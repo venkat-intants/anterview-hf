@@ -43,6 +43,7 @@ import {
   type PublicSection,
 } from '@/api/publicExam';
 import { cn } from '@/lib/utils';
+import { isTransientApiError } from '@/api/client';
 import { AuroraField } from '@/design/components/AuroraField';
 import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
 import CodingTaking from '@/pages/exam/CodingTaking';
@@ -181,7 +182,10 @@ export default function PublicExam() {
     queryKey: ['public-exam', token],
     queryFn: () => getPublicExam(token),
     enabled: token.length > 0,
-    retry: false,
+    // A definitive rejection (404 bad/revoked link) must not be retried, but a
+    // transient failure (network blip, Space replica swap, 5xx) must not brand
+    // a perfectly good link "invalid" — retry those a couple of times.
+    retry: (failureCount, error) => isTransientApiError(error) && failureCount < 2,
     staleTime: Infinity,
   });
 
@@ -335,6 +339,24 @@ export default function PublicExam() {
   );
 
   // ── Error / loading states ───────────────────────────────────────────────
+  // Transient failure (network / server hiccup) — the link may be fine.
+  if (token && examQ.isError && isTransientApiError(examQ.error)) {
+    return (
+      <PageWrap>
+        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(255,183,100,0.15)] text-amber-glow">
+          <AlertCircle className="h-6 w-6" aria-hidden="true" />
+        </span>
+        <h1 className="text-subheading font-semibold text-foreground">
+          {t('publicExam.networkTitle')}
+        </h1>
+        <p className="max-w-sm text-body-sm text-muted-foreground">{t('publicExam.networkDesc')}</p>
+        <Pill className="mt-2 px-8 py-2.5" onClick={() => void examQ.refetch()}>
+          {t('publicExam.retry')}
+        </Pill>
+      </PageWrap>
+    );
+  }
+
   if (!token || examQ.isError) {
     return (
       <PageWrap>

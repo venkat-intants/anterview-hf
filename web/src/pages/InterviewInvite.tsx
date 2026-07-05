@@ -23,6 +23,7 @@ import {
   Calendar,
 } from '@/design/components/icons';
 import { getInterviewInvite, redeemInterviewInvite } from '@/api/publicInterview';
+import { isTransientApiError } from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
 import { AuroraField } from '@/design/components/AuroraField';
 import { GlassCard, Pill, StatusTag, Avatar } from '@/design/components/primitives';
@@ -61,7 +62,10 @@ export default function InterviewInvite() {
     queryKey: ['interview-invite', token],
     queryFn: () => getInterviewInvite(token),
     enabled: token.length > 0,
-    retry: false,
+    // A definitive rejection (404 bad/revoked link) must not be retried, but a
+    // transient failure (network blip, Space replica swap, 5xx) must not brand
+    // a perfectly good link "invalid" — retry those a couple of times.
+    retry: (failureCount, error) => isTransientApiError(error) && failureCount < 2,
     staleTime: Infinity,
   });
 
@@ -85,6 +89,26 @@ export default function InterviewInvite() {
       navigate(`/interview/${r.session_id}`, { replace: true });
     },
   });
+
+  // ── Transient failure (network / server hiccup) — the link may be fine ──
+  if (token && inviteQ.isError && isTransientApiError(inviteQ.error)) {
+    return (
+      <PageWrap>
+        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(255,183,100,0.15)] text-amber-glow shadow-sm">
+          <AlertCircle className="h-6 w-6" aria-hidden="true" />
+        </span>
+        <h1 className="text-subheading font-semibold text-foreground">
+          {t('interviewInvite.networkTitle')}
+        </h1>
+        <p className="max-w-sm text-body-sm text-muted-foreground">
+          {t('interviewInvite.networkDesc')}
+        </p>
+        <Pill className="mt-2 px-8 py-2.5" onClick={() => void inviteQ.refetch()}>
+          {t('interviewInvite.retry')}
+        </Pill>
+      </PageWrap>
+    );
+  }
 
   // ── No token / invalid / expired ──
   if (!token || inviteQ.isError) {

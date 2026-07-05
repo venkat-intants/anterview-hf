@@ -18,6 +18,34 @@
 import { getToken, setToken, clearToken } from './tokenStore';
 import { toast } from '../lib/toast';
 
+/**
+ * Error thrown for non-2xx API responses. Carries the HTTP status so callers
+ * can distinguish a definitive rejection (404 bad link, 403 forbidden) from a
+ * transient failure worth retrying (5xx, 429, or a network error which throws
+ * a plain TypeError with no status at all).
+ */
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+/**
+ * True when an error from clientFetch is worth retrying: network failures
+ * (no ApiError/status — e.g. the Space restarting mid-request), 5xx, or 429.
+ * Definitive 4xx responses (bad token, forbidden, not found) return false.
+ */
+export function isTransientApiError(error: unknown): boolean {
+  if (error instanceof ApiError) {
+    return error.status >= 500 || error.status === 429;
+  }
+  return true; // network-level failure — no response was received
+}
+
 // Fail-CLOSED: mock data is used only when VITE_USE_MOCK is explicitly 'true'.
 // An unset/missing var → real backend (so a mis-configured prod deploy surfaces
 // as API errors, never as silently-served fake data).
@@ -158,7 +186,10 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
         const errorBody = (await retryResponse.json().catch(() => ({}))) as {
           detail?: string;
         };
-        throw new Error(errorBody.detail ?? `HTTP ${retryResponse.status}`);
+        throw new ApiError(
+          errorBody.detail ?? `HTTP ${retryResponse.status}`,
+          retryResponse.status,
+        );
       }
 
       return parseJsonOrEmpty<T>(retryResponse);
@@ -177,7 +208,7 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
     const errorBody = (await response.json().catch(() => ({}))) as {
       detail?: string;
     };
-    throw new Error(errorBody.detail ?? `HTTP ${response.status}`);
+    throw new ApiError(errorBody.detail ?? `HTTP ${response.status}`, response.status);
   }
 
   return parseJsonOrEmpty<T>(response);

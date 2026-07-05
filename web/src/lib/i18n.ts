@@ -510,6 +510,10 @@ const en = {
       invalidTitle: "This interview link isn't valid",
       invalidDesc:
         'It may have expired, been revoked, or already been used. Please ask your recruiter for a fresh link.',
+      networkTitle: "Couldn't load your interview",
+      networkDesc:
+        'We had trouble reaching the server — your link is probably fine. Check your connection and try again.',
+      retry: 'Try again',
       loading: 'Loading your interview…',
       completedTitle: "You've already completed this interview",
       completedDesc:
@@ -538,6 +542,10 @@ const en = {
       invalidTitle: "This exam link isn't valid",
       invalidDesc:
         'The link may have expired, been revoked, or already been used. Please ask your recruiter for a fresh link.',
+      networkTitle: "Couldn't load your exam",
+      networkDesc:
+        'We had trouble reaching the server — your link is probably fine. Check your connection and try again.',
+      retry: 'Try again',
       loading: 'Loading your exam…',
       completedTitle: "You've already completed this exam",
       completedDesc:
@@ -1068,6 +1076,10 @@ const hi = {
       invalidTitle: 'यह इंटरव्यू लिंक मान्य नहीं है',
       invalidDesc:
         'यह समाप्त हो गया हो, रद्द कर दिया गया हो, या पहले ही उपयोग किया जा चुका हो। कृपया अपने recruiter से नया लिंक मांगें।',
+      networkTitle: 'आपका इंटरव्यू लोड नहीं हो सका',
+      networkDesc:
+        'सर्वर से संपर्क नहीं हो पाया — आपका लिंक शायद ठीक है। अपना connection जांचें और फिर से कोशिश करें।',
+      retry: 'फिर से कोशिश करें',
       loading: 'आपका इंटरव्यू लोड हो रहा है…',
       completedTitle: 'आप यह इंटरव्यू पहले ही पूरा कर चुके हैं',
       completedDesc:
@@ -1094,6 +1106,10 @@ const hi = {
       invalidTitle: 'यह परीक्षा लिंक मान्य नहीं है',
       invalidDesc:
         'यह लिंक समाप्त हो गया हो, रद्द कर दिया गया हो, या पहले ही उपयोग किया जा चुका हो। कृपया अपने recruiter से नया लिंक मांगें।',
+      networkTitle: 'आपकी परीक्षा लोड नहीं हो सकी',
+      networkDesc:
+        'सर्वर से संपर्क नहीं हो पाया — आपका लिंक शायद ठीक है। अपना connection जांचें और फिर से कोशिश करें।',
+      retry: 'फिर से कोशिश करें',
       loading: 'आपकी परीक्षा लोड हो रही है…',
       completedTitle: 'आप यह परीक्षा पहले ही पूरी कर चुके हैं',
       completedDesc:
@@ -1617,6 +1633,10 @@ const te = {
       invalidTitle: 'ఈ ఇంటర్వ్యూ లింక్ చెల్లదు',
       invalidDesc:
         'ఇది గడువు ముగిసి ఉండవచ్చు, రద్దు చేయబడి ఉండవచ్చు, లేదా ఇప్పటికే ఉపయోగించబడి ఉండవచ్చు. దయచేసి మీ recruiterను కొత్త లింక్ అడగండి.',
+      networkTitle: 'మీ ఇంటర్వ్యూ లోడ్ కాలేదు',
+      networkDesc:
+        'సర్వర్‌ను చేరుకోవడంలో సమస్య వచ్చింది — మీ లింక్ బహుశా సరైనదే. మీ connection తనిఖీ చేసి మళ్లీ ప్రయత్నించండి.',
+      retry: 'మళ్లీ ప్రయత్నించండి',
       loading: 'మీ ఇంటర్వ్యూ లోడ్ అవుతోంది…',
       completedTitle: 'మీరు ఈ ఇంటర్వ్యూను ఇప్పటికే పూర్తి చేశారు',
       completedDesc:
@@ -1643,6 +1663,10 @@ const te = {
       invalidTitle: 'ఈ పరీక్ష లింక్ చెల్లదు',
       invalidDesc:
         'ఈ లింక్ గడువు ముగిసి ఉండవచ్చు, రద్దు చేయబడి ఉండవచ్చు, లేదా ఇప్పటికే ఉపయోగించబడి ఉండవచ్చు. దయచేసి మీ recruiterను కొత్త లింక్ అడగండి.',
+      networkTitle: 'మీ పరీక్ష లోడ్ కాలేదు',
+      networkDesc:
+        'సర్వర్‌ను చేరుకోవడంలో సమస్య వచ్చింది — మీ లింక్ బహుశా సరైనదే. మీ connection తనిఖీ చేసి మళ్లీ ప్రయత్నించండి.',
+      retry: 'మళ్లీ ప్రయత్నించండి',
       loading: 'మీ పరీక్ష లోడ్ అవుతోంది…',
       completedTitle: 'మీరు ఈ పరీక్షను ఇప్పటికే పూర్తి చేశారు',
       completedDesc:

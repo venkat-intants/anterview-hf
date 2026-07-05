@@ -315,7 +315,7 @@ async def _ingest_resume(
     error (storage) so the caller can record it as a per-file failure.
     """
     try:
-        resume_text = _extract_pdf_text(raw)
+        resume_text = await _extract_pdf_text(raw)
     except Exception as exc:  # noqa: BLE001
         raise ValueError("could not read the PDF (encrypted or not text-based)") from exc
 
@@ -397,7 +397,7 @@ async def create_applicant(
     if len(raw) > _MAX_RESUME_BYTES:
         raise HTTPException(status_code=400, detail="Resume must be under 5 MB.")
     try:
-        resume_text = _extract_pdf_text(raw)
+        resume_text = await _extract_pdf_text(raw)
     except Exception as exc:  # noqa: BLE001
         log.warning("hr.applicant.pdf_parse_failed", error_type=type(exc).__name__)
         raise HTTPException(

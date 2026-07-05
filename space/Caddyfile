@@ -19,6 +19,23 @@
 }
 
 :7860 {
+	# -- SPA-first navigation ---------------------------------------------
+	# The React app owns EVERY browser page load. A navigation is
+	# GET + Accept: text/html; the APIs are JSON-only and PDFs/exports are
+	# pre-signed R2 or blob: URLs, so the ONLY backend endpoints a browser
+	# navigates to are the OAuth redirects under /auth/sso/* (excluded).
+	# Without this, every SPA route that shares a prefix with a proxied API
+	# (/hr/*, /admin/*, /exam, /interview-invite, /jobs, ...) returns raw
+	# JSON in any browser without the PWA service worker installed.
+	# `rewrite` runs before all `handle` blocks (Caddy directive order), so
+	# navigations become /index.html and fall through to the SPA catch-all.
+	@spa_nav {
+		method GET
+		header Accept *text/html*
+		not path /auth/sso/* /internal/* /metrics*
+	}
+	rewrite @spa_nav /index.html
+
 	# -- Never expose internal-only or metrics endpoints ------------------
 	handle /internal/* {
 		respond "Forbidden" 403
@@ -61,61 +78,20 @@
 	}
 
 	# -- data_gateway :8002 (auth, ATS, exams, consent + generic catch-alls)
-	# Google OAuth: Google redirects the browser to this SPA route, which then
-	# fetches /auth/sso/google/callback on data_gateway. Longest-path-wins keeps
-	# it out of the /auth/* proxy below.
-	handle /auth/google/callback {
-		root * /app/webdist
-		try_files {path} /index.html
-		file_server
-	}
-
 	handle /auth/* {
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /consent* {
 		reverse_proxy 127.0.0.1:8002
 	}
-	# Exam magic-link: /exam/* subpaths (start/submit/run-code/...) are pure
-	# API. The BARE /exam path is BOTH the SPA landing page (browser navigation;
-	# token in the #fragment, never sent to the server) AND the exam-meta API
-	# (the SPA's fetch() with the X-Exam-Token header). Split by intent: only a
-	# navigation sends Accept: text/html — serve it the SPA; everything else
-	# falls through to the API proxy. Without this, candidates opening an exam
-	# link saw raw JSON: {"detail":"Exam not available."}.
-	handle /exam/* {
+	handle /exam* {
 		reverse_proxy 127.0.0.1:8002
-	}
-	handle /exam {
-		@exam_page {
-			header Accept *text/html*
-		}
-		@exam_api {
-			not header Accept *text/html*
-		}
-		root * /app/webdist
-		rewrite @exam_page /index.html
-		reverse_proxy @exam_api 127.0.0.1:8002
-		file_server
 	}
 	handle /hr/* {
 		reverse_proxy 127.0.0.1:8002
 	}
-	# Interview-invite magic-link: same bare-path split as /exam above.
-	handle /interview-invite/* {
+	handle /interview-invite* {
 		reverse_proxy 127.0.0.1:8002
-	}
-	handle /interview-invite {
-		@invite_page {
-			header Accept *text/html*
-		}
-		@invite_api {
-			not header Accept *text/html*
-		}
-		root * /app/webdist
-		rewrite @invite_page /index.html
-		reverse_proxy @invite_api 127.0.0.1:8002
-		file_server
 	}
 	handle /jobs* {
 		reverse_proxy 127.0.0.1:8002

@@ -129,15 +129,20 @@ async def score_resume(
         f"/models/{settings.gemini_model}:generateContent"
         f"?key={settings.gemini_api_key}"
     )
+    generation_config: dict[str, Any] = {
+        "temperature": 0.2,
+        # Generous budget so the structured JSON body is never truncated.
+        "maxOutputTokens": 4096,
+        "responseMimeType": "application/json",
+    }
+    # On Gemini 2.5 "thinking" models, hidden reasoning tokens count against
+    # maxOutputTokens and can truncate the JSON mid-string. Disable thinking so
+    # the whole budget is output. Guarded: pre-2.5 models 400 on thinkingConfig.
+    if "2.5" in settings.gemini_model:
+        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
     body: dict[str, Any] = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            # Generous budget so the structured JSON body is never truncated
-            # (thinking-capable models spend part of this on reasoning).
-            "maxOutputTokens": 4096,
-            "responseMimeType": "application/json",
-        },
+        "generationConfig": generation_config,
     }
 
     response = None

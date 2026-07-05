@@ -258,21 +258,26 @@ async def score_session(
         f"/models/{settings.gemini_model}:generateContent"
         f"?key={settings.gemini_api_key}"
     )
+    generation_config: dict[str, Any] = {
+        "temperature": 0.2,
+        # Raised from 2048 to fit the larger output (scores + per-axis
+        # rationale + strengths + improvements + summary). With JSON mode +
+        # thinking disabled the whole budget goes to the JSON; a too-small
+        # cap truncates it mid-string and the parse fails.
+        "maxOutputTokens": 4096,
+        # JSON mode (B-041) — forces well-formed, fence-free JSON. Without it
+        # the scorer truncated/malformed its JSON and 502'd, so the candidate
+        # never got a scorecard.
+        "responseMimeType": "application/json",
+    }
+    # On Gemini 2.5 "thinking" models, hidden reasoning tokens count against
+    # maxOutputTokens and can truncate the JSON mid-string. Disable thinking so
+    # the whole budget is output. Guarded: pre-2.5 models 400 on thinkingConfig.
+    if "2.5" in settings.gemini_model:
+        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
     body: dict[str, Any] = {
         "contents": [{"role": "user", "parts": [{"text": rendered}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            # Raised from 2048 to fit the larger output (scores + per-axis
-            # rationale + strengths + improvements + summary). With JSON mode +
-            # a non-thinking model the whole budget goes to the JSON; a too-small
-            # cap truncates it mid-string and the parse fails.
-            "maxOutputTokens": 4096,
-            # JSON mode (B-041) — forces well-formed, fence-free JSON. Without it
-            # the scorer truncated/malformed its JSON and 502'd, so the candidate
-            # never got a scorecard. Requires a non-thinking model (flash-lite)
-            # so the whole token budget goes to the JSON, not hidden "thinking".
-            "responseMimeType": "application/json",
-        },
+        "generationConfig": generation_config,
     }
 
     # Retry on transient failures (notably 503 "high demand" on the free tier)

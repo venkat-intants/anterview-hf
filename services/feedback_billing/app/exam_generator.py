@@ -139,15 +139,25 @@ async def generate_exam_questions(
         f"/models/{settings.gemini_model}:generateContent"
         f"?key={settings.gemini_api_key}"
     )
+    generation_config: dict[str, Any] = {
+        "temperature": 0.7,  # some variety across generations
+        # Pure JSON output budget (thinking is disabled below on 2.5 models).
+        # Scales with the question count.
+        "maxOutputTokens": min(8192, 2048 + count * 256),
+        "responseMimeType": "application/json",
+    }
+    # Gemini 2.5 models are "thinking" models: their hidden reasoning tokens
+    # count against maxOutputTokens and on generation-heavy prompts can consume
+    # nearly the whole budget, truncating the JSON mid-string (seen live on the
+    # HF Space: output died at char 41 → "Unterminated string"). Structured MCQ
+    # authoring gains nothing from private reasoning, so spend the entire budget
+    # on output. thinkingConfig is only accepted by 2.5-family models — older
+    # models reject the field with HTTP 400, hence the version guard.
+    if "2.5" in settings.gemini_model:
+        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
     body: dict[str, Any] = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.7,  # some variety across generations
-            # Generous budget — 4 options * N questions of JSON, plus the model's
-            # private reasoning tokens. Scales with the question count.
-            "maxOutputTokens": min(8192, 1024 + count * 256),
-            "responseMimeType": "application/json",
-        },
+        "generationConfig": generation_config,
     }
 
     response = None
@@ -174,9 +184,13 @@ async def generate_exam_questions(
         )
 
     try:
-        raw_text: str = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        candidate: dict[str, Any] = response.json()["candidates"][0]
+        raw_text: str = candidate["content"]["parts"][0]["text"]
     except (KeyError, IndexError, json.JSONDecodeError) as exc:
         raise ExamGenerationError(f"Failed to read Gemini response: {exc}") from exc
+    # Surfaced in parse errors: MAX_TOKENS here means the JSON was truncated by
+    # the output budget — raise the budget rather than blaming the model output.
+    finish_reason = str(candidate.get("finishReason", ""))
 
     cleaned = raw_text.strip()
     if cleaned.startswith("```"):
@@ -190,7 +204,14 @@ async def generate_exam_questions(
     try:
         parsed: dict[str, Any] = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise ExamGenerationError(f"Gemini response was not valid JSON: {exc}") from exc
+        hint = (
+            f" (finishReason={finish_reason} — output was truncated)"
+            if finish_reason == "MAX_TOKENS"
+            else ""
+        )
+        raise ExamGenerationError(
+            f"Gemini response was not valid JSON{hint}: {exc}"
+        ) from exc
 
     raw_questions = parsed.get("questions")
     if not isinstance(raw_questions, list):

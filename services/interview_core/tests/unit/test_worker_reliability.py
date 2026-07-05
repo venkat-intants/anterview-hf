@@ -1,4 +1,4 @@
-"""Unit tests for interview_worker reliability fixes.
+﻿"""Unit tests for interview_worker reliability fixes.
 
 Covers:
   1. Abrupt-close teardown: _abrupt_close is shielded so it survives GC when
@@ -11,8 +11,8 @@ Covers:
      handles failure without crashing.
   5. Prometheus /metrics endpoint: returns 200 with the correct content-type.
   6. PII redaction in structlog: _redact_pii_processor strips the expected fields.
-  7. Settings — config fields for worker sizing have correct defaults.
-  8. Abrupt-close shield — teardown survives outer cancel.
+  7. Settings â€” config fields for worker sizing have correct defaults.
+  8. Abrupt-close shield â€” teardown survives outer cancel.
   9. (Finding 2) resolve_consent_user_id retries on transient DB errors and
      returns the DB-error sentinel after exhausting retries.
  10. (Finding 3) _request_fnc memory-gate rejects when estimated RSS would
@@ -60,7 +60,7 @@ def test_active_jobs_increment_and_decrement() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. _request_fnc — admission control gate
+# 2. _request_fnc â€” admission control gate
 # ---------------------------------------------------------------------------
 
 
@@ -86,7 +86,7 @@ async def test_request_fnc_accepts_under_ceiling() -> None:
         ):
             await wk._request_fnc(mock_request)
 
-        mock_request.accept.assert_called_once_with(wk.entrypoint)
+        mock_request.accept.assert_called_once_with()
         mock_request.reject.assert_not_called()
     finally:
         wk._active_jobs = original
@@ -148,7 +148,7 @@ async def test_request_fnc_rejects_over_ceiling() -> None:
 
 @pytest.mark.asyncio
 async def test_request_fnc_zero_cap_always_accepts() -> None:
-    """worker_max_concurrent_jobs=0 disables the cap — jobs always accepted."""
+    """worker_max_concurrent_jobs=0 disables the cap â€” jobs always accepted."""
     import app.worker.interview_worker as wk
 
     original = wk._active_jobs
@@ -168,14 +168,14 @@ async def test_request_fnc_zero_cap_always_accepts() -> None:
         ):
             await wk._request_fnc(mock_request)
 
-        mock_request.accept.assert_called_once_with(wk.entrypoint)
+        mock_request.accept.assert_called_once_with()
         mock_request.reject.assert_not_called()
     finally:
         wk._active_jobs = original
 
 
 # ---------------------------------------------------------------------------
-# 3. Heartbeat — _write_heartbeat and _run_heartbeat
+# 3. Heartbeat â€” _write_heartbeat and _run_heartbeat
 # ---------------------------------------------------------------------------
 
 
@@ -209,7 +209,7 @@ def test_write_heartbeat_bad_path_silent() -> None:
     """_write_heartbeat on an unwritable path must silently swallow the error."""
     from app.worker.interview_worker import _write_heartbeat
 
-    # Should not raise — wraps OSError silently.
+    # Should not raise â€” wraps OSError silently.
     _write_heartbeat("/nonexistent_dir_xyz/heartbeat", "ts")
 
 
@@ -228,7 +228,7 @@ async def test_run_heartbeat_writes_within_interval() -> None:
         import app.worker.interview_worker as wk
 
         with patch.object(wk, "settings", fake_settings):
-            # Run for one tick only — cancel after the first write.
+            # Run for one tick only â€” cancel after the first write.
             task = asyncio.create_task(_run_heartbeat())
             # Give the event loop time to write once.
             await asyncio.sleep(0.05)
@@ -244,7 +244,7 @@ async def test_run_heartbeat_writes_within_interval() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. Prewarm — _prewarm loads VAD into proc.userdata
+# 4. Prewarm â€” _prewarm loads VAD into proc.userdata
 # ---------------------------------------------------------------------------
 
 
@@ -283,7 +283,7 @@ def test_prewarm_swallows_load_failure() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. /metrics endpoint — Prometheus text format
+# 5. /metrics endpoint â€” Prometheus text format
 # ---------------------------------------------------------------------------
 
 
@@ -356,7 +356,7 @@ def test_pii_redaction_leaves_clean_events_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. Settings — new config fields have correct defaults
+# 7. Settings â€” new config fields have correct defaults
 # ---------------------------------------------------------------------------
 
 
@@ -377,14 +377,14 @@ def test_settings_new_fields_exist_with_defaults(
 
 
 # ---------------------------------------------------------------------------
-# 8. Abrupt-close shield — teardown task survives cancellation
+# 8. Abrupt-close shield â€” teardown task survives cancellation
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_abrupt_close_shielded_task_survives_outer_cancel() -> None:
     """asyncio.shield() must allow the inner coroutine to finish even when the
-    outer future is cancelled — this models what happens when LiveKit's framework
+    outer future is cancelled â€” this models what happens when LiveKit's framework
     cancels the room tear-down before _abrupt_close finishes writing to the DB.
     """
     completed: list[bool] = []
@@ -397,7 +397,7 @@ async def test_abrupt_close_shielded_task_survives_outer_cancel() -> None:
     # then cancel the outer shield reference.
     inner_task = asyncio.ensure_future(_inner())
     shielded = asyncio.shield(inner_task)
-    shielded.cancel()  # outer cancel — inner must still run
+    shielded.cancel()  # outer cancel â€” inner must still run
 
     # Wait for the inner task to complete.
     with contextlib.suppress(TimeoutError):
@@ -405,12 +405,12 @@ async def test_abrupt_close_shielded_task_survives_outer_cancel() -> None:
 
     assert completed == [True], (
         "asyncio.shield() must allow the inner coroutine to complete even when "
-        "the outer future is cancelled — _abrupt_close must not be GC'd on browser close"
+        "the outer future is cancelled â€” _abrupt_close must not be GC'd on browser close"
     )
 
 
 # ---------------------------------------------------------------------------
-# 9. (Finding 2) resolve_consent_user_id — retry logic and fail-closed sentinel
+# 9. (Finding 2) resolve_consent_user_id â€” retry logic and fail-closed sentinel
 # ---------------------------------------------------------------------------
 
 
@@ -460,7 +460,7 @@ async def test_resolve_consent_user_id_retries_on_transient_error() -> None:
 async def test_resolve_consent_user_id_succeeds_on_second_attempt() -> None:
     """Transient error on attempt 1 followed by success on attempt 2.
 
-    The resolver must not give up prematurely — a single transient error
+    The resolver must not give up prematurely â€” a single transient error
     should not produce the fail-closed sentinel.
     """
     import uuid
@@ -513,13 +513,13 @@ async def test_resolve_consent_user_id_invalid_uuid_no_retry() -> None:
         result = await wk.resolve_consent_user_id("not-a-uuid")
 
     assert result is None, (
-        "Non-UUID room names are legitimate no-ops — no retry, no sentinel"
+        "Non-UUID room names are legitimate no-ops â€” no retry, no sentinel"
     )
     factory.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# 10. (Finding 3) _request_fnc — memory gate and Redis capacity publish
+# 10. (Finding 3) _request_fnc â€” memory gate and Redis capacity publish
 # ---------------------------------------------------------------------------
 
 
@@ -563,7 +563,7 @@ async def test_request_fnc_accepts_within_memory_budget() -> None:
 
     original = wk._active_jobs
     try:
-        wk._active_jobs = 1  # 1 + 1 incoming = 2 * 150 = 300 < 400 → accept
+        wk._active_jobs = 1  # 1 + 1 incoming = 2 * 150 = 300 < 400 â†’ accept
         mock_request = AsyncMock()
 
         fake_settings = MagicMock()
@@ -578,7 +578,7 @@ async def test_request_fnc_accepts_within_memory_budget() -> None:
         ):
             await wk._request_fnc(mock_request)
 
-        mock_request.accept.assert_called_once_with(wk.entrypoint)
+        mock_request.accept.assert_called_once_with()
         mock_request.reject.assert_not_called()
     finally:
         wk._active_jobs = original
@@ -606,7 +606,7 @@ async def test_request_fnc_zero_memory_limit_skips_check() -> None:
         ):
             await wk._request_fnc(mock_request)
 
-        mock_request.accept.assert_called_once_with(wk.entrypoint)
+        mock_request.accept.assert_called_once_with()
     finally:
         wk._active_jobs = original
 
@@ -663,7 +663,7 @@ def test_worker_max_concurrent_jobs_default_is_conservative() -> None:
         "must be <= 4 for a 2-vCPU / 2 GB VM (Oracle Free Tier). "
         "Old default of 15 caused OOM spikes."
     )
-    # Must still be positive — 0 disables the cap which is not the safe default.
+    # Must still be positive â€” 0 disables the cap which is not the safe default.
     assert settings.worker_max_concurrent_jobs > 0, (
         "worker_max_concurrent_jobs must be > 0 for production safety"
     )
@@ -695,7 +695,7 @@ def test_container_memory_limit_mb_default_nonzero() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 12. (Finding 3 — cap consistency) Effective cap equals the configured cap
+# 12. (Finding 3 â€” cap consistency) Effective cap equals the configured cap
 # ---------------------------------------------------------------------------
 
 
@@ -706,7 +706,7 @@ def test_effective_cap_equals_configured_cap() -> None:
     for every job slot from 1 to worker_max_concurrent_jobs (inclusive), the
     memory gate passes.  If job_memory_limit_mb and container_memory_limit_mb
     are misconfigured such that the memory gate fires BEFORE the concurrency
-    ceiling, _request_fnc would silently reject below the advertised cap —
+    ceiling, _request_fnc would silently reject below the advertised cap â€”
     the reconciled cap is 4 (memory-safe on the box), and BOTH gates must
     agree on exactly 4.
 
@@ -729,7 +729,7 @@ def test_effective_cap_equals_configured_cap() -> None:
     )
 
     if mem_per_job == 0 or mem_limit == 0:
-        # Memory gate is disabled — only the concurrency counter matters.
+        # Memory gate is disabled â€” only the concurrency counter matters.
         return
 
     # For every job slot 1..cap, accepting it must NOT trigger the memory gate.
@@ -779,7 +779,7 @@ async def test_request_fnc_accepts_exactly_cap_jobs_sequentially() -> None:
             if mock_request.accept.called:
                 accepted += 1
                 # Simulate the job actually starting (increment counter).
-                # _request_fnc does NOT increment — entrypoint() does; we
+                # _request_fnc does NOT increment â€” entrypoint() does; we
                 # simulate that by setting _active_jobs = slot so the next
                 # iteration sees the correct running count.
             elif mock_request.reject.called:

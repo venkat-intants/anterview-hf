@@ -50,6 +50,9 @@ export APP_BASE_URL="${APP_BASE_URL:-$PUBLIC_ORIGIN}"
 export EXAM_LINK_BASE_URL="${EXAM_LINK_BASE_URL:-$PUBLIC_ORIGIN}"
 export INTERVIEW_LINK_BASE_URL="${INTERVIEW_LINK_BASE_URL:-$PUBLIC_ORIGIN}"
 export AUTH_COOKIE_SECURE="${AUTH_COOKIE_SECURE:-true}"
+# Google SSO: Google must redirect back to the SPA callback route on this
+# origin (also whitelist this exact URL in the Google Cloud OAuth client).
+export GOOGLE_OAUTH_REDIRECT_URI="${GOOGLE_OAUTH_REDIRECT_URI:-$PUBLIC_ORIGIN/auth/google/callback}"
 export AUTH_COOKIE_SAMESITE="${AUTH_COOKIE_SAMESITE:-lax}"
 export TRUSTED_PROXY_COUNT="${TRUSTED_PROXY_COUNT:-1}"   # HF edge proxy
 

@@ -1561,7 +1561,9 @@ async def _request_fnc(job_request: Any) -> None:
         await _publish_capacity()
         return
 
-    await job_request.accept(entrypoint)
+    # livekit-agents 1.x: accept() takes keyword-only args; the entrypoint is
+    # already bound via WorkerOptions(entrypoint_fnc=...) in run().
+    await job_request.accept()
 
 
 def run() -> None:

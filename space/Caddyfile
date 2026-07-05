@@ -61,6 +61,15 @@
 	}
 
 	# -- data_gateway :8002 (auth, ATS, exams, consent + generic catch-alls)
+	# Google OAuth: Google redirects the browser to this SPA route, which then
+	# fetches /auth/sso/google/callback on data_gateway. Longest-path-wins keeps
+	# it out of the /auth/* proxy below.
+	handle /auth/google/callback {
+		root * /app/webdist
+		try_files {path} /index.html
+		file_server
+	}
+
 	handle /auth/* {
 		reverse_proxy 127.0.0.1:8002
 	}

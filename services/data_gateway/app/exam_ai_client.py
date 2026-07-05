@@ -72,3 +72,44 @@ async def generate_exam_questions_remote(
     data: dict[str, Any] = resp.json()
     questions: list[dict[str, Any]] = data.get("questions") or []
     return questions
+
+
+async def generate_coding_questions_remote(
+    *,
+    topic: str,
+    num_questions: int,
+    difficulty: str,
+    language: str,
+    allowed_languages: list[str],
+    acting_user_id: str,
+) -> list[dict[str, Any]]:
+    """Generate coding problems via feedback_billing. Raises ExamGenerationError.
+
+    Returns a list of {"prompt", "reference_solution", "test_cases"} dicts where
+    test_cases items are {"stdin", "expected_output", "is_sample", "weight"}.
+    """
+    url = f"{settings.feedback_billing_url}/internal/generate-coding"
+    token = _internal_token(acting_user_id)
+    try:
+        # Coding generation emits far more tokens than MCQs — allow extra time.
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "topic": topic,
+                    "num_questions": num_questions,
+                    "difficulty": difficulty,
+                    "language": language,
+                    "allowed_languages": allowed_languages,
+                },
+            )
+    except httpx.RequestError as exc:
+        raise ExamGenerationError(f"coding generator unreachable: {exc}") from exc
+    if resp.status_code != 200:
+        raise ExamGenerationError(
+            f"coding generator returned HTTP {resp.status_code}: {resp.text[:160]}"
+        )
+    data: dict[str, Any] = resp.json()
+    questions: list[dict[str, Any]] = data.get("questions") or []
+    return questions

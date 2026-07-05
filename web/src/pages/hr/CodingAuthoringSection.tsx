@@ -8,13 +8,17 @@
 
 import { Suspense, lazy, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Loader2, Lock, Code2 } from '@/design/components/icons';
+import { Plus, Trash2, Loader2, Lock, Code2, Pencil, Sparkles, X } from '@/design/components/icons';
 import {
   listSectionCodingQuestions,
   addSectionCodingQuestion,
   deleteSectionCodingQuestion,
+  generateCodingQuestions,
   CODING_LANGUAGES,
   type CodingTestCase,
+  type ExamDifficulty,
+  type ExamLanguage,
+  type GeneratedCodingQuestion,
 } from '@/api/exams';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -58,13 +62,65 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
   const refresh = () => void qc.invalidateQueries({ queryKey: qKey });
 
   // Composer state
+  const [composerTab, setComposerTab] = useState<'manual' | 'ai'>('manual');
   const [prompt, setPrompt] = useState('');
   const [langs, setLangs] = useState<string[]>(['python']);
   const [starter, setStarter] = useState('');
   const [tests, setTests] = useState<CodingTestCase[]>([{ ...emptyTest(), is_sample: true }]);
   const [points, setPoints] = useState('100');
 
+  // AI tab state (allowed languages are shared with the manual composer —
+  // same concept, same chips)
+  const [aiTopic, setAiTopic] = useState('');
+  const [aiCount, setAiCount] = useState('2');
+  const [aiDifficulty, setAiDifficulty] = useState<ExamDifficulty>('medium');
+  const [aiLanguage, setAiLanguage] = useState<ExamLanguage>('en');
+  const [aiPreview, setAiPreview] = useState<GeneratedCodingQuestion[]>([]);
+
   const editorLang = useMemo(() => langs[0] ?? 'python', [langs]);
+
+  const generateMut = useMutation({
+    mutationFn: () =>
+      generateCodingQuestions(examId, {
+        topic: aiTopic.trim(),
+        num_questions: Math.min(8, Math.max(1, Number(aiCount) || 2)),
+        difficulty: aiDifficulty,
+        language: aiLanguage,
+        allowed_languages: langs,
+      }),
+    onSuccess: (res) => {
+      setAiPreview(res.questions);
+      if (res.questions.length === 0) toast.error('The AI returned no usable problems.');
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof Error ? e.message : 'AI generation failed'),
+  });
+
+  const addGeneratedMut = useMutation({
+    mutationFn: async () => {
+      for (const q of aiPreview) {
+        await addSectionCodingQuestion(examId, sectionId, {
+          prompt: q.prompt,
+          allowed_languages: q.allowed_languages,
+          starter_code: q.starter_code,
+          reference_solution: q.reference_solution,
+          test_cases: q.test_cases,
+          time_limit_ms: q.time_limit_ms,
+          points: q.points,
+        });
+      }
+      return aiPreview.length;
+    },
+    onSuccess: (n) => {
+      setAiPreview([]);
+      toast.success(`${n} coding problem${n === 1 ? '' : 's'} added`);
+      refresh();
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : 'Add failed');
+      refresh(); // some drafts may have been persisted before the failure
+    },
+  });
 
   const addMut = useMutation({
     mutationFn: () =>
@@ -171,9 +227,217 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
           <Lock size={14} aria-hidden="true" /> Questions are locked once attempts exist.
         </div>
       ) : (
+        <div className="rounded-[14px] border border-dashed border-white/[0.1] bg-[rgba(28,29,31,0.3)] p-3.5">
+          {/* Tab bar — mirrors the MCQ composer's Manual | AI switcher */}
+          <div
+            role="tablist"
+            aria-label="How to add coding questions"
+            className="mb-3 flex gap-1 rounded-[10px] border border-white/[0.08] bg-[rgba(20,21,23,0.6)] p-1"
+          >
+            {[
+              { key: 'manual', label: 'Manual', icon: Pencil },
+              { key: 'ai', label: 'AI', icon: Sparkles },
+            ].map((t) => {
+              const Icon = t.icon;
+              const active = composerTab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setComposerTab(t.key as 'manual' | 'ai')}
+                  className={cn(
+                    'flex flex-1 items-center justify-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[12px] font-medium transition-colors',
+                    active
+                      ? 'bg-[rgba(var(--accent-rgb),0.16)] text-[#60a5fa]'
+                      : 'text-[#888b91] hover:text-white',
+                  )}
+                >
+                  <Icon size={13} aria-hidden="true" />
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* AI generate */}
+          {composerTab === 'ai' && (
+            <div className="space-y-3" aria-label="AI generate coding questions">
+              <input
+                className={cn(inputCls, 'text-[13px]')}
+                placeholder="Topic — e.g. arrays & strings, SQL joins, or Junior Python Developer"
+                value={aiTopic}
+                onChange={(e) => setAiTopic(e.target.value)}
+                aria-label="Topic"
+              />
+              <div className="flex flex-wrap items-end gap-2.5">
+                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                  Problems
+                  <input
+                    type="number"
+                    min={1}
+                    max={8}
+                    value={aiCount}
+                    onChange={(e) => setAiCount(e.target.value)}
+                    className="w-16 rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1.5 text-[12.5px] normal-case text-white focus:border-[var(--accent)] focus:outline-none"
+                    aria-label="Number of problems"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                  Difficulty
+                  <select
+                    value={aiDifficulty}
+                    onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
+                    className="rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1.5 text-[12.5px] normal-case text-white focus:border-[var(--accent)] focus:outline-none"
+                  >
+                    <option value="easy">Easy</option>
+                    <option value="medium">Medium</option>
+                    <option value="hard">Hard</option>
+                    <option value="mixed">Mixed</option>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                  Statement language
+                  <select
+                    value={aiLanguage}
+                    onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
+                    className="rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1.5 text-[12.5px] normal-case text-white focus:border-[var(--accent)] focus:outline-none"
+                  >
+                    <option value="en">English</option>
+                    <option value="hi">हिन्दी</option>
+                    <option value="te">తెలుగు</option>
+                  </select>
+                </label>
+                <Pill
+                  type="button"
+                  variant="accent"
+                  className="gap-1 px-3 py-1.5 text-[12px]"
+                  disabled={generateMut.isPending || !aiTopic.trim() || langs.length === 0}
+                  aria-busy={generateMut.isPending}
+                  onClick={() => generateMut.mutate()}
+                >
+                  {generateMut.isPending ? (
+                    <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Sparkles size={13} aria-hidden="true" />
+                  )}
+                  {generateMut.isPending ? 'Generating…' : 'Generate'}
+                </Pill>
+              </div>
+
+              {/* Allowed languages (shared with the manual composer) */}
+              <div>
+                <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                  Candidates may solve in
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {CODING_LANGUAGES.map((slug) => {
+                    const on = langs.includes(slug);
+                    return (
+                      <button
+                        key={slug}
+                        type="button"
+                        onClick={() => toggleLang(slug, !on)}
+                        className={cn(
+                          'rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors',
+                          on
+                            ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]'
+                            : 'border-white/[0.1] text-[#888b91] hover:text-white',
+                        )}
+                      >
+                        {LANG_LABEL[slug]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Drafts preview */}
+              {aiPreview.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[11.5px] text-[#888b91]">
+                    Review the drafts — check the sample cases and remove any problem you
+                    don&apos;t want. Each problem ships with hidden test cases used for grading.
+                  </p>
+                  {aiPreview.map((q, i) => {
+                    const sampleN = q.test_cases.filter((t) => t.is_sample).length;
+                    const hiddenN = q.test_cases.length - sampleN;
+                    return (
+                      <div
+                        key={i}
+                        className="rounded-[11px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-2.5"
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-white/[0.06] font-mono text-[11px] text-[#b8babf]">
+                            {i + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="line-clamp-4 whitespace-pre-wrap text-[12.5px] leading-snug text-white">
+                              {q.prompt}
+                            </p>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-[#70757c]">
+                              <StatusTag tone="neutral" className="text-[10.5px]">
+                                {sampleN} sample
+                              </StatusTag>
+                              <StatusTag tone="neutral" className="text-[10.5px]">
+                                {hiddenN} hidden
+                              </StatusTag>
+                              {q.reference_solution ? (
+                                <span>reference solution included</span>
+                              ) : (
+                                <span>no reference solution</span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            aria-label={`Discard draft ${i + 1}`}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] border border-white/[0.1] text-[#888b91] transition-colors hover:border-[rgba(230,113,79,0.4)] hover:text-[#e6714f]"
+                            onClick={() =>
+                              setAiPreview((p) => p.filter((_, j) => j !== i))
+                            }
+                          >
+                            <X size={12} aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-center gap-2">
+                    <Pill
+                      type="button"
+                      variant="accent"
+                      className="gap-1 px-3 py-1.5 text-[12px]"
+                      disabled={addGeneratedMut.isPending}
+                      aria-busy={addGeneratedMut.isPending}
+                      onClick={() => addGeneratedMut.mutate()}
+                    >
+                      {addGeneratedMut.isPending ? (
+                        <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Plus size={13} aria-hidden="true" />
+                      )}
+                      Add {aiPreview.length} problem{aiPreview.length === 1 ? '' : 's'}
+                    </Pill>
+                    <button
+                      type="button"
+                      className="text-[12px] text-[#888b91] hover:text-white"
+                      onClick={() => setAiPreview([])}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Manual */}
+          {composerTab === 'manual' && (
         <form
           onSubmit={submit}
-          className="space-y-3 rounded-[14px] border border-dashed border-white/[0.1] bg-[rgba(28,29,31,0.3)] p-3.5"
+          className="space-y-3"
           aria-label="New coding question"
         >
           <textarea
@@ -358,6 +622,8 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
             </Pill>
           </div>
         </form>
+          )}
+        </div>
       )}
     </div>
   );

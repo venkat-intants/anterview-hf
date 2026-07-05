@@ -14,7 +14,11 @@ from typing import Any
 
 import pytest
 
-from app.exam_generator import ExamGenerationError, generate_exam_questions
+from app.exam_generator import (
+    ExamGenerationError,
+    generate_coding_questions,
+    generate_exam_questions,
+)
 
 _SETTINGS_25 = SimpleNamespace(
     gemini_api_base_url="https://example.test/v1beta",
@@ -162,3 +166,107 @@ async def test_all_questions_invalid_raises(monkeypatch: pytest.MonkeyPatch) -> 
 
     with pytest.raises(ExamGenerationError):
         await generate_exam_questions(topic="t", num_questions=1, settings=_SETTINGS_25)
+
+
+# ---------------------------------------------------------------------------
+# Coding-question generation
+# ---------------------------------------------------------------------------
+
+
+def _coding_case(sample: bool, weight: int = 1) -> dict[str, Any]:
+    return {
+        "stdin": "3\n1 2 3",
+        "expected_output": "6",
+        "is_sample": sample,
+        "weight": weight,
+    }
+
+
+def _coding_question(**overrides: Any) -> dict[str, Any]:
+    q: dict[str, Any] = {
+        "prompt": "Read N integers and print their sum. Input: N then N ints.",
+        "reference_solution": "n=int(input());print(sum(int(x) for x in input().split()))",
+        "test_cases": [
+            _coding_case(True),
+            _coding_case(True),
+            _coding_case(False, weight=2),
+            _coding_case(False),
+        ],
+    }
+    q.update(overrides)
+    return q
+
+
+@pytest.mark.asyncio
+async def test_generates_coding_questions(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"questions": [_coding_question(), _coding_question()]}
+    _patch_gemini(monkeypatch, _FakeResp(200, _envelope(json.dumps(payload))))
+
+    qs = await generate_coding_questions(
+        topic="arrays", num_questions=2, allowed_languages=["python"], settings=_SETTINGS_25
+    )
+    assert len(qs) == 2
+    assert qs[0]["reference_solution"].startswith("n=int")
+    cases = qs[0]["test_cases"]
+    assert any(c["is_sample"] for c in cases)
+    assert any(not c["is_sample"] for c in cases)
+    assert cases[2]["weight"] == 2
+
+
+@pytest.mark.asyncio
+async def test_coding_question_without_hidden_cases_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All-sample questions are gradable from visible cases alone — dropped."""
+    bad = _coding_question(test_cases=[_coding_case(True), _coding_case(True)])
+    payload = {"questions": [bad, _coding_question()]}
+    _patch_gemini(monkeypatch, _FakeResp(200, _envelope(json.dumps(payload))))
+
+    qs = await generate_coding_questions(
+        topic="t", num_questions=2, allowed_languages=["python"], settings=_SETTINGS_25
+    )
+    assert len(qs) == 1
+
+
+@pytest.mark.asyncio
+async def test_coding_question_without_sample_cases_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad = _coding_question(test_cases=[_coding_case(False), _coding_case(False)])
+    payload = {"questions": [bad]}
+    _patch_gemini(monkeypatch, _FakeResp(200, _envelope(json.dumps(payload))))
+
+    with pytest.raises(ExamGenerationError):
+        await generate_coding_questions(
+            topic="t", num_questions=1, allowed_languages=["python"], settings=_SETTINGS_25
+        )
+
+
+@pytest.mark.asyncio
+async def test_coding_broken_json_is_repaired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemini intermittently emits raw newlines / bad escapes inside code strings
+    even in JSON mode (seen live) — json_repair must salvage the payload."""
+    valid = json.dumps({"questions": [_coding_question()]})
+    # Inject a RAW newline inside the reference_solution string — invalid JSON.
+    broken = valid.replace("print(sum", "print(\nsum", 1)
+    _patch_gemini(monkeypatch, _FakeResp(200, _envelope(broken)))
+
+    qs = await generate_coding_questions(
+        topic="t", num_questions=1, allowed_languages=["python"], settings=_SETTINGS_25
+    )
+    assert len(qs) == 1
+    assert "sum" in qs[0]["reference_solution"]
+
+
+@pytest.mark.asyncio
+async def test_coding_thinking_disabled_on_25_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {"questions": [_coding_question()]}
+    _patch_gemini(monkeypatch, _FakeResp(200, _envelope(json.dumps(payload))))
+
+    await generate_coding_questions(
+        topic="t", num_questions=1, allowed_languages=["python"], settings=_SETTINGS_25
+    )
+    config = _FakeClient.last_body["generationConfig"]  # type: ignore[index]
+    assert config["thinkingConfig"] == {"thinkingBudget": 0}

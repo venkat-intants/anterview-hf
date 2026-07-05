@@ -327,6 +327,36 @@ export interface CodingQuestionInput {
   points?: number;
 }
 
+/** One AI-drafted coding problem — submit verbatim as CodingQuestionInput after review. */
+export interface GeneratedCodingQuestion {
+  prompt: string;
+  allowed_languages: string[];
+  starter_code: string | null;
+  reference_solution: string | null;
+  test_cases: CodingTestCase[];
+  time_limit_ms: number;
+  points: number;
+}
+
+export interface GenerateCodingParams {
+  topic: string;
+  num_questions: number;
+  difficulty: ExamDifficulty;
+  language: ExamLanguage;
+  allowed_languages: string[];
+}
+
+/** Ask Gemini (via backend) to draft coding problems — returned for preview, NOT saved. */
+export function generateCodingQuestions(
+  examId: string,
+  params: GenerateCodingParams,
+): Promise<{ questions: GeneratedCodingQuestion[] }> {
+  return apiPost<{ questions: GeneratedCodingQuestion[] }>(
+    `/hr/exams/${examId}/coding-questions/generate`,
+    params,
+  );
+}
+
 export function listCodingQuestions(examId: string): Promise<CodingQuestion[]> {
   return apiGet<CodingQuestion[]>(`/hr/exams/${examId}/coding-questions`);
 }

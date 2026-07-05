@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.exam_ai_client import ExamGenerationError, generate_coding_questions_remote
 from app.execution import SUPPORTED_LANGUAGES
 from app.models import CodingQuestion, Exam
 from app.routers.hr_applicants import DbSessionDep, HrCtxDep
@@ -113,6 +114,38 @@ class CodingQuestionOut(BaseModel):
     time_limit_ms: int
     points: int
     position: int
+
+
+class GenerateCodingQuestionsIn(BaseModel):
+    """AI-generate coding problems for PREVIEW (mirrors the MCQ generate flow)."""
+
+    topic: str = Field(min_length=1, max_length=300)
+    num_questions: int = Field(default=2, ge=1, le=8)
+    difficulty: str = Field(default="medium", pattern="^(easy|medium|hard|mixed)$")
+    language: str = Field(default="en", pattern="^(en|hi|te)$")
+    allowed_languages: list[str] = Field(min_length=1, max_length=len(SUPPORTED_LANGUAGES))
+
+    @field_validator("allowed_languages")
+    @classmethod
+    def _validate_languages(cls, v: list[str]) -> list[str]:
+        return _normalize_languages(v)
+
+
+class GeneratedCodingQuestionOut(BaseModel):
+    """One AI draft — shaped so the frontend can submit it verbatim as a
+    CodingQuestionIn after review (plus its own edits)."""
+
+    prompt: str
+    allowed_languages: list[str]
+    starter_code: str | None
+    reference_solution: str | None
+    test_cases: list[TestCaseIn]
+    time_limit_ms: int
+    points: int
+
+
+class GenerateCodingQuestionsOut(BaseModel):
+    questions: list[GeneratedCodingQuestionOut]
 
 
 # ---------------------------------------------------------------------------
@@ -298,3 +331,84 @@ async def delete_coding_question(
     q.deleted_at = datetime.now(tz=UTC)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# AI generate (preview-only — mirrors POST /exams/{id}/questions/generate)
+# ---------------------------------------------------------------------------
+@router.post(
+    "/exams/{exam_id}/coding-questions/generate", response_model=GenerateCodingQuestionsOut
+)
+async def generate_coding_questions(
+    exam_id: uuid.UUID, body: GenerateCodingQuestionsIn, ctx: HrCtxDep, db: DbSessionDep
+) -> GenerateCodingQuestionsOut:
+    """Draft coding problems with Gemini (via feedback_billing). Returned for
+    PREVIEW — not saved. HR reviews/edits them, then persists the wanted ones
+    via the normal add endpoints."""
+    hr_uid, company_id = ctx
+    await _get_owned_exam(db, company_id, exam_id)
+
+    try:
+        raw = await generate_coding_questions_remote(
+            topic=body.topic,
+            num_questions=body.num_questions,
+            difficulty=body.difficulty,
+            language=body.language,
+            allowed_languages=body.allowed_languages,
+            acting_user_id=str(hr_uid),
+        )
+    except ExamGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI generation failed: {exc}"
+        ) from exc
+
+    out: list[GeneratedCodingQuestionOut] = []
+    for q in raw:
+        prompt = str(q.get("prompt") or "").strip()
+        cases_raw = q.get("test_cases") or []
+        cases: list[TestCaseIn] = []
+        for c in cases_raw[: settings.code_max_test_cases]:
+            if not isinstance(c, dict):
+                continue
+            try:
+                cases.append(
+                    TestCaseIn(
+                        stdin=str(c.get("stdin", ""))[:20_000],
+                        expected_output=str(c.get("expected_output", ""))[:20_000],
+                        is_sample=bool(c.get("is_sample", False)),
+                        weight=min(100, max(1, int(c.get("weight", 1)))),
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+        # Same invariants the create endpoint enforces: a sample for the
+        # candidate's Run button AND a hidden case so the grade can't be
+        # hard-coded from the visible samples.
+        if not prompt or not cases:
+            continue
+        if not any(tc.is_sample for tc in cases) or all(tc.is_sample for tc in cases):
+            continue
+        reference = q.get("reference_solution")
+        out.append(
+            GeneratedCodingQuestionOut(
+                prompt=prompt[:20_000],
+                allowed_languages=body.allowed_languages,
+                starter_code=None,
+                reference_solution=(str(reference).strip()[:40_000] or None)
+                if reference
+                else None,
+                test_cases=cases,
+                time_limit_ms=5000,
+                points=100,
+            )
+        )
+    if not out:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The AI returned no usable coding questions. Try again or refine the topic.",
+        )
+    log.info(
+        "hr.exam.coding_questions.generated",
+        exam_id=str(exam_id), company_id=str(company_id), count=len(out),
+    )
+    return GenerateCodingQuestionsOut(questions=out)

@@ -134,6 +134,38 @@ async def generate_exam_questions(
         .replace("{{COUNT}}", str(count))
     )
 
+    parsed = await _call_gemini_json(
+        prompt, settings, max_output_tokens=min(8192, 2048 + count * 256)
+    )
+
+    raw_questions = parsed.get("questions")
+    if not isinstance(raw_questions, list):
+        raise ExamGenerationError("Gemini response had no 'questions' array.")
+
+    questions = [q for q in (_normalise_question(r) for r in raw_questions) if q is not None]
+    if not questions:
+        raise ExamGenerationError("Gemini returned no usable questions.")
+
+    log.info(
+        "exam_generator.complete",
+        topic=topic[:80],
+        requested=count,
+        produced=len(questions),
+        difficulty=difficulty,
+        language=language,
+        model=settings.gemini_model,
+    )
+    return questions[:count]
+
+
+async def _call_gemini_json(
+    prompt: str, settings: Settings, *, max_output_tokens: int
+) -> dict[str, Any]:
+    """POST *prompt* to Gemini in JSON mode with retry; return the parsed object.
+
+    Shared by the MCQ and coding generators. Raises ExamGenerationError on
+    transport failure, unreadable response, or invalid JSON.
+    """
     url = (
         f"{settings.gemini_api_base_url}"
         f"/models/{settings.gemini_model}:generateContent"
@@ -142,14 +174,13 @@ async def generate_exam_questions(
     generation_config: dict[str, Any] = {
         "temperature": 0.7,  # some variety across generations
         # Pure JSON output budget (thinking is disabled below on 2.5 models).
-        # Scales with the question count.
-        "maxOutputTokens": min(8192, 2048 + count * 256),
+        "maxOutputTokens": max_output_tokens,
         "responseMimeType": "application/json",
     }
     # Gemini 2.5 models are "thinking" models: their hidden reasoning tokens
     # count against maxOutputTokens and on generation-heavy prompts can consume
     # nearly the whole budget, truncating the JSON mid-string (seen live on the
-    # HF Space: output died at char 41 → "Unterminated string"). Structured MCQ
+    # HF Space: output died at char 41 → "Unterminated string"). Structured
     # authoring gains nothing from private reasoning, so spend the entire budget
     # on output. thinkingConfig is only accepted by 2.5-family models — older
     # models reject the field with HTTP 400, hence the version guard.
@@ -204,6 +235,23 @@ async def generate_exam_questions(
     try:
         parsed: dict[str, Any] = json.loads(cleaned)
     except json.JSONDecodeError as exc:
+        # Even in JSON mode Gemini intermittently emits invalid escapes / raw
+        # newlines inside strings — especially when the payload embeds source
+        # code (coding questions). json_repair salvages those; per-question
+        # validation downstream still drops anything structurally unusable.
+        # Deliberately NOT attempted on MAX_TOKENS truncation: "repairing" a
+        # cut-off payload fabricates half-empty questions — report it instead.
+        repaired = None
+        if finish_reason != "MAX_TOKENS":
+            try:
+                import json_repair
+
+                repaired = json_repair.repair_json(cleaned, return_objects=True)
+            except Exception:  # noqa: BLE001 — fall through to the original error
+                repaired = None
+        if isinstance(repaired, dict) and repaired:
+            log.warning("exam_generator.json_repaired", parse_error=str(exc)[:120])
+            return repaired
         hint = (
             f" (finishReason={finish_reason} — output was truncated)"
             if finish_reason == "MAX_TOKENS"
@@ -212,17 +260,176 @@ async def generate_exam_questions(
         raise ExamGenerationError(
             f"Gemini response was not valid JSON{hint}: {exc}"
         ) from exc
+    return parsed
+
+
+# ---------------------------------------------------------------------------
+# Coding-question generation (HR workflow — coding-round authoring)
+# ---------------------------------------------------------------------------
+
+# Per-generation cap: coding problems are token-heavy (statement + reference
+# solution + test cases ≈ 1.5-2.5k output tokens each), so this is deliberately
+# lower than the MCQ cap. data_gateway also caps questions per exam at 20.
+_MAX_CODING_QUESTIONS: int = 8
+_MAX_TEST_CASES: int = 20
+_MAX_CASE_TEXT: int = 20_000
+
+_CODING_PROMPT_TEMPLATE: str = """\
+You are an expert competitive-programming problem setter creating CODING
+problems for a hiring / skills assessment. Problems are auto-graded by running
+the candidate's program with a test case's stdin and comparing the program's
+stdout to the expected output (trailing whitespace and trailing newlines are
+ignored).
+
+## Assessment
+Topic / role : {{TOPIC}}
+Difficulty   : {{DIFFICULTY}}
+Statement language : {{LANGUAGE}}
+How many     : {{COUNT}} problems
+Candidates may solve in ANY of: {{ALLOWED_LANGUAGES}}
+
+## Rules
+- Write the problem STATEMENT in {{LANGUAGE}} (keep technical terms in English).
+- Every problem MUST be solvable in every allowed language using ONLY the
+  standard library, reading from stdin and writing to stdout.
+- The statement MUST fully specify: the task, the input format, the output
+  format, and explicit constraints (input sizes / value ranges).
+- Expected outputs MUST be deterministic — exactly one correct output per
+  input. No floating-point tolerance tricks, no multiple valid answers.
+- Give each problem 5 to 8 test cases:
+  * EXACTLY 2 with "is_sample": true — simple, explained in the statement.
+  * The rest with "is_sample": false — hidden; cover edge cases (minimum /
+    maximum constraints, empty-ish inputs, tricky values). Give harder hidden
+    cases "weight" 2, simple ones 1.
+- "stdin" and "expected_output" are the LITERAL text piped to / expected from
+  the program (use \\n for newlines inside the JSON strings).
+- "reference_solution" is a correct, clean solution in {{REF_LANGUAGE}} that
+  reads stdin and writes stdout. It MUST produce exactly the expected_output
+  for every test case.
+- Match the requested difficulty. For "mixed", spread across easy/medium/hard.
+
+## Output STRICT JSON (no markdown, no code fences)
+{
+  "questions": [
+    {
+      "prompt": "<full problem statement incl. input/output format and constraints>",
+      "reference_solution": "<{{REF_LANGUAGE}} source code>",
+      "test_cases": [
+        {"stdin": "<input>", "expected_output": "<output>", "is_sample": true, "weight": 1}
+      ]
+    }
+  ]
+}
+
+Return EXACTLY {{COUNT}} problems. Output ONLY the JSON object."""
+
+
+def _normalise_test_case(raw: Any) -> dict[str, Any] | None:
+    """Validate + clean one raw test-case dict. Returns None to drop a bad row."""
+    if not isinstance(raw, dict):
+        return None
+    stdin = raw.get("stdin", "")
+    expected = raw.get("expected_output", "")
+    if not isinstance(stdin, str) or not isinstance(expected, str):
+        return None
+    if not expected.strip():  # a case with no expected output cannot grade
+        return None
+    try:
+        weight = int(raw.get("weight", 1))
+    except (TypeError, ValueError):
+        weight = 1
+    return {
+        "stdin": stdin[:_MAX_CASE_TEXT],
+        "expected_output": expected[:_MAX_CASE_TEXT],
+        "is_sample": bool(raw.get("is_sample", False)),
+        "weight": min(100, max(1, weight)),
+    }
+
+
+def _normalise_coding_question(raw: Any) -> dict[str, Any] | None:
+    """Validate + clean one raw coding-question dict. Returns None to drop it.
+
+    Grading requires at least one sample case (shown to the candidate for
+    'Run') and at least one hidden case (otherwise the visible samples ARE the
+    grade and can be hard-coded against).
+    """
+    if not isinstance(raw, dict):
+        return None
+    prompt = str(raw.get("prompt", "")).strip()
+    if not prompt:
+        return None
+    cases_raw = raw.get("test_cases")
+    if not isinstance(cases_raw, list):
+        return None
+    cases = [c for c in (_normalise_test_case(r) for r in cases_raw) if c is not None]
+    cases = cases[:_MAX_TEST_CASES]
+    if not any(c["is_sample"] for c in cases):
+        return None
+    if not any(not c["is_sample"] for c in cases):
+        return None
+    reference = raw.get("reference_solution")
+    reference_solution = str(reference).strip()[:40_000] if reference else None
+    return {
+        "prompt": prompt[:20_000],
+        "reference_solution": reference_solution or None,
+        "test_cases": cases,
+    }
+
+
+async def generate_coding_questions(
+    *,
+    topic: str,
+    num_questions: int,
+    difficulty: str = "medium",
+    language: str = "en",
+    allowed_languages: list[str],
+    settings: Settings,
+) -> list[dict[str, Any]]:
+    """Generate stdin/stdout coding problems for *topic*.
+
+    Each dict: {"prompt": str, "reference_solution": str | None,
+    "test_cases": [{"stdin", "expected_output", "is_sample", "weight"}]}
+    with >=1 sample and >=1 hidden case. Raises ExamGenerationError on Gemini
+    failure / unparseable output / zero valid questions.
+    """
+    count = max(1, min(_MAX_CODING_QUESTIONS, int(num_questions)))
+    difficulty = difficulty if difficulty in _VALID_DIFFICULTIES else "medium"
+    language_name = _LANGUAGE_NAMES.get(language.lower(), "English")
+    langs = ", ".join(allowed_languages) or "python"
+    # Reference solution language: python when allowed (most reviewable),
+    # else the first allowed language.
+    ref_language = "python" if "python" in allowed_languages else (
+        allowed_languages[0] if allowed_languages else "python"
+    )
+
+    prompt = (
+        _CODING_PROMPT_TEMPLATE.replace("{{TOPIC}}", topic[:300])
+        .replace("{{DIFFICULTY}}", difficulty)
+        .replace("{{LANGUAGE}}", language_name)
+        .replace("{{COUNT}}", str(count))
+        .replace("{{ALLOWED_LANGUAGES}}", langs)
+        .replace("{{REF_LANGUAGE}}", ref_language)
+    )
+
+    # Coding problems are far heavier than MCQs (statement + solution + cases);
+    # thinking is disabled so the whole budget is output. Gemini 2.5-flash
+    # supports up to 65k output tokens.
+    parsed = await _call_gemini_json(
+        prompt, settings, max_output_tokens=min(32_768, 4096 + count * 2048)
+    )
 
     raw_questions = parsed.get("questions")
     if not isinstance(raw_questions, list):
         raise ExamGenerationError("Gemini response had no 'questions' array.")
 
-    questions = [q for q in (_normalise_question(r) for r in raw_questions) if q is not None]
+    questions = [
+        q for q in (_normalise_coding_question(r) for r in raw_questions) if q is not None
+    ]
     if not questions:
-        raise ExamGenerationError("Gemini returned no usable questions.")
+        raise ExamGenerationError("Gemini returned no usable coding questions.")
 
     log.info(
-        "exam_generator.complete",
+        "exam_generator.coding_complete",
         topic=topic[:80],
         requested=count,
         produced=len(questions),

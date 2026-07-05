@@ -382,6 +382,78 @@ async def internal_generate_exam(
 
 
 # ---------------------------------------------------------------------------
+# AI coding-question generation (HR workflow — coding-round authoring)
+# ---------------------------------------------------------------------------
+
+
+class GenerateCodingRequest(BaseModel):
+    """Request body for POST /generate-coding — coding problems for a topic/role."""
+
+    topic: str = Field(..., min_length=1, max_length=300, description="Subject or role")
+    num_questions: int = Field(default=2, ge=1, le=8)
+    difficulty: str = Field(default="medium", description="easy | medium | hard | mixed")
+    language: str = Field(default="en", description="Statement language: 'en', 'hi', 'te'")
+    allowed_languages: list[str] = Field(
+        default_factory=lambda: ["python"],
+        min_length=1,
+        max_length=10,
+        description="Programming-language slugs candidates may use",
+    )
+
+
+class GeneratedTestCase(BaseModel):
+    stdin: str
+    expected_output: str
+    is_sample: bool
+    weight: int
+
+
+class GeneratedCodingQuestion(BaseModel):
+    prompt: str
+    reference_solution: str | None
+    test_cases: list[GeneratedTestCase]
+
+
+class GenerateCodingResponse(BaseModel):
+    questions: list[GeneratedCodingQuestion]
+
+
+@router.post(
+    "/generate-coding",
+    status_code=status.HTTP_200_OK,
+    response_model=GenerateCodingResponse,
+    summary="Generate coding problems (stdin/stdout + test cases) via Gemini (stateless)",
+)
+async def internal_generate_coding(
+    body: GenerateCodingRequest,
+    _jwt_payload: Annotated[dict[str, Any], Depends(_require_jwt)],
+    app_settings: Annotated[Settings, Depends(_get_settings)],
+) -> GenerateCodingResponse:
+    """Generate coding problems. Stateless — the caller validates + persists."""
+    from app.exam_generator import ExamGenerationError, generate_coding_questions
+
+    try:
+        questions = await generate_coding_questions(
+            topic=body.topic,
+            num_questions=body.num_questions,
+            difficulty=body.difficulty,
+            language=body.language,
+            allowed_languages=body.allowed_languages,
+            settings=app_settings,
+        )
+    except ExamGenerationError as exc:
+        log.error("score.generate_coding_error", error=exc.message)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Coding-question generation failed: {exc.message}",
+        ) from exc
+
+    return GenerateCodingResponse(
+        questions=[GeneratedCodingQuestion(**q) for q in questions]
+    )
+
+
+# ---------------------------------------------------------------------------
 # Semantic resume search (HR workflow) — embeddings + match explanation
 # ---------------------------------------------------------------------------
 

@@ -44,6 +44,12 @@ export JWT_ISSUER="${JWT_ISSUER:-intants-data-gateway}"
 export JWT_AUDIENCE="${JWT_AUDIENCE:-intants-services}"
 export JWT_EXPIRY_HOURS="${JWT_EXPIRY_HOURS:-24}"
 
+# Email: HF blocks outbound SMTP ports (25/465/587) network-wide, so the only
+# transport that can deliver from a Space is an HTTPS API. Set the
+# RESEND_API_KEY Space secret and EMAIL_PROVIDER=resend to enable candidate
+# emails; the smtp default leaves email queuing-but-undeliverable on Spaces.
+export EMAIL_PROVIDER="${EMAIL_PROVIDER:-smtp}"
+
 # Same-origin posture: frontend + APIs share one origin behind Caddy.
 export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$PUBLIC_ORIGIN}"
 export APP_BASE_URL="${APP_BASE_URL:-$PUBLIC_ORIGIN}"

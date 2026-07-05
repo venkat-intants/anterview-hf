@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     naipunyam_client_id: str = ""
     naipunyam_client_secret: str = ""
 
+    # --- Email transport provider ---
+    # 'smtp'   — default; direct SMTP relay via smtp_* below (local dev: Mailpit;
+    #            VM deploys: Gmail/SES relay).
+    # 'resend' — Resend HTTPS API (https://resend.com). REQUIRED on HF Spaces:
+    #            HF blocks outbound SMTP ports (25/465/587) at the network level,
+    #            so no SMTP relay can ever connect from a Space. Port 443 is open.
+    email_provider: str = "smtp"
+    resend_api_key: str = ""
+    resend_api_url: str = "https://api.resend.com"
+
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     smtp_user: str = ""

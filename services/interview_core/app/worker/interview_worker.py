@@ -149,7 +149,7 @@ _RESUME_PROMPT_CHAR_CAP: int = 1500
 
 
 def _interviewer_instructions(
-    job_title: str, language: str, resume_text: str = ""
+    job_title: str, language: str, resume_text: str = "", company_name: str = ""
 ) -> str:
     """Build the interviewer system instructions.
 
@@ -165,6 +165,11 @@ def _interviewer_instructions(
     it is capped to _RESUME_PROMPT_CHAR_CAP chars and injected as a [CANDIDATE
     BACKGROUND] block so the interviewer can ground Q2–Q6 in the candidate's real
     experience. Empty string → no block, interview runs generically (legacy).
+
+    company_name (optional): the hiring company (jobs.company_name). When set,
+    the interviewer speaks on behalf of that company ("why do you want to join
+    <company>?"); when empty the interviewer stays company-neutral — it must
+    NOT present itself as hiring for Intants (the platform is not the employer).
     """
     lang_rule = {
         "en": "Conduct the entire interview in English.",
@@ -202,9 +207,32 @@ def _interviewer_instructions(
             "and relevant to the role.\n"
         )
 
+    company = (company_name or "").strip()
+    if company:
+        persona = (
+            f"You are a warm, professional AI interviewer representing "
+            f"{company}, conducting a screening interview for the {job_title} "
+            f"role at {company}."
+        )
+        company_rule = (
+            f"The hiring company is {company}. Whenever you refer to the "
+            f"company (e.g. 'why do you want to join us?'), say {company} — "
+            "never any other company name.\n"
+        )
+    else:
+        persona = (
+            f"You are a warm, professional AI interviewer conducting a "
+            f"screening interview for the {job_title} role."
+        )
+        company_rule = (
+            "No hiring company is specified for this role. Refer to it "
+            "generically ('this role', 'the company') — do NOT invent or "
+            "assume a company name.\n"
+        )
+
     return (
-        f"You are a warm, professional AI interviewer at Intants conducting a "
-        f"screening interview for the {job_title} role. {lang_rule}\n"
+        f"{persona} {lang_rule}\n"
+        f"{company_rule}"
         f"{resume_block}\n"
         "Structure the interview as exactly 10 questions, one per turn:\n"
         "  Q1  — Ask the candidate to introduce themselves.\n"
@@ -227,7 +255,7 @@ def _interviewer_instructions(
 
 async def _lookup_session(
     room_name: str,
-) -> tuple[str, str, str, str, str | None, str]:
+) -> tuple[str, str, str, str, str | None, str, str]:
     """Look up session fields needed by the worker for a given room/session.
 
     The token endpoint names each LiveKit room after the session_id, so the
@@ -236,13 +264,16 @@ async def _lookup_session(
     to safe defaults if the row/job is missing.
 
     Returns:
-        (job_title, language, experience_level, jd_text, presenter_id, resume_text)
+        (job_title, language, experience_level, jd_text, presenter_id,
+         resume_text, company_name)
         experience_level is one of: 'entry' | 'mid' | 'senior'
         presenter_id is the catalog avatar id stored at session-create time
         (e.g. "anna"); None means unset/legacy row — resolve_avatar(None)
         returns the default.
         resume_text is the candidate's extracted resume text ("" if none on
         file) — used to ground interview questions in their real experience.
+        company_name is the hiring company from jobs.company_name ("" if
+        unset) — the interviewer speaks on behalf of this company.
     """
     import contextlib
 
@@ -259,7 +290,7 @@ async def _lookup_session(
             init_engine()  # idempotent-safe; builds the engine in this worker proc
         sid = _uuid_mod.UUID(room_name)
     except ValueError:
-        return "the role", "en", "entry", "", None, ""
+        return "the role", "en", "entry", "", None, "", ""
     try:
         factory = get_session_factory()
         async with factory() as db:
@@ -267,7 +298,7 @@ async def _lookup_session(
                 await db.execute(select(InterviewSession).where(InterviewSession.id == sid))
             ).scalar_one_or_none()
             if sess is None:
-                return "the role", "en", "entry", "", None, ""
+                return "the role", "en", "entry", "", None, "", ""
             lang = (sess.language or "en").lower()
             language = lang if lang in _LANG_VENDOR else "en"
             presenter_id: str | None = sess.presenter_id  # catalog avatar id or None
@@ -283,19 +314,19 @@ async def _lookup_session(
                 await db.execute(select(Job).where(Job.id == sess.job_id))
             ).scalar_one_or_none()
             if job is None:
-                return "the role", language, "entry", "", presenter_id, resume_text
+                return "the role", language, "entry", "", presenter_id, resume_text, ""
             # Job.level is 'entry' | 'mid' | 'senior' — maps directly to ScoreRequest.
             level = job.level if job.level in ("entry", "mid", "senior") else "entry"
             return (
                 job.title, language, level, (job.description or ""),
-                presenter_id, resume_text,
+                presenter_id, resume_text, (job.company_name or ""),
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "interview-worker: _lookup_session DB query failed room=%s err=%s",
             room_name, type(exc).__name__,
         )
-        return "the role", "en", "entry", "", None, ""
+        return "the role", "en", "entry", "", None, "", ""
 
 
 # ---------------------------------------------------------------------------
@@ -984,10 +1015,11 @@ async def entrypoint(ctx: JobContext) -> None:
     job_title, language, experience_level, jd_text = "the role", "en", "entry", ""
     presenter_id: str | None = None
     resume_text: str = ""
+    company_name: str = ""
     try:
         (
             job_title, language, experience_level, jd_text,
-            presenter_id, resume_text,
+            presenter_id, resume_text, company_name,
         ) = await _lookup_session(ctx.room.name)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -1387,7 +1419,9 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await session.start(
         agent=Agent(
-            instructions=_interviewer_instructions(job_title, language, resume_text)
+            instructions=_interviewer_instructions(
+                job_title, language, resume_text, company_name
+            )
         ),
         room=ctx.room,
     )

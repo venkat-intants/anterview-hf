@@ -337,27 +337,32 @@ def _make_job_row(
     title: str = "Backend Engineer",
     level: str = "mid",
     description: str = "Build APIs",
+    company_name: str | None = None,
 ) -> MagicMock:
     row = MagicMock()
     row.title = title
     row.level = level
     row.description = description
+    row.company_name = company_name
     return row
 
 
 @pytest.mark.asyncio
-async def test_lookup_session_returns_6_tuple_with_presenter_id() -> None:
-    """_lookup_session must return a 6-tuple; 5th is presenter_id, 6th is resume_text.
+async def test_lookup_session_returns_7_tuple_with_presenter_id() -> None:
+    """_lookup_session must return a 7-tuple; 5th is presenter_id, 6th is
+    resume_text, 7th is company_name.
 
-    This test would FAIL if someone removed presenter_id or resume_text from the
-    return tuple, because the unpack in entrypoint()
-        job_title, language, experience_level, jd_text, presenter_id, resume_text = result
-    would raise ValueError: not enough values to unpack.
+    This test would FAIL if someone removed an element from the return tuple,
+    because the unpack in entrypoint() would raise ValueError: not enough
+    values to unpack.
     """
     session_id = str(uuid.uuid4())
     session_row = _make_session_row(presenter_id="gloria")
     user_row = _make_user_row(resume_text="5 years building Django APIs at Acme.")
-    job_row = _make_job_row(title="Data Analyst", level="entry", description="Analyse data")
+    job_row = _make_job_row(
+        title="Data Analyst", level="entry", description="Analyse data",
+        company_name="Google",
+    )
 
     factory = _make_db_factory(
         session_row=session_row, user_row=user_row, job_row=job_row
@@ -369,17 +374,23 @@ async def test_lookup_session_returns_6_tuple_with_presenter_id() -> None:
     ):
         result = await _lookup_session(session_id)
 
-    # Must be a 6-tuple — this assertion catches a regression to a shorter tuple.
-    assert len(result) == 6, (
-        f"_lookup_session must return a 6-tuple; got {len(result)}-tuple: {result!r}"
+    # Must be a 7-tuple — this assertion catches a regression to a shorter tuple.
+    assert len(result) == 7, (
+        f"_lookup_session must return a 7-tuple; got {len(result)}-tuple: {result!r}"
     )
-    job_title, language, experience_level, jd_text, presenter_id, resume_text = result
+    (
+        job_title, language, experience_level, jd_text,
+        presenter_id, resume_text, company_name,
+    ) = result
 
     assert presenter_id == "gloria", (
         f"5th element must be session.presenter_id; got {presenter_id!r}"
     )
     assert resume_text == "5 years building Django APIs at Acme.", (
         f"6th element must be the candidate's resume_text; got {resume_text!r}"
+    )
+    assert company_name == "Google", (
+        f"7th element must be jobs.company_name; got {company_name!r}"
     )
     assert job_title == "Data Analyst"
     assert language == "en"
@@ -388,11 +399,11 @@ async def test_lookup_session_returns_6_tuple_with_presenter_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lookup_session_6_tuple_none_presenter_id() -> None:
+async def test_lookup_session_7_tuple_none_presenter_id() -> None:
     """When session.presenter_id is None (legacy row), 5th element must be None — not omitted.
 
-    Ensures the unpack in entrypoint() ``..., presenter_id, resume_text =
-    await _lookup_session(...)`` always receives exactly 6 values even for old rows.
+    Ensures the unpack in entrypoint() always receives exactly 7 values even
+    for old rows, and NULL company_name is normalised to "".
     """
     session_id = str(uuid.uuid4())
     session_row = _make_session_row(presenter_id=None)
@@ -409,22 +420,25 @@ async def test_lookup_session_6_tuple_none_presenter_id() -> None:
     ):
         result = await _lookup_session(session_id)
 
-    assert len(result) == 6, f"Expected 6-tuple; got {len(result)}-tuple"
-    *_, presenter_id, resume_text = result
+    assert len(result) == 7, f"Expected 7-tuple; got {len(result)}-tuple"
+    *_, presenter_id, resume_text, company_name = result
     assert presenter_id is None, (
         "Legacy rows with presenter_id=None must return None as the 5th element, "
-        "not be omitted — callers unpack all 6 positions."
+        "not be omitted — callers unpack all 7 positions."
     )
     assert resume_text == "", (
         "A NULL users.resume_text must be normalised to '' as the 6th element."
     )
+    assert company_name == "", (
+        "A NULL jobs.company_name must be normalised to '' as the 7th element."
+    )
 
 
 @pytest.mark.asyncio
-async def test_lookup_session_missing_session_returns_6_tuple_safe_defaults() -> None:
-    """When the session row is absent, _lookup_session must still return a 6-tuple.
+async def test_lookup_session_missing_session_returns_7_tuple_safe_defaults() -> None:
+    """When the session row is absent, _lookup_session must still return a 7-tuple.
 
-    The 5th element must be None and the 6th "" (safe defaults) so the entrypoint
+    Elements 5-7 must be (None, "", "") — safe defaults so the entrypoint
     unpack never raises ValueError regardless of missing data.
     """
     session_id = str(uuid.uuid4())
@@ -437,32 +451,40 @@ async def test_lookup_session_missing_session_returns_6_tuple_safe_defaults() ->
     ):
         result = await _lookup_session(session_id)
 
-    assert len(result) == 6, f"Even on missing session, must return 6-tuple; got {len(result)}"
-    job_title, language, experience_level, jd_text, presenter_id, resume_text = result
+    assert len(result) == 7, f"Even on missing session, must return 7-tuple; got {len(result)}"
+    (
+        job_title, language, experience_level, jd_text,
+        presenter_id, resume_text, company_name,
+    ) = result
     assert job_title == "the role"
     assert language == "en"
     assert experience_level == "entry"
     assert jd_text == ""
     assert presenter_id is None
     assert resume_text == ""
+    assert company_name == ""
 
 
 @pytest.mark.asyncio
-async def test_lookup_session_invalid_uuid_returns_6_tuple_safe_defaults() -> None:
-    """A non-UUID room_name must return a 6-tuple with safe defaults (no exception).
+async def test_lookup_session_invalid_uuid_returns_7_tuple_safe_defaults() -> None:
+    """A non-UUID room_name must return a 7-tuple with safe defaults (no exception).
 
     This is the guard for malformed room names — the early ValueError branch
-    must still produce exactly 6 values so the caller's unpack is always safe.
+    must still produce exactly 7 values so the caller's unpack is always safe.
     """
     result = await _lookup_session("not-a-uuid")
 
-    assert len(result) == 6, (
-        f"Non-UUID room_name must still yield 6-tuple; got {len(result)}-tuple"
+    assert len(result) == 7, (
+        f"Non-UUID room_name must still yield 7-tuple; got {len(result)}-tuple"
     )
-    job_title, language, experience_level, jd_text, presenter_id, resume_text = result
+    (
+        job_title, language, experience_level, jd_text,
+        presenter_id, resume_text, company_name,
+    ) = result
     assert job_title == "the role"
     assert language == "en"
     assert experience_level == "entry"
     assert jd_text == ""
     assert presenter_id is None
     assert resume_text == ""
+    assert company_name == ""

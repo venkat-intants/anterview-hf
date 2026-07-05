@@ -89,6 +89,9 @@ class Job(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     level: Mapped[str] = mapped_column(Text, nullable=False)
     language: Mapped[str] = mapped_column(Text, default="en", nullable=False)
+    # B-033 — hiring company for "at <company>" phrasing (column owned by the
+    # data_gateway migration 20260529_0004; NULL for generic practice roles).
+    company_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

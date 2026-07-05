@@ -124,6 +124,37 @@ def test_instructions_job_title_embedded() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _interviewer_instructions — hiring company grounding
+# ---------------------------------------------------------------------------
+
+
+def test_instructions_company_name_embedded() -> None:
+    """With a company set, the interviewer speaks on behalf of that company."""
+    text = _interviewer_instructions("Backend Engineer", "en", "", "Google")
+    assert "Google" in text
+    assert "Intants" not in text, (
+        "The platform name must never be presented as the hiring company"
+    )
+
+
+def test_instructions_no_company_stays_neutral() -> None:
+    """Without a company, the prompt must not name one (esp. not Intants)."""
+    text = _interviewer_instructions("Backend Engineer", "en")
+    assert "Intants" not in text, (
+        "No-company interviews must stay company-neutral — candidates were "
+        "being asked 'why did you apply to Intants?' for third-party roles"
+    )
+    assert "do NOT invent" in text
+
+
+def test_instructions_whitespace_company_treated_as_empty() -> None:
+    """A whitespace-only company_name falls back to the neutral persona."""
+    text = _interviewer_instructions("Backend Engineer", "en", "", "   ")
+    assert "Intants" not in text
+    assert "do NOT invent" in text
+
+
+# ---------------------------------------------------------------------------
 # _interviewer_instructions — resume grounding
 # ---------------------------------------------------------------------------
 

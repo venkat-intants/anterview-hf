@@ -17,6 +17,12 @@ export default defineConfig({
       // They still load fine from our own origin when proctoring starts.
       workbox: {
         globIgnores: ['**/mediapipe/**'],
+        // The app-shell navigation fallback must NOT swallow navigations the
+        // SERVER handles: /auth/sso/* are the OAuth redirect endpoints that
+        // 302 the browser to Google. With the default fallback the service
+        // worker serves the cached index.html instead, and "Sign in with
+        // Google" dead-ends on the SPA's 404 page (seen live on the Space).
+        navigateFallbackDenylist: [/^\/auth\/sso\//],
       },
       manifest: {
         name: 'Intants AI Interview',

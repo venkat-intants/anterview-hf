@@ -76,14 +76,46 @@
 	handle /consent* {
 		reverse_proxy 127.0.0.1:8002
 	}
-	handle /exam* {
+	# Exam magic-link: /exam/* subpaths (start/submit/run-code/...) are pure
+	# API. The BARE /exam path is BOTH the SPA landing page (browser navigation;
+	# token in the #fragment, never sent to the server) AND the exam-meta API
+	# (the SPA's fetch() with the X-Exam-Token header). Split by intent: only a
+	# navigation sends Accept: text/html — serve it the SPA; everything else
+	# falls through to the API proxy. Without this, candidates opening an exam
+	# link saw raw JSON: {"detail":"Exam not available."}.
+	handle /exam/* {
 		reverse_proxy 127.0.0.1:8002
+	}
+	handle /exam {
+		@exam_page {
+			header Accept *text/html*
+		}
+		@exam_api {
+			not header Accept *text/html*
+		}
+		root * /app/webdist
+		rewrite @exam_page /index.html
+		reverse_proxy @exam_api 127.0.0.1:8002
+		file_server
 	}
 	handle /hr/* {
 		reverse_proxy 127.0.0.1:8002
 	}
-	handle /interview-invite* {
+	# Interview-invite magic-link: same bare-path split as /exam above.
+	handle /interview-invite/* {
 		reverse_proxy 127.0.0.1:8002
+	}
+	handle /interview-invite {
+		@invite_page {
+			header Accept *text/html*
+		}
+		@invite_api {
+			not header Accept *text/html*
+		}
+		root * /app/webdist
+		rewrite @invite_page /index.html
+		reverse_proxy @invite_api 127.0.0.1:8002
+		file_server
 	}
 	handle /jobs* {
 		reverse_proxy 127.0.0.1:8002

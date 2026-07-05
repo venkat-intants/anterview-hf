@@ -1,0 +1,3 @@
+REG: NONE
+has_intants: False
+agent_name_count: 0

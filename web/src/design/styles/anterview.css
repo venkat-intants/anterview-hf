@@ -1,0 +1,53 @@
+/* Anterview global styles — import ONCE in main.tsx:
+     import './anterview-pages/src/styles/anterview.css';
+   Provides fonts + motion keyframes as a fallback for environments where the
+   Tailwind token merge hasn't been applied yet, plus a reduced-motion guard. */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --av-electric: var(--accent);
+}
+
+/* ScoreRing / chart helpers */
+.av-aurora-text {
+  background: linear-gradient(160deg, #fff, #a887dc, #e6c4e7);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes av-aurora-drift {
+  0% { transform: translate3d(-5%, -3%, 0) scale(1.05); }
+  50% { transform: translate3d(6%, 5%, 0) scale(1.18); }
+  100% { transform: translate3d(-5%, -3%, 0) scale(1.05); }
+}
+@keyframes av-wave-bar {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+@keyframes av-dot-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+@keyframes av-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.av-aurora-blob { animation: av-aurora-drift 28s ease-in-out infinite; }
+.av-marquee-track { animation: av-marquee 32s linear infinite; }
+
+/* thin dark scrollbars to match the theme */
+.av-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.av-scroll::-webkit-scrollbar-thumb { background: #1c1d1f; border-radius: 9999px; }
+.av-scroll::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .av-aurora-blob,
+  .av-marquee-track,
+  *[class*='animate-'] {
+    animation: none !important;
+  }
+  * { scroll-behavior: auto !important; }
+}

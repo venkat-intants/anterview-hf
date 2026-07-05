@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from shared.security import assert_strong_secrets
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+    )
+
+    service_name: str = "feedback_billing"
+    app_env: str = "development"
+    log_level: str = "INFO"
+    host: str = "0.0.0.0"
+    port: int = 8003
+
+    database_url: str  # required — no default; service fails fast if unset
+    database_pool_size: int = 5
+    # When non-empty, asyncpg passes ssl="require" + statement_cache_size=0
+    # (required for pgBouncer/Prisma pooled endpoints). Set DATABASE_SSL=require
+    # in any cloud env. Leave blank for local Postgres (no SSL, no pgBouncer).
+    database_ssl: str = ""
+
+    redis_url: str  # required — no default; service fails fast if unset
+
+    jwt_secret: str  # required — no default; service fails fast if unset (must match data_gateway)
+    jwt_algorithm: str = "HS256"
+    jwt_issuer: str = "intants-data-gateway"
+    jwt_audience: str = "intants-services"
+
+    # Gemini settings for end-of-session scorer (S5-006)
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+
+    # Embeddings for semantic resume search (HR workflow).
+    # gemini-embedding-001 is free (no card) and emits up to 3072 dims via
+    # outputDimensionality; 3072 is the native size and is already L2-normalized,
+    # so it slots straight into the applicants.embedding halfvec(3072) column.
+    embedding_model: str = "gemini-embedding-001"
+    embedding_dimensions: int = 3072
+
+    sentry_dsn: str = ""
+    cors_allowed_origins: str = "http://localhost:5173"
+
+    # S3 / Cloudflare R2 settings for scorecard PDF storage
+    s3_endpoint_url: str = ""
+    s3_region: str = "auto"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_scorecard_bucket: str = "intants-interview-scorecards"
+
+    @model_validator(mode="after")
+    def validate_secret_strength(self) -> Settings:
+        """Fail fast in production/staging if JWT_SECRET is a weak placeholder
+        (must match data_gateway's). No-op in development/test."""
+        assert_strong_secrets(self.app_env, {"JWT_SECRET": self.jwt_secret})
+        return self
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
+
+settings = Settings()

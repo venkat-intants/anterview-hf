@@ -1,0 +1,69 @@
+# Root-level .dockerignore — applies when any service Dockerfile is built from
+# the repo root context (Railway sets "root": "/" in railway.json).
+#
+# IMPORTANT: Docker reads .dockerignore from the BUILD CONTEXT root.
+# Since all service Dockerfiles use the repo root as context, this file
+# controls what gets sent to the Docker daemon for ALL service images.
+
+# Virtualenvs — large and contain host-OS binaries that are wrong in Linux containers
+services/*/.venv/
+web/node_modules/
+
+# Python caches
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/.mypy_cache/
+**/.ruff_cache/
+**/.pytest_cache/
+
+# Secrets — MUST never be baked into images
+services/*/.env
+services/*/.env.*
+!services/*/.env.example
+.env
+.env.*
+!.env.example
+
+# Dev artefacts
+**/*.log
+**/*.err
+**/_smoke_*.log
+
+# Test directories (reduce image size; tests not needed at runtime)
+services/*/tests/
+
+# Build outputs that don't belong in backend images
+web/dist/
+
+# Git internals
+.git/
+.gitignore
+.gitattributes
+
+# IDE / OS artefacts
+.vscode/
+.idea/
+**/.DS_Store
+**/Thumbs.db
+
+# CI / infra (not needed inside container)
+.github/
+infra/
+sprints/
+research/
+docs/
+*.ps1
+
+# Playwright / e2e tests
+tests/
+
+# Large binary files committed in research/docs
+*.pdf
+*.docx
+
+# Not needed inside the Space image
+voice_samples/
+voice_samples_v3/
+web/playwright-report/
+web/test-results/

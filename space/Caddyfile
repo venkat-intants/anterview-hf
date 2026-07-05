@@ -1,0 +1,117 @@
+# =============================================================================
+# Caddyfile — HF Space edition (single container, one public port).
+#
+# Hugging Face terminates TLS and forwards to :7860, so this listener is plain
+# HTTP. It does two jobs:
+#   1. serve the built React SPA from /app/webdist (same origin as the APIs —
+#      the frontend was built with empty VITE_*_API_URL bases)
+#   2. fan out API paths to the four loopback services, mirroring the
+#      production routing contract in the repo-root Caddyfile. Keep the two in
+#      sync when routes change. Longest-path-wins disambiguates the shared
+#      /admin/*, /api/* and /users/* prefixes.
+# =============================================================================
+{
+	auto_https off
+	admin off
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+:7860 {
+	# -- Never expose internal-only or metrics endpoints ------------------
+	handle /internal/* {
+		respond "Forbidden" 403
+	}
+	handle /metrics* {
+		respond "Forbidden" 403
+	}
+
+	# -- admin_ops :8004 (more-specific /admin + /users subpaths) ---------
+	handle /admin/analytics/* {
+		reverse_proxy 127.0.0.1:8004
+	}
+	handle /admin/interviews* {
+		reverse_proxy 127.0.0.1:8004
+	}
+	handle /admin/overview* {
+		reverse_proxy 127.0.0.1:8004
+	}
+	handle /admin/status* {
+		reverse_proxy 127.0.0.1:8004
+	}
+	handle /admin/system/* {
+		reverse_proxy 127.0.0.1:8004
+	}
+	handle /users/*/dpdp/* {
+		reverse_proxy 127.0.0.1:8004
+	}
+
+	# -- feedback_billing :8003 -------------------------------------------
+	handle /api/scorecards* {
+		reverse_proxy 127.0.0.1:8003
+	}
+
+	# -- interview_core :8001 ----------------------------------------------
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8001
+	}
+	handle /ws/* {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	# -- data_gateway :8002 (auth, ATS, exams, consent + generic catch-alls)
+	handle /auth/* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /consent* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /exam* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /hr/* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /interview-invite* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /jobs* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /notifications* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /admin/* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /users/* {
+		reverse_proxy 127.0.0.1:8002
+	}
+
+	# -- health probe (uptime monitors; also what keeps the Space "active")
+	handle /health {
+		reverse_proxy 127.0.0.1:8002 {
+			rewrite /health/live
+		}
+	}
+
+	# -- everything else: the React SPA (client-side routing fallback) -----
+	handle {
+		root * /app/webdist
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

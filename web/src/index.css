@@ -1,0 +1,377 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Superwhisper dark theme — the app is forced dark (see <html class="dark">).
+   * shadcn semantic tokens are remapped to the dark palette:
+   *   --primary  = WHITE  (the action colour; chromatic CTAs are forbidden)
+   *   --ring     = electric-signal #0088ff (focus glow is the one signal blue)
+   *   surfaces   = midnight #000 / obsidian #0f0f10 / charcoal #1c1d1f
+   */
+  /* ── Apple "MacBook Neo" LIGHT theme (the app default) ────────────────────
+   * Gallery-white canvas, value-only elevation (NO shadows), Ink text,
+   * Graphite secondary, and Azure #0071e3 rationed to the primary CTA only.
+   * The dark values live under `.dark` and are scoped to the live interview. */
+  /* ── Anterview aurora-dark theme (the SINGLE app theme) ───────────────────
+   * Forced dark everywhere (html.dark is always set; :root mirrors it so there
+   * is never a light flash). Palette aligned to the landing design:
+   *   bg = midnight #000 · cards = obsidian #0f0f10 · surfaces = charcoal
+   *   #1c1d1f · text = #f5f5f7 / ash · primary action = WHITE pill · ring =
+   *   electric #0088ff. */
+  :root,
+  .dark {
+    --background: 0 0% 0%; /* midnight #000 — page canvas */
+    --foreground: 240 11% 96%; /* #f5f5f7 — primary text */
+
+    --card: 240 4% 6%; /* obsidian #0f0f10 — card surface */
+    --card-foreground: 240 11% 96%;
+
+    --popover: 240 5% 9%; /* charcoal-lift — dropdowns/menus read above cards */
+    --popover-foreground: 240 11% 96%;
+
+    --primary: 0 0% 100%; /* WHITE — the sole action color (white pill, black text) */
+    --primary-foreground: 0 0% 0%;
+
+    --secondary: 240 5% 11%; /* charcoal #1c1d1f — quiet surface / input fill */
+    --secondary-foreground: 240 11% 96%;
+
+    --muted: 240 5% 10%; /* recessed inset */
+    --muted-foreground: 225 5% 60%; /* ash #888b91 — secondary text */
+
+    --accent: 240 5% 14%; /* subtle hover/active surface */
+    --accent-foreground: 240 11% 96%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 5% 15%; /* hairline borders ≈ white/8 on black */
+    --input: 240 5% 18%;
+    --ring: 208 100% 50%; /* electric #0088ff — the one signal blue */
+
+    --radius: 0.875rem; /* 14px base (cards override to rounded-card / pill) */
+
+    /* ── Themeable signal accent ──────────────────────────────────────────────
+     * One source of truth for the brand signal colour. The user-facing theme
+     * toggle swaps these via html[data-theme=...] below. Components reference
+     * them as var(--accent) / rgba(var(--accent-rgb),A); Tailwind's electric*
+     * and lavender* colours are wired to --accent-rgb-sp / --accent-2-rgb-sp.
+     *   --accent      : solid hex (bg/border/ring/text + gradient stops)
+     *   --accent-rgb  : "R,G,B" for rgba(var(--accent-rgb), A)
+     *   --accent-rgb-sp : "R G B" for rgb(var(--accent-rgb-sp) / <alpha>)
+     *   --accent-2    : the gradient partner (headlines, glows)
+     * Default below = electric blue (the original look). */
+    --accent: #0088ff;
+    --accent-rgb: 0, 136, 255;
+    --accent-rgb-sp: 0 136 255;
+    --accent-2: #b855e7;
+    --accent-2-rgb-sp: 184 85 231;
+
+    /* recharts palette — dark */
+    --chart-text: #9a9aa0;
+    --chart-grid: #2c2c2e;
+    --chart-primary: #0088ff;
+    --chart-strong: #f5f5f7;
+    --chart-tooltip-bg: #1c1c1e;
+  }
+
+  /* ── Theme palettes (user-selectable via the header toggle) ─────────────────
+   * data-theme lives on <html>; a pre-paint script in index.html sets it from
+   * localStorage so there is never a colour flash. html[data-theme=...] beats
+   * the :root defaults on specificity. Only the SIGNAL accent changes — the
+   * midnight surfaces/text stay constant across all three. */
+  html[data-theme='blue'] {
+    --accent: #0088ff;
+    --accent-rgb: 0, 136, 255;
+    --accent-rgb-sp: 0 136 255;
+    --accent-2: #b855e7;
+    --accent-2-rgb-sp: 184 85 231;
+    --ring: 208 100% 50%;
+    --chart-primary: #0088ff;
+  }
+  html[data-theme='purple'] {
+    --accent: #a855f7;
+    --accent-rgb: 168, 85, 247;
+    --accent-rgb-sp: 168 85 247;
+    --accent-2: #e879f9;
+    --accent-2-rgb-sp: 232 121 249;
+    --ring: 271 91% 65%;
+    --chart-primary: #a855f7;
+  }
+  html[data-theme='black'] {
+    --accent: #9aa3af;
+    --accent-rgb: 154, 163, 175;
+    --accent-rgb-sp: 154 163 175;
+    --accent-2: #d4d4d8;
+    --accent-2-rgb-sp: 212 212 216;
+    --ring: 214 12% 65%;
+    --chart-primary: #9aa3af;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  html.dark {
+    background-color: #000000; /* midnight canvas — single forced dark theme */
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv11" 1, "ss01" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* The live interview keeps a true-black backdrop under its .dark scope */
+  .dark body,
+  body:has(.dark-root) {
+    background-color: #000000;
+  }
+  ::selection {
+    background: hsl(var(--ring) / 0.22); /* signal-accent wash (themeable) */
+  }
+}
+
+/* ── Superwhisper keyframes ───────────────────────────────────────────────────
+ * Defined globally (not in the Tailwind keyframes map) so both the
+ * `animate-*` utilities AND HeroCinematic's raw `animation: voice-bar ...`
+ * inline style resolve against them.
+ */
+@keyframes aurora-drift {
+  0%,
+  100% {
+    transform: translateY(0) scale(1.06);
+  }
+  50% {
+    transform: translateY(-2.5%) scale(1.12);
+  }
+}
+
+@keyframes silhouette-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-14px);
+  }
+}
+
+@keyframes laptop-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(12px);
+  }
+}
+
+@keyframes voice-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+    opacity: 0.65;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+/* Cluely landing — buoyant float for the floating interview mockup */
+@keyframes cluely-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+/* ── Futuristic redesign — decorative keyframes (Wave 1) ──────────────────────
+ * Defined here (not the Tailwind map) so the raw names also resolve when used in
+ * inline `animation:` styles or arbitrary `[animation:...]` utilities. */
+@keyframes sheen {
+  0% {
+    transform: translateX(-120%) skewX(-12deg);
+  }
+  100% {
+    transform: translateX(220%) skewX(-12deg);
+  }
+}
+
+@keyframes grid-pan {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 40px;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 hsl(var(--ring) / 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 12px hsl(var(--ring) / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 hsl(var(--ring) / 0);
+  }
+}
+
+/* ── Dark-mode recharts legibility ────────────────────────────────────────────
+ * Chart series colors are baked into the components (azure + categorical, fine
+ * on both themes); only the neutral grid/axis/tooltip need a dark override.
+ * CSS fill/stroke DO apply to SVG, so we retint recharts' own classes. */
+.dark .recharts-cartesian-grid line,
+.dark .recharts-cartesian-axis-line,
+.dark .recharts-cartesian-axis-tick-line,
+.dark .recharts-polar-grid line,
+.dark .recharts-polar-angle-axis-tick-line {
+  stroke: #2c2c2e;
+}
+.dark .recharts-text,
+.dark .recharts-cartesian-axis-tick-value,
+.dark .recharts-polar-angle-axis-tick-value tspan {
+  fill: #9a9aa0;
+}
+.dark .recharts-default-tooltip {
+  background: #1c1c1e !important;
+  border-color: #2c2c2e !important;
+  color: #f5f5f7 !important;
+}
+.dark .recharts-default-tooltip .recharts-tooltip-label,
+.dark .recharts-default-tooltip .recharts-tooltip-item {
+  color: #f5f5f7 !important;
+}
+
+/* ── Futuristic redesign — reusable effect utilities (Wave 1) ─────────────────
+ * Theme-aware via the HSL tokens so every utility works in both light + dark. */
+@layer utilities {
+  /* Animated gradient text — the signature "futuristic" headline treatment. */
+  .text-gradient {
+    background-image: linear-gradient(
+      110deg,
+      hsl(var(--foreground)) 0%,
+      hsl(var(--ring)) 38%,
+      var(--accent-2) 62%,
+      hsl(var(--foreground)) 100%
+    );
+    background-size: 220% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: gradient-pan 6s ease infinite;
+  }
+  .text-gradient-static {
+    background-image: linear-gradient(110deg, hsl(var(--ring)), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Frosted glass surfaces. */
+  .glass {
+    background-color: hsl(var(--card) / 0.6);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    border: 1px solid hsl(var(--border) / 0.7);
+  }
+  .glass-strong {
+    background-color: hsl(var(--card) / 0.78);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid hsl(var(--border) / 0.8);
+  }
+
+  /* Subtle technical backdrops. */
+  .bg-grid {
+    background-image: linear-gradient(hsl(var(--border) / 0.6) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.6) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+  .bg-dots {
+    background-image: radial-gradient(hsl(var(--border)) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  /* Fade a backdrop out toward the edges (pair with .bg-grid / .bg-dots). */
+  .mask-fade {
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 35%, transparent 78%);
+    mask-image: radial-gradient(ellipse at center, #000 35%, transparent 78%);
+  }
+
+  /* Animated gradient border (wrap content in an inner element). */
+  .border-gradient {
+    position: relative;
+    background:
+      linear-gradient(hsl(var(--card)), hsl(var(--card))) padding-box,
+      linear-gradient(120deg, hsl(var(--ring)), var(--accent-2), hsl(var(--ring))) border-box;
+    background-size: 100% 100%, 220% 100%;
+    border: 1px solid transparent;
+    animation: border-flow 4s ease infinite;
+  }
+
+  /* Hover-reactive lift + ring glow used across cards/tiles. */
+  .lift {
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 0.3s ease;
+  }
+  .lift:hover {
+    transform: translateY(-3px);
+  }
+
+  /* Sweep of light across a surface on hover (add `group` to the parent). */
+  .sheen {
+    position: relative;
+    overflow: hidden;
+  }
+  .sheen::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      100deg,
+      transparent 30%,
+      hsl(var(--foreground) / 0.08) 50%,
+      transparent 70%
+    );
+    transform: translateX(-120%) skewX(-12deg);
+    pointer-events: none;
+  }
+  .group:hover .sheen::after,
+  .sheen:hover::after {
+    animation: sheen 0.9s ease;
+  }
+}
+
+/* Respect users who opt out of motion (WCAG 2.3.3) */
+@media (prefers-reduced-motion: reduce) {
+  .animate-aurora-drift,
+  .animate-silhouette-float,
+  .animate-laptop-float,
+  .animate-cluely-float,
+  .animate-voice-bar,
+  .animate-fade-up,
+  .animate-fade-in,
+  .animate-scale-in,
+  .animate-shimmer,
+  .animate-glow-pulse,
+  .animate-gradient-pan,
+  .animate-float-soft,
+  .animate-spin-slow,
+  .animate-blob,
+  .animate-border-flow,
+  .text-gradient,
+  .border-gradient {
+    animation: none !important;
+  }
+  .lift:hover {
+    transform: none !important;
+  }
+}

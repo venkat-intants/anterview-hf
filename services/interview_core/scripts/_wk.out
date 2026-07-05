@@ -1,0 +1,571 @@
+{"message": "starting worker", "level": "INFO", "name": "livekit.agents", "version": "1.5.15", "rtc-version": "1.1.8", "timestamp": "2026-05-31T16:47:22.378259+00:00"}
+{"message": "plugin registered", "level": "INFO", "name": "livekit.agents", "plugin": "livekit.plugins.openai", "version": "1.5.15", "timestamp": "2026-05-31T16:47:22.380772+00:00"}
+{"message": "plugin registered", "level": "INFO", "name": "livekit.agents", "plugin": "livekit.plugins.sarvam", "version": "1.5.15", "timestamp": "2026-05-31T16:47:22.381788+00:00"}
+{"message": "plugin registered", "level": "INFO", "name": "livekit.agents", "plugin": "livekit.plugins.silero", "version": "1.5.15", "timestamp": "2026-05-31T16:47:22.382794+00:00"}
+{"message": "plugin registered", "level": "INFO", "name": "livekit.agents", "plugin": "livekit.plugins.simli", "version": "1.5.15", "timestamp": "2026-05-31T16:47:22.384801+00:00"}
+{"message": "HTTP server listening on :8081", "level": "INFO", "name": "livekit.agents", "timestamp": "2026-05-31T16:47:22.392616+00:00"}
+{"message": "initializing job runner", "level": "INFO", "name": "livekit.agents", "tid": 23584, "timestamp": "2026-05-31T16:47:22.403681+00:00"}
+{"message": "initializing job runner", "level": "INFO", "name": "livekit.agents", "tid": 23796, "timestamp": "2026-05-31T16:47:22.405720+00:00"}
+{"message": "initializing job runner", "level": "INFO", "name": "livekit.agents", "tid": 3584, "timestamp": "2026-05-31T16:47:22.406702+00:00"}
+{"message": "initializing job runner", "level": "INFO", "name": "livekit.agents", "tid": 13744, "timestamp": "2026-05-31T16:47:22.407707+00:00"}
+{"message": "job runner initialized", "level": "INFO", "name": "livekit.agents", "tid": 23584, "elapsed_time": 0.01, "timestamp": "2026-05-31T16:47:22.415711+00:00"}
+{"message": "job runner initialized", "level": "INFO", "name": "livekit.agents", "tid": 3584, "elapsed_time": 0.01, "timestamp": "2026-05-31T16:47:22.417708+00:00"}
+{"message": "job runner initialized", "level": "INFO", "name": "livekit.agents", "tid": 23796, "elapsed_time": 0.01, "timestamp": "2026-05-31T16:47:22.418710+00:00"}
+{"message": "job runner initialized", "level": "INFO", "name": "livekit.agents", "tid": 13744, "elapsed_time": 0.01, "timestamp": "2026-05-31T16:47:22.420707+00:00"}
+{"message": "registered worker", "level": "INFO", "name": "livekit.agents", "agent_name": "", "id": "AW_qrS8NzLvNKox", "url": "wss://ai-interview-o67ft36n.livekit.cloud", "region": "India South", "protocol": 17, "timestamp": "2026-05-31T16:47:22.634748+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.7341999999999996, "threshold": 0.7, "timestamp": "2026-05-31T16:58:29.917113+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.49419999999999975, "threshold": 0.7, "timestamp": "2026-05-31T16:58:32.404899+00:00"}
+{"message": "received job request", "level": "INFO", "name": "livekit.agents", "job_id": "AJ_rGunjjmfU6Dy", "dispatch_id": "AD_nTDQBFs24Xn2", "room": "65745944-3f2a-4f5e-bcd9-2708519af5be", "room_id": "RM_FFsckHeXAnuc", "agent_name": "", "resuming": false, "enable_recording": true, "timestamp": "2026-05-31T16:59:07.627279+00:00"}
+{"message": "initializing job runner", "level": "INFO", "name": "livekit.agents", "tid": 916, "timestamp": "2026-05-31T16:59:07.884864+00:00"}
+{"message": "job runner initialized", "level": "INFO", "name": "livekit.agents", "tid": 916, "elapsed_time": 0.03, "timestamp": "2026-05-31T16:59:07.933994+00:00"}
+{"message": "interview-worker.start room=65745944-3f2a-4f5e-bcd9-2708519af5be job_title='Data Entry Operator' language=en voice=kavya", "level": "INFO", "name": "interview-worker", "timestamp": "2026-05-31T16:59:12.930398+00:00"}
+{"message": "interview-worker: simli avatar started room=65745944-3f2a-4f5e-bcd9-2708519af5be", "level": "INFO", "name": "interview-worker", "timestamp": "2026-05-31T16:59:17.926546+00:00"}
+{"message": "Connecting to Sarvam TTS WebSocket", "level": "INFO", "name": "livekit.plugins.sarvam.log", "timestamp": "2026-05-31T16:59:18.236585+00:00"}
+{"message": "Connecting to STT WebSocket", "level": "INFO", "name": "livekit.plugins.sarvam.log.SpeechStream", "session_id": 2654230807504, "connection_state": "connecting", "model": "saaras:v3", "mode": "transcribe", "language": "en-IN", "client_request_id": "06681a2486b5", "server    22:37:14.595 INFO     livekit.agents     received job request  
+                                         {"job_id": "AJ_XBs6mEVhGbaS", 
+"dispatch_id": "AD_FNTRqjWLk2Qk", "room": 
+"b4a261c9-62af-4e7c-bd84-b626ed0b756d", "room_id": "RM_n7FUjDzQgdEs", 
+"agent_name": "", "resuming": false, "enable_recording": true}
+    22:37:14.835 DEBUG    livekit.agents     received assignment  
+                                         {"agent_name": "", "room_id": 
+"RM_n7FUjDzQgdEs", "room": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "job_id": 
+"AJ_XBs6mEVhGbaS", "dispatch_id": "AD_FNTRqjWLk2Qk", "enable_recording": true}
+    22:37:14.861 WARNING  livekit.agents     no warmed process available for   
+                                             job, waiting for one to be        
+                                             created                           
+                                         {"job_id": "AJ_XBs6mEVhGbaS"}
+    22:37:14.961 INFO     livekit.agents     initializing job runner  
+                                         {"tid": 25404}
+    22:37:14.993 DEBUG    asyncio            Using proactor: IocpProactor  
+    22:37:14.999 INFO     livekit.agents     job runner initialized  
+                                         {"tid": 25404, "elapsed_time": 0.03}
+    22:37:20.151 INFO     interview-worker   interview-worker.start            
+                                             room=b4a261c9-62af-4e7c-bd84-b6…  
+                                             job_title='Junior Java            
+                                             Developer' language=te            
+                                             voice=kavya                       
+    22:37:21.686 DEBUG    livekit.agents     http_session(): creating a new    
+                                             httpclient ctx                    
+    22:37:21.704 DEBUG    livekit.…ins.simli starting avatar session  
+    22:37:23.838 INFO     interview-worker   interview-worker: simli avatar    
+                                             started                           
+                                             room=b4a261c9-62af-4e7c-bd84-b6…  
+    22:37:23.857 DEBUG    livekit.agents     configuring session recording  
+    22:37:23.903 DEBUG    livekit.agents     input stream attached  
+                                         {"participant": null, "source": 
+"SOURCE_UNKNOWN", "accepted_sources": ["SOURCE_MICROPHONE"]}
+    22:37:23.926 DEBUG    livekit.agents     input stream detached  
+                                         {"participant": null, "source": 
+"SOURCE_UNKNOWN", "accepted_sources": ["SOURCE_MICROPHONE"]}
+    22:37:23.946 DEBUG    livekit.agents     input stream attached  
+                                         {"participant": null, "source": 
+"SOURCE_UNKNOWN", "accepted_sources": ["SOURCE_MICROPHONE"]}
+    22:37:24.006 DEBUG    livekit.agents     waiting for the remote            
+                                             participant                       
+                                         {"identity": "simli-avatar-agent"}
+    22:37:24.035 DEBUG    livekit.agents     start reading stream  
+                                         {"participant": 
+"candidate-bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "source": 
+"SOURCE_MICROPHONE"}
+    22:37:24.049 INFO     livekit.…arvam.log Connecting to Sarvam TTS          
+                                             WebSocket                         
+    22:37:24.068 DEBUG    livekit.agents     remote participant ready  
+                                         {"identity": "simli-avatar-agent"}
+    22:37:24.081 INFO     livekit.…echStream Connecting to STT WebSocket  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connecting", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null, "url": 
+"wss://api.sarvam.ai/speech-to-text/ws?language-code=te-IN&model=saaras%3Av3&va
+d_signals=true&sample_rate=16000&mode=transcribe", "user-agent": 
+"Livekit/1.5.15 Python/3.11.9"}
+    22:37:24.101 DEBUG    livekit.agents     using audio io: `RoomIO` ->       
+                                             `RecorderIO` -> `AgentSession`    
+                                             -> `RecorderIO` ->                
+                                             `TranscriptSynchronizer` ->       
+                                             `DataStreamIO`                    
+    22:37:24.117 WARNING  livekit.agents     resume_false_interruption is      
+                                             enabled but audio output does     
+                                             not support pause, it will be     
+                                             ignored                           
+                                         {"audio_output": "RecorderIO"}
+    22:37:24.134 DEBUG    livekit.agents     using transcript io:              
+                                             `AgentSession` ->                 
+                                             `TranscriptSynchronizer` ->       
+                                             `RoomIO`                          
+    22:37:26.055 WARNING  livekit.…ns.silero inference is slower than          
+                                             realtime                          
+                                           {"delay": 1.8575823000020755}
+    22:37:26.227 INFO     livekit.…echStream WebSocket connected successfully  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:37:26.236 DEBUG    livekit.…echStream Starting audio processing  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null, "chunk_size": 800}
+    22:37:26.259 INFO     livekit.…echStream Starting message processing  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null, "ws_closed": false}
+    22:37:26.344 INFO     livekit.…arvam.log Starting TTS WebSocket session  
+                                           {"session_id": 2111706442512, 
+"connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", 
+"client_request_id": "56ed0f41c662", "server_request_id": null, "user-agent": 
+"Livekit/1.5.15 Python/3.11.9"}
+    22:37:26.357 INFO     livekit.…arvam.log WebSocket connected successfully  
+                                           {"session_id": 2111706442512, 
+"connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", 
+"client_request_id": "56ed0f41c662", "server_request_id": null}
+    22:37:26.366 DEBUG    livekit.…arvam.log Sending TTS config  
+                                           {"session_id": 2111706442512, 
+"connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", 
+"client_request_id": "56ed0f41c662", "server_request_id": null, "config": 
+{"type": "config", "data": {"target_language_code": "te-IN", "speaker": 
+"kavya", "pace": 1.0, "model": "bulbul:v3", "speech_sample_rate": 22050, 
+"output_audio_codec": "mp3", "temperature": 0.6, "output_audio_bitrate": 
+"128k", "min_buffer_size": 50, "max_chunk_length": 150}}}
+    22:37:27.710 DEBUG    livekit.agents     aec warmup active, disabling      
+                                             interruptions for 3.00s           
+    22:37:28.912 DEBUG    livekit.agents     stream closed  
+                                         {"participant": 
+"candidate-bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "source": 
+"SOURCE_MICROPHONE"}
+    22:37:28.944 DEBUG    livekit.…echStream Sent 100 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:37:30.134 DEBUG    livekit.agents     start reading stream  
+                                         {"participant": 
+"candidate-bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "source": 
+"SOURCE_MICROPHONE"}
+    22:37:30.685 DEBUG    livekit.agents     aec warmup expired, re-enabling   
+                                             interruptions                     
+    22:37:33.828 DEBUG    livekit.…arvam.log Generation complete event         
+                                             received                          
+                                           {"session_id": 2111706442512, 
+"connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", 
+"client_request_id": "56ed0f41c662", "server_request_id": 
+"20260531_d1187dcc-8fb4-4968-8b36-00944b878a56"}
+    22:37:33.848 INFO     livekit.…arvam.log WebSocket session completed       
+                                             successfully                      
+                                           {"session_id": 2111706442512, 
+"connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", 
+"client_request_id": "56ed0f41c662", "server_request_id": 
+"20260531_d1187dcc-8fb4-4968-8b36-00944b878a56"}
+    22:37:34.780 DEBUG    livekit.…echStream Sent 200 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:37:39.782 DEBUG    livekit.…echStream Sent 300 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:37:44.780 DEBUG    livekit.…echStream Sent 400 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:37:49.781 DEBUG    livekit.…echStream Sent 500 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:37:54.781 DEBUG    livekit.…echStream Sent 600 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:37:59.781 DEBUG    livekit.…echStream Sent 700 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:04.784 DEBUG    livekit.…echStream Sent 800 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:09.781 DEBUG    livekit.…echStream Sent 900 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:14.784 DEBUG    livekit.…echStream Sent 1000 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:19.781 DEBUG    livekit.…echStream Sent 1100 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:24.781 DEBUG    livekit.…echStream Sent 1200 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:29.809 DEBUG    livekit.…echStream Sent 1300 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:34.787 DEBUG    livekit.…echStream Sent 1400 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:39.798 DEBUG    livekit.…echStream Sent 1500 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:44.788 DEBUG    livekit.…echStream Sent 1600 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:49.795 DEBUG    livekit.…echStream Sent 1700 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:54.782 DEBUG    livekit.…echStream Sent 1800 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:38:59.783 DEBUG    livekit.…echStream Sent 1900 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:04.783 DEBUG    livekit.…echStream Sent 2000 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:09.782 DEBUG    livekit.…echStream Sent 2100 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:14.780 DEBUG    livekit.…echStream Sent 2200 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:19.781 DEBUG    livekit.…echStream Sent 2300 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:24.784 DEBUG    livekit.…echStream Sent 2400 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:29.783 DEBUG    livekit.…echStream Sent 2500 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:34.783 DEBUG    livekit.…echStream Sent 2600 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:39.780 DEBUG    livekit.…echStream Sent 2700 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:44.782 DEBUG    livekit.…echStream Sent 2800 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:49.783 DEBUG    livekit.…echStream Sent 2900 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:54.782 DEBUG    livekit.…echStream Sent 3000 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:39:59.781 DEBUG    livekit.…echStream Sent 3100 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:01.769 DEBUG    livekit.agents     stream closed  
+                                         {"participant": 
+"candidate-bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "source": 
+"SOURCE_MICROPHONE"}
+    22:40:03.875 DEBUG    livekit.agents     start reading stream  
+                                         {"participant": 
+"candidate-bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "source": 
+"SOURCE_MICROPHONE"}
+    22:40:06.423 DEBUG    livekit.…echStream Sent 3200 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:11.420 DEBUG    livekit.…echStream Sent 3300 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:16.432 DEBUG    livekit.…echStream Sent 3400 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:21.423 DEBUG    livekit.…echStream Sent 3500 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:26.421 DEBUG    livekit.…echStream Sent 3600 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:31.422 DEBUG    livekit.…echStream Sent 3700 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:36.421 DEBUG    livekit.…echStream Sent 3800 audio chunks  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:37.105 INFO     livekit.agents     closing agent session due to      
+                                             participant disconnect (disable   
+                                             via                               
+                                             `RoomInputOptions.close_on_disc…  
+                                         {"room": 
+"b4a261c9-62af-4e7c-bd84-b626ed0b756d", "participant": 
+"candidate-bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "reason": "CLIENT_INITIATED"}
+    22:40:37.133 DEBUG    livekit.agents     stream closed  
+                                         {"participant": 
+"candidate-bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "source": 
+"SOURCE_MICROPHONE"}
+    22:40:42.141 ERROR    livekit.agents     speech not done in time after     
+                                             interruption, cancelling the      
+                                             speech arbitrarily.               
+                                         {"speech_id": "speech_c331c41d24f5", 
+"timeout": 5.0}
+    22:40:42.171 INFO     interview-worker   interview-worker: session         
+                                             started                           
+                                             room=b4a261c9-62af-4e7c-bd84-b6…  
+    22:40:42.200 DEBUG    livekit.agents     input stream detached  
+                                         {"participant": 
+"candidate-bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "source": "SOURCE_UNKNOWN", 
+"accepted_sources": ["SOURCE_MICROPHONE"]}
+    22:40:44.169 ERROR    livekit.agents     failed to perform clear buffer    
+                                             rpc                               
+Traceback (most recent call last):
+  File 
+"C:\Intants\ai_online_interview\services\interview_core\.venv\Lib\site-packages
+\livekit\agents\voice\avatar\_datastream_io.py", line 201, in 
+_clear_buffer_task
+    await self._room.local_participant.perform_rpc(
+  File 
+"C:\Intants\ai_online_interview\services\interview_core\.venv\Lib\site-packages
+\livekit\rtc\participant.py", line 358, in perform_rpc
+    raise RpcError._from_proto(cb.perform_rpc.error)
+livekit.rtc.rpc.RpcError: Connection timeout
+
+    22:40:44.222 WARNING  livekit.agents     didn't receive playback finished  
+                                             event after clear buffer,         
+                                             marking playout as done           
+                                             arbitrarily                       
+    22:40:44.253 DEBUG    livekit.…echStream Starting stream cleanup  
+                                           {"session_id": 2111690978192, 
+"connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", 
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:44.278 DEBUG    livekit.…echStream Audio processing completed, sent  
+                                             3863 chunks                       
+                                           {"session_id": 2111690978192, 
+"connection_state": "disconnected", "model": "saaras:v3", "mode": "transcribe",
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:44.310 DEBUG    livekit.…echStream WebSocket closed  
+                                           {"session_id": 2111690978192, 
+"connection_state": "disconnected", "model": "saaras:v3", "mode": "transcribe",
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:44.345 DEBUG    livekit.…echStream HTTP session closed  
+                                           {"session_id": 2111690978192, 
+"connection_state": "disconnected", "model": "saaras:v3", "mode": "transcribe",
+"language": "te-IN", "client_request_id": "7a39d9cb48c6", "server_request_id": 
+null}
+    22:40:51.614 DEBUG    livekit.agents     session closed  
+                                         {"reason": "participant_disconnected",
+"error": null}
+    22:40:57.364 WARNING  livekit            livekit_api::signal_client:530:…  
+                                             - dropping pass-through signal —  
+                                             no stream available               
+    22:40:57.428 DEBUG    livekit.agents     uploading session report to       
+                                             LiveKit Cloud                     
+    22:41:03.236 DEBUG    livekit.agents     finished uploading  
+    22:41:03.244 DEBUG    livekit.agents     shutting down job task  
+                                         {"reason": "", "user_initiated": 
+false}
+    22:41:03.252 DEBUG    livekit.agents     job exiting  
+                                         {"reason": "", "tid": 25404, "job_id":
+"AJ_XBs6mEVhGbaS", "room_id": "RM_n7FUjDzQgdEs"}
+    22:41:04.646 DEBUG    livekit.agents     http_session(): closing the       
+                                             httpclient ctx                    
+    22:41:04.660 DEBUG    livekit.…arvam.log Sarvam TTS keepalive ping         
+                                             failed; evicting connection from  
+                                             pool                              
+                                           {"error": "Cannot write to closing 
+transport"}
+ker: session started room=2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "level": "INFO", "name": "interview-worker", "timestamp": "2026-05-31T17:04:33.746152+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654250422096, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "537c9405bb47", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:04:33.788735+00:00"}
+{"message": "_SegmentSynchronizerImpl text marked as ended in capture text, rotating segment", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:04:33.828729+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654250422096, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "537c9405bb47", "server_request_id": null, "timestamp": "2026-05-31T17:04:33.832796+00:00"}
+{"message": "failed to perform clear buffer rpc", "level": "ERROR", "name": "livekit.agents", "exc_info": "Traceback (most recent call last):\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\avatar\\_datastream_io.py\", line 201, in _clear_buffer_task\n    await self._room.local_participant.perform_rpc(\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\rtc\\participant.py\", line 358, in perform_rpc\n    raise RpcError._from_proto(cb.perform_rpc.error)\nlivekit.rtc.rpc.RpcError: Connection timeout", "timestamp": "2026-05-31T17:04:35.785691+00:00"}
+{"message": "didn't receive playback finished event after clear buffer, marking playout as done arbitrarily", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:04:35.791347+00:00"}
+{"message": "_SegmentSynchronizerImpl.playback_finished called before text/audio input is done", "level": "WARNING", "name": "livekit.agents", "text_done": true, "audio_done": false, "timestamp": "2026-05-31T17:04:35.793349+00:00"}
+{"message": "WebSocket session completed successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654250422096, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "537c9405bb47", "server_request_id": "20260531_898e2d95-f84b-4963-82f3-1a76210db49b", "timestamp": "2026-05-31T17:04:38.064441+00:00"}
+{"message": "speech not done in time after interruption, cancelling the speech arbitrarily.", "level": "ERROR", "name": "livekit.agents", "speech_id": "speech_81b7beca16e5", "timeout": 5.0, "timestamp": "2026-05-31T17:05:01.186621+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652191747152, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "c1cd600b0ca1", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:05:01.216268+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652191747152, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "c1cd600b0ca1", "server_request_id": null, "timestamp": "2026-05-31T17:05:01.252524+00:00"}
+{"message": "_SegmentSynchronizerImpl audio marked as ended in capture audio, rotating segment", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:05:01.506242+00:00"}
+{"message": "failed to perform clear buffer rpc", "level": "ERROR", "name": "livekit.agents", "exc_info": "Traceback (most recent call last):\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\avatar\\_datastream_io.py\", line 201, in _clear_buffer_task\n    await self._room.local_participant.perform_rpc(\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\rtc\\participant.py\", line 358, in perform_rpc\n    raise RpcError._from_proto(cb.perform_rpc.error)\nlivekit.rtc.rpc.RpcError: Connection timeout", "timestamp": "2026-05-31T17:05:03.183463+00:00"}
+{"message": "didn't receive playback finished event after clear buffer, marking playout as done arbitrarily", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:05:03.188174+00:00"}
+{"message": "_SegmentSynchronizerImpl.playback_finished called before text/audio input is done", "level": "WARNING", "name": "livekit.agents", "text_done": false, "audio_done": false, "timestamp": "2026-05-31T17:05:03.189245+00:00"}
+{"message": "WebSocket session completed successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652191747152, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "c1cd600b0ca1", "server_request_id": "20260531_898e2d95-f84b-4963-82f3-1a76210db49b", "timestamp": "2026-05-31T17:05:05.739073+00:00"}
+{"message": "closing agent session due to participant disconnect (disable via `RoomInputOptions.close_on_disconnect=False`)", "level": "INFO", "name": "livekit.agents", "room": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "participant": "candidate-eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "reason": "CLIENT_INITIATED", "timestamp": "2026-05-31T17:05:41.459106+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.8462000000000003, "threshold": 0.7, "timestamp": "2026-05-31T17:05:44.502658+00:00"}
+{"message": "speech not done in time after interruption, cancelling the speech arbitrarily.", "level": "ERROR", "name": "livekit.agents", "speech_id": "speech_42a9f928cfa9", "timeout": 5.0, "timestamp": "2026-05-31T17:05:46.470942+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.5714000000000006, "threshold": 0.7, "timestamp": "2026-05-31T17:05:47.040469+00:00"}
+{"message": "failed to perform clear buffer rpc", "level": "ERROR", "name": "livekit.agents", "exc_info": "Traceback (most recent call last):\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\avatar\\_datastream_io.py\", line 201, in _clear_buffer_task\n    await self._room.local_participant.perform_rpc(\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\rtc\\participant.py\", line 358, in perform_rpc\n    raise RpcError._from_proto(cb.perform_rpc.error)\nlivekit.rtc.rpc.RpcError: Connection timeout", "timestamp": "2026-05-31T17:05:48.494377+00:00"}
+{"message": "didn't receive playback finished event after clear buffer, marking playout as done arbitrarily", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:05:48.499397+00:00"}
+{"message": "playback_finished called more times than playback segments were captured", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:05:48.500401+00:00"}
+{"message": "livekit_api::signal_client:530:livekit_api::signal_client - dropping pass-through signal — no stream available", "level": "WARNING", "name": "livekit", "timestamp": "2026-05-31T17:06:02.832030+00:00"}
+{"message": "shutdown can only be called once", "level": "WARNING", "name": "opentelemetry.sdk.metrics._internal", "timestamp": "2026-05-31T17:06:05.732159+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.7288000000000007, "threshold": 0.7, "timestamp": "2026-05-31T17:10:02.127182+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.5510000000000007, "threshold": 0.7, "timestamp": "2026-05-31T17:10:04.622920+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.7460000000000001, "threshold": 0.7, "timestamp": "2026-05-31T17:13:17.352149+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.5998000000000003, "threshold": 0.7, "timestamp": "2026-05-31T17:13:19.844322+00:00"}
+{"message": "received job request", "level": "INFO", "name": "livekit.agents", "job_id": "AJ_8zE4kwao5YHD", "dispatch_id": "AD_46sjwzY2uXWY", "room": "22875e92-2613-45cf-8e9c-81d351c14acf", "room_id": "RM_v9z9jqhaHist", "agent_name": "", "resuming": false, "enable_recording": true, "timestamp": "2026-05-31T17:14:22.800377+00:00"}
+{"message": "initializing job runner", "level": "INFO", "name": "livekit.agents", "tid": 22632, "timestamp": "2026-05-31T17:14:23.113482+00:00"}
+{"message": "job runner initialized", "level": "INFO", "name": "livekit.agents", "tid": 22632, "elapsed_time": 0.02, "timestamp": "2026-05-31T17:14:23.137940+00:00"}
+{"message": "interview-worker.start room=22875e92-2613-45cf-8e9c-81d351c14acf job_title='Junior Java Developer' language=te voice=kavya", "level": "INFO", "name": "interview-worker", "timestamp": "2026-05-31T17:14:26.187358+00:00"}
+{"message": "interview-worker: simli avatar started room=22875e92-2613-45cf-8e9c-81d351c14acf", "level": "INFO", "name": "interview-worker", "timestamp": "2026-05-31T17:14:30.983294+00:00"}
+{"message": "Connecting to Sarvam TTS WebSocket", "level": "INFO", "name": "livekit.plugins.sarvam.log", "timestamp": "2026-05-31T17:14:31.238321+00:00"}
+{"message": "Connecting to STT WebSocket", "level": "INFO", "name": "livekit.plugins.sarvam.log.SpeechStream", "session_id": 2654266643088, "connection_state": "connecting", "model": "saaras:v3", "mode": "transcribe", "language": "te-IN", "client_request_id": "5126d1d2b70d", "server_request_id": null, "url": "wss://api.sarvam.ai/speech-to-text/ws?language-code=te-IN&model=saaras%3Av3&vad_signals=true&sample_rate=16000&mode=transcribe", "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:14:31.273060+00:00"}
+{"message": "resume_false_interruption is enabled but audio output does not support pause, it will be ignored", "level": "WARNING", "name": "livekit.agents", "audio_output": "RecorderIO", "timestamp": "2026-05-31T17:14:31.303713+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log.SpeechStream", "session_id": 2654266643088, "connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", "language": "te-IN", "client_request_id": "5126d1d2b70d", "server_request_id": null, "timestamp": "2026-05-31T17:14:31.608578+00:00"}
+{"message": "Starting message processing", "level": "INFO", "name": "livekit.plugins.sarvam.log.SpeechStream", "session_id": 2654266643088, "connection_state": "connected", "model": "saaras:v3", "mode": "transcribe", "language": "te-IN", "client_request_id": "5126d1d2b70d", "server_request_id": null, "ws_closed": false, "timestamp": "2026-05-31T17:14:31.618221+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654251177488, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "fa770506952e", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:14:31.705799+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654251177488, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "fa770506952e", "server_request_id": null, "timestamp": "2026-05-31T17:14:31.707796+00:00"}
+{"message": "WebSocket session completed successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654251177488, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "fa770506952e", "server_request_id": "20260531_554a38b9-cece-43d9-a8e6-277427e519ea", "timestamp": "2026-05-31T17:14:38.222684+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:14:47.118155+00:00"}
+{"message": "interview-worker: session started room=22875e92-2613-45cf-8e9c-81d351c14acf", "level": "INFO", "name": "interview-worker", "timestamp": "2026-05-31T17:14:47.138113+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654263581072, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "dae678a1bb4d", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:14:58.447517+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654263581072, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "dae678a1bb4d", "server_request_id": null, "timestamp": "2026-05-31T17:14:58.454650+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:14:58.985099+00:00"}
+{"message": "didn't receive playback finished event after clear buffer, marking playout as done arbitrarily", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:01.011014+00:00"}
+{"message": "playback_finished called more times than playback segments were captured", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:01.014116+00:00"}
+{"message": "preemptive generation enabled but chat context or tools have changed after `on_user_turn_completed`", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:01.275651+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654249592144, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "ddb6a7e41bca", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:15:02.061041+00:00"}
+{"message": "Connecting to Sarvam TTS WebSocket", "level": "INFO", "name": "livekit.plugins.sarvam.log", "timestamp": "2026-05-31T17:15:02.070869+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654249592144, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "ddb6a7e41bca", "server_request_id": null, "timestamp": "2026-05-31T17:15:02.258004+00:00"}
+{"message": "didn't receive playback finished event after clear buffer, marking playout as done arbitrarily", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:03.780059+00:00"}
+{"message": "_SegmentSynchronizerImpl.playback_finished called before text/audio input is done", "level": "WARNING", "name": "livekit.agents", "text_done": true, "audio_done": false, "timestamp": "2026-05-31T17:15:03.782491+00:00"}
+{"message": "WebSocket session completed successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2654249592144, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "ddb6a7e41bca", "server_request_id": "20260531_905c193c-838d-497c-bf1b-05fc0500047a", "timestamp": "2026-05-31T17:15:06.810112+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:15:14.046772+00:00"}
+{"message": "playback_finished called more times than playback segments were captured", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:14.049789+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652209147344, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "b28a49f08cbd", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:15:21.552052+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652209147344, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "b28a49f08cbd", "server_request_id": null, "timestamp": "2026-05-31T17:15:21.553705+00:00"}
+{"message": "Error in _audio_forwarding_task", "level": "ERROR", "name": "livekit.agents", "exc_info": "Traceback (most recent call last):\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\generation.py\", line 413, in _audio_forwarding_task\n    async for frame in tts_output:\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\utils\\aio\\channel.py\", line 176, in __anext__\n    return await self.recv()\n           ^^^^^^^^^^^^^^^^^\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\utils\\aio\\channel.py\", line 106, in recv\n    await g\nasyncio.exceptions.CancelledError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\utils\\log.py\", line 17, in async_fn_logs\n    return await fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\generation.py\", line 450, in _audio_forwarding_task\n    audio_output.flush()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\recorder_io\\recorder_io.py\", line 530, in flush\n    self.next_in_chain.flush()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\transcription\\synchronizer.py\", line 600, in flush\n    self._synchronizer._impl.end_audio_input()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\transcription\\synchronizer.py\", line 202, in end_audio_input\n    self._audio_data.sr_stream.end_input()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\transcription\\_speaking_rate.py\", line 266, in end_input\n    self.flush()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\transcription\\_speaking_rate.py\", line 262, in flush\n    self._input_ch.send_nowait(self._FlushSentinel())\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\utils\\aio\\channel.py\", line 92, in send_nowait\n    raise ChanClosed\nlivekit.agents.utils.aio.channel.ChanClosed", "timestamp": "2026-05-31T17:15:22.133994+00:00"}
+{"message": "didn't receive playback finished event after clear buffer, marking playout as done arbitrarily", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:24.566469+00:00"}
+{"message": "playback_finished called more times than playback segments were captured", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:24.568479+00:00"}
+{"message": "Task exception was never retrieved\nfuture: <Task finished name='Task-1763' coro=<_audio_forwarding_task() done, defined at C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\utils\\log.py:14> exception=ChanClosed()>", "level": "ERROR", "name": "asyncio", "exc_info": "Traceback (most recent call last):\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\generation.py\", line 413, in _audio_forwarding_task\n    async for frame in tts_output:\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\utils\\aio\\channel.py\", line 176, in __anext__\n    return await self.recv()\n           ^^^^^^^^^^^^^^^^^\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\utils\\aio\\channel.py\", line 106, in recv\n    await g\nasyncio.exceptions.CancelledError\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\utils\\log.py\", line 17, in async_fn_logs\n    return await fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\generation.py\", line 450, in _audio_forwarding_task\n    audio_output.flush()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\recorder_io\\recorder_io.py\", line 530, in flush\n    self.next_in_chain.flush()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\transcription\\synchronizer.py\", line 600, in flush\n    self._synchronizer._impl.end_audio_input()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\transcription\\synchronizer.py\", line 202, in end_audio_input\n    self._audio_data.sr_stream.end_input()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\transcription\\_speaking_rate.py\", line 266, in end_input\n    self.flush()\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\voice\\transcription\\_speaking_rate.py\", line 262, in flush\n    self._input_ch.send_nowait(self._FlushSentinel())\n  File \"C:\\Intants\\ai_online_interview\\services\\interview_core\\.venv\\Lib\\site-packages\\livekit\\agents\\utils\\aio\\channel.py\", line 92, in send_nowait\n    raise ChanClosed\nlivekit.agents.utils.aio.channel.ChanClosed", "timestamp": "2026-05-31T17:15:29.784444+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652209558032, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "8e9cb7f884ad", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:15:34.548056+00:00"}
+{"message": "Connecting to Sarvam TTS WebSocket", "level": "INFO", "name": "livekit.plugins.sarvam.log", "timestamp": "2026-05-31T17:15:34.551153+00:00"}
+{"message": "_SegmentSynchronizerImpl text marked as ended in capture text, rotating segment", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:34.559819+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652209558032, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "8e9cb7f884ad", "server_request_id": null, "timestamp": "2026-05-31T17:15:34.759007+00:00"}
+{"message": "didn't receive playback finished event after clear buffer, marking playout as done arbitrarily", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:36.981106+00:00"}
+{"message": "playback_finished called more times than playback segments were captured", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:36.983129+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652209909072, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "58dff618411b", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:15:42.504025+00:00"}
+{"message": "Connecting to Sarvam TTS WebSocket", "level": "INFO", "name": "livekit.plugins.sarvam.log", "timestamp": "2026-05-31T17:15:42.508085+00:00"}
+{"message": "_SegmentSynchronizerImpl text marked as ended in capture text, rotating segment", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:42.537749+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652209909072, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "58dff618411b", "server_request_id": null, "timestamp": "2026-05-31T17:15:42.674117+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:15:43.387305+00:00"}
+{"message": "preemptive generation enabled but chat context or tools have changed after `on_user_turn_completed`", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:44.531886+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652230634960, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "0af0b2c81487", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:15:44.940838+00:00"}
+{"message": "Connecting to Sarvam TTS WebSocket", "level": "INFO", "name": "livekit.plugins.sarvam.log", "timestamp": "2026-05-31T17:15:44.946891+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652230634960, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "0af0b2c81487", "server_request_id": null, "timestamp": "2026-05-31T17:15:45.131746+00:00"}
+{"message": "didn't receive playback finished event after clear buffer, marking playout as done arbitrarily", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:46.356188+00:00"}
+{"message": "_SegmentSynchronizerImpl.playback_finished called before text/audio input is done", "level": "WARNING", "name": "livekit.agents", "text_done": true, "audio_done": false, "timestamp": "2026-05-31T17:15:46.358196+00:00"}
+{"message": "_SegmentSynchronizerImpl.push_audio called after close", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:46.360774+00:00"}
+{"message": "WebSocket session completed successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652230634960, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "0af0b2c81487", "server_request_id": "20260531_d85aa352-8b68-40bd-9316-1dd47d428629", "timestamp": "2026-05-31T17:15:49.364073+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:15:55.750066+00:00"}
+{"message": "playback_finished called more times than playback segments were captured", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:15:55.751693+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652210293392, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "0f722dd012f0", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:16:18.797061+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652210293392, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "0f722dd012f0", "server_request_id": null, "timestamp": "2026-05-31T17:16:18.806275+00:00"}
+{"message": "_SegmentSynchronizerImpl audio marked as ended in capture audio, rotating segment", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:16:19.047928+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:16:19.330993+00:00"}
+{"message": "_SegmentSynchronizerImpl.playback_finished called before text/audio input is done", "level": "WARNING", "name": "livekit.agents", "text_done": false, "audio_done": true, "timestamp": "2026-05-31T17:16:19.333122+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652231974352, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "a06e54c854a7", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:16:19.592149+00:00"}
+{"message": "Connecting to Sarvam TTS WebSocket", "level": "INFO", "name": "livekit.plugins.sarvam.log", "timestamp": "2026-05-31T17:16:19.595465+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652231974352, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "a06e54c854a7", "server_request_id": null, "timestamp": "2026-05-31T17:16:19.822585+00:00"}
+{"message": "didn't receive playback finished event after clear buffer, marking playout as done arbitrarily", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:16:21.344046+00:00"}
+{"message": "_SegmentSynchronizerImpl.playback_finished called before text/audio input is done", "level": "WARNING", "name": "livekit.agents", "text_done": true, "audio_done": false, "timestamp": "2026-05-31T17:16:21.347038+00:00"}
+{"message": "WebSocket session completed successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652231974352, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "a06e54c854a7", "server_request_id": "20260531_99a00006-712f-4411-b2da-914d6dc1011c", "timestamp": "2026-05-31T17:16:26.220219+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:16:36.393952+00:00"}
+{"message": "playback_finished called more times than playback segments were captured", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:16:36.394955+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652231928656, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "6c6dd0a9300d", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:16:41.756544+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652231928656, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "6c6dd0a9300d", "server_request_id": null, "timestamp": "2026-05-31T17:16:41.758813+00:00"}
+{"message": "_SegmentSynchronizerImpl audio marked as ended in capture audio, rotating segment", "level": "WARNING", "name": "livekit.agents", "timestamp": "2026-05-31T17:16:42.388156+00:00"}
+{"message": "WebSocket session completed successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652231928656, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "6c6dd0a9300d", "server_request_id": "20260531_99a00006-712f-4411-b2da-914d6dc1011c", "timestamp": "2026-05-31T17:16:45.103921+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:16:50.533397+00:00"}
+{"message": "_SegmentSynchronizerImpl.playback_finished called before text/audio input is done", "level": "WARNING", "name": "livekit.agents", "text_done": false, "audio_done": true, "timestamp": "2026-05-31T17:16:50.535421+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652209367952, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "09fc4401be67", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:16:55.371802+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652209367952, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "09fc4401be67", "server_request_id": null, "timestamp": "2026-05-31T17:16:55.373825+00:00"}
+{"message": "WebSocket session completed successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652209367952, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "09fc4401be67", "server_request_id": "20260531_99a00006-712f-4411-b2da-914d6dc1011c", "timestamp": "2026-05-31T17:16:58.210155+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:17:02.597938+00:00"}
+{"message": "Starting TTS WebSocket session", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652210165840, "connection_state": "disconnected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "0b3869e74f74", "server_request_id": null, "user-agent": "Livekit/1.5.15 Python/3.11.9", "timestamp": "2026-05-31T17:17:06.518001+00:00"}
+{"message": "WebSocket connected successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652210165840, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "0b3869e74f74", "server_request_id": null, "timestamp": "2026-05-31T17:17:06.520903+00:00"}
+{"message": "WebSocket session completed successfully", "level": "INFO", "name": "livekit.plugins.sarvam.log", "session_id": 2652210165840, "connection_state": "connected", "model": "bulbul:v3", "speaker": "kavya", "client_request_id": "0b3869e74f74", "server_request_id": "20260531_99a00006-712f-4411-b2da-914d6dc1011c", "timestamp": "2026-05-31T17:17:07.408183+00:00"}
+{"message": "playback finished event received", "level": "INFO", "name": "livekit.agents", "caller_identity": "simli-avatar-agent", "timestamp": "2026-05-31T17:17:08.839736+00:00"}
+{"message": "closing agent session due to participant disconnect (disable via `RoomInputOptions.close_on_disconnect=False`)", "level": "INFO", "name": "livekit.agents", "room": "22875e92-2613-45cf-8e9c-81d351c14acf", "participant": "candidate-bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "reason": "CLIENT_INITIATED", "timestamp": "2026-05-31T17:19:25.966958+00:00"}
+{"message": "livekit_api::signal_client:530:livekit_api::signal_client - dropping pass-through signal — no stream available", "level": "WARNING", "name": "livekit", "timestamp": "2026-05-31T17:19:47.914164+00:00"}
+{"message": "shutdown can only be called once", "level": "WARNING", "name": "opentelemetry.sdk.metrics._internal", "timestamp": "2026-05-31T17:19:52.789640+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.7096000000000011, "threshold": 0.7, "timestamp": "2026-05-31T17:21:05.937989+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.5206000000000011, "threshold": 0.7, "timestamp": "2026-05-31T17:21:08.444360+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.7198000000000013, "threshold": 0.7, "timestamp": "2026-05-31T17:22:03.443503+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.35140000000000143, "threshold": 0.7, "timestamp": "2026-05-31T17:22:05.944462+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.7384000000000018, "threshold": 0.7, "timestamp": "2026-05-31T17:24:30.958247+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.664800000000002, "threshold": 0.7, "timestamp": "2026-05-31T17:24:33.457063+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.7108000000000019, "threshold": 0.7, "timestamp": "2026-05-31T17:24:43.459772+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.5170000000000018, "threshold": 0.7, "timestamp": "2026-05-31T17:24:45.974445+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.7644000000000017, "threshold": 0.7, "timestamp": "2026-05-31T17:28:01.254337+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.5512000000000017, "threshold": 0.7, "timestamp": "2026-05-31T17:28:08.798002+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.8066000000000029, "threshold": 0.7, "timestamp": "2026-05-31T17:43:36.760308+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.4638000000000031, "threshold": 0.7, "timestamp": "2026-05-31T17:43:39.266151+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.8668000000000031, "threshold": 0.7, "timestamp": "2026-05-31T17:45:41.996286+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.551800000000003, "threshold": 0.7, "timestamp": "2026-05-31T17:45:52.014580+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.8698000000000029, "threshold": 0.7, "timestamp": "2026-05-31T17:48:02.034341+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.43220000000000286, "threshold": 0.7, "timestamp": "2026-05-31T17:48:07.067900+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.759800000000003, "threshold": 0.7, "timestamp": "2026-05-31T17:55:42.533165+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.5506000000000033, "threshold": 0.7, "timestamp": "2026-05-31T17:55:47.527002+00:00"}
+{"message": "worker is at full capacity, marking as unavailable", "level": "INFO", "name": "livekit.agents", "load": 0.7740000000000038, "threshold": 0.7, "timestamp": "2026-05-31T18:14:13.173556+00:00"}
+{"message": "worker is below capacity, marking as available", "level": "INFO", "name": "livekit.agents", "load": 0.5658000000000039, "threshold": 0.7, "timestamp": "2026-05-31T18:14:15.692779+00:00"}

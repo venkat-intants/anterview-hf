@@ -1,0 +1,29 @@
+# Virtualenvs and caches
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Dev artefacts
+tests/
+*.log
+*.err
+
+# Git
+.git/
+.gitignore
+
+# Docs
+README.md
+*.md
+
+# Node (shouldn't be here but just in case)
+node_modules/

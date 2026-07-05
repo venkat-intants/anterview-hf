@@ -1,0 +1,415 @@
+# ============================================================================
+# ⚠️ DEPRECATED / LEGACY — NOT the current deploy path.
+# The supported production deploy is a single Oracle Cloud VM behind Caddy TLS:
+# see docs/DEPLOY-ORACLE.md + docker-compose.prod.yml + scripts/oracle-setup.sh.
+# This Render blueprint is kept for historical reference only; it is unmaintained
+# and its routing/env assumptions no longer match the app.
+# ============================================================================
+# Render Blueprint — Intants AI Voice Interview Platform
+# ============================================================================
+# Deploys the whole stack on Render from one file (Dashboard → Blueprints → New).
+#
+#   6 services:
+#     intants-data-gateway      web    (auth, users, DPDP, jobs)        :8002
+#     intants-interview-core    web    (sessions, room tokens, avatars) :8001
+#     intants-feedback-billing  web    (scoring, scorecards, PDFs)      :8003
+#     intants-admin-ops         web    (admin + analytics APIs)         :8004
+#     intants-interview-worker  worker (LiveKit avatar/voice engine)    no port
+#     intants-web               static (React/Vite PWA frontend)
+#
+# Backing services (Neon Postgres, Upstash Redis, Cloudflare R2, LiveKit Cloud,
+# Gemini, Sarvam, Tavus) are EXTERNAL — reuse your existing demo accounts. This
+# Blueprint provisions only the compute. Fill every `sync: false` secret in the
+# Render dashboard (or under Environment Groups → intants-shared). See
+# docs/RENDER_DEPLOY.md for the click-by-click steps and the deploy ORDER.
+#
+# ---------------------------------------------------------------------------
+# COST NOTE — read before you deploy:
+#   * The 4 web APIs + the static site can run on Render's FREE plan.
+#     Free web services SPIN DOWN after 15 min idle (≈30-60s cold start) and
+#     get 512 MB RAM. `intants-interview-core` pulls onnxruntime + PyAV +
+#     livekit-agents and may OOM at 512 MB — bump it to `starter` if it crashes.
+#   * `intants-interview-worker` CANNOT be free — Render background workers
+#     require a paid instance. It is set to `starter` (~$7/mo). It is also the
+#     ONLY thing that runs the live avatar/voice interview. If you just want to
+#     demo the UI + auth + dashboards for $0, comment the worker out.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Shared environment group — values common to every backend, entered ONCE.
+# Putting JWT_SECRET here guarantees it matches across the services that issue
+# (data_gateway) and validate (everyone else) tokens.
+# ---------------------------------------------------------------------------
+envVarGroups:
+  - name: intants-shared
+    envVars:
+      # --- Postgres (Neon) — use the POOLED connection string (…-pooler.…) ---
+      # asyncpg form: postgresql+asyncpg://USER:PASS@HOST/DB   (NO ?sslmode= — see DATABASE_SSL)
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: require
+      - key: DATABASE_POOL_SIZE
+        value: "3"            # keep low — 5 services share Neon's connection cap
+
+      # --- Auth (data_gateway issues, others validate — must be identical) ---
+      - key: JWT_SECRET
+        sync: false           # generate: python -c "import secrets;print(secrets.token_hex(32))"
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_ISSUER
+        value: intants-data-gateway
+      - key: JWT_AUDIENCE
+        value: intants-services
+
+      # --- LLM (Gemini) ---
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_MAX_TOKENS
+        value: "2048"
+
+      # --- Object storage (Cloudflare R2, S3-compatible) ---
+      - key: S3_ENDPOINT
+        sync: false           # https://<account-id>.r2.cloudflarestorage.com
+      - key: S3_REGION
+        value: auto
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_USE_SSL
+        value: "true"
+
+      # --- Runtime posture ---
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      # Render terminates TLS at one proxy hop in front of the container.
+      - key: TRUSTED_PROXY_COUNT
+        value: "1"
+
+      # --- CORS — the PUBLIC frontend origin (set after the static site deploys) ---
+      # e.g. https://intants-web.onrender.com  (or your custom domain, no trailing slash)
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+
+      # --- Errors (optional) ---
+      - key: SENTRY_DSN
+        sync: false
+
+services:
+  # =========================================================================
+  # data_gateway — auth, users, DPDP consent, jobs, resume/exam/interview links
+  # =========================================================================
+  - type: web
+    name: intants-data-gateway
+    runtime: docker
+    region: singapore
+    plan: free
+    branch: main
+    dockerfilePath: ./services/data_gateway/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - services/data_gateway/**
+        - shared/**
+    envVars:
+      - fromGroup: intants-shared
+      - key: PORT
+        value: "8002"
+      - key: SERVICE_NAME
+        value: data_gateway
+      - key: REDIS_URL
+        sync: false           # Upstash: rediss://default:PASS@HOST:6379
+      - key: AUTH_PROVIDER
+        value: local
+      - key: JWT_EXPIRY_HOURS
+        value: "24"
+      - key: S3_BUCKET_NAME
+        value: intants-uploads
+      # Internal (private-network) call to feedback_billing for exam/resume scoring.
+      # NOTE: on FREE plans a spun-down target won't wake from private traffic —
+      # if you keep feedback_billing free, change this to its public https URL.
+      - key: FEEDBACK_BILLING_URL
+        value: http://intants-feedback-billing:8003
+      # DPDP + magic-link secrets (each MUST be distinct from JWT_SECRET)
+      - key: CONSENT_IP_SALT
+        sync: false
+      - key: EXAM_LINK_SECRET
+        sync: false
+      - key: INTERVIEW_LINK_SECRET
+        sync: false
+      # Public frontend origin the candidate's browser opens for magic links
+      - key: EXAM_LINK_BASE_URL
+        sync: false           # https://intants-web.onrender.com
+      - key: INTERVIEW_LINK_BASE_URL
+        sync: false           # https://intants-web.onrender.com
+      # Email (Resend over SMTP) — optional but needed for verification/scorecards
+      - key: SMTP_HOST
+        value: smtp.resend.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        value: resend
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_USE_TLS
+        value: "true"
+      - key: EMAIL_FROM
+        value: noreply@intants.com
+
+  # =========================================================================
+  # interview_core — API (sessions, LiveKit room tokens, /api/avatars)
+  # Heavy image (livekit-agents + onnxruntime + PyAV). May need `standard`.
+  # =========================================================================
+  - type: web
+    name: intants-interview-core
+    runtime: docker
+    region: singapore
+    plan: free               # ⚠ bump to `starter`/`standard` if it OOMs at 512 MB
+    branch: main
+    dockerfilePath: ./services/interview_core/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - services/interview_core/**
+        - shared/**
+    envVars:
+      - fromGroup: intants-shared
+      - key: PORT
+        value: "8001"
+      - key: SERVICE_NAME
+        value: interview_core
+      - key: REDIS_URL
+        sync: false
+      - key: S3_BUCKET_NAME
+        value: intants-interview-audio
+      # Speech (Sarvam)
+      - key: SPEECH_STT_PROVIDER
+        value: sarvam
+      - key: SPEECH_TTS_PROVIDER
+        value: sarvam
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: SARVAM_STT_MODEL
+        value: saaras:v3
+      - key: SARVAM_TTS_MODEL
+        value: bulbul:v3
+      # Real-time transport (LiveKit Cloud)
+      - key: LIVEKIT_URL
+        sync: false           # wss://<project>.livekit.cloud
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      # Avatar — tavus|simli|none. `none` = voice-only (no paid Tavus cost).
+      - key: AVATAR_PROVIDER
+        value: none
+      - key: TAVUS_API_KEY
+        sync: false
+      - key: TAVUS_REPLICA_ID
+        sync: false
+      - key: TAVUS_PERSONA_ID
+        sync: false
+      - key: SIMLI_API_KEY
+        sync: false
+      - key: SIMLI_FACE_ID
+        sync: false
+      - key: FEEDBACK_BILLING_URL
+        value: http://intants-feedback-billing:8003
+
+  # =========================================================================
+  # interview_worker — the LiveKit avatar/voice engine (SAME image, worker mode)
+  # Workers cannot be free on Render. This is the core real-time engine.
+  # =========================================================================
+  - type: worker
+    name: intants-interview-worker
+    runtime: docker
+    region: singapore
+    plan: starter            # ⚠ workers require a paid plan (free not allowed)
+    branch: main
+    dockerfilePath: ./services/interview_core/Dockerfile
+    dockerContext: .
+    dockerCommand: python -m app.worker.interview_worker start
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - services/interview_core/**
+        - shared/**
+    envVars:
+      - fromGroup: intants-shared
+      - key: SERVICE_NAME
+        value: interview_core
+      - key: REDIS_URL
+        sync: false
+      - key: S3_BUCKET_NAME
+        value: intants-interview-audio
+      - key: SPEECH_STT_PROVIDER
+        value: sarvam
+      - key: SPEECH_TTS_PROVIDER
+        value: sarvam
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: SARVAM_STT_MODEL
+        value: saaras:v3
+      - key: SARVAM_TTS_MODEL
+        value: bulbul:v3
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: AVATAR_PROVIDER
+        value: none
+      - key: TAVUS_API_KEY
+        sync: false
+      - key: TAVUS_REPLICA_ID
+        sync: false
+      - key: TAVUS_PERSONA_ID
+        sync: false
+      - key: SIMLI_API_KEY
+        sync: false
+      - key: SIMLI_FACE_ID
+        sync: false
+      # The worker reaches feedback_billing privately to post the final score.
+      - key: FEEDBACK_BILLING_URL
+        value: http://intants-feedback-billing:8003
+
+  # =========================================================================
+  # feedback_billing — scoring (Gemini), scorecards, PDF, billing
+  # =========================================================================
+  - type: web
+    name: intants-feedback-billing
+    runtime: docker
+    region: singapore
+    plan: free
+    branch: main
+    dockerfilePath: ./services/feedback_billing/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - services/feedback_billing/**
+        - shared/**
+    envVars:
+      - fromGroup: intants-shared
+      - key: PORT
+        value: "8003"
+      - key: SERVICE_NAME
+        value: feedback_billing
+      - key: REDIS_URL
+        sync: false
+      - key: S3_BUCKET_NAME
+        value: intants-interview-scorecards
+      - key: OPENAI_API_KEY
+        sync: false           # embeddings for JD/NOS retrieval during scoring
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-large
+      - key: EMBEDDING_DIMENSIONS
+        value: "3072"
+      - key: FEATURE_BILLING
+        value: "false"
+      - key: SMTP_HOST
+        value: smtp.resend.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        value: resend
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_USE_TLS
+        value: "true"
+      - key: EMAIL_FROM
+        value: noreply@intants.com
+
+  # =========================================================================
+  # admin_ops — admin dashboard APIs + analytics (fans out to the other three)
+  # =========================================================================
+  - type: web
+    name: intants-admin-ops
+    runtime: docker
+    region: singapore
+    plan: free
+    branch: main
+    dockerfilePath: ./services/admin_ops/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - services/admin_ops/**
+        - shared/**
+    envVars:
+      - fromGroup: intants-shared
+      - key: PORT
+        value: "8004"
+      - key: SERVICE_NAME
+        value: admin_ops
+      - key: REDIS_URL
+        sync: false
+      - key: S3_BUCKET_NAME
+        value: intants-interview-audio
+      # Private-network health/status fan-out to the other services.
+      - key: INTERVIEW_CORE_URL
+        value: http://intants-interview-core:8001
+      - key: DATA_GATEWAY_URL
+        value: http://intants-data-gateway:8002
+      - key: FEEDBACK_BILLING_URL
+        value: http://intants-feedback-billing:8003
+
+  # =========================================================================
+  # web — React 18 + Vite PWA (static). Build runs `npm ci && npm run build`;
+  # the predev/prebuild hook vendors MediaPipe assets automatically.
+  # VITE_* are inlined at BUILD time — set them BEFORE the build, to the PUBLIC
+  # https URLs of the backends above (see docs/RENDER_DEPLOY.md for the order).
+  # =========================================================================
+  - type: web
+    name: intants-web
+    runtime: static
+    region: singapore
+    branch: main
+    rootDir: web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - web/**
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: VITE_API_BASE_URL
+        sync: false           # https://intants-data-gateway.onrender.com
+      - key: VITE_INTERVIEW_API_URL
+        sync: false           # https://intants-interview-core.onrender.com
+      - key: VITE_FEEDBACK_API_URL
+        sync: false           # https://intants-feedback-billing.onrender.com
+      - key: VITE_ADMIN_API_URL
+        sync: false           # https://intants-admin-ops.onrender.com
+      - key: VITE_APP_NAME
+        value: Intants AI Interview
+      - key: VITE_APP_ENV
+        value: production
+      - key: VITE_USE_MOCK
+        value: "false"
+      - key: VITE_FEATURE_AVATAR
+        value: "true"
+      - key: VITE_FEATURE_VOICE_INTERRUPTION
+        value: "true"
+      - key: VITE_FEATURE_MULTILINGUAL
+        value: "true"

@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "shared"
+version = "0.1.0"
+description = "Shared Pydantic models, auth providers, LLM adapters, voice adapters, observability"
+authors = ["Intants <support@intants.com>"]
+packages = [{include = "shared", from = ".."}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pydantic = {extras = ["email"], version = "^2.9"}
+python-jose = {extras = ["cryptography"], version = "^3.3"}
+structlog = "^24.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,164 @@
+/* Anterview landing — fonts + keyframes/animations that are scoped to this
+   design so they never collide with the app-wide keyframes in index.css.
+   Import once in main.tsx AFTER your own index.css.
+
+   The `animate-*` class names below match what the copied design components
+   use verbatim (animate-aurora, animate-wave, …). Tailwind does NOT generate
+   these utilities (they're not in tailwind.config animation map), and they are
+   only referenced by files under src/landing/, so defining them here as plain
+   CSS is self-contained. Keyframes use an `at-` prefix to avoid redefining the
+   identically-named `aurora-drift` / `pulse-ring` keyframes in index.css. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* horizontal mask for the logo marquee */
+.at-marquee-mask {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+/* ── Landing keyframes (mirror tailwind.tokens.ts, prefixed to stay scoped) ── */
+@keyframes at-aurora-drift {
+  0% {
+    transform: translate3d(-6%, -4%, 0) scale(1.05);
+  }
+  50% {
+    transform: translate3d(6%, 5%, 0) scale(1.2);
+  }
+  100% {
+    transform: translate3d(-6%, -4%, 0) scale(1.05);
+  }
+}
+@keyframes at-aurora-drift-2 {
+  0% {
+    transform: translate3d(5%, 3%, 0) scale(1.1);
+  }
+  50% {
+    transform: translate3d(-7%, -6%, 0) scale(1.25);
+  }
+  100% {
+    transform: translate3d(5%, 3%, 0) scale(1.1);
+  }
+}
+@keyframes at-float-chip {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-16px);
+  }
+}
+@keyframes at-pulse-ring {
+  0% {
+    transform: scale(0.82);
+    opacity: 0.7;
+  }
+  70% {
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+@keyframes at-wave {
+  0%,
+  100% {
+    transform: scaleY(0.28);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+@keyframes at-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+@keyframes at-float-up {
+  0% {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  12%,
+  88% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(-150px);
+    opacity: 0;
+  }
+}
+@keyframes at-beam-sweep {
+  0% {
+    transform: translateX(-40%) skewX(-12deg);
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateX(140%) skewX(-12deg);
+    opacity: 0;
+  }
+}
+@keyframes at-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+/* ── Landing animation utilities (consumed verbatim by src/landing/*) ──────── */
+.animate-aurora {
+  animation: at-aurora-drift 22s ease-in-out infinite;
+}
+.animate-aurora-2 {
+  animation: at-aurora-drift-2 28s ease-in-out infinite;
+}
+.animate-float-chip {
+  animation: at-float-chip 6s ease-in-out infinite;
+}
+.animate-pulse-ring {
+  animation: at-pulse-ring 3.4s ease-out infinite;
+}
+.animate-wave {
+  animation: at-wave 1s ease-in-out infinite;
+}
+.animate-dot-pulse {
+  animation: at-dot-pulse 1.8s infinite;
+}
+.animate-float-up {
+  animation: at-float-up 16s linear infinite;
+}
+.animate-beam-sweep {
+  animation: at-beam-sweep 19s ease-in-out infinite;
+}
+.animate-marquee {
+  animation: at-marquee 38s linear infinite;
+}
+
+/* respect reduced motion: freeze the ambient/looping landing animations */
+@media (prefers-reduced-motion: reduce) {
+  .at-anim,
+  .at-anim *,
+  .animate-aurora,
+  .animate-aurora-2,
+  .animate-float-chip,
+  .animate-pulse-ring,
+  .animate-wave,
+  .animate-dot-pulse,
+  .animate-float-up,
+  .animate-beam-sweep,
+  .animate-marquee {
+    animation: none !important;
+  }
+}

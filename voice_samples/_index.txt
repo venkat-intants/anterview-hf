@@ -1,0 +1,21 @@
+OK   te_anushka.wav
+OK   te_manisha.wav
+OK   te_vidya.wav (CURRENT)
+OK   te_arya.wav
+OK   te_abhilash.wav
+OK   te_karun.wav
+OK   te_hitesh.wav
+OK   hi_anushka.wav
+OK   hi_manisha.wav (CURRENT)
+OK   hi_vidya.wav
+OK   hi_arya.wav
+OK   hi_abhilash.wav
+OK   hi_karun.wav
+OK   hi_hitesh.wav
+OK   en_anushka.wav (CURRENT)
+OK   en_manisha.wav
+OK   en_vidya.wav
+OK   en_arya.wav
+OK   en_abhilash.wav
+OK   en_karun.wav
+OK   en_hitesh.wav

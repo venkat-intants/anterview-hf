@@ -1,0 +1,94 @@
+{"service": "interview_core", "env": "development", "llm_provider": "groq", "stt_provider": "sarvam", "tts_provider": "sarvam", "avatar_provider": "simli", "event": "service.start", "timestamp": "2026-05-31T17:03:38.820864Z", "level": "info"}
+{"session_id": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "job_id": "11111111-1111-1111-1111-111111111111", "language": "te", "event": "sessions.created", "timestamp": "2026-05-31T17:03:52.143681Z", "level": "info"}
+INFO:     127.0.0.1:49670 - "POST /api/sessions HTTP/1.1" 201 Created
+INFO:     127.0.0.1:55673 - "OPTIONS /api/rooms/2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c/token HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54176 - "OPTIONS /api/rooms/2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c/token HTTP/1.1" 200 OK
+{"room": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "session_id": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "note": "worker auto-joins (automatic dispatch)", "event": "agent.dispatch.auto", "timestamp": "2026-05-31T17:03:55.592621Z", "level": "info"}
+{"session_id": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "dispatched": true, "event": "rooms.token.agent_dispatch", "timestamp": "2026-05-31T17:03:55.593653Z", "level": "info"}
+{"session_id": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "room": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "event": "rooms.token.issued", "timestamp": "2026-05-31T17:03:55.595615Z", "level": "info"}
+{"room": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "session_id": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "note": "worker auto-joins (automatic dispatch)", "event": "agent.dispatch.auto", "timestamp": "2026-05-31T17:03:55.629112Z", "level": "info"}
+{"session_id": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "dispatched": true, "event": "rooms.token.agent_dispatch", "timestamp": "2026-05-31T17:03:55.631146Z", "level": "info"}
+{"session_id": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "room": "2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c", "event": "rooms.token.issued", "timestamp": "2026-05-31T17:03:55.631990Z", "level": "info"}
+INFO:     127.0.0.1:49670 - "POST /api/rooms/2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c/token HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63491 - "POST /api/rooms/2a1ee0ef-9c7d-43b9-a6c9-5f17ff4f1b4c/token HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60753 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64941 - "OPTIONS /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "total": 0, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T17:06:52.486976Z", "level": "info"}
+INFO:     127.0.0.1:61635 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60419 - "OPTIONS /api/sessions HTTP/1.1" 200 OK
+{"session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "user_id": "bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "job_id": "11111111-1111-1111-1111-111111111111", "language": "te", "event": "sessions.created", "timestamp": "2026-05-31T17:07:08.481040Z", "level": "info"}
+INFO:     127.0.0.1:53631 - "POST /api/sessions HTTP/1.1" 201 Created
+INFO:     127.0.0.1:60419 - "OPTIONS /api/rooms/b4a261c9-62af-4e7c-bd84-b626ed0b756d/token HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60419 - "OPTIONS /api/rooms/b4a261c9-62af-4e7c-bd84-b626ed0b756d/token HTTP/1.1" 200 OK
+{"room": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "note": "worker auto-joins (automatic dispatch)", "event": "agent.dispatch.auto", "timestamp": "2026-05-31T17:07:11.741149Z", "level": "info"}
+{"session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "dispatched": true, "event": "rooms.token.agent_dispatch", "timestamp": "2026-05-31T17:07:11.744169Z", "level": "info"}
+{"session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "user_id": "bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "room": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "event": "rooms.token.issued", "timestamp": "2026-05-31T17:07:11.765372Z", "level": "info"}
+INFO:     127.0.0.1:53631 - "POST /api/rooms/b4a261c9-62af-4e7c-bd84-b626ed0b756d/token HTTP/1.1" 200 OK
+{"room": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "note": "worker auto-joins (automatic dispatch)", "event": "agent.dispatch.auto", "timestamp": "2026-05-31T17:07:12.053534Z", "level": "info"}
+{"session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "dispatched": true, "event": "rooms.token.agent_dispatch", "timestamp": "2026-05-31T17:07:12.054505Z", "level": "info"}
+{"session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "user_id": "bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "room": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "event": "rooms.token.issued", "timestamp": "2026-05-31T17:07:12.055513Z", "level": "info"}
+INFO:     127.0.0.1:64584 - "POST /api/rooms/b4a261c9-62af-4e7c-bd84-b626ed0b756d/token HTTP/1.1" 200 OK
+{"room": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "note": "worker auto-joins (automatic dispatch)", "event": "agent.dispatch.auto", "timestamp": "2026-05-31T17:10:01.351170Z", "level": "info"}
+{"session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "dispatched": true, "event": "rooms.token.agent_dispatch", "timestamp": "2026-05-31T17:10:01.353190Z", "level": "info"}
+{"session_id": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "user_id": "bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "room": "b4a261c9-62af-4e7c-bd84-b626ed0b756d", "event": "rooms.token.issued", "timestamp": "2026-05-31T17:10:01.357195Z", "level": "info"}
+INFO:     127.0.0.1:58305 - "POST /api/rooms/b4a261c9-62af-4e7c-bd84-b626ed0b756d/token HTTP/1.1" 200 OK
+{"session_id": "22875e92-2613-45cf-8e9c-81d351c14acf", "user_id": "bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "job_id": "11111111-1111-1111-1111-111111111111", "language": "te", "event": "sessions.created", "timestamp": "2026-05-31T17:14:18.068195Z", "level": "info"}
+INFO:     127.0.0.1:53670 - "POST /api/sessions HTTP/1.1" 201 Created
+INFO:     127.0.0.1:53691 - "OPTIONS /api/rooms/22875e92-2613-45cf-8e9c-81d351c14acf/token HTTP/1.1" 200 OK
+{"room": "22875e92-2613-45cf-8e9c-81d351c14acf", "session_id": "22875e92-2613-45cf-8e9c-81d351c14acf", "note": "worker auto-joins (automatic dispatch)", "event": "agent.dispatch.auto", "timestamp": "2026-05-31T17:14:21.615930Z", "level": "info"}
+{"session_id": "22875e92-2613-45cf-8e9c-81d351c14acf", "dispatched": true, "event": "rooms.token.agent_dispatch", "timestamp": "2026-05-31T17:14:21.616928Z", "level": "info"}
+{"session_id": "22875e92-2613-45cf-8e9c-81d351c14acf", "user_id": "bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "room": "22875e92-2613-45cf-8e9c-81d351c14acf", "event": "rooms.token.issued", "timestamp": "2026-05-31T17:14:21.622702Z", "level": "info"}
+INFO:     127.0.0.1:53670 - "POST /api/rooms/22875e92-2613-45cf-8e9c-81d351c14acf/token HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54284 - "OPTIONS /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "total": 2, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T17:19:28.739437Z", "level": "info"}
+INFO:     127.0.0.1:64628 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52232 - "OPTIONS /api/sessions?page=1&per_page=10 HTTP/1.1" 200 OK
+{"user_id": "bbd1610d-c0ba-43dc-ad58-4bd8b64b2b27", "total": 2, "page": 1, "per_page": 10, "event": "sessions.list", "timestamp": "2026-05-31T17:19:40.600534Z", "level": "info"}
+INFO:     127.0.0.1:53690 - "GET /api/sessions?page=1&per_page=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55146 - "OPTIONS /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "60bec27a-4d07-4389-8e97-6bf0edbaa313", "total": 5, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T17:42:15.489430Z", "level": "info"}
+INFO:     127.0.0.1:60095 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T17:43:18.773270Z", "level": "info"}
+INFO:     127.0.0.1:57003 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52373 - "OPTIONS /api/presenters HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61489 - "GET /api/presenters HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:61489 - "GET /api/presenters HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50284 - "OPTIONS /api/sessions?page=1&per_page=10 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 10, "event": "sessions.list", "timestamp": "2026-05-31T17:44:26.046389Z", "level": "info"}
+INFO:     127.0.0.1:65269 - "GET /api/sessions?page=1&per_page=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55300 - "OPTIONS /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T17:58:40.442303Z", "level": "info"}
+INFO:     127.0.0.1:58159 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T17:59:21.413916Z", "level": "info"}
+INFO:     127.0.0.1:52050 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50402 - "GET /api/presenters HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:61016 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61018 - "GET /api/presenters HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:61020 - "GET /health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:61523 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62481 - "OPTIONS /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:09:09.721997Z", "level": "info"}
+INFO:     127.0.0.1:49317 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:09:25.796573Z", "level": "info"}
+INFO:     127.0.0.1:64778 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:09:31.148580Z", "level": "info"}
+INFO:     127.0.0.1:64778 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:09:38.420671Z", "level": "info"}
+INFO:     127.0.0.1:64309 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:09:51.554103Z", "level": "info"}
+INFO:     127.0.0.1:65444 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:09:57.736544Z", "level": "info"}
+INFO:     127.0.0.1:65444 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:10:12.290510Z", "level": "info"}
+INFO:     127.0.0.1:51083 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:10:23.739627Z", "level": "info"}
+INFO:     127.0.0.1:53286 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:10:40.967394Z", "level": "info"}
+INFO:     127.0.0.1:59011 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:10:56.471726Z", "level": "info"}
+INFO:     127.0.0.1:58451 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 3, "event": "sessions.list", "timestamp": "2026-05-31T18:13:36.675628Z", "level": "info"}
+INFO:     127.0.0.1:50894 - "GET /api/sessions?page=1&per_page=3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54097 - "OPTIONS /api/sessions?page=1&per_page=10 HTTP/1.1" 200 OK
+{"user_id": "eadd18e4-3f75-4ec6-b24e-848bf6d4a420", "total": 4, "page": 1, "per_page": 10, "event": "sessions.list", "timestamp": "2026-05-31T18:13:48.085299Z", "level": "info"}
+INFO:     127.0.0.1:59482 - "GET /api/sessions?page=1&per_page=10 HTTP/1.1" 200 OK

@@ -1,0 +1,7 @@
+candidate connected to proof-1780244886
+candidate published mic
+candidate subscribed: simli-avatar-agent:1
+candidate subscribed: simli-avatar-agent:2
+[t+5s] participants: {'candidate-proof': [(0, 'mic')], 'agent-AJ_VBHeM87VuBbi': [], 'simli-avatar-agent': [(0, 'avatar_audio'), (1, 'avatar_video')]}
+PASS avatar_publishes_VIDEO
+DONE

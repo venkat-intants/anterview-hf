@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Intants — Live Interview Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 30px auto; padding: 0 16px; }
+    #video { width: 100%; max-width: 512px; background: #000; border-radius: 10px; aspect-ratio: 1 / 1; }
+    button { padding: 12px 24px; font-size: 1rem; cursor: pointer; margin-top: 12px; }
+    #log { margin-top: 16px; padding: 10px; background: #111; color: #0f0; font-family: monospace;
+           font-size: .8rem; height: 180px; overflow-y: auto; white-space: pre-wrap; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h2>🎙️ Intants — Live Interview Test (Simli avatar)</h2>
+  <p>Click <b>Join &amp; Talk</b>, allow the microphone. You should SEE the avatar face
+     and HEAR the interviewer greet you. Then speak and pause ~1.5s.</p>
+  <video id="video" autoplay playsinline></video><br />
+  <button id="join">Join &amp; Talk</button>
+  <div id="log"></div>
+  <script>
+    const URL = "__URL__";
+    const TOKEN = "__TOKEN__";
+    const L = document.getElementById("log");
+    const V = document.getElementById("video");
+    function log(m) { L.textContent += m + "\n"; L.scrollTop = L.scrollHeight; }
+
+    document.getElementById("join").onclick = async () => {
+      const room = new LivekitClient.Room({ adaptiveStream: true });
+      room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, part) => {
+        log("track " + track.kind + " from " + part.identity);
+        if (track.kind === "video") { track.attach(V); }
+        if (track.kind === "audio") { const a = track.attach(); document.body.appendChild(a); }
+      });
+      room.on(LivekitClient.RoomEvent.ParticipantConnected, (p) => log("joined: " + p.identity));
+      room.on(LivekitClient.RoomEvent.Disconnected, () => log("— disconnected"));
+      try {
+        log("connecting...");
+        await room.connect(URL, TOKEN);
+        log("connected to room: " + room.name);
+        await room.localParticipant.setMicrophoneEnabled(true);
+        log("mic ON — say hello, then pause ~1.5s when done.");
+      } catch (e) {
+        log("ERROR: " + (e && e.message ? e.message : e));
+      }
+    };
+  </script>
+</body>
+</html>

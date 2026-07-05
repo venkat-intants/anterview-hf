@@ -1,0 +1,30 @@
+# =============================================================================
+# Trivy accepted-risk exceptions (reviewed 2026-07-05; re-review each sprint).
+#
+# Every ID below is upgrade-blocked by a pinned major version. The pip-audit
+# --ignore-vuln list in .github/workflows/ci.yml covers the same ROOT CAUSES
+# (fastapi<0.47 starlette pin, langgraph 0.2 family, websockets ^13, pytest 9)
+# but the two scanners' advisory DBs emit different ID sets — do not expect a
+# 1:1 ID match; when unblocking a pin, prune BOTH lists.
+#
+# starlette 0.46.2 — all fixes land in starlette >=0.49.1/1.x, but
+# fastapi 0.115 pins starlette <0.47. Unblock = fastapi >=0.139 bump across
+# all 4 services (planned follow-up).
+CVE-2025-62727
+CVE-2026-48818
+CVE-2026-54283
+#
+# langchain-core — CVE-2026-34070 (legacy load_prompt path traversal) is only
+# fixed in langchain-core 1.2.22; the 0.3.x line has no fix. The app does not
+# use load_prompt. Unblock = LangGraph 1.x migration (planned follow-up).
+CVE-2026-34070
+#
+# langgraph-checkpoint 2.1.2 — fix is in 3.0.0, blocked by langgraph 0.2 pin
+# (langgraph <0.3 requires langgraph-checkpoint <3). The app does not enable
+# the vulnerable "json" serializer mode. Unblock = LangGraph 1.x migration.
+CVE-2025-64439
+#
+# langsmith 0.8.5 — fix (0.8.18) requires websockets>=15; the voice/WS
+# pipeline pins websockets ^13. TracingMiddleware is not enabled (LangSmith
+# tracing off). Unblock = websockets 15 bump (planned follow-up).
+GHSA-f4xh-w4cj-qxq8

@@ -1,0 +1,86 @@
+[tool.poetry]
+name = "interview-core"
+version = "0.1.0"
+description = "Voice interview WebSocket + LangGraph orchestrator + voice pipeline"
+authors = ["Intants <support@intants.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+# <3.15 upper bound required by livekit-agents (pulled in via livekit-plugins-tavus)
+python = ">=3.11,<3.15"
+fastapi = "^0.115"
+uvicorn = {extras = ["standard"], version = "^0.32"}
+pydantic = "^2.9"
+pydantic-settings = "^2.6"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0"}
+asyncpg = "^0.30"
+redis = "^5.2"
+aioboto3 = ">=13.0"
+anthropic = "^0.41"
+httpx = "^0.27"
+websockets = "^13.0"
+structlog = "^24.4"
+python-jose = {extras = ["cryptography"], version = "^3.3"}
+langgraph = "^0.2"
+langchain-core = "^0.3"
+shared = {path = "../../shared", develop = true}
+livekit = "^1.1.8"
+livekit-api = "^1.1.0"
+# The worker (app/worker/interview_worker.py) imports all of these at module
+# top — they must be installable from this pyproject or CI test collection
+# breaks. Versions match the pip-freeze pins in requirements.txt.
+livekit-agents = "1.5.15"
+livekit-plugins-openai = "1.5.15"
+livekit-plugins-sarvam = "1.5.15"
+livekit-plugins-silero = "1.5.15"
+livekit-plugins-simli = "1.5.15"
+livekit-plugins-tavus = "1.5.15"
+# ---------------------------------------------------------------------------
+# Transitive runtime-parity pins. requirements.txt (pip freeze of the proven
+# live voice stack) is what the Docker image and dev .venv install; these pins
+# force poetry.lock (the CI test env) to resolve the SAME versions, so what CI
+# tests is what ships. Bump here and in requirements.txt together.
+# ---------------------------------------------------------------------------
+av = "17.0.1"
+cryptography = "48.0.1"
+eval-type-backport = "0.3.1"
+grpcio = "1.80.0"
+livekit-protocol = "1.1.11"
+onnxruntime = "1.26.0"
+openai = "2.38.0"
+pillow = "12.2.0"
+tqdm = "4.67.3"
+typer = "0.26.4"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+pytest-asyncio = "^0.24"
+ruff = "^0.7"
+mypy = "^1.13"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM"]
+# E501: line-too-long — D-ID adapter and WS test fixtures contain long URLs/
+# docstring lines that are correct as-is. Formatting them would harm readability.
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = [".", "../.."]
+markers = [
+    "integration: live external-service tests (hit real Gemini / Sarvam / etc.)",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true

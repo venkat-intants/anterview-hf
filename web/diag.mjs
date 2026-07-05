@@ -1,0 +1,21 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch();
+const ctx = await b.newContext();
+const p = await ctx.newPage();
+const t0 = Date.now();
+const ts = () => ('+' + (Date.now() - t0) + 'ms');
+const log = [];
+p.on('request', r => { if (r.url().includes(':8002')) log.push(ts() + ' REQ  ' + r.method() + ' ' + r.url().replace('http://localhost:8002','')); });
+p.on('response', r => { if (r.url().includes(':8002')) log.push(ts() + ' RESP ' + r.status() + ' ' + r.request().method() + ' ' + r.url().replace('http://localhost:8002','')); });
+p.on('requestfinished', r => { if (r.url().includes('/auth/me')) log.push(ts() + ' DONE ' + r.method() + ' ' + r.url().replace('http://localhost:8002','')); });
+p.on('requestfailed', r => { if (r.url().includes(':8002')) log.push(ts() + ' FAIL ' + r.method() + ' ' + r.url().replace('http://localhost:8002','') + ' :: ' + r.failure()?.errorText); });
+
+await p.goto('http://localhost:5173/login', { waitUntil: 'networkidle' });
+await p.fill('input[type=email]', 'realtest@intants.com');
+await p.fill('input[type=password]', 'Test1234!');
+log.push(ts() + ' --- click submit ---');
+await p.click('button[type=submit]');
+await p.waitForTimeout(9000);
+console.log('FINAL_URL=' + p.url());
+console.log('TRACE:'); for (const l of log) console.log('  ' + l);
+await b.close();

@@ -1,0 +1,331 @@
+# ---------------------------------------------------------------------------
+# PRODUCTION compose — full backend on ONE host (e.g. an Oracle VM or any box).
+#
+# Runs 6 containers:
+#   caddy (TLS termination), data_gateway, interview_core (API),
+#   interview_worker, feedback_billing, admin_ops
+#
+# Caddy is the ONLY published service (ports 80 + 443).
+# The 4 FastAPI services are INTERNAL to the Docker network — they are NOT
+# accessible from the public internet.
+#
+# Coding exams run via JDoodle (hosted API) — NO Piston, NO privileged
+# container, NO VM-specific setup. JDoodle credentials come from
+# services/data_gateway/.env (JDOODLE_CLIENT_ID / JDOODLE_CLIENT_SECRET).
+#
+# Frontend is NOT here — it goes on Vercel and proxies to Caddy (HTTPS).
+# DB (Neon) + Redis (Upstash) + storage (R2) + LiveKit/Sarvam/Gemini stay cloud;
+# their keys come from each services/<name>/.env (copy those onto the host).
+#
+# USAGE (from repo root on the host):
+#   docker compose --env-file deploy.env -f docker-compose.prod.yml up -d --build
+#
+# deploy.env must define (see scripts/oracle-setup.sh which creates it):
+#   PUBLIC_WEB_ORIGIN=https://your-app.vercel.app
+#   PUBLIC_API_DOMAIN=api.yourdomain.com   <-- REQUIRED for Caddy auto-HTTPS
+#                                              must resolve to this VM's IP
+# ---------------------------------------------------------------------------
+name: intants-prod
+
+x-common-env: &common-env
+  APP_ENV: production
+  LOG_LEVEL: INFO
+
+# Bounded JSON logs — without this Docker's json-file driver grows unbounded and
+# will fill the Oracle VM's ~47 GB boot volume, hanging the whole host. 10 MB × 3
+# files × 6 containers ≈ 180 MB ceiling.
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# Runtime confinement (defense-in-depth on a shared single VM). Images already
+# run as a non-root user; this blocks privilege escalation and drops every Linux
+# capability. Caddy re-adds NET_BIND_SERVICE below (it binds :80/:443).
+x-hardening: &hardening
+  security_opt:
+    - "no-new-privileges:true"
+  cap_drop:
+    - ALL
+
+services:
+  # --------------------------------------------------------------------------
+  # Caddy — TLS termination and reverse proxy (the ONLY public-facing service)
+  # --------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    <<: [*logging, *hardening]
+    # Caddy binds privileged ports 80/443 — restore just that one capability.
+    cap_add:
+      - NET_BIND_SERVICE
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      PUBLIC_API_DOMAIN: ${PUBLIC_API_DOMAIN}
+    depends_on:
+      data_gateway:
+        condition: service_healthy
+      interview_core:
+        condition: service_healthy
+      feedback_billing:
+        condition: service_healthy
+      admin_ops:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 256m
+    # CPU reservations across all 6 containers are budgeted to stay at or below
+    # 4.0 OCPU total (the Oracle Free Tier VM ceiling):
+    #   caddy 0.25 + data_gateway 0.75 + interview_core 0.75
+    #   + interview_worker 1.5 + feedback_billing 0.5 + admin_ops 0.25 = 4.00
+    cpus: "0.25"
+    networks:
+      - intants
+
+  # --------------------------------------------------------------------------
+  # data_gateway — auth, user management, ATS, exams
+  # --------------------------------------------------------------------------
+  data_gateway:
+    build:
+      context: .
+      dockerfile: services/data_gateway/Dockerfile
+    image: intants/data_gateway:prod
+    <<: [*logging, *hardening]
+    env_file: [services/data_gateway/.env]
+    environment:
+      <<: *common-env
+      PORT: "8002"
+      # Coding exams use the JDoodle hosted API (no VM). The JDOODLE_* credentials
+      # are read from services/data_gateway/.env.
+      EXECUTION_PROVIDER: jdoodle
+      # Browser origin (Vercel) — CORS + cookie + email/magic-link base URLs.
+      CORS_ALLOWED_ORIGINS: ${PUBLIC_WEB_ORIGIN}
+      APP_BASE_URL: ${PUBLIC_WEB_ORIGIN}
+      EXAM_LINK_BASE_URL: ${PUBLIC_WEB_ORIGIN}
+      INTERVIEW_LINK_BASE_URL: ${PUBLIC_WEB_ORIGIN}
+      # Behind the Caddy proxy which sets X-Forwarded-Proto: https
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_COOKIE_SAMESITE: none
+      TRUSTED_PROXY_COUNT: "1"
+    expose:
+      - "8002"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8002/health/live', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 1g
+    cpus: "0.75"
+    networks:
+      - intants
+
+  # --------------------------------------------------------------------------
+  # interview_core — LiveKit real-time interview API
+  # --------------------------------------------------------------------------
+  interview_core:
+    build:
+      context: .
+      dockerfile: services/interview_core/Dockerfile
+    image: intants/interview_core:prod
+    <<: [*logging, *hardening]
+    env_file: [services/interview_core/.env]
+    environment:
+      <<: *common-env
+      PORT: "8001"
+      CORS_ALLOWED_ORIGINS: ${PUBLIC_WEB_ORIGIN}
+      FEEDBACK_BILLING_URL: http://feedback_billing:8003
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/live', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 1536m
+    cpus: "0.75"
+    networks:
+      - intants
+
+  # --------------------------------------------------------------------------
+  # interview_worker — LiveKit agent worker (same image as interview_core)
+  # Depends on both interview_core AND feedback_billing being healthy.
+  # --------------------------------------------------------------------------
+  interview_worker:
+    image: intants/interview_core:prod
+    <<: [*logging, *hardening]
+    depends_on:
+      interview_core:
+        condition: service_healthy
+      feedback_billing:
+        condition: service_healthy
+    env_file: [services/interview_core/.env]
+    environment:
+      <<: *common-env
+      FEEDBACK_BILLING_URL: http://feedback_billing:8003
+      # -----------------------------------------------------------------------
+      # Worker sizing — tuned for a single 4-OCPU / 24 GB Oracle Free Tier VM
+      # shared across 6 containers.
+      #
+      # WORKER_MAX_CONCURRENT_JOBS: each live interview holds the prewarmed
+      # Silero VAD model + one Sarvam STT stream + one Sarvam TTS stream + an
+      # LLM call (Gemini). Measured peak per-job overhead is ~350–450 MB. With
+      # 4 GB allocated to this container and 6 services sharing the 24 GB host,
+      # 4 concurrent jobs is the memory-safe ceiling (4 × 450 MB = 1.8 GB peak
+      # RSS + ~150 MB VAD model = ~2 GB, well inside the 4 GB mem_limit with
+      # buffer for GC spikes). Raise to 6–7 if the VM is upgraded to 32 GB.
+      # EFFECTIVE CAP ON THIS BOX: 4. Do NOT set this above 4 without re-
+      # measuring RSS on the actual host — OOM kills are silent mid-interview.
+      #
+      # WORKER_DRAIN_TIMEOUT_SECONDS: on SIGTERM the worker stops accepting new
+      # jobs and waits up to 120 s for in-flight interviews to finish naturally
+      # (say goodbye → persist transcript → call scorer). The compose
+      # stop_grace_period below MUST be >= drain_timeout + scoring overhead
+      # (see stop_grace_period comment).
+      #
+      # JOB_MEMORY_LIMIT_MB: informational annotation used by monitoring/alerts
+      # to set the per-job memory budget. Docker enforces the container-level
+      # mem_limit; this variable is not read by the worker binary itself.
+      WORKER_MAX_CONCURRENT_JOBS: "4"
+      WORKER_DRAIN_TIMEOUT_SECONDS: "120"
+      JOB_MEMORY_LIMIT_MB: "400"
+    command: ["python", "-m", "app.worker.interview_worker", "start"]
+    healthcheck:
+      # The worker has no HTTP port. Instead it writes its current timestamp
+      # into /tmp/interview_worker_heartbeat every ~15 s. This check confirms
+      # the file exists and was written within the last 60 s. If the worker
+      # hangs or crashes (without writing the heartbeat) Docker will detect it
+      # as unhealthy after 3 retries (90 s) and restart the container.
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - |
+          import os, sys, time
+          hb = '/tmp/interview_worker_heartbeat'
+          try:
+              age = time.time() - os.stat(hb).st_mtime
+              sys.exit(0 if age < 60 else 1)
+          except FileNotFoundError:
+              sys.exit(1)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Give the worker time to connect to LiveKit and write the first heartbeat
+      # before the health check starts firing.
+      start_period: 60s
+    restart: unless-stopped
+    # -----------------------------------------------------------------------
+    # Graceful drain margin — stop_grace_period must exceed drain_timeout by
+    # enough for in-flight scoring to complete after the drain window closes.
+    #
+    # Timeline on SIGTERM:
+    #   0 s   — Docker sends SIGTERM; livekit-agents starts drain (no new jobs)
+    #   0–120 s — active interviews finish naturally (drain_timeout = 120 s);
+    #             each close path: goodbye TTS ~5 s + DB write ~1 s + scoring
+    #             HTTP call up to 47 s (15 s timeout × 1 retry + 2 s sleep +
+    #             overhead) = ~53 s worst-case close overhead per job
+    #   120 s — drain window closes; agent sends SIGTERM to worker process;
+    #           scoring calls that started before 120 s are still in-flight
+    #  ~170 s — worst-case final scoring call completes
+    #   210 s — stop_grace_period fires; Docker sends SIGKILL
+    #
+    # Margin: 210 s − 120 s = 90 s comfortably covers worst-case scoring
+    # overhead and leaves a 40 s buffer for DB commit retries. Raises the
+    # previous 150 s value (only 30 s above drain) which risked SIGKILL
+    # mid-scoring on a busy VM.
+    stop_grace_period: 210s
+    # 4 GB for the worker: base Silero VAD model ~150 MB + 4 concurrent jobs
+    # × ~450 MB peak = ~1.95 GB + buffer. Keeps the worker within its share of
+    # the 24 GB host without starving the other five containers.
+    mem_limit: 4g
+    # 1.5 vCPU: the worker is I/O-bound (WebRTC relay, Sarvam HTTP, Groq HTTP)
+    # not CPU-bound. 1.5 provides burst headroom for VAD inference without
+    # starving the API services. Total across all 6 containers = 4.00 OCPU.
+    cpus: "1.5"
+    networks:
+      - intants
+
+  # --------------------------------------------------------------------------
+  # feedback_billing — scoring, PDF scorecards, billing pipeline
+  # --------------------------------------------------------------------------
+  feedback_billing:
+    build:
+      context: .
+      dockerfile: services/feedback_billing/Dockerfile
+    image: intants/feedback_billing:prod
+    <<: [*logging, *hardening]
+    env_file: [services/feedback_billing/.env]
+    environment:
+      <<: *common-env
+      PORT: "8003"
+      CORS_ALLOWED_ORIGINS: ${PUBLIC_WEB_ORIGIN}
+    expose:
+      - "8003"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8003/health/live', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 1g
+    cpus: "0.5"
+    networks:
+      - intants
+
+  # --------------------------------------------------------------------------
+  # admin_ops — analytics and ops dashboard APIs
+  # --------------------------------------------------------------------------
+  admin_ops:
+    build:
+      context: .
+      dockerfile: services/admin_ops/Dockerfile
+    image: intants/admin_ops:prod
+    <<: [*logging, *hardening]
+    env_file: [services/admin_ops/.env]
+    environment:
+      <<: *common-env
+      PORT: "8004"
+      CORS_ALLOWED_ORIGINS: ${PUBLIC_WEB_ORIGIN}
+      INTERVIEW_CORE_URL: http://interview_core:8001
+      DATA_GATEWAY_URL: http://data_gateway:8002
+      FEEDBACK_BILLING_URL: http://feedback_billing:8003
+    expose:
+      - "8004"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8004/health/live', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 512m
+    cpus: "0.25"
+    networks:
+      - intants
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  intants:
+    driver: bridge

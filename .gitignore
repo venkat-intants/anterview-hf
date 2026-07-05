@@ -1,0 +1,172 @@
+# ==============================================================================
+# SECRETS — NEVER COMMIT
+# ==============================================================================
+.env
+.env.local
+.env.*.local
+.env.bak*
+.env.*.bak
+*.env.bak*
+*.pem
+*.key
+secrets/
+**/credentials.json
+
+
+# ==============================================================================
+# PYTHON
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+.nox/
+.hypothesis/
+pip-log.txt
+pip-delete-this-directory.txt
+
+
+# ==============================================================================
+# NODE / JAVASCRIPT / TYPESCRIPT (frontend)
+# ==============================================================================
+node_modules/
+web/dist/
+web/build/
+web/.vite/
+web/.next/
+web/.turbo/
+*.tsbuildinfo
+.npm
+.eslintcache
+.parcel-cache
+
+
+# ==============================================================================
+# IDE / EDITORS
+# ==============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+
+# ==============================================================================
+# OS
+# ==============================================================================
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+
+# ==============================================================================
+# LOGS / TEMP
+# ==============================================================================
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+
+# ==============================================================================
+# DOCKER / K8S RUNTIME
+# ==============================================================================
+*.pid
+*.sock
+
+
+# ==============================================================================
+# LARGE BINARIES / CACHES (download on demand, don't commit)
+# ==============================================================================
+assets/avatars/cache/
+*.mp3
+*.wav
+*.webm
+*.glb
+!web/src/assets/**/*.glb     # except committed sample avatars
+
+
+# ==============================================================================
+# TERRAFORM / IAC STATE
+# ==============================================================================
+*.tfstate
+*.tfstate.*
+.terraform/
+.terragrunt-cache/
+
+
+# ==============================================================================
+# CLAUDE CODE (keep agents committed, exclude local-only settings)
+# ==============================================================================
+.claude/settings.local.json
+
+
+# ==============================================================================
+# JUPYTER / NOTEBOOKS (for ad-hoc analysis)
+# ==============================================================================
+.ipynb_checkpoints/
+*.ipynb
+
+
+# ==============================================================================
+# DB DUMPS (these can contain PII — never commit)
+# ==============================================================================
+*.sql.gz
+*.dump
+backups/
+
+
+# ==============================================================================
+# IDE-OPENED PLACEHOLDER FILES
+# ==============================================================================
+Untitled
+Untitled.*
+
+
+# ==============================================================================
+# PROJECT-SPECIFIC RUNTIME FILES
+# ==============================================================================
+.tmp_openapi.json
+web/test-results/
+web/vite.log
+web/vite.err
+uvicorn.log
+uvicorn.err
+
+# scratch/log files
+services/interview_core/spike_*.txt
+services/interview_core/demo.log
+services/interview_core/live_session.*
+services/interview_core/interview_test.html
+
+# MediaPipe proctoring assets — vendored locally by web/scripts/fetch-mediapipe.mjs (npm run setup:mediapipe)
+web/public/mediapipe/
+
+# stray duplicate git repo — never commit
+cls/
+
+# HF Space consolidated secrets — NEVER commit (space.env.example is the committable template)
+space.env

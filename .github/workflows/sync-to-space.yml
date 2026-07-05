@@ -1,0 +1,30 @@
+# Push every main-branch commit to the Hugging Face Space (which then builds
+# the Dockerfile and redeploys). Requires two repo settings:
+#   Secrets  → HF_TOKEN  — hf.co → Settings → Access Tokens → type "write"
+#   Variables→ HF_SPACE  — the Space id, e.g. "venkat-intants/intants-interview"
+name: Sync to HF Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    if: vars.HF_SPACE != ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push to Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          git push --force \
+            "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" \
+            HEAD:main

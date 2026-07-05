@@ -1,0 +1,53 @@
+[tool.poetry]
+name = "admin-ops"
+version = "0.1.0"
+description = "Admin dashboard APIs, analytics, ops"
+authors = ["Intants <support@intants.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115"
+uvicorn = {extras = ["standard"], version = "^0.32"}
+pydantic-settings = "^2.6"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0"}
+asyncpg = "^0.30"
+redis = "^5.2"
+python-jose = {extras = ["cryptography"], version = "^3.3"}
+# Transitive pin: match the requirements.txt runtime stack (bump both together)
+cryptography = "48.0.1"
+# app/main.py exposes /metrics via prometheus_client directly
+prometheus-client = ">=0.20,<1"
+httpx = "^0.27"
+structlog = "^24.4"
+# app/s3_client.py (DPDP erasure executor) deletes R2 objects via aioboto3
+aioboto3 = ">=13.0"
+shared = {path = "../../shared", develop = true}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+pytest-asyncio = "^0.24"
+ruff = "^0.7"
+mypy = "^1.13"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM"]
+ignore = ["E501", "B008"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = [".", "../.."]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true

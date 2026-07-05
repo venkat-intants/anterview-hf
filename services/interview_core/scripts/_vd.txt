@@ -1,0 +1,6 @@
+candidate in vd-99f17fe1, mic published
+dispatch_interview_agent returned True
+[t+5s] {'candidate-vd': [0], 'agent-AJ_ewuy9FSyx2DH': []}
+[t+10s] {'candidate-vd': [0], 'agent-AJ_ewuy9FSyx2DH': [], 'simli-avatar-agent': [0, 1]}
+PASS avatar_publishes_VIDEO via production dispatch
+DONE

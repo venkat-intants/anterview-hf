@@ -1,0 +1,73 @@
+# ---------------------------------------------------------------------------
+# Local full-stack run of the Intants backend in Docker (validation before Railway).
+#
+#   docker compose build            # build all images
+#   docker compose up -d            # start the 5 backend services
+#   docker compose ps               # status
+#   docker compose logs -f <svc>    # tail one service
+#   docker compose down             # stop
+#
+# DB (Neon/Prisma) + Redis (Upstash) + storage (R2/Backblaze) + LiveKit/Tavus/
+# Sarvam/Gemini are all CLOUD — pulled from each service's .env. Nothing local.
+#
+# Build context is the repo root for every image (the Dockerfiles COPY shared/).
+# The frontend is NOT containerised here (Vercel serves it as static); run it
+# with `cd web && npm run dev` if you want the full browser flow.
+# ---------------------------------------------------------------------------
+name: intants-local
+
+services:
+  data_gateway:
+    build:
+      context: .
+      dockerfile: services/data_gateway/Dockerfile
+    image: intants/data_gateway:local
+    env_file: [services/data_gateway/.env]
+    environment:
+      PORT: "8002"
+    ports: ["8002:8002"]
+    restart: unless-stopped
+
+  interview_core:
+    build:
+      context: .
+      dockerfile: services/interview_core/Dockerfile
+    image: intants/interview_core:local
+    env_file: [services/interview_core/.env]
+    environment:
+      PORT: "8001"
+    ports: ["8001:8001"]
+    restart: unless-stopped
+
+  feedback_billing:
+    build:
+      context: .
+      dockerfile: services/feedback_billing/Dockerfile
+    image: intants/feedback_billing:local
+    env_file: [services/feedback_billing/.env]
+    environment:
+      PORT: "8003"
+    ports: ["8003:8003"]
+    restart: unless-stopped
+
+  admin_ops:
+    build:
+      context: .
+      dockerfile: services/admin_ops/Dockerfile
+    image: intants/admin_ops:local
+    env_file: [services/admin_ops/.env]
+    environment:
+      PORT: "8004"
+    ports: ["8004:8004"]
+    restart: unless-stopped
+
+  # Reuses the interview_core image; runs the LiveKit worker instead of the API.
+  interview_worker:
+    image: intants/interview_core:local
+    depends_on: [interview_core, feedback_billing]
+    env_file: [services/interview_core/.env]
+    environment:
+      # Reach feedback_billing by its compose service name (not localhost).
+      FEEDBACK_BILLING_URL: "http://feedback_billing:8003"
+    command: ["python", "-m", "app.worker.interview_worker", "start"]
+    restart: unless-stopped

@@ -1,0 +1,173 @@
+# ---------------------------------------------------------------------------
+# Caddyfile — Intants AI Voice Interview Platform (production, single-VM)
+#
+# Caddy is the ONLY publicly reachable process (ports 80 + 443).
+# All four FastAPI services are on the internal Docker network only.
+#
+# REQUIRED env var (set in deploy.env or the host environment):
+#   PUBLIC_API_DOMAIN   e.g. api.yourdomain.com
+#
+# Caddy obtains a TLS certificate automatically via ACME (Let's Encrypt).
+# The domain MUST resolve to this VM's public IP before you start the stack,
+# otherwise ACME will fail and Caddy will refuse to start.
+#
+# ROUTING CONTRACT (critical — do not "simplify" to /api/v1/*):
+#   The React frontend (Vercel) and every FastAPI service speak BARE paths
+#   (/auth, /hr, /api/sessions, /admin/overview, ...). The frontend's four
+#   VITE_*_API_URL vars all point at THIS domain in production; Caddy is what
+#   fan-outs each bare path to the right upstream. So the matchers below MUST
+#   mirror the services' real routes. Three prefixes are shared by two services
+#   and are disambiguated by Caddy's longest-path-wins rule (more specific
+#   `handle` matchers are evaluated first, regardless of order here):
+#     /admin/* → admin_ops for analytics/interviews/overview/status/system,
+#                data_gateway for everything else (companies, hr-managers, ...)
+#     /api/*   → feedback_billing for /api/scorecards*, interview_core for the rest
+#     /users/* → admin_ops for /users/*/dpdp/*, data_gateway for the rest
+# ---------------------------------------------------------------------------
+{
+	# Caddy is the edge today (only 80/443 are open). If a CDN (Cloudflare) is
+	# ever placed in front, its egress ranges must be added here so the real
+	# client IP is preserved for rate-limiting + the DPDP consent IP hash.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$PUBLIC_API_DOMAIN} {
+	# ==================================================================
+	# Blocked paths — evaluated first because they are the most specific.
+	# /internal/* is service-to-service ONLY (Gemini scoring/embeddings);
+	# /metrics leaks user/session-id cardinality labels. Neither may ever
+	# be reachable from the public internet.
+	# ==================================================================
+	handle /internal/* {
+		respond "Forbidden" 403
+	}
+	handle /metrics* {
+		respond "Forbidden" 403
+	}
+
+	# ==================================================================
+	# admin_ops  :8004  — analytics + ops dashboard + DPDP erasure.
+	# These sub-paths of /admin and /users are MORE specific than the
+	# data_gateway /admin/* and /users/* blocks below, so Caddy matches
+	# them first (longest-path-wins).
+	# ==================================================================
+	handle /admin/analytics/* {
+		reverse_proxy admin_ops:8004
+	}
+	handle /admin/interviews* {
+		reverse_proxy admin_ops:8004
+	}
+	handle /admin/overview* {
+		reverse_proxy admin_ops:8004
+	}
+	handle /admin/status* {
+		reverse_proxy admin_ops:8004
+	}
+	handle /admin/system/* {
+		reverse_proxy admin_ops:8004
+	}
+	handle /users/*/dpdp/* {
+		reverse_proxy admin_ops:8004
+	}
+
+	# ==================================================================
+	# feedback_billing  :8003  — scoring, PDF scorecards.
+	# /api/scorecards* is more specific than interview_core's /api/* below.
+	# ==================================================================
+	handle /api/scorecards* {
+		reverse_proxy feedback_billing:8003
+	}
+
+	# ==================================================================
+	# interview_core  :8001  — LiveKit / real-time interview API.
+	# Serves /api/me, /api/avatars, /api/sessions*, /api/rooms/*.
+	# ==================================================================
+	handle /api/* {
+		reverse_proxy interview_core:8001
+	}
+	handle /ws/* {
+		reverse_proxy interview_core:8001
+	}
+
+	# ==================================================================
+	# data_gateway  :8002  — auth, users, ATS, exams, consent (catch-all
+	# for the remaining bare prefixes + the generic /admin and /users).
+	# ==================================================================
+	handle /auth/* {
+		reverse_proxy data_gateway:8002
+	}
+	handle /consent* {
+		reverse_proxy data_gateway:8002
+	}
+	handle /exam* {
+		reverse_proxy data_gateway:8002
+	}
+	handle /hr/* {
+		reverse_proxy data_gateway:8002
+	}
+	handle /interview-invite* {
+		reverse_proxy data_gateway:8002
+	}
+	handle /jobs* {
+		reverse_proxy data_gateway:8002
+	}
+	handle /notifications* {
+		reverse_proxy data_gateway:8002
+	}
+	handle /admin/* {
+		reverse_proxy data_gateway:8002
+	}
+	handle /users/* {
+		reverse_proxy data_gateway:8002
+	}
+
+	# ------------------------------------------------------------------
+	# Catch-all health probe (used by uptime monitors). Proxies to
+	# data_gateway's liveness endpoint — a 200 means at least one backend
+	# is reachable; a 502 (data_gateway down) is the correct signal.
+	# /health/deep is deliberately NOT exposed (it leaks dependency state).
+	# ------------------------------------------------------------------
+	handle /health {
+		reverse_proxy data_gateway:8002 {
+			rewrite /health/live
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 5s
+			}
+		}
+	}
+
+	# ------------------------------------------------------------------
+	# Anything else that reached here is not a known API path — 404 so we
+	# never accidentally serve an unmatched upstream.
+	# ------------------------------------------------------------------
+	handle {
+		respond "Not Found" 404
+	}
+
+	# ------------------------------------------------------------------
+	# Security headers on every response.
+	# CSP/frame-ancestors: these are JSON API responses (the HTML origin is
+	# on Vercel), so lock the API down to a non-renderable, non-framable
+	# resource as defense-in-depth.
+	# ------------------------------------------------------------------
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		-Server
+	}
+
+	# ------------------------------------------------------------------
+	# Logging — structured JSON for Loki scraping
+	# ------------------------------------------------------------------
+	log {
+		output stdout
+		format json
+	}
+}

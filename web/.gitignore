@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Vite
+vite.err
+vite.log
+
+# E2E test artifacts
+e2e-results/
+playwright-report/
+test-results/
+smoke-shots/
+
+# Environment locals
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

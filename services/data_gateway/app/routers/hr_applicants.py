@@ -541,7 +541,13 @@ async def bulk_upload_applicants(
             failed.append({"filename": fname, "error": str(exc)[:140]})
         except Exception as exc:  # noqa: BLE001 — one bad file must not kill the batch
             await db.rollback()
-            log.error("hr.applicant.bulk.unexpected", error_type=type(exc).__name__)
+            # Full traceback — an "unexpected error" with only the type name is
+            # undiagnosable from production logs (learned the hard way on the Space).
+            log.exception(
+                "hr.applicant.bulk.unexpected",
+                error_type=type(exc).__name__,
+                error=str(exc)[:300],
+            )
             failed.append({"filename": fname, "error": "unexpected error"})
 
     # Embed the whole batch in one or two calls (best-effort — never fails upload).

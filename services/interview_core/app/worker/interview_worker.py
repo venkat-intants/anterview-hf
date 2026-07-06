@@ -962,6 +962,45 @@ def _build_avatar(provider: str, replica_id: str | None = None) -> Any:
     )
 
 
+async def _start_avatar_or_fallback(
+    avatar: Any,
+    session: AgentSession,
+    room: Any,
+    *,
+    provider: str,
+    session_id: str,
+) -> Any | None:
+    """Start the avatar; on ANY failure return None (voice-only), never raise.
+
+    ``avatar.start()`` calls the provider's API (Tavus/Simli create-session).
+    A provider outage or exhausted credits (e.g. Tavus HTTP 402) raises there —
+    before the avatar reroutes the session's audio output — and previously
+    aborted the entrypoint, leaving the candidate alone in a silent dead room.
+    Voice-only is always the better failure mode.
+    """
+    if avatar is None:
+        return None
+    try:
+        await avatar.start(session, room=room)
+        logger.info(
+            "interview-worker: avatar started provider=%r room=%s",
+            provider, session_id,
+        )
+        return avatar
+    except Exception as exc:  # noqa: BLE001 — any provider error degrades, never aborts
+        logger.error(
+            "interview-worker: avatar start failed provider=%r err_type=%s err=%s — "
+            "falling back to voice-only",
+            provider, type(exc).__name__, exc,
+        )
+        # Detach the half-started avatar session (BaseAvatarSession.start
+        # registered event handlers + an avatar-join watcher) so it can't
+        # touch the AgentSession later. Best-effort.
+        with contextlib.suppress(Exception):
+            await avatar.aclose()
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
@@ -1405,31 +1444,10 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         avatar = None
 
-    if avatar is not None:
-        # avatar.start() calls the provider's API (Tavus/Simli create-session).
-        # A provider outage or exhausted credits (e.g. Tavus HTTP 402) raises
-        # HERE — before the avatar reroutes the session's audio output — and
-        # previously aborted the entrypoint, leaving the candidate alone in a
-        # silent dead room. Voice-only is always the better failure mode.
-        try:
-            await avatar.start(session, room=ctx.room)
-            logger.info(
-                "interview-worker: avatar started provider=%r room=%s",
-                settings.avatar_provider, session_id,
-            )
-        except Exception as exc:  # noqa: BLE001 — any provider error degrades, never aborts
-            logger.error(
-                "interview-worker: avatar start failed provider=%r err_type=%s err=%s — "
-                "falling back to voice-only",
-                settings.avatar_provider, type(exc).__name__, exc,
-            )
-            # Detach the half-started avatar session (BaseAvatarSession.start
-            # registered event handlers + an avatar-join watcher) so it can't
-            # touch the AgentSession later. Best-effort.
-            with contextlib.suppress(Exception):
-                await avatar.aclose()
-            avatar = None
-
+    avatar = await _start_avatar_or_fallback(
+        avatar, session, ctx.room,
+        provider=settings.avatar_provider, session_id=session_id,
+    )
     if avatar is None:
         logger.info(
             "interview-worker: running voice-only room=%s provider=%r",

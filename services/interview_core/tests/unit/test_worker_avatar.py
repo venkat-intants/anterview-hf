@@ -488,3 +488,74 @@ async def test_lookup_session_invalid_uuid_returns_7_tuple_safe_defaults() -> No
     assert presenter_id is None
     assert resume_text == ""
     assert company_name == ""
+
+
+# ---------------------------------------------------------------------------
+# _start_avatar_or_fallback — avatar failure must degrade to voice-only
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_avatar_or_fallback_none_avatar_returns_none() -> None:
+    """avatar=None (provider "none" or _build_avatar failure) → voice-only."""
+    from app.worker.interview_worker import _start_avatar_or_fallback
+
+    result = await _start_avatar_or_fallback(
+        None, MagicMock(), MagicMock(), provider="none", session_id="s-1"
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_start_avatar_or_fallback_success_returns_avatar() -> None:
+    """Happy path: start() succeeds → the avatar object is returned unchanged."""
+    from app.worker.interview_worker import _start_avatar_or_fallback
+
+    avatar = MagicMock()
+    avatar.start = AsyncMock()
+    session = MagicMock()
+    room = MagicMock()
+
+    result = await _start_avatar_or_fallback(
+        avatar, session, room, provider="tavus", session_id="s-1"
+    )
+
+    assert result is avatar
+    avatar.start.assert_awaited_once_with(session, room=room)
+    avatar.aclose.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_start_avatar_or_fallback_start_failure_returns_none_and_acloses() -> None:
+    """Provider API failure (e.g. Tavus HTTP 402 credits exhausted) must NOT
+    propagate — the half-started avatar is aclosed and None (voice-only) is
+    returned. This locks in the dead-room fix."""
+    from app.worker.interview_worker import _start_avatar_or_fallback
+
+    avatar = MagicMock()
+    avatar.start = AsyncMock(side_effect=RuntimeError("Tavus HTTP 402: payment required"))
+    avatar.aclose = AsyncMock()
+
+    result = await _start_avatar_or_fallback(
+        avatar, MagicMock(), MagicMock(), provider="tavus", session_id="s-1"
+    )
+
+    assert result is None
+    avatar.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_avatar_or_fallback_aclose_failure_still_returns_none() -> None:
+    """Even if aclose() itself blows up, the fallback must stay silent (voice-only)."""
+    from app.worker.interview_worker import _start_avatar_or_fallback
+
+    avatar = MagicMock()
+    avatar.start = AsyncMock(side_effect=ConnectionError("provider unreachable"))
+    avatar.aclose = AsyncMock(side_effect=RuntimeError("cleanup also failed"))
+
+    result = await _start_avatar_or_fallback(
+        avatar, MagicMock(), MagicMock(), provider="simli", session_id="s-1"
+    )
+
+    assert result is None

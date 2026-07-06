@@ -31,6 +31,7 @@ Prod: poetry run python -m app.worker.interview_worker start
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import uuid as _uuid_mod
@@ -1395,21 +1396,44 @@ async def entrypoint(ctx: JobContext) -> None:
         # Simli and "none" providers ignore replica_id entirely.
         avatar = _build_avatar(settings.avatar_provider, replica_id=avatar_replica_id)
     except RuntimeError as exc:
+        # Misconfiguration (missing plugin / persona / replica). Loud, but the
+        # interview must still happen — degrade to voice-only.
         logger.error(
-            "interview-worker: avatar setup failed provider=%r err=%s — aborting entrypoint",
+            "interview-worker: avatar setup failed provider=%r err=%s — "
+            "falling back to voice-only",
             settings.avatar_provider, exc,
         )
-        raise
+        avatar = None
 
     if avatar is not None:
-        await avatar.start(session, room=ctx.room)
+        # avatar.start() calls the provider's API (Tavus/Simli create-session).
+        # A provider outage or exhausted credits (e.g. Tavus HTTP 402) raises
+        # HERE — before the avatar reroutes the session's audio output — and
+        # previously aborted the entrypoint, leaving the candidate alone in a
+        # silent dead room. Voice-only is always the better failure mode.
+        try:
+            await avatar.start(session, room=ctx.room)
+            logger.info(
+                "interview-worker: avatar started provider=%r room=%s",
+                settings.avatar_provider, session_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — any provider error degrades, never aborts
+            logger.error(
+                "interview-worker: avatar start failed provider=%r err_type=%s err=%s — "
+                "falling back to voice-only",
+                settings.avatar_provider, type(exc).__name__, exc,
+            )
+            # Detach the half-started avatar session (BaseAvatarSession.start
+            # registered event handlers + an avatar-join watcher) so it can't
+            # touch the AgentSession later. Best-effort.
+            with contextlib.suppress(Exception):
+                await avatar.aclose()
+            avatar = None
+
+    if avatar is None:
         logger.info(
-            "interview-worker: avatar started provider=%r room=%s",
-            settings.avatar_provider, session_id,
-        )
-    else:
-        logger.info(
-            "interview-worker: avatar_provider=none; running voice-only room=%s", session_id
+            "interview-worker: running voice-only room=%s provider=%r",
+            session_id, settings.avatar_provider,
         )
 
     # Mark session in_progress.

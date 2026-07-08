@@ -233,6 +233,29 @@ async def test_delete_company_happy_path() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_company_tombstones_slug() -> None:
+    """The soft-delete must release the slug (slug || '-deleted-' || id) so a
+    company with the same name can be created again afterwards."""
+    from app.routers.admin_hr import delete_company
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=1)
+    member_result = MagicMock()
+    member_result.fetchall.return_value = []
+    db.execute = AsyncMock(return_value=member_result)
+
+    await delete_company(uuid.uuid4(), _platform_owner(), db, _mock_auth())
+
+    company_updates = [
+        str(call.args[0])
+        for call in db.execute.await_args_list
+        if "UPDATE companies" in str(call.args[0])
+    ]
+    assert company_updates, "expected an UPDATE companies statement"
+    assert "slug = slug || '-deleted-' || id::text" in company_updates[0]
+
+
+@pytest.mark.asyncio
 async def test_delete_company_revocation_failure_does_not_block_204() -> None:
     """A Redis failure during session revocation must not fail the deletion."""
     from app.routers.admin_hr import delete_company

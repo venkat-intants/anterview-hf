@@ -11,11 +11,12 @@
 // If the route is reached without a sessionId (shouldn't happen in normal flow)
 // the page renders a graceful "missing session" error rather than crashing.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import InterviewIntro from '@/components/InterviewIntro';
 import LiveKitInterview from '@/features/interview/LiveKitInterview';
+import { preloadProctorAssets } from '@/features/interview/useProctoring';
 import { postConsent } from '@/api/consent';
 import type { Language } from '@/types/interview';
 import { StatusTag } from '@/design/components/primitives';
@@ -41,6 +42,14 @@ export default function Interview() {
 
   // Resolved once at mount — language cannot change mid-session.
   const [sessionLanguage] = useState<Language>(resolveLanguage);
+
+  // Warm the MediaPipe wasm + face model (~15 MB) into the HTTP cache while
+  // the candidate is still on the intro screen. On a hosted deployment a cold
+  // download can take longer than the proctoring worker's init window; warming
+  // here makes detection start near-instantly once the room connects.
+  useEffect(() => {
+    preloadProctorAssets();
+  }, []);
 
   // Intro complete: persist the camera-consent decision (best-effort — a ledger
   // failure must never block the interview) and advance to the live session.

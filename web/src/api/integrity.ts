@@ -13,7 +13,11 @@ export type IntegrityEventType =
   | 'copy'
   | 'paste'
   | 'second_voice'
-  | 'devtools_open';
+  | 'devtools_open'
+  // Diagnostic: the detection pipeline itself failed (model load, worker crash).
+  // Stored + shown in the summary but contributes no score penalty — it exists
+  // so "no camera flags" is distinguishable from "detection never ran".
+  | 'proctor_error';
 
 export interface IntegrityEventOut {
   type: IntegrityEventType;

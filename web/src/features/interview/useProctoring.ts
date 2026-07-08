@@ -83,6 +83,48 @@ const CALIBRATION_MS = 2500;
 const WASM_URL = '/mediapipe/wasm';
 const MODEL_URL = '/mediapipe/face_landmarker.task';
 
+// How long the Web Worker gets to fetch + compile the wasm (~11 MB) and model
+// (~3.7 MB) before we give up on it and fall back to the main thread. Locally
+// these are instant; on a hosted deployment a cold load over a slow link can
+// take well over 8 s — a too-short timeout forces the fallback to re-download
+// everything and made proctoring look dead on slow connections.
+const WORKER_INIT_TIMEOUT_MS = 20_000;
+
+// If the self-view <video> has no usable frames for this long while proctoring
+// is enabled (camera permission denied, track never attached, camera toggled
+// off mid-interview), we treat it as ZERO faces so `face_absent` is flagged.
+// Without this, "no camera" meant "no detection" — a candidate whose camera
+// never came on (or who turned it off) was never flagged as not present.
+const NO_FRAME_GRACE_MS = 4000;
+
+// Signals object for a frame with no detectable face data.
+const EMPTY_SIGNALS: GazeSignals = {
+  fwdX: null,
+  fwdY: null,
+  eyeMax: null,
+  horiz: null,
+  vert: null,
+};
+
+/**
+ * Warm the browser HTTP cache with the MediaPipe wasm + model while the
+ * candidate is still on the intro screen, so detection starts near-instantly
+ * once the room connects. Best-effort: failures are ignored (the detection
+ * path re-fetches on demand exactly as before).
+ */
+export function preloadProctorAssets(): void {
+  const assets = [
+    `${WASM_URL}/vision_wasm_internal.js`,
+    `${WASM_URL}/vision_wasm_internal.wasm`,
+    MODEL_URL,
+  ];
+  for (const url of assets) {
+    void fetch(url, { cache: 'force-cache' }).catch(() => {
+      /* best-effort warm-up only */
+    });
+  }
+}
+
 /** A sustained-condition warning surfaced to the candidate in real time. */
 export type ProctorWarningType = ProctorCondition;
 
@@ -241,6 +283,34 @@ export function useProctoring({
     let initTimer: number | undefined;
     let workerReady = false;
     let posting = false; // backpressure: one in-flight frame at a time
+    let noFrameSince: number | null = null; // when the self-view last had no frames
+    let errorReported = false; // one diagnostic event per session, not a flood
+
+    // Emit a single diagnostic integrity event when the detection pipeline
+    // itself fails. Zero score impact — it makes "detection never ran" visible
+    // in the session summary instead of silently indistinguishable from a
+    // clean interview.
+    const reportProctorError = (stage: string, detail?: string) => {
+      if (errorReported) return;
+      errorReported = true;
+      queueRef.current.push({
+        type: 'proctor_error',
+        started_at: nowIso(),
+        metadata: { stage, ...(detail ? { detail: detail.slice(0, 300) } : {}) },
+      });
+    };
+
+    // The self-view has no usable frames this tick (camera denied / detached /
+    // toggled off). After a short grace, treat it as ZERO faces so the
+    // face_absent condition runs — a candidate with no live camera must be
+    // flagged as not present, not silently unmonitored.
+    const handleNoFrame = () => {
+      const t = Date.now();
+      if (noFrameSince === null) noFrameSince = t;
+      if (t - noFrameSince >= NO_FRAME_GRACE_MS) {
+        processSignals(0, EMPTY_SIGNALS, t);
+      }
+    };
 
     // Shared decision logic — runs on the main thread regardless of where the
     // inference happened. `t` is wall-clock epoch ms (condition timing + ISO).
@@ -300,8 +370,13 @@ export function useProctoring({
         }
         setReady(true);
         intervalId = window.setInterval(() => {
+          if (!landmarker) return;
           const video = videoRef.current;
-          if (!landmarker || !video || video.readyState < 2 || video.videoWidth === 0) return;
+          if (!video || video.readyState < 2 || video.videoWidth === 0) {
+            handleNoFrame();
+            return;
+          }
+          noFrameSince = null;
           let result;
           try {
             result = landmarker.detectForVideo(video, performance.now());
@@ -315,8 +390,9 @@ export function useProctoring({
           });
           processSignals(n, signals, Date.now());
         }, DETECT_INTERVAL_MS);
-      } catch {
+      } catch (err) {
         setReady(false); // model failed to load — degrade to browser events only
+        reportProctorError('model_load_main_thread', String(err));
       }
     };
 
@@ -335,21 +411,38 @@ export function useProctoring({
       } catch {
         return false;
       }
+      // Abandon the worker (crash, init failure, or timeout) and run inference
+      // on the main thread instead. Idempotent — only the first call acts.
+      const fallBackToMainThread = () => {
+        if (cancelled) return;
+        if (intervalId !== undefined) {
+          clearInterval(intervalId);
+          intervalId = undefined;
+        }
+        if (initTimer) clearTimeout(initTimer);
+        worker?.terminate();
+        worker = null;
+        posting = false;
+        void startMainThread();
+      };
       worker.onmessage = (ev: MessageEvent) => {
         const data = ev.data as
           | { type: 'ready' }
           | { type: 'signals'; n: number; signals: GazeSignals }
-          | { type: 'error' };
+          | { type: 'error'; error?: string };
         if (data.type === 'ready') {
           workerReady = true;
           if (initTimer) clearTimeout(initTimer);
           if (cancelled) return;
           setReady(true);
           intervalId = window.setInterval(() => {
+            if (!worker || posting) return;
             const video = videoRef.current;
-            if (!worker || posting || !video || video.readyState < 2 || video.videoWidth === 0) {
+            if (!video || video.readyState < 2 || video.videoWidth === 0) {
+              handleNoFrame();
               return;
             }
+            noFrameSince = null;
             posting = true;
             createImageBitmap(video)
               .then((bitmap) => {
@@ -362,29 +455,32 @@ export function useProctoring({
         } else if (data.type === 'signals') {
           posting = false;
           processSignals(data.n, data.signals, Date.now());
+        } else if (!workerReady) {
+          // Init failed inside the worker (wasm/model fetch or compile) —
+          // don't wait for the timeout, fall back to the main thread now.
+          workerReady = true; // guard against the timer double-firing
+          fallBackToMainThread();
         } else {
           posting = false; // transient inference error — skip frame
         }
       };
       worker.onerror = () => {
-        // Worker crashed before/while ready → fall back to the main thread once.
-        if (!workerReady && !cancelled) {
-          workerReady = true; // guard against double fallback
-          worker?.terminate();
-          worker = null;
-          void startMainThread();
-        }
+        if (cancelled) return;
+        // Crashed before ready → main-thread fallback. Crashed AFTER ready
+        // (e.g. wasm OOM mid-session on a low-end device) → same fallback;
+        // previously this case left `posting` stuck and detection silently
+        // dead for the rest of the interview.
+        workerReady = true;
+        fallBackToMainThread();
       };
       worker.postMessage({ type: 'init', wasmUrl: WASM_URL, modelUrl: MODEL_URL });
       // If 'ready' never arrives, give up on the worker and use the main thread.
       initTimer = window.setTimeout(() => {
         if (!workerReady && !cancelled) {
           workerReady = true;
-          worker?.terminate();
-          worker = null;
-          void startMainThread();
+          fallBackToMainThread();
         }
-      }, 8000);
+      }, WORKER_INIT_TIMEOUT_MS);
       return true;
     };
 

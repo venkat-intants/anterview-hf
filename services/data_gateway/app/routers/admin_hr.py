@@ -454,9 +454,13 @@ async def delete_company(
         ),
         {"cid": company_id},
     )
+    # Tombstone the slug too (same pattern as member emails above): the soft-
+    # deleted row would otherwise keep holding uq_companies_slug, making a
+    # company with the same name impossible to ever create again.
     await db.execute(
         text(
             "UPDATE companies SET deleted_at = now(), is_active = false, "
+            "slug = slug || '-deleted-' || id::text, "
             "updated_at = now() WHERE id = :cid"
         ),
         {"cid": company_id},

@@ -494,3 +494,103 @@ async def test_score_session_does_not_retry_on_403() -> None:
             )
 
         assert mock_client.post.await_count == 1  # no retry on 403
+
+
+# ---------------------------------------------------------------------------
+# axis_feedback — per-axis went_wrong / how_to_improve bullets
+# ---------------------------------------------------------------------------
+
+
+def _stored_rationale(mock_db: AsyncMock) -> dict[str, Any]:
+    """Extract the rationale JSONB payload passed to the INSERT."""
+    params = mock_db.execute.call_args[0][1]
+    return json.loads(params["rationale"])  # type: ignore[no-any-return]
+
+
+@pytest.mark.asyncio
+async def test_score_session_stores_axis_feedback_nested_in_rationale() -> None:
+    """axis_feedback from the model is sanitised and nested in the rationale JSONB."""
+    mock_db = _make_db_session()
+    body = {
+        **_GOOD_GEMINI_RESPONSE,
+        "axis_feedback": {
+            "communication": {
+                "went_wrong": ["Spoke in fragments", "  ", "Long pauses"],
+                "how_to_improve": ["Practise STAR answers"],
+            },
+            "technical": {"went_wrong": [], "how_to_improve": ["Study MLOps basics"]},
+            # problem_solving intentionally missing; confidence malformed.
+            "confidence": "not-a-dict",
+        },
+    }
+    mock_response = _make_httpx_response(json_body=body)
+
+    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        await score_session(
+            session_id=str(uuid.uuid4()),
+            job_title="Junior Java Developer",
+            experience_level="entry",
+            language="en",
+            turns=_SAMPLE_TURNS,
+            db_session=mock_db,
+            settings=_make_settings(),
+        )
+
+    stored = _stored_rationale(mock_db)
+    fb = stored["axis_feedback"]
+    # Blank bullets are dropped; real ones survive.
+    assert fb["communication"]["went_wrong"] == ["Spoke in fragments", "Long pauses"]
+    assert fb["communication"]["how_to_improve"] == ["Practise STAR answers"]
+    assert fb["technical"] == {"went_wrong": [], "how_to_improve": ["Study MLOps basics"]}
+    # Missing / malformed axes degrade to empty lists — never crash scoring.
+    assert fb["problem_solving"] == {"went_wrong": [], "how_to_improve": []}
+    assert fb["confidence"] == {"went_wrong": [], "how_to_improve": []}
+    # The four plain rationale axis keys are still present alongside.
+    for axis in ("communication", "technical", "problem_solving", "confidence"):
+        assert axis in stored
+
+
+@pytest.mark.asyncio
+async def test_score_session_missing_axis_feedback_does_not_fail() -> None:
+    """A model that omits axis_feedback entirely must still produce a scorecard."""
+    mock_db = _make_db_session()
+    mock_response = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
+
+    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        scorecard_id, _, _ = await score_session(
+            session_id=str(uuid.uuid4()),
+            job_title="Junior Java Developer",
+            experience_level="entry",
+            language="en",
+            turns=_SAMPLE_TURNS,
+            db_session=mock_db,
+            settings=_make_settings(),
+        )
+
+    assert uuid.UUID(scorecard_id)
+    stored = _stored_rationale(mock_db)
+    assert all(
+        stored["axis_feedback"][axis] == {"went_wrong": [], "how_to_improve": []}
+        for axis in ("communication", "technical", "problem_solving", "confidence")
+    )
+
+
+def test_scorer_prompt_documents_axis_feedback() -> None:
+    """The prompt template must define the axis_feedback output contract."""
+    from app.scorer import SCORER_PROMPT_TEMPLATE
+
+    assert '"axis_feedback"' in SCORER_PROMPT_TEMPLATE
+    assert '"went_wrong"' in SCORER_PROMPT_TEMPLATE
+    assert '"how_to_improve"' in SCORER_PROMPT_TEMPLATE

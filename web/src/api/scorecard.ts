@@ -21,6 +21,20 @@ export interface AxisRationale {
   confidence: string;
 }
 
+/** Concrete mistakes + actionable practice steps for one axis. */
+export interface AxisFeedbackEntry {
+  went_wrong: string[];
+  how_to_improve: string[];
+}
+
+/** Per-axis went_wrong / how_to_improve bullets. Empty lists for legacy scorecards. */
+export interface AxisFeedback {
+  communication: AxisFeedbackEntry;
+  technical: AxisFeedbackEntry;
+  problem_solving: AxisFeedbackEntry;
+  confidence: AxisFeedbackEntry;
+}
+
 export interface ImprovementItem {
   area: string;
   suggestion: string;
@@ -33,6 +47,8 @@ export interface ScorecardData {
   scores: ScoreBreakdown;
   /** Optional — present on scorecards generated after the rationale feature. */
   rationale?: AxisRationale;
+  /** Optional — present on scorecards generated after the axis-feedback feature. */
+  axis_feedback?: AxisFeedback;
   strengths: string[];
   improvements: ImprovementItem[];
   summary: string;

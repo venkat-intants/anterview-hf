@@ -34,7 +34,7 @@ import {
 } from 'recharts';
 import { useAuth } from '@/context/AuthContext';
 import { getScorecard } from '@/api/scorecard';
-import type { ScoreBreakdown, ImprovementItem } from '@/api/scorecard';
+import type { ScoreBreakdown, ImprovementItem, AxisFeedbackEntry } from '@/api/scorecard';
 import { getSessionIntegrity } from '@/api/integrity';
 import type { IntegrityReport } from '@/api/integrity';
 import { toast } from '@/lib/toast';
@@ -94,12 +94,14 @@ function scoreLabelKey(score: number): string {
   return 'scorecard.labelNeedsWork';
 }
 
-/** Convert a 0–10 score to a hex colour for the competency bars. */
+/** Convert a 0–10 score to a hex colour for the competency bars.
+ *  Semantic red→orange→green ramp: the bar colour alone must read as
+ *  "bad / medium / good" (a blue→orange gradient read as decoration). */
 function scoreHexColor(score: number): string {
-  if (score >= 8) return '#27c93f';
-  if (score >= 6) return 'var(--accent)';
-  if (score >= 4) return '#ffb764';
-  return '#e6714f';
+  if (score >= 8) return '#27c93f'; // excellent — green
+  if (score >= 6) return '#a3e635'; // good — lime
+  if (score >= 4) return '#ffb764'; // fair — orange
+  return '#e6714f'; // needs work — red
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -134,15 +136,17 @@ function ErrorState() {
   );
 }
 
-// ScoreBarRow — collapsible rationale accordion (aria-expanded / aria-controls preserved).
+// ScoreBarRow — collapsible detail accordion (aria-expanded / aria-controls preserved).
 function ScoreBarRow({
   label,
   score,
   rationale,
+  feedback,
 }: {
   label: string;
   score: number;
   rationale?: string;
+  feedback?: AxisFeedbackEntry;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -183,30 +187,74 @@ function ScoreBarRow({
         </span>
       </button>
 
-      {/* Gradient progress bar */}
+      {/* Score-coloured progress bar — the colour IS the verdict (red→green) */}
       <div className="h-2 overflow-hidden rounded-full bg-white/[0.07]" aria-label={`${label}: ${score} out of 10`}>
         <div
           className="h-full rounded-full transition-all duration-700"
           style={{
             width: `${pct}%`,
-            background: `linear-gradient(90deg,var(--accent),${hexColor})`,
+            background: `linear-gradient(90deg,${hexColor}99,${hexColor})`,
           }}
         />
       </div>
 
-      {/* Rationale panel */}
+      {/* Detail panel: why this score + what went wrong + how to improve */}
       {open && (
         <div
           id={panelId}
-          className="mt-1 rounded-[14px] border border-white/[0.08] bg-[rgba(var(--accent-rgb),0.06)] px-4 py-3"
+          className="mt-1 space-y-3 rounded-[14px] border border-white/[0.08] bg-[rgba(var(--accent-rgb),0.06)] px-4 py-3"
         >
-          <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#60a5fa]">
-            <Info className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('scorecard.whyThisScore')}
-          </p>
-          <p className="text-[13px] leading-relaxed text-[#888b91]">
-            {hasRationale ? rationale : t('scorecard.rationaleUnavailable')}
-          </p>
+          <div>
+            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#60a5fa]">
+              <Info className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('scorecard.whyThisScore')}
+            </p>
+            <p className="text-[13px] leading-relaxed text-[#888b91]">
+              {hasRationale ? rationale : t('scorecard.rationaleUnavailable')}
+            </p>
+          </div>
+
+          {feedback && feedback.went_wrong.length > 0 && (
+            <div>
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#e6714f]">
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                {/* "What went wrong" — design-only label */}
+                What went wrong
+              </p>
+              <ul className="space-y-1.5" aria-label={`${label}: what went wrong`}>
+                {feedback.went_wrong.map((point, idx) => (
+                  <li key={idx} className="flex items-start gap-2 text-[13px] leading-relaxed text-[#b8babf]">
+                    <span
+                      className="mt-[7px] h-1.5 w-1.5 flex-none rounded-full bg-[#e6714f]"
+                      aria-hidden="true"
+                    />
+                    {point}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {feedback && feedback.how_to_improve.length > 0 && (
+            <div>
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#27c93f]">
+                <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
+                {/* "How to improve" — design-only label */}
+                How to improve
+              </p>
+              <ul className="space-y-1.5" aria-label={`${label}: how to improve`}>
+                {feedback.how_to_improve.map((point, idx) => (
+                  <li key={idx} className="flex items-start gap-2 text-[13px] leading-relaxed text-[#b8babf]">
+                    <CheckCircle2
+                      className="mt-0.5 h-3.5 w-3.5 flex-none text-[#27c93f]"
+                      aria-hidden="true"
+                    />
+                    {point}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -596,6 +644,7 @@ export default function Scorecard() {
                     label={t(DIMENSION_LABEL_KEYS[key])}
                     score={data.scores[key]}
                     rationale={data.rationale?.[key]}
+                    feedback={data.axis_feedback?.[key]}
                   />
                 </StaggerItem>
               ))}

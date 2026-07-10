@@ -42,9 +42,18 @@ from typing import Any
 import httpx
 from jose import jwt as jose_jwt
 from livekit import api as lk_api
+from livekit import rtc
 from livekit.agents import Agent, AgentSession, JobContext, JobProcess, WorkerOptions, cli
 from livekit.agents.llm.chat_context import ChatMessage as _ChatMessage
 from livekit.agents.voice.events import ConversationItemAddedEvent
+
+# _ParticipantAudioOutput is the exact output RoomIO publishes TTS with in
+# voice-only mode. It is a private module (pinned livekit-agents==1.5.15 in
+# requirements.txt) — we need it directly for the MID-SESSION voice-only
+# fallback: when the avatar participant dies mid-interview, RoomIO's own audio
+# output was never created (the avatar owned the audio path), so we build the
+# replacement ourselves. Revisit on any livekit-agents upgrade.
+from livekit.agents.voice.room_io._output import _ParticipantAudioOutput
 from livekit.plugins import openai, sarvam, silero, simli
 
 # livekit-plugins-tavus is an optional dependency: the worker must still load
@@ -133,6 +142,15 @@ MIN_ANSWERS_TO_SCORE: int = 2
 # interview within this window. Kept short enough to honour withdrawal promptly,
 # long enough to be a negligible DB load (one indexed SELECT per tick).
 CONSENT_RECHECK_INTERVAL_SECONDS: int = 15
+
+# Mid-session voice-only fallback (avatar participant died while the interview
+# was live — e.g. the Tavus free-plan per-conversation duration cap fired).
+# 24 kHz mono + SOURCE_MICROPHONE mirror RoomIO's AudioOutputOptions defaults,
+# i.e. exactly what a voice-only session would have published from the start.
+_FALLBACK_AUDIO_SAMPLE_RATE: int = 24000
+# Bound on waiting for the candidate to subscribe to the fallback track — if
+# the candidate left too, give up instead of hanging the job teardown.
+_FALLBACK_SUBSCRIBE_TIMEOUT_SECONDS: float = 15.0
 
 # Service-to-service JWT TTL — generous but finite; scorer returns immediately.
 _SERVICE_JWT_TTL_SECONDS: int = 60
@@ -1001,6 +1019,125 @@ async def _start_avatar_or_fallback(
         return None
 
 
+async def _degrade_to_voice_only_midsession(
+    session: AgentSession,
+    room: Any,
+    *,
+    session_id: str,
+) -> bool:
+    """Re-route interviewer audio to our own room track after the avatar died.
+
+    In avatar mode ALL interviewer audio flows through the avatar participant
+    (echo mode: the provider republishes our TTS with lip-sync). When the
+    provider kills the conversation mid-interview — Tavus ends the conversation
+    when the plan's duration cap / remaining credits run out — the avatar
+    participant leaves the room and the session's DataStreamAudioOutput streams
+    into the void: the candidate sits in a silent-but-"Connected" room.
+
+    This swaps ``session.output.audio`` for a directly-published audio track
+    (the same output RoomIO uses in voice-only mode). The AgentSession reads
+    ``output.audio`` fresh at each speech turn, so the swap takes effect from
+    the next utterance.
+
+    Returns True when the swap succeeded (audio will flow again).
+    """
+    # Abort any speech currently draining into the dead avatar datastream —
+    # its playout may never resolve now that the destination is gone.
+    with contextlib.suppress(Exception):
+        session.interrupt(force=True)
+
+    try:
+        output = _ParticipantAudioOutput(
+            room,
+            sample_rate=_FALLBACK_AUDIO_SAMPLE_RATE,
+            num_channels=1,
+            track_publish_options=rtc.TrackPublishOptions(
+                source=rtc.TrackSource.SOURCE_MICROPHONE
+            ),
+            track_name="interviewer_audio_fallback",
+        )
+        # start() publishes the track and waits for the candidate to subscribe.
+        await asyncio.wait_for(
+            output.start(), timeout=_FALLBACK_SUBSCRIBE_TIMEOUT_SECONDS
+        )
+    except Exception as exc:  # noqa: BLE001 — fallback must never crash the job
+        logger.error(
+            "interview-worker: voice-only degrade failed room=%s err_type=%s err=%s",
+            session_id, type(exc).__name__, exc,
+        )
+        return False
+
+    session.output.audio = output
+    logger.warning(
+        "interview-worker: avatar died mid-session — continuing voice-only room=%s",
+        session_id,
+    )
+    return True
+
+
+def _install_avatar_death_watch(
+    *,
+    avatar: Any,
+    session: AgentSession,
+    room: Any,
+    state: InterviewState,
+    session_id: str,
+) -> None:
+    """Continue the interview voice-only if the avatar participant leaves mid-session.
+
+    Registers a ``participant_disconnected`` handler on the room that fires at
+    most once, only for the avatar's own identity, and only while the interview
+    is still live (normal teardown also removes the avatar participant — the
+    ``state.close_triggered`` guard keeps us quiet then).
+
+    After a successful audio swap the interviewer briefly acknowledges the
+    glitch and repeats the current question, which both reassures the candidate
+    and proves the new audio path end-to-end.
+    """
+    if avatar is None:
+        return
+    avatar_identity = getattr(avatar, "avatar_identity", None)
+    if not avatar_identity:
+        return
+
+    handled = False
+    # Strong reference so the recovery task can't be GC'd mid-flight.
+    recover_task_holder: dict[str, asyncio.Task[None] | None] = {"task": None}
+
+    async def _recover() -> None:
+        ok = await _degrade_to_voice_only_midsession(
+            session, room, session_id=session_id
+        )
+        if not ok or state.close_triggered:
+            return
+        with contextlib.suppress(Exception):
+            await session.generate_reply(
+                instructions=(
+                    "The video avatar just dropped due to a technical issue, but "
+                    "the audio call is still live. In ONE short sentence reassure "
+                    "the candidate that the interview continues in audio-only "
+                    "mode, then repeat your last question. Do NOT advance to a "
+                    "new question."
+                )
+            )
+
+    def _on_participant_disconnected(participant: Any) -> None:
+        nonlocal handled
+        if handled or state.close_triggered:
+            return
+        if getattr(participant, "identity", None) != avatar_identity:
+            return
+        handled = True
+        logger.warning(
+            "interview-worker: avatar participant %r disconnected mid-session "
+            "room=%s — degrading to voice-only",
+            avatar_identity, session_id,
+        )
+        recover_task_holder["task"] = asyncio.create_task(_recover())
+
+    room.on("participant_disconnected", _on_participant_disconnected)
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
@@ -1452,6 +1589,18 @@ async def entrypoint(ctx: JobContext) -> None:
         logger.info(
             "interview-worker: running voice-only room=%s provider=%r",
             session_id, settings.avatar_provider,
+        )
+    else:
+        # The provider can also kill the avatar MID-interview (e.g. Tavus ends
+        # the conversation when the plan's duration cap or credits run out —
+        # observed as "audio dies at ~3 minutes" on the free plan). Watch for
+        # the avatar participant leaving and continue the interview voice-only.
+        _install_avatar_death_watch(
+            avatar=avatar,
+            session=session,
+            room=ctx.room,
+            state=state,
+            session_id=session_id,
         )
 
     # Mark session in_progress.

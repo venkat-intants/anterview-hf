@@ -323,3 +323,170 @@ async def test_post_integrity_consent_checked_before_persist(client: AsyncClient
         "db.add() must NOT be called when consent is absent — "
         "events must be rejected before any DB write"
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/sessions/{id}/integrity — candidate read-back for the scorecard page
+# ---------------------------------------------------------------------------
+
+
+def _patch_db_get(
+    *,
+    session_user_id: str | None,
+    integrity_score: int | None = None,
+    proctoring_summary: dict | None = None,
+    started_at: datetime | None = None,
+    event_rows: list[tuple] | None = None,
+) -> Any:
+    """DB override for the GET endpoint.
+
+    Unlike _patch_db, the session row carries the report fields the GET
+    serialises (integrity_score, proctoring_summary, started_at) as REAL
+    values — a bare MagicMock attribute would fail response validation.
+    """
+    session_row = None
+    if session_user_id is not None:
+        session_row = MagicMock()
+        session_row.user_id = uuid.UUID(session_user_id)
+        session_row.integrity_score = integrity_score
+        session_row.proctoring_summary = proctoring_summary
+        session_row.started_at = started_at
+
+    session_result = MagicMock()
+    session_result.scalar_one_or_none.return_value = session_row
+
+    events_result = MagicMock()
+    events_result.all.return_value = event_rows or []
+
+    def _execute_side_effect(stmt: Any, *a: Any, **k: Any) -> Any:
+        sql = str(stmt).upper()
+        if "INTEGRITY_EVENTS" in sql:
+            return events_result
+        return session_result
+
+    @asynccontextmanager
+    async def _ctx() -> AsyncGenerator[AsyncSession, None]:
+        db = AsyncMock(spec=AsyncSession)
+        db.execute = AsyncMock(side_effect=_execute_side_effect)
+        yield db  # type: ignore[misc]
+
+    async def _override() -> AsyncGenerator[AsyncSession, None]:
+        async with _ctx() as db:
+            yield db
+
+    return _override
+
+
+@pytest.mark.asyncio
+async def test_get_integrity_happy_path(client: AsyncClient) -> None:
+    """Owner reads back score, summary, session start, and the ordered timeline."""
+    uid = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+    summary = {"by_type": {"gaze_away": 1, "tab_blur": 1}, "flagged_seconds": {"gaze_away": 10.0}}
+    event_rows = [
+        ("gaze_away", _T0 + timedelta(seconds=31), _T0 + timedelta(seconds=41)),
+        ("tab_blur", _T0 + timedelta(seconds=90), None),
+    ]
+    override = _patch_db_get(
+        session_user_id=uid,
+        integrity_score=92,
+        proctoring_summary=summary,
+        started_at=_T0,
+        event_rows=event_rows,
+    )
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        resp = await client.get(
+            f"/api/sessions/{sid}/integrity",
+            headers={"Authorization": f"Bearer {_token(uid)}"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["integrity_score"] == 92
+    assert data["summary"]["by_type"]["gaze_away"] == 1
+    assert data["session_started_at"] is not None
+
+    events = data["events"]
+    assert len(events) == 2
+    # Ranged event: duration computed with the same clamp as the score.
+    assert events[0]["event_type"] == "gaze_away"
+    assert events[0]["duration_seconds"] == 10.0
+    # Instantaneous event: no duration.
+    assert events[1]["event_type"] == "tab_blur"
+    assert events[1]["duration_seconds"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_integrity_proctoring_never_ran(client: AsyncClient) -> None:
+    """Session without proctoring → nulls + empty events (NOT a fake 100)."""
+    uid = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+    override = _patch_db_get(session_user_id=uid, started_at=_T0)
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        resp = await client.get(
+            f"/api/sessions/{sid}/integrity",
+            headers={"Authorization": f"Bearer {_token(uid)}"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["integrity_score"] is None
+    assert data["summary"] is None
+    assert data["events"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_integrity_wrong_owner_forbidden(client: AsyncClient) -> None:
+    """Another user's session → 403 (candidates only see their OWN report)."""
+    caller = str(uuid.uuid4())
+    other = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+    override = _patch_db_get(session_user_id=other, integrity_score=100, started_at=_T0)
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        resp = await client.get(
+            f"/api/sessions/{sid}/integrity",
+            headers={"Authorization": f"Bearer {_token(caller)}"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 403, resp.text
+
+
+@pytest.mark.asyncio
+async def test_get_integrity_session_not_found(client: AsyncClient) -> None:
+    """No session row → 404."""
+    uid = str(uuid.uuid4())
+    override = _patch_db_get(session_user_id=None)
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        resp = await client.get(
+            f"/api/sessions/{uuid.uuid4()}/integrity",
+            headers={"Authorization": f"Bearer {_token(uid)}"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.asyncio
+async def test_get_integrity_no_token(client: AsyncClient) -> None:
+    """Missing Authorization → 401."""
+    resp = await client.get(f"/api/sessions/{uuid.uuid4()}/integrity")
+    assert resp.status_code == 401, resp.text

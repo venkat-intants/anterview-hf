@@ -22,6 +22,7 @@ import {
   ChevronDown,
   Info,
   History,
+  ShieldCheck,
 } from '@/design/components/icons';
 import {
   RadarChart,
@@ -34,6 +35,8 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { getScorecard } from '@/api/scorecard';
 import type { ScoreBreakdown, ImprovementItem } from '@/api/scorecard';
+import { getSessionIntegrity } from '@/api/integrity';
+import type { IntegrityReport } from '@/api/integrity';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -282,6 +285,132 @@ function ImprovementCard({ item }: { item: ImprovementItem }) {
   );
 }
 
+// ── Integrity (proctoring) panel ───────────────────────────────────────────────
+
+/** Human-readable labels for proctoring event types (mirrors admin console). */
+const INTEGRITY_LABELS: Record<string, string> = {
+  gaze_away: 'Looked away from screen',
+  face_absent: 'Face not visible',
+  multiple_faces: 'Multiple faces detected',
+  tab_blur: 'Switched tab / window',
+  fullscreen_exit: 'Left fullscreen',
+  copy: 'Copied text',
+  paste: 'Pasted text',
+  second_voice: 'Second voice detected',
+  devtools_open: 'Developer tools opened',
+  proctor_error: 'Camera detection unavailable',
+};
+
+/** Integrity score colour (0–100 scale) — same thresholds as the admin console. */
+function integrityColor(score: number): string {
+  if (score >= 80) return '#27c93f';
+  if (score >= 60) return '#ffb764';
+  return '#e6714f';
+}
+
+/** mm:ss offset of an event into the interview; falls back to wall-clock time. */
+function fmtOffset(eventIso: string, sessionStartIso: string | null): string {
+  const ev = new Date(eventIso).getTime();
+  const start = sessionStartIso ? new Date(sessionStartIso).getTime() : NaN;
+  if (!Number.isNaN(ev) && !Number.isNaN(start) && ev >= start) {
+    const total = Math.round((ev - start) / 1000);
+    const mm = String(Math.floor(total / 60)).padStart(2, '0');
+    const ss = String(total % 60).padStart(2, '0');
+    return `${mm}:${ss}`;
+  }
+  const d = new Date(eventIso);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function IntegrityPanel({ report }: { report: IntegrityReport }) {
+  const score = report.integrity_score;
+  const byType = report.summary?.by_type ?? {};
+  const flaggedSeconds = report.summary?.flagged_seconds ?? {};
+  const types = Object.keys(byType);
+  const timeline = report.events;
+
+  // integrity_score null = proctoring never ran; the parent hides the panel.
+  if (score === null) return null;
+
+  return (
+    <GlassCard className="p-5">
+      <h3 className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-white">
+        <ShieldCheck className="h-4 w-4 text-[#27c93f]" aria-hidden="true" />
+        {/* "Interview integrity" — design-only label, matches admin console wording */}
+        Interview integrity
+      </h3>
+      <p className="mb-4 text-[12px] text-[#888b91]">
+        AI-assisted flagging for human review — not an automated decision.
+      </p>
+
+      <div className="mb-4 flex items-baseline gap-2">
+        <span
+          className="text-[30px] font-semibold tabular-nums tracking-[-1px]"
+          style={{ color: integrityColor(score) }}
+          data-testid="integrity-score"
+        >
+          {score}
+        </span>
+        <span className="text-[13px] text-[#888b91]">/ 100 integrity</span>
+      </div>
+
+      {types.length === 0 ? (
+        <p className="text-[13px] text-[#27c93f]">No integrity flags were raised. ✓</p>
+      ) : (
+        <div className="flex flex-col gap-2.5" aria-label="Integrity flags">
+          {types.map((t) => (
+            <div
+              key={t}
+              className="flex items-center gap-3 rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3"
+            >
+              <AlertTriangle className="h-[15px] w-[15px] flex-none text-[#ffb764]" aria-hidden="true" />
+              <span className="flex-1 text-[12.5px] text-[#b8babf]">
+                {INTEGRITY_LABELS[t] ?? t}
+              </span>
+              <span className="font-mono text-[11px] text-[#70757c] tabular-nums">
+                {byType[t]}×{flaggedSeconds[t] ? ` · ${flaggedSeconds[t]}s` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {timeline.length > 0 && (
+        <div className="pt-4">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.5px] text-[#888b91]">
+            Event timeline
+          </p>
+          <ul
+            className="max-h-64 space-y-1 overflow-y-auto"
+            aria-label="Integrity event timeline"
+          >
+            {timeline.map((ev, idx) => (
+              <li
+                key={idx}
+                className="flex items-center justify-between gap-2 rounded-[10px] bg-white/[0.02] px-2.5 py-1.5 text-[11.5px]"
+              >
+                <span className="flex items-center gap-2 text-[#b8babf]">
+                  <span className="font-mono text-[#70757c] tabular-nums">
+                    {fmtOffset(ev.started_at, report.session_started_at)}
+                  </span>
+                  {INTEGRITY_LABELS[ev.event_type] ?? ev.event_type}
+                </span>
+                {ev.duration_seconds != null && (
+                  <span className="font-mono text-[#70757c] tabular-nums">
+                    {ev.duration_seconds}s
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </GlassCard>
+  );
+}
+
 // ── Loading skeleton ───────────────────────────────────────────────────────────
 
 function ScorecardSkeleton() {
@@ -324,6 +453,18 @@ export default function Scorecard() {
       return getScorecard(scorecardId, accessToken);
     },
     enabled: Boolean(scorecardId) && Boolean(accessToken),
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+    throwOnError: false,
+  });
+
+  // Integrity report — best-effort second query keyed off the scorecard's
+  // session_id. getSessionIntegrity resolves to null on ANY error, so this can
+  // never break the page; the panel simply doesn't render.
+  const { data: integrity } = useQuery({
+    queryKey: ['integrity', data?.session_id],
+    queryFn: () => getSessionIntegrity(data!.session_id),
+    enabled: Boolean(data?.session_id) && Boolean(accessToken),
     staleTime: 10 * 60 * 1000,
     retry: false,
     throwOnError: false,
@@ -512,6 +653,13 @@ export default function Scorecard() {
                 {data.summary}
               </p>
             </GlassCard>
+          </Reveal>
+        )}
+
+        {/* ── Interview integrity (proctoring) ──────────────────────────── */}
+        {integrity && integrity.integrity_score !== null && (
+          <Reveal className="mt-5">
+            <IntegrityPanel report={integrity} />
           </Reveal>
         )}
 

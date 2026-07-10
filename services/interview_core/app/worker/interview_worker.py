@@ -892,9 +892,18 @@ class InterviewState:
             return False
 
         score_role = "user" if role == "user" else "ai"
+        # An ANSWER is an exchange, not an utterance. Silero VAD + STT commit a
+        # new user item at every pause, so one spoken answer often arrives as
+        # several consecutive user items; counting each fragment burned through
+        # MAX_CANDIDATE_ANSWERS in ~4 minutes and ended interviews with an
+        # abrupt goodbye. Only count a user item when the interviewer has
+        # spoken since the candidate's previous item — consecutive fragments
+        # collapse into the answer already counted (they still all land in the
+        # transcript for scoring).
+        prev_role: str | None = self.transcript[-1]["role"] if self.transcript else None
         self.transcript.append({"role": score_role, "text": text})
 
-        if role == "user":
+        if role == "user" and prev_role != "user":
             self.candidate_answer_count += 1
             if (
                 self.candidate_answer_count >= MAX_CANDIDATE_ANSWERS

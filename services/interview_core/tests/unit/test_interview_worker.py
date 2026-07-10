@@ -333,6 +333,22 @@ def _make_event(item: Any) -> Any:
     return ev
 
 
+def _feed_exchanges(s: InterviewState, n: int, *, start: int = 1) -> list[bool]:
+    """Feed n interviewer-question → candidate-answer exchanges.
+
+    Mirrors a real interview: an answer only counts after the interviewer has
+    spoken (consecutive user fragments collapse into one answer). Returns the
+    list of should-close signals from the USER items.
+    """
+    signals: list[bool] = []
+    for i in range(start, start + n):
+        s.handle_conversation_item(_make_chat_message("assistant", f"Question {i}"))
+        signals.append(
+            s.handle_conversation_item(_make_chat_message("user", f"Answer {i}"))
+        )
+    return signals
+
+
 # ---------------------------------------------------------------------------
 # InterviewState — pure unit tests (no asyncio needed)
 # ---------------------------------------------------------------------------
@@ -349,14 +365,10 @@ def test_interview_state_initial_values() -> None:
 def test_interview_state_nine_answers_no_close() -> None:
     """9 candidate answers must NOT trigger the should-close signal."""
     s = InterviewState()
-    triggered_count = 0
-    for i in range(MAX_CANDIDATE_ANSWERS - 1):
-        should_close = s.handle_conversation_item(_make_chat_message("user", f"Answer {i + 1}"))
-        if should_close:
-            triggered_count += 1
+    signals = _feed_exchanges(s, MAX_CANDIDATE_ANSWERS - 1)
 
     assert s.candidate_answer_count == MAX_CANDIDATE_ANSWERS - 1
-    assert triggered_count == 0, (
+    assert not any(signals), (
         f"should-close signal fired after only {MAX_CANDIDATE_ANSWERS - 1} answers"
     )
     assert not s.close_triggered  # state is still open
@@ -365,11 +377,11 @@ def test_interview_state_nine_answers_no_close() -> None:
 def test_interview_state_tenth_answer_triggers_close() -> None:
     """The 10th candidate answer must return True (should-close) exactly once."""
     s = InterviewState()
-    # Feed 9 silently.
-    for i in range(MAX_CANDIDATE_ANSWERS - 1):
-        s.handle_conversation_item(_make_chat_message("user", f"Answer {i + 1}"))
+    # Feed 9 exchanges silently.
+    _feed_exchanges(s, MAX_CANDIDATE_ANSWERS - 1)
 
-    # 10th answer — must signal close.
+    # 10th exchange — must signal close.
+    s.handle_conversation_item(_make_chat_message("assistant", "Question 10"))
     should_close = s.handle_conversation_item(_make_chat_message("user", "Answer 10"))
     assert should_close, "10th answer did not return should-close=True"
     assert s.candidate_answer_count == MAX_CANDIDATE_ANSWERS
@@ -378,16 +390,72 @@ def test_interview_state_tenth_answer_triggers_close() -> None:
 def test_interview_state_eleventh_answer_ignored_after_close() -> None:
     """An 11th answer after close_triggered must NOT re-signal close."""
     s = InterviewState()
-    for i in range(MAX_CANDIDATE_ANSWERS):
-        s.handle_conversation_item(_make_chat_message("user", f"Answer {i + 1}"))
+    _feed_exchanges(s, MAX_CANDIDATE_ANSWERS)
     # Simulate entrypoint marking close after the 10th.
     s.mark_close_triggered()
 
-    # 11th answer — close_triggered is True, so should_close must be False.
+    # 11th exchange — close_triggered is True, so should_close must be False.
+    s.handle_conversation_item(_make_chat_message("assistant", "Anything else?"))
     should_close = s.handle_conversation_item(_make_chat_message("user", "Answer 11"))
     assert not should_close, "11th answer triggered a second close signal"
     # Count still advances (it's just the close signal that's suppressed).
     assert s.candidate_answer_count == MAX_CANDIDATE_ANSWERS + 1
+
+
+def test_interview_state_consecutive_user_fragments_count_once() -> None:
+    """VAD-fragmented speech (consecutive user items) is ONE answer, not many.
+
+    This is the ~4-minute abrupt-goodbye bug: one spoken answer committed as
+    several user items at every pause burned through MAX_CANDIDATE_ANSWERS
+    long before 10 real questions were asked.
+    """
+    s = InterviewState()
+    s.handle_conversation_item(_make_chat_message("assistant", "Tell me about yourself."))
+    signals = [
+        s.handle_conversation_item(_make_chat_message("user", "My name is Venkat.")),
+        s.handle_conversation_item(_make_chat_message("user", "I have three years of experience.")),
+        s.handle_conversation_item(_make_chat_message("user", "Mostly in backend engineering.")),
+    ]
+
+    assert s.candidate_answer_count == 1, (
+        f"3 consecutive fragments must count as 1 answer, got {s.candidate_answer_count}"
+    )
+    assert not any(signals)
+    # ALL fragments must still be captured in the transcript for scoring.
+    assert [t["text"] for t in s.transcript if t["role"] == "user"] == [
+        "My name is Venkat.",
+        "I have three years of experience.",
+        "Mostly in backend engineering.",
+    ]
+
+
+def test_interview_state_fragments_never_close_early() -> None:
+    """Even 3x MAX_CANDIDATE_ANSWERS fragments across 5 questions never close."""
+    s = InterviewState()
+    signals: list[bool] = []
+    for q in range(5):
+        s.handle_conversation_item(_make_chat_message("assistant", f"Question {q + 1}"))
+        for f in range(6):  # 6 fragments per answer → 30 user items total
+            signals.append(
+                s.handle_conversation_item(_make_chat_message("user", f"Q{q + 1} fragment {f + 1}"))
+            )
+
+    assert s.candidate_answer_count == 5, (
+        f"5 questions × 6 fragments must be 5 answers, got {s.candidate_answer_count}"
+    )
+    assert not any(signals), "Fragmented speech must never trigger the close signal"
+
+
+def test_interview_state_new_answer_counts_after_interviewer_speaks() -> None:
+    """After the interviewer speaks again, the next user item IS a new answer."""
+    s = InterviewState()
+    s.handle_conversation_item(_make_chat_message("assistant", "Question 1"))
+    s.handle_conversation_item(_make_chat_message("user", "Answer 1a"))
+    s.handle_conversation_item(_make_chat_message("user", "Answer 1b"))  # fragment
+    s.handle_conversation_item(_make_chat_message("assistant", "Question 2"))
+    s.handle_conversation_item(_make_chat_message("user", "Answer 2"))
+
+    assert s.candidate_answer_count == 2
 
 
 def test_interview_state_transcript_role_mapping() -> None:
@@ -426,8 +494,7 @@ def test_interview_state_non_chat_message_ignored() -> None:
 def test_interview_state_final_status_above_min() -> None:
     """final_status() returns 'completed' when answers >= MIN_ANSWERS_TO_SCORE."""
     s = InterviewState()
-    for i in range(MIN_ANSWERS_TO_SCORE):
-        s.handle_conversation_item(_make_chat_message("user", f"A{i}"))
+    _feed_exchanges(s, MIN_ANSWERS_TO_SCORE)
     assert s.final_status() == "completed"
     assert s.should_score() is True
 
@@ -435,8 +502,7 @@ def test_interview_state_final_status_above_min() -> None:
 def test_interview_state_final_status_below_min() -> None:
     """final_status() returns 'abandoned' when answers < MIN_ANSWERS_TO_SCORE."""
     s = InterviewState()
-    for i in range(MIN_ANSWERS_TO_SCORE - 1):
-        s.handle_conversation_item(_make_chat_message("user", f"A{i}"))
+    _feed_exchanges(s, MIN_ANSWERS_TO_SCORE - 1)
     assert s.final_status() == "abandoned"
     assert s.should_score() is False
 
@@ -496,10 +562,10 @@ async def test_async_tenth_answer_schedules_close() -> None:
         if should_close:
             asyncio.create_task(fake_on_close(timed_out=False))
 
-    # Feed exactly MAX_CANDIDATE_ANSWERS user messages.
+    # Feed exactly MAX_CANDIDATE_ANSWERS question→answer exchanges.
     for i in range(MAX_CANDIDATE_ANSWERS):
-        msg = _make_chat_message("user", f"Answer {i + 1}")
-        handler(_make_event(msg))
+        handler(_make_event(_make_chat_message("assistant", f"Question {i + 1}")))
+        handler(_make_event(_make_chat_message("user", f"Answer {i + 1}")))
 
     # Allow the created task to execute.
     await asyncio.sleep(0)
@@ -558,9 +624,8 @@ async def test_wall_clock_cap_fires_with_timed_out_true() -> None:
 async def test_abrupt_close_above_min_scores_and_completes() -> None:
     """Abrupt disconnect with answers >= MIN_ANSWERS_TO_SCORE → 'completed' + scoring."""
     state = InterviewState()
-    # Feed enough answers to pass the MIN threshold.
-    for i in range(MIN_ANSWERS_TO_SCORE):
-        state.handle_conversation_item(_make_chat_message("user", f"A{i}"))
+    # Feed enough exchanges to pass the MIN threshold.
+    _feed_exchanges(state, MIN_ANSWERS_TO_SCORE)
 
     assert state.should_score() is True
     assert state.final_status() == "completed"
@@ -590,9 +655,8 @@ async def test_abrupt_close_above_min_scores_and_completes() -> None:
 async def test_abrupt_close_below_min_abandoned_no_score() -> None:
     """Abrupt disconnect with answers < MIN_ANSWERS_TO_SCORE → 'abandoned' + no scoring."""
     state = InterviewState()
-    # Feed fewer answers than the threshold.
-    for i in range(MIN_ANSWERS_TO_SCORE - 1):
-        state.handle_conversation_item(_make_chat_message("user", f"A{i}"))
+    # Feed fewer exchanges than the threshold.
+    _feed_exchanges(state, MIN_ANSWERS_TO_SCORE - 1)
 
     assert state.should_score() is False
     assert state.final_status() == "abandoned"

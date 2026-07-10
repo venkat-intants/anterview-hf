@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
@@ -559,3 +560,248 @@ async def test_start_avatar_or_fallback_aclose_failure_still_returns_none() -> N
     )
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Mid-session avatar death → voice-only fallback
+#
+# The provider can kill the avatar conversation MID-interview (e.g. the Tavus
+# free-plan per-conversation duration cap fires at ~3 minutes). The avatar
+# participant leaves the room and, without the watch, the interviewer's audio
+# streams into the dead datastream forever — a silent-but-"Connected" room.
+# ---------------------------------------------------------------------------
+
+from app.worker.interview_worker import (  # noqa: E402 — grouped with its test section
+    InterviewState,
+    _degrade_to_voice_only_midsession,
+    _install_avatar_death_watch,
+)
+
+_AVATAR_ID = "tavus-avatar-agent"
+
+
+def _make_watch_fixtures() -> tuple[Any, Any, Any, InterviewState]:
+    """Return (avatar, session, room, state) mocks for the death-watch tests."""
+    avatar = MagicMock()
+    avatar.avatar_identity = _AVATAR_ID
+    session = MagicMock()
+    session.generate_reply = AsyncMock()
+    room = MagicMock()
+    state = InterviewState()
+    return avatar, session, room, state
+
+
+def _installed_handler(room: Any) -> Any:
+    """Extract the participant_disconnected handler registered on the room."""
+    assert room.on.call_count == 1
+    event_name, handler = room.on.call_args[0]
+    assert event_name == "participant_disconnected"
+    return handler
+
+
+def _participant(identity: str) -> MagicMock:
+    p = MagicMock()
+    p.identity = identity
+    return p
+
+
+def test_death_watch_none_avatar_registers_nothing() -> None:
+    """avatar=None (voice-only already) must not register a room handler."""
+    _, session, room, state = _make_watch_fixtures()
+
+    _install_avatar_death_watch(
+        avatar=None, session=session, room=room, state=state, session_id="s-1"
+    )
+
+    room.on.assert_not_called()
+
+
+def test_death_watch_missing_identity_registers_nothing() -> None:
+    """An avatar object without avatar_identity must not register a handler."""
+    _, session, room, state = _make_watch_fixtures()
+    avatar = MagicMock(spec=[])  # no avatar_identity attribute at all
+
+    _install_avatar_death_watch(
+        avatar=avatar, session=session, room=room, state=state, session_id="s-1"
+    )
+
+    room.on.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_death_watch_ignores_other_participants() -> None:
+    """A candidate (non-avatar) disconnect must NOT trigger the fallback."""
+    avatar, session, room, state = _make_watch_fixtures()
+    _install_avatar_death_watch(
+        avatar=avatar, session=session, room=room, state=state, session_id="s-1"
+    )
+    handler = _installed_handler(room)
+
+    with patch(
+        "app.worker.interview_worker._degrade_to_voice_only_midsession",
+        new_callable=AsyncMock,
+    ) as degrade:
+        handler(_participant("candidate-123"))
+        await asyncio.sleep(0)
+
+    degrade.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_death_watch_ignores_disconnect_after_close() -> None:
+    """Normal teardown also removes the avatar — no fallback once close fired."""
+    avatar, session, room, state = _make_watch_fixtures()
+    _install_avatar_death_watch(
+        avatar=avatar, session=session, room=room, state=state, session_id="s-1"
+    )
+    handler = _installed_handler(room)
+    state.mark_close_triggered()
+
+    with patch(
+        "app.worker.interview_worker._degrade_to_voice_only_midsession",
+        new_callable=AsyncMock,
+    ) as degrade:
+        handler(_participant(_AVATAR_ID))
+        await asyncio.sleep(0)
+
+    degrade.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_death_watch_avatar_disconnect_degrades_and_repeats_question() -> None:
+    """Avatar identity disconnect mid-session → audio swap + spoken recovery line."""
+    avatar, session, room, state = _make_watch_fixtures()
+    _install_avatar_death_watch(
+        avatar=avatar, session=session, room=room, state=state, session_id="s-1"
+    )
+    handler = _installed_handler(room)
+
+    with patch(
+        "app.worker.interview_worker._degrade_to_voice_only_midsession",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as degrade:
+        handler(_participant(_AVATAR_ID))
+        # Let the scheduled recovery task run to completion.
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    degrade.assert_awaited_once()
+    session.generate_reply.assert_awaited_once()
+    instructions = session.generate_reply.await_args.kwargs["instructions"]
+    assert "repeat" in instructions.lower(), (
+        "Recovery reply must repeat the current question, not advance"
+    )
+
+
+@pytest.mark.asyncio
+async def test_death_watch_fires_at_most_once() -> None:
+    """A second disconnect event for the avatar identity must be a no-op."""
+    avatar, session, room, state = _make_watch_fixtures()
+    _install_avatar_death_watch(
+        avatar=avatar, session=session, room=room, state=state, session_id="s-1"
+    )
+    handler = _installed_handler(room)
+
+    with patch(
+        "app.worker.interview_worker._degrade_to_voice_only_midsession",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as degrade:
+        handler(_participant(_AVATAR_ID))
+        handler(_participant(_AVATAR_ID))
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    assert degrade.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_death_watch_failed_degrade_skips_reply() -> None:
+    """If the audio swap failed there is no working output — do not try to speak."""
+    avatar, session, room, state = _make_watch_fixtures()
+    _install_avatar_death_watch(
+        avatar=avatar, session=session, room=room, state=state, session_id="s-1"
+    )
+    handler = _installed_handler(room)
+
+    with patch(
+        "app.worker.interview_worker._degrade_to_voice_only_midsession",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        handler(_participant(_AVATAR_ID))
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    session.generate_reply.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _degrade_to_voice_only_midsession — the audio-output swap itself
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_degrade_swaps_session_audio_output() -> None:
+    """Success path: interrupt in-flight speech, publish track, swap output.audio."""
+    session = MagicMock()
+    room = MagicMock()
+    fake_output = MagicMock()
+    fake_output.start = AsyncMock()
+
+    with patch(
+        "app.worker.interview_worker._ParticipantAudioOutput",
+        return_value=fake_output,
+    ) as output_cls:
+        ok = await _degrade_to_voice_only_midsession(session, room, session_id="s-1")
+
+    assert ok is True
+    session.interrupt.assert_called_once_with(force=True)
+    fake_output.start.assert_awaited_once()
+    assert session.output.audio is fake_output, (
+        "session.output.audio must point at the directly-published room output"
+    )
+    # The replacement must publish at RoomIO's voice-only defaults (24 kHz mono).
+    assert output_cls.call_args.kwargs["sample_rate"] == 24000
+    assert output_cls.call_args.kwargs["num_channels"] == 1
+
+
+@pytest.mark.asyncio
+async def test_degrade_start_failure_returns_false_without_swap() -> None:
+    """If the fallback track can't publish, return False and leave output alone."""
+    session = MagicMock()
+    original_output = session.output.audio
+    room = MagicMock()
+    fake_output = MagicMock()
+    fake_output.start = AsyncMock(side_effect=RuntimeError("publish failed"))
+
+    with patch(
+        "app.worker.interview_worker._ParticipantAudioOutput",
+        return_value=fake_output,
+    ):
+        ok = await _degrade_to_voice_only_midsession(session, room, session_id="s-1")
+
+    assert ok is False
+    assert session.output.audio is original_output, (
+        "A failed swap must not replace the session's audio output"
+    )
+
+
+@pytest.mark.asyncio
+async def test_degrade_interrupt_failure_does_not_abort_swap() -> None:
+    """session.interrupt() raising must not prevent the audio swap."""
+    session = MagicMock()
+    session.interrupt.side_effect = RuntimeError("nothing to interrupt")
+    room = MagicMock()
+    fake_output = MagicMock()
+    fake_output.start = AsyncMock()
+
+    with patch(
+        "app.worker.interview_worker._ParticipantAudioOutput",
+        return_value=fake_output,
+    ):
+        ok = await _degrade_to_voice_only_midsession(session, room, session_id="s-1")
+
+    assert ok is True
+    assert session.output.audio is fake_output

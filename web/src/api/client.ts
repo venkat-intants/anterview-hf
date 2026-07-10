@@ -270,6 +270,11 @@ export function apiDelete<T>(path: string, opts?: ClientOptions): Promise<T> {
   });
 }
 
+/** GET request against interview_core (VITE_INTERVIEW_API_URL). */
+export function interviewGet<T>(path: string, opts?: ClientOptions): Promise<T> {
+  return clientFetch<T>(buildUrl(INTERVIEW_BASE, path), opts);
+}
+
 /** POST request against interview_core (VITE_INTERVIEW_API_URL). */
 export function interviewPost<T>(path: string, body: unknown, opts?: ClientOptions): Promise<T> {
   return clientFetch<T>(buildUrl(INTERVIEW_BASE, path), {

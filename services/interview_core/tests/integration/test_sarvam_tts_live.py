@@ -58,7 +58,14 @@ async def test_sarvam_tts_live_english() -> None:
             f"Expected WAV RIFF header, got {result.audio_bytes[:4]!r}"
         )
         assert result.format == "wav"
-        assert result.sample_rate == 22050
+        # Sarvam's bulbul default output rate is account/version dependent —
+        # observed 22050 originally, 24000 since 2026-07 (new account). The
+        # adapter reads the real rate from the WAV header, so any standard
+        # speech rate is correct; pinning one exact value made this live test
+        # fail on a vendor-side default change.
+        assert result.sample_rate in (16000, 22050, 24000), (
+            f"Unexpected TTS sample rate: {result.sample_rate}"
+        )
     except TTSError as exc:
         pytest.fail(
             f"Sarvam TTS returned an error — "

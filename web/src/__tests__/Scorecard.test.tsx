@@ -44,6 +44,42 @@ vi.mock('../api/scorecard', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Mock integrity (proctoring) API — resolves null by default (proctoring off /
+// fetch failed), which must leave the page rendering exactly as before.
+// ---------------------------------------------------------------------------
+
+const MOCK_INTEGRITY_REPORT = {
+  integrity_score: 87,
+  summary: {
+    by_type: { gaze_away: 1, tab_blur: 1 },
+    flagged_seconds: { gaze_away: 16 },
+    total_events: 2,
+    total_flagged_seconds: 16,
+  },
+  session_started_at: '2026-07-10T10:00:00Z',
+  events: [
+    {
+      event_type: 'gaze_away',
+      started_at: '2026-07-10T10:02:31Z',
+      ended_at: '2026-07-10T10:02:47Z',
+      duration_seconds: 16,
+    },
+    {
+      event_type: 'tab_blur',
+      started_at: '2026-07-10T10:03:05Z',
+      ended_at: null,
+      duration_seconds: null,
+    },
+  ],
+};
+
+const mockGetSessionIntegrity = vi.fn().mockResolvedValue(null);
+
+vi.mock('../api/integrity', () => ({
+  getSessionIntegrity: (...args: unknown[]) => mockGetSessionIntegrity(...args) as unknown,
+}));
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -87,6 +123,7 @@ describe('Scorecard page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetScorecard.mockResolvedValue(MOCK_SCORECARD_DATA);
+    mockGetSessionIntegrity.mockResolvedValue(null);
   });
 
   it('shows a loading spinner initially', () => {
@@ -208,5 +245,67 @@ describe('Scorecard page', () => {
       expect(screen.getByRole('heading', { name: /your scorecard/i })).toBeInTheDocument();
     });
     expect(screen.getByRole('link', { name: /dashboard/i })).toBeInTheDocument();
+  });
+
+  // ── Interview integrity (proctoring) panel ─────────────────────────────────
+
+  it('displays the integrity panel with score, flags, and mm:ss timeline', async () => {
+    mockGetSessionIntegrity.mockResolvedValue(MOCK_INTEGRITY_REPORT);
+    renderScorecard();
+    await waitFor(() => {
+      expect(screen.getByText('Interview integrity')).toBeInTheDocument();
+    });
+
+    // Score badge (0–100 scale)
+    expect(screen.getByTestId('integrity-score')).toHaveTextContent('87');
+
+    // Flags list + timeline both label the event type (so 2 matches).
+    expect(screen.getAllByText('Looked away from screen').length).toBe(2);
+    expect(screen.getAllByText('Switched tab / window').length).toBe(2);
+
+    // Timeline: mm:ss offsets from session start + ranged-event duration.
+    expect(screen.getByText('02:31')).toBeInTheDocument();
+    expect(screen.getByText('03:05')).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: /integrity event timeline/i })).toBeInTheDocument();
+
+    // The integrity API was called with the scorecard's session_id.
+    expect(mockGetSessionIntegrity).toHaveBeenCalledWith(MOCK_SCORECARD_DATA.session_id);
+  });
+
+  it('shows the clean message when proctoring ran with zero flags', async () => {
+    mockGetSessionIntegrity.mockResolvedValue({
+      integrity_score: 100,
+      summary: { by_type: {}, flagged_seconds: {}, total_events: 0, total_flagged_seconds: 0 },
+      session_started_at: '2026-07-10T10:00:00Z',
+      events: [],
+    });
+    renderScorecard();
+    await waitFor(() => {
+      expect(screen.getByText('Interview integrity')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/no integrity flags were raised/i)).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: /integrity event timeline/i })).not.toBeInTheDocument();
+  });
+
+  it('hides the integrity panel when proctoring never ran (null score / null report)', async () => {
+    // Default beforeEach mock resolves null (fetch failed / endpoint absent).
+    renderScorecard();
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /your scorecard/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Interview integrity')).not.toBeInTheDocument();
+
+    // Explicit "proctoring off" report (score null) must also hide the panel.
+    mockGetSessionIntegrity.mockResolvedValue({
+      integrity_score: null,
+      summary: null,
+      session_started_at: '2026-07-10T10:00:00Z',
+      events: [],
+    });
+    renderScorecard();
+    await waitFor(() => {
+      expect(screen.getAllByRole('heading', { name: /your scorecard/i }).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText('Interview integrity')).not.toBeInTheDocument();
   });
 });

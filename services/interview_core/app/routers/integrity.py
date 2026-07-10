@@ -14,6 +14,17 @@ Contract:
     403  : session belongs to another user OR active recording consent absent
     404  : session not found
 
+  GET /api/sessions/{session_id}/integrity
+    200  : {"integrity_score": int|null, "summary": {...}|null,
+            "session_started_at": iso|null,
+            "events": [{event_type, started_at, ended_at, duration_seconds}, ...]}
+    401  : missing/invalid JWT
+    403  : session belongs to another user
+    404  : session not found
+    Read-back of the candidate's OWN proctoring data (DPDP §11 right to access;
+    no consent gate — reading your own stored data is not fresh processing).
+    integrity_score null means proctoring never ran for this session.
+
 DPDP note: gaze/face proctoring events are biometric-derived data under the
 DPDP Act 2023.  Storing them requires an active ``interview_voice_recording``
 consent on the ``dpdp_consent_ledger``.  This endpoint is FAIL-CLOSED: if the
@@ -38,7 +49,11 @@ from app.database import get_db_session
 from app.dependencies import CurrentUserDep
 from app.models import IntegrityEvent
 from app.models import Session as InterviewSession
-from app.proctoring import KNOWN_EVENT_TYPES, compute_integrity
+from app.proctoring import (
+    KNOWN_EVENT_TYPES,
+    _duration_seconds,  # single source of truth for the ranged-event clamp
+    compute_integrity,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -207,3 +222,96 @@ async def post_integrity_events(
         log.warning("integrity.unknown_event_types", session_id=str(session_id), types=sorted(unknown))
 
     return IntegrityBatchOut(integrity_score=score, summary=summary, stored=stored)
+
+
+# ---------------------------------------------------------------------------
+# Read-back — the candidate's own integrity report for the scorecard page
+# ---------------------------------------------------------------------------
+
+
+class IntegrityEventEntry(BaseModel):
+    """One stored proctoring event, time-ordered for the timeline view."""
+
+    event_type: str
+    started_at: datetime
+    ended_at: datetime | None
+    # Seconds for ranged events (gaze_away, face_absent, ...); null for
+    # instantaneous events (tab_blur, copy, ...). Uses the same clamp as the
+    # score computation so the timeline and the score always agree.
+    duration_seconds: float | None
+
+
+class IntegrityReportOut(BaseModel):
+    """Response for GET /api/sessions/{id}/integrity.
+
+    integrity_score is null when proctoring never ran for this session —
+    the UI must distinguish that from a clean 100.
+    """
+
+    integrity_score: int | None
+    summary: dict[str, Any] | None
+    # Session start — lets the UI render events as mm:ss offsets into the
+    # interview instead of raw wall-clock times.
+    session_started_at: datetime | None
+    events: list[IntegrityEventEntry]
+
+
+@router.get(
+    "/sessions/{session_id}/integrity",
+    response_model=IntegrityReportOut,
+    status_code=status.HTTP_200_OK,
+    summary="Read the session's integrity score, summary, and event timeline",
+)
+async def get_integrity_report(
+    current_user: CurrentUserDep,
+    db: DbSessionDep,
+    session_id: Annotated[_uuid_mod.UUID, Path()],
+) -> IntegrityReportOut:
+    """Return the caller's own proctoring report for one session.
+
+    Owner-only: candidates can read the integrity data of THEIR sessions
+    (DPDP right to access). HR/admin views go through admin_ops instead.
+    """
+    sess = (
+        await db.execute(
+            select(InterviewSession).where(InterviewSession.id == session_id)
+        )
+    ).scalar_one_or_none()
+    if sess is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+    if str(sess.user_id) != current_user["sub"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not own this session.",
+        )
+
+    rows = (
+        await db.execute(
+            select(
+                IntegrityEvent.event_type,
+                IntegrityEvent.started_at,
+                IntegrityEvent.ended_at,
+            )
+            .where(IntegrityEvent.session_id == session_id)
+            .order_by(IntegrityEvent.started_at)
+        )
+    ).all()
+
+    events = [
+        IntegrityEventEntry(
+            event_type=etype,
+            started_at=started,
+            ended_at=ended,
+            duration_seconds=(
+                round(_duration_seconds(started, ended), 1) if ended is not None else None
+            ),
+        )
+        for etype, started, ended in rows
+    ]
+
+    return IntegrityReportOut(
+        integrity_score=sess.integrity_score,
+        summary=sess.proctoring_summary,
+        session_started_at=sess.started_at,
+        events=events,
+    )

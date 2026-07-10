@@ -62,6 +62,22 @@ class AxisRationale(BaseModel):
     confidence: str = ""
 
 
+class AxisFeedbackEntry(BaseModel):
+    """Concrete mistakes + actionable practice steps for one axis."""
+
+    went_wrong: list[str] = Field(default_factory=list)
+    how_to_improve: list[str] = Field(default_factory=list)
+
+
+class AxisFeedback(BaseModel):
+    """Per-axis went_wrong / how_to_improve bullets. Empty for legacy rows."""
+
+    communication: AxisFeedbackEntry = Field(default_factory=AxisFeedbackEntry)
+    technical: AxisFeedbackEntry = Field(default_factory=AxisFeedbackEntry)
+    problem_solving: AxisFeedbackEntry = Field(default_factory=AxisFeedbackEntry)
+    confidence: AxisFeedbackEntry = Field(default_factory=AxisFeedbackEntry)
+
+
 class ImprovementItem(BaseModel):
     """A single improvement recommendation."""
 
@@ -79,6 +95,10 @@ class ScorecardResponse(BaseModel):
     rationale: AxisRationale = Field(
         default_factory=AxisRationale,
         description="Per-axis explanation of why each score was given.",
+    )
+    axis_feedback: AxisFeedback = Field(
+        default_factory=AxisFeedback,
+        description="Per-axis 'what went wrong' and 'how to improve' bullets.",
     )
     strengths: list[str]
     improvements: list[ImprovementItem]
@@ -356,6 +376,28 @@ async def get_scorecard(
         problem_solving=str(raw_rationale.get("problem_solving", "")),
         confidence=str(raw_rationale.get("confidence", "")),
     )
+
+    # axis_feedback is stored NESTED inside the rationale JSONB (no separate
+    # column). Legacy rows simply lack the key → empty lists everywhere.
+    raw_feedback = raw_rationale.get("axis_feedback") or {}
+
+    def _feedback_entry(axis: str) -> AxisFeedbackEntry:
+        entry = raw_feedback.get(axis)
+        if not isinstance(entry, dict):
+            return AxisFeedbackEntry()
+        went = entry.get("went_wrong")
+        improve = entry.get("how_to_improve")
+        return AxisFeedbackEntry(
+            went_wrong=[str(b) for b in went] if isinstance(went, list) else [],
+            how_to_improve=[str(b) for b in improve] if isinstance(improve, list) else [],
+        )
+
+    axis_feedback = AxisFeedback(
+        communication=_feedback_entry("communication"),
+        technical=_feedback_entry("technical"),
+        problem_solving=_feedback_entry("problem_solving"),
+        confidence=_feedback_entry("confidence"),
+    )
     improvements = [
         ImprovementItem(
             area=str(i.get("area", "")),
@@ -376,6 +418,7 @@ async def get_scorecard(
         composite_score=float(row["composite_score"]),
         scores=breakdown,
         rationale=rationale,
+        axis_feedback=axis_feedback,
         strengths=[str(s) for s in strengths],
         improvements=improvements,
         summary=str(row["summary"]),

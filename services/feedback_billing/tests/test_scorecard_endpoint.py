@@ -419,3 +419,102 @@ def test_get_scorecard_platform_owner_can_read_any(client: TestClient) -> None:
         app.dependency_overrides.pop(get_db_session, None)
 
     assert resp.status_code == 200, resp.text
+
+
+# ---------------------------------------------------------------------------
+# axis_feedback — per-axis went_wrong / how_to_improve read-back
+# ---------------------------------------------------------------------------
+
+
+def test_get_scorecard_surfaces_axis_feedback(client: TestClient) -> None:
+    """axis_feedback nested in the rationale JSONB is surfaced as its own field."""
+    token = _make_jwt()
+    row = {
+        **_GOOD_ROW,
+        "rationale": json.dumps(
+            {
+                "communication": "Clear and structured (6-7 band).",
+                "technical": "Solid fundamentals, light on depth.",
+                "problem_solving": "Strong, used concrete examples.",
+                "confidence": "Composed throughout.",
+                "axis_feedback": {
+                    "communication": {
+                        "went_wrong": ["Fragmented sentences", "Long pauses mid-answer"],
+                        "how_to_improve": ["Practise STAR-structured answers aloud"],
+                    },
+                    "technical": {
+                        "went_wrong": [],
+                        "how_to_improve": ["Review MLOps: serving, monitoring, versioning"],
+                    },
+                    # problem_solving intentionally absent, confidence malformed —
+                    # both must degrade to empty lists.
+                    "confidence": ["not", "a", "dict"],
+                },
+            }
+        ),
+    }
+    mock_db = _mock_db_row(row)
+
+    async def _override_db() -> AsyncSession:  # type: ignore[misc]
+        yield mock_db  # type: ignore[misc]
+
+    from app.database import get_db_session  # noqa: PLC0415
+
+    app.dependency_overrides[get_db_session] = _override_db
+    try:
+        with patch(
+            "app.routers.scorecard._generate_presigned_url",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            resp = client.get(
+                f"/api/scorecards/{_SCORECARD_ID}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 200, resp.text
+    fb = resp.json()["axis_feedback"]
+    assert fb["communication"]["went_wrong"] == [
+        "Fragmented sentences",
+        "Long pauses mid-answer",
+    ]
+    assert fb["communication"]["how_to_improve"] == [
+        "Practise STAR-structured answers aloud"
+    ]
+    assert fb["technical"]["went_wrong"] == []
+    assert fb["problem_solving"] == {"went_wrong": [], "how_to_improve": []}
+    assert fb["confidence"] == {"went_wrong": [], "how_to_improve": []}
+    # The plain rationale strings must be untouched by the nested key.
+    assert resp.json()["rationale"]["technical"] == "Solid fundamentals, light on depth."
+
+
+def test_get_scorecard_legacy_row_returns_empty_axis_feedback(client: TestClient) -> None:
+    """Rows scored before the feature (no axis_feedback key) → empty lists, not 500."""
+    token = _make_jwt()
+    mock_db = _mock_db_row(_GOOD_ROW)  # rationale has only the four axis strings
+
+    async def _override_db() -> AsyncSession:  # type: ignore[misc]
+        yield mock_db  # type: ignore[misc]
+
+    from app.database import get_db_session  # noqa: PLC0415
+
+    app.dependency_overrides[get_db_session] = _override_db
+    try:
+        with patch(
+            "app.routers.scorecard._generate_presigned_url",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            resp = client.get(
+                f"/api/scorecards/{_SCORECARD_ID}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 200, resp.text
+    fb = resp.json()["axis_feedback"]
+    for axis in ("communication", "technical", "problem_solving", "confidence"):
+        assert fb[axis] == {"went_wrong": [], "how_to_improve": []}

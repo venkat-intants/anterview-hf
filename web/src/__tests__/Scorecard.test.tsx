@@ -3,6 +3,7 @@
 // navigation links, radar chart presence.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '../context/AuthContext';
@@ -245,6 +246,75 @@ describe('Scorecard page', () => {
       expect(screen.getByRole('heading', { name: /your scorecard/i })).toBeInTheDocument();
     });
     expect(screen.getByRole('link', { name: /dashboard/i })).toBeInTheDocument();
+  });
+
+  // ── Per-axis feedback accordion (what went wrong / how to improve) ──────────
+
+  it('shows went-wrong and how-to-improve bullets when a competency is expanded', async () => {
+    mockGetScorecard.mockResolvedValue({
+      ...MOCK_SCORECARD_DATA,
+      rationale: {
+        communication: 'Fragmented sentences limited clarity (0-3 band).',
+        technical: '',
+        problem_solving: '',
+        confidence: '',
+      },
+      axis_feedback: {
+        communication: {
+          went_wrong: ['Answers were fragmented mid-sentence', 'Frequent long pauses'],
+          how_to_improve: ['Practise STAR-structured answers aloud'],
+        },
+        technical: { went_wrong: [], how_to_improve: [] },
+        problem_solving: { went_wrong: [], how_to_improve: [] },
+        confidence: { went_wrong: [], how_to_improve: [] },
+      },
+    });
+    renderScorecard();
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /your scorecard/i })).toBeInTheDocument();
+    });
+
+    // Expand the Communication accordion (button appears in the Competency
+    // breakdown card; getAllByRole because the radar also renders the label).
+    const toggle = screen
+      .getAllByRole('button', { expanded: false })
+      .find((b) => b.textContent?.includes('Communication'));
+    expect(toggle).toBeDefined();
+    await userEvent.click(toggle!);
+
+    // Why this score (existing) + the two new marked sections.
+    expect(screen.getByText(/fragmented sentences limited clarity/i)).toBeInTheDocument();
+    expect(screen.getByText('What went wrong')).toBeInTheDocument();
+    expect(screen.getByText('Answers were fragmented mid-sentence')).toBeInTheDocument();
+    expect(screen.getByText('Frequent long pauses')).toBeInTheDocument();
+    expect(screen.getByText('How to improve')).toBeInTheDocument();
+    expect(screen.getByText('Practise STAR-structured answers aloud')).toBeInTheDocument();
+  });
+
+  it('legacy scorecards without axis_feedback show only the rationale on expand', async () => {
+    mockGetScorecard.mockResolvedValue({
+      ...MOCK_SCORECARD_DATA,
+      rationale: {
+        communication: 'Clear and structured answers.',
+        technical: '',
+        problem_solving: '',
+        confidence: '',
+      },
+      // no axis_feedback field at all (rows scored before the feature)
+    });
+    renderScorecard();
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /your scorecard/i })).toBeInTheDocument();
+    });
+
+    const toggle = screen
+      .getAllByRole('button', { expanded: false })
+      .find((b) => b.textContent?.includes('Communication'));
+    await userEvent.click(toggle!);
+
+    expect(screen.getByText(/clear and structured answers/i)).toBeInTheDocument();
+    expect(screen.queryByText('What went wrong')).not.toBeInTheDocument();
+    expect(screen.queryByText('How to improve')).not.toBeInTheDocument();
   });
 
   // ── Interview integrity (proctoring) panel ─────────────────────────────────

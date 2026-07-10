@@ -98,6 +98,12 @@ Language     : {{ lang_name }}
     "problem_solving": "<why this exact score>",
     "confidence":      "<why this exact score>"
   },
+  "axis_feedback": {
+    "communication":   {"went_wrong": [<string>, ...], "how_to_improve": [<string>, ...]},
+    "technical":       {"went_wrong": [<string>, ...], "how_to_improve": [<string>, ...]},
+    "problem_solving": {"went_wrong": [<string>, ...], "how_to_improve": [<string>, ...]},
+    "confidence":      {"went_wrong": [<string>, ...], "how_to_improve": [<string>, ...]}
+  },
   "strengths":    [<string>, <string>, <string>],
   "improvements": [
     {"area": <string>, "suggestion": <string>},
@@ -118,6 +124,15 @@ Rules:
   demonstrate to score higher. Ground every claim in the transcript — do NOT
   invent details that were not said. If the candidate barely spoke on an axis,
   say so explicitly and explain how that limited the score.
+- "axis_feedback": for EACH of the four axes give
+  (a) "went_wrong": 2-4 short bullets naming the CONCRETE mistakes or gaps
+      observed on that axis, each grounded in the transcript (paraphrase, never
+      quote PII). If nothing went wrong on an axis (score 8+), return [].
+  (b) "how_to_improve": 2-4 short bullets of SPECIFIC, actionable practice
+      steps for that axis — things the candidate can do before the next
+      interview (e.g. "practise answering in full sentences using the STAR
+      structure"), not vague advice like "improve communication".
+  Each bullet must be one sentence, self-contained, and about THIS axis only.
 
 ## Transcript
 {% for turn in turns %}
@@ -260,11 +275,12 @@ async def score_session(
     )
     generation_config: dict[str, Any] = {
         "temperature": 0.2,
-        # Raised from 2048 to fit the larger output (scores + per-axis
-        # rationale + strengths + improvements + summary). With JSON mode +
-        # thinking disabled the whole budget goes to the JSON; a too-small
-        # cap truncates it mid-string and the parse fails.
-        "maxOutputTokens": 4096,
+        # Raised from 2048→4096→6144 as the output grew (scores + per-axis
+        # rationale + per-axis went_wrong/how_to_improve bullets + strengths +
+        # improvements + summary). With JSON mode + thinking disabled the whole
+        # budget goes to the JSON; a too-small cap truncates it mid-string and
+        # the parse fails.
+        "maxOutputTokens": 6144,
         # JSON mode (B-041) — forces well-formed, fence-free JSON. Without it
         # the scorer truncated/malformed its JSON and 502'd, so the candidate
         # never got a scorecard.
@@ -356,8 +372,31 @@ async def score_session(
     # Per-axis rationale ("why this score"). Best-effort: a model that omits it
     # (or omits an axis) must not fail scoring — missing axes become "".
     raw_rationale: dict[str, Any] = parsed.get("rationale", {}) or {}
-    rationale: dict[str, str] = {
+    rationale: dict[str, Any] = {
         axis: str(raw_rationale.get(axis, "")) for axis in required_axes
+    }
+
+    # Per-axis "what went wrong" / "how to improve" bullets. Best-effort like
+    # rationale — a model that omits them must not fail scoring. Stored NESTED
+    # inside the rationale JSONB column (no schema migration; legacy readers
+    # that only .get() the four axis keys are unaffected).
+    raw_axis_feedback: dict[str, Any] = parsed.get("axis_feedback", {}) or {}
+
+    def _bullets(axis: str, key: str) -> list[str]:
+        entry = raw_axis_feedback.get(axis)
+        if not isinstance(entry, dict):
+            return []
+        raw = entry.get(key)
+        if not isinstance(raw, list):
+            return []
+        return [str(b).strip() for b in raw if str(b).strip()]
+
+    rationale["axis_feedback"] = {
+        axis: {
+            "went_wrong": _bullets(axis, "went_wrong"),
+            "how_to_improve": _bullets(axis, "how_to_improve"),
+        }
+        for axis in required_axes
     }
 
     # ---- 5. Compute composite score --------------------------------------

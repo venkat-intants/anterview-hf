@@ -1,11 +1,13 @@
 // Tests for the Google SSO api module (B-035)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { completeGoogleLogin, googleLoginUrl } from '../api/sso';
+import { getToken, clearToken } from '../api/tokenStore';
 
 describe('sso api', () => {
   const originalFetch = global.fetch;
   afterEach(() => {
     global.fetch = originalFetch;
+    clearToken();
     vi.restoreAllMocks();
   });
 
@@ -29,6 +31,26 @@ describe('sso api', () => {
     const res = await completeGoogleLogin('code123', 'state123');
     expect(res.access_token).toBe('jwt-token');
     expect(res.user_id).toBe('user-1');
+  });
+
+  it('completeGoogleLogin stores the access token so the follow-up getMe is authenticated', async () => {
+    // Regression guard: on the first Google sign-in the token must land in the
+    // store here — otherwise getMe() fires with no Bearer header → 401 → the
+    // client bounces to /login, and the user has to sign in a second time.
+    clearToken();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          access_token: 'jwt-token',
+          token_type: 'bearer',
+          user_id: 'user-1',
+        }),
+    }) as unknown as typeof fetch;
+
+    expect(getToken()).toBeNull();
+    await completeGoogleLogin('code123', 'state123');
+    expect(getToken()).toBe('jwt-token');
   });
 
   it('completeGoogleLogin throws the server detail on a non-2xx response', async () => {

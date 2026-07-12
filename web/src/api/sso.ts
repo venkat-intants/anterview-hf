@@ -6,8 +6,14 @@
 // frontend landing route after Google redirects back with ?code&state.
 //
 // Note: completeGoogleLogin does NOT use the central apiClient because it is
-// an unauthenticated exchange (no Bearer token needed, no refresh loop). The
-// caller (GoogleCallback.tsx) sets the token in the store via setAuth.
+// an unauthenticated exchange (no Bearer token needed, no refresh loop). It
+// stores the returned access token in the tokenStore itself (mirroring login()
+// in auth.ts) so the caller's immediate getMe() carries the Bearer header —
+// without this, getMe fires against an empty store → 401 → bounced to /login on
+// the very first Google sign-in. The caller still calls setAuth to publish the
+// token + user into React state.
+
+import { setToken } from './tokenStore';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -57,5 +63,9 @@ export async function completeGoogleLogin(code: string, state: string): Promise<
     throw new Error(body.detail ?? `Google sign-in failed (HTTP ${response.status})`);
   }
 
-  return response.json() as Promise<SsoTokenResponse>;
+  const tokens = (await response.json()) as SsoTokenResponse;
+  // Populate the store immediately so the next authenticated call (getMe in
+  // GoogleCallback.tsx) sends the Bearer header. See the module note above.
+  setToken(tokens.access_token);
+  return tokens;
 }

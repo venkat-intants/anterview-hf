@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from shared.intelligence import RoleProfile
+
 # NOTE: pydantic v2 schema generation requires ``typing_extensions.TypedDict``
 # on Python < 3.12 — stdlib ``typing.TypedDict`` does not expose enough
 # runtime metadata for nested-TypedDict introspection. LangGraph's
@@ -94,6 +96,13 @@ class InterviewState(TypedDict):
     resume_text: str  # extracted from candidate's uploaded resume (may be empty)
     jd_text: str  # parsed JD document text (may be empty)
 
+    # Intelligence layer: the derived role model (shared.intelligence). Drives
+    # per-turn competency selection in ``follow_up`` and the [ROLE MODEL] block
+    # in the system prompt. None keeps the pre-intelligence-layer behaviour
+    # byte-for-byte, which is what unit tests and any caller that could not
+    # derive a profile rely on.
+    role_profile: RoleProfile | None
+
 
 def build_initial_state(
     *,
@@ -110,6 +119,7 @@ def build_initial_state(
     required_skills: list[str] | None = None,
     resume_text: str = "",
     jd_text: str = "",
+    role_profile: RoleProfile | None = None,
 ) -> InterviewState:
     """Construct a fresh ``InterviewState`` for a brand-new session.
 
@@ -147,4 +157,5 @@ def build_initial_state(
         required_skills=required_skills if required_skills is not None else [],
         resume_text=resume_text,
         jd_text=jd_text,
+        role_profile=role_profile,
     )

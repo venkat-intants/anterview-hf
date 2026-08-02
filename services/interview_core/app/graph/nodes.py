@@ -109,6 +109,7 @@ async def ask_question(state: InterviewState, *, adapter: LLMAdapter) -> Intervi
         required_skills=state.get("required_skills", []),
         resume_text=state.get("resume_text", ""),
         jd_text=state.get("jd_text", ""),
+        role_profile=state.get("role_profile"),
     )
     history = _build_history_messages(state)
     history.append(
@@ -224,6 +225,7 @@ async def follow_up(state: InterviewState, *, adapter: LLMAdapter) -> InterviewS
         required_skills=state.get("required_skills", []),
         resume_text=state.get("resume_text", ""),
         jd_text=state.get("jd_text", ""),
+        role_profile=state.get("role_profile"),
     )
     history = _build_history_messages(state)
     history.append(
@@ -232,6 +234,7 @@ async def follow_up(state: InterviewState, *, adapter: LLMAdapter) -> InterviewS
                 last_candidate_input=last_candidate_input,
                 turn_count=state["turn_count"],
                 max_turns=state["max_turns"],
+                role_profile=state.get("role_profile"),
             )
         )
     )

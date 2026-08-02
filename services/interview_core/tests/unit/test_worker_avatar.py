@@ -6,7 +6,7 @@ Covers:
   - _build_avatar simli path ignores replica_id entirely.
   - _build_avatar "none" path returns None regardless of replica_id.
   - resolve_avatar integration: voice and replica_id come from the catalog.
-  - _lookup_session returns a 5-tuple with presenter_id as the 5th element
+  - _lookup_session returns a fully-populated SessionContext
     (mocked DB path — no real connection needed).
 """
 
@@ -21,7 +21,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.avatars import AVATARS_BY_ID, DEFAULT_AVATAR_ID, resolve_avatar
-from app.worker.interview_worker import _build_avatar, _lookup_session
+from app.worker.interview_worker import (
+    SessionContext,
+    _build_avatar,
+    _lookup_session,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -255,7 +259,7 @@ def test_resolve_none_gives_default_voice() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _lookup_session — 5-tuple arity regression tests (no live DB connection)
+# _lookup_session — SessionContext population tests (no live DB connection)
 #
 # Strategy: patch the two symbols _lookup_session imports locally:
 #   app.database.init_engine      → no-op
@@ -264,8 +268,7 @@ def test_resolve_none_gives_default_voice() -> None:
 #
 # The mock AsyncSession.execute() returns a scalar_one_or_none() on an
 # awaitable Result mock.  This is the same boundary the function crosses at
-# runtime; changing the unpack to 4-tuple inside the function would break these
-# tests immediately.
+# runtime; dropping a field inside the function breaks these tests immediately.
 # ---------------------------------------------------------------------------
 
 
@@ -339,23 +342,32 @@ def _make_job_row(
     level: str = "mid",
     description: str = "Build APIs",
     company_name: str | None = None,
+    competencies: object = None,
+    department: str | None = None,
+    interview_type: str | None = None,
 ) -> MagicMock:
     row = MagicMock()
     row.title = title
     row.level = level
     row.description = description
     row.company_name = company_name
+    # Role-model inputs. Set explicitly (rather than left as MagicMock
+    # attributes) because a MagicMock is truthy — `job.department or ""` would
+    # otherwise leak a mock object into the SessionContext.
+    row.competencies = competencies
+    row.department = department
+    row.interview_type = interview_type
     return row
 
 
 @pytest.mark.asyncio
-async def test_lookup_session_returns_7_tuple_with_presenter_id() -> None:
-    """_lookup_session must return a 7-tuple; 5th is presenter_id, 6th is
-    resume_text, 7th is company_name.
+async def test_lookup_session_populates_every_context_field() -> None:
+    """_lookup_session must fill the whole SessionContext from session + job.
 
-    This test would FAIL if someone removed an element from the return tuple,
-    because the unpack in entrypoint() would raise ValueError: not enough
-    values to unpack.
+    Was a 7-tuple arity assertion; the role-competency engine needed three more
+    job fields, so the return type became a dataclass and these are now field
+    assertions — a strictly better guard, since a field that silently stops
+    being populated is caught, not just a change in count.
     """
     session_id = str(uuid.uuid4())
     session_row = _make_session_row(presenter_id="gloria")
@@ -363,6 +375,9 @@ async def test_lookup_session_returns_7_tuple_with_presenter_id() -> None:
     job_row = _make_job_row(
         title="Data Analyst", level="entry", description="Analyse data",
         company_name="Google",
+        competencies={"required": ["SQL", "Power BI"]},
+        department="Analytics",
+        interview_type="technical",
     )
 
     factory = _make_db_factory(
@@ -373,39 +388,25 @@ async def test_lookup_session_returns_7_tuple_with_presenter_id() -> None:
         patch("app.database.init_engine"),
         patch("app.database.get_session_factory", return_value=factory),
     ):
-        result = await _lookup_session(session_id)
+        ctx = await _lookup_session(session_id)
 
-    # Must be a 7-tuple — this assertion catches a regression to a shorter tuple.
-    assert len(result) == 7, (
-        f"_lookup_session must return a 7-tuple; got {len(result)}-tuple: {result!r}"
-    )
-    (
-        job_title, language, experience_level, jd_text,
-        presenter_id, resume_text, company_name,
-    ) = result
-
-    assert presenter_id == "gloria", (
-        f"5th element must be session.presenter_id; got {presenter_id!r}"
-    )
-    assert resume_text == "5 years building Django APIs at Acme.", (
-        f"6th element must be the candidate's resume_text; got {resume_text!r}"
-    )
-    assert company_name == "Google", (
-        f"7th element must be jobs.company_name; got {company_name!r}"
-    )
-    assert job_title == "Data Analyst"
-    assert language == "en"
-    assert experience_level == "entry"
-    assert jd_text == "Analyse data"
+    assert ctx.presenter_id == "gloria"
+    assert ctx.resume_text == "5 years building Django APIs at Acme."
+    assert ctx.company_name == "Google"
+    assert ctx.job_title == "Data Analyst"
+    assert ctx.language == "en"
+    assert ctx.experience_level == "entry"
+    assert ctx.jd_text == "Analyse data"
+    # Role-model inputs — without these the engine falls back to classifying
+    # on the job title alone.
+    assert ctx.required_skills == ["SQL", "Power BI"]
+    assert ctx.department == "Analytics"
+    assert ctx.interview_type == "technical"
 
 
 @pytest.mark.asyncio
-async def test_lookup_session_7_tuple_none_presenter_id() -> None:
-    """When session.presenter_id is None (legacy row), 5th element must be None — not omitted.
-
-    Ensures the unpack in entrypoint() always receives exactly 7 values even
-    for old rows, and NULL company_name is normalised to "".
-    """
+async def test_lookup_session_normalises_nulls_to_safe_defaults() -> None:
+    """Legacy rows with NULL columns must normalise, not leak None downstream."""
     session_id = str(uuid.uuid4())
     session_row = _make_session_row(presenter_id=None)
     user_row = _make_user_row(resume_text=None)
@@ -419,25 +420,22 @@ async def test_lookup_session_7_tuple_none_presenter_id() -> None:
         patch("app.database.init_engine"),
         patch("app.database.get_session_factory", return_value=factory),
     ):
-        result = await _lookup_session(session_id)
+        ctx = await _lookup_session(session_id)
 
-    assert len(result) == 7, f"Expected 7-tuple; got {len(result)}-tuple"
-    *_, presenter_id, resume_text, company_name = result
-    assert presenter_id is None, (
-        "Legacy rows with presenter_id=None must return None as the 5th element, "
-        "not be omitted — callers unpack all 7 positions."
+    assert ctx.presenter_id is None, (
+        "Legacy rows with presenter_id=None must stay None — resolve_avatar(None) "
+        "returns the default avatar."
     )
-    assert resume_text == "", (
-        "A NULL users.resume_text must be normalised to '' as the 6th element."
-    )
-    assert company_name == "", (
-        "A NULL jobs.company_name must be normalised to '' as the 7th element."
-    )
+    assert ctx.resume_text == "", "A NULL users.resume_text must normalise to ''."
+    assert ctx.company_name == "", "A NULL jobs.company_name must normalise to ''."
+    assert ctx.required_skills == [], "A NULL jobs.competencies must normalise to []."
+    assert ctx.department == ""
+    assert ctx.interview_type == "screening"
 
 
 @pytest.mark.asyncio
-async def test_lookup_session_missing_session_returns_7_tuple_safe_defaults() -> None:
-    """When the session row is absent, _lookup_session must still return a 7-tuple.
+async def test_lookup_session_missing_session_returns_safe_defaults() -> None:
+    """When the session row is absent, _lookup_session must still return a context.
 
     Elements 5-7 must be (None, "", "") — safe defaults so the entrypoint
     unpack never raises ValueError regardless of missing data.
@@ -452,43 +450,20 @@ async def test_lookup_session_missing_session_returns_7_tuple_safe_defaults() ->
     ):
         result = await _lookup_session(session_id)
 
-    assert len(result) == 7, f"Even on missing session, must return 7-tuple; got {len(result)}"
-    (
-        job_title, language, experience_level, jd_text,
-        presenter_id, resume_text, company_name,
-    ) = result
-    assert job_title == "the role"
-    assert language == "en"
-    assert experience_level == "entry"
-    assert jd_text == ""
-    assert presenter_id is None
-    assert resume_text == ""
-    assert company_name == ""
+    assert result == SessionContext(), (
+        "A missing session row must yield the default SessionContext so the "
+        "interview still starts generically instead of crashing."
+    )
 
 
 @pytest.mark.asyncio
-async def test_lookup_session_invalid_uuid_returns_7_tuple_safe_defaults() -> None:
-    """A non-UUID room_name must return a 7-tuple with safe defaults (no exception).
+async def test_lookup_session_invalid_uuid_returns_safe_defaults() -> None:
+    """A non-UUID room_name must return safe defaults, never raise.
 
-    This is the guard for malformed room names — the early ValueError branch
-    must still produce exactly 7 values so the caller's unpack is always safe.
+    Guard for malformed room names — the early ValueError branch must still
+    produce a usable context.
     """
-    result = await _lookup_session("not-a-uuid")
-
-    assert len(result) == 7, (
-        f"Non-UUID room_name must still yield 7-tuple; got {len(result)}-tuple"
-    )
-    (
-        job_title, language, experience_level, jd_text,
-        presenter_id, resume_text, company_name,
-    ) = result
-    assert job_title == "the role"
-    assert language == "en"
-    assert experience_level == "entry"
-    assert jd_text == ""
-    assert presenter_id is None
-    assert resume_text == ""
-    assert company_name == ""
+    assert await _lookup_session("not-a-uuid") == SessionContext()
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,8 @@ async def generate_exam_questions_remote(
     difficulty: str,
     language: str,
     acting_user_id: str,
+    job_title: str = "",
+    experience_level: str = "mid",
 ) -> list[dict[str, Any]]:
     """Generate MCQs via feedback_billing. Raises ExamGenerationError on failure.
 
@@ -61,6 +63,11 @@ async def generate_exam_questions_remote(
                     "num_questions": num_questions,
                     "difficulty": difficulty,
                     "language": language,
+                    # Role context — lets the generator spread questions across
+                    # the competencies this role is assessed on, matching the
+                    # interview. Empty job_title = topic-only, as before.
+                    "job_title": job_title,
+                    "experience_level": experience_level,
                 },
             )
     except httpx.RequestError as exc:
@@ -82,6 +89,8 @@ async def generate_coding_questions_remote(
     language: str,
     allowed_languages: list[str],
     acting_user_id: str,
+    job_title: str = "",
+    experience_level: str = "mid",
 ) -> list[dict[str, Any]]:
     """Generate coding problems via feedback_billing. Raises ExamGenerationError.
 
@@ -102,6 +111,8 @@ async def generate_coding_questions_remote(
                     "difficulty": difficulty,
                     "language": language,
                     "allowed_languages": allowed_languages,
+                    "job_title": job_title,
+                    "experience_level": experience_level,
                 },
             )
     except httpx.RequestError as exc:

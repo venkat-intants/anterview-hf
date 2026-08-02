@@ -1,0 +1,148 @@
+# CI — lint, type-check and test every service on push and PR.
+#
+# The repo had no test automation before this: `sync-to-space.yml` pushed to
+# Hugging Face, so a broken commit reached the live Space and was discovered
+# there. This runs first and gates that.
+#
+# Design notes:
+#   * One job per service, in parallel. Each service pins its OWN dependency
+#     set (see the four requirements.txt files — that separation is
+#     deliberate, per the root Dockerfile), so a single shared env would test
+#     something no deployment actually runs.
+#   * `shared/` is on PYTHONPATH rather than installed: it is COPY'd into each
+#     image at /app/shared with PYTHONPATH=/app, and CI should exercise the
+#     same import path as production.
+#   * Integration tests are excluded. They need live Neon/Upstash/R2/Sarvam
+#     credentials, so on a fork PR they would fail for lack of secrets rather
+#     than for lack of correctness. Unit suites cover the logic.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch cancels the previous run — no point burning
+# minutes on a commit that has already been superseded.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  shared:
+    name: shared (intelligence + agents + auth)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install
+        # shared/ is dependency-light by design (stdlib + pydantic + structlog),
+        # which is what lets all four services import it. Installing only that
+        # here keeps the constraint honest: if someone adds httpx to shared/,
+        # this job fails and the design violation is caught immediately.
+        run: |
+          python -m pip install --upgrade pip
+          pip install pydantic structlog pytest pytest-asyncio ruff mypy
+      - name: Lint
+        run: ruff check shared/
+      - name: Type-check
+        run: mypy shared/intelligence shared/agents --ignore-missing-imports
+      - name: Test
+        run: python -m pytest shared/intelligence shared/agents -q
+
+  services:
+    name: ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One failing service should not hide the state of the other three.
+      fail-fast: false
+      matrix:
+        service: [data_gateway, interview_core, feedback_billing, admin_ops]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+
+      - name: System deps
+        # portaudio/ffmpeg are needed by interview_core's audio stack
+        # (sounddevice, PyAV). Harmless no-ops for the other three.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpq-dev portaudio19-dev libgomp1
+
+      - name: Install
+        working-directory: services/${{ matrix.service }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio ruff mypy
+
+      - name: Lint
+        working-directory: services/${{ matrix.service }}
+        run: ruff check app/ tests/
+
+      - name: Test
+        working-directory: services/${{ matrix.service }}
+        # Placeholder secrets: every service's Settings has required fields with
+        # no default (database_url, jwt_secret, s3_*) and fails fast at import
+        # without them. These are syntactically valid and point nowhere — unit
+        # tests never open a connection.
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+          EXAM_LINK_SECRET: ci-only-exam-secret-0123456789abcdef
+          INTERVIEW_LINK_SECRET: ci-only-interview-secret-0123456789ab
+          CONSENT_IP_SALT: ci-only-salt-0123456789abcdef
+          S3_ENDPOINT: http://localhost:9000
+          S3_ACCESS_KEY_ID: ci-access-key
+          S3_SECRET_ACCESS_KEY: ci-secret-key
+        # -m "not integration" drops the live-service tests; the deselect
+        # covers integration dirs that predate the marker.
+        run: |
+          python -m pytest tests/ -q -m "not integration" \
+            --ignore=tests/integration
+
+  web:
+    name: web (typecheck + lint + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        working-directory: web
+        run: npm ci
+      - name: Type-check
+        working-directory: web
+        run: npx tsc --noEmit
+      - name: Lint
+        working-directory: web
+        run: npx eslint src
+      - name: Build
+        working-directory: web
+        # Same empty API bases the production image uses — every client call
+        # becomes relative and Caddy fans it out (see the root Dockerfile).
+        env:
+          VITE_API_BASE_URL: ''
+          VITE_INTERVIEW_API_URL: ''
+          VITE_FEEDBACK_API_URL: ''
+          VITE_ADMIN_API_URL: ''
+        run: npm run build

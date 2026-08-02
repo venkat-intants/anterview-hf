@@ -170,3 +170,12 @@ cls/
 
 # HF Space consolidated secrets — NEVER commit (space.env.example is the committable template)
 space.env
+
+# Microsoft Office lock/owner files (~$Foo.docx). Committed by accident once;
+# they are per-machine temp state and never belong in the repo.
+~$*
+
+# One-off AI response dumps written while debugging a generator. Never
+# referenced by code — if you need one, write it under a path already ignored.
+**/raw_gen_debug.txt
+**/gemini_debug*.txt

@@ -45,6 +45,7 @@ import time
 from collections.abc import AsyncIterator
 
 import structlog
+from shared.intelligence import RoleProfile
 
 from app.graph.nodes import _build_history_messages
 from app.graph.personas import Persona
@@ -103,6 +104,7 @@ class InterviewBrain:
         required_skills: list[str] | None = None,
         resume_text: str = "",
         jd_text: str = "",
+        role_profile: RoleProfile | None = None,
     ) -> tuple[InterviewBrain, str]:
         """Create a brain for a new session and emit the greeting.
 
@@ -124,6 +126,7 @@ class InterviewBrain:
             required_skills=required_skills,
             resume_text=resume_text,
             jd_text=jd_text,
+            role_profile=role_profile,
         )
         greeting_line = render_greeting(state["language"], state["job_title"])
         state["phase"] = PHASE_IN_PROGRESS
@@ -231,6 +234,7 @@ class InterviewBrain:
             required_skills=s.get("required_skills", []),
             resume_text=s.get("resume_text", ""),
             jd_text=s.get("jd_text", ""),
+            role_profile=s.get("role_profile"),
         )
 
     async def _follow_up(self) -> AsyncIterator[str]:
@@ -249,6 +253,7 @@ class InterviewBrain:
                     last_candidate_input=last_candidate_input,
                     turn_count=self._state["turn_count"],
                     max_turns=self._state["max_turns"],
+                    role_profile=self._state.get("role_profile"),
                 )
             )
         )

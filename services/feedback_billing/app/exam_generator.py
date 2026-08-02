@@ -19,6 +19,11 @@ from typing import Any
 
 import httpx
 import structlog
+from shared.intelligence import (
+    baseline_profile,
+    compute_profile_id,
+    render_exam_blueprint,
+)
 
 from app.config import Settings
 
@@ -109,6 +114,50 @@ def _normalise_question(raw: Any) -> dict[str, Any] | None:
     return {"prompt": prompt[:2000], "options": options, "correct_index": correct_index}
 
 
+# Families where a stdin/stdout coding problem is a sensible assessment. A
+# coding exam authored for a welding or nursing role is a user error, and
+# spreading its questions across welding competencies would produce nonsense
+# rather than catching the mistake — so the blueprint is skipped and the
+# free-text topic drives, exactly as before.
+_CODING_FAMILIES: frozenset[str] = frozenset({"software_it", "data_analytics"})
+
+
+def _role_blueprint(
+    job_title: str,
+    level: str,
+    count: int,
+    *,
+    only_families: frozenset[str] | None = None,
+) -> str:
+    """Render a per-competency question quota, or "" when not applicable.
+
+    Deterministic baseline only — no LLM call and no cache lookup. Exam
+    authoring is already one Gemini round-trip; adding a derivation call in
+    front of it would double the latency an HR user waits through for a
+    marginal gain in specificity that the topic string mostly supplies anyway.
+
+    ``only_families`` restricts the blueprint to occupational families where it
+    makes sense (see ``_CODING_FAMILIES``).
+    """
+    title = (job_title or "").strip()
+    if not title:
+        return ""
+    seniority = level if level in ("entry", "mid", "senior") else "mid"
+    profile = baseline_profile(
+        profile_id=compute_profile_id(job_title=title, seniority=seniority),
+        job_title=title,
+        seniority=seniority,  # type: ignore[arg-type]
+    )
+    if only_families is not None and profile.domain_family not in only_families:
+        log.info(
+            "exam_generator.blueprint_skipped",
+            domain_family=profile.domain_family,
+            reason="family_not_applicable",
+        )
+        return ""
+    return render_exam_blueprint(profile, count)
+
+
 async def generate_exam_questions(
     *,
     topic: str,
@@ -116,8 +165,15 @@ async def generate_exam_questions(
     difficulty: str = "medium",
     language: str = "en",
     settings: Settings,
+    job_title: str = "",
+    experience_level: str = "mid",
 ) -> list[dict[str, Any]]:
     """Generate MCQs for *topic*. Returns a list of validated question dicts.
+
+    ``job_title`` (optional) pulls in the role model: the questions are then
+    spread across the competencies THIS role is assessed on, in the same
+    proportion the interview uses. Without it the generator behaves exactly as
+    before, driven by the free-text topic alone.
 
     Each dict: {"prompt": str, "options": [4 strings], "correct_index": int 0-3}.
     Raises ExamGenerationError on Gemini failure / unparseable output / zero valid
@@ -133,6 +189,10 @@ async def generate_exam_questions(
         .replace("{{LANGUAGE}}", language_name)
         .replace("{{COUNT}}", str(count))
     )
+
+    blueprint = _role_blueprint(job_title, experience_level, count)
+    if blueprint:
+        prompt = prompt + "\n\n" + blueprint
 
     parsed = await _call_gemini_json(
         prompt, settings, max_output_tokens=min(8192, 2048 + count * 256)
@@ -384,8 +444,15 @@ async def generate_coding_questions(
     language: str = "en",
     allowed_languages: list[str],
     settings: Settings,
+    job_title: str = "",
+    experience_level: str = "mid",
 ) -> list[dict[str, Any]]:
     """Generate stdin/stdout coding problems for *topic*.
+
+    ``job_title`` (optional) spreads the problems across the role's
+    competencies — but only for families where a coding test is a sensible
+    assessment (see ``_CODING_FAMILIES``). For any other role the topic drives
+    alone, as before.
 
     Each dict: {"prompt": str, "reference_solution": str | None,
     "test_cases": [{"stdin", "expected_output", "is_sample", "weight"}]}
@@ -414,6 +481,12 @@ async def generate_coding_questions(
     # Coding problems are far heavier than MCQs (statement + solution + cases);
     # thinking is disabled so the whole budget is output. Gemini 2.5-flash
     # supports up to 65k output tokens.
+    blueprint = _role_blueprint(
+        job_title, experience_level, count, only_families=_CODING_FAMILIES
+    )
+    if blueprint:
+        prompt = prompt + "\n\n" + blueprint
+
     parsed = await _call_gemini_json(
         prompt, settings, max_output_tokens=min(32_768, 4096 + count * 2048)
     )

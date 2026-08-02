@@ -66,7 +66,7 @@ class _FakeClient:
     def __init__(self, resp: _FakeResp) -> None:
         self._resp = resp
 
-    async def __aenter__(self) -> "_FakeClient":
+    async def __aenter__(self) -> _FakeClient:
         return self
 
     async def __aexit__(self, *_: Any) -> bool:

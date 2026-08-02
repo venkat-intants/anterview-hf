@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
+import CandidatePanel from '@/components/agent/CandidatePanel';
 import {
   Upload,
   FileText,
@@ -332,6 +333,12 @@ function ApplicantDrawer({
                 </div>
               </div>
             )}
+
+            {/* Cross-signal assessment — the specialist panel. Placed above the
+                ATS strengths/concerns because it spans every round, whereas
+                those describe the resume alone. User-triggered inside the
+                component, so opening a drawer costs nothing. */}
+            <CandidatePanel applicantId={a.id} applicantName={a.full_name} />
 
             {/* Strengths + Concerns */}
             {((a.ats_strengths && a.ats_strengths.length > 0) ||

@@ -20,6 +20,12 @@ from typing import Any
 import httpx
 import structlog
 from jinja2 import BaseLoader, Environment
+from shared.intelligence import (
+    RoleProfile,
+    axis_weights,
+    render_competency_output_spec,
+    render_scoring_rubric_block,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -176,19 +182,73 @@ def _render_prompt(
     )
 
 
+# The transcript is the LAST section of the rendered prompt, so role context
+# has to be spliced in ABOVE it — appending would put the rubric after the
+# transcript, where it reads as commentary on the conversation rather than as
+# instructions governing it.
+_TRANSCRIPT_MARKER: str = "## Transcript"
+
+
+def _splice_role_context(rendered: str, block: str) -> str:
+    """Insert ``block`` immediately before the transcript section."""
+    idx = rendered.find(_TRANSCRIPT_MARKER)
+    if idx == -1:  # template changed shape — appending still beats dropping it
+        return f"{rendered}\n\n{block}"
+    return f"{rendered[:idx]}{block}\n\n{rendered[idx:]}"
+
+
 # ---------------------------------------------------------------------------
 # Composite score formula (LLD §10)
 # ---------------------------------------------------------------------------
 
 
-def _compute_composite(scores: dict[str, int]) -> float:
-    """Return the weighted composite score, rounded to 2 decimal places."""
-    return round(sum(_WEIGHTS[k] * scores[k] for k in _WEIGHTS), 2)
+def _compute_composite(
+    scores: dict[str, int], weights: dict[str, float] | None = None
+) -> float:
+    """Return the weighted composite score, rounded to 2 decimal places.
+
+    ``weights`` defaults to the fixed LLD §10 blend. When a role profile is
+    available the caller passes per-role weights instead (see
+    ``shared.intelligence.render.axis_weights``) — the four AXES are unchanged
+    (they are persisted, charted and typed in the frontend), only their
+    relative importance moves. A hands-on trade role should not have its
+    composite driven 30% by how articulate the candidate was.
+    """
+    active = weights if weights is not None else _WEIGHTS
+    return round(sum(active[k] * scores[k] for k in _WEIGHTS), 2)
 
 
 def _clamp(value: int, lo: int = 0, hi: int = 10) -> int:
     """Clamp an integer to [lo, hi]."""
     return max(lo, min(hi, value))
+
+
+def _extract_competency_breakdown(
+    raw: dict[str, Any], profile: RoleProfile
+) -> dict[str, dict[str, Any]]:
+    """Pull the per-competency scores out of the model's response.
+
+    Best-effort by design: this is supplementary evidence for a human reviewer,
+    not a scoring input. Only competencies that are actually in the profile are
+    kept (the model occasionally invents one), and a malformed entry is skipped
+    rather than failing the scorecard.
+    """
+    breakdown: dict[str, dict[str, Any]] = {}
+    for comp in profile.competencies:
+        entry = raw.get(comp.id)
+        if not isinstance(entry, dict):
+            continue
+        try:
+            score = _clamp(int(entry.get("score", 0)))
+        except (TypeError, ValueError):
+            continue
+        breakdown[comp.id] = {
+            "name": comp.name,
+            "weight": comp.weight,
+            "score": score,
+            "evidence": str(entry.get("evidence", ""))[:800],
+        }
+    return breakdown
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +268,7 @@ async def score_session(
     jd_text: str = "",
     candidate_name: str = "",
     db_session_factory: Any = None,
+    role_profile: RoleProfile | None = None,
 ) -> tuple[str, dict[str, int], float]:
     """Score a completed interview session and persist the scorecard row.
 
@@ -229,6 +290,13 @@ async def score_session(
                             PDF task so it can open a fresh session for the
                             report_pdf_key UPDATE. Pass get_session_factory()
                             from the calling endpoint.
+        role_profile: the role model the interview was conducted against
+                      (shared.intelligence). When supplied it (a) tells the
+                      scorer what the four axes MEAN for this role via
+                      behaviourally-anchored competency descriptions, (b)
+                      reweights the composite to the role, and (c) adds a
+                      per-competency breakdown to ``rationale``. None
+                      reproduces the pre-intelligence-layer behaviour exactly.
 
     Returns:
         Tuple of (scorecard_id, scores, composite_score) where:
@@ -261,10 +329,22 @@ async def score_session(
     # budget). Done outside the Jinja2 template to keep the template clean and
     # avoid {% if %} whitespace artefacts.
     if jd_text:
-        rendered = (
-            rendered
-            + "\n## Job Description (use to calibrate technical depth expectations)\n"
-            + jd_text[:1200]
+        rendered = _splice_role_context(
+            rendered,
+            "## Job Description (use to calibrate technical depth expectations)\n"
+            + jd_text[:1200],
+        )
+
+    # Role model — spliced above the transcript so it governs the scoring
+    # rather than reading as commentary on it. This is what stops "technical: 7"
+    # meaning a generic (in practice, software-flavoured) notion of technical
+    # skill for a welder or a staff nurse.
+    active_weights = axis_weights(role_profile)
+    if role_profile is not None:
+        rendered = _splice_role_context(rendered, render_scoring_rubric_block(role_profile))
+        rendered = _splice_role_context(
+            rendered,
+            "## Additional output\n" + render_competency_output_spec(role_profile),
         )
 
     # ---- 2. Call Gemini ---------------------------------------------------
@@ -399,8 +479,23 @@ async def score_session(
         for axis in required_axes
     }
 
+    # Per-competency breakdown — also nested inside the rationale JSONB, for
+    # the same reason as axis_feedback above: the four canonical axes stay
+    # exactly as they were (the admin analytics SQL aggregates them by name and
+    # the frontend types them), so this is purely additive. The two blocks are
+    # complementary — axis_feedback is per-AXIS coaching, this is per-ROLE-
+    # COMPETENCY evidence — and both are keyed so they cannot collide.
+    if role_profile is not None:
+        rationale["_role_profile_id"] = role_profile.profile_id
+        rationale["_domain_family"] = role_profile.domain_family
+        raw_comps = parsed.get("competencies")
+        if isinstance(raw_comps, dict):
+            breakdown = _extract_competency_breakdown(raw_comps, role_profile)
+            if breakdown:
+                rationale["_competencies"] = json.dumps(breakdown, ensure_ascii=False)
+
     # ---- 5. Compute composite score --------------------------------------
-    composite = _compute_composite(scores)
+    composite = _compute_composite(scores, active_weights)
 
     # ---- 6. Persist scorecard row ----------------------------------------
     # Import here to avoid circular — the Scorecard model lives in data_gateway
@@ -451,6 +546,11 @@ async def score_session(
         scorecard_id=scorecard_id,
         composite_score=composite,
         model=settings.gemini_model,
+        # Rubric provenance — lets any score be traced back to the exact role
+        # model that produced it (the audit story for a government bid).
+        role_profile_id=role_profile.profile_id if role_profile else None,
+        domain_family=role_profile.domain_family if role_profile else None,
+        profile_source=role_profile.source if role_profile else None,
         # NEVER log transcript text — PII.
     )
 

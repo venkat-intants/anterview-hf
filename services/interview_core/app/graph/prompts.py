@@ -37,6 +37,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from shared.intelligence import (
+    RoleProfile,
+    plan_for_turn,
+    render_role_model_block,
+    render_turn_directive,
+)
+
 if TYPE_CHECKING:
     # Imported only for typing — keeps ``personas`` free to import the
     # ``Language`` type from this module without a runtime circular import.
@@ -379,6 +386,7 @@ def render_interviewer_system_prompt(
     required_skills: list[str] | None = None,
     resume_text: str = "",
     jd_text: str = "",
+    role_profile: RoleProfile | None = None,
 ) -> str:
     """Render the persona / rules block for ``systemInstruction``.
 
@@ -406,10 +414,16 @@ def render_interviewer_system_prompt(
     guardrails when the persona block was upfront and chatty). See
     ``docs/interview-persona-design-ai.md`` §3.
 
-    Backwards-compatible: with ``persona=None`` AND all context fields at
-    their defaults, this reproduces the pre-B-033 / pre-S4-003 behaviour
-    exactly (no marker, no context block), so callers that don't yet pass a
-    persona or context still get a working prompt.
+    ``role_profile`` (intelligence layer) injects a ``[ROLE MODEL]`` block
+    after ``[CONTEXT]``: the competencies THIS role is assessed on, with their
+    weights and probe shapes. Placed before the persona for the same reason the
+    context block is — the persona is a stylistic overlay and belongs at the
+    recency-priority tail.
+
+    Backwards-compatible: with ``persona=None``, ``role_profile=None`` AND all
+    context fields at their defaults, this reproduces the pre-B-033 / pre-S4-003
+    behaviour exactly (no marker, no context block), so callers that don't yet
+    pass a persona, context or role model still get a working prompt.
     """
     skills = required_skills if required_skills is not None else []
     at_company = f" at {company_name}" if company_name else ""
@@ -433,6 +447,9 @@ def render_interviewer_system_prompt(
     )
     if context_block:
         base = f"{base}\n\n{context_block}"
+
+    if role_profile is not None:
+        base = f"{base}\n\n{render_role_model_block(role_profile)}"
 
     if persona is None:
         return base
@@ -524,8 +541,30 @@ def render_follow_up_user_prompt(
     last_candidate_input: str,
     turn_count: int,
     max_turns: int,
+    role_profile: RoleProfile | None = None,
 ) -> str:
-    """Render the user-turn instruction for a follow-up question."""
+    """Render the user-turn instruction for a follow-up question.
+
+    With a ``role_profile``, the competency for this turn is chosen in CODE
+    (``shared.intelligence.coverage``) and named explicitly. That replaces the
+    template below, which asked the model to "inspect the conversation history
+    and pick the competency covered LEAST so far" — an instruction it could not
+    be held to, and which routinely left competencies unprobed while drilling
+    whatever the candidate opened with. The model now spends its attention on
+    phrasing a good question instead of on bookkeeping.
+
+    Without a profile, the original four-competency prose template is used
+    unchanged, so this stays a no-op for callers that have no role model.
+    """
+    if role_profile is not None:
+        # turn_count is the number of COMPLETED candidate answers, so the
+        # question about to be asked is turn_count + 1.
+        plan = plan_for_turn(role_profile, turn_count + 1, max_turns)
+        directive = render_turn_directive(
+            plan, turn_index=turn_count + 1, max_turns=max_turns
+        )
+        return f'The candidate just responded: "{last_candidate_input}"\n\n{directive}'
+
     return FOLLOW_UP_USER_PROMPT_TEMPLATE.format(
         last_candidate_input=last_candidate_input,
         turn_count=turn_count,

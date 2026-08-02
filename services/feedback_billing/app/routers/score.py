@@ -17,6 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from pydantic import BaseModel, Field, field_validator
 from shared.auth.jwt import verify_access_token
+from shared.intelligence import RoleProfile
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -79,6 +80,20 @@ class ScoreRequest(BaseModel):
     turns: list[TurnIn] = Field(
         ..., description="Ordered list of conversation turns"
     )
+    # The role model the interview was actually conducted against (see
+    # shared.intelligence). Sent by interview_core so the scorer grades on the
+    # SAME rubric the questions came from — re-deriving it here could produce a
+    # different profile (cache state, LLM nondeterminism) and score an
+    # interview against a rubric that never shaped it.
+    #
+    # Optional and forgiving on purpose: a session from an older worker, or a
+    # payload whose profile fails validation, scores exactly as it did before
+    # the intelligence layer existed (fixed axes, fixed weights) rather than
+    # 422-ing and costing the candidate their scorecard.
+    role_profile: dict[str, Any] | None = Field(
+        default=None,
+        description="Derived RoleProfile (shared.intelligence) — optional",
+    )
 
 
 class ScoreResponse(BaseModel):
@@ -87,6 +102,28 @@ class ScoreResponse(BaseModel):
     scorecard_id: str
     composite_score: float
     scores: dict[str, int]
+
+
+def _parse_role_profile(raw: dict[str, Any] | None, session_id: str) -> RoleProfile | None:
+    """Validate an inbound role profile, degrading to None on any problem.
+
+    Never raises. A malformed profile means this scorecard is produced with the
+    legacy fixed rubric — a slightly less calibrated score, which is vastly
+    better than a 502 and no scorecard at all for a candidate who has already
+    finished their interview.
+    """
+    if not raw:
+        return None
+    try:
+        return RoleProfile.model_validate(raw)
+    except ValueError as exc:
+        log.warning(
+            "score.role_profile_invalid",
+            session_id=session_id,
+            error=str(exc)[:300],
+            fallback="legacy_fixed_rubric",
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +265,7 @@ async def internal_score(
             turns=turns_dicts,
             db_session=db,
             settings=app_settings,
+            role_profile=_parse_role_profile(body.role_profile, body.session_id),
         )
     except ScoringError as exc:
         log.error(
@@ -335,6 +373,13 @@ class GenerateExamRequest(BaseModel):
     num_questions: int = Field(default=5, ge=1, le=30)
     difficulty: str = Field(default="medium", description="easy | medium | hard | mixed")
     language: str = Field(default="en", description="BCP-47: 'en', 'hi', or 'te'")
+    # Optional role context. When supplied, the generator spreads questions
+    # across the competencies THIS role is assessed on, using the same
+    # weighted allocator as the interview — so a candidate's exam and
+    # interview stop assessing subtly different jobs. Omitted = previous
+    # behaviour, driven by `topic` alone.
+    job_title: str = Field(default="", max_length=300)
+    experience_level: str = Field(default="mid", description="entry | mid | senior")
 
 
 class GeneratedQuestion(BaseModel):
@@ -368,6 +413,8 @@ async def internal_generate_exam(
             difficulty=body.difficulty,
             language=body.language,
             settings=app_settings,
+            job_title=body.job_title,
+            experience_level=body.experience_level,
         )
     except ExamGenerationError as exc:
         log.error("score.generate_exam_error", error=exc.message)
@@ -399,6 +446,10 @@ class GenerateCodingRequest(BaseModel):
         max_length=10,
         description="Programming-language slugs candidates may use",
     )
+    # See GenerateExamRequest — same optional role context. Ignored for roles
+    # where a coding test is not a sensible assessment.
+    job_title: str = Field(default="", max_length=300)
+    experience_level: str = Field(default="mid", description="entry | mid | senior")
 
 
 class GeneratedTestCase(BaseModel):
@@ -440,6 +491,8 @@ async def internal_generate_coding(
             language=body.language,
             allowed_languages=body.allowed_languages,
             settings=app_settings,
+            job_title=body.job_title,
+            experience_level=body.experience_level,
         )
     except ExamGenerationError as exc:
         log.error("score.generate_coding_error", error=exc.message)

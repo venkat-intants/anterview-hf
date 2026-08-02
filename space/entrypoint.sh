@@ -64,6 +64,15 @@ export TRUSTED_PROXY_COUNT="${TRUSTED_PROXY_COUNT:-1}"   # HF edge proxy
 
 export LLM_PROVIDER="${LLM_PROVIDER:-gemini}"
 export GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
+# Console copilots + assessment panel (data_gateway). GEMINI_API_KEY is
+# already required above, so the agents run wherever the interviewer does.
+# Set AGENTS_ENABLED=false to switch them off during an incident or a cost
+# spike without rotating the key or redeploying.
+export AGENTS_ENABLED="${AGENTS_ENABLED:-true}"
+# Nightly proactive watchers (stalled candidates, funnel health, exam
+# quality, DPDP deadlines). Hour is UTC; the Space runs UTC.
+export WATCHERS_ENABLED="${WATCHERS_ENABLED:-true}"
+export WATCHERS_CRON_HOUR="${WATCHERS_CRON_HOUR:-2}"
 export GEMINI_MAX_TOKENS="${GEMINI_MAX_TOKENS:-2048}"
 export SPEECH_STT_PROVIDER="${SPEECH_STT_PROVIDER:-sarvam}"
 export SPEECH_TTS_PROVIDER="${SPEECH_TTS_PROVIDER:-sarvam}"

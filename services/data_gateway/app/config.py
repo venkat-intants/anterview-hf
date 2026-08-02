@@ -1,7 +1,7 @@
 from typing import Literal
 
 import structlog
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.security import assert_strong_secrets
 
@@ -29,6 +29,26 @@ class Settings(BaseSettings):
     redis_url: str
 
     auth_provider: str = "local"
+
+    # --- Agent layer (console copilots + assessment panel) ---
+    # data_gateway previously had no LLM credentials and proxied AI work to
+    # feedback_billing over HTTP. That is fine for a one-shot generation, but
+    # agents LOOP — every planning step would become an extra internal hop, and
+    # the user is waiting through all of them. The agent tools also need the
+    # same DB session the request already holds, so the loop belongs here.
+    # Empty key = copilots report "assistant unavailable"; the rest of the
+    # service is unaffected.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    # Master switch, so an operator can disable copilots during an incident or
+    # a cost spike without redeploying or rotating the key.
+    agents_enabled: bool = True
+    # Nightly proactive watchers -> in-app notifications. Separate switch
+    # from agents_enabled: the watchers are pure SQL rules and stay useful
+    # even with the LLM copilots disabled.
+    watchers_enabled: bool = True
+    watchers_cron_hour: int = Field(default=2, ge=0, le=23)
 
     jwt_secret: str
     jwt_algorithm: str = "HS256"

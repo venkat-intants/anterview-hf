@@ -43,6 +43,7 @@ import {
   type NotificationItem,
 } from '@/api/notifications';
 import { useAuth } from '@/context/AuthContext';
+import CopilotLauncher from '@/components/agent/CopilotLauncher';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
@@ -675,6 +676,8 @@ export default function AppShell({ children }: AppShellProps) {
   }
 
   const location = useLocation();
+  // Used to refresh console data after an assistant proposal is committed.
+  const queryClient = useQueryClient();
 
   // Desktop sidebar collapse — persisted so it sticks across reloads/navigation.
   const [collapsed, setCollapsed] = useState(
@@ -723,6 +726,14 @@ export default function AppShell({ children }: AppShellProps) {
           </AnimatePresence>
         </main>
       </div>
+
+      {/* Console assistant. One mount here covers every authenticated console;
+          it self-hides for roles with no copilot (a plain candidate) and for
+          deployments with no model key. Committing a proposal invalidates the
+          whole query cache so the console reflects the change immediately —
+          coarse, but a proposal commit is rare and the alternative is threading
+          a refetch callback through every page. */}
+      <CopilotLauncher onCommitted={() => void queryClient.invalidateQueries()} />
     </div>
   );
 }

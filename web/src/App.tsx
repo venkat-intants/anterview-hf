@@ -29,6 +29,7 @@ const InterviewInvite = lazy(() => import('./pages/InterviewInvite'));
 
 // ── Authenticated shell pages ─────────────────────────────────────────────────
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Onboarding = lazy(() => import('./pages/Onboarding'));
 const JobsList = lazy(() => import('./pages/JobsList'));
 const StartInterview = lazy(() => import('./pages/StartInterview'));
 const History = lazy(() => import('./pages/History'));
@@ -114,6 +115,7 @@ export default function App() {
           {/* Authenticated routes rendered INSIDE AppShell */}
           <Route element={<ProtectedRoute />}>
             <Route element={<ShellLayout />}>
+              <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/jobs" element={<JobsList />} />
               <Route path="/start" element={<StartInterview />} />

@@ -12,6 +12,13 @@ Covers nine migrations:
   20260530_0001 — self-serve custom jobs (created_by_user_id UUID NULL FK→users)
   20260530_0002 — resume version history table (resumes)
   20260530_0003 — session presenter_id column (Area 4 UI redesign v2)
+  20260802_0001 — self-serve onboarding (onboarding_goal, target_role,
+                  target_level, onboarding_completed_at/skipped_at on users)
+
+NOTE: this list has drifted — the alembic chain now holds 29 revisions and
+several (HR workflow, exams, email, feature flags) are mirrored below without
+being named here. Treat ``alembic/versions/`` as the source of truth for what
+exists; this header is orientation, not an index.
 """
 
 from __future__ import annotations
@@ -82,6 +89,27 @@ class User(Base):
     )
     notify_login_email: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
+    )
+    # Self-serve onboarding (migration a1b2c3d4e5f7) — the student practising
+    # on their own, as opposed to an HR-invited applicant.
+    #
+    # target_role is a MACHINE input: shared.intelligence classifies it, and it
+    # drives interview question planning and the practice plan. Deliberately
+    # NOT desired_roles/headline, which are display text a user edits for other
+    # humans — overloading those would let a cosmetic profile edit silently
+    # re-target someone's practice plan.
+    #
+    # Both timestamps NULL is the sentinel for "onboarding never shown", which
+    # is what fires the first-login redirect. Language reuses the existing
+    # preferred_language column (NOT NULL — never write NULL to it).
+    onboarding_goal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_role: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_level: Mapped[str | None] = mapped_column(Text, nullable=True)
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    onboarding_skipped_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
     )
     # HR workflow (Phase 0) — multi-tenant scoping + forced first-login reset.
     # company_id is NULL for platform_owner / platform users; it is SET for a

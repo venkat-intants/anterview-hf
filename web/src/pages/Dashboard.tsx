@@ -5,10 +5,11 @@
 
 import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { getMe, logout } from '@/api/auth';
+import { getOnboardingStatus } from '@/api/onboarding';
 import { listSessions } from '@/api/sessions';
 import { listScorecards } from '@/api/scorecard';
 import { getCurrentResume, uploadResume } from '@/api/resume';
@@ -27,6 +28,7 @@ import {
   Avatar,
 } from '@/design/components/primitives';
 import FileUploadZone from '@/components/FileUploadZone';
+import PracticePlanCard from '@/components/practice/PracticePlanCard';
 import { PromoBanner, TrustStrip } from '@/design/components/banners';
 import {
   ArrowRight,
@@ -120,6 +122,16 @@ export default function Dashboard() {
     queryKey: ['auth', 'me'],
     queryFn: () => getMe(accessToken ?? undefined),
     enabled: accessToken !== null,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
+  // ── Query: onboarding status (drives the first-login redirect) ──────────────
+  // retry:false — a 403 (privileged account with no self-serve plan) is a
+  // permanent answer, and retrying it just delays the dashboard.
+  const { data: onboarding } = useQuery({
+    queryKey: ['onboarding-status'],
+    queryFn: getOnboardingStatus,
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
@@ -235,6 +247,16 @@ export default function Dashboard() {
     if (diff >= 0 && diff < 7) weekDaysHit.add(monBased);
   });
 
+  // ── First-login personalization redirect ────────────────────────────────────
+  // Placed here rather than in Login/Register/GoogleCallback because all three
+  // land self-serve users on /dashboard, and patching three navigate() sites
+  // would drift the moment a fourth auth path is added. `applicable` is false
+  // for HR/admin, and `seen` flips on both complete AND skip, so this fires
+  // exactly once per account and never for a privileged user.
+  if (onboarding && onboarding.applicable && !onboarding.seen) {
+    return <Navigate to="/onboarding" replace />;
+  }
+
   // ── Full-page error state ───────────────────────────────────────────────────
   if (isError) {
     return (
@@ -280,6 +302,11 @@ export default function Dashboard() {
           { icon: ShieldCheck, label: 'DPDP-compliant' },
         ]}
       />
+
+      {/* ── Row 0.5: personal practice plan (self-serve users) ── */}
+      <Reveal>
+        <PracticePlanCard />
+      </Reveal>
 
       {/* ── Row 1: Hero + Readiness (2-col) ── */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.4fr_1fr]">

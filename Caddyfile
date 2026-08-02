@@ -104,6 +104,9 @@
 	handle /exam* {
 		reverse_proxy data_gateway:8002
 	}
+	handle /agent/* {
+		reverse_proxy data_gateway:8002
+	}
 	handle /hr/* {
 		reverse_proxy data_gateway:8002
 	}

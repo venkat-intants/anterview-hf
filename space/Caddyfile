@@ -78,6 +78,9 @@
 	}
 
 	# -- data_gateway :8002 (auth, ATS, exams, consent + generic catch-alls)
+	handle /agent/* {
+		reverse_proxy 127.0.0.1:8002
+	}
 	handle /auth/* {
 		reverse_proxy 127.0.0.1:8002
 	}

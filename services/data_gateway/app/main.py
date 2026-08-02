@@ -63,6 +63,7 @@ from app.routers.interview_take import router as interview_take_router
 from app.routers.jd import router as jd_router
 from app.routers.jobs import router as jobs_router
 from app.routers.notifications import router as notifications_router
+from app.routers.onboarding import router as onboarding_router
 from app.routers.profile import router as profile_router
 from app.routers.resume import router as resume_router
 from app.routers.sso_google import router as sso_google_router
@@ -322,6 +323,7 @@ app.include_router(agent_router)
 app.include_router(consent_router)
 app.include_router(jobs_router)
 app.include_router(notifications_router)
+app.include_router(onboarding_router)
 app.include_router(profile_router)
 app.include_router(resume_router)
 app.include_router(jd_router)

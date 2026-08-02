@@ -492,7 +492,14 @@ async def score_session(
         if isinstance(raw_comps, dict):
             breakdown = _extract_competency_breakdown(raw_comps, role_profile)
             if breakdown:
-                rationale["_competencies"] = json.dumps(breakdown, ensure_ascii=False)
+                # Stored as a NESTED OBJECT, not a JSON string. The whole
+                # rationale dict is json.dumps()'d once at the INSERT below, so
+                # a nested dict lands as real JSONB and stays queryable —
+                # jsonb_each(rationale->'_competencies') works directly.
+                # Double-encoding it here would bury the breakdown in an opaque
+                # string that Postgres cannot index or aggregate, which the
+                # self-serve practice plan reads on every dashboard load.
+                rationale["_competencies"] = breakdown
 
     # ---- 5. Compute composite score --------------------------------------
     composite = _compute_composite(scores, active_weights)

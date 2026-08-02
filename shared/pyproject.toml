@@ -14,3 +14,14 @@ structlog = "^24.4"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+# Tests under shared/ (shared/auth/tests, shared/intelligence/tests) are run
+# with a service's venv, e.g.:
+#   services/interview_core/.venv/Scripts/python -m pytest ../../shared
+# pytest resolves rootdir from the test path upwards and stops at the first
+# file carrying [tool.pytest.ini_options] — without this block it walked past
+# shared/ to the repo root, found no config, and every async test errored with
+# "async def functions are not natively supported".
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = [".."]

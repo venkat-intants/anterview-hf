@@ -49,6 +49,7 @@ from app.mailer import purge_old_email_events, start_email_worker, stop_email_wo
 from app.redis_client import close_redis, get_redis, init_redis
 from app.retention import purge_expired_sessions
 from app.routers.admin_hr import router as admin_hr_router
+from app.routers.agent import router as agent_router
 from app.routers.auth import router as auth_router
 from app.routers.consent import router as consent_router
 from app.routers.exam_take import router as exam_take_router
@@ -199,6 +200,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         name="DPDP §8(7) 90-day session purge",
         replace_existing=True,
     )
+    # --- nightly proactive watchers (agent layer) ---
+    # Same scheduler instance as retention: a second AsyncIOScheduler would mean
+    # a second thread pool for one job a day.
+    if settings.watchers_enabled:
+        from app.agents.watch_runner import run_watcher_sweep
+
+        scheduler.add_job(
+            run_watcher_sweep,
+            CronTrigger(hour=settings.watchers_cron_hour, minute=30, timezone="UTC"),
+            id="agent_watchers",
+            name="Pipeline watchers -> notifications",
+            replace_existing=True,
+        )
+
     scheduler.start()
     application.state.retention_scheduler = scheduler
 
@@ -303,6 +318,7 @@ app.include_router(exam_take_router)
 app.include_router(hr_interviews_router)
 app.include_router(interview_take_router)
 app.include_router(hr_pipeline_router)
+app.include_router(agent_router)
 app.include_router(consent_router)
 app.include_router(jobs_router)
 app.include_router(notifications_router)

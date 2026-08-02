@@ -53,6 +53,45 @@ A **voice-first AI interview platform**. A candidate logs in, picks a job role, 
 
 **Why two-tier:** AWS Bedrock approval takes 1-5 days, custom avatar build takes 2-3 weeks. Demo tier ships now without compromising the production path — same code, env-swappable. See `docs/PROCUREMENT.md` for sign-up checklist.
 
+## Intelligence Layers (added 2026-08-01)
+
+Two shared packages, both dependency-light (stdlib + pydantic + structlog only)
+so all four service images can import them — same rule as `shared/auth`.
+
+**`shared/intelligence/` — the role engine.** One source of truth for what a
+job *is*. A weighted keyword classifier files any role into one of 18
+occupational families (trades, healthcare, agriculture, retail, teaching,
+finance, …), each supplying weighted competencies with weak/adequate/strong
+anchors. Gemini refines the baseline per posting when a key is set; when it
+fails the deterministic baseline stands and `profile.source` records that.
+Consumed by:
+- the live interviewer (question plan weighted per role, replacing the fixed
+  `Q2–Q6 technical / Q7–Q9 behavioural` split)
+- the scorer (per-role axis weights + rubric; the four canonical axes are
+  unchanged, since analytics SQL and the frontend depend on them)
+- exam + coding generation (same weighted allocator, so a candidate's written
+  round and interview assess the same job)
+
+**`shared/agents/` — copilots, panel, watchers.** Console copilots (HR,
+super-admin, platform, analytics), a four-specialist assessment panel, and
+nightly watchers.
+
+> **The load-bearing invariant: agents cannot mutate anything.** `ToolEffect`
+> has only `read` and `draft` members and `ToolRegistry.register` rejects
+> anything else, so no prompt injection or model error can cause a write. An
+> agent that wants something to happen emits a `Proposal` carrying the exact
+> API request; the frontend renders it for review and, on approval, fires it
+> with the *user's own* credentials through the normal authorised endpoint.
+> Adding write capability requires editing the type in `shared/agents/schema.py`
+> — make that a deliberate, reviewed change, never a call-site argument.
+
+Tenancy comes from the authenticated session into `ToolContext`, never from a
+model argument. Cross-tenant tools (`platform_owner`) are aggregate-only and
+must stay `read`.
+
+Env: `GEMINI_API_KEY` (already required by the Space entrypoint),
+`AGENTS_ENABLED`, `WATCHERS_ENABLED`, `WATCHERS_CRON_HOUR`.
+
 ## Architecture — 4 Microservices
 
 1. **`interview_core`** — LiveKit (real-time WebRTC) transport, LangGraph brain, voice pipeline, real-time turn loop
@@ -113,7 +152,15 @@ AWS Mumbai) is the same code, env-swappable.
 2. **Never hardcode secrets** — read from `.env` via Pydantic `BaseSettings`
 3. **Never store PII** without a `dpdp_consent_ledger` entry
 4. **Never deploy to production** without `security-auditor` sign-off
-5. **All AI prompts must support EN / HI / TE** (Day-1 languages)
+5. **All AI prompts must support EN / HI / TE** (Day-1 languages) — this
+   covers CANDIDATE-facing prompts. Staff-console copilot prompts
+   (`shared/agents/roster.py`) are English-only by design; localising them is a
+   prompt change plus an eval pass, not a runtime change.
+8. **Never give an agent a write tool.** See the intelligence-layer note above.
+9. **AI must never decide hiring outcomes.** `PanelVerdict` has no field that
+   can express hire/reject (`decision_authority` is the literal `"human_only"`).
+   DPDP Act 2023 scrutinises automated decision-making — keep this structural,
+   not a promise in a prompt.
 6. **Never use `--no-verify` or `--no-gpg-sign`** to bypass hooks
 7. **Per-session variable cost must stay ≤ ₹12** (target ₹10) for L1 bid viability
 

@@ -36,6 +36,7 @@ import logging
 import os
 import uuid as _uuid_mod
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -67,6 +68,15 @@ try:
 except ImportError:  # pragma: no cover — only absent in stripped envs
     _tavus_plugin = None  # type: ignore[assignment]
     _TAVUS_AVAILABLE = False
+
+from shared.intelligence import (
+    InMemoryProfileCache,
+    RoleProfile,
+    derive_role_profile,
+    plan_interview,
+    render_plan_block,
+    render_role_model_block,
+)
 
 from app.avatars import resolve_avatar
 from app.config import settings
@@ -168,7 +178,11 @@ _RESUME_PROMPT_CHAR_CAP: int = 1500
 
 
 def _interviewer_instructions(
-    job_title: str, language: str, resume_text: str = "", company_name: str = ""
+    job_title: str,
+    language: str,
+    resume_text: str = "",
+    company_name: str = "",
+    role_profile: RoleProfile | None = None,
 ) -> str:
     """Build the interviewer system instructions.
 
@@ -189,6 +203,15 @@ def _interviewer_instructions(
     the interviewer speaks on behalf of that company ("why do you want to join
     <company>?"); when empty the interviewer stays company-neutral — it must
     NOT present itself as hiring for Intants (the platform is not the employer).
+
+    role_profile (optional): the derived role model (shared.intelligence). When
+    present it replaces the fixed "Q2-Q6 technical, Q7-Q9 behavioural" structure
+    with a plan weighted to what THIS role actually requires — a support role is
+    mostly behavioural, a machinist mostly practical, and the old fixed split
+    served neither. It also carries per-role competencies and probe shapes, so
+    the model stops inferring the job from its title alone. None reproduces the
+    previous fixed structure exactly, which is the safe path for any caller that
+    could not derive a profile.
     """
     lang_rule = {
         "en": "Conduct the entire interview in English.",
@@ -249,19 +272,41 @@ def _interviewer_instructions(
             "assume a company name.\n"
         )
 
+    if role_profile is not None:
+        # Role-driven: the role model describes the job, and the plan allocates
+        # the 10 question slots by competency weight (deterministic — see
+        # shared.intelligence.coverage).
+        plans = plan_interview(role_profile, MAX_CANDIDATE_ANSWERS)
+        structure_block = (
+            f"{render_role_model_block(role_profile)}\n\n"
+            f"{render_plan_block(plans)}\n"
+        )
+        if cleaned_resume:
+            structure_block += (
+                "\nGround your questions in the candidate's background above "
+                "wherever it is relevant to the competency you are probing.\n"
+            )
+    else:
+        # Legacy fixed structure — the fallback when no profile could be
+        # derived. Byte-identical to the pre-intelligence-layer prompt.
+        structure_block = (
+            f"Structure the interview as exactly {MAX_CANDIDATE_ANSWERS} questions, "
+            "one per turn:\n"
+            "  Q1  — Ask the candidate to introduce themselves.\n"
+            f"{resume_rule}"
+            "  Q7–Q9 — Behavioural questions (situation/task/action/result style).\n"
+            "  Q10 — A warm wrap-up question (e.g. candidate's goals or questions for us).\n"
+        )
+
     return (
         f"{persona} {lang_rule}\n"
         f"{company_rule}"
         f"{resume_block}\n"
-        "Structure the interview as exactly 10 questions, one per turn:\n"
-        "  Q1  — Ask the candidate to introduce themselves.\n"
-        f"{resume_rule}"
-        "  Q7–Q9 — Behavioural questions (situation/task/action/result style).\n"
-        "  Q10 — A warm wrap-up question (e.g. candidate's goals or questions for us).\n\n"
+        f"{structure_block}\n"
         "Ask ONE question per turn. Keep each turn short (1–2 sentences) — this is "
         "spoken aloud, so write for the ear. Do not narrate actions or use markdown. "
         "Do NOT close the interview yourself — the system will handle the close after "
-        "the candidate has answered all 10 questions.\n\n"
+        f"the candidate has answered all {MAX_CANDIDATE_ANSWERS} questions.\n\n"
         "Never ask for personal data (full name, phone, email, address, age, "
         "religion, caste, salary). Never reveal scoring or make hiring decisions."
     )
@@ -272,27 +317,74 @@ def _interviewer_instructions(
 # ---------------------------------------------------------------------------
 
 
-async def _lookup_session(
-    room_name: str,
-) -> tuple[str, str, str, str, str | None, str, str]:
+@dataclass
+class SessionContext:
+    """Everything the worker needs to know about a session before it starts.
+
+    Was a positional 7-tuple until the role-competency engine needed three more
+    job fields (skills, department, interview type) to derive a role model. A
+    10-element positional tuple is unreadable and every caller/test asserting
+    its arity is a tripwire that fires on any addition, so this became a
+    dataclass. Defaults are the same safe fallbacks the tuple used to carry, so
+    a missing session/job still yields a usable, generic interview.
+    """
+
+    job_title: str = "the role"
+    language: str = "en"
+    experience_level: str = "entry"  # 'entry' | 'mid' | 'senior'
+    jd_text: str = ""
+    # Catalog avatar id chosen at session-create time (e.g. "anna"). None means
+    # unset/legacy row — resolve_avatar(None) returns the default.
+    presenter_id: str | None = None
+    # Candidate's extracted resume text ("" if none on file) — grounds the
+    # interview in their real experience.
+    resume_text: str = ""
+    # Hiring company from jobs.company_name ("" if unset). The interviewer
+    # speaks on behalf of this company; empty keeps it company-neutral.
+    company_name: str = ""
+    # --- role-model inputs (intelligence layer) ---
+    required_skills: list[str] = field(default_factory=list)
+    department: str = ""
+    interview_type: str = "screening"  # 'screening' | 'technical' | 'hr'
+
+
+def _extract_required_skills(competencies: Any) -> list[str]:
+    """Pull a flat skill list out of the ``jobs.competencies`` JSONB blob.
+
+    The column is a free-form blob whose shape has drifted across seeds and
+    the HR job-creation UI: sometimes ``{"required": [...], "nice_to_have":
+    [...]}``, sometimes a bare list, occasionally a dict of category -> list.
+    All three are handled; anything else yields an empty list, which the role
+    engine treats as "no skills supplied" rather than failing.
+    """
+    if isinstance(competencies, list):
+        return [str(s).strip() for s in competencies if str(s).strip()][:40]
+    if not isinstance(competencies, dict):
+        return []
+
+    skills: list[str] = []
+    # Prefer the required/must-have buckets; they are the ones that should
+    # actually weight the role model.
+    for key in ("required", "required_skills", "must_have", "skills"):
+        value = competencies.get(key)
+        if isinstance(value, list):
+            skills.extend(str(s).strip() for s in value if str(s).strip())
+    if not skills:
+        for value in competencies.values():
+            if isinstance(value, list):
+                skills.extend(str(s).strip() for s in value if str(s).strip())
+    return skills[:40]
+
+
+async def _lookup_session(room_name: str) -> SessionContext:
     """Look up session fields needed by the worker for a given room/session.
 
     The token endpoint names each LiveKit room after the session_id, so the
     worker can resolve the job + language + avatar straight from the DB — no
-    dispatch metadata needed (AUTOMATIC dispatch, the proven path). Falls back
-    to safe defaults if the row/job is missing.
+    dispatch metadata needed (AUTOMATIC dispatch, the proven path).
 
-    Returns:
-        (job_title, language, experience_level, jd_text, presenter_id,
-         resume_text, company_name)
-        experience_level is one of: 'entry' | 'mid' | 'senior'
-        presenter_id is the catalog avatar id stored at session-create time
-        (e.g. "anna"); None means unset/legacy row — resolve_avatar(None)
-        returns the default.
-        resume_text is the candidate's extracted resume text ("" if none on
-        file) — used to ground interview questions in their real experience.
-        company_name is the hiring company from jobs.company_name ("" if
-        unset) — the interviewer speaks on behalf of this company.
+    Never raises: any missing row or DB failure returns a default
+    ``SessionContext`` so the interview still starts.
     """
     import contextlib
 
@@ -309,7 +401,7 @@ async def _lookup_session(
             init_engine()  # idempotent-safe; builds the engine in this worker proc
         sid = _uuid_mod.UUID(room_name)
     except ValueError:
-        return "the role", "en", "entry", "", None, "", ""
+        return SessionContext()
     try:
         factory = get_session_factory()
         async with factory() as db:
@@ -317,7 +409,7 @@ async def _lookup_session(
                 await db.execute(select(InterviewSession).where(InterviewSession.id == sid))
             ).scalar_one_or_none()
             if sess is None:
-                return "the role", "en", "entry", "", None, "", ""
+                return SessionContext()
             lang = (sess.language or "en").lower()
             language = lang if lang in _LANG_VENDOR else "en"
             presenter_id: str | None = sess.presenter_id  # catalog avatar id or None
@@ -333,19 +425,106 @@ async def _lookup_session(
                 await db.execute(select(Job).where(Job.id == sess.job_id))
             ).scalar_one_or_none()
             if job is None:
-                return "the role", language, "entry", "", presenter_id, resume_text, ""
+                return SessionContext(
+                    language=language,
+                    presenter_id=presenter_id,
+                    resume_text=resume_text,
+                )
             # Job.level is 'entry' | 'mid' | 'senior' — maps directly to ScoreRequest.
             level = job.level if job.level in ("entry", "mid", "senior") else "entry"
-            return (
-                job.title, language, level, (job.description or ""),
-                presenter_id, resume_text, (job.company_name or ""),
+            return SessionContext(
+                job_title=job.title,
+                language=language,
+                experience_level=level,
+                jd_text=(job.description or ""),
+                presenter_id=presenter_id,
+                resume_text=resume_text,
+                company_name=(job.company_name or ""),
+                required_skills=_extract_required_skills(job.competencies),
+                department=(job.department or ""),
+                interview_type=(job.interview_type or "screening"),
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "interview-worker: _lookup_session DB query failed room=%s err=%s",
             room_name, type(exc).__name__,
         )
-        return "the role", "en", "entry", "", None, "", ""
+        return SessionContext()
+
+
+# ---------------------------------------------------------------------------
+# Role model (intelligence layer)
+# ---------------------------------------------------------------------------
+
+# One cache per worker PROCESS. The worker runs up to
+# worker_max_concurrent_jobs interviews in a single process and campus/company
+# drives put dozens of candidates through the SAME job back to back — without
+# this, every one of them pays for an identical derivation call. Bounded, so a
+# long-lived worker cannot grow unboundedly across distinct roles.
+_ROLE_PROFILE_CACHE = InMemoryProfileCache(max_entries=128)
+
+# Derivation needs more output budget than a conversational turn: the JSON
+# carries 4-8 competencies each with probes and three anchors. settings
+# .gemini_max_tokens (1024) truncates it mid-object, which costs the whole role
+# model — so this call overrides the budget explicitly.
+_ROLE_PROFILE_MAX_TOKENS: int = 3072
+# Bounded so a slow derivation cannot delay the candidate's first question.
+# On timeout we fall back to the deterministic taxonomy baseline.
+_ROLE_PROFILE_TIMEOUT_SECONDS: float = 12.0
+
+
+async def _derive_role_profile(ctx: SessionContext) -> RoleProfile:
+    """Derive the role model for a session. Never raises.
+
+    Runs before the interview starts. Uses Gemini when a key is configured and
+    the deterministic taxonomy baseline otherwise — a worker with no Gemini key
+    still gets a role-appropriate interview, it just does not get the
+    posting-specific refinement.
+
+    Note this is a *different* provider from the conversational LLM (the live
+    turn loop runs on Groq). Derivation is a one-off structured-JSON call where
+    Gemini's JSON mode is the better fit, and keeping it off the turn-loop
+    provider means a Groq incident cannot also cost us the role model.
+    """
+    llm_caller = None
+    if settings.gemini_api_key:
+        from app.llm.base import LLMMessage
+        from app.llm.gemini import GeminiAdapter
+
+        adapter = GeminiAdapter(
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_model,
+            max_tokens=_ROLE_PROFILE_MAX_TOKENS,
+            base_url=settings.gemini_api_base_url,
+            timeout_seconds=_ROLE_PROFILE_TIMEOUT_SECONDS,
+        )
+
+        async def llm_caller(system_prompt: str, user_prompt: str) -> str:  # noqa: F811
+            response = await adapter.generate(
+                system_prompt,
+                [LLMMessage.user(user_prompt)],
+                max_tokens=_ROLE_PROFILE_MAX_TOKENS,
+            )
+            return response.text
+
+    profile = await derive_role_profile(
+        job_title=ctx.job_title,
+        jd_text=ctx.jd_text,
+        required_skills=ctx.required_skills,
+        department=ctx.department,
+        company_name=ctx.company_name,
+        experience_level=ctx.experience_level,
+        interview_type=ctx.interview_type,
+        llm=llm_caller,
+        cache=_ROLE_PROFILE_CACHE,
+    )
+    logger.info(
+        "interview-worker.role_profile job_title=%r family=%s source=%s "
+        "competencies=%d profile_id=%s",
+        ctx.job_title, profile.domain_family, profile.source,
+        len(profile.competencies), profile.profile_id,
+    )
+    return profile
 
 
 # ---------------------------------------------------------------------------
@@ -720,6 +899,7 @@ async def _post_score(
     language: str,
     jd_text: str,
     transcript: list[dict[str, str]],
+    role_profile: RoleProfile | None = None,
 ) -> None:
     """POST the transcript to feedback_billing /internal/score.
 
@@ -739,6 +919,12 @@ async def _post_score(
         "jd_text": jd_text,
         "turns": transcript,
     }
+    # Send the SAME role model the interview was conducted against, so the
+    # scorer grades on the rubric the questions actually came from. Deriving it
+    # independently in feedback_billing would risk a different profile (cache
+    # state, LLM nondeterminism) scoring an interview it did not shape.
+    if role_profile is not None:
+        payload["role_profile"] = role_profile.model_dump(mode="json")
 
     # JWT mint is outside the loop — a mint failure aborts immediately without
     # retry and is logged, so we don't thrash on a bad config.
@@ -1189,20 +1375,27 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
     # DB lookup is best-effort and MUST NEVER crash the avatar path.
-    job_title, language, experience_level, jd_text = "the role", "en", "entry", ""
-    presenter_id: str | None = None
-    resume_text: str = ""
-    company_name: str = ""
+    session_ctx = SessionContext()
     try:
-        (
-            job_title, language, experience_level, jd_text,
-            presenter_id, resume_text, company_name,
-        ) = await _lookup_session(ctx.room.name)
+        session_ctx = await _lookup_session(ctx.room.name)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "interview-worker: session lookup failed, using defaults: %s",
             type(exc).__name__,
         )
+
+    # Local aliases — the close/scoring paths below close over these names.
+    job_title = session_ctx.job_title
+    language = session_ctx.language
+    experience_level = session_ctx.experience_level
+    jd_text = session_ctx.jd_text
+    presenter_id = session_ctx.presenter_id
+    resume_text = session_ctx.resume_text
+    company_name = session_ctx.company_name
+
+    # Role model — drives question planning below. Never raises; degrades to
+    # the deterministic taxonomy baseline.
+    role_profile = await _derive_role_profile(session_ctx)
 
     # Resolve the per-session avatar: voice (Sarvam TTS speaker) + replica_id
     # (Tavus face). resolve_avatar() never raises — unknown/None → default "anna".
@@ -1340,6 +1533,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 language=language,
                 jd_text=jd_text,
                 transcript=state.transcript,
+                role_profile=role_profile,
             )
         else:
             logger.info(
@@ -1486,6 +1680,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 language=language,
                 jd_text=jd_text,
                 transcript=state.transcript,
+                role_profile=role_profile,
             )
 
     def _on_session_close(_event: Any) -> None:
@@ -1611,7 +1806,7 @@ async def entrypoint(ctx: JobContext) -> None:
     await session.start(
         agent=Agent(
             instructions=_interviewer_instructions(
-                job_title, language, resume_text, company_name
+                job_title, language, resume_text, company_name, role_profile
             )
         ),
         room=ctx.room,

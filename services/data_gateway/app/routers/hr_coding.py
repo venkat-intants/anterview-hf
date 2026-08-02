@@ -60,6 +60,10 @@ class TestCaseIn(BaseModel):
 class CodingQuestionIn(BaseModel):
     prompt: str = Field(min_length=1, max_length=20_000)
     allowed_languages: list[str] = Field(min_length=1, max_length=len(SUPPORTED_LANGUAGES))
+    # Optional role context — see GenerateQuestionsIn in hr_exams. Ignored
+    # downstream for roles where a coding test is not a sensible assessment.
+    job_title: str = Field(default="", max_length=300)
+    experience_level: str = Field(default="mid")
     starter_code: str | None = Field(default=None, max_length=40_000)
     reference_solution: str | None = Field(default=None, max_length=40_000)
     test_cases: list[TestCaseIn] = Field(min_length=1, max_length=settings.code_max_test_cases)
@@ -356,6 +360,8 @@ async def generate_coding_questions(
             language=body.language,
             allowed_languages=body.allowed_languages,
             acting_user_id=str(hr_uid),
+            job_title=body.job_title,
+            experience_level=body.experience_level,
         )
     except ExamGenerationError as exc:
         raise HTTPException(

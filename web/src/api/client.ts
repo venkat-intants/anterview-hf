@@ -244,6 +244,30 @@ export function apiPost<T>(path: string, body: unknown, opts?: ClientOptions): P
   });
 }
 
+/**
+ * Request against data_gateway with a runtime-chosen method.
+ *
+ * Exists for the agent layer's proposal commit, where the method and path come
+ * from a server-issued CommitSpec rather than from a literal at the call site.
+ * The path is still a relative API path (the backend rejects absolute URLs on
+ * a CommitSpec), so this cannot be pointed at another host.
+ *
+ * Prefer the explicit apiGet/apiPost/apiPut/apiPatch/apiDelete helpers
+ * everywhere else — a literal method is easier to grep and to review.
+ */
+export function apiRequest<T>(
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  path: string,
+  body?: unknown,
+  opts?: ClientOptions,
+): Promise<T> {
+  return clientFetch<T>(buildUrl(DATA_GATEWAY_BASE, path), {
+    ...opts,
+    method,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
 /** PUT request against data_gateway. */
 export function apiPut<T>(path: string, body: unknown, opts?: ClientOptions): Promise<T> {
   return clientFetch<T>(buildUrl(DATA_GATEWAY_BASE, path), {

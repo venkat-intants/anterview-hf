@@ -154,6 +154,11 @@ class GenerateQuestionsIn(BaseModel):
     num_questions: int = Field(default=5, ge=1, le=30)
     difficulty: str = Field(default="medium")
     language: str = Field(default="en")
+    # Optional role context. When set, the generator spreads questions across
+    # this role's competencies using the same allocator the interview uses, so
+    # the two rounds stop assessing subtly different jobs.
+    job_title: str = Field(default="", max_length=300)
+    experience_level: str = Field(default="mid")
 
     @field_validator("difficulty")
     @classmethod
@@ -856,6 +861,8 @@ async def generate_questions(
             difficulty=body.difficulty,
             language=body.language,
             acting_user_id=str(hr_uid),
+            job_title=body.job_title,
+            experience_level=body.experience_level,
         )
     except ExamGenerationError as exc:
         raise HTTPException(

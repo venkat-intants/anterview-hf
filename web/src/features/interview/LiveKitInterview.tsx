@@ -150,7 +150,7 @@ export default function LiveKitInterview({ sessionId, cameraConsented = false }:
   const handleEnd = useCallback(async () => {
     setEnding(true);
     await disconnect();
-    navigate(`/interview/${sessionId}/complete`, {
+    void navigate(`/interview/${sessionId}/complete`, {
       state: { endedEarly: true },
       replace: true,
     });
@@ -162,7 +162,7 @@ export default function LiveKitInterview({ sessionId, cameraConsented = false }:
   // InterviewComplete will poll for the scorecard.
   useEffect(() => {
     if (status === 'disconnected' && !ending) {
-      navigate(`/interview/${sessionId}/complete`, { replace: true });
+      void navigate(`/interview/${sessionId}/complete`, { replace: true });
     }
   }, [status, ending, navigate, sessionId]);
 

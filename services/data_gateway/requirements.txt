@@ -43,7 +43,7 @@ packaging==26.2
 pathspec==1.1.1
 pluggy==1.6.0
 propcache==0.5.2
-pyasn1==0.6.3
+pyasn1==0.6.4
 pycparser==3.0
 pydantic==2.13.4
 pydantic-settings==2.14.2

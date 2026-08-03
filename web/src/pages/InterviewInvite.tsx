@@ -86,7 +86,7 @@ export default function InterviewInvite() {
       }
       // Strip the token from the URL before leaving the page.
       window.history.replaceState(null, '', '/interview-invite');
-      navigate(`/interview/${r.session_id}`, { replace: true });
+      void navigate(`/interview/${r.session_id}`, { replace: true });
     },
   });
 

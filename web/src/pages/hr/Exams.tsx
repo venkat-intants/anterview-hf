@@ -73,7 +73,7 @@ function ExamCard({ e }: { e: ExamSummary }) {
         <button
           type="button"
           className="flex-1"
-          onClick={() => navigate(`/hr/exams/${e.id}`)}
+          onClick={() => void navigate(`/hr/exams/${e.id}`)}
           aria-label={`Edit exam ${e.title}`}
         >
           <Pill variant="ghost" className="w-full py-2 text-[12.5px]">
@@ -84,7 +84,7 @@ function ExamCard({ e }: { e: ExamSummary }) {
           <button
             type="button"
             className="flex-1"
-            onClick={() => navigate(`/hr/exams/${e.id}/results`)}
+            onClick={() => void navigate(`/hr/exams/${e.id}/results`)}
             aria-label={`View results for exam ${e.title}`}
           >
             <Pill variant="accent" className="w-full py-2 text-[12.5px]">
@@ -136,7 +136,7 @@ export default function Exams() {
       setKind('mcq');
       setShowForm(false);
       void qc.invalidateQueries({ queryKey: ['hr', 'exams'] });
-      navigate(`/hr/exams/${e.id}`);
+      void navigate(`/hr/exams/${e.id}`);
     },
     onError: (err: unknown) =>
       toast.error(err instanceof Error ? err.message : 'Create failed'),

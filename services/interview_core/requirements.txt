@@ -41,6 +41,11 @@ importlib_metadata==8.7.1
 iniconfig==2.3.0
 jiter==0.15.0
 jmespath==1.1.0
+# json_repair is HELD at 0.59.10 despite GHSA-xf7x-x43h-rpqh: livekit-agents
+# 1.5.15 hard-pins `json-repair==0.59.10`, so bumping it here makes pip's
+# resolver fail and breaks both the Docker build and CI. feedback_billing has
+# no livekit dependency and IS on the patched 0.60.1. Unblock = livekit-agents
+# bump. See .trivyignore.
 json_repair==0.59.10
 jsonpatch==1.33
 jsonpointer==3.1.1
@@ -81,13 +86,13 @@ orjson==3.11.9
 ormsgpack==1.12.2
 packaging==25.0
 pathspec==1.1.1
-pillow==12.2.0
+pillow==12.3.0
 pluggy==1.6.0
 prometheus_client==0.25.0
 propcache==0.5.2
 protobuf==6.33.6
 psutil==7.2.2
-pyasn1==0.6.3
+pyasn1==0.6.4
 pycparser==3.0
 pydantic==2.13.4
 pydantic-settings==2.14.2

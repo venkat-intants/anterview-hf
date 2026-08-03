@@ -14,9 +14,10 @@
     "test:watch": "vitest",
     "lint": "eslint src --ext ts,tsx --max-warnings 0",
     "lint:fix": "eslint src --ext ts,tsx --fix",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -b --noEmit",
     "format": "prettier --write src",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "audit:ci": "node scripts/audit-ci.mjs"
   },
   "dependencies": {
     "@headlessui/react": "^2.1.2",
@@ -48,7 +49,7 @@
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.52.1",
     "react-i18next": "^15.0.1",
-    "react-router-dom": "^6.26.0",
+    "react-router-dom": "^7.18.2",
     "react-simple-code-editor": "^0.14.1",
     "recharts": "^3.8.1",
     "sonner": "^2.0.7",

@@ -50,7 +50,7 @@ export default function ProfileView() {
       <div className="mx-auto max-w-[900px] px-6 py-16">
         <button
           type="button"
-          onClick={() => navigate(-1)}
+          onClick={() => void navigate(-1)}
           className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-[#888b91] hover:text-white"
         >
           <ArrowLeft size={15} aria-hidden="true" /> Back
@@ -84,7 +84,7 @@ export default function ProfileView() {
     <div className="mx-auto max-w-[900px] px-6 py-8 lg:px-8 space-y-5">
       <button
         type="button"
-        onClick={() => navigate(-1)}
+        onClick={() => void navigate(-1)}
         className="inline-flex items-center gap-1.5 text-[13px] text-[#888b91] transition-colors hover:text-white"
       >
         <ArrowLeft size={15} aria-hidden="true" /> Back
@@ -196,7 +196,7 @@ export default function ProfileView() {
       )}
 
       <div className="flex justify-end pb-2">
-        <Pill variant="ghost" type="button" onClick={() => navigate(-1)} className="px-5 py-2.5">
+        <Pill variant="ghost" type="button" onClick={() => void navigate(-1)} className="px-5 py-2.5">
           Done
         </Pill>
       </div>

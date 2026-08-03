@@ -692,19 +692,62 @@ def _make_user(*, user_id: str | None = None, roles: list[str] | None = None) ->
 
 
 @pytest.mark.asyncio
-async def test_jd_authz_platform_admin_can_upload_any_job() -> None:
-    """platform_owner / super_admin / admin must bypass all tenant checks.
+async def test_jd_authz_platform_owner_can_upload_any_job() -> None:
+    """platform_owner — and ONLY platform_owner — bypasses the tenant check.
 
-    This test would FAIL (raise 403) if _PLATFORM_ADMIN_ROLES were removed."""
+    Would FAIL (raise 403) if platform_owner were removed from
+    _PLATFORM_ADMIN_ROLES."""
     from app.routers.jd import _assert_jd_upload_authorized
 
-    for role in ("platform_owner", "super_admin", "admin"):
+    user = _make_user(roles=["platform_owner"])
+    job = _make_job(created_by_user_id=None)  # seeded / platform job
+    mock_db = AsyncMock()
+    # Must not raise
+    await _assert_jd_upload_authorized(mock_db, user, job)
+    mock_db.scalar.assert_not_awaited()  # no DB queries needed
+
+
+@pytest.mark.asyncio
+async def test_jd_authz_super_admin_denied_on_seeded_job() -> None:
+    """super_admin is ONE COMPANY's admin — it must not touch a platform job.
+
+    It used to sit in _PLATFORM_ADMIN_ROLES and bypass every tenant check, so
+    company B's super_admin could overwrite company A's jd_text. That is both a
+    cross-tenant write and an LLM prompt-injection vector, since jd_text is fed
+    to the model. `admin` is the analytics role and has no business writing a
+    JD at all.
+    """
+    from fastapi import HTTPException
+
+    from app.routers.jd import _assert_jd_upload_authorized
+
+    for role in ("super_admin", "admin"):
         user = _make_user(roles=[role])
         job = _make_job(created_by_user_id=None)  # seeded / platform job
-        mock_db = AsyncMock()
-        # Must not raise
+        with pytest.raises(HTTPException) as exc:
+            await _assert_jd_upload_authorized(AsyncMock(), user, job)
+        assert exc.value.status_code == 403, role
+
+
+@pytest.mark.asyncio
+async def test_jd_authz_super_admin_denied_on_other_companys_job() -> None:
+    """A super_admin of company B gets 403 on a job owned by company A."""
+    from fastapi import HTTPException
+
+    from app.routers.jd import _assert_jd_upload_authorized
+
+    caller_uid = uuid.uuid4()
+    other_owner_uid = uuid.uuid4()
+    user = _make_user(user_id=str(caller_uid), roles=["super_admin"])
+    job = _make_job(created_by_user_id=other_owner_uid)
+
+    mock_db = AsyncMock()
+    # Rule 3 resolves both companies; make them differ.
+    mock_db.scalar.side_effect = [uuid.uuid4(), uuid.uuid4()]
+
+    with pytest.raises(HTTPException) as exc:
         await _assert_jd_upload_authorized(mock_db, user, job)
-        mock_db.scalar.assert_not_awaited()  # no DB queries needed
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio

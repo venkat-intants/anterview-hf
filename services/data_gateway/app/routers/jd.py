@@ -52,8 +52,17 @@ router = APIRouter(prefix="/jobs", tags=["jd"])
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
-# Roles that may manage platform-level (seeded / created_by_user_id=NULL) jobs.
-_PLATFORM_ADMIN_ROLES = frozenset({"platform_owner", "super_admin", "admin"})
+# Roles that may manage platform-level (seeded / created_by_user_id=NULL) jobs
+# and, in doing so, bypass the tenant check below.
+#
+# platform_owner ONLY. `super_admin` is a SINGLE company's admin (CLAUDE.md:
+# "company_id SET"), so granting it a cross-tenant bypass let company B
+# overwrite company A's jd_text — a cross-tenant write, and a prompt-injection
+# vector because that text is fed to the LLM. `admin` is the analytics role and
+# has no business writing a JD at all. Every other router already scopes both:
+# routers/profile.py's _GLOBAL_VIEW_ROLES is {"admin", "platform_owner"} and
+# admin_hr.py scopes super_admin to "the caller's OWN company".
+_PLATFORM_ADMIN_ROLES = frozenset({"platform_owner"})
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -261,15 +270,18 @@ async def _assert_jd_upload_authorized(
     """Raise HTTP 403 if the caller is not authorized to upload a JD for *job*.
 
     Authorization rules (evaluated in order):
-    1. Platform-admin roles (platform_owner / super_admin / admin) may always upload.
+    1. platform_owner may always upload (the only genuinely cross-tenant role).
     2. User-owned job: job.created_by_user_id == caller's UUID → allowed.
     3. Same-tenant job: the job owner is in the SAME company as the caller → allowed.
-    4. Seeded/platform job (created_by_user_id IS NULL) with a non-admin caller → 403.
+    4. Seeded/platform job (created_by_user_id IS NULL) with any other caller → 403.
     5. Cross-company job → 403.
+
+    A super_admin therefore gets 403 on both a seeded job and another company's
+    job, which is what the module docstring has always promised.
     """
     caller_roles = set(current_user.roles)
 
-    # Rule 1 — platform admins bypass all tenant checks.
+    # Rule 1 — the platform owner bypasses all tenant checks.
     if caller_roles & _PLATFORM_ADMIN_ROLES:
         return
 

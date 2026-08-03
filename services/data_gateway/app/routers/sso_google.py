@@ -394,6 +394,27 @@ async def callback(
                     detail="GOOGLE_USERINFO_FAILED",
                 )
 
+            # The email is the account-linking key below (ON CONFLICT (email)),
+            # so an UNVERIFIED one is an account-takeover primitive: anyone who
+            # can set that address on a Google account they control would be
+            # handed a session for the existing local user. Google's own OIDC
+            # guidance is that email must not be used as an identifier unless
+            # email_verified is true.
+            #
+            # `is not True` deliberately, not a truthiness test: Google has
+            # historically returned the STRING "true" in some responses, and a
+            # truthy check would also pass on a missing key — the two cases we
+            # most need to reject.
+            if userinfo.get("email_verified") is not True:
+                log.warning(
+                    "google.sso.userinfo.email_unverified",
+                    google_sub=google_sub,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="GOOGLE_EMAIL_UNVERIFIED",
+                )
+
     except HTTPException:
         raise
     except Exception as exc:

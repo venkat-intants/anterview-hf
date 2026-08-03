@@ -25,62 +25,36 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
-from shared.auth.jwt import verify_access_token
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings as _app_settings
+from app.auth import UNAUTHORIZED, require_jwt
 from app.database import get_db_session
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["scorecards"])
 
-_bearer_scheme = HTTPBearer(auto_error=False)
-
-_UNAUTHORIZED = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED,
-    detail="Invalid or missing access token",
-    headers={"WWW-Authenticate": "Bearer"},
-)
+_UNAUTHORIZED = UNAUTHORIZED
 
 # Truncate summary to this many characters in the list view.
 _SUMMARY_TRUNCATE_LEN = 200
 
 
 # ---------------------------------------------------------------------------
-# Auth dependency (shared pattern with scorecard.py / score.py)
+# Auth dependency — imported, not reimplemented (see app/auth.py)
 # ---------------------------------------------------------------------------
 
 
-async def _require_jwt(
-    credentials: Annotated[
-        HTTPAuthorizationCredentials | None,
-        Depends(_bearer_scheme),
-    ],
-) -> dict[str, Any]:
-    """Verify Bearer JWT; return decoded payload."""
-    if credentials is None:
-        raise _UNAUTHORIZED
-
-    try:
-        payload = verify_access_token(
-            credentials.credentials,
-            secret=_app_settings.jwt_secret,
-            algorithm=_app_settings.jwt_algorithm,
-            expected_issuer=_app_settings.jwt_issuer,
-            expected_audience=_app_settings.jwt_audience,
-        )
-    except JWTError as exc:
-        log.warning("scorecard_list.auth.jwt_failed", error_type=type(exc).__name__)
-        raise _UNAUTHORIZED from exc
-
-    result: dict[str, Any] = dict(payload)
-    return result
+# The shared dependency from app.auth — NOT a local copy. A local copy is
+# exactly how this router ended up skipping the token-revocation epoch check
+# that every other JWT verifier in the platform performs, so `GET
+# /api/scorecards` kept serving history to access tokens that "log out all
+# devices", change-password, reset-password, HR deletion and DPDP erasure had
+# all revoked.
+_require_jwt = require_jwt
 
 
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ from shared.agents import (
     ToolContext,
     UnknownConsoleError,
     assess_candidate,
+    available_consoles,
     build_agent,
     run_agent,
 )
@@ -154,8 +155,15 @@ async def agent_status(user: UserDep) -> dict[str, Any]:
         role = _primary_role(user)
     except HTTPException:
         role = ""
+    # `enabled` must depend on the CALLER's role, not just on global config.
+    # Without the role terms this reported the assistant as enabled for every
+    # authenticated user, and the frontend gates purely on this flag
+    # (CopilotLauncher.tsx: `if (!status?.enabled) return null`) while AppShell
+    # mounts the launcher on candidate pages too — so a candidate saw an "Ask
+    # assistant" button whose every message 403'd from _primary_role.
+    has_console = bool(role) and role in available_consoles()
     return {
-        "enabled": settings.agents_enabled and availability["configured"],
+        "enabled": settings.agents_enabled and availability["configured"] and has_console,
         "model_configured": availability["configured"],
         "console": role,
         # Stated in the API so a client cannot present the copilot as more

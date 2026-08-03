@@ -1,0 +1,37 @@
+# gitleaks config for the secret-scan step in .github/workflows/ci.yml.
+#
+# Philosophy: allowlist EXACT literals, never whole paths. "ignore everything
+# under tests/" is the usual shortcut and it is how a real key committed to a
+# fixture goes unnoticed forever — test files are exactly where a developer
+# pastes a live key "just to check something".
+#
+# Every entry needs to be verifiably fake on its face.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Verifiably-fake fixtures and CI placeholders"
+
+regexes = [
+  # services/interview_core/tests/unit/test_groq.py — a literal that spells out
+  # what it is. Matches gitleaks' generic-api-key rule only because of the
+  # provider-style `gsk_` prefix.
+  '''gsk_test_key_abc123''',
+
+  # .github/workflows/ci.yml placeholder secrets. Every service's Settings has
+  # required fields with no default and fails fast at import without them, so
+  # CI must supply syntactically valid values. These say so in the value
+  # itself and point nowhere.
+  '''ci-only-[a-z-]*secret-[0-9a-f]+''',
+  '''ci-only-salt-[0-9a-f]+''',
+  '''ci-only-not-a-real-secret-[0-9a-f]+''',
+]
+
+paths = [
+  # Committed templates: every value in these is an empty placeholder, which is
+  # the whole point of the file. Verified — `grep -hE 'SECRET|KEY|TOKEN'` over
+  # them returns bare `KEY=` lines.
+  '''.*\.env\.example$''',
+  '''^space\.env\.example$''',
+]

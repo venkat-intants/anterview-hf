@@ -1,31 +1,82 @@
-# Push every main-branch commit to the Hugging Face Space (which then builds
-# the Dockerfile and redeploys). Requires two repo settings:
+# Deploy: push a main-branch commit to the Hugging Face Space, which then
+# builds the Dockerfile and redeploys.
+#
+# GATED ON CI. This used to trigger on `push: branches: [main]`, independently
+# of ci.yml — two separate workflows with no relationship — so a commit that
+# failed lint, tests or the security scan still force-pushed to the live Space.
+# ci.yml's header claimed "This runs first and gates that"; nothing enforced it.
+#
+# `workflow_run` is the only way to express "after another workflow finished"
+# across workflow files (`needs:` works only between jobs in ONE file). The job
+# then re-checks the conclusion, because workflow_run fires on completion
+# regardless of outcome — `types: [completed]` includes failure and cancelled.
+#
+# Requires two repo settings:
 #   Secrets  → HF_TOKEN  — hf.co → Settings → Access Tokens → type "write"
 #   Variables→ HF_SPACE  — the Space id, e.g. "venkat-intants/intants-interview"
+#
+# NOTE: a workflow_run trigger only takes effect once this file is on the
+# DEFAULT branch. Until this lands on main, no deploy fires at all — which is
+# the safe direction to fail.
 name: Sync to HF Space
 
 on:
-  push:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
     branches: [main]
+  # Manual escape hatch: lets an operator redeploy the current main without
+  # waiting for a fresh CI run (e.g. to recover a Space that lost its state).
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Never let two force-pushes to the same Space interleave. Without this, two
+# quick merges to main race and whichever push lands second wins — which is not
+# necessarily the newer commit. Not cancel-in-progress: a deploy that has begun
+# should finish rather than leave the Space mid-update.
+concurrency:
+  group: sync-to-space
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
-    if: vars.HF_SPACE != ''
+    # Deploy only when CI actually passed. workflow_dispatch has no
+    # workflow_run context, so allow it through explicitly.
+    if: >-
+      vars.HF_SPACE != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.workflow_run.conclusion == 'success')
     steps:
       - uses: actions/checkout@v4
         with:
+          # Check out the EXACT commit CI validated, not whatever main points at
+          # now. Between CI finishing and this job starting, main may have moved
+          # to a commit that has not been tested — deploying that would silently
+          # defeat the gate this workflow exists to enforce.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0
           lfs: true
+
+      - name: Report what is being deployed
+        run: |
+          echo "event:      ${{ github.event_name }}"
+          echo "CI result:  ${{ github.event.workflow_run.conclusion || 'n/a (manual)' }}"
+          echo "commit:     $(git rev-parse HEAD)"
+          git --no-pager log -1 --pretty='%h %s'
+
       - name: Push to Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE: ${{ vars.HF_SPACE }}
         run: |
+          if [ -z "${HF_TOKEN}" ]; then
+            echo "::error::HF_TOKEN is not set — cannot deploy."
+            exit 1
+          fi
+          # HEAD, not a branch name: the checkout above is a detached commit.
           git push --force \
             "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" \
             HEAD:main

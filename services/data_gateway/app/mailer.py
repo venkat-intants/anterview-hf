@@ -28,9 +28,11 @@ import asyncio
 import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import Row, select, text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import email_templates
@@ -198,7 +200,7 @@ def _backoff_seconds(attempts: int) -> int:
     return min(_BACKOFF_CAP_SECONDS, _BACKOFF_BASE_SECONDS * (2 ** max(0, attempts - 1)))
 
 
-async def _claim_batch(db: AsyncSession) -> list[tuple]:
+async def _claim_batch(db: AsyncSession) -> list[Row[Any]]:
     """Atomically claim up to email_batch_size due rows → set 'sending', bump
     attempts. Returns the rows' send payloads. FOR UPDATE SKIP LOCKED makes this
     safe to run concurrently across multiple worker instances."""
@@ -360,4 +362,5 @@ async def purge_old_email_events(db: AsyncSession) -> int:
         )
     )
     await db.commit()
-    return int(result.rowcount or 0)
+    # See retention.py: execute() is typed Result, DML returns CursorResult.
+    return int(cast("CursorResult[Any]", result).rowcount or 0)

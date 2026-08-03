@@ -128,6 +128,17 @@ class GenerateCodingQuestionsIn(BaseModel):
     difficulty: str = Field(default="medium", pattern="^(easy|medium|hard|mixed)$")
     language: str = Field(default="en", pattern="^(en|hi|te)$")
     allowed_languages: list[str] = Field(min_length=1, max_length=len(SUPPORTED_LANGUAGES))
+    # Optional role context — same pair, same defaults, as the MCQ flow's
+    # GenerateQuestionsIn. When set, the generator spreads problems across the
+    # role's competencies using the allocator the interview uses, so the two
+    # rounds stop assessing subtly different jobs.
+    #
+    # These are not decoration: the endpoint body already passes both to
+    # generate_coding_questions_remote(). Without the declarations every call
+    # raised AttributeError before reaching the generator, because pydantic
+    # raises on an undeclared attribute — the endpoint was a guaranteed 500.
+    job_title: str = Field(default="", max_length=300)
+    experience_level: str = Field(default="mid")
 
     @field_validator("allowed_languages")
     @classmethod

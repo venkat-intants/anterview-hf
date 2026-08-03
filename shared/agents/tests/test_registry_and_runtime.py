@@ -79,7 +79,12 @@ def test_registry_refuses_a_mutating_tool() -> None:
         name="delete_applicant",
         description="destructive",
         parameters=OBJ_SCHEMA,
-        effect="write",
+        # The suppression below is the POINT of this test, not an oversight:
+        # mypy is right that "write" is not a ToolEffect. We smuggle one past
+        # the type system anyway to prove the RUNTIME gate in
+        # ToolRegistry.register catches it too — belt and braces, because the
+        # type alone would not stop a value arriving from JSON at runtime.
+        effect="write",  # type: ignore[arg-type]
         allowed_roles=(),
     )
 

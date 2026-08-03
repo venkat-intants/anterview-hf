@@ -531,6 +531,11 @@ async def platform_stats(current_user: PlatformOwnerDep, db: DbSessionDep) -> Pl
             )
         )
     ).fetchone()
+    # Scalar aggregate with no GROUP BY — Postgres always returns exactly one
+    # row, so fetchone() cannot be None here. Asserted rather than ignored so
+    # that adding a WHERE/GROUP BY later fails loudly instead of raising
+    # TypeError on the subscript below.
+    assert row is not None
     return PlatformStats(
         companies=int(row[0]), super_admins=int(row[1]), hr_managers=int(row[2]),
         candidates=int(row[3]), interviews_total=int(row[4]), interviews_30d=int(row[5]),
@@ -997,6 +1002,8 @@ async def email_events_summary(
             )
         )
     ).fetchone()
+    # Scalar aggregate with no GROUP BY — always exactly one row. See above.
+    assert row is not None
     return EmailEventSummary(
         queued=int(row[0]), sent=int(row[1]), failed=int(row[2])
     )

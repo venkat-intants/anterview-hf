@@ -105,8 +105,15 @@ def _normalise_question(raw: Any) -> dict[str, Any] | None:
         return None
     if len(set(options)) != _OPTIONS_PER_QUESTION:  # reject duplicate options
         return None
+    # `int(None)` raising TypeError into the handler below is deliberate — a
+    # model that omits correct_index must be dropped, not defaulted to 0, which
+    # would silently mark option A correct. Pull the value out first so the
+    # None case is visible in the types rather than resting on that TypeError.
+    raw_index = raw.get("correct_index")
+    if raw_index is None:
+        return None
     try:
-        correct_index = int(raw.get("correct_index"))
+        correct_index = int(raw_index)
     except (TypeError, ValueError):
         return None
     if not (0 <= correct_index < _OPTIONS_PER_QUESTION):

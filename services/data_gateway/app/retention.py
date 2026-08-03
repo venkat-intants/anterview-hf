@@ -59,9 +59,11 @@ Log events emitted:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import structlog
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -146,7 +148,11 @@ async def purge_expired_sessions(db: AsyncSession, settings: Settings) -> int:
     delete_stmt = delete(InterviewSession).where(predicate)
     result = await db.execute(delete_stmt)
     await db.commit()
-    deleted_count = int(result.rowcount)
+    # AsyncSession.execute is typed as returning Result, which declares no
+    # rowcount; a DML statement actually returns a CursorResult, which does.
+    # Narrow it rather than ignoring, so a future change that stops issuing DML
+    # here is caught.
+    deleted_count = int(cast("CursorResult[Any]", result).rowcount)
 
     log.info(
         "retention.purge.done",

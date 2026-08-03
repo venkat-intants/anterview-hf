@@ -310,7 +310,12 @@ def get_interviewer_prompt(language: str) -> str:
     ``{max_turns}``, ``{interview_type}`` and ``{at_company}`` placeholders
     intact; call ``render_interviewer_system_prompt`` to substitute values.
     """
-    return INTERVIEWER_SYSTEM_PROMPTS.get(language, INTERVIEWER_SYSTEM_PROMPT_EN)  # type: ignore[arg-type]
+    # The dict is keyed by Literal["en","hi","te"] but `language` is a plain
+    # str off the wire, so .get() has no matching overload. That is exactly the
+    # lookup we want — an unknown language must fall back to English rather
+    # than raise. (The previous suppression named [arg-type], which is not the
+    # code mypy emits here, so it silenced nothing.)
+    return INTERVIEWER_SYSTEM_PROMPTS.get(language, INTERVIEWER_SYSTEM_PROMPT_EN)  # type: ignore[call-overload,no-any-return]
 
 
 # Backwards-compat alias for Sprint-2 callers / tests that imported the

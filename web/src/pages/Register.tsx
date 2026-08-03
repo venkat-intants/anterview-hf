@@ -115,7 +115,11 @@ export default function Register() {
         roles: me.roles,
       };
       setAuth(regRes.access_token, user);
-      void navigate('/dashboard', { replace: true });
+      // Straight to personalization, not via /dashboard. A self-registered
+      // account is always a self-serve candidate, so the dashboard would only
+      // render a generic page and then bounce them here anyway — the bounce is
+      // visible, and it is the first thing they ever see of the product.
+      void navigate('/onboarding', { replace: true });
     },
     onError: (err: unknown) => {
       const message = err instanceof Error ? err.message : t('error.generic');

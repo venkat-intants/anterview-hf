@@ -5,11 +5,15 @@
 
 import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, Link, Navigate } from 'react-router-dom';
+import { useNavigate, useLocation, Link, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { getMe, logout } from '@/api/auth';
-import { getOnboardingStatus } from '@/api/onboarding';
+import {
+  getOnboardingStatus,
+  getPracticePlan,
+  type OnboardingGoal,
+} from '@/api/onboarding';
 import { listSessions } from '@/api/sessions';
 import { listScorecards } from '@/api/scorecard';
 import { getCurrentResume, uploadResume } from '@/api/resume';
@@ -104,13 +108,56 @@ function sessionTagTone(status: string): TagTone {
 
 const DOW_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as const;
 
+// ── Goal → hero copy ──────────────────────────────────────────────────────────
+// The wizard asks why they're practising; this is where that answer earns its
+// keep. "Campus placement in three weeks" and "just getting comfortable" want
+// very different encouragement on the page they see every day.
+
+const GOAL_LINE: Record<OnboardingGoal, string> = {
+  campus_placement: 'Placement season rewards reps — keep the streak going.',
+  first_job: 'First interviews are won on practice, not luck.',
+  switching_field: 'New field, new vocabulary — practise talking about the work you want.',
+  interview_soon: 'You have one coming up. Run a full mock before the real thing.',
+  general_practice: 'Getting comfortable talking is most of the battle.',
+};
+
+// ── Loading gate ──────────────────────────────────────────────────────────────
+// Shown until we know whether this account still owes onboarding. Rendering the
+// real dashboard first and redirecting after would flash a generic, empty page
+// at exactly the user it is least suited to — someone who has never seen the
+// product. Shape-matched to the page below so the swap is not a jolt.
+
+function DashboardSkeleton() {
+  return (
+    <div className="mx-auto max-w-[1200px] px-6 py-8 lg:px-8 space-y-5" aria-busy="true">
+      <Sk className="h-[132px] w-full rounded-[16px]" />
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.4fr_1fr]">
+        <Sk className="h-[200px] w-full rounded-[16px]" />
+        <Sk className="h-[200px] w-full rounded-[16px]" />
+      </div>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Sk className="h-[92px] rounded-[16px]" />
+        <Sk className="h-[92px] rounded-[16px]" />
+        <Sk className="h-[92px] rounded-[16px]" />
+        <Sk className="h-[92px] rounded-[16px]" />
+      </div>
+    </div>
+  );
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const { accessToken, user, clearAuth } = useAuth();
   const queryClient = useQueryClient();
+
+  // Set by the onboarding handoff so the first dashboard reads as the end of
+  // that flow rather than an unrelated page.
+  const justOnboarded =
+    (location.state as { justOnboarded?: boolean } | null)?.justOnboarded === true;
 
   // ── Query: profile ──────────────────────────────────────────────────────────
   const {
@@ -129,10 +176,21 @@ export default function Dashboard() {
   // ── Query: onboarding status (drives the first-login redirect) ──────────────
   // retry:false — a 403 (privileged account with no self-serve plan) is a
   // permanent answer, and retrying it just delays the dashboard.
-  const { data: onboarding } = useQuery({
+  const { data: onboarding, isLoading: onboardingLoading } = useQuery({
     queryKey: ['onboarding-status'],
     queryFn: getOnboardingStatus,
     staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
+  // ── Query: practice plan ────────────────────────────────────────────────────
+  // Same key PracticePlanCard uses, so this is one request served twice from
+  // cache — not a second round-trip. Read here to personalize the hero and to
+  // decide whether the acquisition banner still has a job to do.
+  const { data: plan } = useQuery({
+    queryKey: ['practice-plan'],
+    queryFn: getPracticePlan,
+    staleTime: 60_000,
     retry: false,
   });
 
@@ -228,6 +286,31 @@ export default function Dashboard() {
   const firstName = (me?.full_name ?? user?.full_name ?? '').split(' ')[0] ?? '';
   const isAdmin = (me?.roles ?? user?.roles ?? []).includes('admin');
 
+  // ── Personalization ─────────────────────────────────────────────────────────
+  // `planReady` means they told us a target role, so the page can speak about
+  // that job instead of pitching the product at them.
+  const planReady = plan?.ready === true;
+  const goalLine = onboarding?.goal ? GOAL_LINE[onboarding.goal] : null;
+
+  const heroSubtitle = (() => {
+    if (!planReady || !plan) {
+      return interviewsTaken > 0
+        ? 'You’re building momentum — one more mock interview keeps your readiness climbing.'
+        : 'Start your first mock interview to see your readiness score.';
+    }
+    // plan.interviews_completed, not interviewsTaken: the sessions feed counts
+    // every session, the plan counts the ones that produced a scorecard. A
+    // sentence about the plan must use the plan's own number or it can claim
+    // "your weakest area is X" off zero scored interviews.
+    if (plan.interviews_completed === 0) {
+      return `Your ${plan.target_role} plan is ready — ${plan.competencies.length} competencies to practise. One mock interview fills in every bar.`;
+    }
+    if (plan.focus_competency_name) {
+      return `Practising for ${plan.target_role}. Your weakest area right now is ${plan.focus_competency_name} — that’s where the next mock should go.`;
+    }
+    return `Practising for ${plan.target_role}. Keep the reps up and your readiness climbs.`;
+  })();
+
   // Readiness ring: avg composite ×10 (0–100) when available
   const readinessScore = avgScore0to100 ?? 0;
 
@@ -248,11 +331,19 @@ export default function Dashboard() {
   });
 
   // ── First-login personalization redirect ────────────────────────────────────
-  // Placed here rather than in Login/Register/GoogleCallback because all three
-  // land self-serve users on /dashboard, and patching three navigate() sites
-  // would drift the moment a fourth auth path is added. `applicable` is false
-  // for HR/admin, and `seen` flips on both complete AND skip, so this fires
-  // exactly once per account and never for a privileged user.
+  // Placed here rather than in Login/GoogleCallback because both land
+  // self-serve users on /dashboard, and patching every navigate() site would
+  // drift the moment a fourth auth path is added. (Register skips the round
+  // trip and goes straight to /onboarding, since a self-registered account is
+  // always a candidate.) `applicable` is false for HR/admin, and `seen` flips
+  // on both complete AND skip, so this fires exactly once per account and
+  // never for a privileged user.
+  //
+  // The gate below is what makes the redirect invisible: without it the whole
+  // generic dashboard paints first and is then yanked away.
+  if (onboardingLoading) {
+    return <DashboardSkeleton />;
+  }
   if (onboarding && onboarding.applicable && !onboarding.seen) {
     return <Navigate to="/onboarding" replace />;
   }
@@ -280,19 +371,45 @@ export default function Dashboard() {
   return (
     <div className="mx-auto max-w-[1200px] px-6 py-8 lg:px-8 space-y-5">
 
-      {/* ── Row 0: Brand promo banner + trust chips ── */}
+      {/* ── Row 0: arrival from onboarding ── */}
+      {justOnboarded && (
+        <Reveal>
+          <div className="flex items-center gap-2.5 rounded-[12px] border border-[rgba(39,201,63,0.25)] bg-[rgba(39,201,63,0.06)] px-4 py-3">
+            <CheckCircle2 size={16} className="shrink-0 text-[#27c93f]" aria-hidden="true" />
+            <p className="text-[13px]">
+              <span className="font-medium">You’re all set{firstName ? `, ${firstName}` : ''}.</span>{' '}
+              <span className="text-[#9fb6d6]">
+                This is your dashboard — your plan is at the top, and it updates after
+                every mock interview.
+              </span>
+            </p>
+          </div>
+        </Reveal>
+      )}
+
+      {/* ── Row 0.5: personal practice plan (self-serve users) ──
+          Above the fold once it exists: a plan built from THEIR role outranks
+          a banner pitching a product they have already bought into. */}
       <Reveal>
-        <PromoBanner
-          tone="aurora"
-          badge="Voice-first"
-          eyebrow="AI Interview Studio"
-          title="Practice like it's real. Walk in ready."
-          subtitle="Talk to a lifelike AI interviewer in your language, then get a competency scorecard in minutes — not days. The more you practise, the higher your readiness climbs."
-          cta={{ label: 'Start a mock interview', to: '/start' }}
-          icon={Mic}
-          dismissId="candidate-hero-v1"
-        />
+        <PracticePlanCard />
       </Reveal>
+
+      {/* ── Row 1: Brand promo banner — only while there is nothing personal to
+          show. Once a plan exists this is the least useful thing on the page. ── */}
+      {!planReady && (
+        <Reveal>
+          <PromoBanner
+            tone="aurora"
+            badge="Voice-first"
+            eyebrow="AI Interview Studio"
+            title="Practice like it's real. Walk in ready."
+            subtitle="Talk to a lifelike AI interviewer in your language, then get a competency scorecard in minutes — not days. The more you practise, the higher your readiness climbs."
+            cta={{ label: 'Start a mock interview', to: '/start' }}
+            icon={Mic}
+            dismissId="candidate-hero-v1"
+          />
+        </Reveal>
+      )}
       <TrustStrip
         className="px-0.5"
         items={[
@@ -302,11 +419,6 @@ export default function Dashboard() {
           { icon: ShieldCheck, label: 'DPDP-compliant' },
         ]}
       />
-
-      {/* ── Row 0.5: personal practice plan (self-serve users) ── */}
-      <Reveal>
-        <PracticePlanCard />
-      </Reveal>
 
       {/* ── Row 1: Hero + Readiness (2-col) ── */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.4fr_1fr]">
@@ -319,7 +431,7 @@ export default function Dashboard() {
           >
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-[0.1em] text-[#60a5fa] mb-2">
-                Welcome back
+                {planReady && plan?.domain_label ? plan.domain_label : 'Welcome back'}
               </p>
               {isLoading ? (
                 <>
@@ -335,10 +447,13 @@ export default function Dashboard() {
                     {`Let's get you hired${firstName ? `, ${firstName}` : ''}.`}
                   </h1>
                   <p className="mt-2 text-[14px] text-[#9fb6d6] max-w-[480px]">
-                    {interviewsTaken > 0
-                      ? 'You’re building momentum — one more mock interview keeps your readiness climbing.'
-                      : 'Start your first mock interview to see your readiness score.'}
+                    {heroSubtitle}
                   </p>
+                  {goalLine && (
+                    <p className="mt-1.5 text-[12.5px] text-[#70757c] max-w-[480px]">
+                      {goalLine}
+                    </p>
+                  )}
                 </>
               )}
             </div>

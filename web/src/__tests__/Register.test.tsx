@@ -97,7 +97,10 @@ describe('Register page', () => {
     });
   });
 
-  it('submits and navigates to dashboard on valid input', async () => {
+  // A self-registered account is always a self-serve candidate, so it goes
+  // straight to personalization. Routing via /dashboard would render a generic
+  // page and bounce them here anyway — visibly.
+  it('submits and navigates to onboarding on valid input', async () => {
     const user = userEvent.setup();
     renderRegister();
     await user.type(screen.getByLabelText(/full name/i), 'Test Candidate');
@@ -107,7 +110,7 @@ describe('Register page', () => {
     await checkDpdpConsent(user);
     await user.click(screen.getByRole('button', { name: /create account/i }));
     await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
+      expect(mockNavigate).toHaveBeenCalledWith('/onboarding', { replace: true });
     });
   });
 

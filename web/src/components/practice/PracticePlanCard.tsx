@@ -90,7 +90,28 @@ export default function PracticePlanCard(): JSX.Element | null {
     retry: false,
   });
 
-  if (isLoading || !plan) return null;
+  // A skeleton, not null, while loading: this card sits at the top of the
+  // dashboard, so collapsing to nothing and then appearing shoves everything
+  // below it down a beat after arrival.
+  if (isLoading) {
+    return (
+      <GlassCard className="p-5" aria-busy="true">
+        <div className="animate-pulse space-y-3">
+          <div className="h-4 w-40 rounded bg-white/[0.06]" />
+          <div className="h-3 w-56 rounded bg-white/[0.06]" />
+          <div className="space-y-2 pt-1">
+            <div className="h-1.5 w-full rounded-full bg-white/[0.06]" />
+            <div className="h-1.5 w-full rounded-full bg-white/[0.06]" />
+            <div className="h-1.5 w-full rounded-full bg-white/[0.06]" />
+          </div>
+        </div>
+      </GlassCard>
+    );
+  }
+
+  // No plan at all — an HR/admin account whose plan request 403s. Render
+  // nothing rather than a candidate-shaped card they cannot act on.
+  if (!plan) return null;
 
   // ── Not personalized yet: the nudge ──────────────────────────────────────
   if (!plan.ready) {

@@ -13,7 +13,7 @@
 //      they find out here, not after a wasted 10-minute interview.
 
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
@@ -21,10 +21,12 @@ import {
   LANGUAGE_OPTIONS,
   LEVEL_OPTIONS,
   getOnboardingStatus,
+  getPracticePlan,
   previewPracticePlan,
   skipOnboarding,
   submitOnboarding,
   type OnboardingGoal,
+  type PracticePlan,
   type TargetLevel,
 } from '@/api/onboarding';
 import { useAuth } from '@/context/AuthContext';
@@ -34,6 +36,14 @@ import { Reveal } from '@/design/components/Reveal';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 
 const TOTAL_STEPS = 4;
+
+/** How long the "your plan is ready" recap holds before the dashboard.
+ *
+ * Long enough to read three lines, short enough that it still reads as one
+ * continuous motion rather than a second page. The CTA skips it, and the
+ * dashboard shows the same plan in more detail, so nothing is lost either way.
+ */
+const HANDOFF_MS = 2600;
 
 /** Debounce so typing a role doesn't fire a request per keystroke.
  *
@@ -89,6 +99,18 @@ export default function Onboarding(): JSX.Element {
     staleTime: 5 * 60_000,
   });
 
+  // The handoff beat: null = still in the wizard, otherwise the saved plan
+  // (or `false` if we could not read it back — the recap degrades, the
+  // navigation does not).
+  const [handoff, setHandoff] = useState<PracticePlan | false | null>(null);
+
+  const goToDashboard = useCallback(
+    (justOnboarded: boolean) => {
+      void navigate('/dashboard', { replace: true, state: { justOnboarded } });
+    },
+    [navigate],
+  );
+
   const finish = useMutation({
     mutationFn: () =>
       submitOnboarding({
@@ -99,23 +121,47 @@ export default function Onboarding(): JSX.Element {
         preferred_language: language,
       }),
     onSuccess: async () => {
-      // Both the plan and the status are now stale; the dashboard reads them
-      // immediately on arrival.
       await queryClient.invalidateQueries({ queryKey: ['onboarding-status'] });
-      await queryClient.invalidateQueries({ queryKey: ['practice-plan'] });
-      toast.success('Your practice plan is ready');
-      void navigate('/dashboard', { replace: true });
+      // Fetch — not invalidate — the plan before we leave. The dashboard's
+      // centrepiece is this query; warming it here means the plan is on screen
+      // the instant they arrive instead of popping in a beat later, which is
+      // the whole difference between a handoff and a jump cut.
+      //
+      // staleTime: 0 is load-bearing. fetchQuery honours the cached staleTime,
+      // and this same route is how someone CHANGES their role — without it a
+      // re-run serves the previous role's plan back for a minute, in the recap
+      // and on the dashboard both.
+      const plan = await queryClient
+        .fetchQuery({
+          queryKey: ['practice-plan'],
+          queryFn: getPracticePlan,
+          staleTime: 0,
+        })
+        .catch(() => null);
+      setHandoff(plan ?? false);
     },
     onError: () => toast.error('Could not save. Please try again.'),
   });
 
   const skip = useMutation({
     mutationFn: skipOnboarding,
-    onSettled: async () => {
+    // onSuccess, not onSettled: leaving on a failed skip sends them to a
+    // dashboard that still reads `seen: false` and bounces them straight back
+    // here — a loop. Staying put with an error is the honest outcome.
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['onboarding-status'] });
-      void navigate('/dashboard', { replace: true });
+      goToDashboard(false);
     },
+    onError: () => toast.error('Could not skip. Please try again.'),
   });
+
+  // Auto-advance off the recap. Cleared on unmount so an early CTA click does
+  // not fire a second navigate.
+  useEffect(() => {
+    if (handoff === null) return;
+    const id = setTimeout(() => goToDashboard(true), HANDOFF_MS);
+    return () => clearTimeout(id);
+  }, [handoff, goToDashboard]);
 
   const canAdvance = useCallback((): boolean => {
     if (step === 3) return role.trim().length >= 2;
@@ -123,6 +169,73 @@ export default function Onboarding(): JSX.Element {
   }, [step, role]);
 
   const busy = finish.isPending || skip.isPending;
+
+  // HR/admin have their own consoles; "what job are you practising for?" is
+  // nonsense for them. The server already refuses to build them a plan — this
+  // stops them reaching the form by typing the URL and stamping a target_role
+  // on their own account.
+  if (status && !status.applicable) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // ── Handoff: the wizard's payoff, shown in place before the dashboard ──────
+  if (handoff !== null) {
+    const plan = handoff === false ? null : handoff;
+    return (
+      <div className="mx-auto flex min-h-[80vh] max-w-[720px] flex-col justify-center px-6 py-10">
+        <Reveal>
+          <GlassCard className="p-6 sm:p-8 space-y-5">
+            <div>
+              <StatusTag tone="forest">Ready</StatusTag>
+              <h1 className="mt-3 text-2xl font-semibold">
+                {fullName.trim()
+                  ? `You're all set, ${fullName.trim().split(' ')[0]}.`
+                  : "You're all set."}
+              </h1>
+              <p className="mt-2 text-sm opacity-70">
+                {plan?.ready ? (
+                  <>
+                    We built your practice plan for <strong>{plan.target_role}</strong>
+                    {plan.domain_label ? ` — ${plan.domain_label}` : ''}.
+                  </>
+                ) : (
+                  <>We saved your answers and built your practice plan.</>
+                )}
+              </p>
+            </div>
+
+            {plan?.ready && plan.competencies.length > 0 && (
+              <div className="space-y-2 rounded-lg bg-white/5 px-4 py-3">
+                <p className="text-xs opacity-60">
+                  Your interviews will assess these {plan.competencies.length}{' '}
+                  competencies:
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {plan.competencies.map((c) => (
+                    <span
+                      key={c.id}
+                      className="rounded-full bg-white/5 px-2 py-0.5 text-xs opacity-80"
+                    >
+                      {c.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => goToDashboard(true)}
+              className="w-full rounded-lg px-4 py-3 text-sm font-medium transition sm:w-auto"
+              style={{ background: 'var(--accent)', color: '#08131f' }}
+            >
+              Go to my dashboard
+            </button>
+          </GlassCard>
+        </Reveal>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto flex min-h-[80vh] max-w-[720px] flex-col justify-center px-6 py-10">

@@ -54,6 +54,36 @@ vi.mock('../api/sessions', () => ({
   }),
 }));
 
+// Onboarding + practice plan gate what the Dashboard renders at all: it holds a
+// skeleton until the status resolves, and swaps the marketing banner for the
+// plan once one exists. Mocked explicitly so these tests exercise the
+// already-onboarded, no-target-role path deterministically instead of leaning
+// on a network call failing fast.
+vi.mock('../api/onboarding', async () => {
+  const actual =
+    await vi.importActual<typeof import('../api/onboarding')>('../api/onboarding');
+  return {
+    ...actual,
+    getOnboardingStatus: vi.fn().mockResolvedValue({
+      applicable: true,
+      seen: true,
+      completed: false,
+      skipped: true,
+      full_name: 'Test Candidate',
+      goal: null,
+      target_role: null,
+      target_level: null,
+      preferred_language: 'en',
+    }),
+    getPracticePlan: vi.fn().mockResolvedValue({
+      ready: false,
+      competencies: [],
+      interviews_completed: 0,
+      never_probed: [],
+    }),
+  };
+});
+
 vi.mock('../api/scorecard', () => ({
   listScorecards: vi.fn().mockResolvedValue({
     items: [

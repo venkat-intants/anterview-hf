@@ -17,13 +17,20 @@ web/node_modules/
 **/.ruff_cache/
 **/.pytest_cache/
 
-# Secrets — MUST never be baked into images
-services/*/.env
-services/*/.env.*
-!services/*/.env.example
-.env
-.env.*
-!.env.example
+# Secrets — MUST never be baked into images.
+#
+# Use **/ — unlike .gitignore, .dockerignore patterns are matched against the
+# path relative to the CONTEXT ROOT and are NOT "at any level". The previous
+# root-anchored `.env` matched only ./.env, so `web/.env` and `space.env` (both
+# of which exist and hold real values) were sent to the daemon. web/.env was
+# worse than transferred: `COPY web ./` puts it in the webbuild stage where
+# Vite READS it, so a developer's local VITE_* values were baked into the
+# production bundle.
+**/.env
+**/.env.*
+!**/.env.example
+space.env
+!space.env.example
 
 # Dev artefacts
 **/*.log

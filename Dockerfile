@@ -29,6 +29,14 @@ COPY web/package.json web/package-lock.json ./
 COPY web/scripts ./scripts
 RUN npm ci
 COPY web ./
+# Deployment-specific, supplied with --build-arg. They are declared here rather
+# than left to Vite's dotenv lookup because `web/.env` is now excluded by
+# .dockerignore: it used to be copied into this stage and READ, so a
+# developer's local values were baked into the production bundle. Neither is a
+# secret (both ship in client JS by design), but both must come from the build
+# invocation, not from whoever's laptop built the image.
+ARG VITE_RPM_SUBDOMAIN=""
+ARG VITE_SENTRY_DSN=""
 # Same-origin API routing: empty base URLs make every client call relative
 # (e.g. fetch("/auth/login")), and Caddy fans each path out to the right
 # service. web/src/api/admin.ts uses ?? so the empty string is honoured.
@@ -41,7 +49,9 @@ ENV VITE_API_BASE_URL="" \
     VITE_USE_MOCK="false" \
     VITE_FEATURE_AVATAR="true" \
     VITE_FEATURE_VOICE_INTERRUPTION="true" \
-    VITE_FEATURE_MULTILINGUAL="true"
+    VITE_FEATURE_MULTILINGUAL="true" \
+    VITE_RPM_SUBDOMAIN="${VITE_RPM_SUBDOMAIN}" \
+    VITE_SENTRY_DSN="${VITE_SENTRY_DSN}"
 RUN npm run build
 
 # ---- Stage 2: python builder (four isolated venvs) --------------------------

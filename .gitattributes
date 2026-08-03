@@ -1,3 +1,29 @@
+# End-of-line policy.
+#
+# Without this, Git on Windows (core.autocrlf=true by default) checks out
+# space/entrypoint.sh with CRLF. Docker COPYs from the WORKING TREE, not from
+# the git blob, so `docker build .` on a Windows machine produced an image
+# whose ENTRYPOINT began `#!/bin/bash\r` — the kernel looks for an interpreter
+# literally named "/bin/bash\r" and the container dies at startup with
+# "no such file or directory". The file is correct (LF) in the repository; only
+# the checkout was wrong, which is why it never showed up in review.
+#
+# `text=auto` normalises to LF in the repo; the explicit eol=lf entries force
+# LF in the WORKING TREE too, which is the half that matters for Docker.
+* text=auto
+*.sh text eol=lf
+*.bash text eol=lf
+Dockerfile text eol=lf
+Caddyfile text eol=lf
+*.conf text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Windows-only scripts must keep CRLF — cmd.exe and older PowerShell hosts
+# mis-parse LF-only batch files.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 # Treat binary document/asset formats as binary so Git never applies
 # end-of-line (CRLF/LF) normalization to them — that would corrupt the bytes.
 *.pdf filter=lfs diff=lfs merge=lfs -text

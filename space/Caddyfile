@@ -123,9 +123,24 @@
 		file_server
 	}
 
+	# Security headers.
+	#
+	# This origin serves the HTML, unlike the repo-root Caddyfile whose origin
+	# is JSON-only — so the root's `default-src 'none'` CSP and its
+	# `Permissions-Policy: microphone=(), camera=()` must NOT be copied here.
+	# The first would blank the SPA; the second would kill the interview, which
+	# is the entire product. What DOES transfer is the anti-framing pair, and
+	# it was missing: the live app could be embedded in a hostile page and
+	# clickjacked.
+	#
+	# frame-ancestors is the modern control and the only one that applies to
+	# the HF Space's TLS-terminating proxy chain; X-Frame-Options is kept for
+	# older browsers that ignore CSP.
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		-Server
 	}

@@ -31,6 +31,35 @@ def _platform_owner() -> User:
     )
 
 
+class _HrDirectory:
+    """A stand-in for the users ⋈ user_roles lookup in delete_my_hr_manager,
+    driven by the SQL the router actually emits.
+
+    A `db.scalar = AsyncMock(return_value=...)` answers the same regardless of
+    the query, so the tenancy predicate could be deleted from the router and the
+    isolation test would stay green. This fake instead interprets the statement:
+    the target must be a known HR manager, and while the SQL still carries the
+    ``u.company_id = :cid`` predicate the HR's company must equal the bound
+    :cid. Remove that predicate and the cross-company lookup starts matching —
+    which is precisely what test_delete_my_hr_manager_other_company_404 fails on.
+    """
+
+    def __init__(self, hr_managers: dict[uuid.UUID, uuid.UUID]) -> None:
+        self._hr = hr_managers
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def scalar(self, stmt: object, params: dict[str, object] | None = None) -> int | None:
+        sql = " ".join(str(stmt).split())
+        params = params or {}
+        self.calls.append((sql, params))
+        company = self._hr.get(params["uid"])  # type: ignore[arg-type]
+        if company is None:
+            return None
+        if "u.company_id = :cid" in sql and company != params.get("cid"):
+            return None
+        return 1
+
+
 # ---------------------------------------------------------------------------
 # require_role
 # ---------------------------------------------------------------------------
@@ -324,30 +353,45 @@ async def test_delete_company_admin_none_404() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_my_hr_manager_happy_path() -> None:
-    from app.routers.admin_hr import delete_my_hr_manager
-
     caller_uid, company_id = uuid.uuid4(), uuid.uuid4()
     hr_uid = uuid.uuid4()
+    directory = _HrDirectory({hr_uid: company_id})  # HR belongs to the caller's company
     db = AsyncMock()
-    db.scalar = AsyncMock(return_value=1)  # target is an HR in the caller's company
+    db.scalar = directory.scalar
     auth = _mock_auth()
+
+    from app.routers.admin_hr import delete_my_hr_manager
+
     await delete_my_hr_manager(hr_uid, (caller_uid, company_id), db, auth)
     db.commit.assert_awaited_once()
     # Session revocation must be called for the removed HR.
     auth.logout_all.assert_awaited_once_with(str(hr_uid))
+    # The company scope is bound from the caller's session ctx, never from input.
+    assert directory.calls[0][1]["cid"] == company_id
 
 
 @pytest.mark.asyncio
 async def test_delete_my_hr_manager_other_company_404() -> None:
+    """The isolation boundary: a super admin of company A may not delete an HR
+    of company B, even knowing their user id.
+
+    The same directory answers the happy path above, so this 404 comes from the
+    company scoping in the query — not from a fake that refuses everything.
+    """
+    caller_uid, company_a, company_b = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    other_hr_uid = uuid.uuid4()
+    directory = _HrDirectory({other_hr_uid: company_b})
+    db = AsyncMock()
+    db.scalar = directory.scalar
+
     from app.routers.admin_hr import delete_my_hr_manager
 
-    caller_uid, company_id = uuid.uuid4(), uuid.uuid4()
-    db = AsyncMock()
-    db.scalar = AsyncMock(return_value=None)  # not an HR in the caller's company
     with pytest.raises(HTTPException) as exc:
-        await delete_my_hr_manager(uuid.uuid4(), (caller_uid, company_id), db, _mock_auth())
+        await delete_my_hr_manager(other_hr_uid, (caller_uid, company_a), db, _mock_auth())
     assert exc.value.status_code == 404
     db.commit.assert_not_awaited()
+    # Nothing may be written before the scope check — no soft-delete, no audit row.
+    db.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

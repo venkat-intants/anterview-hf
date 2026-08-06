@@ -226,7 +226,22 @@ jobs:
         # add ~4 minutes to a job that should take seconds.
         run: |
           python -m pip install --upgrade pip
-          pip install "alembic==1.16.6" "sqlalchemy[asyncio]==2.0.44" pgvector \
+          # -c: versions come from the service's OWN pins, never restated here.
+          # Restating them is exactly how this step came to ask for
+          # alembic==1.16.6 and sqlalchemy==2.0.44 — two versions that have
+          # never existed on PyPI (the real pins are 1.18.4 and 2.0.50). A
+          # hand-copied version in a second file is a number nothing validates
+          # until the build fails; a constraints file cannot drift.
+          #
+          # bcrypt is in this list for a non-obvious reason: `alembic heads`
+          # IMPORTS every module under versions/, and
+          # 20260625_0002_..._platform_owner_hierarchy.py:36 imports bcrypt to
+          # seed a password hash. Verified by grepping every migration for
+          # third-party imports — alembic, sqlalchemy and bcrypt are the only
+          # three. A new migration importing something else will break this job
+          # until it is added here.
+          pip install -c services/data_gateway/requirements.txt \
+            alembic "sqlalchemy[asyncio]" pgvector bcrypt \
             pydantic pydantic-settings structlog
 
       - name: Assert a single linear migration head

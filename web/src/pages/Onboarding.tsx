@@ -56,12 +56,18 @@ const HANDOFF_MS = 2600;
  * Keyed off the API's option `value`, not its `label`: api/onboarding.ts is
  * the transport contract and its English label strings are the fallback for
  * anything the bundles have not caught up with. */
+// Capitalised: these are concatenated as `onboarding.goal${KEY}`, so the value
+// has to start where the bundle key does — `goalCampusPlacement`, not
+// `goalcampusPlacement`. i18next does not fold case, so lower-camel values
+// missed every lookup and silently fell through to the English defaultValue,
+// leaving all ten Hindi and Telugu strings on step 2 dead. LEVEL_KEYS below
+// already capitalises, which is what made the mismatch invisible.
 const GOAL_KEYS: Record<OnboardingGoal, string> = {
-  campus_placement: 'campusPlacement',
-  first_job: 'firstJob',
-  switching_field: 'switchingField',
-  interview_soon: 'interviewSoon',
-  general_practice: 'generalPractice',
+  campus_placement: 'CampusPlacement',
+  first_job: 'FirstJob',
+  switching_field: 'SwitchingField',
+  interview_soon: 'InterviewSoon',
+  general_practice: 'GeneralPractice',
 };
 
 const LEVEL_KEYS: Record<TargetLevel, string> = {

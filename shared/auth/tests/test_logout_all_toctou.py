@@ -24,13 +24,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from shared.auth.local import (
-    USER_TOKEN_EPOCH_PREFIX,
-    LocalAuthProvider,
     _RT_PREFIX,
     _SESSIONS_PREFIX,
+    USER_TOKEN_EPOCH_PREFIX,
+    LocalAuthProvider,
     mint_refresh_session,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures

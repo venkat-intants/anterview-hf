@@ -401,11 +401,17 @@ async def callback(
             # guidance is that email must not be used as an identifier unless
             # email_verified is true.
             #
-            # `is not True` deliberately, not a truthiness test: Google has
-            # historically returned the STRING "true" in some responses, and a
-            # truthy check would also pass on a missing key — the two cases we
-            # most need to reject.
-            if userinfo.get("email_verified") is not True:
+            # Accept the boolean True or the string "true", reject everything
+            # else — including a MISSING key, which a bare truthiness test
+            # would let through and which is the case that matters most.
+            #
+            # Not `is not True`: the OIDC userinfo endpoint used above returns
+            # a JSON boolean, but Google's older oauth2/v2/userinfo returns the
+            # string form, so a strict identity check would 403 every login the
+            # day someone swaps the endpoint — the exact case the previous
+            # comment here cited as the reason for strictness, while the code
+            # rejected it.
+            if str(userinfo.get("email_verified", "")).strip().lower() != "true":
                 log.warning(
                     "google.sso.userinfo.email_unverified",
                     google_sub=google_sub,

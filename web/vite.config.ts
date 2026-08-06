@@ -61,5 +61,13 @@ export default defineConfig({
     setupFiles: ['./src/__tests__/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     css: false,
+    // Vitest defaults to 5s. Several userEvent-driven tests already sit in the
+    // 2.4-3.1s band on a fast laptop, and under full-suite parallelism one has
+    // been observed at 7.6s — a real 1-in-6 flake locally, which on a slower
+    // CI runner would be worse. These tests type character-by-character through
+    // jsdom with i18n and react-query mounted, so the cost is structural rather
+    // than a hang; a longer ceiling is the honest fix. A genuinely stuck test
+    // still fails, 15s later.
+    testTimeout: 15_000,
   },
 });

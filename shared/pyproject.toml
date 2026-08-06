@@ -15,6 +15,20 @@ structlog = "^24.4"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+# Same ruleset the four services use. Without this block shared/ was linted
+# with ruff's DEFAULT rules (E+F only) — far weaker than the code that imports
+# it — and pointing `--config` at this file changed nothing, because there was
+# no [tool.ruff] here to find. shared/ is the code every service depends on;
+# it should be held to at least the same bar, not a lower one.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM"]
+# E501: long descriptive strings in the taxonomy/roster prompt tables.
+ignore = ["E501"]
+
 # Tests under shared/ (shared/auth/tests, shared/intelligence/tests) are run
 # with a service's venv, e.g.:
 #   services/interview_core/.venv/Scripts/python -m pytest ../../shared

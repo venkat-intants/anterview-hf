@@ -1878,33 +1878,78 @@ def _prewarm(proc: JobProcess) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Worker liveness heartbeat — written every N seconds from the asyncio loop.
+# Worker liveness heartbeat — refreshed only while the worker's own loop answers.
 # ---------------------------------------------------------------------------
+
+# livekit-agents serves a small HTTP server for health (GET /) and operational
+# telemetry (GET /worker: worker_load, active_jobs, agent_name — unauthenticated).
+# Its defaults are all interfaces on :8081, which contradicts the Dockerfile's
+# "no port" posture and would expose that telemetry to anything sharing the
+# network. Loopback is also all the heartbeat probe below needs.
+_WORKER_HTTP_HOST = "127.0.0.1"
+_WORKER_HTTP_PORT = 8081
+_WORKER_HEALTH_URL = f"http://{_WORKER_HTTP_HOST}:{_WORKER_HTTP_PORT}/"
+# Must stay well under worker_heartbeat_interval_seconds (>= 5) so a stalled
+# probe cannot delay the next heartbeat cycle past the healthcheck's window.
+_WORKER_HEALTH_TIMEOUT_SECONDS = 3.0
+
+
+async def _worker_loop_responsive() -> bool:
+    """Return True when the worker's own event loop answers its health endpoint.
+
+    livekit-agents serves this endpoint from the same loop that runs the
+    interview jobs, and answers 503 when the LiveKit connection or the inference
+    process is gone.  So a timeout or a non-200 here is precisely the "worker is
+    up but cannot conduct interviews" state the heartbeat must not paper over.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_WORKER_HEALTH_TIMEOUT_SECONDS) as client:
+            resp = await client.get(_WORKER_HEALTH_URL)
+    except Exception as exc:  # noqa: BLE001 — any failure means "not responsive"
+        logger.warning(
+            "interview-worker.heartbeat: health probe failed url=%s err=%s",
+            _WORKER_HEALTH_URL, type(exc).__name__,
+        )
+        return False
+    if resp.status_code != 200:
+        logger.warning(
+            "interview-worker.heartbeat: health probe unhealthy status=%d",
+            resp.status_code,
+        )
+        return False
+    return True
 
 
 async def _run_heartbeat() -> None:
-    """Write the current UTC timestamp to the heartbeat file every N seconds.
+    """Refresh the heartbeat file every N seconds, while the worker loop answers.
 
     The deploy cluster (docker-compose healthcheck) reads this file's mtime to
-    decide if the worker event loop has stalled:
+    decide if the worker has stalled:
 
         healthcheck:
-          test: ["CMD", "find", "/tmp/interview_worker_heartbeat",
-                 "-mmin", "-1"]
+          test: ["CMD", "python", "-c", "... age of the heartbeat file < 60 ..."]
 
-    This coroutine runs for the lifetime of the worker process.  It is started
-    by ``run()`` before ``cli.run_app()`` via the event loop.
+    This coroutine runs on a dedicated thread with its own event loop, because
+    ``cli.run_app()`` owns the main thread and its own loop.  That means its
+    liveness says nothing about the loop that actually conducts interviews — a
+    blocking call wedging that loop left this coroutine happily refreshing the
+    file, so the healthcheck reported healthy while no candidate could get an
+    interviewer.  Writing only after a successful probe of the worker's health
+    endpoint (served ON that loop) is what makes the file mean what the
+    healthcheck assumes it means.
     """
     path = settings.worker_heartbeat_path
     interval = settings.worker_heartbeat_interval_seconds
     logger.info(
-        "interview-worker.heartbeat: starting path=%s interval=%ds", path, interval
+        "interview-worker.heartbeat: starting path=%s interval=%ds probe=%s",
+        path, interval, _WORKER_HEALTH_URL,
     )
     while True:
         try:
-            ts = datetime.now(tz=UTC).isoformat()
-            # Use asyncio.to_thread so the write never blocks the event loop.
-            await asyncio.to_thread(_write_heartbeat, path, ts)
+            if await _worker_loop_responsive():
+                ts = datetime.now(tz=UTC).isoformat()
+                # Use asyncio.to_thread so the write never blocks the event loop.
+                await asyncio.to_thread(_write_heartbeat, path, ts)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "interview-worker.heartbeat: write failed path=%s err=%s",
@@ -2008,9 +2053,10 @@ def run() -> None:
     before terminating them. Keep this <= the worker's compose stop_grace_period
     so Docker doesn't SIGKILL mid-drain.
 
-    Heartbeat: an asyncio task writes the current UTC time to the heartbeat file
-    every worker_heartbeat_interval_seconds so the Docker healthcheck can
-    verify the event loop is alive.
+    Heartbeat: a daemon thread writes the current UTC time to the heartbeat file
+    every worker_heartbeat_interval_seconds, but only while this worker's health
+    endpoint answers — see _run_heartbeat for why the probe is what makes the
+    Docker healthcheck meaningful.
     """
     import threading
 
@@ -2038,6 +2084,11 @@ def run() -> None:
             entrypoint_fnc=entrypoint,
             request_fnc=_request_fnc,
             prewarm_fnc=_prewarm,
+            # Both are explicit on purpose: livekit-agents otherwise binds all
+            # interfaces, and picks a random port under `dev` — which would
+            # leave the heartbeat probe above pointed at nothing.
+            host=_WORKER_HTTP_HOST,
+            port=_WORKER_HTTP_PORT,
             load_threshold=settings.worker_load_threshold,
             ws_url=settings.livekit_url,
             api_key=settings.livekit_api_key,

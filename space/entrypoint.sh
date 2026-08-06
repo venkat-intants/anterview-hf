@@ -28,6 +28,21 @@ for v in LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET SARVAM_API_KEY GEMINI_AP
   [ -n "${!v:-}" ] || echo "WARNING: $v is not set — live interviews will not work until it is."
 done
 
+# ...but "runs without" only holds if the worker is not supervised without them.
+# livekit-agents raises before its first connection attempt when any of the three
+# LiveKit values is empty, so the worker would exit in under a second, exhaust
+# startretries and trip supervisord's FATAL handler — turning an optional feature
+# being off into a permanent boot loop for the whole Space. Read by
+# [program:interview_worker] in space/supervisord.conf, which is why this is
+# exported unconditionally: supervisord refuses to start if the name is unset.
+if [ -n "${LIVEKIT_URL:-}" ] && [ -n "${LIVEKIT_API_KEY:-}" ] && [ -n "${LIVEKIT_API_SECRET:-}" ]; then
+  export INTERVIEW_WORKER_AUTOSTART=true
+else
+  export INTERVIEW_WORKER_AUTOSTART=false
+  echo "NOTICE: interview_worker stays stopped (LiveKit credentials incomplete)."
+  echo "        Set all three LIVEKIT_* secrets and restart to enable interviews."
+fi
+
 # ---------------------------------------------------------------------------
 # 2. Defaults (every one overridable via Space variables).
 #    SPACE_HOST is injected by Hugging Face (e.g. user-name-space.hf.space).
@@ -60,7 +75,20 @@ export AUTH_COOKIE_SECURE="${AUTH_COOKIE_SECURE:-true}"
 # origin (also whitelist this exact URL in the Google Cloud OAuth client).
 export GOOGLE_OAUTH_REDIRECT_URI="${GOOGLE_OAUTH_REDIRECT_URI:-$PUBLIC_ORIGIN/auth/google/callback}"
 export AUTH_COOKIE_SAMESITE="${AUTH_COOKIE_SAMESITE:-lax}"
-export TRUSTED_PROXY_COUNT="${TRUSTED_PROXY_COUNT:-1}"   # HF edge proxy
+# TWO proxies append to X-Forwarded-For before a request reaches a service:
+# HF's TLS-terminating edge, then our own Caddy (space/Caddyfile). The backends
+# resolve the client by counting this many entries from the RIGHT, so 1 selected
+# Caddy's peer — the HF edge — for EVERY request: one shared auth rate-limit
+# bucket (any 6 logins/min locked out the whole platform) and one identical
+# DPDP consent ip_hash for every data principal. Counting from the right also
+# ignores attacker-prepended entries, which is why we do not let Caddy collapse
+# the chain for us: its {client_ip} takes the LEFTMOST untrusted entry and is
+# spoofable by a client that sends its own X-Forwarded-For.
+# This 2 assumes Caddy trusts the HF edge and so preserves the chain (see the
+# trusted_proxies note in space/Caddyfile). Verify on a live Space: the Caddy
+# access log's request.remote_ip is the edge peer, and it must be inside
+# private_ranges or listed in SPACE_EXTRA_TRUSTED_PROXIES.
+export TRUSTED_PROXY_COUNT="${TRUSTED_PROXY_COUNT:-2}"   # HF edge + our Caddy
 
 export LLM_PROVIDER="${LLM_PROVIDER:-gemini}"
 export GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
@@ -108,7 +136,85 @@ export SENTRY_DSN="${SENTRY_DSN:-}"
 export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
 
 # ---------------------------------------------------------------------------
-# 3. Database migrations (data_gateway owns the schema).
+# 3. Supervisor's FATAL handler (see [eventlistener:fatal_abort]).
+#    Generated here, next to the boot policy it enforces, because it only has
+#    meaning inside this container's process tree.
+# ---------------------------------------------------------------------------
+cat > /tmp/fatal_abort.py <<'PYEOF'
+"""Abort the container when supervisord gives up restarting a program.
+
+autorestart=true stops applying once a program reaches FATAL (it has failed
+startretries times in a row — a rejected Space secret is the usual cause).
+supervisord itself stays up and caddy keeps answering :7860, so HF's port probe
+reads the Space as healthy while the service behind those routes is gone for
+good, with no self-heal. Ending supervisord converts that silent half-outage
+into a container exit, which is the only restart mechanism a Space has.
+"""
+import os
+import signal
+import sys
+
+# Programs whose FATAL degrades the product instead of ending it. Keep this
+# tiny and deliberate: anything listed here can die permanently while the Space
+# still reports healthy, which is exactly the silent half-outage this listener
+# exists to prevent for everything else.
+NON_FATAL_PROGRAMS = frozenset({"interview_worker"})
+
+
+def main() -> None:
+    while True:
+        # Supervisor's eventlistener protocol: announce readiness, read the
+        # header, then exactly `len` bytes of payload.
+        sys.stdout.write("READY\n")
+        sys.stdout.flush()
+        header = sys.stdin.readline()
+        if not header:
+            return
+        meta = dict(kv.split(":", 1) for kv in header.split())
+        payload = sys.stdin.read(int(meta["len"]))
+        fields = dict(kv.split(":", 1) for kv in payload.split() if ":" in kv)
+        program = fields.get("processname", "")
+
+        # interview_worker is the one program whose death must not take the
+        # container with it. The boot policy below already starts the rest of
+        # the app when LiveKit credentials are ABSENT; aborting when the worker
+        # is BROKEN would make the degradation disproportionate — every login,
+        # console and scorecard would go down because avatar interviews cannot
+        # run. Log it loudly and keep serving.
+        if program in NON_FATAL_PROGRAMS:
+            sys.stderr.write(
+                f"DEGRADED: {payload} - {program} gave up. The rest of the app "
+                f"keeps serving; avatar interviews are UNAVAILABLE until this "
+                f"container is restarted.\n"
+            )
+            sys.stderr.flush()
+            sys.stdout.write("RESULT 2\nOK")
+            sys.stdout.flush()
+            continue
+
+        # ASCII only: under a C/POSIX locale stderr can be ascii-encoded, and a
+        # UnicodeEncodeError here would abort the abort.
+        sys.stderr.write(
+            f"FATAL: {payload} - supervisord gave up; aborting the container "
+            f"so Hugging Face restarts it\n"
+        )
+        sys.stderr.flush()
+        # Acknowledge before shutting down, or supervisord logs a protocol
+        # error on the way out and buries the message above.
+        sys.stdout.write("RESULT 2\nOK")
+        sys.stdout.flush()
+        # Our parent IS supervisord (it forks its listeners), which `exec` in
+        # this script made PID 1. SIGTERM lets it drain live interviews within
+        # stopwaitsecs instead of severing them.
+        os.kill(os.getppid(), signal.SIGTERM)
+        return
+
+
+main()
+PYEOF
+
+# ---------------------------------------------------------------------------
+# 4. Database migrations (data_gateway owns the schema).
 # ---------------------------------------------------------------------------
 echo "--- alembic upgrade head (data_gateway schema) ---"
 cd /app/services/data_gateway
@@ -116,7 +222,7 @@ cd /app/services/data_gateway
 cd /app
 
 # ---------------------------------------------------------------------------
-# 4. Run everything under supervisord (nodaemon; container's PID 1 via exec).
+# 5. Run everything under supervisord (nodaemon; container's PID 1 via exec).
 # ---------------------------------------------------------------------------
 echo "--- starting supervisord (caddy + 4 services + worker) ---"
 exec /venvs/tools/bin/supervisord -c /app/space/supervisord.conf

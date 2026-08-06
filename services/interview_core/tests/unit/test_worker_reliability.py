@@ -6,7 +6,9 @@ Covers:
   2. Admission control: _active_jobs counter increments/decrements correctly;
      _request_fnc rejects when at/over the ceiling.
   3. Worker heartbeat: _write_heartbeat writes a timestamp to the given path;
-     _run_heartbeat loops and updates the file.
+     _run_heartbeat refreshes it only while the worker's own event loop
+     answers its health endpoint, and the worker binds that endpoint to
+     loopback.
   4. Prewarm: _prewarm loads silero VAD into proc.userdata["vad"]; gracefully
      handles failure without crashing.
   5. Prometheus /metrics endpoint: returns 200 with the correct content-type.
@@ -213,34 +215,146 @@ def test_write_heartbeat_bad_path_silent() -> None:
     _write_heartbeat("/nonexistent_dir_xyz/heartbeat", "ts")
 
 
+class _FakeAsyncClient:
+    """Stand-in for httpx.AsyncClient returning a canned result (or raising)."""
+
+    def __init__(self, result: Any) -> None:
+        self._result = result
+
+    async def __aenter__(self) -> _FakeAsyncClient:
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> bool:
+        return False
+
+    async def get(self, url: str) -> Any:
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+async def _run_one_heartbeat_tick(path: str) -> None:
+    """Run _run_heartbeat just long enough for a single cycle, then cancel."""
+    import app.worker.interview_worker as wk
+
+    fake_settings = MagicMock()
+    fake_settings.worker_heartbeat_path = path
+    fake_settings.worker_heartbeat_interval_seconds = 0  # immediate in tests
+
+    with patch.object(wk, "settings", fake_settings):
+        task = asyncio.create_task(wk._run_heartbeat())
+        # Give the event loop time to run one cycle.
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 @pytest.mark.asyncio
-async def test_run_heartbeat_writes_within_interval() -> None:
-    """_run_heartbeat must write to the file within the configured interval."""
-    from app.worker.interview_worker import _run_heartbeat
+async def test_run_heartbeat_writes_when_worker_loop_responsive() -> None:
+    """_run_heartbeat must refresh the file while the worker's loop answers."""
+    import app.worker.interview_worker as wk
 
     with tempfile.TemporaryDirectory() as tmpdir:
         path = os.path.join(tmpdir, "heartbeat")
 
-        fake_settings = MagicMock()
-        fake_settings.worker_heartbeat_path = path
-        fake_settings.worker_heartbeat_interval_seconds = 0  # immediate in tests
+        with patch.object(
+            wk, "_worker_loop_responsive", new=AsyncMock(return_value=True)
+        ):
+            await _run_one_heartbeat_tick(path)
 
-        import app.worker.interview_worker as wk
-
-        with patch.object(wk, "settings", fake_settings):
-            # Run for one tick only â€” cancel after the first write.
-            task = asyncio.create_task(_run_heartbeat())
-            # Give the event loop time to write once.
-            await asyncio.sleep(0.05)
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-
-        # File must have been written at least once.
         assert os.path.exists(path), "heartbeat file was not written"
         with open(path, encoding="utf-8") as fh:
             content = fh.read()
         assert len(content) > 0, "heartbeat file is empty"
+
+
+@pytest.mark.asyncio
+async def test_run_heartbeat_skips_write_when_worker_loop_wedged() -> None:
+    """A wedged worker loop must let the heartbeat file go stale.
+
+    That staleness is the entire signal: the healthcheck restarts the container
+    when the mtime ages out. The heartbeat runs on its own thread and its own
+    event loop, so before the probe gate it kept writing while the loop that
+    actually conducts interviews was blocked - reporting healthy when no
+    candidate could get an interviewer.
+    """
+    import app.worker.interview_worker as wk
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "heartbeat")
+
+        with patch.object(
+            wk, "_worker_loop_responsive", new=AsyncMock(return_value=False)
+        ):
+            await _run_one_heartbeat_tick(path)
+
+        assert not os.path.exists(path), (
+            "heartbeat was written despite the worker loop failing its health "
+            "probe - the healthcheck would report healthy on a wedged worker"
+        )
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_responsive_true_on_200() -> None:
+    """A 200 from the worker's health endpoint means the loop is answering."""
+    import app.worker.interview_worker as wk
+
+    resp = MagicMock()
+    resp.status_code = 200
+    with patch.object(wk.httpx, "AsyncClient", lambda **kw: _FakeAsyncClient(resp)):
+        assert await wk._worker_loop_responsive() is True
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_responsive_false_on_503() -> None:
+    """livekit-agents answers 503 once it has lost LiveKit or the inference proc."""
+    import app.worker.interview_worker as wk
+
+    resp = MagicMock()
+    resp.status_code = 503
+    with patch.object(wk.httpx, "AsyncClient", lambda **kw: _FakeAsyncClient(resp)):
+        assert await wk._worker_loop_responsive() is False
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_responsive_false_on_timeout() -> None:
+    """A stalled loop cannot answer at all - the probe must report unresponsive."""
+    import httpx
+
+    import app.worker.interview_worker as wk
+
+    timeout = httpx.ReadTimeout("worker event loop is blocked")
+    with patch.object(wk.httpx, "AsyncClient", lambda **kw: _FakeAsyncClient(timeout)):
+        assert await wk._worker_loop_responsive() is False
+
+
+def test_run_binds_worker_http_server_to_loopback() -> None:
+    """The worker HTTP server must bind loopback on the port the probe uses.
+
+    livekit-agents defaults to every interface, which would publish its
+    unauthenticated /worker telemetry (worker_load, active_jobs) to anything on
+    the container network, and to a random port under `dev`, which would leave
+    the heartbeat probe pointed at nothing.
+    """
+    import app.worker.interview_worker as wk
+
+    with (
+        patch.object(wk.cli, "run_app") as mock_run_app,
+        patch("threading.Thread") as mock_thread,
+    ):
+        wk.run()
+
+    mock_thread.assert_called_once()
+    opts = mock_run_app.call_args.args[0]
+    assert opts.host == "127.0.0.1", (
+        f"worker HTTP server binds {opts.host!r}; must be loopback-only"
+    )
+    assert opts.port == wk._WORKER_HTTP_PORT
+    # The probe URL must address the bound socket, or the heartbeat gate below
+    # would be testing something that isn't there.
+    probe_url = f"http://{opts.host}:{opts.port}/"
+    assert probe_url == wk._WORKER_HEALTH_URL
 
 
 # ---------------------------------------------------------------------------

@@ -43,12 +43,36 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # Deploy only when CI actually passed. workflow_dispatch has no
-    # workflow_run context, so allow it through explicitly.
+    # Deploy only when CI passed AND the commit provenably came from this
+    # repository's own main branch.
+    #
+    # Every term below is load-bearing; do not simplify this to a conclusion
+    # check. A `workflow_run` job runs from the DEFAULT branch with full access
+    # to secrets and a write token even when the run that triggered it came
+    # from an untrusted fork — that is the documented footgun of this trigger.
+    # ci.yml runs on `pull_request`, this repo is public, and the `branches:`
+    # filter above matches the TRIGGERING run's head_branch, which for a fork
+    # PR is a branch name the attacker chooses. So a stranger who forks, names
+    # their branch `main`, and opens a PR would satisfy a bare
+    # `conclusion == 'success'` guard — and this job would then check out their
+    # commit and force-push it to the live Space, handing them the
+    # write-scoped HF_TOKEN on the way.
+    #
+    #   event == 'push'                  kills that path outright: a fork PR
+    #                                    produces event 'pull_request'.
+    #   head_repository == github.repository   defence in depth.
+    #   head_branch == 'main'            explicit, not inherited from the
+    #                                    trigger filter.
+    #
+    # workflow_dispatch has no workflow_run context and is gated by repo
+    # permissions, so it is allowed through separately.
     if: >-
       vars.HF_SPACE != '' &&
       (github.event_name == 'workflow_dispatch' ||
-       github.event.workflow_run.conclusion == 'success')
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_branch == 'main'))
     steps:
       - uses: actions/checkout@v4
         with:

@@ -14,7 +14,20 @@
 	auto_https off
 	admin off
 	servers {
-		trusted_proxies static private_ranges
+		# This list decides whether the inbound X-Forwarded-For survives.
+		# Caddy preserves the chain and appends its peer only when that peer
+		# is trusted; from an untrusted peer it REPLACES the whole header with
+		# the peer address, which erases the candidate's IP and leaves the
+		# backends' TRUSTED_PROXY_COUNT arithmetic (see space/entrypoint.sh)
+		# with nothing to count. HF terminates TLS at its edge and forwards
+		# over the internal cluster network, so that peer is normally an
+		# RFC1918 address already covered by private_ranges. If a Space is
+		# ever fronted by a proxy on a public address, put its CIDR in
+		# SPACE_EXTRA_TRUSTED_PROXIES — the access log below reports the peer
+		# as `request.remote_ip`, so verify it rather than guessing. Never
+		# widen this to 0.0.0.0/0: every entry here is an address permitted to
+		# assert who the client is.
+		trusted_proxies static private_ranges {$SPACE_EXTRA_TRUSTED_PROXIES}
 	}
 }
 
@@ -29,10 +42,14 @@
 	# JSON in any browser without the PWA service worker installed.
 	# `rewrite` runs before all `handle` blocks (Caddy directive order), so
 	# navigations become /index.html and fall through to the SPA catch-all.
+	# /health is excluded for the same reason: uptime monitors and browsers
+	# send Accept: text/html, and without the exclusion the probe was rewritten
+	# to /index.html and answered 200 by the static file server — green while
+	# data_gateway was dead.
 	@spa_nav {
 		method GET
 		header Accept *text/html*
-		not path /auth/sso/* /internal/* /metrics*
+		not path /auth/sso/* /internal/* /metrics* /health
 	}
 	rewrite @spa_nav /index.html
 
@@ -133,14 +150,24 @@
 	# it was missing: the live app could be embedded in a hostile page and
 	# clickjacked.
 	#
-	# frame-ancestors is the modern control and the only one that applies to
-	# the HF Space's TLS-terminating proxy chain; X-Frame-Options is kept for
-	# older browsers that ignore CSP.
+	# It must NOT be 'none', and X-Frame-Options must NOT be set at all:
+	# Hugging Face serves a Space by embedding this origin in an iframe on
+	# huggingface.co, and that page is the canonical URL for the product (this
+	# origin returns `link: <...>; rel="canonical"` pointing at it). Denying
+	# framing outright renders the Space page a blank frame in every browser —
+	# a silent, console-only failure that a candidate discovers, not a health
+	# check. X-Frame-Options has no allow-list form for a third-party origin,
+	# so it cannot express "huggingface.co only" and has to go; CSP
+	# frame-ancestors supersedes it in every browser that matters.
+	#
+	# 'self' keeps the app embeddable by itself; huggingface.co is the one
+	# third-party embedder that must work. Everything else is still blocked, so
+	# the clickjacking protection the API origin has is preserved here in the
+	# only form this deployment can actually use.
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Content-Security-Policy "frame-ancestors 'none'"
+		Content-Security-Policy "frame-ancestors 'self' https://huggingface.co"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		-Server
 	}

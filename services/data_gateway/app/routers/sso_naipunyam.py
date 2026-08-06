@@ -14,9 +14,20 @@ Contract:
          → 404 if AUTH_PROVIDER != "naipunyam"
          → 503 {"detail": "NAIPUNYAM_UNAVAILABLE"} on circuit-open or httpx error
 
-The stub currently skips server-side ``state`` verification (a nonce stored in
-session/Redis).  Full CSRF protection will be added in S5-003b once the Redis
-session layer is wired for SSO flows.
+Login-CSRF defence (2026-08-06): ``state`` is verified server-side. ``initiate``
+writes a JSON payload to Redis under ``oauth:naipunyam:state:<state>`` holding the
+SHA-256 of a ``state_binding`` secret plus a PKCE verifier, and sets the binding
+secret as an httpOnly ``SameSite=Lax`` cookie. ``callback`` looks the state up,
+deletes it (one-shot, no replay), and compares the presented cookie's SHA-256
+with ``hmac.compare_digest`` BEFORE the token exchange and before any session is
+minted. A callback that does not come from the browser that started the flow
+costs nothing and reveals nothing. Same pattern as ``sso_google.py`` — read that
+module's ``initiate`` docstring for the attack this blocks.
+
+Candidate-only: an IdP email mapping to an account with ``hr_manager``,
+``super_admin``, ``platform_owner`` or ``admin`` is rejected with 403 before any
+write, because ``/auth/refresh`` re-derives live roles from the DB and would
+silently escalate the session past the candidate boundary.
 
 AUTH-01 fix (2026-07-01): the callback now mints a proper tracked refresh token
 via ``mint_refresh_session`` (same function used by LocalAuthProvider and the
@@ -29,6 +40,11 @@ PII note: user profile data from Naipunyam is NEVER written to logs.
 
 from __future__ import annotations
 
+import base64
+import contextlib
+import hashlib
+import hmac
+import json
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -37,11 +53,13 @@ from urllib.parse import urlencode
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from shared.auth.jwt import issue_access_token
 from shared.auth.local import mint_refresh_session
+from sqlalchemy import bindparam as sa_bindparam
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -85,6 +103,36 @@ class SsoTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user_id: str
+
+
+# ---------------------------------------------------------------------------
+# Login-CSRF state machinery (mirrors sso_google.py)
+# ---------------------------------------------------------------------------
+
+# How long a started SSO flow stays completable. Long enough for a slow IdP
+# login, short enough that a leaked state is not useful later.
+_STATE_TTL_SECONDS = 600  # 10 minutes
+_STATE_KEY_PREFIX = "oauth:naipunyam:state:"
+
+# httpOnly cookie binding a state token to the browser that started the flow.
+# Without it `state` is a bearer value the attacker generates for themselves,
+# which is exactly the login-CSRF this module used to be open to.
+_STATE_COOKIE_NAME = "naipunyam_oauth_state"
+
+# Roles that must never receive a session from this flow. Naipunyam SSO signs in
+# CANDIDATES; staff accounts are provisioned internally and use a password.
+_PRIVILEGED_ROLES = ("hr_manager", "super_admin", "platform_owner", "admin")
+
+
+def _state_redis_key(state_token: str) -> str:
+    """Return the Redis key for the given OAuth state token."""
+    return f"{_STATE_KEY_PREFIX}{state_token}"
+
+
+def _pkce_challenge(verifier: str) -> str:
+    """S256 code challenge for *verifier* (RFC 7636 §4.2)."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +219,7 @@ def _make_client() -> NaipunyamClient:
     response_class=RedirectResponse,
 )
 async def initiate(
+    redis: RedisDep,
     return_url: Annotated[
         str,
         Query(description="URL to redirect to after successful authentication"),
@@ -180,16 +229,37 @@ async def initiate(
 
     1. Guard: AUTH_PROVIDER must be naipunyam.
     2. Guard: naipunyam_api_base_url must be configured.
-    3. Generate a random ``state`` nonce (CSRF protection).
-    4. Build the authorize URL and redirect.
+    3. Generate ``state``, a ``state_binding`` secret, and a PKCE verifier;
+       store the binding's SHA-256 and the verifier in Redis under ``state``.
+    4. Set ``state_binding`` as an httpOnly SameSite=Lax cookie.
+    5. Build the authorize URL (carrying the S256 challenge) and redirect.
 
-    The ``state`` nonce is currently embedded in the redirect URL only; full
-    server-side state validation (Redis nonce store) is deferred to S5-003b.
+    Steps 3-4 are what make ``state`` non-forgeable. The value in the URL is
+    public by construction — anyone who can start a flow gets one — so on its
+    own it proves nothing about who is completing the flow. The binding cookie
+    is the half the attacker cannot obtain: it is httpOnly (script on the page
+    cannot read it) and only its SHA-256 reaches Redis (a Redis read does not
+    disclose it either).
     """
     _require_naipunyam_provider()
     _require_naipunyam_configured()
 
     state = secrets.token_urlsafe(32)
+    state_binding = secrets.token_urlsafe(32)
+    code_verifier = secrets.token_urlsafe(64)
+
+    await redis.set(
+        _state_redis_key(state),
+        json.dumps(
+            {
+                "return_url": return_url or "",
+                "binding": hashlib.sha256(state_binding.encode()).hexdigest(),
+                "code_verifier": code_verifier,
+            }
+        ),
+        ex=_STATE_TTL_SECONDS,
+    )
+
     redirect_uri = settings.naipunyam_saml_acs_url or (
         f"{settings.naipunyam_api_base_url.rstrip('/')}/auth/sso/naipunyam/callback"
     )
@@ -199,6 +269,11 @@ async def initiate(
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "state": state,
+        # PKCE. Even for a confidential client this binds the authorization
+        # code to the browser that started the flow, so a code captured in
+        # transit cannot be redeemed without the matching verifier.
+        "code_challenge": _pkce_challenge(code_verifier),
+        "code_challenge_method": "S256",
     }
     if return_url:
         params["return_url"] = return_url
@@ -208,8 +283,24 @@ async def initiate(
         f"?{urlencode(params)}"
     )
 
-    log.info("naipunyam.sso.initiate", state=state)
-    return RedirectResponse(url=authorize_url, status_code=status.HTTP_302_FOUND)
+    # Log a prefix, never the nonce itself: a full state in the log stream is a
+    # credential for anyone who can read logs.
+    log.info("naipunyam.sso.initiate", state_prefix=state[:8])
+    redirect = RedirectResponse(url=authorize_url, status_code=status.HTTP_302_FOUND)
+    redirect.set_cookie(
+        key=_STATE_COOKIE_NAME,
+        value=state_binding,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        # Lax, not Strict: the callback is triggered by a cross-site top-level
+        # navigation back from the Naipunyam portal, and Strict would withhold
+        # the cookie exactly then, breaking every legitimate sign-in.
+        samesite="lax",
+        domain=settings.auth_cookie_domain,
+        path="/",
+        max_age=_STATE_TTL_SECONDS,
+    )
+    return redirect
 
 
 @router.post(
@@ -228,6 +319,7 @@ async def callback(
     body: SsoCallbackBody,
     db: DbSessionDep,
     redis: RedisDep,
+    request: Request,
     response: Response,
 ) -> SsoTokenResponse:
     """Complete the Naipunyam OAuth2 flow and create/update the Intants user.
@@ -236,21 +328,87 @@ async def callback(
     -----
     1. Guard: AUTH_PROVIDER must be naipunyam.
     2. Guard: naipunyam_api_base_url must be configured.
-    3. Exchange ``code`` for a Naipunyam bearer token (authorization_code grant).
+    2a. Look up ``state`` in Redis and delete it (one-shot — no replay).
+    2b. Verify the state belongs to THIS browser via the binding cookie.
+    3. Exchange ``code`` + PKCE verifier for a Naipunyam bearer token.
     4. Extract the user's UID from the token response.
     5. Fetch the full profile via GET /v1/users/{uid}/profile.
+    5a. Reject the sign-in if the email maps to a privileged account.
     6. Upsert the user row (INSERT … ON CONFLICT naipunyam_id DO UPDATE).
     7. Issue an Intants JWT (same claim shape as LocalAuthProvider).
     8. Mint a tracked refresh token via mint_refresh_session + set cookies.
     9. Return {"access_token": …, "token_type": "bearer", "user_id": …}.
 
+    Steps 2a-2b run BEFORE the token exchange on purpose: a forged callback is
+    then rejected without ever contacting the IdP, so it costs us nothing and
+    tells the attacker nothing.
+
     Error handling
     --------------
+    - Unknown / expired / unbound state → 400 INVALID_OR_EXPIRED_STATE
+    - Privileged account → 403 NAIPUNYAM_SIGNIN_CANDIDATES_ONLY
     - CircuitOpenError or httpx.HTTPError → 503 NAIPUNYAM_UNAVAILABLE
     - NaipunyamError (non-2xx from IdP) → 503 NAIPUNYAM_UNAVAILABLE
     """
     _require_naipunyam_provider()
     _require_naipunyam_configured()
+
+    # ------------------------------------------------------------------
+    # Step 2a: the state must be one WE issued and have not yet consumed
+    # ------------------------------------------------------------------
+    state_key = _state_redis_key(body.state)
+    stored_value = await redis.get(state_key)
+    if stored_value is None:
+        log.warning(
+            "naipunyam.sso.callback.unknown_state",
+            state_prefix=body.state[:8],
+        )
+        response.delete_cookie(_STATE_COOKIE_NAME, path="/")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="INVALID_OR_EXPIRED_STATE",
+        )
+    # Atomically drop it so the same state cannot authorise a second callback.
+    await redis.delete(state_key)
+
+    if isinstance(stored_value, bytes):
+        stored_value = stored_value.decode()
+
+    # ------------------------------------------------------------------
+    # Step 2b: the state must belong to THIS browser (login-CSRF defence)
+    # ------------------------------------------------------------------
+    expected_binding = ""
+    pkce_verifier = ""
+    with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+        parsed = json.loads(stored_value)
+        if isinstance(parsed, dict):
+            expected_binding = str(parsed.get("binding") or "")
+            pkce_verifier = str(parsed.get("code_verifier") or "")
+
+    binding_cookie = request.cookies.get(_STATE_COOKIE_NAME, "")
+    presented = (
+        hashlib.sha256(binding_cookie.encode()).hexdigest() if binding_cookie else ""
+    )
+    # No fallback for a missing binding. Unlike the Google flow — which had live
+    # sessions mid-flight when its fix shipped and needed a compat branch — this
+    # provider has never been enabled, so there is no legacy state to tolerate.
+    # An unbound state is a forged state; treat it as one.
+    if not expected_binding or not presented or not hmac.compare_digest(
+        presented, expected_binding
+    ):
+        log.warning(
+            "naipunyam.sso.callback.state_not_bound_to_browser",
+            state_prefix=body.state[:8],
+            had_cookie=bool(binding_cookie),
+        )
+        response.delete_cookie(_STATE_COOKIE_NAME, path="/")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="INVALID_OR_EXPIRED_STATE",
+        )
+
+    # One-shot: the binding must not survive to authorise a second callback.
+    response.delete_cookie(_STATE_COOKIE_NAME, path="/")
 
     client = _make_client()
     try:
@@ -258,16 +416,16 @@ async def callback(
         # Step 3: exchange code for token (authorization_code grant)
         # ------------------------------------------------------------------
         token_url = f"{settings.naipunyam_api_base_url.rstrip('/')}/oauth/token"
+        exchange_data: dict[str, str] = {
+            "grant_type": "authorization_code",
+            "code": body.code,
+            "client_id": settings.naipunyam_client_id,
+            "client_secret": settings.naipunyam_client_secret,
+        }
+        if pkce_verifier:
+            exchange_data["code_verifier"] = pkce_verifier
         try:
-            token_resp = await client._http.post(
-                token_url,
-                data={
-                    "grant_type": "authorization_code",
-                    "code": body.code,
-                    "client_id": settings.naipunyam_client_id,
-                    "client_secret": settings.naipunyam_client_secret,
-                },
-            )
+            token_resp = await client._http.post(token_url, data=exchange_data)
         except httpx.HTTPError as exc:
             log.warning("naipunyam.sso.token_exchange.http_error", error=str(exc))
             raise HTTPException(
@@ -320,6 +478,35 @@ async def callback(
         # Use PostgreSQL INSERT … ON CONFLICT to atomically upsert.
         # email is required; derive a placeholder if the profile omits it.
         email = profile.email or f"{naipunyam_uid}@naipunyam.invalid"
+
+        # ------------------------------------------------------------------
+        # Step 5a: candidate-only gate (BEFORE any write or session mint).
+        #
+        # Naipunyam SSO signs in CANDIDATES. Staff accounts are provisioned
+        # internally and sign in with a password. If this IdP email already maps
+        # to an account holding a privileged role, refuse: the access token we
+        # would mint says roles=["candidate"], but /auth/refresh re-derives roles
+        # from the DB, so 15 minutes later the same session silently holds the
+        # account's real privileges. Reject outright so no access token, refresh
+        # token or cookie is ever issued against a privileged email.
+        # ------------------------------------------------------------------
+        privileged_row = await db.execute(
+            text(
+                "SELECT 1 FROM users u "
+                "JOIN user_roles ur ON ur.user_id = u.id "
+                "JOIN roles r ON r.id = ur.role_id "
+                "WHERE u.email = :email AND u.deleted_at IS NULL "
+                "AND r.name IN :roles "
+                "LIMIT 1"
+            ).bindparams(sa_bindparam("roles", expanding=True)),
+            {"email": email, "roles": list(_PRIVILEGED_ROLES)},
+        )
+        if privileged_row.fetchone() is not None:
+            log.warning("naipunyam.sso.callback.privileged_account_rejected")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="NAIPUNYAM_SIGNIN_CANDIDATES_ONLY",
+            )
 
         stmt = (
             pg_insert(User)

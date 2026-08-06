@@ -18,7 +18,10 @@
     Tear down later with:  docker rm -f piston_api
 
 .NOTES
-    --privileged is REQUIRED: Piston sandboxes each run with isolate/nsjail.
+    SECURITY POSTURE (2026-08-06). This container executes candidate-submitted
+    code, so it runs with the narrowest privilege set that still works, not
+    --privileged. See the block above the docker run line for what each flag buys
+    and, more importantly, for what this still does NOT protect against.
     First run downloads each runtime, so installing all languages takes a few minutes.
     ASCII-only on purpose (Windows PowerShell 5.1 reads .ps1 as ANSI).
 #>
@@ -57,6 +60,14 @@ if ($exists) {
     Write-Host "Removing old '$Container' (languages persist in the volume)..." -ForegroundColor DarkGray
     docker rm -f $Container | Out-Null
 }
+
+# 0. Remove the cgroup tree a previous run left in the host hierarchy. See the
+# cgroup note below the language table for why it outlives the container. This
+# helper is deliberately minimal -- no capabilities except the one rmdir needs.
+Write-Host 'Clearing any stale piston cgroup...' -ForegroundColor DarkGray
+docker run --rm --cap-drop=ALL --cap-add=DAC_OVERRIDE `
+    -v /sys/fs/cgroup:/sys/fs/cgroup:rw --entrypoint sh alpine `
+    -c 'rmdir /sys/fs/cgroup/isolate/init 2>/dev/null; rmdir /sys/fs/cgroup/isolate 2>/dev/null; exit 0' 2>$null | Out-Null
 Write-Host "Running Piston ($Image)..." -ForegroundColor Cyan
 $tmpfs = "/piston/jobs:exec,uid=1000,gid=1000,mode=711"
 # Raise Piston's run/compile timeout ceilings to 15s so our per-question
@@ -66,9 +77,65 @@ $timeoutEnv = @(
     '-e', 'PISTON_RUN_TIMEOUT=15000',
     '-e', 'PISTON_RUN_CPU_TIME=15000',
     '-e', 'PISTON_COMPILE_TIMEOUT=15000',
-    '-e', 'PISTON_COMPILE_CPU_TIME=15000'
+    '-e', 'PISTON_COMPILE_CPU_TIME=15000',
+    # Per-job network lockdown. Piston runs each job in its own network
+    # namespace with no interfaces, so candidate code cannot reach the network
+    # even though the container itself can (it must, to download runtimes in
+    # step 3). Upstream already defaults this to true; set it explicitly so the
+    # control is ours and not an upstream default that could change under us.
+    '-e', 'PISTON_DISABLE_NETWORKING=true'
 )
-docker run --privileged -d --restart unless-stopped -p 2000:2000 -v piston_packages:/piston/packages --tmpfs $tmpfs --dns 8.8.8.8 @timeoutEnv --name $Container $Image | Out-Null
+
+# --- Sandbox privileges -------------------------------------------------------
+# This container runs code written by candidates. It used to run --privileged,
+# which grants every capability, all host devices, an unmasked /proc and an
+# unconfined seccomp/AppArmor profile -- i.e. it removed the isolation that is
+# the entire point of a sandbox. The set below was derived empirically: each
+# capability was verified necessary by removing it and watching Piston fail.
+#
+#   SYS_ADMIN    isolate's mount/namespace work (the one that hurts -- see below)
+#   SYS_CHROOT   pivot into the per-job box
+#   SYS_RESOURCE rlimits on the job
+#   NET_ADMIN    brings up 'lo' INSIDE the job's empty netns. Counter-intuitive,
+#                but this is the capability that lets isolate finish the network
+#                lockdown; without it every run dies with SIOCSIFFLAGS on 'lo'.
+#   SETUID/SETGID drop from root to the piston user
+#   CHOWN/DAC_OVERRIDE/FOWNER/MKNOD  build the per-job box filesystem
+#   KILL         terminate a job that exceeds its budget
+#
+# HONEST LIMIT: CAP_SYS_ADMIN is close to root and, combined with
+# apparmor=unconfined, a container escape is not off the table. What this change
+# removes is the easy paths -- host device access via /dev, unmasked /proc, and
+# the full capability set. Treat this as "materially harder to escape", NOT as
+# "isolated". Do not run this on a host that holds production credentials.
+#
+# Cgroups. --privileged used to mount the container's own cgroup subtree rw,
+# which is why the old script never had to think about this. Without it Docker
+# mounts /sys/fs/cgroup read-only and Piston's entrypoint dies on
+# "mkdir: cannot create directory 'isolate/': Read-only file system", so we bind
+# the cgroup2 root in rw. Note the consequence honestly: the bind mount overrides
+# --cgroupns, so the 'isolate' cgroup is created in the HOST hierarchy and
+# outlives the container -- the next start would fail with "File exists". Step 0
+# below removes the stale tree so the script stays re-runnable.
+$sandboxOpts = @(
+    '--cap-drop=ALL',
+    '--cap-add=SYS_ADMIN', '--cap-add=SYS_CHROOT', '--cap-add=SYS_RESOURCE',
+    '--cap-add=NET_ADMIN', '--cap-add=SETUID', '--cap-add=SETGID',
+    '--cap-add=CHOWN', '--cap-add=DAC_OVERRIDE', '--cap-add=FOWNER',
+    '--cap-add=MKNOD', '--cap-add=KILL',
+    # isolate needs mount operations the default AppArmor profile denies.
+    '--security-opt', 'apparmor=unconfined',
+    '--cgroupns=private',
+    # cgroup v2 must be writable: the entrypoint creates the 'isolate' subtree.
+    # --privileged used to provide this implicitly.
+    '-v', '/sys/fs/cgroup:/sys/fs/cgroup:rw',
+    # Blast radius caps if a job does get out of the per-job cgroup.
+    '--pids-limit', '512'
+)
+
+# 127.0.0.1, not 0.0.0.0: an unauthenticated arbitrary-code-execution API must
+# not be reachable from the local network.
+docker run -d --restart unless-stopped -p 127.0.0.1:2000:2000 @sandboxOpts -v piston_packages:/piston/packages --tmpfs $tmpfs @timeoutEnv --name $Container $Image | Out-Null
 
 # 2. Wait for the API to answer.
 Write-Host 'Waiting for the Piston API on :2000 ...' -ForegroundColor Cyan

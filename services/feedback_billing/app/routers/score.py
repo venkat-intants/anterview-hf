@@ -9,6 +9,7 @@ Idempotency: the scorecards table has a UNIQUE constraint on session_id.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Annotated, Any
 
 import structlog
@@ -18,12 +19,13 @@ from jose import JWTError
 from pydantic import BaseModel, Field, field_validator
 from shared.auth.jwt import verify_access_token
 from shared.intelligence import RoleProfile
+from sqlalchemy import text as sa_text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
 from app.config import settings as _app_settings
-from app.database import get_db_session
+from app.database import get_db_session, get_session_factory
 from app.redis_client import get_redis
 from app.scorer import ScoringError, score_session
 
@@ -123,6 +125,78 @@ def _parse_role_profile(raw: dict[str, Any] | None, session_id: str) -> RoleProf
             error=str(exc)[:300],
             fallback="legacy_fixed_rubric",
         )
+        return None
+
+
+async def _lookup_candidate_name(db: AsyncSession, session_id: str) -> str:
+    """Return the candidate's full name for this session, or "" if unavailable.
+
+    Resolved server-side instead of being carried on the request body: the name
+    is PII that has no reason to cross the service boundary, and a body field
+    would let any holder of a service token stamp an arbitrary name onto
+    somebody else's scorecard. feedback_billing already reads ``users`` in the
+    same database (see routers/scorecard.py), so this costs one indexed lookup.
+
+    Never raises. The name only feeds the PDF header — a candidate who has just
+    finished their interview must still get their scores even if it is missing.
+    """
+    try:
+        name = await db.scalar(
+            sa_text(
+                """
+                SELECT u.full_name
+                FROM sessions s
+                JOIN users u ON u.id = s.user_id
+                WHERE s.id = :session_id AND u.deleted_at IS NULL
+                """
+            ),
+            {"session_id": session_id},
+        )
+    except Exception as exc:  # noqa: BLE001 — scoring must not depend on this
+        # A failed statement poisons the surrounding transaction on asyncpg;
+        # roll back so the scorecard INSERT that follows can still commit.
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        log.warning(
+            "score.candidate_name_lookup_failed",
+            session_id=session_id,
+            error_type=type(exc).__name__,
+        )
+        return ""
+
+    # End the read transaction immediately — NOT optional.
+    #
+    # This is the first DB touch in /internal/score, and AsyncSession autobegins
+    # on the first statement and then holds the transaction (and its pooled
+    # connection) until commit/rollback. The very next thing this request does
+    # is call Gemini, an httpx client with a 60s timeout plus retries. Without
+    # this rollback every in-flight scoring parks one connection idle-in-
+    # transaction for a minute-plus; with database_pool_size defaulting to 5,
+    # ten concurrent end-of-session scorings saturate the pool and every other
+    # request on the service queues behind them. On the pgBouncer path it is
+    # worse — transaction-mode pooling pins a server-side slot for the whole
+    # duration instead of releasing between statements.
+    #
+    # Safe: this is a read, there is nothing to persist, and score_session
+    # autobegins a fresh transaction for its own INSERT afterwards.
+    with contextlib.suppress(Exception):
+        await db.rollback()
+
+    return str(name).strip() if name else ""
+
+
+def _pdf_session_factory() -> async_sessionmaker[AsyncSession] | None:
+    """Session factory for the fire-and-forget PDF task, or None if unavailable.
+
+    The request-scoped session is closed as soon as this endpoint returns, so
+    the background task that writes ``scorecards.report_pdf_key`` needs its own.
+    None when the engine was never initialised (unit tests override
+    get_db_session and never run the lifespan); the PDF is then still rendered
+    and uploaded, only the key write-back is skipped.
+    """
+    try:
+        return get_session_factory()
+    except RuntimeError:
         return None
 
 
@@ -255,6 +329,11 @@ async def internal_score(
     """
     turns_dicts = [{"role": t.role, "text": t.text} for t in body.turns]
 
+    # Both are what actually switch the PDF scorecard on: score_session skips
+    # rendering without a candidate name, and cannot write report_pdf_key back
+    # without a factory of its own.
+    candidate_name = await _lookup_candidate_name(db, body.session_id)
+
     try:
         scorecard_id, scores, composite = await score_session(
             session_id=body.session_id,
@@ -265,6 +344,8 @@ async def internal_score(
             turns=turns_dicts,
             db_session=db,
             settings=app_settings,
+            candidate_name=candidate_name,
+            db_session_factory=_pdf_session_factory(),
             role_profile=_parse_role_profile(body.role_profile, body.session_id),
         )
     except ScoringError as exc:

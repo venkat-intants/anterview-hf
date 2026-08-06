@@ -11,6 +11,8 @@ Tests:
      — end-to-end ReportLab call (no mocking) → returns non-empty bytes
   5. test_update_pdf_key_executes_update
      — mock DB session factory → verifies UPDATE is executed
+  6. test_build_pdf_bytes_escapes_candidate_markup
+     — candidate-controlled markup never reaches ReportLab's paraparser live
 """
 
 from __future__ import annotations
@@ -197,6 +199,55 @@ def test_build_pdf_bytes_returns_bytes() -> None:
     # PDF magic bytes — every valid PDF starts with %PDF-
     assert pdf[:5] == b"%PDF-"
     assert len(pdf) > 1000
+
+
+# ---------------------------------------------------------------------------
+# test_build_pdf_bytes_escapes_candidate_markup
+# ---------------------------------------------------------------------------
+
+
+def test_build_pdf_bytes_escapes_candidate_markup() -> None:
+    """Candidate-controlled text is inert: no live markup reaches paraparser.
+
+    The dangerous tag is <img src="...">, which ReportLab resolves through
+    ImageReader — an SSRF from inside the container, on a name the candidate
+    edits themselves via PATCH /auth/me/profile.
+    """
+    from reportlab.platypus import Paragraph as _RealParagraph  # noqa: PLC0415
+
+    hostile_name = '<img src="http://169.254.169.254/latest/meta-data/"/>'
+    hostile_summary = "Answered <b>well</b> & <font color=red>clearly</font>"
+
+    with patch(
+        "app.pdf_render.Paragraph", wraps=_RealParagraph
+    ) as mock_paragraph:
+        pdf = _build_pdf_bytes(
+            scorecard_id=_SCORECARD_ID,
+            candidate_name=hostile_name,
+            job_title="Welder & Fabricator <script>",
+            language="en",
+            scores=_SAMPLE_SCORES,
+            composite_score=7.05,
+            strengths=["Bench work <b>strong</b>"],
+            improvements=[{"area": "Depth & rigour", "suggestion": "<i>Practise</i>"}],
+            summary=hostile_summary,
+        )
+
+    assert pdf[:5] == b"%PDF-"
+
+    rendered = [call.args[0] for call in mock_paragraph.call_args_list if call.args]
+    hostile_fragments = ("<img", "<script", "<font", "<i>")
+    for text in rendered:
+        for fragment in hostile_fragments:
+            assert fragment not in text, f"live markup reached paraparser: {text!r}"
+
+    # The escaped forms are present, i.e. the text is rendered, not dropped.
+    joined = "\n".join(rendered)
+    assert "&lt;img" in joined
+    assert "Welder &amp; Fabricator" in joined
+    assert "Depth &amp; rigour" in joined
+    # The template's own bold markup must stay live.
+    assert any(t.startswith("<b>Candidate</b>") or t == "<b>Candidate</b>" for t in rendered)
 
 
 # ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ import io
 from datetime import date
 from functools import partial
 from typing import Any
+from xml.sax.saxutils import escape as _xml_escape
 
 import structlog
 from reportlab.lib import colors
@@ -66,6 +67,20 @@ _AXIS_LABELS: dict[str, str] = {
 }
 
 
+def _esc(value: str) -> str:
+    """Escape untrusted text so ReportLab renders it, rather than parsing it.
+
+    Paragraph bodies go through ReportLab's paraparser, which honours an
+    XML-ish markup — including ``<img src="..."/>``, whose src is resolved by
+    ImageReader and will happily fetch a URL from inside this container. Every
+    value that originates from the candidate (their profile name, the job title
+    they applied against, and the Gemini strings derived from their own
+    transcript) is escaped to inert text; only the template's own <b> tags and
+    &#x2022; entities are written unescaped.
+    """
+    return _xml_escape(value)
+
+
 # ---------------------------------------------------------------------------
 # ReportLab PDF builder
 # ---------------------------------------------------------------------------
@@ -92,6 +107,9 @@ def _build_pdf_bytes(
         rightMargin=18 * mm,
         topMargin=16 * mm,
         bottomMargin=16 * mm,
+        # Not escaped on purpose: the document title is PDF DocInfo metadata,
+        # written as a PDF string by ReportLab — no markup parser sees it, and
+        # escaping would surface a literal "&amp;" in the viewer's title bar.
         title=f"Interview Scorecard — {candidate_name}",
         author="Intants AI Interview Platform",
     )
@@ -183,13 +201,13 @@ def _build_pdf_bytes(
     info_data = [
         [
             Paragraph("<b>Candidate</b>", body_style),
-            Paragraph(candidate_name, body_style),
+            Paragraph(_esc(candidate_name), body_style),
             Paragraph("<b>Date</b>", body_style),
             Paragraph(today, body_style),
         ],
         [
             Paragraph("<b>Position</b>", body_style),
-            Paragraph(job_title, body_style),
+            Paragraph(_esc(job_title), body_style),
             Paragraph("<b>Language</b>", body_style),
             Paragraph(lang_display, body_style),
         ],
@@ -272,7 +290,7 @@ def _build_pdf_bytes(
     story.append(Paragraph("Key Strengths", section_title_style))
     for strength in strengths[:3]:
         story.append(
-            Paragraph(f"&#x2022; &nbsp;{strength}", bullet_style)
+            Paragraph(f"&#x2022; &nbsp;{_esc(strength)}", bullet_style)
         )
     story.append(Spacer(1, 6))
 
@@ -282,13 +300,15 @@ def _build_pdf_bytes(
         area = item.get("area", "")
         suggestion = item.get("suggestion", "")
         story.append(
-            Paragraph(f"&#x2022; &nbsp;<b>{area}:</b> {suggestion}", bullet_style)
+            Paragraph(
+                f"&#x2022; &nbsp;<b>{_esc(area)}:</b> {_esc(suggestion)}", bullet_style
+            )
         )
     story.append(Spacer(1, 6))
 
     # ---- Summary ------------------------------------------------------------
     story.append(Paragraph("Summary", section_title_style))
-    story.append(Paragraph(summary, body_style))
+    story.append(Paragraph(_esc(summary), body_style))
     story.append(Spacer(1, 10))
 
     # ---- Footer -------------------------------------------------------------

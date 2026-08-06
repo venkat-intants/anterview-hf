@@ -69,11 +69,16 @@ _GOOD_COMPOSITE = 7.05
 _GOOD_SCORE_SESSION_RETURN = (_GOOD_SCORECARD_ID, _GOOD_SCORES, _GOOD_COMPOSITE)
 
 
-def _mock_db_session() -> AsyncMock:
-    """Build a minimal AsyncSession mock for dependency override."""
+def _mock_db_session(candidate_name: str | None = "Ravi Kumar") -> AsyncMock:
+    """Build a minimal AsyncSession mock for dependency override.
+
+    ``scalar`` answers the candidate-name lookup the endpoint runs before
+    scoring; pass None to simulate a session whose user has no name on file.
+    """
     mock_db = AsyncMock(spec=AsyncSession)
     mock_db.execute = AsyncMock()
     mock_db.commit = AsyncMock()
+    mock_db.scalar = AsyncMock(return_value=candidate_name)
     return mock_db
 
 
@@ -162,6 +167,133 @@ def test_internal_score_accepts_jd_text(client: TestClient) -> None:
     assert mock_score.await_args.kwargs["jd_text"] == (
         "Must know Spring Boot and Kubernetes."
     )
+
+
+# ---------------------------------------------------------------------------
+# PDF scorecard wiring — score_session only renders a PDF when it is handed a
+# candidate name, and can only write report_pdf_key back with its own factory.
+# ---------------------------------------------------------------------------
+
+
+def test_internal_score_passes_candidate_name_for_pdf(client: TestClient) -> None:
+    """The endpoint resolves the candidate name server-side and forwards it."""
+    token = _make_jwt()
+    mock_db = _mock_db_session(candidate_name="Ravi Kumar")
+
+    async def _override_db() -> AsyncSession:  # type: ignore[misc]
+        yield mock_db  # type: ignore[misc]
+
+    from app.database import get_db_session  # noqa: PLC0415
+
+    app.dependency_overrides[get_db_session] = _override_db
+
+    try:
+        with patch(
+            "app.routers.score.score_session",
+            new_callable=AsyncMock,
+            return_value=_GOOD_SCORE_SESSION_RETURN,
+        ) as mock_score:
+            resp = client.post(
+                "/internal/score",
+                json={**_VALID_BODY, "session_id": str(uuid.uuid4())},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 201, resp.text
+    kwargs = mock_score.await_args.kwargs
+    assert kwargs["candidate_name"] == "Ravi Kumar"
+    # The name must not be accepted from the wire — it is looked up in the DB.
+    assert "candidate_name" not in _VALID_BODY
+    mock_db.scalar.assert_awaited_once()
+    assert "db_session_factory" in kwargs
+
+
+def test_candidate_name_lookup_releases_the_transaction_before_scoring(
+    client: TestClient,
+) -> None:
+    """The name lookup must not hold a connection across the Gemini call.
+
+    The lookup is the first DB touch in this endpoint, and AsyncSession
+    autobegins on the first statement and holds the pooled connection until
+    commit/rollback. The next thing the request does is call Gemini with a 60s
+    timeout plus retries — so without an explicit rollback each in-flight
+    scoring parks a connection idle-in-transaction for a minute-plus, and
+    database_pool_size defaults to 5.
+
+    Asserting on ORDER, not just on the call: a rollback that happened after
+    score_session returned would satisfy `assert_awaited` and still leave the
+    pool pinned for the whole call, which is the entire defect.
+    """
+    token = _make_jwt()
+    mock_db = _mock_db_session(candidate_name="Ravi Kumar")
+
+    events: list[str] = []
+    mock_db.rollback = AsyncMock(side_effect=lambda: events.append("rollback"))
+
+    async def _override_db() -> AsyncSession:  # type: ignore[misc]
+        yield mock_db  # type: ignore[misc]
+
+    from app.database import get_db_session  # noqa: PLC0415
+
+    app.dependency_overrides[get_db_session] = _override_db
+
+    async def _record_score(**_kwargs: object) -> tuple[str, dict, float]:
+        events.append("score_session")
+        return _GOOD_SCORE_SESSION_RETURN
+
+    try:
+        with patch("app.routers.score.score_session", new=_record_score):
+            resp = client.post(
+                "/internal/score",
+                json={**_VALID_BODY, "session_id": str(uuid.uuid4())},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 201, resp.text
+    assert events == ["rollback", "score_session"], (
+        f"expected the read transaction to be released BEFORE scoring, got {events}"
+    )
+
+
+def test_internal_score_survives_candidate_name_lookup_failure(
+    client: TestClient,
+) -> None:
+    """A failed name lookup costs the PDF header, never the scorecard."""
+    token = _make_jwt()
+    mock_db = _mock_db_session()
+    mock_db.scalar = AsyncMock(side_effect=RuntimeError("connection reset"))
+    mock_db.rollback = AsyncMock()
+
+    async def _override_db() -> AsyncSession:  # type: ignore[misc]
+        yield mock_db  # type: ignore[misc]
+
+    from app.database import get_db_session  # noqa: PLC0415
+
+    app.dependency_overrides[get_db_session] = _override_db
+
+    try:
+        with patch(
+            "app.routers.score.score_session",
+            new_callable=AsyncMock,
+            return_value=_GOOD_SCORE_SESSION_RETURN,
+        ) as mock_score:
+            resp = client.post(
+                "/internal/score",
+                json={**_VALID_BODY, "session_id": str(uuid.uuid4())},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 201, resp.text
+    assert mock_score.await_args.kwargs["candidate_name"] == ""
+    # The aborted statement must be rolled back or the INSERT that follows
+    # would fail on the poisoned transaction.
+    mock_db.rollback.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

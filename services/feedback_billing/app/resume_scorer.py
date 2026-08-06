@@ -18,6 +18,7 @@ import httpx
 import structlog
 
 from app.config import Settings
+from app.untrusted_input import frame_untrusted, scan_untrusted
 
 log = structlog.get_logger(__name__)
 
@@ -112,8 +113,22 @@ async def score_resume(
     settings: Settings,
 ) -> dict[str, Any]:
     """ATS-score *resume_text* against a role. Returns a dict; never persists."""
+    # Both inputs are written outside this organisation: the resume by the
+    # candidate being scored, the JD by whoever uploaded it. Truncate first, then
+    # scan and frame, so what we inspect is exactly what the model will see —
+    # scanning the full text while sending a truncated copy (or vice versa) makes
+    # the finding describe a different string than the one that was scored.
+    resume_excerpt = resume_text[:8000]
+    jd_excerpt = jd_text[:1200]
+    injection_markers = scan_untrusted(
+        {"resume": resume_excerpt, "jd": jd_excerpt},
+        event="resume_scorer.injection_markers_detected",
+        job_title=job_title,
+    )
+
     jd_block = (
-        f"Job description (calibrate skill/experience expectations against this):\n{jd_text[:1200]}"
+        "Job description (calibrate skill/experience expectations against this):\n"
+        + frame_untrusted(jd_excerpt, label="JOB DESCRIPTION")
         if jd_text
         else ""
     )
@@ -121,7 +136,9 @@ async def score_resume(
         _PROMPT_TEMPLATE.replace("{{JOB_TITLE}}", job_title)
         .replace("{{LEVEL}}", level)
         .replace("{{JD_BLOCK}}", jd_block)
-        .replace("{{RESUME_TEXT}}", resume_text[:8000])
+        .replace(
+            "{{RESUME_TEXT}}", frame_untrusted(resume_excerpt, label="RESUME")
+        )
     )
 
     # Auth via x-goog-api-key header (not ?key=) so the key never lands in
@@ -207,6 +224,16 @@ async def score_resume(
         "recommendation": recommendation,
         "summary": str(parsed.get("summary", "")),
         "scorer_version": RESUME_SCORER_VERSION,
+        # Travels with the score so HR sees "this CV contained instructions
+        # aimed at the scorer" next to the number it may have influenced.
+        # Empty list on the normal path — callers can persist it unconditionally.
+        "injection_markers": injection_markers,
     }
-    log.info("resume_scorer.complete", job_title=job_title, overall=overall, model=settings.gemini_model)
+    log.info(
+        "resume_scorer.complete",
+        job_title=job_title,
+        overall=overall,
+        model=settings.gemini_model,
+        injection_marker_count=len(injection_markers),
+    )
     return result

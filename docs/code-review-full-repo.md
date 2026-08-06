@@ -214,6 +214,16 @@ companies. It is a correctness and least-privilege issue, not a breach.
 
 **CWE-150.**
 
+**Related, and explicitly NOT part of the fix — CONSIDER, not required.** Both
+paths run a leading-wildcard `ILIKE '%…%'` on `applicants.target_job_title`,
+which Postgres cannot serve from a B-tree index, so every filtered list is a
+sequential scan over the company's applicants. A `pg_trgm` GIN index on that
+column would make it indexable. Deliberately deferred: `_SEARCH_LIMIT`/
+`_LIST_PAGE_SIZE` already cap the scan at 200 rows and `_MAX_PAGE` bounds the
+OFFSET cost, so at current tenant sizes this is not a problem worth a new
+extension, a migration and an index to maintain. Revisit if a single company
+passes ~50k applicants or this filter shows up in slow-query logs.
+
 ### M-5 — Candidate-controlled text reaches scoring prompts without injection framing
 
 | | |

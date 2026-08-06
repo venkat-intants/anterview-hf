@@ -263,7 +263,15 @@ class Settings(BaseSettings):
     # We pick the entry immediately to the left of those N trusted hops as the
     # "real" client IP.  This prevents a client from claiming any IP it likes
     # while still recovering the original IP through a known-hop proxy chain.
-    trusted_proxy_count: int = 0
+    #
+    # Bounded deliberately. This is the divisor of the hop arithmetic, and an
+    # out-of-range value degrades SILENTLY: too high and every request takes the
+    # real_index < 0 branch and resolves to the socket peer, so every client
+    # collapses into one rate-limit bucket and one consent-ledger IP hash. The
+    # control looks like it is working and is doing nothing. 4 is well above any
+    # topology we would actually deploy (CDN → WAF → LB → Caddy is 4), so a
+    # larger value is a typo rather than an architecture.
+    trusted_proxy_count: int = Field(default=0, ge=0, le=4)
 
     # --- S3 / R2 storage (B-031 resume upload, B-032 JD upload) ---
     # For local dev with MinIO: set S3_ENDPOINT=http://localhost:9000

@@ -16,18 +16,29 @@ rows where:
 
 For each claimed request (one at a time, SKIP LOCKED) it:
 
-  1. Hard-deletes interview transcript turns for the user's sessions
+  1. COLLECTS every S3 / R2 object key first, before any DELETE:
+       - resumes.resume_s3_key      (all versions, uploads bucket)
+       - users.resume_s3_key        (uploads bucket)
+       - applicants.resume_s3_key   (uploads bucket)
+       - scorecards.report_pdf_key + transcript_key (scorecard bucket)
+       - turns.audio_s3_key         (scorecard bucket; NULL until voice ships)
+     Collection MUST precede deletion. It used to run the other way round, and
+     because "DELETE FROM resumes" had already removed the rows inside the same
+     transaction, every superseded resume PDF was orphaned in R2 while the
+     executor stamped status='completed'. Under DPDP §12 a false completion
+     claim is worse than an incomplete erasure that reports itself.
+  2. Hard-deletes interview transcript turns for the user's sessions
      (via DELETE FROM turns WHERE session_id IN (SELECT id FROM sessions
       WHERE user_id = :uid) — turns.text_content is candidate speech PII).
-  2. Hard-deletes resume version rows (resumes table — resume_text is PII).
-  3. Collects scorecard PDF key + transcript key from scorecards (for S3
-     deletion in step 3b) and resume S3 keys from users + resumes rows.
-  4. Hard-deletes scorecards for the user's sessions (scorecard PDF/transcript
-     S3 keys are used for S3 deletion in this same step).
+  3. Hard-deletes resume version rows (resumes table — resume_text is PII).
+  4. Hard-deletes scorecards for the user's sessions.
   5. Hard-deletes the sessions rows themselves (was soft-deleted on request;
      turns are already gone so the cascade is safe, but we delete explicitly).
   6. Anonymises applicant rows linked to this user (full_name, email,
-     resume_text, resume_s3_key → redacted / NULL; user_id set to NULL).
+     resume_text, resume_s3_key, embedding → redacted / NULL; user_id NULL).
+     ``embedding`` is a halfvec(3072) derived from resume_text — leaving it
+     behind keeps a dense representation of the erased CV and keeps the
+     applicant semantically searchable via GET /hr/applicants?q=.
   7. Anonymises users columns in-place:
        email        → 'erased_{user_id}@deleted.invalid'
        full_name    → '[redacted]'
@@ -42,9 +53,10 @@ For each claimed request (one at a time, SKIP LOCKED) it:
        headline      → NULL
        bio           → NULL
        official_email → NULL
-  8. DELETES every collected object key from S3/R2 storage:
-       - scorecard PDFs and transcript JSON from the scorecard bucket
-       - resume PDFs from the uploads bucket
+  8. DELETES every object key collected in step 1 from S3/R2 storage:
+       - scorecard PDFs, transcript JSON and turn audio (scorecard bucket)
+       - resume PDFs from users, all resume versions, and applicant rows
+         (uploads bucket), deduplicated
      Only proceeds to step 9 when ALL deletes succeed (or the key was
      already absent from the bucket).  If any delete fails the transaction
      is rolled back and the row stays in 'pending' for the next poll cycle.
@@ -155,7 +167,99 @@ async def _execute_one_erasure(
     uid_str = str(user_id)
 
     # ------------------------------------------------------------------
-    # Step 1: Hard-delete interview transcript turns
+    # Step 1: Collect EVERY S3 / R2 object key, BEFORE deleting any row that
+    #         holds one.
+    #
+    # 1a. Resume S3 keys from the resumes version table (uploads bucket).
+    # 1b. Resume S3 key from users.resume_s3_key (uploads bucket).
+    # 1c. Resume S3 keys from applicant rows (uploads bucket).
+    # 1d. Scorecard PDF + transcript keys (scorecard bucket).
+    # 1e. Interview audio keys from turns (scorecard bucket).
+    #
+    # Ordering is load-bearing and it used to be wrong: the deletes ran first
+    # and collection second, so by the time we looked for resume keys the rows
+    # holding them were already gone from the transaction. Only
+    # users.resume_s3_key survived, so every superseded resume PDF stayed in R2
+    # while the executor stamped status='completed' and wrote a
+    # dpdp_erasure_completed audit row. Under DPDP §12 a false completion claim
+    # in the audit trail is worse than an incomplete erasure that reports
+    # itself. The old code knew — its own comment said "In a future refactor,
+    # move key collection to before step 2."
+    #
+    # Collecting first is also what makes retry idempotent: if the S3 phase
+    # fails we roll back and retry next cycle with the same key list.
+    # ------------------------------------------------------------------
+
+    # 1a — resume S3 keys from the resumes version table. This is the one the
+    # old ordering lost. A candidate who re-uploaded their CV five times has
+    # five objects here and only the newest is referenced by users.
+    resume_keys_result = await db.execute(
+        text(
+            "SELECT resume_s3_key FROM resumes "
+            "WHERE user_id = :uid AND resume_s3_key IS NOT NULL"
+        ),
+        {"uid": uid_str},
+    )
+    resume_version_keys: list[str] = [
+        str(row[0]) for row in resume_keys_result.fetchall() if row[0]
+    ]
+
+    # 1b — resume_s3_key from users row
+    user_s3_key_result = await db.execute(
+        text("SELECT resume_s3_key FROM users WHERE id = :uid"),
+        {"uid": uid_str},
+    )
+    user_s3_key_row = user_s3_key_result.fetchone()
+    user_resume_s3_key: str | None = user_s3_key_row[0] if user_s3_key_row else None
+
+    # 1c — applicant resume objects. The applicants UPDATE nulls
+    # resume_s3_key; without collecting it first that nulling just orphans the
+    # object in the bucket.
+    applicant_keys_result = await db.execute(
+        text(
+            "SELECT resume_s3_key FROM applicants "
+            "WHERE user_id = :uid AND resume_s3_key IS NOT NULL"
+        ),
+        {"uid": uid_str},
+    )
+    applicant_resume_keys: list[str] = [
+        str(row[0]) for row in applicant_keys_result.fetchall() if row[0]
+    ]
+
+    # 1d — scorecard PDF + transcript keys (from scorecards table)
+    scorecard_keys_result = await db.execute(
+        text(
+            "SELECT report_pdf_key, transcript_key FROM scorecards "
+            "WHERE session_id IN (SELECT id FROM sessions WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    scorecard_rows = scorecard_keys_result.fetchall()
+    scorecard_keys: list[dict[str, str | None]] = [
+        {"pdf": row[0], "transcript": row[1]}
+        for row in scorecard_rows
+    ]
+
+    # 1e — turn audio. turns.audio_s3_key is a Sprint-3 placeholder that is NULL
+    # today, so this collects nothing yet, and it MUST be read before step 2
+    # deletes the turns. It is here deliberately: the day the voice pipeline
+    # starts populating it, erasure covers it automatically instead of silently
+    # leaving candidate speech recordings in the bucket because nobody
+    # remembered to revisit this function.
+    turn_audio_result = await db.execute(
+        text(
+            "SELECT audio_s3_key FROM turns "
+            "WHERE session_id IN (SELECT id FROM sessions WHERE user_id = :uid) "
+            "  AND audio_s3_key IS NOT NULL"
+        ),
+        {"uid": uid_str},
+    )
+    turn_audio_keys: list[str] = [
+        str(row[0]) for row in turn_audio_result.fetchall() if row[0]
+    ]
+
+    # ------------------------------------------------------------------
+    # Step 2: Hard-delete interview transcript turns
     # ------------------------------------------------------------------
     turns_result = await db.execute(
         text(
@@ -173,7 +277,7 @@ async def _execute_one_erasure(
     )
 
     # ------------------------------------------------------------------
-    # Step 2: Hard-delete resume version rows
+    # Step 3: Hard-delete resume version rows (keys now safely collected)
     # ------------------------------------------------------------------
     resumes_result = await db.execute(
         text("DELETE FROM resumes WHERE user_id = :uid"),
@@ -186,55 +290,6 @@ async def _execute_one_erasure(
         request_id=str(request.request_id),
         count=resumes_deleted,
     )
-
-    # ------------------------------------------------------------------
-    # Step 3: Collect S3 keys before any further deletion.
-    #
-    # 3a. Scorecard PDF keys + transcript keys (scorecard bucket).
-    # 3b. Resume S3 keys from resumes table (uploads bucket).
-    # 3c. Resume S3 key from users.resume_s3_key (uploads bucket).
-    #
-    # We collect keys BEFORE deleting the rows that hold them so we
-    # always know which objects to purge even if the DB delete succeeds
-    # but the S3 delete fails on the first attempt (retry idempotency).
-    # ------------------------------------------------------------------
-
-    # 3a — scorecard PDF + transcript keys (from scorecards table)
-    scorecard_keys_result = await db.execute(
-        text(
-            "SELECT report_pdf_key, transcript_key FROM scorecards "
-            "WHERE session_id IN (SELECT id FROM sessions WHERE user_id = :uid)"
-        ),
-        {"uid": uid_str},
-    )
-    scorecard_rows = scorecard_keys_result.fetchall()
-    scorecard_keys: list[dict[str, str | None]] = [
-        {"pdf": row[0], "transcript": row[1]}
-        for row in scorecard_rows
-    ]
-
-    # 3b — resume S3 keys from resumes table (already deleted in step 2,
-    # but the keys must be collected BEFORE the DELETE in step 2 for
-    # idempotent retry).  Since step 2 already ran, query the key list
-    # from a SELECT *before* the delete — but because we're in a
-    # transaction, the DELETE in step 2 has already removed the rows.
-    # We therefore also collect the user-level resume_s3_key in step 3c.
-    #
-    # NOTE: For clean separation we collect resume keys from the users
-    # table here (step 3c) since the resumes table rows are already gone
-    # from this transaction (step 2 deleted them).  To capture all resume
-    # S3 keys reliably, callers should order: collect keys → delete rows.
-    # The current ordering (delete first) means we rely solely on
-    # users.resume_s3_key for the user-level resume object.  In a future
-    # refactor, move key collection to before step 2.
-
-    # 3c — resume_s3_key from users row
-    user_s3_key_result = await db.execute(
-        text("SELECT resume_s3_key FROM users WHERE id = :uid"),
-        {"uid": uid_str},
-    )
-    user_s3_key_row = user_s3_key_result.fetchone()
-    user_resume_s3_key: str | None = user_s3_key_row[0] if user_s3_key_row else None
 
     # ------------------------------------------------------------------
     # Step 4: Hard-delete scorecards
@@ -272,6 +327,14 @@ async def _execute_one_erasure(
     # ------------------------------------------------------------------
     # Step 6: Anonymise applicant rows linked to this user_id
     # ------------------------------------------------------------------
+    # embedding is NOT decoration on this list. applicants.embedding is a
+    # halfvec(3072) computed by hr_applicants._embed_applicant directly FROM
+    # resume_text, so nulling the text while keeping the vector leaves a dense
+    # representation of the candidate's CV behind — and keeps the erased
+    # applicant semantically searchable through GET /hr/applicants?q=.
+    # Embedding-inversion research makes "a vector is not personal data" a
+    # position we would have to defend with evidence, not assert. Cheaper to
+    # null it.
     applicants_result = await db.execute(
         text(
             "UPDATE applicants "
@@ -279,6 +342,7 @@ async def _execute_one_erasure(
             "    email = NULL, "
             "    resume_text = NULL, "
             "    resume_s3_key = NULL, "
+            "    embedding = NULL, "
             "    user_id = NULL, "
             "    updated_at = :now "
             "WHERE user_id = :uid"
@@ -340,23 +404,35 @@ async def _execute_one_erasure(
     # erasure_request in 'pending' for the next poll cycle to retry.
     #
     # Key catalogue:
-    #   scorecard bucket → report_pdf_key, transcript_key (from scorecards)
-    #   uploads bucket   → resume_s3_key (from users row collected in step 3c)
+    #   scorecard bucket → report_pdf_key, transcript_key (scorecards)
+    #                    → audio_s3_key (turns; NULL until the voice pipeline)
+    #   uploads bucket   → resume_s3_key from users, EVERY resumes version row,
+    #                      and every applicant row
     # ------------------------------------------------------------------
+    # Built unconditionally so the artifacts record below can report the true
+    # counts whether or not object storage was configured.
+    scorecard_bucket_keys: list[str] = []
+    for sc_key in scorecard_keys:
+        if sc_key.get("pdf"):
+            scorecard_bucket_keys.append(sc_key["pdf"])  # type: ignore[arg-type]
+        if sc_key.get("transcript"):
+            scorecard_bucket_keys.append(sc_key["transcript"])  # type: ignore[arg-type]
+    scorecard_bucket_keys.extend(turn_audio_keys)
+
+    # dedupe: users.resume_s3_key normally duplicates the is_current row in
+    # resumes, and two applicant rows can point at one upload. Deleting the same
+    # key twice is harmless (delete_objects tolerates absent keys) but it
+    # inflates the artifacts count, which is the number an auditor reads.
+    resume_bucket_keys: list[str] = list(
+        dict.fromkeys(
+            ([user_resume_s3_key] if user_resume_s3_key else [])
+            + resume_version_keys
+            + applicant_resume_keys
+        )
+    )
+
     if settings is not None:
         from app.s3_client import delete_objects  # local import — avoids circular
-
-        # Build the per-bucket key lists, filtering out None values.
-        scorecard_bucket_keys: list[str] = []
-        for sc_key in scorecard_keys:
-            if sc_key.get("pdf"):
-                scorecard_bucket_keys.append(sc_key["pdf"])  # type: ignore[arg-type]
-            if sc_key.get("transcript"):
-                scorecard_bucket_keys.append(sc_key["transcript"])  # type: ignore[arg-type]
-
-        resume_bucket_keys: list[str] = []
-        if user_resume_s3_key:
-            resume_bucket_keys.append(user_resume_s3_key)
 
         keys_by_bucket: dict[str, list[str]] = {}
         if scorecard_bucket_keys:
@@ -404,9 +480,21 @@ async def _execute_one_erasure(
         "sessions_deleted": sessions_deleted,
         "applicants_anonymised": applicants_anonymised,
         "scorecard_s3_keys": scorecard_keys,
+        # Count what we actually deleted, not what we assumed. The old
+        # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,
+        # which double-counted scorecards with a NULL transcript_key and
+        # ignored resume versions entirely — so the number written to the DPDP
+        # artifacts record did not describe the erasure it claimed to.
         "s3_objects_deleted": (
-            len(scorecard_keys) * 2 + (1 if user_resume_s3_key else 0)
-            if settings is not None else 0
+            len(scorecard_bucket_keys) + len(resume_bucket_keys)
+            if settings is not None
+            else 0
+        ),
+        "resume_objects_deleted": (
+            len(resume_bucket_keys) if settings is not None else 0
+        ),
+        "turn_audio_objects_deleted": (
+            len(turn_audio_keys) if settings is not None else 0
         ),
     }
     await db.execute(

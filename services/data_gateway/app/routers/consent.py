@@ -37,6 +37,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from prometheus_client import Counter
 from shared.auth.base import User
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -55,6 +56,22 @@ from app.schemas.consent import (
 )
 
 log = structlog.get_logger(__name__)
+
+# Two security controls in this service fail open by design — the client-IP hop
+# arithmetic below and the Redis rate limiter. Failing open is the right call for
+# both (a blip must not lock every user out), but a control that switches itself
+# off without saying so is indistinguishable from one that is working. These
+# counters make the degraded state visible on /metrics so it can be alerted on.
+_proxy_hop_underflow = Counter(
+    "client_ip_proxy_hop_underflow_total",
+    "X-Forwarded-For had fewer hops than TRUSTED_PROXY_COUNT, so the socket peer "
+    "was used instead. Sustained non-zero means per-IP rate limiting is degraded "
+    "to a single global bucket.",
+)
+
+# Module-level, not per-request: a misconfiguration fires this on every request,
+# and an unthrottled WARNING per request is its own outage.
+_underflow_warned = False
 
 router = APIRouter(prefix="/consent", tags=["consent"])
 
@@ -164,6 +181,29 @@ def _extract_client_ip(request: Request) -> str:
         # Fewer hops than expected (e.g. proxy chain not fully established in
         # staging).  Fall back to the direct connection address rather than
         # picking a potentially attacker-controlled entry.
+        #
+        # Falling back is correct, but doing it silently is not: if
+        # trusted_proxy_count is misconfigured this branch fires for EVERY
+        # request, every client resolves to the same proxy address, and per-IP
+        # rate limiting quietly becomes one global bucket. The control still
+        # reports success while protecting nothing. Warn (once per process, so a
+        # misconfiguration under load does not flood the log) and count it, so
+        # the wrong topology announces itself instead of being discovered later.
+        _proxy_hop_underflow.inc()
+        global _underflow_warned
+        if not _underflow_warned:
+            _underflow_warned = True
+            log.warning(
+                "consent.client_ip.proxy_hop_underflow",
+                configured_proxy_count=settings.trusted_proxy_count,
+                observed_hops=len(hops),
+                detail=(
+                    "X-Forwarded-For has fewer hops than TRUSTED_PROXY_COUNT; "
+                    "falling back to the socket peer for every such request. "
+                    "Per-IP rate limiting and consent-ledger IP hashing are "
+                    "degraded until this matches the real topology."
+                ),
+            )
         return direct_host
 
     return _validated_ip(hops[real_index], fallback=direct_host)

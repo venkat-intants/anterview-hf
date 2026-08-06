@@ -45,6 +45,66 @@ _SCHEDULED_PAST = _NOW - timedelta(days=31)
 _SCHEDULED_FUTURE = _NOW + timedelta(days=5)
 
 
+def _make_key_collecting_db(
+    *,
+    scorecard_keys: list[tuple[str | None, str | None]] | None = None,
+    user_resume_key: str | None = None,
+    resume_version_keys: list[str] | None = None,
+    applicant_resume_keys: list[str] | None = None,
+    turn_audio_keys: list[str] | None = None,
+) -> tuple[AsyncMock, list[str]]:
+    """A DB mock that answers each key-collection SELECT by matching its SQL.
+
+    Dispatches on statement CONTENT, not call index. The previous version keyed
+    off "call 3 is the scorecard SELECT, call 4 is the users SELECT", which
+    silently mis-routed every canned result the moment the executor's step order
+    changed — and the step order is exactly what the DPDP fix had to change. A
+    fixture that breaks when correct code is reordered tests the ordering, not
+    the behaviour.
+
+    Returns (db_mock, executed_statements).
+    """
+    db = AsyncMock()
+    db.add = MagicMock()
+    executed: list[str] = []
+
+    async def _execute(stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
+        sql = str(stmt)
+        executed.append(sql)
+        result = MagicMock()
+        result.rowcount = 1
+        result.fetchall.return_value = []
+        result.fetchone.return_value = None
+
+        if "FROM scorecards" in sql and "SELECT" in sql:
+            result.fetchall.return_value = scorecard_keys or []
+        elif "FROM resumes" in sql and sql.strip().startswith("SELECT"):
+            result.fetchall.return_value = [(k,) for k in (resume_version_keys or [])]
+        elif "FROM applicants" in sql and sql.strip().startswith("SELECT"):
+            result.fetchall.return_value = [(k,) for k in (applicant_resume_keys or [])]
+        elif "audio_s3_key" in sql and sql.strip().startswith("SELECT"):
+            result.fetchall.return_value = [(k,) for k in (turn_audio_keys or [])]
+        elif "FROM users" in sql and "resume_s3_key" in sql:
+            result.fetchone.return_value = (
+                (user_resume_key,) if user_resume_key else None
+            )
+        return result
+
+    db.execute = _execute
+    return db, executed
+
+
+def _mock_s3_settings() -> MagicMock:
+    settings = MagicMock()
+    settings.s3_scorecard_bucket = "intants-interview-scorecards"
+    settings.s3_bucket_name = "intants-uploads"
+    settings.s3_endpoint_url = "https://fake-endpoint.example.com"
+    settings.s3_access_key_id = "fake-key"
+    settings.s3_secret_access_key = "fake-secret"
+    settings.s3_region = "auto"
+    return settings
+
+
 def _make_erasure_request(
     scheduled_for: datetime = _SCHEDULED_PAST,
     status: str = "pending",
@@ -511,29 +571,11 @@ async def test_poll_sql_error_leaves_request_pending() -> None:
 @pytest.mark.asyncio
 async def test_execute_one_erasure_scorecard_keys_in_artifacts() -> None:
     """Scorecard S3 keys are captured and stored in artifacts for downstream purge."""
-    db = AsyncMock()
-    db.add = MagicMock()
-
     _scorecard_keys = [
         ("s3://bucket/report1.pdf", "s3://bucket/transcript1.json"),
         ("s3://bucket/report2.pdf", None),
     ]
-
-    stmt_count: dict[str, int] = {"i": 0}
-
-    async def _execute(stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
-        stmt_count["i"] += 1
-        result = MagicMock()
-        result.rowcount = 1
-        # The 3rd execute is the scorecard key SELECT
-        if stmt_count["i"] == 3:
-            result.fetchall.return_value = _scorecard_keys
-        else:
-            result.fetchall.return_value = []
-        result.fetchone.return_value = None
-        return result
-
-    db.execute = _execute
+    db, _ = _make_key_collecting_db(scorecard_keys=_scorecard_keys)
 
     request = _make_erasure_request()
     artifacts = await _execute_one_erasure(
@@ -580,38 +622,13 @@ async def test_execute_one_erasure_s3_delete_called_for_every_key() -> None:
     ]
     _user_resume_key = "resumes/user-uuid/resume.pdf"
 
-    db = AsyncMock()
-    db.add = MagicMock()
-    stmt_count: dict[str, int] = {"i": 0}
-    executed_stmts: list[str] = []
-
-    async def _execute(stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
-        stmt_count["i"] += 1
-        executed_stmts.append(str(stmt))
-        result = MagicMock()
-        result.rowcount = 1
-        # Call 3 (1-indexed) is the scorecard key SELECT (step 3a).
-        if stmt_count["i"] == 3:
-            result.fetchall.return_value = _scorecard_keys
-        else:
-            result.fetchall.return_value = []
-        # Call 4 is the users.resume_s3_key SELECT (step 3c).
-        if stmt_count["i"] == 4:
-            result.fetchone.return_value = (_user_resume_key,)
-        else:
-            result.fetchone.return_value = None
-        return result
-
-    db.execute = _execute
+    db, executed_stmts = _make_key_collecting_db(
+        scorecard_keys=_scorecard_keys,
+        user_resume_key=_user_resume_key,
+    )
 
     # ---- Settings mock -----------------------------------------------------
-    mock_settings = MagicMock()
-    mock_settings.s3_scorecard_bucket = "intants-interview-scorecards"
-    mock_settings.s3_bucket_name = "intants-uploads"
-    mock_settings.s3_endpoint_url = "https://fake-endpoint.example.com"
-    mock_settings.s3_access_key_id = "fake-key"
-    mock_settings.s3_secret_access_key = "fake-secret"
-    mock_settings.s3_region = "auto"
+    mock_settings = _mock_s3_settings()
 
     # ---- Patch delete_objects ----------------------------------------------
     delete_calls: list[dict[str, list[str]]] = []
@@ -705,33 +722,10 @@ async def test_execute_one_erasure_s3_failure_prevents_completed_stamp() -> None
 
     # ---- DB mock -----------------------------------------------------------
     _scorecard_keys = [("scorecards/sc1/report.pdf", None)]
-    db = AsyncMock()
-    db.add = MagicMock()
-    stmt_count: dict[str, int] = {"i": 0}
-    executed_stmts: list[str] = []
-
-    async def _execute(stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
-        stmt_count["i"] += 1
-        executed_stmts.append(str(stmt))
-        result = MagicMock()
-        result.rowcount = 1
-        if stmt_count["i"] == 3:
-            result.fetchall.return_value = _scorecard_keys
-        else:
-            result.fetchall.return_value = []
-        result.fetchone.return_value = None
-        return result
-
-    db.execute = _execute
+    db, executed_stmts = _make_key_collecting_db(scorecard_keys=_scorecard_keys)
 
     # ---- Settings mock -----------------------------------------------------
-    mock_settings = MagicMock()
-    mock_settings.s3_scorecard_bucket = "intants-interview-scorecards"
-    mock_settings.s3_bucket_name = "intants-uploads"
-    mock_settings.s3_endpoint_url = "https://fake-endpoint.example.com"
-    mock_settings.s3_access_key_id = "fake-key"
-    mock_settings.s3_secret_access_key = "fake-secret"
-    mock_settings.s3_region = "auto"
+    mock_settings = _mock_s3_settings()
 
     # ---- S3 raises a non-absent ClientError --------------------------------
     s3_error = ClientError(
@@ -777,4 +771,230 @@ async def test_execute_one_erasure_s3_failure_prevents_completed_stamp() -> None
     # audit_log must NOT be written for a failed erasure.
     assert not db.add.called, (
         "audit_log entry must NOT be written when erasure fails mid-way"
+    )
+
+
+# ---------------------------------------------------------------------------
+# DPDP erasure-coverage regression set (2026-08-06)
+#
+# The executor used to DELETE FROM resumes and only THEN look for the S3 keys
+# those rows held, so every superseded resume PDF was orphaned in R2 while
+# status='completed' was stamped and a dpdp_erasure_completed audit row was
+# written. It also left applicants.embedding — a halfvec(3072) derived from the
+# resume text it had just nulled — in place.
+#
+# Each test below was mutation-checked: the corresponding line was reverted and
+# the test confirmed to go red.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_erasure_deletes_every_resume_version_object() -> None:
+    """All resumes.resume_s3_key objects must reach S3 deletion, not just the
+    one referenced by users.resume_s3_key.
+
+    This is the DPDP §12 false-completion bug: a candidate who re-uploaded their
+    CV four times had three PDFs left in R2 after an erasure that reported
+    itself complete.
+    """
+    db, _ = _make_key_collecting_db(
+        user_resume_key="resumes/u1/current.pdf",
+        resume_version_keys=[
+            "resumes/u1/current.pdf",  # duplicate of the users row on purpose
+            "resumes/u1/v2.pdf",
+            "resumes/u1/v1.pdf",
+        ],
+    )
+    mock_settings = _mock_s3_settings()
+
+    delete_calls: list[dict[str, list[str]]] = []
+
+    async def _capture(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> None:
+        delete_calls.append(dict(keys_by_bucket))
+
+    with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_capture)):
+        artifacts = await _execute_one_erasure(
+            db=db,
+            request=_make_erasure_request(),
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=mock_settings,
+        )
+
+    uploads = delete_calls[0][mock_settings.s3_bucket_name]
+    assert sorted(uploads) == sorted(
+        ["resumes/u1/current.pdf", "resumes/u1/v2.pdf", "resumes/u1/v1.pdf"]
+    ), f"superseded resume versions were not purged: {uploads}"
+
+    # The users-row key duplicates a resumes row; it must appear exactly once so
+    # the artifacts count an auditor reads is not inflated.
+    assert len(uploads) == 3, f"keys were not deduplicated: {uploads}"
+    assert artifacts["resume_objects_deleted"] == 3
+
+
+@pytest.mark.asyncio
+async def test_erasure_collects_resume_keys_before_deleting_the_rows() -> None:
+    """Key collection must precede the DELETEs.
+
+    Pins the ordering directly rather than only its consequence: if a
+    DELETE FROM resumes is ever moved back above the SELECT, the keys are gone
+    from the transaction and cannot be collected at all.
+    """
+    db, executed = _make_key_collecting_db(resume_version_keys=["resumes/u1/v1.pdf"])
+
+    with patch("app.s3_client.delete_objects", new=AsyncMock()):
+        await _execute_one_erasure(
+            db=db,
+            request=_make_erasure_request(),
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
+
+    select_idx = next(
+        i for i, s in enumerate(executed)
+        if s.strip().startswith("SELECT") and "FROM resumes" in s
+    )
+    delete_idx = next(
+        i for i, s in enumerate(executed)
+        if s.strip().startswith("DELETE") and "FROM resumes" in s
+    )
+    assert select_idx < delete_idx, (
+        "resume S3 keys must be SELECTed before DELETE FROM resumes; "
+        "collecting after the delete silently loses every key"
+    )
+
+    audio_select_idx = next(
+        i for i, s in enumerate(executed)
+        if s.strip().startswith("SELECT") and "audio_s3_key" in s
+    )
+    turns_delete_idx = next(
+        i for i, s in enumerate(executed)
+        if s.strip().startswith("DELETE") and "FROM turns" in s
+    )
+    assert audio_select_idx < turns_delete_idx, (
+        "turn audio keys must be SELECTed before DELETE FROM turns"
+    )
+
+
+@pytest.mark.asyncio
+async def test_erasure_nulls_the_applicant_embedding() -> None:
+    """applicants.embedding is derived from resume_text and must be nulled too.
+
+    Leaving it keeps a dense representation of the erased CV in the DB and keeps
+    the applicant semantically searchable via GET /hr/applicants?q=.
+    """
+    db, executed = _make_key_collecting_db()
+
+    with patch("app.s3_client.delete_objects", new=AsyncMock()):
+        await _execute_one_erasure(
+            db=db,
+            request=_make_erasure_request(),
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
+
+    applicants_update = next(
+        (s for s in executed if s.strip().startswith("UPDATE applicants")), None
+    )
+    assert applicants_update is not None, "applicants UPDATE must run"
+    assert "embedding = NULL" in applicants_update, (
+        "applicants.embedding must be nulled — it is a vector derived from the "
+        "resume_text this same statement nulls"
+    )
+
+
+@pytest.mark.asyncio
+async def test_erasure_deletes_applicant_resume_objects() -> None:
+    """Nulling applicants.resume_s3_key without deleting the object orphans it."""
+    db, _ = _make_key_collecting_db(
+        applicant_resume_keys=["applicants/a1/cv.pdf", "applicants/a2/cv.pdf"],
+    )
+    mock_settings = _mock_s3_settings()
+    delete_calls: list[dict[str, list[str]]] = []
+
+    async def _capture(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> None:
+        delete_calls.append(dict(keys_by_bucket))
+
+    with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_capture)):
+        await _execute_one_erasure(
+            db=db,
+            request=_make_erasure_request(),
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=mock_settings,
+        )
+
+    uploads = delete_calls[0][mock_settings.s3_bucket_name]
+    assert "applicants/a1/cv.pdf" in uploads
+    assert "applicants/a2/cv.pdf" in uploads
+
+
+@pytest.mark.asyncio
+async def test_erasure_deletes_turn_audio_when_present() -> None:
+    """turns.audio_s3_key is NULL today; erasure must already handle it.
+
+    The voice pipeline will start populating this column. Without this path the
+    first candidate to request erasure after that ships would leave their speech
+    recordings in the bucket, and nothing would say so.
+    """
+    db, _ = _make_key_collecting_db(
+        turn_audio_keys=["audio/s1/turn-1.ogg", "audio/s1/turn-2.ogg"],
+    )
+    mock_settings = _mock_s3_settings()
+    delete_calls: list[dict[str, list[str]]] = []
+
+    async def _capture(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> None:
+        delete_calls.append(dict(keys_by_bucket))
+
+    with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_capture)):
+        artifacts = await _execute_one_erasure(
+            db=db,
+            request=_make_erasure_request(),
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=mock_settings,
+        )
+
+    scorecard_bucket = delete_calls[0][mock_settings.s3_scorecard_bucket]
+    assert "audio/s1/turn-1.ogg" in scorecard_bucket
+    assert "audio/s1/turn-2.ogg" in scorecard_bucket
+    assert artifacts["turn_audio_objects_deleted"] == 2
+
+
+@pytest.mark.asyncio
+async def test_erasure_artifacts_count_matches_keys_actually_deleted() -> None:
+    """The artifacts number is what an auditor reads; it must not be a guess.
+
+    The old expression was len(scorecard_keys) * 2 + (1 if user_resume_s3_key),
+    which over-counted scorecards with a NULL transcript_key and ignored resume
+    versions entirely.
+    """
+    # Numbers chosen so the old and new formulas DIVERGE. With two scorecard
+    # rows and one resume version they both happen to say 5, and a test that
+    # cannot tell the formulas apart is not testing the fix.
+    #   old: len(scorecard_keys) * 2 + (1 if user_resume_s3_key)  =  1*2 + 1 = 3
+    #   new: len(scorecard_bucket_keys) + len(resume_bucket_keys)  =  1  + 3 = 4
+    db, _ = _make_key_collecting_db(
+        scorecard_keys=[
+            ("sc/1/report.pdf", None),  # no transcript — old code counted 2 here
+        ],
+        user_resume_key="resumes/u1/current.pdf",
+        resume_version_keys=["resumes/u1/v1.pdf", "resumes/u1/v2.pdf"],
+    )
+    mock_settings = _mock_s3_settings()
+    delete_calls: list[dict[str, list[str]]] = []
+
+    async def _capture(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> None:
+        delete_calls.append(dict(keys_by_bucket))
+
+    with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_capture)):
+        artifacts = await _execute_one_erasure(
+            db=db,
+            request=_make_erasure_request(),
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=mock_settings,
+        )
+
+    actually_deleted = sum(len(v) for v in delete_calls[0].values())
+    # 1 scorecard key + 3 resume keys = 4. The old formula would have said 3.
+    assert actually_deleted == 4
+    assert artifacts["s3_objects_deleted"] == actually_deleted, (
+        "artifacts must report the keys actually passed to delete_objects"
     )

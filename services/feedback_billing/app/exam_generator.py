@@ -26,6 +26,7 @@ from shared.intelligence import (
 )
 
 from app.config import Settings
+from app.untrusted_input import frame_untrusted, scan_untrusted
 
 log = structlog.get_logger(__name__)
 
@@ -190,8 +191,20 @@ async def generate_exam_questions(
     difficulty = difficulty if difficulty in _VALID_DIFFICULTIES else "medium"
     language_name = _LANGUAGE_NAMES.get(language.lower(), "English")
 
+    # `topic` is free text an HR user typed or pasted from a JD. Less hostile
+    # than a candidate's resume, but it is still user-controlled text going into
+    # a prompt, and a pasted JD can carry whatever the poster put in it.
+    topic_excerpt = topic[:300]
+    scan_untrusted(
+        {"topic": topic_excerpt},
+        event="exam_generator.injection_markers_detected",
+        job_title=job_title,
+        kind="mcq",
+    )
     prompt = (
-        _PROMPT_TEMPLATE.replace("{{TOPIC}}", topic[:300])
+        _PROMPT_TEMPLATE.replace(
+            "{{TOPIC}}", frame_untrusted(topic_excerpt, label="TOPIC / ROLE")
+        )
         .replace("{{DIFFICULTY}}", difficulty)
         .replace("{{LANGUAGE}}", language_name)
         .replace("{{COUNT}}", str(count))
@@ -476,8 +489,17 @@ async def generate_coding_questions(
         allowed_languages[0] if allowed_languages else "python"
     )
 
+    topic_excerpt = topic[:300]
+    scan_untrusted(
+        {"topic": topic_excerpt},
+        event="exam_generator.injection_markers_detected",
+        job_title=job_title,
+        kind="coding",
+    )
     prompt = (
-        _CODING_PROMPT_TEMPLATE.replace("{{TOPIC}}", topic[:300])
+        _CODING_PROMPT_TEMPLATE.replace(
+            "{{TOPIC}}", frame_untrusted(topic_excerpt, label="TOPIC / ROLE")
+        )
         .replace("{{DIFFICULTY}}", difficulty)
         .replace("{{LANGUAGE}}", language_name)
         .replace("{{COUNT}}", str(count))

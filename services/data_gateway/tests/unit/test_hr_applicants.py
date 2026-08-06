@@ -178,3 +178,135 @@ def test_apply_score_maps_fields() -> None:
     assert a.ats_overall == 77
     assert a.ats_recommendation == "strong_fit"
     assert a.ats_breakdown == {"skills_match": 80, "experience_relevance": 70}
+
+
+# ---------------------------------------------------------------------------
+# LIKE wildcard escaping (2026-08-06)
+#
+# Both applicant-search paths interpolated the caller's `job` filter straight
+# into a LIKE pattern. Not injection — the value is bound as a parameter — but
+# `%` and `_` are wildcards inside the pattern, so `job=%` matched every
+# applicant in the tenant and `job=_` matched any single character. The filter
+# could widen its own result set.
+# ---------------------------------------------------------------------------
+
+
+def test_like_literal_escapes_wildcards() -> None:
+    from app.routers.hr_applicants import _like_literal
+
+    assert _like_literal("%") == chr(92) + "%"
+    assert _like_literal("_") == chr(92) + "_"
+    assert _like_literal("100%_bonus") == "100" + chr(92) + "%" + chr(92) + "_bonus"
+
+
+def test_like_literal_escapes_the_escape_character_first() -> None:
+    """Ordering matters: escaping % before the backslash would re-escape the
+    backslash this function just introduced, turning one literal into two."""
+    from app.routers.hr_applicants import _like_literal
+
+    assert _like_literal(chr(92)) == chr(92) * 2
+    # A backslash followed by a percent must yield escaped-backslash + escaped-%
+    assert _like_literal(chr(92) + "%") == chr(92) * 2 + chr(92) + "%"
+
+
+def test_like_literal_leaves_ordinary_titles_untouched() -> None:
+    """The common case must not change — this filter is used on every list call."""
+    from app.routers.hr_applicants import _like_literal
+
+    for title in ("Data Engineer", "Sr. QA (Manual)", "Nurse - ICU", "Welder/Fitter"):
+        assert _like_literal(title) == title
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_binds_the_escaped_job_pattern() -> None:
+    """The raw-SQL path must actually CALL the escaper, not merely have one.
+
+    Testing _like_literal alone passes even if the call site still interpolates
+    the raw value — which is exactly the bug. This asserts on the parameter the
+    query is executed with.
+    """
+    import uuid as _uuid
+    from unittest.mock import AsyncMock, patch
+
+    from app.routers import hr_applicants
+
+    captured: dict[str, object] = {}
+
+    class _Result:
+        @staticmethod
+        def all() -> list[object]:
+            return []
+
+        @staticmethod
+        def fetchall() -> list[object]:
+            return []
+
+    class _Db:
+        async def execute(self, stmt: object, params: dict[str, object]) -> _Result:
+            captured.update(params)
+            captured["sql"] = str(stmt)
+            return _Result()
+
+    with patch.object(
+        hr_applicants, "embed_one_remote", AsyncMock(side_effect=Exception("no embedder"))
+    ), patch.object(hr_applicants, "EmbeddingError", Exception):
+        await hr_applicants._semantic_search(
+            db=_Db(),  # type: ignore[arg-type]
+            hr_uid=_uuid.uuid4(),
+            company_id=_uuid.uuid4(),
+            q="welder",
+            status_filter=None,
+            job="100%_bonus",
+        )
+
+    assert captured["job"] == "%100" + chr(92) + "%" + chr(92) + "_bonus%", (
+        f"job filter reached SQL unescaped: {captured['job']!r}"
+    )
+    assert "ESCAPE" in str(captured["sql"]), (
+        "the ILIKE must declare its escape character explicitly rather than "
+        "relying on the server's standard_conforming_strings default"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_applicants_orm_path_escapes_the_job_pattern() -> None:
+    """Same guarantee for the ORM leg, which builds its own ILIKE.
+
+    Exercises list_applicants and inspects the statement it actually executes.
+    Building the clause here instead would test SQLAlchemy, not our call site —
+    and a call site that dropped the escaping would still pass.
+    """
+    import uuid as _uuid
+
+    from app.routers.hr_applicants import list_applicants
+
+    captured: dict[str, str] = {}
+
+    class _Scalars:
+        @staticmethod
+        def all() -> list[object]:
+            return []
+
+    class _Result:
+        @staticmethod
+        def scalars() -> _Scalars:
+            return _Scalars()
+
+    class _Db:
+        async def execute(self, stmt: object) -> _Result:
+            captured["sql"] = str(
+                stmt.compile(compile_kwargs={"literal_binds": True})  # type: ignore[attr-defined]
+            )
+            return _Result()
+
+    await list_applicants(
+        ctx=(_uuid.uuid4(), _uuid.uuid4()),
+        db=_Db(),  # type: ignore[arg-type]
+        status_filter=None,
+        q=None,
+        job="100%_bonus",
+    )
+
+    sql = captured["sql"]
+    assert "ESCAPE" in sql.upper(), f"ORM ILIKE lost its escape clause: {sql}"
+    assert chr(92) + "%" in sql, f"job filter reached SQL unescaped: {sql}"

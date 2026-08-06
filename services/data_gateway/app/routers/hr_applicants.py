@@ -586,6 +586,34 @@ _LIST_PAGE_SIZE = _SEARCH_LIMIT
 # rather than a bigger ceiling.
 _MAX_PAGE = 500
 
+# Escape character for the LIKE patterns below. Backslash is Postgres's default,
+# but both call sites pass ESCAPE '\' explicitly so the behaviour does not depend
+# on standard_conforming_strings or on the SQLAlchemy dialect's defaults.
+_LIKE_ESCAPE = "\\"
+
+
+def _like_literal(value: str) -> str:
+    """Escape LIKE wildcards so *value* matches itself and nothing else.
+
+    Not an injection fix — both call sites already bind the value as a parameter,
+    so it can never break out of the string. The bug is subtler: `%` and `_` are
+    wildcards inside a LIKE pattern, so a caller passing ``job=%`` matched EVERY
+    applicant and ``job=_`` matched any single character. The filter widened its
+    own result set beyond what the caller was authorised to narrow to.
+
+    Tenancy is unaffected either way (``company_id`` is a separate predicate), so
+    this widens results within the caller's own company rather than across
+    companies — a least-privilege and correctness fix, not a breach fix.
+
+    The escape character must be escaped first, or escaping `%` would re-escape
+    the backslash it just introduced.
+    """
+    return (
+        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", f"{_LIKE_ESCAPE}%")
+        .replace("_", f"{_LIKE_ESCAPE}_")
+    )
+
 
 async def _semantic_search(
     db: AsyncSession,
@@ -613,8 +641,8 @@ async def _semantic_search(
         where.append("a.status = :status")
         params["status"] = status_filter
     if job:
-        where.append("a.target_job_title ILIKE :job")
-        params["job"] = f"%{job}%"
+        where.append(f"a.target_job_title ILIKE :job ESCAPE '{_LIKE_ESCAPE}'")
+        params["job"] = f"%{_like_literal(job)}%"
 
     lexical = (
         "ts_rank_cd(to_tsvector('english', coalesce(a.resume_text, '')), "
@@ -722,7 +750,11 @@ async def list_applicants(
     if status_filter:
         stmt = stmt.where(Applicant.status == status_filter)
     if job:
-        stmt = stmt.where(Applicant.target_job_title.ilike(f"%{job}%"))
+        stmt = stmt.where(
+            Applicant.target_job_title.ilike(
+                f"%{_like_literal(job)}%", escape=_LIKE_ESCAPE
+            )
+        )
     stmt = (
         stmt.order_by(Applicant.ats_overall.desc().nullslast(), Applicant.created_at.desc())
         .limit(per_page)

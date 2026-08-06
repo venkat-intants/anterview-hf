@@ -36,6 +36,10 @@ Coverage
 
 26. test_export_csv_requires_admin              — no token → 401
 27. test_export_csv_happy_path                  — Content-Disposition attachment, CSV columns
+28. test_export_csv_streams_from_a_session_it_owns — stream owns its session
+29. test_detail_rationale_drops_nested_scorer_keys — only the 4 axes surface
+30. test_overview_today_bucket_starts_at_ist_midnight — IST, not UTC, day boundary
+31. test_trends_group_by_reporting_timezone_with_exclusive_upper_bound
 
 All tests use mock DB sessions — no live PostgreSQL required.
 PII: candidate email in assertions is a synthetic fixture address.
@@ -43,10 +47,12 @@ PII: candidate email in assertions is a synthetic fixture address.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from shared.auth.jwt import issue_access_token
@@ -110,11 +116,16 @@ def _make_session_with_results(results: list[Any]) -> AsyncMock:
     Each item in ``results`` is the raw value returned by .mappings().first()
     or .mappings().all() depending on the shape.  Pass a list to simulate .all(),
     a dict/MagicMock to simulate .first(), or None for empty.
+
+    Every (statement, params) pair is recorded on ``session.captured_calls`` so
+    tests can assert on the SQL and bind parameters the endpoint actually built.
     """
     session = AsyncMock()
     call_index: dict[str, int] = {"i": 0}
+    captured: list[tuple[Any, Any]] = []
 
     async def _execute(stmt: Any, params: Any = None) -> MagicMock:
+        captured.append((stmt, params))
         result = MagicMock()
         idx = call_index["i"]
         call_index["i"] += 1
@@ -135,6 +146,7 @@ def _make_session_with_results(results: list[Any]) -> AsyncMock:
     session.commit = AsyncMock()
     session.rollback = AsyncMock()
     session.add = MagicMock()
+    session.captured_calls = captured
     return session
 
 
@@ -507,8 +519,6 @@ def test_detail_happy_path_no_scorecard() -> None:
 def test_detail_happy_path_with_scorecard() -> None:
     detail_row = _fake_detail_row_with_scorecard()
     # 2nd execute = the integrity_events timeline query (most-recent-first).
-    from datetime import timedelta
-
     event_rows = [
         {
             "event_type": "gaze_away",
@@ -704,9 +714,8 @@ def _make_streaming_session(rows: list[dict[str, Any]]) -> AsyncMock:
     """Build a mock AsyncSession whose .stream() returns rows asynchronously.
 
     Used by the CSV export endpoint (C5 — true server-side streaming).
-    db.stream() is an async function that returns an AsyncResult-like object;
+    .stream() is an async function that returns an AsyncResult-like object;
     .mappings() on that result is an async iterable.
-    The .execute() + .commit() path handles the audit INSERT.
     """
     from collections.abc import AsyncGenerator
     from unittest.mock import MagicMock
@@ -719,11 +728,52 @@ def _make_streaming_session(rows: list[dict[str, Any]]) -> AsyncMock:
     mock_stream_result.mappings = MagicMock(return_value=_stream_mappings())
 
     session = AsyncMock()
-    # db.stream() is an async function (coroutine) — AsyncMock handles this.
+    # .stream() is an async function (coroutine) — AsyncMock handles this.
     session.stream = AsyncMock(return_value=mock_stream_result)
     session.commit = AsyncMock()
     session.add = MagicMock()
     return session
+
+
+def _make_session_factory(
+    session: AsyncMock, *, lifecycle: list[str] | None = None
+) -> Any:
+    """Return a stand-in for async_sessionmaker that yields ``session``.
+
+    ``lifecycle`` (when supplied) records 'enter'/'exit' so a test can prove the
+    export's own session is opened for the stream and closed only after the
+    response body has been fully consumed.
+    """
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _factory() -> Any:
+        if lifecycle is not None:
+            lifecycle.append("enter")
+        try:
+            yield session
+        finally:
+            if lifecycle is not None:
+                lifecycle.append("exit")
+
+    return _factory
+
+
+def _build_export_app(
+    request_session: AsyncMock, stream_factory: Any
+) -> FastAPI:
+    """App wiring the export endpoint's two distinct DB dependencies."""
+    from app.database import get_session_factory
+
+    test_app = FastAPI()
+
+    async def _db_override() -> AsyncMock:  # type: ignore[misc]
+        yield request_session
+
+    test_app.dependency_overrides[get_db_session] = _db_override
+    test_app.dependency_overrides[get_session_factory] = lambda: stream_factory
+    test_app.include_router(analytics_router)
+    return test_app
 
 
 def test_export_csv_happy_path() -> None:
@@ -732,14 +782,9 @@ def test_export_csv_happy_path() -> None:
     from app.routers import analytics as analytics_mod
 
     data_rows = [_fake_interview_row()]
-    session = _make_streaming_session(data_rows)
-    test_app = FastAPI()
-
-    async def _db_override() -> AsyncMock:  # type: ignore[misc]
-        yield session
-
-    test_app.dependency_overrides[get_db_session] = _db_override
-    test_app.include_router(analytics_router)
+    stream_session = _make_streaming_session(data_rows)
+    request_session = _make_session_with_results([])
+    test_app = _build_export_app(request_session, _make_session_factory(stream_session))
 
     client = TestClient(test_app, raise_server_exceptions=False)
 
@@ -1091,6 +1136,194 @@ def test_filter_builder_rejects_unknown_sort_col() -> None:
 # ---------------------------------------------------------------------------
 # S2: filter builder returns 3-tuple; count query uses WHERE without ORDER BY
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# CSV export must not stream from the request-scoped session
+# ---------------------------------------------------------------------------
+
+
+def test_export_csv_streams_from_a_session_it_owns() -> None:
+    """The stream must open its own session, not reuse the injected one.
+
+    FastAPI >= 0.106 unwinds the dependency exit stack before Starlette sends
+    the response body, so the injected ``db`` is already closed when the
+    generator runs — streaming from it leaks one connection per export and
+    swallows any error into a 200 with nothing but the header row.
+    """
+    lifecycle: list[str] = []
+    stream_session = _make_streaming_session([_fake_interview_row()])
+    request_session = _make_session_with_results([])
+    # Fail loudly if the endpoint ever streams from the request-scoped session.
+    request_session.stream = AsyncMock(
+        side_effect=AssertionError("streamed from the request-scoped session")
+    )
+
+    test_app = _build_export_app(
+        request_session,
+        _make_session_factory(stream_session, lifecycle=lifecycle),
+    )
+    client = TestClient(test_app, raise_server_exceptions=False)
+    resp = client.get(
+        "/admin/interviews/export.csv", headers=_auth_header(_admin_token())
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert _SESSION_ID in resp.text
+    stream_session.stream.assert_awaited_once()
+    request_session.stream.assert_not_awaited()
+    # Opened for the stream, closed only after the body was fully consumed.
+    assert lifecycle == ["enter", "exit"]
+    # The audit row still rides the request-scoped session (committed before
+    # the response starts, so a client disconnect cannot skip it).
+    request_session.add.assert_called_once()
+    request_session.commit.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Drill-in rationale must expose only the four canonical axes
+# ---------------------------------------------------------------------------
+
+
+def test_detail_rationale_drops_nested_scorer_keys() -> None:
+    """Nested scorer keys must not be str()-ed into the per-axis rationale map.
+
+    The scorer parks axis_feedback / _competencies / _role_profile_id in the
+    same JSONB column; stringifying them shipped Python dict reprs (and up to
+    800 chars of transcript-derived evidence per competency) to the console.
+    """
+    import json
+
+    detail_row = _fake_detail_row_with_scorecard()
+    detail_row["rationale"] = {
+        **detail_row["rationale"],
+        "axis_feedback": {
+            "technical": {
+                "went_wrong": ["Missed the weld-symbol question"],
+                "how_to_improve": ["Revise AWS D1.1 basics"],
+            }
+        },
+        "_role_profile_id": "welder-baseline-v1",
+        "_domain_family": "trades",
+        "_competencies": {
+            "welding_fundamentals": {"name": "Welding fundamentals", "evidence": "…"}
+        },
+    }
+    session = _make_session_with_results([detail_row, []])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+    resp = client.get(
+        f"/admin/interviews/{_SESSION_ID}", headers=_auth_header(_admin_token())
+    )
+
+    assert resp.status_code == 200, resp.text
+    rationale = resp.json()["scorecard"]["rationale"]
+    assert set(rationale) == {
+        "communication",
+        "technical",
+        "problem_solving",
+        "confidence",
+    }
+    # No Python dict/list reprs leaked into any axis string.
+    assert "{'" not in json.dumps(rationale)
+    assert rationale["technical"].startswith("Solid depth")
+
+
+def test_detail_rationale_empty_for_legacy_scorecards() -> None:
+    """A scorecard predating the rationale feature yields an empty map, not keys
+    with empty-string values."""
+    detail_row = _fake_detail_row_with_scorecard()
+    detail_row["rationale"] = None
+    session = _make_session_with_results([detail_row, []])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+    resp = client.get(
+        f"/admin/interviews/{_SESSION_ID}", headers=_auth_header(_admin_token())
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["scorecard"]["rationale"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Calendar buckets break at reporting-timezone midnight, not UTC midnight
+# ---------------------------------------------------------------------------
+
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def _overview_params(client: TestClient, session: AsyncMock) -> dict[str, Any]:
+    resp = client.get("/admin/overview", headers=_auth_header(_admin_token()))
+    assert resp.status_code == 200, resp.text
+    _, params = session.captured_calls[0]
+    return dict(params)
+
+
+def test_overview_today_bucket_starts_at_ist_midnight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'Interviews today' must count from IST midnight — UTC midnight is 05:30
+    IST, which would sweep in a day and a half of sessions."""
+    monkeypatch.delenv("REPORTING_TIMEZONE", raising=False)
+    session = _make_session_with_results([_fake_overview_row()])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+
+    params = _overview_params(client, session)
+    today_start = params["today_start"]
+
+    assert today_start.utcoffset() == timedelta(hours=5, minutes=30)
+    assert (today_start.hour, today_start.minute, today_start.second) == (0, 0, 0)
+    assert today_start.date() == datetime.now(_IST).date()
+    # Explicitly NOT the old UTC-midnight boundary.
+    now_utc = datetime.now(UTC)
+    assert today_start != datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=UTC)
+
+
+def test_reporting_timezone_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-IST deployment can move the day boundary via REPORTING_TIMEZONE."""
+    monkeypatch.setenv("REPORTING_TIMEZONE", "UTC")
+    session = _make_session_with_results([_fake_overview_row()])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+
+    today_start = _overview_params(client, session)["today_start"]
+    assert today_start.utcoffset() == timedelta(0)
+    assert today_start.hour == 0
+
+
+def test_unknown_reporting_timezone_falls_back_to_utc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bogus/unavailable zone must degrade to UTC, not 500 the dashboard."""
+    monkeypatch.setenv("REPORTING_TIMEZONE", "Mars/Olympus_Mons")
+    session = _make_session_with_results([_fake_overview_row()])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+
+    today_start = _overview_params(client, session)["today_start"]
+    assert today_start.utcoffset() == timedelta(0)
+
+
+def test_trends_group_by_reporting_timezone_with_exclusive_upper_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Daily bars must be Indian calendar days, and the range end must be
+    exclusive so the final second of date_to is not dropped."""
+    monkeypatch.delenv("REPORTING_TIMEZONE", raising=False)
+    session = _make_session_with_results([[_fake_trend_row()]])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+
+    resp = client.get(
+        "/admin/analytics/trends?date_from=2026-06-01&date_to=2026-06-02",
+        headers=_auth_header(_admin_token()),
+    )
+    assert resp.status_code == 200, resp.text
+
+    stmt, params = session.captured_calls[0]
+    sql = str(stmt)
+    assert "AT TIME ZONE :report_tz" in sql
+    assert "< :to_dt_exclusive" in sql
+    assert ":to_dt " not in sql and "<= :to_dt" not in sql
+    assert params["report_tz"] == "Asia/Kolkata"
+    assert params["from_dt"] == datetime(2026, 6, 1, tzinfo=_IST)
+    # Start of the day AFTER date_to — 2026-06-02 23:59:59.5 IST still counts.
+    assert params["to_dt_exclusive"] == datetime(2026, 6, 3, tzinfo=_IST)
 
 
 def test_filter_builder_returns_three_tuple() -> None:

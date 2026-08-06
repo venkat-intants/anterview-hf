@@ -10,6 +10,7 @@ up yet.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -251,11 +252,25 @@ def test_two_roles_produce_different_plans() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _db_returning(rows: list[Any]) -> MagicMock:
+def _db_returning(
+    rows: list[Any], *, total: int | None = None, last: datetime | None = None
+) -> MagicMock:
+    """Fake DB for ``_competency_history``: the bounded window, then the totals.
+
+    ``rows`` is written oldest-first (the order the aggregation must see) and
+    handed back reversed, because the real window query is ``ORDER BY ... DESC``.
+    ``total``/``last`` override the totals leg to model a user who has sat more
+    interviews than the window scans.
+    """
+    window = MagicMock()
+    window.all.return_value = list(reversed(rows))
+    totals = MagicMock()
+    totals.first.return_value = SimpleNamespace(
+        interviews=len(rows) if total is None else total,
+        last_at=last if last is not None else (rows[-1].created_at if rows else None),
+    )
     db = MagicMock()
-    result = MagicMock()
-    result.all.return_value = rows
-    db.execute = AsyncMock(return_value=result)
+    db.execute = AsyncMock(side_effect=[window, totals])
     return db
 
 
@@ -312,7 +327,11 @@ async def test_no_scorecards_yields_empty_history() -> None:
 
 
 async def test_history_is_ordered_oldest_first_so_trend_is_meaningful() -> None:
-    """Trend is last-minus-previous; reversed order would invert every arrow."""
+    """Trend is last-minus-previous; reversed order would invert every arrow.
+
+    The window query is newest-first, so the aggregation only reads
+    oldest → newest because ``_competency_history`` reverses it back.
+    """
     rows = [
         _row({"_competencies": {"c": {"score": 3}}}, datetime(2026, 7, 1, tzinfo=UTC)),
         _row({"_competencies": {"c": {"score": 9}}}, datetime(2026, 8, 1, tzinfo=UTC)),
@@ -320,3 +339,38 @@ async def test_history_is_ordered_oldest_first_so_trend_is_meaningful() -> None:
     history, _, last = await _competency_history(_db_returning(rows), "u-1")
     assert history["c"] == [3.0, 9.0]
     assert last == datetime(2026, 8, 1, tzinfo=UTC)
+
+
+async def test_a_heavy_user_sees_their_newest_interviews_not_their_first() -> None:
+    """Past _MAX_SESSIONS_SCANNED the plan must keep moving.
+
+    ASC + LIMIT froze it on the OLDEST N scorecards: the count stuck at N, the
+    last-practised date went stale by weeks, and every trend was the delta
+    between two interviews from months ago.
+    """
+    newest = datetime(2026, 8, 1, tzinfo=UTC)
+    window = [
+        _row({"_competencies": {"c": {"score": 5}}}, datetime(2026, 7, 20, tzinfo=UTC)),
+        _row({"_competencies": {"c": {"score": 9}}}, newest),
+    ]
+    history, count, last = await _competency_history(
+        _db_returning(window, total=60, last=newest), "u-1"
+    )
+    assert count == 60  # the unbounded count, not the size of the window
+    assert last == newest
+    assert history["c"] == [5.0, 9.0]  # still oldest-first, so trend reads +4
+
+
+async def test_window_takes_the_newest_rows_and_the_totals_are_unbounded() -> None:
+    """Guards the SQL itself — the fake DB cannot express real row ordering."""
+    db = _db_returning([])
+    await _competency_history(db, "u-1")
+
+    window_sql = str(db.execute.await_args_list[0].args[0])
+    totals_sql = str(db.execute.await_args_list[1].args[0])
+    assert "ORDER BY sc.created_at DESC" in window_sql
+    assert "LIMIT" in window_sql
+    assert "LIMIT" not in totals_sql
+    # Totals must share the window's JOIN, or interviews_completed would count
+    # sessions that never produced a scorecard.
+    assert "JOIN scorecards sc" in totals_sql

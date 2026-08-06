@@ -80,8 +80,10 @@ _PRIVILEGED_ROLES: frozenset[str] = frozenset(
     {"hr_manager", "super_admin", "platform_owner", "admin"}
 )
 
-# How many past mock interviews feed the plan. Enough to show a trend without
-# an unbounded scan for a heavy user.
+# How many past mock interviews feed the per-competency scores. The MOST
+# RECENT this many — enough to show a trend without an unbounded scan for a
+# heavy user. The headline totals are counted separately (see
+# _competency_history) so they never freeze at this number.
 _MAX_SESSIONS_SCANNED: int = 50
 
 
@@ -241,28 +243,53 @@ async def _competency_history(
     ``scorecards.rationale`` (nested JSONB — see scorer.py). Sessions are the
     join: a self-serve mock interview is a ``sessions`` row owned by the user.
 
+    Two queries on purpose. The window takes the NEWEST ``_MAX_SESSIONS_SCANNED``
+    scorecards and is reversed here, so the aggregation still reads
+    oldest → newest and ``trend`` remains last-minus-previous. The headline
+    totals are counted unbounded: capping them too would freeze a heavy user's
+    interview count and "last practised" date the moment they passed the
+    window, which is the exact opposite of what the plan promises.
+
     Returns (scores_by_competency_id, interviews_completed, last_interview_at).
     """
-    rows = (
+    rows = list(
+        (
+            await db.execute(
+                text(
+                    """
+                    SELECT sc.rationale, sc.created_at
+                    FROM sessions s
+                    JOIN scorecards sc ON sc.session_id = s.id
+                    WHERE s.user_id = CAST(:uid AS uuid)
+                    ORDER BY sc.created_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"uid": user_id, "limit": _MAX_SESSIONS_SCANNED},
+            )
+        ).all()
+    )
+    rows.reverse()
+
+    # Same JOIN and filter as the window. Counting ``sessions`` alone would
+    # include ones that never produced a scorecard, and interviews_completed
+    # would then disagree with the per-competency attempt counts beside it.
+    totals = (
         await db.execute(
             text(
                 """
-                SELECT sc.rationale, sc.created_at
+                SELECT count(*) AS interviews, max(sc.created_at) AS last_at
                 FROM sessions s
                 JOIN scorecards sc ON sc.session_id = s.id
                 WHERE s.user_id = CAST(:uid AS uuid)
-                ORDER BY sc.created_at ASC
-                LIMIT :limit
                 """
             ),
-            {"uid": user_id, "limit": _MAX_SESSIONS_SCANNED},
+            {"uid": user_id},
         )
-    ).all()
+    ).first()
 
     history: dict[str, list[float]] = {}
-    last_at: datetime | None = None
     for row in rows:
-        last_at = row.created_at
         rationale = row.rationale
         if not isinstance(rationale, dict):
             continue
@@ -286,7 +313,9 @@ async def _competency_history(
                 continue
             history.setdefault(str(cid), []).append(score)
 
-    return history, len(rows), last_at
+    interviews = int(totals.interviews or 0) if totals is not None else 0
+    last_at: datetime | None = totals.last_at if totals is not None else None
+    return history, interviews, last_at
 
 
 def _build_plan(

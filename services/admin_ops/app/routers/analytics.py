@@ -15,6 +15,12 @@ GET /admin/analytics/by-language       — grouped by language
 GET /admin/analytics/score-distribution — histogram + per-axis averages
 GET /admin/analytics/trends            — daily series (date_trunc)
 
+Timezone note
+-------------
+Calendar buckets ("interviews today", the daily trend series) break at midnight
+in the reporting timezone, not UTC — see ``_reporting_tz``.  Raw timestamps in
+responses stay UTC/ISO-8601.
+
 PII note
 --------
 - Candidate email and full_name are returned in paginated lists and CSV
@@ -32,10 +38,12 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -43,10 +51,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.admin_auth import AdminDep
-from app.database import get_db_session
+from app.database import get_db_session, get_session_factory
 from app.models import AuditLog
 
 log = structlog.get_logger(__name__)
@@ -54,6 +62,11 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["analytics"])
 
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+# Injected as a plain (non-yield) dependency so it is NOT torn down with the
+# request exit stack — the CSV export needs it alive while the body streams.
+SessionFactoryDep = Annotated[
+    async_sessionmaker[AsyncSession], Depends(get_session_factory)
+]
 
 # ---------------------------------------------------------------------------
 # Score axes — 4 NOS-aligned axes defined in LLD §10 / scorer.py _WEIGHTS
@@ -77,6 +90,13 @@ _CSV_COLUMNS: list[str] = [
 
 # Fixed score histogram bucket labels (inclusive lower, exclusive upper)
 _SCORE_BUCKETS: list[str] = ["0-2", "2-4", "4-6", "6-8", "8-10"]
+
+# Timezone whose midnight starts a reporting "day".  Every operator reads these
+# tiles in IST (CLAUDE.md pins India residency and Indian buyers), and UTC
+# midnight is 05:30 IST — bucketing on UTC would put a day and a half of
+# sessions in "today" and file an 04:00 IST interview under "yesterday".
+# Overridable per deployment via the REPORTING_TIMEZONE env var.
+_DEFAULT_REPORTING_TZ = "Asia/Kolkata"
 
 # ---------------------------------------------------------------------------
 # Response models
@@ -235,6 +255,34 @@ class TrendsResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _reporting_tz() -> tuple[str, tzinfo]:
+    """Return the (IANA name, tzinfo) pair used for all calendar bucketing.
+
+    Both halves come from here so the Python-side day boundaries and the
+    Postgres-side ``AT TIME ZONE`` grouping can never drift apart.  Resolved per
+    call — ZoneInfo caches instances, so this is cheap, and a deployment can
+    change REPORTING_TIMEZONE without a code change.
+
+    Falls back to UTC when the host image ships no tz database: a tile that is
+    wrong by 5.5 hours beats a 500 on the whole admin dashboard.
+    """
+    name = os.getenv("REPORTING_TIMEZONE", _DEFAULT_REPORTING_TZ).strip() or _DEFAULT_REPORTING_TZ
+    try:
+        return name, ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        log.warning("analytics.reporting_tz_unavailable", requested=name)
+        return "UTC", UTC
+
+
+def _local_day_start(day: date, tz: tzinfo) -> datetime:
+    """Midnight at the start of ``day`` in ``tz``, as an aware datetime.
+
+    Built from the calendar date rather than by arithmetic on a timestamp so a
+    DST-observing reporting timezone still lands on the real local midnight.
+    """
+    return datetime.combine(day, time.min, tzinfo=tz)
+
+
 def _round2(value: Any) -> float | None:
     """Return float rounded to 2 dp, or None if value is None."""
     if value is None:
@@ -306,7 +354,8 @@ async def _write_audit(
         "Returns platform-wide KPI tiles in one round-trip: total candidates, "
         "total/completed interviews, completion rate, avg composite score, "
         "avg duration, and interview counts for today / last 7 / last 30 days. "
-        "Soft-deleted users and sessions are excluded."
+        "'Today' starts at midnight in the reporting timezone (Asia/Kolkata by "
+        "default). Soft-deleted users and sessions are excluded."
     ),
 )
 async def get_overview(
@@ -314,10 +363,13 @@ async def get_overview(
     db: DbSessionDep,
 ) -> OverviewResponse:
     """Single aggregate query returning all KPI tiles."""
-    now_utc = datetime.now(UTC)
-    today_start = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=UTC)
-    last_7d = now_utc - timedelta(days=7)
-    last_30d = now_utc - timedelta(days=30)
+    _, tz = _reporting_tz()
+    now_local = datetime.now(tz)
+    today_start = _local_day_start(now_local.date(), tz)
+    # Rolling windows, not calendar buckets — a relative offset is the same
+    # instant in every timezone, so these need no conversion.
+    last_7d = now_local - timedelta(days=7)
+    last_30d = now_local - timedelta(days=30)
 
     sql = sa_text(
         """
@@ -622,6 +674,7 @@ async def list_interviews(
 async def export_interviews_csv(
     admin_sub: AdminDep,
     db: DbSessionDep,
+    session_factory: SessionFactoryDep,
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
@@ -637,8 +690,9 @@ async def export_interviews_csv(
 
     Uses SQLAlchemy async server-side streaming so the full result set is
     never loaded into memory — safe at govt scale.
-    Audit log is written BEFORE the stream begins so a client disconnect
-    cannot cause it to be skipped.
+    The stream opens its own session (see ``_generate``); the request-scoped
+    ``db`` is used only for the audit row, which is written BEFORE the stream
+    begins so a client disconnect cannot cause it to be skipped.
     """
     where_clause, order_clause, params = _build_interview_filter_sql(
         date_from=date_from,
@@ -680,12 +734,19 @@ async def export_interviews_csv(
         writer.writeheader()
         yield buf.getvalue()
 
-        # Server-side streaming: db.stream() is an async function that returns
-        # AsyncResult; iterate its .mappings() to yield rows one at a time
+        # The request-scoped `db` is unusable here: FastAPI (>=0.106) unwinds
+        # the dependency exit stack before Starlette sends the response body, so
+        # `db` is already closed by the time this generator runs — streaming
+        # from it silently leaks a connection per export.  The stream therefore
+        # owns a session for exactly its own lifetime.
+        #
+        # Server-side streaming: .stream() is an async function returning an
+        # AsyncResult; iterating its .mappings() yields rows one at a time
         # without loading the full result set into memory.
-        stream_result = await db.stream(data_sql, params)
-        async for row in stream_result.mappings():
-            yield _csv_line(row)
+        async with session_factory() as stream_session:
+            stream_result = await stream_session.stream(data_sql, params)
+            async for row in stream_result.mappings():
+                yield _csv_line(row)
 
     return StreamingResponse(
         _generate(),
@@ -799,7 +860,16 @@ async def get_interview_detail(
             technical=_round2(scores_raw.get("technical")),
             problem_solving=_round2(scores_raw.get("problem_solving")),
             confidence=_round2(scores_raw.get("confidence")),
-            rationale={k: str(v) for k, v in rationale_raw.items()},
+            # Only the four canonical axes hold prose.  The scorer also parks
+            # nested structures in this same JSONB column (axis_feedback,
+            # _competencies, _role_profile_id, …); str()-ing those would ship
+            # Python dict reprs — kilobytes of unparseable, transcript-derived
+            # text — to a client that only ever indexes the axes.
+            rationale={
+                axis: str(rationale_raw[axis])
+                for axis in _AXES
+                if rationale_raw.get(axis) is not None
+            },
             strengths=list(row["strengths"]) if row["strengths"] else None,
             improvements=list(row["improvements"]) if row["improvements"] else None,
             summary=str(row["summary"]) if row["summary"] else None,
@@ -1102,7 +1172,8 @@ _DEFAULT_TREND_DAYS = 30
     summary="Daily interview count and avg composite score trend series",
     description=(
         "Returns a daily series (date_trunc day) of interview_count and "
-        "avg_composite. Defaults to the last 30 days. "
+        "avg_composite. Days are calendar days in the reporting timezone "
+        "(Asia/Kolkata by default). Defaults to the last 30 days. "
         "Empty days (no interviews) are omitted from the series."
     ),
 )
@@ -1119,32 +1190,45 @@ async def analytics_trends(
     ),
 ) -> TrendsResponse:
     """date_trunc('day') GROUP BY over the selected window."""
-    now_utc = datetime.now(UTC)
-    resolved_to = date_to or now_utc.date()
-    resolved_from = date_from or (now_utc - timedelta(days=_DEFAULT_TREND_DAYS)).date()
+    tz_name, tz = _reporting_tz()
+    now_local = datetime.now(tz)
+    resolved_to = date_to or now_local.date()
+    resolved_from = date_from or (now_local - timedelta(days=_DEFAULT_TREND_DAYS)).date()
 
-    # Convert to UTC datetimes for the timestamp comparison
-    from_dt = datetime(resolved_from.year, resolved_from.month, resolved_from.day, tzinfo=UTC)
-    to_dt = datetime(
-        resolved_to.year, resolved_to.month, resolved_to.day, 23, 59, 59, tzinfo=UTC
-    )
+    # Local midnight bounds. The upper bound is the start of the day AFTER
+    # resolved_to and compared exclusively — an inclusive 23:59:59 bound drops
+    # every session created in the final second of the range.
+    from_dt = _local_day_start(resolved_from, tz)
+    to_dt_exclusive = _local_day_start(resolved_to + timedelta(days=1), tz)
 
+    # AT TIME ZONE shifts the timestamptz into reporting-local time before the
+    # truncation, so each bar is one Indian working day rather than a UTC day
+    # split across two of them.
     sql = sa_text(
         """
         SELECT
-            date_trunc('day', s.created_at)::date   AS day,
+            date_trunc('day', s.created_at AT TIME ZONE :report_tz)::date AS day,
             COUNT(s.id)                             AS interview_count,
             AVG(sc.composite_score)                 AS avg_composite
         FROM sessions s
         LEFT JOIN scorecards sc ON sc.session_id = s.id
         WHERE s.deleted_at IS NULL
           AND s.created_at >= :from_dt
-          AND s.created_at <= :to_dt
+          AND s.created_at < :to_dt_exclusive
         GROUP BY day
         ORDER BY day ASC
         """
     )
-    rows = (await db.execute(sql, {"from_dt": from_dt, "to_dt": to_dt})).mappings().all()
+    rows = (
+        await db.execute(
+            sql,
+            {
+                "report_tz": tz_name,
+                "from_dt": from_dt,
+                "to_dt_exclusive": to_dt_exclusive,
+            },
+        )
+    ).mappings().all()
 
     log.info("analytics.trends.fetched", actor=admin_sub, rows=len(rows))
 

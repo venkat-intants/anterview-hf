@@ -6,7 +6,7 @@ isolation are covered by live end-to-end verification.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -99,6 +99,64 @@ async def test_bulk_upload_empty_batch_400() -> None:
             files=[], target_job_title="Engineer", ctx=(uuid.uuid4(), uuid.uuid4()), db=db
         )
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_list_applicants_is_paged_and_leaves_resume_text_in_the_database() -> None:
+    """The list used to SELECT every applicant row, resume text and all.
+
+    A company with thousands of uploaded CVs turned one page load into tens of
+    megabytes of ORM objects held for the length of the scan.
+    """
+    from app.routers.hr_applicants import list_applicants
+
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result)
+
+    await list_applicants(ctx=(uuid.uuid4(), uuid.uuid4()), db=db, page=3, per_page=25)
+
+    stmt = db.execute.await_args.args[0]
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "LIMIT 25" in compiled
+    assert "OFFSET 50" in compiled
+    assert "resume_text" not in compiled
+    assert "target_jd_text" not in compiled
+
+
+@pytest.mark.asyncio
+async def test_list_applicants_defaults_to_a_bounded_page() -> None:
+    from app.routers.hr_applicants import _LIST_PAGE_SIZE, list_applicants
+
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result)
+
+    await list_applicants(ctx=(uuid.uuid4(), uuid.uuid4()), db=db)
+
+    compiled = str(
+        db.execute.await_args.args[0].compile(compile_kwargs={"literal_binds": True})
+    )
+    assert f"LIMIT {_LIST_PAGE_SIZE}" in compiled
+
+
+@pytest.mark.asyncio
+async def test_search_results_are_paged_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """?q= is capped at _SEARCH_LIMIT, but page=2 must not repeat page one."""
+    from app.routers import hr_applicants as mod
+
+    ranked = [MagicMock(name=f"applicant-{i}") for i in range(7)]
+
+    async def _fake_search(*_args: object, **_kwargs: object) -> list[object]:
+        return ranked
+
+    monkeypatch.setattr(mod, "_semantic_search", _fake_search)
+    out = await mod.list_applicants(
+        ctx=(uuid.uuid4(), uuid.uuid4()), db=AsyncMock(), q="welder", page=2, per_page=3
+    )
+    assert out == ranked[3:6]
 
 
 def test_apply_score_maps_fields() -> None:

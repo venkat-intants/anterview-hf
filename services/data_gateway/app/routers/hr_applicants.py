@@ -9,7 +9,7 @@ the HR's user row). An HR can NEVER see or touch another company's applicants �
 all reads/writes filter by company_id, so a cross-company id returns 404.
 
   POST   /hr/applicants                 — upload + auto-score an applicant
-  GET    /hr/applicants[?status=]       — ranked list (by ATS score)
+  GET    /hr/applicants[?status=]       — ranked list (by ATS score), paged
   GET    /hr/applicants/{id}            — detail
   PATCH  /hr/applicants/{id}            — set status (new|shortlisted|rejected)
   POST   /hr/applicants/{id}/rescore    — re-run ATS scoring
@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from shared.auth.base import User
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.database import get_db_session
 from app.dependencies import require_role
@@ -571,6 +572,19 @@ async def bulk_upload_applicants(
 _SEMANTIC_WEIGHT = 0.7
 _LEXICAL_WEIGHT = 0.3
 _SEARCH_LIMIT = 200
+# Default AND maximum page size for the plain list. Deliberately the same
+# ceiling as the search leg so both modes of GET /hr/applicants bound the scan
+# identically, and so the console — which does not send page params yet — keeps
+# showing what it always showed for any company under that size.
+_LIST_PAGE_SIZE = _SEARCH_LIMIT
+
+# Upper bound on `page`. OFFSET paging makes Postgres sort every matching row
+# before discarding the skipped ones, so an unbounded page number costs the
+# same full sort the LIMIT was added to avoid. 500 pages x 200 rows = 100k
+# applicants, far past any real company on this platform; a tenant that ever
+# needs more should get keyset pagination on (ats_overall, created_at, id)
+# rather than a bigger ceiling.
+_MAX_PAGE = 500
 
 
 async def _semantic_search(
@@ -634,10 +648,12 @@ async def _semantic_search(
     id_order = [r.id for r in ranked]
     rows = (
         await db.execute(
-            select(Applicant).where(
+            select(Applicant)
+            .where(
                 Applicant.id.in_(id_order),
                 Applicant.company_id == company_id,  # defence-in-depth: never cross tenants
             )
+            .options(defer(Applicant.resume_text), defer(Applicant.target_jd_text))
         )
     ).scalars().all()
     by_id = {a.id: a for a in rows}
@@ -664,26 +680,53 @@ async def list_applicants(
     job: Annotated[
         str | None, Query(max_length=200, description="Filter by target job title (contains)")
     ] = None,
+    # `le` as well as `ge` — without an upper bound this re-arms the very scan
+    # the LIMIT was added to prevent. The ORDER BY is
+    # `ats_overall DESC NULLS LAST, created_at DESC`, so Postgres must sort
+    # every matching row before it can discard the OFFSET; ?page=999999 costs
+    # the same full sort as the old unbounded query. The Python-side
+    # materialisation stays bounded, so it is a partial reversion rather than a
+    # total one, but it is still an authenticated HR user re-arming a DoS.
+    page: Annotated[
+        int,
+        Query(ge=1, le=_MAX_PAGE, description=f"Page number (1-based, max {_MAX_PAGE})"),
+    ] = 1,
+    per_page: Annotated[
+        int,
+        Query(ge=1, le=_LIST_PAGE_SIZE, description=f"Items per page (max {_LIST_PAGE_SIZE})"),
+    ] = _LIST_PAGE_SIZE,
 ) -> list[ApplicantOut]:
-    """Applicant list for the caller's company.
+    """Applicant list for the caller's company, one page at a time.
 
     Default: ranked by ATS score. With ``?q=`` it becomes a hybrid semantic +
     exact-keyword search (each result carries a 0-100 ``match_score``). The
-    ``status`` and ``job`` filters stack with either mode.
+    ``status`` and ``job`` filters stack with either mode, as does paging.
     """
     hr_uid, company_id = ctx
-    if q and q.strip():
-        return await _semantic_search(db, hr_uid, company_id, q.strip(), status_filter, job)
+    offset = (page - 1) * per_page
 
-    stmt = select(Applicant).where(
-        Applicant.company_id == company_id, Applicant.deleted_at.is_(None)
+    if q and q.strip():
+        ranked = await _semantic_search(db, hr_uid, company_id, q.strip(), status_filter, job)
+        # The ranked window is already capped at _SEARCH_LIMIT; slice it so a
+        # paging client gets a real second page rather than page one again.
+        return ranked[offset : offset + per_page]
+
+    stmt = (
+        select(Applicant)
+        .where(Applicant.company_id == company_id, Applicant.deleted_at.is_(None))
+        # resume_text / target_jd_text are large PII columns _to_out never
+        # returns; without this every listed applicant's full CV is pulled into
+        # memory for nothing.
+        .options(defer(Applicant.resume_text), defer(Applicant.target_jd_text))
     )
     if status_filter:
         stmt = stmt.where(Applicant.status == status_filter)
     if job:
         stmt = stmt.where(Applicant.target_job_title.ilike(f"%{job}%"))
-    stmt = stmt.order_by(
-        Applicant.ats_overall.desc().nullslast(), Applicant.created_at.desc()
+    stmt = (
+        stmt.order_by(Applicant.ats_overall.desc().nullslast(), Applicant.created_at.desc())
+        .limit(per_page)
+        .offset(offset)
     )
     rows = (await db.execute(stmt)).scalars().all()
     return [_to_out(a) for a in rows]

@@ -15,7 +15,7 @@ certifi==2026.5.20
 cffi==2.0.0
 click==8.4.1
 colorama==0.4.6
-cryptography==48.0.1
+cryptography==50.0.0
 dnspython==2.8.0
 ecdsa==0.19.2
 email-validator==2.3.0

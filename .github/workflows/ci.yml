@@ -68,7 +68,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pydantic structlog pytest pytest-asyncio "ruff==0.7.4" "mypy==1.20.2"
-          pip install redis "python-jose[cryptography]" bcrypt sqlalchemy
+          # shared/auth's deps. email-validator is not optional decoration:
+          # the auth models use pydantic EmailStr, which raises ImportError at
+          # class-construction time without it, so the whole suite fails at
+          # COLLECTION rather than in a test — which is why a machine that
+          # happened to have it installed could not reproduce the failure.
+          pip install redis "python-jose[cryptography]" bcrypt sqlalchemy email-validator
 
       - name: Lint
         # --config explicitly: run from the repo root and ruff finds no config

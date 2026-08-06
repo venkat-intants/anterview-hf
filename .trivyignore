@@ -28,3 +28,40 @@ CVE-2025-64439
 # pipeline pins websockets ^13. TracingMiddleware is not enabled (LangSmith
 # tracing off). Unblock = websockets 15 bump (planned follow-up).
 GHSA-f4xh-w4cj-qxq8
+#
+# -----------------------------------------------------------------------------
+# Added 2026-08-06, when a Trivy step was finally wired into CI and this file
+# was consumed for the first time. Everything below was found by that first
+# real scan of the built image — it had never been scanned before, so these are
+# pre-existing exposures being recorded, not new ones being introduced.
+# -----------------------------------------------------------------------------
+#
+# json_repair 0.59.10 (interview_core only) — DoS via a circular JSON Schema
+# `$ref`. Fixed in 0.60.1, and feedback_billing already ships 0.60.1. Held here
+# because livekit-agents 1.5.15 hard-pins `json-repair==0.59.10`; bumping it
+# makes pip's resolver fail and the image stops building (verified empirically,
+# not assumed). Reachability: json_repair is used by livekit-agents to repair
+# LLM JSON output, and we never hand it an attacker-supplied JSON *Schema*,
+# which is the vulnerable input. Unblock = livekit-agents bump past the pin.
+# See the note at services/interview_core/requirements.txt:44.
+GHSA-xf7x-x43h-rpqh
+#
+# Caddy (usr/local/bin/caddy) — 5 HIGH in the vendored Go toolchain and deps of
+# the official `caddy:2-alpine` binary we COPY in (Dockerfile:89). We do not
+# build Caddy, so there is nothing to bump on our side: the tag already floats
+# to the latest 2.x and upstream has not yet rebuilt against a patched Go.
+#
+# All five are denial-of-service or traversal in code paths our edge config does
+# not expose: no gRPC/xDS (grpc), no client-certificate verification
+# (crypto/x509), no MIME parsing of untrusted headers beyond what the reverse
+# proxy passes through, and `os.Root` is not used. Caddy here terminates TLS and
+# proxies to loopback services; it is not a multi-tenant ingress.
+#
+# Unblock = a `caddy:2-alpine` rebuild on Go >=1.26.5. Re-check each sprint —
+# this is the entry most likely to become stale, and a DoS on the edge is a real
+# availability risk against the 99.5% NFR even if it is not a data risk.
+CVE-2026-56852
+GHSA-hrxh-6v49-42gf
+CVE-2026-27145
+CVE-2026-39822
+CVE-2026-42504

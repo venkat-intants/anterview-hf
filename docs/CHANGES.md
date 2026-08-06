@@ -255,3 +255,75 @@ Anyone reviewing the v1.1 design who asks "why isn't X here?" can be pointed to 
 **Last updated:** 2026-05-26
 **Author:** AI Orchestrator
 **Approves cuts:** Pending owner review
+
+---
+---
+
+# ADDENDUM — S5 Hardening Cycle (2026-08-06)
+
+Everything above is the v1.0 → v1.1 *design-cut* log and is unchanged. This
+addendum records the S5 review cycle: what was audited, what shipped, and what
+consumers of the API need to know.
+
+## Review documents
+
+| Document | Reviewer | Verdict |
+|---|---|---|
+| [`docs/code-review-s5.md`](code-review-s5.md) | code-reviewer | **REQUEST CHANGES** — 3 MUST FIX, 6 SHOULD FIX, 8 CONSIDER |
+| [`docs/security-review-s5.md`](security-review-s5.md) | security-auditor | **BLOCKED** — CRITICAL 0 / HIGH 2 / MEDIUM 3 / LOW 0 |
+
+Prior security reports in the same chain:
+[`security-review-s4-bundle.md`](security-review-s4-bundle.md),
+[`security-review-s3-011.md`](security-review-s3-011.md),
+[`security-review-s3-004-s3-005.md`](security-review-s3-004-s3-005.md).
+
+The S5 pair covers `fa42edc` → `566b2ea` (23 commits, 117 files). The two
+documents are companions: the security report verifies that the fixes merged in
+that range hold, then audits the surfaces the cycle did not reach; the code
+review ranks the same findings by remediation effort and adds correctness,
+test-coverage and anti-pattern items that are not security issues.
+
+**Scope note.** Per owner direction, DPDP data-plumbing remediation (R2 object
+erasure, retention purge, consent-ledger test coverage) is deferred pending
+database consolidation, and demo/seed credentials already published in git
+history are out of scope. Both are recorded in the security report's status
+tables for the audit trail; neither counts toward the verdict.
+
+## Blocking items (not yet remediated)
+
+| Ref | Item | Blocks |
+|---|---|---|
+| HIGH-1 | `sso_naipunyam.py` accepts `state` and never validates it — login CSRF, no PKCE, no privileged-account exclusion | Any deploy with `AUTH_PROVIDER=naipunyam`. Dormant today (`local`), but it is one env flip away and sits on the APSSDC bid path. |
+| HIGH-2 | `scripts/piston-up.ps1` runs the code-execution sandbox `--privileged` with `--dns 8.8.8.8` | Any use of the self-hosted Piston runner, including local dev. Hosted provider is the current default. |
+
+## API contract and behaviour changes (already merged)
+
+These shipped in the S5 range and are live. Any client, test fixture or
+integration built against the previous behaviour needs checking.
+
+| Endpoint | Change | Commit |
+|---|---|---|
+| `POST /api/rooms/{session_id}/token` | Now **409** on a completed/failed session, or when a scorecard already exists — closes session replay. | `40df357` |
+| `POST /internal/score` | `language` constrained to `en\|hi\|te`; anything else is **422**. | `40df357` |
+| `GET /api/scorecards/{id}` | Pre-signed PDF URL TTL cut from 30 days to **1 hour**. Clients must not cache or share the URL. | `40df357` |
+| `GET /admin/interviews/{id}/transcript` | Now writes an `audit_log` row on every read. | `40df357` |
+| `POST /jobs/{job_id}/jd-document` | Now **403** for any non-staff role (previously any authenticated co-tenant, including guests). | `566b2ea` |
+| `PATCH /auth/me/profile` | `linkedin_url` / `github_url` must be `http(s)`; other schemes are **422**. | `566b2ea` |
+| All `/hr/*` and `/admin/*` | **403** while the caller's `must_change_password` flag is set. Only `/auth/*` stays reachable, so the flag can be cleared. | `a5b8f68` |
+| LiveKit interview room | Participant grants now carry `can_publish_data=False` and the agent session runs with `text_input=False` — typed answers over the data channel are refused at the transport. | `566b2ea` |
+| `infra/docker/docker-compose.yml` | All six service ports bind to `127.0.0.1` instead of `0.0.0.0`. Anything reaching a dev service from another host must now go through an explicit tunnel. | `b04d257` |
+
+Behaviour changes with no contract surface: `logout_all` now revokes for the
+full refresh-token lifetime rather than 16 minutes; the Google SSO callback
+requires a browser-bound state cookie and PKCE verifier, so a callback replayed
+into a different browser fails.
+
+## Later phases
+
+Remediation is phased by severity — MUST FIX, then SHOULD FIX, then CONSIDER —
+tracked in the two review documents rather than duplicated here. Any API or
+behaviour change a later phase introduces gets appended to the table above with
+its commit.
+
+**Last updated:** 2026-08-06
+**Author:** code-reviewer / security-auditor

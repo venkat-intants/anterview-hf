@@ -12,6 +12,7 @@ from jose import JWTError
 from shared.auth.base import AuthProvider, User
 from shared.auth.jwt import verify_access_token
 from shared.auth.local import USER_TOKEN_EPOCH_PREFIX
+from sqlalchemy import text as sa_text
 
 from app.config import settings
 from app.redis_client import get_redis
@@ -139,3 +140,66 @@ def require_role(*allowed: str) -> Callable[[User], Awaitable[User]]:
         return user
 
     return _dep
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap-password gate
+# ---------------------------------------------------------------------------
+
+
+async def require_password_changed(
+    user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Reject a caller who still owes a bootstrap password change.
+
+    ``must_change_password`` is set by admin_hr when it provisions a
+    super_admin or hr_manager, and it was enforced NOWHERE on the server — the
+    forced reset lived only in the React router (AuthContext / ShellLayout). So
+    a freshly provisioned account could drive the entire API on its bootstrap
+    password simply by talking to it directly instead of through the SPA:
+    POST /admin/hr-managers, GET /hr/applicants, POST /hr/interviews. For a
+    super_admin that is the whole tenant.
+
+    Applied to the privileged routers rather than globally: it costs one
+    indexed read per request, and a candidate holding this flag can do nothing
+    interesting anyway. /auth/* is deliberately NOT gated — the caller has to
+    be able to reach /auth/me, /auth/change-password and /auth/logout* in order
+    to clear the flag.
+
+    Fails OPEN on a database error. A gate that 500s every privileged request
+    during a transient blip is worse than the narrow window it protects, and
+    the flag is a bootstrap-hygiene control rather than the tenancy boundary —
+    that is enforced separately on every one of these routes.
+    """
+    try:
+        must_change = await _must_change_password(user.user_id)
+    except Exception as exc:  # noqa: BLE001 — never 500 a request on this check
+        log.warning(
+            "auth.must_change_password.check_skipped",
+            error_type=type(exc).__name__,
+        )
+        return user
+
+    if must_change:
+        log.info("auth.bootstrap_password_gate", user_id=user.user_id)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must set a new password before using this account.",
+        )
+    return user
+
+
+async def _must_change_password(user_id: str) -> bool:
+    """One indexed read of the caller's bootstrap-password flag."""
+    from app.database import get_session_factory  # noqa: PLC0415 — avoid cycle
+
+    factory = get_session_factory()
+    async with factory() as session:
+        raw = await session.scalar(
+            sa_text(
+                "SELECT must_change_password FROM users "
+                "WHERE id = CAST(:uid AS uuid) AND deleted_at IS NULL"
+            ),
+            {"uid": user_id},
+        )
+    return bool(raw)

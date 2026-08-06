@@ -119,6 +119,29 @@ def _patch_db(
     return _override
 
 
+@pytest.fixture(autouse=True)
+def _livekit_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give rooms.py the LiveKit settings it refuses to run without.
+
+    rooms.py:101 returns 503 when livekit_url / api_key / api_secret are unset,
+    BEFORE any of the authorisation logic these tests exist to cover. On a
+    developer machine services/interview_core/.env supplies them, so the tests
+    passed locally while every one of them 503'd in CI — where there is no .env
+    and the workflow's env block (correctly) carries no LiveKit credentials.
+
+    Patching them here rather than adding real values to CI keeps these tests
+    what they claim to be: offline unit-ish coverage of ownership, guest
+    binding and session state, with no dependency on a real LiveKit tenant.
+    The values are syntactically valid and point nowhere; no token minted from
+    them is ever sent anywhere.
+    """
+    monkeypatch.setattr(settings, "livekit_url", "wss://test.livekit.invalid", raising=False)
+    monkeypatch.setattr(settings, "livekit_api_key", "APItestkey", raising=False)
+    monkeypatch.setattr(
+        settings, "livekit_api_secret", "test-secret-not-a-real-livekit-secret", raising=False
+    )
+
+
 @pytest_asyncio.fixture
 async def client() -> AsyncClient:  # type: ignore[misc]
     async with AsyncClient(

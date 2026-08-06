@@ -544,3 +544,63 @@ def test_internal_score_rejects_revoked_service_token(client: TestClient) -> Non
         )
 
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Every /internal/* route must accept what its REAL caller actually sends.
+#
+# _ALLOWED_SERVICE_SUBS was pinned to {"interview_core"} alone in an earlier
+# change. Only /internal/score is called by interview_core; the other five are
+# called by data_gateway, which at the time minted its token with the acting HR
+# user's UUID as `sub`. Every one of those five 403'd in production — AI exam
+# generation, coding-question generation, ATS resume scoring, semantic search
+# and why-match all went dead — and CI did not notice, because the only tests
+# posted to /internal/score with sub="interview_core".
+#
+# These tests exist so a change to the pin cannot silently take a caller
+# offline again. They assert only that the request gets PAST auth (not 401/403);
+# what happens afterwards is each route's own business.
+# ---------------------------------------------------------------------------
+
+_INTERNAL_ROUTES: list[tuple[str, dict[str, Any]]] = [
+    ("/internal/score", _VALID_BODY),
+    ("/internal/score-resume", {"resume_text": "x", "jd_text": "y"}),
+    ("/internal/generate-exam", {"topic": "python", "num_questions": 1}),
+    ("/internal/generate-coding", {"topic": "arrays", "num_questions": 1}),
+    ("/internal/embed", {"texts": ["hello"], "task_type": "document"}),
+    ("/internal/why-match", {"resume_text": "x", "query": "y"}),
+]
+
+
+@pytest.mark.parametrize(("path", "body"), _INTERNAL_ROUTES)
+def test_internal_routes_accept_the_data_gateway_service_identity(
+    client: TestClient, path: str, body: dict[str, Any]
+) -> None:
+    """data_gateway's service token must clear auth on every /internal/* route."""
+    token = _make_jwt(sub="data_gateway")
+    resp = client.post(path, json=body, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code not in (401, 403), (
+        f"{path} rejected the data_gateway service identity with "
+        f"{resp.status_code} — that takes an HR feature offline. {resp.text[:200]}"
+    )
+
+
+@pytest.mark.parametrize(("path", "body"), _INTERNAL_ROUTES)
+def test_internal_routes_reject_an_unpinned_service_sub(
+    client: TestClient, path: str, body: dict[str, Any]
+) -> None:
+    """The pin must still hold: a service-role token with an arbitrary sub is
+    rejected. A per-user UUID is exactly the shape that used to be accepted."""
+    token = _make_jwt(sub=str(uuid.uuid4()))
+    resp = client.post(path, json=body, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 403, f"{path} accepted an unpinned sub: {resp.status_code}"
+
+
+@pytest.mark.parametrize(("path", "body"), _INTERNAL_ROUTES)
+def test_internal_routes_reject_a_non_service_role(
+    client: TestClient, path: str, body: dict[str, Any]
+) -> None:
+    """A candidate token must never reach Gemini, whatever its sub."""
+    token = _make_jwt(sub="data_gateway", roles=["candidate"])
+    resp = client.post(path, json=body, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 403, f"{path} accepted a candidate token: {resp.status_code}"

@@ -43,11 +43,12 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from urllib.parse import urlparse
 
 import bcrypt
 import structlog
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from shared.auth.base import AuthProvider, User
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -194,6 +195,34 @@ class UserProfileUpdate(BaseModel):
     location: str | None = Field(default=None, max_length=120)
     # Opt-in for the "new sign-in" email alert (separate — it's a bool, not text).
     notify_login_email: bool | None = None
+
+    @field_validator("linkedin_url", "github_url")
+    @classmethod
+    def _validate_link_scheme(cls, v: str | None) -> str | None:
+        """Only http(s) links. These render as an `href` in the HR console.
+
+        These fields are candidate-controlled and are read back by HR,
+        super_admin and platform_owner on another user's profile
+        (routers/profile.py). React 18 does NOT block a `javascript:` URL in an
+        href — it only warns in development; blocking landed in React 19 — so
+        without this a self-registering candidate could store a
+        `javascript:`-scheme string, wait for a privileged user to click the
+        "LinkedIn" chip, and run script in the console's origin. From there the
+        JS-readable csrf_token plus the httpOnly refresh cookie mint a fresh
+        access token and drive /hr/* and /admin/* as that user.
+
+        Parsed rather than prefix-matched: a `\\t`/newline-obfuscated
+        "java\\tscript:" defeats a naive startswith check but not urlparse.
+        """
+        if v is None:
+            return None
+        candidate = v.strip()
+        if not candidate:
+            return None
+        parsed = urlparse(candidate)
+        if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+            raise ValueError("must be a http(s) URL")
+        return candidate
 
 
 class OkResponse(BaseModel):

@@ -928,3 +928,68 @@ def test_database_ssl_loopback_exempt_sentinel_is_cleared() -> None:
         }
     )
     assert result.database_ssl == ""
+
+
+@pytest.mark.asyncio
+async def test_jd_upload_denied_to_guest_candidate_in_the_same_company() -> None:
+    """A magic-link interview guest must not be able to rewrite the JD.
+
+    interview_take.py provisions the guest user INSIDE the hiring company's
+    tenant ("cid": inv.company_id), and jd.py's rule 3 grants the write to
+    anyone sharing a company_id with the job's owner — on the assumption that
+    "same company" means "colleague". It does not.
+
+    jd_text is read straight into the interviewer's grounding prompt, so this
+    let the person being assessed author the instructions that shape their own
+    assessment, and overwrite the JD of other candidates' jobs in the same
+    company. Co-tenancy is necessary here but never sufficient.
+
+    Would FAIL (no exception) if the staff-role check were removed, even though
+    every company_id in this scenario matches.
+    """
+    from fastapi import HTTPException
+
+    from app.routers.jd import _assert_jd_upload_authorized
+
+    company_id = uuid.uuid4()
+    hr_uid = uuid.uuid4()
+    guest = _make_user(user_id=str(uuid.uuid4()), roles=["guest_candidate"])
+    job = _make_job(created_by_user_id=hr_uid)
+
+    mock_db = AsyncMock()
+    # Same company on both sides — the co-tenancy rule would otherwise allow it.
+    mock_db.scalar.side_effect = [company_id, company_id]
+
+    with pytest.raises(HTTPException) as exc:
+        await _assert_jd_upload_authorized(mock_db, guest, job)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_jd_upload_denied_to_plain_candidate() -> None:
+    """Same reasoning for an ordinary self-serve candidate."""
+    from fastapi import HTTPException
+
+    from app.routers.jd import _assert_jd_upload_authorized
+
+    candidate = _make_user(roles=["candidate"])
+    job = _make_job(created_by_user_id=uuid.uuid4())
+
+    with pytest.raises(HTTPException) as exc:
+        await _assert_jd_upload_authorized(AsyncMock(), candidate, job)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_jd_upload_still_allowed_for_hr_in_the_same_company() -> None:
+    """The staff gate must not break the legitimate path."""
+    from app.routers.jd import _assert_jd_upload_authorized
+
+    company_id = uuid.uuid4()
+    hr = _make_user(user_id=str(uuid.uuid4()), roles=["hr_manager"])
+    job = _make_job(created_by_user_id=uuid.uuid4())
+
+    mock_db = AsyncMock()
+    mock_db.scalar.side_effect = [company_id, company_id]
+
+    await _assert_jd_upload_authorized(mock_db, hr, job)  # must not raise

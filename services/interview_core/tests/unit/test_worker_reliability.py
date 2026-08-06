@@ -982,10 +982,20 @@ def test_session_start_disables_text_input() -> None:
 
 
 def test_candidate_token_cannot_publish_data() -> None:
-    """Defence in depth: the candidate grant must not allow data publishing.
+    """The candidate grant must EXPLICITLY deny data publishing.
 
-    The viseme stream is agent -> client, so the candidate never needs it.
-    Granting it is what lets a candidate write to the `lk.chat` text stream.
+    This is the load-bearing control, not `text_input=False`. Disabling text
+    input closes the `lk.chat` stream, but livekit-agents also starts a
+    SessionHost on the `lk.agent.session` byte-stream topic unconditionally,
+    with no participant filter — and its run_input handler injects a user turn
+    that is counted, transcribed and scored. can_publish_data=False is the only
+    thing standing in front of that channel.
+
+    Asserts PRESENCE before value: `VideoGrants.can_publish_data` defaults to
+    True, so an earlier version of this test — which checked the value only
+    inside `if kw.arg == "can_publish_data"` — passed when the kwarg was
+    deleted entirely, i.e. it went green in exactly the case it existed to
+    catch. Same defect class as the tenant-isolation tests fixed in fde86c9.
     """
     import ast
     import pathlib
@@ -1003,9 +1013,15 @@ def test_candidate_token_cannot_publish_data() -> None:
     assert grants, "VideoGrants(...) not found in rooms.py"
 
     for call in grants:
-        for kw in call.keywords:
-            if kw.arg == "can_publish_data":
-                assert isinstance(kw.value, ast.Constant) and kw.value.value is False, (
-                    f"can_publish_data is granted at rooms.py:{call.lineno} — a "
-                    "candidate with it can submit typed answers over lk.chat"
-                )
+        kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+        assert "can_publish_data" in kwargs, (
+            f"VideoGrants at rooms.py:{call.lineno} does not set "
+            "can_publish_data — it defaults to True, which re-opens the "
+            "lk.agent.session user-turn injection channel"
+        )
+        value = kwargs["can_publish_data"]
+        assert isinstance(value, ast.Constant) and value.value is False, (
+            f"can_publish_data is granted at rooms.py:{call.lineno} — a "
+            "candidate with it can submit typed answers that bypass STT, VAD "
+            "and every proctoring signal"
+        )

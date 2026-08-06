@@ -52,6 +52,11 @@ async def test_jd_upload_happy_path() -> None:
 
     mock_user = MagicMock()
     mock_user.user_id = str(uuid.uuid4())
+    # A JD upload requires a staff role. These mocks previously carried no
+    # roles, so the tests asserted that ANY authenticated principal could
+    # overwrite a job description — including a magic-link guest candidate,
+    # who is provisioned inside the hiring company's tenant.
+    mock_user.roles = ["hr_manager"]
 
     # DB: scalar_one_or_none returns a fake job so the 404 branch is skipped.
     fake_job = MagicMock()
@@ -103,6 +108,11 @@ async def test_jd_job_not_found() -> None:
 
     mock_user = MagicMock()
     mock_user.user_id = str(uuid.uuid4())
+    # A JD upload requires a staff role. These mocks previously carried no
+    # roles, so the tests asserted that ANY authenticated principal could
+    # overwrite a job description — including a magic-link guest candidate,
+    # who is provisioned inside the hiring company's tenant.
+    mock_user.roles = ["hr_manager"]
 
     # DB: scalar_one_or_none returns None → job not found
     mock_result = MagicMock()

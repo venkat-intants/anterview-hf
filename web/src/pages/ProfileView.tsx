@@ -24,6 +24,30 @@ function roleLabel(roles: string[]): { label: string; tone: 'electric' | 'forest
 
 const STATUS_LABEL: Record<string, string> = { student: 'Student', employed: 'Employed' };
 
+/** Return the URL only if it is a safe http(s) link, else null.
+ *
+ * linkedin_url / github_url are candidate-controlled and this page is opened by
+ * hr_manager, super_admin and platform_owner on *another user's* profile. React
+ * 18 does not block a `javascript:` URL in an href — it only warns in
+ * development; blocking arrived in React 19 — so rendering the raw value would
+ * let a self-registering candidate run script in the console's origin on one
+ * click, and from there mint an access token via the JS-readable csrf_token.
+ *
+ * The server now rejects non-http(s) values on write, but this guard also
+ * covers rows stored BEFORE that validator existed, which the server-side fix
+ * alone does not clean up.
+ */
+function safeExternalUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? raw : null;
+  } catch {
+    // Not an absolute URL at all — never emit it as an href.
+    return null;
+  }
+}
+
 export default function ProfileView() {
   const { userId = '' } = useParams<{ userId: string }>();
   const navigate = useNavigate();
@@ -170,9 +194,9 @@ export default function ProfileView() {
               <Link2 size={16} className="text-[#60a5fa]" aria-hidden="true" /> Links
             </h3>
             <div className="flex flex-wrap gap-2.5">
-              {p.linkedin_url && (
+              {safeExternalUrl(p.linkedin_url) && (
                 <a
-                  href={p.linkedin_url}
+                  href={safeExternalUrl(p.linkedin_url) as string}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-[13px] text-[#cccccc] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] hover:text-white"
@@ -180,9 +204,9 @@ export default function ProfileView() {
                   <Globe size={14} aria-hidden="true" /> LinkedIn
                 </a>
               )}
-              {p.github_url && (
+              {safeExternalUrl(p.github_url) && (
                 <a
-                  href={p.github_url}
+                  href={safeExternalUrl(p.github_url) as string}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-[13px] text-[#cccccc] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] hover:text-white"

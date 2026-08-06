@@ -215,9 +215,18 @@ _FORBIDDEN = HTTPException(
     detail="Service role required for internal endpoints.",
 )
 
-# The set of sub claims that are permitted to call /internal/* endpoints.
-# Extend this tuple if a second internal service needs to call scoring.
-_ALLOWED_SERVICE_SUBS = frozenset({"interview_core"})
+# Subjects permitted to call /internal/*. Both are SERVICE identities, never a
+# human — data_gateway used to mint these tokens with the acting HR user's UUID
+# as `sub`, which is unpinnable (you cannot enumerate every HR user) and made a
+# service identity indistinguishable from a user identity on the wire. It now
+# presents `sub="data_gateway"` and carries the human in a non-authoritative
+# `act_sub` claim.
+#
+# Only interview_core calls /internal/score; the other five routes
+# (score-resume, generate-exam, generate-coding, embed, why-match) are called
+# by data_gateway. Adding an entry here is a trust decision — the token is
+# signed with the shared jwt_secret, so any listed subject can reach Gemini.
+_ALLOWED_SERVICE_SUBS = frozenset({"interview_core", "data_gateway"})
 
 
 async def _token_epoch_check(user_id: str, iat: Any) -> None:

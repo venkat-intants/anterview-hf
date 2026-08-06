@@ -41,14 +41,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth_tokens import hash_token, mint_token, ttl_hours_for
 from app.config import settings
 from app.database import get_db_session
-from app.dependencies import get_auth_provider_dep, require_role
+from app.dependencies import get_auth_provider_dep, require_role_password_ok
 from app.mailer import enqueue_email
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin-hr"])
 
-PlatformOwnerDep = Annotated[User, Depends(require_role("platform_owner"))]
+PlatformOwnerDep = Annotated[User, Depends(require_role_password_ok("platform_owner"))]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 AuthProviderDep = Annotated[AuthProvider, Depends(get_auth_provider_dep)]
 
@@ -59,7 +59,7 @@ AuthProviderDep = Annotated[AuthProvider, Depends(get_auth_provider_dep)]
 # its own company's HR managers.
 # ---------------------------------------------------------------------------
 async def get_company_admin_ctx(
-    user: Annotated[User, Depends(require_role("super_admin"))],
+    user: Annotated[User, Depends(require_role_password_ok("super_admin"))],
     db: DbSessionDep,
 ) -> tuple[uuid.UUID, uuid.UUID]:
     """Return (admin_user_id, company_id). 403 if not assigned to a company."""

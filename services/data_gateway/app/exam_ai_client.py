@@ -24,16 +24,33 @@ class ExamGenerationError(Exception):
     """Raised when the AI generator cannot be reached or returns an error."""
 
 
+# The service identity this process presents to feedback_billing. It must be
+# in feedback_billing's _ALLOWED_SERVICE_SUBS.
+_SERVICE_SUB = "data_gateway"
+
+
 def _internal_token(acting_user_id: str) -> str:
-    # feedback_billing's /internal/* gate (_require_service_jwt) requires the
-    # "service" role — a plain user/guest token is rejected 403. Mint with it.
+    """Mint the service token for a feedback_billing /internal/* call.
+
+    `sub` is the SERVICE, not the human who triggered the call. It used to be
+    the acting HR user's UUID, which made a service identity and a user
+    identity indistinguishable on the wire — both signed with the same
+    jwt_secret, differing only by a roles claim. feedback_billing pins the
+    allowed subjects, and a per-user UUID cannot be pinned.
+
+    The human is carried in `act_sub` purely for attribution in the callee's
+    logs. It is NOT authoritative and must never be used for an authorisation
+    decision — the caller controls it, and the caller is the one being
+    authorised.
+    """
     return issue_access_token(
-        user_id=acting_user_id,
+        user_id=_SERVICE_SUB,
         roles=["service"],
         secret=settings.jwt_secret,
         algorithm=settings.jwt_algorithm,
         issuer=settings.jwt_issuer,
         audience=settings.jwt_audience,
+        extra_claims={"act_sub": acting_user_id},
     )
 
 

@@ -11,6 +11,16 @@
 #   redis      localhost:6379  Redis 7
 #   minio      localhost:9000  MinIO S3-compatible storage  (console: localhost:9001)
 #   mailpit    localhost:1025  SMTP catcher                  (web UI: localhost:8025)
+#
+# EVERY port below is bound to 127.0.0.1 — do not shorten to "6379:6379".
+# Docker's short form publishes on ALL interfaces, and this stack ships default
+# credentials (POSTGRES_PASSWORD=intants_dev_pw, minioadmin:minioadmin) with
+# Redis running with no password at all. On the short form, anyone on the same
+# network as a developer could read and write the Redis holding OAuth state and
+# session-revocation epochs, browse the MinIO buckets with the published
+# credentials, and read every captured password-reset and magic-link email in
+# Mailpit. scripts/start-all.ps1 runs this file, so it is live on dev machines.
+# CI enforces the prefix — see the "compose ports" step in .github/workflows/ci.yml.
 # ==============================================================================
 
 services:
@@ -23,7 +33,7 @@ services:
       POSTGRES_PASSWORD: intants_dev_pw
       POSTGRES_DB: intants_interview
     ports:
-      - "${POSTGRES_PORT_HOST:-5433}:5432"   # host port overridable (local default 5433 avoids local Postgres collision; CI sets POSTGRES_PORT_HOST=5432). S4-006.
+      - "127.0.0.1:${POSTGRES_PORT_HOST:-5433}:5432"   # host port overridable (local default 5433 avoids local Postgres collision; CI sets POSTGRES_PORT_HOST=5432). S4-006.
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -38,7 +48,7 @@ services:
     image: redis:7-alpine
     container_name: intants-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -56,8 +66,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web console
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # Web console
     volumes:
       - minio_data:/data
     healthcheck:
@@ -87,8 +97,8 @@ services:
     image: axllent/mailpit:latest
     container_name: intants-mailpit
     ports:
-      - "1025:1025"   # SMTP
-      - "8025:8025"   # Web UI to see captured emails
+      - "127.0.0.1:1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # Web UI to see captured emails
     restart: unless-stopped
 
 volumes:

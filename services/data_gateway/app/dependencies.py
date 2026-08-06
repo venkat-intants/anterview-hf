@@ -189,6 +189,36 @@ async def require_password_changed(
     return user
 
 
+def require_role_password_ok(*allowed: str) -> Callable[[User, User], Awaitable[User]]:
+    """``require_role`` plus the bootstrap-password gate, as one dependency.
+
+    Exists so the two cannot drift apart. The gate was previously defined and
+    wired to NOTHING — a function with a docstring claiming it was applied to
+    the privileged routers, which is worse than no gate at all, because the
+    next reader stops looking. Composing it into the role check means a new
+    privileged route inherits both by using the same chokepoint.
+    """
+
+    role_dep = require_role(*allowed)
+
+    # Default-value Depends, NOT Annotated. This module has
+    # `from __future__ import annotations`, so every annotation is a string —
+    # and a string containing `Depends(require_role(*allowed))` refers to a
+    # closure variable FastAPI cannot resolve at runtime, which fails at import
+    # with a PydanticUserError rather than at call time.
+    # B008 flags a function call in an argument default — it exists to catch
+    # mutable/expensive defaults evaluated once at definition time. FastAPI's
+    # Depends() is the documented exception: it is a marker object the framework
+    # resolves per request, and here it is the only form that works.
+    async def _dep(
+        user: User = Depends(role_dep),  # noqa: B008
+        _pw_ok: User = Depends(require_password_changed),  # noqa: B008
+    ) -> User:
+        return user
+
+    return _dep
+
+
 async def _must_change_password(user_id: str) -> bool:
     """One indexed read of the caller's bootstrap-password flag."""
     from app.database import get_session_factory  # noqa: PLC0415 — avoid cycle

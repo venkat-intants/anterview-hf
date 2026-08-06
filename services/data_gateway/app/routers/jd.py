@@ -64,6 +64,23 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 # admin_hr.py scopes super_admin to "the caller's OWN company".
 _PLATFORM_ADMIN_ROLES = frozenset({"platform_owner"})
 
+# Roles allowed to write a job description at all.
+#
+# Rule 3 below grants the write to anyone sharing a company_id with the job's
+# owner, on the assumption that "same company" means "colleague". It does not:
+# interview_take.py provisions a magic-link guest INSIDE the hiring company's
+# tenant ("cid": inv.company_id), so a `guest_candidate` — an external
+# applicant who has only received an interview invite — satisfied that rule
+# against every job the company's HR managers created, including the one built
+# for their own interview.
+#
+# jd_text is read straight into the interviewer's grounding prompt
+# (interview_core graph/prompts.py), so that let the person being assessed
+# write the instructions that shape their own assessment, and overwrite the JD
+# of other candidates' jobs in the same company. Co-tenancy is necessary here
+# but never sufficient.
+_JD_WRITER_ROLES = frozenset({"hr_manager", "super_admin", "platform_owner"})
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -280,6 +297,20 @@ async def _assert_jd_upload_authorized(
     job, which is what the module docstring has always promised.
     """
     caller_roles = set(current_user.roles)
+
+    # Rule 0 — must hold a staff role. Checked FIRST so no later rule can grant
+    # the write to a candidate or a magic-link guest on co-tenancy alone.
+    if not (caller_roles & _JD_WRITER_ROLES):
+        log.warning(
+            "jd.upload.authz_denied.not_staff",
+            job_id=str(job.id),
+            user_id=str(current_user.user_id),
+            roles=sorted(caller_roles),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to upload a JD for this job.",
+        )
 
     # Rule 1 — the platform owner bypasses all tenant checks.
     if caller_roles & _PLATFORM_ADMIN_ROLES:

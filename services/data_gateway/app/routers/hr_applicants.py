@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from app.database import get_db_session
-from app.dependencies import require_role
+from app.dependencies import require_role_password_ok
 from app.embedding_client import (
     EmbeddingError,
     embed_one_remote,
@@ -92,7 +92,7 @@ async def email_applicant_decision(
 # Tenant context — resolve the caller's company_id (the isolation boundary)
 # ---------------------------------------------------------------------------
 async def get_hr_company(
-    user: Annotated[User, Depends(require_role("hr_manager"))],
+    user: Annotated[User, Depends(require_role_password_ok("hr_manager"))],
     db: DbSessionDep,
 ) -> tuple[uuid.UUID, uuid.UUID]:
     """Return (hr_user_id, company_id). 403 if the HR is not assigned a company."""

@@ -270,6 +270,25 @@ jobs:
           npm ci
           npm run audit:ci
 
+      - name: Compose files must not publish on all interfaces
+        # Docker's short "6379:6379" form binds 0.0.0.0. Every compose file here
+        # loads real cloud credentials or ships default ones, so a published
+        # port means anyone on a developer's network reaches the service. This
+        # class has now been fixed twice — in the root compose and in
+        # infra/docker — so it gets a gate rather than a third fix.
+        run: |
+          # 80 and 443 are the intended public edge (Caddy in
+          # docker-compose.prod.yml). Everything else must be loopback-bound.
+          bad=$(grep -rnE '^\s*-\s*"(\$\{[A-Z_]+:-[0-9]+\}|[0-9]+):[0-9]+"' \
+                  --include='docker-compose*.yml' . \
+                | grep -vE '"(80|443):(80|443)"' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::compose port published on all interfaces — prefix with 127.0.0.1:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "All compose port mappings are loopback-bound (or the 80/443 edge)."
+
       - name: Scan for committed secrets
         # The gitleaks BINARY, not gitleaks/gitleaks-action. The action requires
         # a paid GITLEAKS_LICENSE for repos owned by a GitHub Organization and

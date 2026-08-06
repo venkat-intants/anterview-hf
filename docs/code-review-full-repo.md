@@ -491,13 +491,47 @@ decoration.
 
 ## Phase mapping
 
-| Phase | Closes | Sign-off |
-|---|---|---|
-| 1 (this document) | — | — |
-| 2 | H-1, H-2 | `security-auditor` |
-| 3 | M-1, M-2, M-3, M-4, M-5 | `security-auditor` (DPDP + injection) |
-| 4 | S-1, S-2, S-3, S-4, D-1, D-2, D-3, D-4 | `cto-architect` (S-1 crosses service boundaries) |
-| not scheduled | M-6, S-5, S-6, S-7, S-8, S-9 | — |
+| Phase | Closes | Commit | Sign-off |
+|---|---|---|---|
+| 1 (this document) | — | `d555069` | — |
+| 2 | H-1, H-2 | `d555069` | `security-auditor` |
+| 3 | M-1, M-2, M-3, M-4, M-5 | `e1a3a11` | `security-auditor` |
+| 4 | S-1, S-2, S-3, S-4, D-1, D-2, D-3, D-4 | `2586a9f` | `cto-architect` — APPROVE WITH CHANGES |
+| not scheduled | M-6, S-5, S-6, S-7, S-8, S-9 | — | — |
+
+### Phase 4 deviated from its brief, on `cto-architect` instruction
+
+The ticket said "replace the four per-service `get_current_user` implementations
+with a shared helper" and "replace `_mint_service_jwt` with
+`issue_access_token`". Both were changed after review. Recorded here because the
+delta is the useful part:
+
+1. **There are five verifiers, not four.** `feedback_billing/app/routers/score.py:254`
+   (`_require_service_jwt`) is a fifth full copy. S-1 undercounted.
+2. **They are not copies of one thing.** They return `User`, `dict` and `str`;
+   one UUID-validates `sub`, which the service tokens (`sub="interview_core"`)
+   would fail; one underpins a guest dependency that reads `session_id` off the
+   raw payload. Standardising `interview_core` on `User` — which has no
+   `session_id` field — would have made that comparison `None != str(...)`,
+   returned 200 for everyone, and silently undone the guest session binding from
+   `40df357`, with nothing appearing broken. **Only the epoch check was shared.**
+3. **The `_mint_service_jwt` swap as specified was a regression.**
+   `issue_access_token` had no TTL parameter and defaults to 900s; the
+   hand-rolled minter used 60s. Since a service token's `sub` is a service name,
+   the epoch kill switch cannot revoke it and its lifetime is its only
+   containment — the swap would have multiplied that by 15. A `ttl_seconds`
+   parameter was added first. That in turn exposed that `data_gateway`'s three
+   minters had been issuing 900s service tokens all along, for want of a way to
+   say otherwise; all four are now 60s.
+4. **`data_gateway`'s `assert_strong_secrets` already covered
+   `EXAM_LINK_SECRET` and `INTERVIEW_LINK_SECRET`** (`config.py:350-357`). No
+   change was needed and none was made.
+
+Deferred by the same review, deliberately not bundled into Phase 4: unifying the
+401 response bodies and the four distinct revocation log-event names (do it
+separately so a log-alert regression stays attributable), and moving the
+`erasure.py` epoch *writer* (reader and writer of the same Redis key should not
+change in one commit).
 
 Deferred by owner direction and therefore **not** counted as findings above:
 DPDP retention purge and consent-ledger test coverage (blocked on database

@@ -19,6 +19,12 @@ const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
 
+/** How many times the mount-time profile fetch may fail before the session is
+ *  treated as unusable. One retry absorbs a cold container's 502/timeout,
+ *  which is the common case on the Space. */
+const PROFILE_FETCH_ATTEMPTS = 2;
+const PROFILE_RETRY_MS = 600;
+
 interface AuthContextValue {
   accessToken: string | null;
   user: AuthUser | null;
@@ -30,6 +36,14 @@ interface AuthContextValue {
    */
   isInitializing: boolean;
   setAuth: (token: string, user: AuthUser) => void;
+  /**
+   * Merge fresh profile fields into the cached session user.
+   *
+   * Needed because the session user is written once at login: anything that
+   * edits the profile afterwards (onboarding writes `full_name`) would
+   * otherwise leave the shell greeting them by the name they just replaced.
+   */
+  updateUser: (patch: Partial<AuthUser>) => void;
   clearAuth: () => void;
 }
 
@@ -65,24 +79,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void (async () => {
       try {
         const refreshed = await attemptRefresh(API_BASE);
-        if (refreshed) {
-          const newToken = getToken();
-          if (newToken) {
-            try {
-              const me = await getMe();
-              setUser({
-                user_id: me.user_id,
-                full_name: me.full_name,
-                email: me.email,
-                roles: me.roles,
-                must_change_password: me.must_change_password,
-              });
-            } catch {
-              // Could not fetch profile — token still valid, user stays null
-              // and the profile will be fetched by the page query.
+        if (!refreshed || getToken() === null) return;
+
+        for (let attempt = 1; attempt <= PROFILE_FETCH_ATTEMPTS; attempt += 1) {
+          try {
+            const me = await getMe();
+            setUser({
+              user_id: me.user_id,
+              full_name: me.full_name,
+              email: me.email,
+              roles: me.roles,
+              must_change_password: me.must_change_password,
+            });
+            return;
+          } catch {
+            if (attempt < PROFILE_FETCH_ATTEMPTS) {
+              await new Promise((resolve) => setTimeout(resolve, PROFILE_RETRY_MS));
             }
           }
         }
+
+        // Every attempt failed. Keeping the token would leave an authenticated
+        // but role-less session, and the route guards read roles from HERE, not
+        // from a page query: an hr_manager would be bounced to the candidate
+        // dashboard on every attempt to reach /hr, and `must_change_password`
+        // would read `undefined` and wave a bootstrap password straight into
+        // the shell. Dropping the token fails closed and sends them to /login,
+        // which they can recover from without a manual reload.
+        clearToken();
+        setAccessToken(null);
+        setUser(null);
       } finally {
         setIsInitializing(false);
       }
@@ -101,6 +127,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(authUser);
   }, []);
 
+  const updateUser = useCallback((patch: Partial<AuthUser>) => {
+    setUser((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
   const clearAuth = useCallback(() => {
     clearToken();
     setAccessToken(null);
@@ -114,9 +144,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: accessToken !== null,
       isInitializing,
       setAuth,
+      updateUser,
       clearAuth,
     }),
-    [accessToken, user, isInitializing, setAuth, clearAuth],
+    [accessToken, user, isInitializing, setAuth, updateUser, clearAuth],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

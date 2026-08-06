@@ -52,7 +52,7 @@ import {
   ShieldCheck,
 } from '@/design/components/icons';
 
-import { gradientFor, initialsOf, scoreColor } from '@/design/data/shared';
+import { gradientFor, initialsOf } from '@/design/data/shared';
 import type { TagTone } from '@/design/components/primitives';
 
 // ── Inline skeleton — avoids @/components/ui/* shadcn dep ────────────────────
@@ -70,6 +70,18 @@ function Sk({ className }: { className?: string }) {
 
 const RESUME_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 const RECENT_COUNT = 3;
+
+/** How many sessions the aggregate widgets are computed over.
+ *
+ * The feed under "Recent interviews" shows three rows, but practice time,
+ * languages used and the weekly strip are lifetime/7-day facts and three rows
+ * cannot answer either — they used to, and under-reported by an order of
+ * magnitude. 100 is the server's `per_page` ceiling (interview_core
+ * sessions.py), one request, and comfortably past any self-serve history; past
+ * that the time tile becomes a floor rather than a total, which is still the
+ * right direction to be wrong in.
+ */
+const STATS_COUNT = 100;
 
 // ── Nudge tone → icon mapping ─────────────────────────────────────────────────
 
@@ -113,12 +125,12 @@ const DOW_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as const;
 // keep. "Campus placement in three weeks" and "just getting comfortable" want
 // very different encouragement on the page they see every day.
 
-const GOAL_LINE: Record<OnboardingGoal, string> = {
-  campus_placement: 'Placement season rewards reps — keep the streak going.',
-  first_job: 'First interviews are won on practice, not luck.',
-  switching_field: 'New field, new vocabulary — practise talking about the work you want.',
-  interview_soon: 'You have one coming up. Run a full mock before the real thing.',
-  general_practice: 'Getting comfortable talking is most of the battle.',
+const GOAL_LINE_KEY: Record<OnboardingGoal, string> = {
+  campus_placement: 'dashboard.goalCampusPlacement',
+  first_job: 'dashboard.goalFirstJob',
+  switching_field: 'dashboard.goalSwitchingField',
+  interview_soon: 'dashboard.goalInterviewSoon',
+  general_practice: 'dashboard.goalGeneralPractice',
 };
 
 // ── Loading gate ──────────────────────────────────────────────────────────────
@@ -195,9 +207,11 @@ export default function Dashboard() {
   });
 
   // ── Query: sessions ─────────────────────────────────────────────────────────
+  // One page serves both the 3-row feed and every aggregate on the page. Two
+  // queries (3 rows + 100 rows) would be two round-trips for a strict subset.
   const { data: sessionsData, isLoading: sessionsLoading } = useQuery({
-    queryKey: ['sessions', { page: 1, perPage: RECENT_COUNT }],
-    queryFn: () => listSessions({ page: 1, perPage: RECENT_COUNT }),
+    queryKey: ['sessions', { page: 1, perPage: STATS_COUNT }],
+    queryFn: () => listSessions({ page: 1, perPage: STATS_COUNT }),
     staleTime: 2 * 60 * 1000,
     retry: false,
   });
@@ -251,7 +265,8 @@ export default function Dashboard() {
   const statsLoading = sessionsLoading || scorecardsLoading || resumeLoading;
 
   const interviewsTaken = sessionsData?.total ?? 0;
-  const recentSessions = (sessionsData?.items ?? []).slice(0, RECENT_COUNT);
+  const allSessions = sessionsData?.items ?? [];
+  const recentSessions = allSessions.slice(0, RECENT_COUNT);
 
   // avg composite from scorecards (backend: 0–10) — multiply ×10 for ScoreRing (0–100)
   const avgScore0to100 = (() => {
@@ -270,8 +285,8 @@ export default function Dashboard() {
     return Math.round(Math.max(...valid.map((s) => s.composite_score ?? 0)) * 10);
   })();
 
-  // Total practice time from recent sessions (sum of duration_seconds)
-  const totalPracticeSeconds = recentSessions.reduce(
+  // Total practice time (sum of duration_seconds) over the whole fetched history
+  const totalPracticeSeconds = allSessions.reduce(
     (acc, s) => acc + (s.duration_seconds ?? 0),
     0,
   );
@@ -279,8 +294,8 @@ export default function Dashboard() {
     ? formatDuration(totalPracticeSeconds)
     : '—';
 
-  // Distinct languages across recent sessions
-  const distinctLanguages = new Set(recentSessions.map((s) => s.language)).size;
+  // Distinct languages practised in
+  const distinctLanguages = new Set(allSessions.map((s) => s.language)).size;
 
   const hasResume = Boolean(currentResume) || Boolean(me?.has_resume);
   const firstName = (me?.full_name ?? user?.full_name ?? '').split(' ')[0] ?? '';
@@ -290,31 +305,36 @@ export default function Dashboard() {
   // `planReady` means they told us a target role, so the page can speak about
   // that job instead of pitching the product at them.
   const planReady = plan?.ready === true;
-  const goalLine = onboarding?.goal ? GOAL_LINE[onboarding.goal] : null;
+  const goalLine = onboarding?.goal ? t(GOAL_LINE_KEY[onboarding.goal]) : null;
 
   const heroSubtitle = (() => {
     if (!planReady || !plan) {
       return interviewsTaken > 0
-        ? 'You’re building momentum — one more mock interview keeps your readiness climbing.'
-        : 'Start your first mock interview to see your readiness score.';
+        ? t('dashboard.heroMomentum')
+        : t('dashboard.heroFirstRun');
     }
     // plan.interviews_completed, not interviewsTaken: the sessions feed counts
     // every session, the plan counts the ones that produced a scorecard. A
     // sentence about the plan must use the plan's own number or it can claim
     // "your weakest area is X" off zero scored interviews.
     if (plan.interviews_completed === 0) {
-      return `Your ${plan.target_role} plan is ready — ${plan.competencies.length} competencies to practise. One mock interview fills in every bar.`;
+      return t('dashboard.heroPlanReady', {
+        role: plan.target_role,
+        count: plan.competencies.length,
+      });
     }
     if (plan.focus_competency_name) {
-      return `Practising for ${plan.target_role}. Your weakest area right now is ${plan.focus_competency_name} — that’s where the next mock should go.`;
+      return t('dashboard.heroFocus', {
+        role: plan.target_role,
+        competency: plan.focus_competency_name,
+      });
     }
-    return `Practising for ${plan.target_role}. Keep the reps up and your readiness climbs.`;
+    return t('dashboard.heroKeepGoing', { role: plan.target_role });
   })();
 
-  // Readiness ring: avg composite ×10 (0–100) when available
-  const readinessScore = avgScore0to100 ?? 0;
-
-  // Weekly streak — derive from recentSessions created_at
+  // Weekly streak — derived from the full session history, not the 3-row feed:
+  // three rows can light at most three of the seven days, which silently
+  // under-rewards exactly the behaviour the strip exists to reinforce.
   // DOW_LABELS maps index 0→Mon … 6→Sun (JS: getDay 0=Sun,1=Mon…6=Sat)
   const todayMidnight = (() => {
     const d = new Date();
@@ -322,7 +342,7 @@ export default function Dashboard() {
     return d;
   })();
   const weekDaysHit = new Set<number>();
-  recentSessions.forEach((s) => {
+  allSessions.forEach((s) => {
     const d = new Date(s.created_at);
     const jsDay = d.getDay(); // 0=Sun
     const monBased = jsDay === 0 ? 6 : jsDay - 1; // 0=Mon…6=Sun
@@ -377,11 +397,12 @@ export default function Dashboard() {
           <div className="flex items-center gap-2.5 rounded-[12px] border border-[rgba(39,201,63,0.25)] bg-[rgba(39,201,63,0.06)] px-4 py-3">
             <CheckCircle2 size={16} className="shrink-0 text-[#27c93f]" aria-hidden="true" />
             <p className="text-[13px]">
-              <span className="font-medium">You’re all set{firstName ? `, ${firstName}` : ''}.</span>{' '}
-              <span className="text-[#9fb6d6]">
-                This is your dashboard — your plan is at the top, and it updates after
-                every mock interview.
-              </span>
+              <span className="font-medium">
+                {firstName
+                  ? t('dashboard.onboardedTitleNamed', { name: firstName })
+                  : t('dashboard.onboardedTitle')}
+              </span>{' '}
+              <span className="text-[#9fb6d6]">{t('dashboard.onboardedBody')}</span>
             </p>
           </div>
         </Reveal>
@@ -431,7 +452,9 @@ export default function Dashboard() {
           >
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-[0.1em] text-[#60a5fa] mb-2">
-                {planReady && plan?.domain_label ? plan.domain_label : 'Welcome back'}
+                {planReady && plan?.domain_label
+                  ? plan.domain_label
+                  : t('dashboard.heroEyebrow')}
               </p>
               {isLoading ? (
                 <>
@@ -444,7 +467,9 @@ export default function Dashboard() {
                     className="font-semibold tracking-[-1px] text-white"
                     style={{ fontSize: 'clamp(28px, 4vw, 40px)' }}
                   >
-                    {`Let's get you hired${firstName ? `, ${firstName}` : ''}.`}
+                    {firstName
+                      ? t('dashboard.heroGreetingNamed', { name: firstName })
+                      : t('dashboard.heroGreeting')}
                   </h1>
                   <p className="mt-2 text-[14px] text-[#9fb6d6] max-w-[480px]">
                     {heroSubtitle}
@@ -482,11 +507,15 @@ export default function Dashboard() {
           </GlassCard>
         </Reveal>
 
-        {/* RIGHT: Interview readiness card */}
+        {/* RIGHT: Average-score card.
+            Named for what it is — the unweighted mean of scored composites.
+            The practice plan card above shows the server's competency-weighted
+            `readiness`; calling both "readiness" put two different numbers
+            under one word 200px apart. */}
         <Reveal dir="right">
           <GlassCard className="flex h-full flex-col gap-4">
             <h3 className="text-[15px] font-semibold">
-              {t('dashboard.readinessTitle')}
+              {t('dashboard.avgScoreTitle')}
             </h3>
 
             <div className="flex items-center gap-5 flex-1">
@@ -494,11 +523,25 @@ export default function Dashboard() {
               <div className="shrink-0">
                 {statsLoading ? (
                   <Sk className="h-[120px] w-[120px] rounded-full" />
+                ) : avgScore0to100 === null ? (
+                  // No scored interview yet. A ring at 0 is not "no data", it
+                  // is a failing grade — say nothing instead of saying zero.
+                  <div
+                    className="flex h-[120px] w-[120px] flex-col items-center justify-center rounded-full border border-white/[0.08]"
+                    aria-label={t('dashboard.readinessDescNoData')}
+                  >
+                    <span className="text-[28px] font-semibold tracking-[-1px] text-[#70757c]">
+                      —
+                    </span>
+                    <span className="text-[10px] uppercase tracking-[1px] text-[#70757c]">
+                      {t('dashboard.avgScoreRingLabel')}
+                    </span>
+                  </div>
                 ) : (
                   <ScoreRing
-                    score={readinessScore}
+                    score={avgScore0to100}
                     size={120}
-                    label={t('dashboard.ringLabel')}
+                    label={t('dashboard.avgScoreRingLabel')}
                   />
                 )}
               </div>
@@ -516,7 +559,7 @@ export default function Dashboard() {
                   to="/resume"
                   className="inline-flex items-center gap-1 text-[12.5px] text-[#60a5fa] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded w-fit"
                 >
-                  Improve resume →
+                  {t('dashboard.improveResume')} →
                 </Link>
                 <Link
                   to="/history"
@@ -565,7 +608,7 @@ export default function Dashboard() {
         {/* 3 — Practice time */}
         <StaggerItem>
           <StatCard
-            label="practice time"
+            label={t('dashboard.statPracticeTime')}
             value={statsLoading ? '—' : practiceTimeLabel}
             trend="flat"
             className="h-full"
@@ -575,7 +618,7 @@ export default function Dashboard() {
         {/* 4 — Languages used */}
         <StaggerItem>
           <StatCard
-            label="languages used"
+            label={t('dashboard.statLanguagesUsed')}
             value={statsLoading ? '—' : String(distinctLanguages)}
             trend="flat"
             className="h-full"
@@ -635,8 +678,6 @@ export default function Dashboard() {
                     session.session_id.charCodeAt(0) +
                     session.session_id.charCodeAt(1);
                   const gradient = gradientFor(seedNum);
-                  const scoreForColor =
-                    session.scorecard_id !== null ? 72 : 0;
 
                   return (
                     <li
@@ -668,10 +709,11 @@ export default function Dashboard() {
                             </div>
                           </div>
                           <div className="text-right shrink-0">
-                            <div
-                              className="text-[13px] font-semibold"
-                              style={{ color: scoreColor(scoreForColor) }}
-                            >
+                            {/* Neutral, like the unscored row below: this is a
+                                date, and the semantic score palette here used
+                                to paint every scored session the same "good"
+                                accent off a hardcoded 72. */}
+                            <div className="text-[13px] font-semibold text-[#888b91]">
                               {formatDate(session.created_at)}
                             </div>
                             <ExternalLink
@@ -721,12 +763,14 @@ export default function Dashboard() {
           {/* Next steps (nudges) */}
           <Reveal dir="right">
             <GlassCard className="p-5">
-              <h3 className="mb-3 text-[15px] font-semibold">Next steps</h3>
+              <h3 className="mb-3 text-[15px] font-semibold">
+                {t('dashboard.nextStepsTitle')}
+              </h3>
 
               {/* Weekly streak strip */}
               <div className="mb-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#70757c] mb-2">
-                  This week
+                  {t('dashboard.thisWeekTitle')}
                 </p>
                 <div className="flex items-center gap-1.5" aria-hidden="true">
                   {DOW_LABELS.map((lbl, i) => (

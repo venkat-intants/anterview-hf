@@ -8,6 +8,8 @@
 //   (e) refresh 403/failure clears auth + redirects
 //   (f) ProtectedRoute shows loader while isInitializing, then outlet once done
 //   (g) ProtectedRoute redirects to /login when refresh fails
+//   (i) refresh succeeds but getMe fails — retried, and on a definitive failure
+//       the session is dropped rather than left authenticated-but-role-less
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
@@ -28,6 +30,9 @@ function AuthStatusDisplay() {
       <span data-testid="initializing">{String(isInitializing)}</span>
       <span data-testid="authenticated">{String(isAuthenticated)}</span>
       <span data-testid="user">{user?.full_name ?? 'none'}</span>
+      {/* The route guards (HRRoute, AdminRoute, …) read roles from HERE, not
+          from a page query — so an empty list is a locked-out console. */}
+      <span data-testid="roles">{user?.roles.join(',') ?? 'none'}</span>
     </div>
   );
 }
@@ -248,6 +253,67 @@ describe('AuthProvider silent refresh on load', () => {
       expect(screen.getByTestId('initializing')).toHaveTextContent('false');
     });
     expect(screen.getByTestId('authenticated')).toHaveTextContent('false');
+  });
+
+  // (i) The cold-container case on the Space: attemptRefresh is cheap and
+  // succeeds, GET /users/me 502s. One retry absorbs it.
+  it('(i1) retries a failed profile fetch and restores the session with its roles', async () => {
+    mockAttemptRefresh.mockResolvedValue(true);
+    setToken('refreshed-token');
+    mockGetMe
+      .mockRejectedValueOnce(new Error('502 Bad Gateway'))
+      .mockResolvedValueOnce({
+        user_id: 'u2',
+        full_name: 'HR Manager',
+        email: 'hr@test.com',
+        roles: ['hr_manager'],
+        must_change_password: false,
+      });
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <AuthStatusDisplay />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('roles')).toHaveTextContent('hr_manager');
+      },
+      { timeout: 5000 },
+    );
+    expect(screen.getByTestId('authenticated')).toHaveTextContent('true');
+  });
+
+  // (i2) Every attempt failed. Keeping the token would leave an authenticated
+  // but role-less session: HRRoute would bounce the user to the candidate
+  // dashboard on every attempt to reach /hr with no error and no way back, and
+  // `must_change_password` would read undefined and wave a bootstrap password
+  // straight into the shell. Failing closed sends them to /login instead.
+  it('(i2) drops the session when the profile fetch fails definitively', async () => {
+    mockAttemptRefresh.mockResolvedValue(true);
+    setToken('refreshed-token');
+    mockGetMe.mockRejectedValue(new Error('502 Bad Gateway'));
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <AuthStatusDisplay />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('initializing')).toHaveTextContent('false');
+      },
+      { timeout: 5000 },
+    );
+    expect(screen.getByTestId('authenticated')).toHaveTextContent('false');
+    expect(screen.getByTestId('roles')).toHaveTextContent('none');
+    expect(getToken()).toBeNull();
   });
 });
 

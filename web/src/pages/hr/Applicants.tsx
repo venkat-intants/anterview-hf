@@ -824,6 +824,19 @@ export default function Applicants() {
   // the list exactly as returned (relevance order when searching, ATS order otherwise).
   const list = applicants ?? [];
 
+  /** Server-side page ceiling for GET /hr/applicants (_SEARCH_LIMIT / _LIST_PAGE_SIZE). */
+  const APPLICANTS_PAGE_SIZE = 200;
+
+  /** "200+" rather than "200" when the page is full.
+   *
+   * The endpoint returns one bounded page and no total, so a company with 5,000
+   * applicants would otherwise read a flat "200 applicants" as a definitive
+   * count — a confidently-wrong number, which is worse than an obviously
+   * incomplete one. A full page means "at least this many"; say that.
+   * When a real total or a pager lands, this can show the true figure. */
+  const countLabel =
+    list.length >= APPLICANTS_PAGE_SIZE ? `${list.length}+` : `${list.length}`;
+
   const pending = uploadMut.isPending;
 
   return (
@@ -914,8 +927,8 @@ export default function Applicants() {
             {isLoading
               ? '…'
               : searching
-                ? `${list.length} match${list.length === 1 ? '' : 'es'}`
-                : `${list.length} applicant${list.length === 1 ? '' : 's'}`}
+                ? `${countLabel} match${list.length === 1 ? '' : 'es'}`
+                : `${countLabel} applicant${list.length === 1 ? '' : 's'}`}
           </span>
         </div>
 

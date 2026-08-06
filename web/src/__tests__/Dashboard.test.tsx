@@ -181,15 +181,22 @@ describe('Dashboard page', () => {
   });
 
   // Aurora redesign: explicit role badges were removed from the Dashboard.
-  // Candidate-specific content is now indicated by the "Interview readiness"
-  // section, which only renders for authenticated candidates. Verify that
-  // heading is present to assert role-appropriate UI loaded correctly.
+  // Candidate-specific content is now indicated by the score card, which only
+  // renders for authenticated candidates. Verify that heading is present to
+  // assert role-appropriate UI loaded correctly.
+  //
+  // The card is titled "Average interview score", NOT "Interview readiness":
+  // the practice plan card on the same screen shows the server's
+  // competency-weighted readiness, and two different numbers under one word
+  // 200px apart left the user unable to tell which one measured them.
   it('displays the candidate role badge', async () => {
     renderDashboard();
     await waitFor(() => {
-      // t('dashboard.readinessTitle') = 'Interview readiness'
-      expect(screen.getByText(/interview readiness/i)).toBeInTheDocument();
+      // t('dashboard.avgScoreTitle')
+      expect(screen.getByText(/average interview score/i)).toBeInTheDocument();
     });
+    // The word "readiness" must not appear on the ring card any more.
+    expect(screen.queryByText(/interview readiness/i)).not.toBeInTheDocument();
   });
 
   it('navigates to /start when Start Interview is clicked', async () => {

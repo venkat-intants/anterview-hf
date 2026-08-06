@@ -12,9 +12,10 @@
 //      and the competencies. If we misread "CNC Operator" as something else,
 //      they find out here, not after a wasted 10-minute interview.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 
 import {
   GOAL_OPTIONS,
@@ -34,8 +35,13 @@ import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { Reveal } from '@/design/components/Reveal';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { Check } from '@/design/components/icons';
 
 const TOTAL_STEPS = 4;
+
+/** Where every page that starts an interview reads the spoken language from.
+ *  Mirrors the constant in StartInterview/JobsList/Interview/AppShell. */
+const INTERVIEW_LANGUAGE_KEY = 'intants:interview-language';
 
 /** How long the "your plan is ready" recap holds before the dashboard.
  *
@@ -44,6 +50,25 @@ const TOTAL_STEPS = 4;
  * dashboard shows the same plan in more detail, so nothing is lost either way.
  */
 const HANDOFF_MS = 2600;
+
+/** Translation keys for the wizard's option lists.
+ *
+ * Keyed off the API's option `value`, not its `label`: api/onboarding.ts is
+ * the transport contract and its English label strings are the fallback for
+ * anything the bundles have not caught up with. */
+const GOAL_KEYS: Record<OnboardingGoal, string> = {
+  campus_placement: 'campusPlacement',
+  first_job: 'firstJob',
+  switching_field: 'switchingField',
+  interview_soon: 'interviewSoon',
+  general_practice: 'generalPractice',
+};
+
+const LEVEL_KEYS: Record<TargetLevel, string> = {
+  entry: 'Entry',
+  mid: 'Mid',
+  senior: 'Senior',
+};
 
 /** Debounce so typing a role doesn't fire a request per keystroke.
  *
@@ -63,7 +88,8 @@ function useDebounced<T>(value: T, ms: number): T {
 export default function Onboarding(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { t, i18n } = useTranslation();
+  const { user, updateUser } = useAuth();
 
   const { data: status } = useQuery({
     queryKey: ['onboarding-status'],
@@ -78,16 +104,27 @@ export default function Onboarding(): JSX.Element {
   const [level, setLevel] = useState<TargetLevel>('entry');
   const [language, setLanguage] = useState('en');
 
-  // Prefill once from whatever we already know, without clobbering typing.
-  const [seeded, setSeeded] = useState(false);
-  if (!seeded && status) {
+  // Prefill from whatever we already know — but only while they have not
+  // started answering. The guard has to be "has the user interacted", not "has
+  // the query resolved": step 1's input is autofocused and typeable while
+  // GET /users/me/onboarding is still in flight, and on a cold container that
+  // response lands mid-keystroke and would overwrite what they typed.
+  const seeded = useRef(false);
+  const touched = useRef(false);
+  const touch = useCallback(() => {
+    touched.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (seeded.current || !status) return;
+    seeded.current = true;
+    if (touched.current) return;
     setFullName(status.full_name ?? user?.full_name ?? '');
     setGoal(status.goal);
     setRole(status.target_role ?? '');
     setLevel(status.target_level ?? 'entry');
     setLanguage(status.preferred_language || 'en');
-    setSeeded(true);
-  }
+  }, [status, user?.full_name]);
 
   const debouncedRole = useDebounced(role.trim(), 450);
 
@@ -120,7 +157,29 @@ export default function Onboarding(): JSX.Element {
         target_level: level,
         preferred_language: language,
       }),
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
+      // The language answer is the one the wizard makes an explicit promise
+      // about ("your AI interviewer will speak and listen in this language"),
+      // so it has to land in the two places that can keep it. AppShell has
+      // already seeded this key with 'en' by the time anyone reaches step 4,
+      // which is why this overwrites rather than falls back.
+      try {
+        localStorage.setItem(INTERVIEW_LANGUAGE_KEY, language);
+      } catch {
+        // localStorage unavailable (private mode) — the picker on /start is
+        // still there, they just start from the default.
+      }
+      // The other half: they have just told us which language they read.
+      await i18n.changeLanguage(language);
+
+      // Onboarding writes users.full_name server-side. Without this the
+      // dashboard greets them by the name they just replaced — the ['auth','me']
+      // query has a 5-minute staleTime and the shell's copy is only ever
+      // written at login.
+      const savedName = saved.full_name ?? (fullName.trim() || null);
+      if (savedName) updateUser({ full_name: savedName });
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
+
       await queryClient.invalidateQueries({ queryKey: ['onboarding-status'] });
       // Fetch — not invalidate — the plan before we leave. The dashboard's
       // centrepiece is this query; warming it here means the plan is on screen
@@ -140,7 +199,7 @@ export default function Onboarding(): JSX.Element {
         .catch(() => null);
       setHandoff(plan ?? false);
     },
-    onError: () => toast.error('Could not save. Please try again.'),
+    onError: () => toast.error(t('onboarding.saveFailed')),
   });
 
   const skip = useMutation({
@@ -152,7 +211,7 @@ export default function Onboarding(): JSX.Element {
       await queryClient.invalidateQueries({ queryKey: ['onboarding-status'] });
       goToDashboard(false);
     },
-    onError: () => toast.error('Could not skip. Please try again.'),
+    onError: () => toast.error(t('onboarding.skipFailed')),
   });
 
   // Auto-advance off the recap. Cleared on unmount so an early CTA click does
@@ -181,34 +240,36 @@ export default function Onboarding(): JSX.Element {
   // ── Handoff: the wizard's payoff, shown in place before the dashboard ──────
   if (handoff !== null) {
     const plan = handoff === false ? null : handoff;
+    const firstName = fullName.trim().split(' ')[0] ?? '';
     return (
       <div className="mx-auto flex min-h-[80vh] max-w-[720px] flex-col justify-center px-6 py-10">
         <Reveal>
           <GlassCard className="p-6 sm:p-8 space-y-5">
             <div>
-              <StatusTag tone="forest">Ready</StatusTag>
+              <StatusTag tone="forest">{t('onboarding.readyTag')}</StatusTag>
               <h1 className="mt-3 text-2xl font-semibold">
-                {fullName.trim()
-                  ? `You're all set, ${fullName.trim().split(' ')[0]}.`
-                  : "You're all set."}
+                {firstName
+                  ? t('onboarding.readyTitleNamed', { name: firstName })
+                  : t('onboarding.readyTitle')}
               </h1>
               <p className="mt-2 text-sm opacity-70">
-                {plan?.ready ? (
-                  <>
-                    We built your practice plan for <strong>{plan.target_role}</strong>
-                    {plan.domain_label ? ` — ${plan.domain_label}` : ''}.
-                  </>
-                ) : (
-                  <>We saved your answers and built your practice plan.</>
-                )}
+                {plan?.ready
+                  ? plan.domain_label
+                    ? t('onboarding.readyPlanDomain', {
+                        role: plan.target_role,
+                        domain: plan.domain_label,
+                      })
+                    : t('onboarding.readyPlan', { role: plan.target_role })
+                  : t('onboarding.readySaved')}
               </p>
             </div>
 
             {plan?.ready && plan.competencies.length > 0 && (
               <div className="space-y-2 rounded-lg bg-white/5 px-4 py-3">
                 <p className="text-xs opacity-60">
-                  Your interviews will assess these {plan.competencies.length}{' '}
-                  competencies:
+                  {t('onboarding.readyCompetencies', {
+                    count: plan.competencies.length,
+                  })}
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {plan.competencies.map((c) => (
@@ -229,7 +290,7 @@ export default function Onboarding(): JSX.Element {
               className="w-full rounded-lg px-4 py-3 text-sm font-medium transition sm:w-auto"
               style={{ background: 'var(--accent)', color: '#08131f' }}
             >
-              Go to my dashboard
+              {t('onboarding.goToDashboard')}
             </button>
           </GlassCard>
         </Reveal>
@@ -244,16 +305,14 @@ export default function Onboarding(): JSX.Element {
           {/* progress */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs opacity-60">
-              <span>
-                Step {step} of {TOTAL_STEPS}
-              </span>
+              <span>{t('onboarding.stepOf', { step, total: TOTAL_STEPS })}</span>
               <button
                 type="button"
                 onClick={() => skip.mutate()}
                 disabled={busy}
                 className="underline underline-offset-2 hover:opacity-100 disabled:opacity-40"
               >
-                Skip for now
+                {t('onboarding.skip')}
               </button>
             </div>
             <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
@@ -267,16 +326,20 @@ export default function Onboarding(): JSX.Element {
           {step === 1 && (
             <div className="space-y-4">
               <div>
-                <h1 className="text-xl font-semibold">What should we call you?</h1>
-                <p className="mt-1 text-sm opacity-70">
-                  Your interviewer will greet you by name.
-                </p>
+                <h1 id="onboarding-name-title" className="text-xl font-semibold">
+                  {t('onboarding.nameTitle')}
+                </h1>
+                <p className="mt-1 text-sm opacity-70">{t('onboarding.nameHint')}</p>
               </div>
               <input
                 autoFocus
+                aria-labelledby="onboarding-name-title"
                 value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Your name"
+                onChange={(e) => {
+                  touch();
+                  setFullName(e.target.value);
+                }}
+                placeholder={t('onboarding.namePlaceholder')}
                 maxLength={120}
                 className="w-full rounded-lg bg-white/5 px-4 py-3 text-base outline-none focus:ring-1 focus:ring-[var(--accent)]"
               />
@@ -286,28 +349,53 @@ export default function Onboarding(): JSX.Element {
           {step === 2 && (
             <div className="space-y-4">
               <div>
-                <h1 className="text-xl font-semibold">What brings you here?</h1>
-                <p className="mt-1 text-sm opacity-70">
-                  So we can pitch the practice at the right thing.
-                </p>
+                <h1 id="onboarding-goal-title" className="text-xl font-semibold">
+                  {t('onboarding.goalTitle')}
+                </h1>
+                <p className="mt-1 text-sm opacity-70">{t('onboarding.goalHint')}</p>
               </div>
-              <div className="flex flex-col gap-2">
-                {GOAL_OPTIONS.map((g) => (
-                  <button
-                    key={g.value}
-                    type="button"
-                    onClick={() => setGoal(g.value)}
-                    className={cn(
-                      'rounded-lg px-4 py-3 text-left transition',
-                      goal === g.value
-                        ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
-                        : 'bg-white/5 hover:bg-white/10',
-                    )}
-                  >
-                    <div className="text-sm font-medium">{g.label}</div>
-                    <div className="text-xs opacity-60">{g.hint}</div>
-                  </button>
-                ))}
+              <div
+                role="radiogroup"
+                aria-labelledby="onboarding-goal-title"
+                className="flex flex-col gap-2"
+              >
+                {GOAL_OPTIONS.map((g) => {
+                  const selected = goal === g.value;
+                  return (
+                    <button
+                      key={g.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => {
+                        touch();
+                        setGoal(g.value);
+                      }}
+                      className={cn(
+                        'rounded-lg px-4 py-3 text-left transition',
+                        selected
+                          ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
+                          : 'bg-white/5 hover:bg-white/10',
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5 text-sm font-medium">
+                        {/* Selection is otherwise carried by a tint and a ring
+                            alone — no use to anyone who cannot see them. */}
+                        {selected && (
+                          <Check
+                            size={14}
+                            className="shrink-0 text-[var(--accent)]"
+                            aria-hidden="true"
+                          />
+                        )}
+                        {t(`onboarding.goal${GOAL_KEYS[g.value]}`, g.label)}
+                      </div>
+                      <div className="text-xs opacity-60">
+                        {t(`onboarding.goal${GOAL_KEYS[g.value]}Hint`, g.hint)}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -315,17 +403,20 @@ export default function Onboarding(): JSX.Element {
           {step === 3 && (
             <div className="space-y-4">
               <div>
-                <h1 className="text-xl font-semibold">What role are you aiming for?</h1>
-                <p className="mt-1 text-sm opacity-70">
-                  Any job — welder, staff nurse, sales executive, developer. This decides
-                  what your interviews ask about.
-                </p>
+                <h1 id="onboarding-role-title" className="text-xl font-semibold">
+                  {t('onboarding.roleTitle')}
+                </h1>
+                <p className="mt-1 text-sm opacity-70">{t('onboarding.roleHint')}</p>
               </div>
               <input
                 autoFocus
+                aria-labelledby="onboarding-role-title"
                 value={role}
-                onChange={(e) => setRole(e.target.value)}
-                placeholder="e.g. CNC Machine Operator"
+                onChange={(e) => {
+                  touch();
+                  setRole(e.target.value);
+                }}
+                placeholder={t('onboarding.rolePlaceholder')}
                 maxLength={200}
                 className="w-full rounded-lg bg-white/5 px-4 py-3 text-base outline-none focus:ring-1 focus:ring-[var(--accent)]"
               />
@@ -333,13 +424,17 @@ export default function Onboarding(): JSX.Element {
               {/* Live confirmation that we understood the job. */}
               {debouncedRole.length >= 2 && (
                 <div className="rounded-lg bg-white/5 px-4 py-3 text-sm">
-                  {previewing && <span className="opacity-60">Reading the role…</span>}
+                  {previewing && (
+                    <span className="opacity-60">{t('onboarding.roleReading')}</span>
+                  )}
                   {!previewing && preview?.ready && (
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         <StatusTag tone="forest">{preview.domain_label}</StatusTag>
                         <span className="text-xs opacity-60">
-                          {preview.competencies.length} competencies
+                          {t('onboarding.roleCompetencies', {
+                            count: preview.competencies.length,
+                          })}
                         </span>
                       </div>
                       <p className="text-xs opacity-70">{preview.what_this_person_does}</p>
@@ -354,7 +449,7 @@ export default function Onboarding(): JSX.Element {
                         ))}
                       </div>
                       <p className="pt-1 text-xs opacity-50">
-                        Not right? Try naming the job more specifically.
+                        {t('onboarding.roleNotRight')}
                       </p>
                     </div>
                   )}
@@ -362,24 +457,45 @@ export default function Onboarding(): JSX.Element {
               )}
 
               <div>
-                <div className="mb-2 text-sm font-medium">How much experience?</div>
-                <div className="flex flex-wrap gap-2">
-                  {LEVEL_OPTIONS.map((l) => (
-                    <button
-                      key={l.value}
-                      type="button"
-                      onClick={() => setLevel(l.value)}
-                      title={l.hint}
-                      className={cn(
-                        'rounded-lg px-3 py-2 text-sm transition',
-                        level === l.value
-                          ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
-                          : 'bg-white/5 hover:bg-white/10',
-                      )}
-                    >
-                      {l.label}
-                    </button>
-                  ))}
+                <div id="onboarding-level-title" className="mb-2 text-sm font-medium">
+                  {t('onboarding.levelTitle')}
+                </div>
+                <div
+                  role="radiogroup"
+                  aria-labelledby="onboarding-level-title"
+                  className="flex flex-wrap gap-2"
+                >
+                  {LEVEL_OPTIONS.map((l) => {
+                    const selected = level === l.value;
+                    return (
+                      <button
+                        key={l.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => {
+                          touch();
+                          setLevel(l.value);
+                        }}
+                        title={t(`onboarding.level${LEVEL_KEYS[l.value]}Hint`, l.hint)}
+                        className={cn(
+                          'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm transition',
+                          selected
+                            ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
+                            : 'bg-white/5 hover:bg-white/10',
+                        )}
+                      >
+                        {selected && (
+                          <Check
+                            size={14}
+                            className="shrink-0 text-[var(--accent)]"
+                            aria-hidden="true"
+                          />
+                        )}
+                        {t(`onboarding.level${LEVEL_KEYS[l.value]}`, l.label)}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -388,27 +504,47 @@ export default function Onboarding(): JSX.Element {
           {step === 4 && (
             <div className="space-y-4">
               <div>
-                <h1 className="text-xl font-semibold">Which language for your interview?</h1>
-                <p className="mt-1 text-sm opacity-70">
-                  Your AI interviewer will speak and listen in this language.
-                </p>
+                <h1 id="onboarding-language-title" className="text-xl font-semibold">
+                  {t('onboarding.languageTitle')}
+                </h1>
+                <p className="mt-1 text-sm opacity-70">{t('onboarding.languageHint')}</p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {LANGUAGE_OPTIONS.map((l) => (
-                  <button
-                    key={l.value}
-                    type="button"
-                    onClick={() => setLanguage(l.value)}
-                    className={cn(
-                      'rounded-lg px-4 py-3 text-sm transition',
-                      language === l.value
-                        ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
-                        : 'bg-white/5 hover:bg-white/10',
-                    )}
-                  >
-                    {l.label}
-                  </button>
-                ))}
+              <div
+                role="radiogroup"
+                aria-labelledby="onboarding-language-title"
+                className="flex flex-wrap gap-2"
+              >
+                {LANGUAGE_OPTIONS.map((l) => {
+                  const selected = language === l.value;
+                  return (
+                    <button
+                      key={l.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => {
+                        touch();
+                        setLanguage(l.value);
+                      }}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-lg px-4 py-3 text-sm transition',
+                        selected
+                          ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
+                          : 'bg-white/5 hover:bg-white/10',
+                      )}
+                    >
+                      {selected && (
+                        <Check
+                          size={14}
+                          className="shrink-0 text-[var(--accent)]"
+                          aria-hidden="true"
+                        />
+                      )}
+                      {/* Endonyms — never translated, that is the point of them. */}
+                      {l.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -421,7 +557,7 @@ export default function Onboarding(): JSX.Element {
               disabled={step === 1 || busy}
               className="rounded-lg px-3 py-2 text-sm transition hover:bg-white/10 disabled:opacity-30"
             >
-              Back
+              {t('onboarding.back')}
             </button>
 
             {step < TOTAL_STEPS ? (
@@ -432,7 +568,7 @@ export default function Onboarding(): JSX.Element {
                 className="rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-40"
                 style={{ background: 'var(--accent)', color: '#08131f' }}
               >
-                Continue
+                {t('onboarding.continue')}
               </button>
             ) : (
               <button
@@ -442,15 +578,14 @@ export default function Onboarding(): JSX.Element {
                 className="rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-40"
                 style={{ background: 'var(--accent)', color: '#08131f' }}
               >
-                {finish.isPending ? 'Saving…' : 'Build my practice plan'}
+                {finish.isPending ? t('onboarding.saving') : t('onboarding.submit')}
               </button>
             )}
           </div>
 
           {step === TOTAL_STEPS && role.trim().length < 2 && (
             <p className="text-xs" style={{ color: '#ffb764' }}>
-              Go back and tell us the role you&apos;re aiming for — it&apos;s the one thing
-              we genuinely need.
+              {t('onboarding.roleRequired')}
             </p>
           )}
         </GlassCard>

@@ -254,28 +254,75 @@ async def _already_notified(user_id: str, dedupe_key: str) -> bool:
     A cache outage should cost a duplicate notification, never a missed one —
     the DPDP deadline alert in particular must not be swallowed because Redis
     was briefly unreachable.
+
+    A pure read. Claiming the slot here (SET NX) would suppress the finding for
+    the full TTL even when the INSERT that follows never commits — a DPDP
+    deadline alert that was never delivered and can no longer fire.
+    ``_mark_notified`` runs only after the write lands.
     """
     if not dedupe_key:
         return False
     try:
         redis = get_redis()
-        key = f"{_DEDUPE_PREFIX}{user_id}:{dedupe_key}"
-        # SET NX returns None when the key already exists.
-        return await redis.set(key, "1", ex=DEDUPE_TTL_SECONDS, nx=True) is None
+        return bool(await redis.exists(_dedupe_key(user_id, dedupe_key)))
     except Exception as exc:  # noqa: BLE001 — see docstring
         log.warning("watchers.dedupe_unavailable", error=type(exc).__name__)
         return False
 
 
+async def _mark_notified(user_id: str, dedupe_key: str) -> None:
+    """Suppress a finding for the TTL. Called only after the rows are committed.
+
+    Best-effort: a Redis failure here costs a duplicate notification tomorrow,
+    which is the side of the trade this module deliberately errs on.
+    """
+    if not dedupe_key:
+        return
+    try:
+        redis = get_redis()
+        await redis.set(_dedupe_key(user_id, dedupe_key), "1", ex=DEDUPE_TTL_SECONDS)
+    except Exception as exc:  # noqa: BLE001 — see docstring
+        log.warning("watchers.dedupe_unavailable", error=type(exc).__name__)
+
+
+def _dedupe_key(user_id: str, dedupe_key: str) -> str:
+    return f"{_DEDUPE_PREFIX}{user_id}:{dedupe_key}"
+
+
+async def _safe_rollback(db: AsyncSession) -> None:
+    """Clear an aborted transaction without letting the cleanup itself raise.
+
+    ``run_watcher_sweep`` promises never to raise, and a rollback on a session
+    whose connection has already gone is exactly the case where it would.
+    """
+    try:
+        await db.rollback()
+    except Exception as exc:  # noqa: BLE001 — see docstring
+        log.warning("watchers.rollback_failed", error=type(exc).__name__)
+
+
 async def deliver(
     db: AsyncSession, findings: list[WatcherFinding], recipients: list[str]
 ) -> int:
-    """Write findings to the notifications table. Returns rows written."""
+    """Write findings to the notifications table. Returns rows written.
+
+    Write first, suppress second. The dedupe markers are only set once the
+    commit has succeeded, so a failed insert costs a retry tomorrow rather than
+    silently burning the finding's 8-day suppression window.
+    """
     written = 0
     now = datetime.now(tz=UTC)
+    # Ordered so the markers are set in the order the rows were written; the
+    # membership test is what stops two findings sharing a dedupe_key from
+    # notifying the same person twice within one sweep, which the old
+    # claim-on-check SET NX used to handle as a side effect. An EMPTY
+    # dedupe_key means "never suppress this", so it is excluded from that test.
+    delivered: list[tuple[str, str]] = []
 
     for finding in findings:
         for user_id in recipients:
+            if finding.dedupe_key and (user_id, finding.dedupe_key) in delivered:
+                continue
             if await _already_notified(user_id, finding.dedupe_key):
                 continue
             await db.execute(
@@ -303,9 +350,12 @@ async def deliver(
                 },
             )
             written += 1
+            delivered.append((user_id, finding.dedupe_key))
 
     if written:
         await db.commit()
+        for user_id, dedupe_key in delivered:
+            await _mark_notified(user_id, dedupe_key)
     return written
 
 
@@ -341,6 +391,7 @@ async def run_watcher_sweep() -> dict[str, int]:
                 totals["findings"] += len(dpdp_findings)
                 totals["notifications"] += await deliver(db, dpdp_findings, owners)
         except Exception as exc:  # noqa: BLE001
+            await _safe_rollback(db)
             log.warning("watchers.dpdp_sweep_failed", error=type(exc).__name__)
 
         for company in companies:
@@ -359,6 +410,13 @@ async def run_watcher_sweep() -> dict[str, int]:
                 totals["notifications"] += await deliver(db, findings, recipients)
             except Exception as exc:  # noqa: BLE001 — one tenant must not
                 # cost every other tenant their alerts.
+                #
+                # The rollback is what makes that true rather than aspirational:
+                # all 500 companies share one session, and a SQL-level failure
+                # leaves the transaction aborted, so without it every remaining
+                # tenant's queries fail too and the sweep quietly delivers
+                # nothing platform-wide.
+                await _safe_rollback(db)
                 log.warning(
                     "watchers.company_failed",
                     company_id=company_id,

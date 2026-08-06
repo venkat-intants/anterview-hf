@@ -18,6 +18,7 @@ from app.agents import watch_runner
 from app.agents.watch_runner import (
     DEDUPE_TTL_SECONDS,
     _already_notified,
+    _mark_notified,
     deliver,
     gather_company_input,
     gather_erasure_deadlines,
@@ -155,14 +156,85 @@ async def test_empty_dedupe_key_is_never_suppressed() -> None:
     assert await _already_notified("u-1", "") is False
 
 
+async def test_the_suppression_check_does_not_claim_the_slot() -> None:
+    """Checking must be a pure read.
+
+    Claiming on check (SET NX) suppressed a finding for the full TTL even when
+    the INSERT behind it never committed — a statutory DPDP alert that was never
+    delivered and could not fire again for 8 days.
+    """
+    redis = MagicMock()
+    redis.exists = AsyncMock(return_value=0)
+    redis.set = AsyncMock()
+    with patch.object(watch_runner, "get_redis", return_value=redis):
+        assert await _already_notified("u-1", "k1") is False
+    redis.set.assert_not_awaited()
+
+
 async def test_dedupe_marker_uses_a_bounded_ttl() -> None:
     """An unbounded marker would suppress a recurring problem forever."""
     redis = MagicMock()
     redis.set = AsyncMock(return_value=True)
     with patch.object(watch_runner, "get_redis", return_value=redis):
-        await _already_notified("u-1", "k1")
+        await _mark_notified("u-1", "k1")
     assert redis.set.await_args.kwargs["ex"] == DEDUPE_TTL_SECONDS
-    assert redis.set.await_args.kwargs["nx"] is True
+
+
+async def test_markers_are_only_set_after_the_rows_commit() -> None:
+    """A failed write must be retried tomorrow, not suppressed for 8 days."""
+    db = _db([])
+    db.commit = AsyncMock(side_effect=RuntimeError("connection reset"))
+    marked: list[tuple[str, str]] = []
+
+    async def _mark(user_id: str, key: str) -> None:
+        marked.append((user_id, key))
+
+    with (
+        patch.object(watch_runner, "_already_notified", AsyncMock(return_value=False)),
+        patch.object(watch_runner, "_mark_notified", _mark),
+        pytest.raises(RuntimeError),
+    ):
+        await deliver(db, [_finding()], ["u-1"])
+
+    assert marked == []
+
+
+async def test_markers_are_set_for_every_row_that_committed() -> None:
+    db = _db([])
+    marked: list[tuple[str, str]] = []
+
+    async def _mark(user_id: str, key: str) -> None:
+        marked.append((user_id, key))
+
+    with (
+        patch.object(watch_runner, "_already_notified", AsyncMock(return_value=False)),
+        patch.object(watch_runner, "_mark_notified", _mark),
+    ):
+        await deliver(db, [_finding(key="k1")], ["u-1", "u-2"])
+
+    assert marked == [("u-1", "k1"), ("u-2", "k1")]
+
+
+async def test_two_findings_sharing_a_key_notify_once_per_recipient() -> None:
+    """The old claim-on-check SET NX collapsed these as a side effect."""
+    db = _db([])
+    with (
+        patch.object(watch_runner, "_already_notified", AsyncMock(return_value=False)),
+        patch.object(watch_runner, "_mark_notified", AsyncMock()),
+    ):
+        written = await deliver(db, [_finding(key="k1"), _finding(key="k1")], ["u-1"])
+    assert written == 1
+
+
+async def test_an_empty_dedupe_key_never_collapses_distinct_findings() -> None:
+    """An empty key means 'never suppress this', not 'suppress everything'."""
+    db = _db([])
+    with (
+        patch.object(watch_runner, "_already_notified", AsyncMock(return_value=False)),
+        patch.object(watch_runner, "_mark_notified", AsyncMock()),
+    ):
+        written = await deliver(db, [_finding(key=""), _finding(key="")], ["u-1"])
+    assert written == 2
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +280,70 @@ async def test_one_broken_company_does_not_stop_the_sweep() -> None:
     assert seen == ["co-bad", "co-good"]
     # Both counted; only the healthy one produced findings.
     assert totals["companies"] == 2
+    assert totals["notifications"] == 1
+
+
+async def test_a_sql_failure_is_rolled_back_so_later_tenants_still_query() -> None:
+    """The isolation guarantee, against a session that behaves like Postgres.
+
+    All 500 companies share one session. A SQL-level failure leaves the
+    transaction aborted, so without a rollback every remaining tenant's queries
+    fail identically and the sweep silently delivers nothing platform-wide.
+    """
+
+    class AbortingSession:
+        def __init__(self, rows: list[list[Any]]) -> None:
+            self._rows = list(rows)
+            self.aborted = False
+            self.rollbacks = 0
+            self.commit = AsyncMock()
+
+        async def execute(self, *args: Any, **kwargs: Any) -> MagicMock:
+            if self.aborted:
+                raise RuntimeError("current transaction is aborted")
+            rows = self._rows.pop(0) if self._rows else []
+            result = MagicMock()
+            result.all.return_value = rows
+            result.first.return_value = rows[0] if rows else None
+            return result
+
+        async def rollback(self) -> None:
+            self.rollbacks += 1
+            self.aborted = False
+
+    from shared.agents import StalledApplicant, WatcherInput
+
+    db = AbortingSession(
+        [
+            [_row(id="co-bad"), _row(id="co-good")],  # the company list
+            [_row(id="u-1")],  # recipients for co-good
+        ]
+    )
+
+    async def _gather(session: Any, company_id: str) -> Any:
+        if company_id == "co-bad":
+            session.aborted = True
+            raise RuntimeError("invalid input syntax for type integer")
+        return WatcherInput(
+            company_id=company_id, stalled=[StalledApplicant("a-1", "Asha", "new", 30)]
+        )
+
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=db)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    deliver_mock = AsyncMock(return_value=1)
+
+    with (
+        patch.object(watch_runner, "get_session_factory", return_value=factory),
+        patch.object(watch_runner, "gather_company_input", _gather),
+        patch.object(watch_runner, "gather_erasure_deadlines", AsyncMock(return_value=[])),
+        patch.object(watch_runner, "deliver", deliver_mock),
+    ):
+        totals = await run_watcher_sweep()
+
+    assert db.rollbacks == 1
+    # co-good's recipient lookup ran against a clean session, so it was notified.
+    assert deliver_mock.await_args.args[2] == ["u-1"]
     assert totals["notifications"] == 1
 
 

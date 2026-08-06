@@ -37,7 +37,11 @@ from shared.agents import (
 from shared.auth.base import User
 from sqlalchemy import text
 
-from app.agents.evidence import ApplicantNotFoundError, gather_candidate_evidence
+from app.agents.evidence import (
+    ApplicantNotFoundError,
+    apply_document_warnings,
+    gather_candidate_evidence,
+)
 from app.agents.llm import build_agent_llm, build_panel_llm, describe_availability
 from app.agents.tools import registry
 from app.config import settings
@@ -56,6 +60,13 @@ UserDep = Annotated[User, Depends(get_current_user)]
 # better served by the user restating what they want.
 MAX_HISTORY_TURNS: int = 12
 MAX_MESSAGE_CHARS: int = 2000
+
+# Roles that live above the tenant boundary and therefore carry no company_id.
+# `admin` is the platform ANALYTICS role, not a tenant one — seed_admin.py and
+# grant_admin.py both create it with users.company_id NULL — so demanding a
+# company for it made the analytics copilot 403 on every message and left
+# get_score_distribution (its only tool, an un-scoped aggregate) unreachable.
+PLATFORM_ROLES: frozenset[str] = frozenset({"platform_owner", "admin"})
 
 _AGENT_DISABLED = HTTPException(
     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -104,7 +115,7 @@ async def _agent_context(user: User, db: Any) -> ToolContext:
     role = _primary_role(user)
     company_id: str | None = None
 
-    if role != "platform_owner":
+    if role not in PLATFORM_ROLES:
         raw = await db.scalar(
             text("SELECT company_id FROM users WHERE id = CAST(:uid AS uuid) AND deleted_at IS NULL"),
             {"uid": user.user_id},
@@ -260,13 +271,14 @@ async def agent_panel(applicant_id: uuid.UUID, user: UserDep, db: DbSessionDep) 
     assert ctx.company_id is not None  # non-platform roles always carry one
 
     try:
-        evidence = await gather_candidate_evidence(
+        bundle = await gather_candidate_evidence(
             db, company_id=ctx.company_id, applicant_id=str(applicant_id)
         )
     except ApplicantNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Applicant not found.") from exc
 
-    verdict = await assess_candidate(evidence, llm=build_panel_llm())
+    verdict = await assess_candidate(bundle.evidence, llm=build_panel_llm())
+    apply_document_warnings(verdict, bundle.document_warnings)
 
     log.info(
         "agent.panel",
@@ -275,5 +287,6 @@ async def agent_panel(applicant_id: uuid.UUID, user: UserDep, db: DbSessionDep) 
         signals=sum(1 for s in verdict.signals if s.available),
         contradictions=len(verdict.contradictions),
         confidence=verdict.confidence,
+        document_warnings=len(bundle.document_warnings),
     )
     return verdict.model_dump(mode="json")

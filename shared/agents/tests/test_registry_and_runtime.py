@@ -184,6 +184,68 @@ async def test_a_throwing_handler_does_not_abort_the_run() -> None:
     assert "tool failed" in result.content
 
 
+async def test_a_failed_tool_leaves_the_session_usable_for_the_next_one() -> None:
+    """One bad argument must not cost the rest of the turn.
+
+    A run shares one database session across every tool call. PostgreSQL aborts
+    the transaction on any error, so without a rollback here the second tool —
+    and every tool after it — fails too, and the copilot appears to lose the
+    ability to answer anything.
+    """
+
+    class FakeSession:
+        """Mimics an aborted-transaction session: everything fails until rollback."""
+
+        def __init__(self) -> None:
+            self.aborted = False
+            self.rollbacks = 0
+
+        async def query(self) -> str:
+            if self.aborted:
+                raise RuntimeError("current transaction is aborted")
+            return "rows"
+
+        async def rollback(self) -> None:
+            self.rollbacks += 1
+            self.aborted = False
+
+    session = FakeSession()
+    reg = ToolRegistry()
+
+    @reg.tool(name="bad_cast", description="x", parameters=OBJ_SCHEMA)
+    async def _bad_cast(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+        db = ctx.require("db")
+        db.aborted = True  # what a rejected uuid cast does to the transaction
+        raise RuntimeError("invalid input syntax for type uuid")
+
+    @reg.tool(name="good_read", description="x", parameters=OBJ_SCHEMA)
+    async def _good_read(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+        return ToolOutput(data={"rows": await ctx.require("db").query()})
+
+    ctx = ToolContext(actor_id="u-1", role="hr_manager", resources={"db": session})
+    failed = await reg.invoke("bad_cast", {}, ctx, call_id="c1")
+    survivor = await reg.invoke("good_read", {}, ctx, call_id="c2")
+
+    assert failed.ok is False
+    assert session.rollbacks == 1
+    assert survivor.ok is True
+    assert "rows" in survivor.content
+
+
+async def test_a_resource_without_a_transaction_is_left_alone() -> None:
+    """``resources`` is untyped — settings and http clients have no rollback."""
+    reg = ToolRegistry()
+
+    @reg.tool(name="boom2", description="x", parameters=OBJ_SCHEMA)
+    async def _boom2(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+        raise RuntimeError("nope")
+
+    ctx = ToolContext(actor_id="u-1", role="hr_manager", resources={"settings": object()})
+    result = await reg.invoke("boom2", {}, ctx, call_id="c1")
+    assert result.ok is False
+    assert result.error == "RuntimeError"
+
+
 async def test_oversized_tool_output_is_truncated_with_guidance() -> None:
     reg = ToolRegistry()
 

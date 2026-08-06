@@ -49,9 +49,10 @@ MAX_TOOL_CONTENT_CHARS: int = 12_000
 class ToolContext:
     """Caller identity and scope, injected by the router — never by the model.
 
-    ``company_id`` is None only for ``platform_owner``, who is genuinely
-    cross-company by design (see the admin hierarchy in CLAUDE.md). Every other
-    role always carries one, and handlers must filter on it.
+    ``company_id`` is None only for the platform roles — ``platform_owner`` and
+    the ``admin`` analytics console — which are genuinely cross-company by
+    design (see the admin hierarchy in CLAUDE.md) and are handed aggregate-only
+    tools. Every tenant role always carries one, and handlers must filter on it.
     """
 
     actor_id: str
@@ -86,6 +87,35 @@ ToolHandler = Callable[[dict[str, Any], ToolContext], Awaitable[ToolOutput]]
 
 class ToolPermissionError(Exception):
     """Raised when a caller's role may not use a tool."""
+
+
+async def _reset_transactional_resources(ctx: ToolContext) -> None:
+    """Undo a failed handler's half-finished work on shared resources.
+
+    A run makes up to ``max_tool_calls`` calls against ONE request-scoped
+    database session. PostgreSQL aborts the whole transaction on any error — a
+    model passing a candidate's name where a UUID cast is expected is enough —
+    and every later tool on that session then fails with "current transaction
+    is aborted" regardless of how good its own arguments were. From the user's
+    side that reads as the copilot losing the ability to answer anything.
+
+    Duck-typed on purpose: ``resources`` is deliberately untyped so shared/ does
+    not import SQLAlchemy, and a service is free to inject a resource that has
+    no transaction at all.
+    """
+    for key, resource in ctx.resources.items():
+        rollback = getattr(resource, "rollback", None)
+        if rollback is None:
+            continue
+        try:
+            await rollback()
+        except Exception as exc:  # noqa: BLE001 — a failed rollback is not the
+            # caller's problem; the tool error it follows is the real finding.
+            log.warning(
+                "agents.tool.rollback_failed",
+                resource=key,
+                error=type(exc).__name__,
+            )
 
 
 class ToolRegistry:
@@ -152,6 +182,10 @@ class ToolRegistry:
         approach or telling the user plainly. Letting the exception escape would
         abort the whole run over one bad argument, which from the user's side
         looks like the copilot crashing on a reasonable question.
+
+        Surviving the failure is not enough on its own: the next tool has to be
+        able to run too, so a failed handler's transactional resources are
+        rolled back before the result goes back to the model.
         """
         started = time.monotonic()
 
@@ -186,6 +220,7 @@ class ToolRegistry:
         try:
             output = await handler(arguments or {}, ctx)
         except Exception as exc:  # noqa: BLE001 — see docstring
+            await _reset_transactional_resources(ctx)
             log.warning(
                 "agents.tool.failed",
                 tool=name,

@@ -560,8 +560,9 @@ async def _get_role_model(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
 @registry.tool(
     name="get_platform_overview",
     description=(
-        "Platform-wide totals: companies, users by role, interview sessions in "
-        "the last 30 days, and pending DPDP erasure requests. Aggregates only — "
+        "Platform-wide totals: companies, a headcount per role (a user holding "
+        "two roles is counted under both, so these do not sum to the user "
+        "total), and interview sessions in the last 30 days. Aggregates only — "
         "no individual candidate data."
     ),
     parameters={"type": "object", "properties": {}},
@@ -586,12 +587,20 @@ async def _get_platform_overview(args: dict[str, Any], ctx: ToolContext) -> Tool
         )
     ).all()
 
+    # Roles are a many-to-many through user_roles; there is no users.role
+    # column. A user holding two roles is therefore counted under both, which
+    # is why the tool description calls this a role headcount rather than a
+    # partition of the user base.
     by_role = (
         await db.execute(
             text(
                 """
-                SELECT role, COUNT(*) AS n FROM users
-                WHERE deleted_at IS NULL GROUP BY role ORDER BY n DESC
+                SELECT r.name AS role, COUNT(DISTINCT u.id) AS n
+                FROM users u
+                JOIN user_roles ur ON ur.user_id = u.id
+                JOIN roles r ON r.id = ur.role_id
+                WHERE u.deleted_at IS NULL
+                GROUP BY r.name ORDER BY n DESC
                 """
             )
         )

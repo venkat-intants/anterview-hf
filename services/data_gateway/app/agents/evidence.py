@@ -19,10 +19,17 @@ brief.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
-from shared.agents import CandidateEvidence, Citation, SignalEvidence
+from shared.agents import (
+    CandidateEvidence,
+    Citation,
+    PanelVerdict,
+    SignalEvidence,
+    detect_injection,
+)
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,9 +44,23 @@ class ApplicantNotFoundError(Exception):
     """The applicant does not exist in the caller's company."""
 
 
+@dataclass
+class EvidenceBundle:
+    """Panel evidence plus findings the panel schema has no field for.
+
+    ``document_warnings`` carries injection markers found in candidate-authored
+    text. The panel's ``SignalEvidence`` has nowhere to put them, so they travel
+    alongside and the router folds them into the verdict — see
+    ``apply_document_warnings``.
+    """
+
+    evidence: CandidateEvidence
+    document_warnings: list[str] = field(default_factory=list)
+
+
 async def gather_candidate_evidence(
     db: AsyncSession, *, company_id: str, applicant_id: str
-) -> CandidateEvidence:
+) -> EvidenceBundle:
     """Build ``CandidateEvidence`` for one applicant.
 
     Raises ``ApplicantNotFoundError`` when the id is unknown OR belongs to
@@ -71,13 +92,56 @@ async def gather_candidate_evidence(
         await _interview_signal(db, company_id, applicant_id, applicant.full_name),
     ]
 
-    return CandidateEvidence(
-        applicant_id=str(applicant.id),
-        applicant_label=applicant.full_name,
-        job_title=applicant.target_job_title,
-        signals=signals,
-        uncovered_competencies=_uncovered_competencies(signals),
+    # A resume is candidate-authored. The HR copilot already reports steering
+    # text found in this same column (get_applicant_detail), and the panel must
+    # not be the one path where the same person is told nothing about the same
+    # document.
+    markers = detect_injection(applicant.resume_text or "")
+    if markers:
+        log.warning(
+            "agents.panel.injection_detected",
+            applicant_id=applicant_id,
+            markers=len(markers),
+        )
+
+    return EvidenceBundle(
+        evidence=CandidateEvidence(
+            applicant_id=str(applicant.id),
+            applicant_label=applicant.full_name,
+            job_title=applicant.target_job_title,
+            signals=signals,
+            uncovered_competencies=_uncovered_competencies(signals),
+        ),
+        document_warnings=[_document_warning("resume", markers)] if markers else [],
     )
+
+
+def _document_warning(source: str, markers: list[str]) -> str:
+    return (
+        f"The candidate's {source} contains text that attempts to instruct an "
+        f"automated reviewer (markers: {', '.join(markers)}). It was not acted "
+        "on, but the panel's narrative read this document — treat its wording "
+        "with that in mind."
+    )
+
+
+def apply_document_warnings(verdict: PanelVerdict, warnings: list[str]) -> None:
+    """Put document warnings in front of the human, deterministically.
+
+    Prepended to the resume specialist's ``concerns`` rather than left to the
+    model: the specialist read the steering text as evidence, so asking it to
+    also report the steering text is exactly the thing an injection is trying to
+    prevent. The UI renders the first two concerns per signal, so leading the
+    list guarantees the finding is visible. Falls back to ``coverage_gaps`` when
+    there is no resume assessment to attach to.
+    """
+    if not warnings:
+        return
+    resume = next((s for s in verdict.signals if s.signal == "resume"), None)
+    if resume is None:
+        verdict.coverage_gaps.extend(warnings)
+        return
+    resume.concerns = [*warnings, *resume.concerns]
 
 
 def _resume_signal(row: Any) -> SignalEvidence:

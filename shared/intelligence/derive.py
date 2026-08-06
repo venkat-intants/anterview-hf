@@ -104,6 +104,7 @@ def compute_profile_id(
     jd_text: str = "",
     required_skills: list[str] | None = None,
     department: str = "",
+    company_name: str = "",
     seniority: str = "mid",
     interview_type: str = "screening",
 ) -> str:
@@ -116,6 +117,11 @@ def compute_profile_id(
 
     Skills are sorted before hashing — the same skill set in a different order
     is the same role, and treating it otherwise would halve the hit rate.
+
+    Every derivation input must appear here, ``company_name`` included: it is
+    fed to the LLM prompt, and the profile cache is process-global and has no
+    tenant prefix. Omitting it served one company's LLM-derived rubric — company
+    details and all — to a different company posting the same job title.
     """
     payload = {
         "v": SCHEMA_VERSION,
@@ -123,6 +129,7 @@ def compute_profile_id(
         "jd": _normalise_for_hash(jd_text)[:4000],
         "skills": sorted(_normalise_for_hash(s) for s in (required_skills or []) if s.strip()),
         "dept": _normalise_for_hash(department),
+        "company": _normalise_for_hash(company_name),
         "level": _normalise_for_hash(seniority),
         "type": _normalise_for_hash(interview_type),
     }
@@ -178,6 +185,7 @@ async def derive_role_profile(
         jd_text=jd_text,
         required_skills=required_skills,
         department=department,
+        company_name=company_name,
         seniority=seniority,
         interview_type=interview_type,
     )

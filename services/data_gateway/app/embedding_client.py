@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import httpx
 import structlog
-from shared.auth.jwt import issue_access_token
+from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
 
 from app.config import settings
 
@@ -52,6 +52,13 @@ def _internal_token(acting_user_id: str) -> str:
         issuer=settings.jwt_issuer,
         audience=settings.jwt_audience,
         extra_claims={"act_sub": acting_user_id},
+        # 60s, not the 15-minute user default. A service token's `sub` is a
+        # service name, so logout_all (which only ever writes
+        # auth_epoch:<user-uuid>) cannot revoke it — its lifetime is its only
+        # containment. interview_core's minter always used 60s; these three
+        # silently used 900s because that was issue_access_token's default and
+        # there was no parameter to say otherwise.
+        ttl_seconds=SERVICE_TOKEN_TTL_SECONDS,
     )
 
 

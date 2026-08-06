@@ -24,16 +24,12 @@ import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
-from shared.auth.jwt import verify_access_token
+from shared.auth.jwt import is_token_revoked, verify_access_token
 
 from app.config import settings
 from app.redis_client import get_redis
 
 log = structlog.get_logger(__name__)
-
-# Redis key prefix for per-user token revocation epochs.
-# Kept in sync with shared.auth.local.USER_TOKEN_EPOCH_PREFIX — do not change.
-_TOKEN_EPOCH_PREFIX = "auth_epoch:"
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -42,20 +38,6 @@ _UNAUTHORIZED = HTTPException(
     detail="Authorization header required",
     headers={"WWW-Authenticate": "Bearer"},
 )
-
-
-async def _token_epoch(user_id: str) -> int | None:
-    """Return the user's revocation epoch (Unix seconds), or None.
-
-    Fails OPEN: any Redis error returns None so a cache hiccup never locks
-    admins out. Set by ``AuthProvider.logout_all`` in data_gateway.
-    """
-    try:
-        raw = await get_redis().get(_TOKEN_EPOCH_PREFIX + user_id)
-        return int(raw) if raw is not None else None
-    except Exception as exc:  # noqa: BLE001 — fail open on any Redis/parse error
-        log.warning("admin_auth.token_epoch.check_skipped", error_type=type(exc).__name__)
-        return None
 
 
 async def verify_admin_role(
@@ -92,17 +74,10 @@ async def verify_admin_role(
         )
 
     # Revocation check: reject tokens issued before a "log out all devices".
-    epoch = await _token_epoch(sub)
-    if epoch is not None:
-        iat = payload.get("iat")
-        # `<=` and a None-check: both are whole-second timestamps and
-        # logout_all sets epoch = now(), so a token minted in the same
-        # second as the revocation has iat == epoch and survived a strict
-        # `<` for its full TTL. A missing iat is treated as revoked too —
-        # otherwise the claim the kill switch depends on is optional.
-        if iat is None or int(iat) <= epoch:
-            log.info("admin_auth.token_revoked", user_id=sub)
-            raise _UNAUTHORIZED
+    # Shared implementation — see shared/auth/jwt.py.
+    if await is_token_revoked(get_redis, sub, payload.get("iat")):
+        log.info("admin_auth.token_revoked", user_id=sub)
+        raise _UNAUTHORIZED
 
     roles: list[str] = payload.get("roles") or []
     if "admin" not in roles:

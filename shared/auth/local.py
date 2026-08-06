@@ -63,6 +63,9 @@ from shared.auth.jwt import (
     hash_refresh_token,
     issue_access_token,
 )
+from shared.auth.jwt import (
+    USER_TOKEN_EPOCH_PREFIX as _USER_TOKEN_EPOCH_PREFIX,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -78,8 +81,11 @@ _SESSIONS_PREFIX = "user_sessions:"
 # predates this value is treated as revoked by get_current_user. Set by
 # ``logout_all`` (and password reset) to invalidate every outstanding access token
 # for the user *immediately*, rather than waiting out the 15-minute TTL.
-# Imported by data_gateway's get_current_user — keep the name stable.
-USER_TOKEN_EPOCH_PREFIX = "auth_epoch:"
+# Canonical definition moved to shared/auth/jwt.py so services that do NOT ship
+# bcrypt can import it — this module imports bcrypt at load time, which is why
+# four verifiers used to re-declare the literal instead. Re-exported here so
+# existing importers keep working.
+USER_TOKEN_EPOCH_PREFIX = _USER_TOKEN_EPOCH_PREFIX
 
 # Separator used inside the Redis refresh-token value: "<user_id>:<created_at_unix>"
 _RT_VALUE_SEP = ":"

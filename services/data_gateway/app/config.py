@@ -3,7 +3,7 @@ from typing import Literal
 import structlog
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from shared.security import assert_strong_secrets
+from shared.security import assert_strong_secrets, normalise_app_env
 
 log = structlog.get_logger(__name__)
 
@@ -15,6 +15,14 @@ class Settings(BaseSettings):
 
     service_name: str = "data_gateway"
     app_env: str = "development"
+
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def _normalise_app_env(cls, v: object) -> str:
+        """Lowercase/strip APP_ENV so `== "production"` gates cannot be bypassed
+        by `APP_ENV=Production`. Shared implementation — see shared/security.py
+        for why this must exist in every service, not just interview_core."""
+        return normalise_app_env(v)
     log_level: str = "INFO"
     host: str = "0.0.0.0"
     port: int = 8002

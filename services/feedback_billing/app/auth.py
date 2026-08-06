@@ -29,15 +29,21 @@ import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
-from shared.auth.jwt import verify_access_token
+from shared.auth.jwt import (
+    USER_TOKEN_EPOCH_PREFIX,
+    is_token_revoked,
+    verify_access_token,
+)
 
 from app.config import settings as _app_settings
 from app.redis_client import get_redis
 
 log = structlog.get_logger(__name__)
 
-# Kept in sync with shared.auth.local.USER_TOKEN_EPOCH_PREFIX — do not change.
-TOKEN_EPOCH_PREFIX = "auth_epoch:"
+# Re-exported from the canonical definition so the six copies of this literal
+# that used to be "kept in sync" by comment are now actually one value. Name
+# kept for the existing importers in this service.
+TOKEN_EPOCH_PREFIX = USER_TOKEN_EPOCH_PREFIX
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -56,23 +62,15 @@ async def token_epoch_check(user_id: str, iat: Any, *, source: str) -> None:
     revocation accelerator, not the primary auth control, and tokens still
     expire on their own in 15 minutes.
     """
-    try:
-        raw = await get_redis().get(TOKEN_EPOCH_PREFIX + user_id)
-        # `<=` and a None-check: both are whole-second timestamps and
-        # logout_all sets epoch = now(), so a token minted in the same
-        # second as the revocation has iat == epoch and survived a strict
-        # `<` for its full TTL. A missing iat is treated as revoked too —
-        # otherwise the claim the kill switch depends on is optional.
-        if raw is not None and (iat is None or int(iat) <= int(raw)):
-            log.info(f"{source}.auth.token_revoked", user_id=user_id)
-            raise UNAUTHORIZED
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 — fail open on Redis/parse errors
-        log.warning(
-            f"{source}.auth.epoch_check_skipped",
-            error_type=type(exc).__name__,
-        )
+    # Comparison and fail-open live in shared/auth/jwt.py. The previous local
+    # version wrapped the whole comparison in `try`, which meant it also needed
+    # an `except HTTPException: raise` guard — without that, the 401 it had just
+    # raised was swallowed by its own bare `except` and the request proceeded.
+    # The shared helper returns a bool and raises nothing, so that hazard is
+    # gone rather than replicated.
+    if await is_token_revoked(get_redis, user_id, iat):
+        log.info(f"{source}.auth.token_revoked", user_id=user_id)
+        raise UNAUTHORIZED
 
 
 async def require_jwt(

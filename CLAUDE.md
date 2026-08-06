@@ -139,7 +139,14 @@ AWS Mumbai) is the same code, env-swappable.
 
 ## Coding Conventions
 
-- **Python:** PEP 8, type hints, async/await for all I/O, ruff + mypy strict
+- **Python:** PEP 8, type hints, async/await for all I/O, ruff (pinned 0.7.4) +
+  mypy (pinned 1.20.2). **mypy is NOT strict** — the root `mypy.ini` that CI
+  uses is deliberately non-strict, and its header explains why (turning strict on
+  across four services at once yields hundreds of errors; the honest options are
+  then "block every PR" or "switch the step off"). The per-service
+  `[tool.mypy] strict = true` blocks in each `pyproject.toml` are never loaded,
+  because CI must run mypy from the repo root. Tightening per-service is tracked
+  work. This line previously said "mypy strict", which was aspirational.
 - **TypeScript:** strict mode, no `any`, eslint + prettier
 - **Tests:** pytest (backend), Vitest + RTL (frontend), Playwright (E2E)
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `chore:`, `refactor:`, `test:`, `docs:`)

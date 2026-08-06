@@ -37,11 +37,10 @@ import os
 import uuid as _uuid_mod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from jose import jwt as jose_jwt
 from livekit import api as lk_api
 from livekit import rtc
 from livekit.agents import Agent, AgentSession, JobContext, JobProcess, WorkerOptions, cli
@@ -57,6 +56,7 @@ from livekit.agents.voice.room_io import RoomOptions
 # replacement ourselves. Revisit on any livekit-agents upgrade.
 from livekit.agents.voice.room_io._output import _ParticipantAudioOutput
 from livekit.plugins import openai, sarvam, silero, simli
+from shared.auth.jwt import issue_access_token
 
 # livekit-plugins-tavus is an optional dependency: the worker must still load
 # and run under Simli even when the tavus package is absent.  The module-level
@@ -875,17 +875,22 @@ def _mint_service_jwt() -> str:
       - roles: ["service"]
     Algorithm: HS256 (settings.jwt_algorithm), secret: settings.jwt_secret.
     """
-    now = datetime.now(tz=UTC)
-    claims: dict[str, Any] = {
-        "sub": "interview_core",
-        "roles": ["service"],
-        "iat": now,
-        "exp": now + timedelta(seconds=_SERVICE_JWT_TTL_SECONDS),
-        "iss": settings.jwt_issuer,
-        "aud": settings.jwt_audience,
-        "jti": _uuid_mod.uuid4().hex,
-    }
-    return str(jose_jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm))
+    # Delegates to the canonical minter rather than building the claims dict
+    # here. A second implementation of token minting is the same drift risk that
+    # produced the missing revocation check in feedback_billing: this function
+    # had to stay manually in step with what verify_access_token requires, and
+    # nothing enforced that. The TTL is unchanged (60s) — issue_access_token
+    # gained a ttl_seconds parameter for exactly this caller, because swapping to
+    # its 900s default would have multiplied this credential's lifetime by 15.
+    return issue_access_token(
+        user_id="interview_core",
+        roles=["service"],
+        secret=settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+        issuer=settings.jwt_issuer,
+        audience=settings.jwt_audience,
+        ttl_seconds=_SERVICE_JWT_TTL_SECONDS,
+    )
 
 
 # ---------------------------------------------------------------------------

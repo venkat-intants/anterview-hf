@@ -13,16 +13,12 @@ import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
-from shared.auth.jwt import verify_access_token
+from shared.auth.jwt import is_token_revoked, verify_access_token
 
 from app.config import settings
 from app.redis_client import get_redis
 
 log = structlog.get_logger(__name__)
-
-# Redis key prefix for per-user token revocation epochs.
-# Kept in sync with shared.auth.local.USER_TOKEN_EPOCH_PREFIX — do not change.
-_TOKEN_EPOCH_PREFIX = "auth_epoch:"
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -31,20 +27,6 @@ _UNAUTHORIZED = HTTPException(
     detail="Invalid or missing token",
     headers={"WWW-Authenticate": "Bearer"},
 )
-
-
-async def _token_epoch(user_id: str) -> int | None:
-    """Return the user's revocation epoch (Unix seconds), or None.
-
-    Fails OPEN: any Redis error returns None so a cache hiccup never locks
-    users out. Set by ``AuthProvider.logout_all`` in data_gateway.
-    """
-    try:
-        raw = await get_redis().get(_TOKEN_EPOCH_PREFIX + user_id)
-        return int(raw) if raw is not None else None
-    except Exception as exc:  # noqa: BLE001 — fail open on any Redis/parse error
-        log.warning("auth.token_epoch.check_skipped", error_type=type(exc).__name__)
-        return None
 
 
 async def get_current_user(
@@ -80,18 +62,14 @@ async def get_current_user(
         raise _UNAUTHORIZED
 
     # Revocation check: reject tokens issued before a "log out all devices".
-    epoch = await _token_epoch(user_id)
-    if epoch is not None:
-        # `<=`, not `<`. Both are whole-second Unix timestamps, and logout_all
-        # sets epoch = now(). An access token minted in the SAME second as the
-        # revocation has iat == epoch, passed a strict `<`, and stayed valid for
-        # its full 15-minute TTL — right after the user asked to be logged out
-        # everywhere. shared/auth/local.py's refresh path already used `<=`;
-        # this is the access path catching up.
-        iat = payload.get("iat")
-        if iat is None or int(iat) <= epoch:
-            log.info("auth.token_revoked", user_id=user_id)
-            raise _UNAUTHORIZED
+    # Shared implementation (shared/auth/jwt.py) — this used to be a local copy,
+    # and a sibling copy in feedback_billing drifted into shipping without it.
+    # The RETURN TYPE stays dict: get_guest_bound_user reads `session_id` off
+    # this payload, and shared.auth.base.User has no such field, so returning a
+    # User here would silently disable the guest session binding from 40df357.
+    if await is_token_revoked(get_redis, user_id, payload.get("iat")):
+        log.info("auth.token_revoked", user_id=user_id)
+        raise _UNAUTHORIZED
 
     return payload
 

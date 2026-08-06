@@ -1,6 +1,10 @@
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from shared.security import assert_strong_secrets
+from shared.security import (
+    assert_strong_secrets,
+    normalise_app_env,
+)
+from shared.security import validate_cors_origins as _validate_cors_origins
 
 
 class Settings(BaseSettings):
@@ -18,10 +22,12 @@ class Settings(BaseSettings):
         """Lowercase + strip ``app_env`` so security gates that match
         ``== "production"`` don't silently bypass on ``APP_ENV=Production``
         or ``APP_ENV=PROD``. S4-007 security-auditor follow-up question #1.
+
+        Body moved to shared/security.py: this guard used to live ONLY here,
+        so the three services that lacked it were the ones a capitalised
+        APP_ENV would have walked straight past.
         """
-        if not isinstance(v, str):
-            return str(v)
-        return v.strip().lower()
+        return normalise_app_env(v)
     host: str = "0.0.0.0"
     port: int = 8001
 
@@ -213,22 +219,8 @@ class Settings(BaseSettings):
     @field_validator("cors_allowed_origins")
     @classmethod
     def validate_cors_origins(cls, v: str) -> str:
-        """Reject wildcard origins when allow_credentials=True.
-
-        RFC 6454 + CORS spec forbid combining credentials with '*'.
-        Also validates each origin uses http:// or https:// scheme.
-        """
-        origins = [o.strip() for o in v.split(",") if o.strip()]
-        for origin in origins:
-            if origin in ("*", "null"):
-                raise ValueError(
-                    "CORS allow_credentials=True is incompatible with wildcard '*' origin"
-                )
-            if not (origin.startswith("http://") or origin.startswith("https://")):
-                raise ValueError(
-                    f"CORS origin {origin!r} must start with http:// or https://"
-                )
-        return v
+        """Reject wildcard / non-http(s) origins (shared/security.py)."""
+        return _validate_cors_origins(v)
 
     @model_validator(mode="after")
     def validate_secret_strength(self) -> "Settings":

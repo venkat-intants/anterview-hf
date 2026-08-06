@@ -125,7 +125,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio
+          pip install pytest pytest-asyncio pytest-cov
 
       - name: Lint
         working-directory: services/${{ matrix.service }}
@@ -169,10 +169,91 @@ jobs:
         # directory ignore; the other three do not.
         run: |
           if [ "${{ matrix.service }}" = "data_gateway" ]; then
-            python -m pytest tests/ -q -m "not integration" --ignore=tests/integration
+            python -m pytest tests/ -q -m "not integration" --ignore=tests/integration \
+              --cov=app --cov-report=term-missing --cov-report=xml
           else
-            python -m pytest tests/ -q -m "not integration"
+            python -m pytest tests/ -q -m "not integration" \
+              --cov=app --cov-report=term-missing --cov-report=xml
           fi
+
+      - name: Coverage
+        working-directory: services/${{ matrix.service }}
+        # docs/LLD.md §15 documents "80% line coverage on services; 90% on
+        # critical paths" and nothing measured it, so the number was a claim
+        # rather than a gate.
+        #
+        # Each floor is that service's MEASURED coverage minus a 4-point margin
+        # for CI-vs-local variance, not a guess and not the documented target:
+        #
+        #   data_gateway     59%  ->  55
+        #   interview_core   72%  ->  68
+        #   feedback_billing 87%  ->  83   (already above the documented 80%)
+        #   admin_ops        82%  ->  78   (already above the documented 80%)
+        #
+        # A ratchet, deliberately. Setting every floor to 80 today would turn the
+        # build red on arrival for two services, and the honest options then are
+        # "block every PR" or "switch the gate off" — both end with no gate. This
+        # one fails the moment coverage DROPS, which is the property that
+        # actually protects the suite, and the floors get raised as the numbers
+        # climb. docs/LLD.md now records the enforced floor next to the target so
+        # the two cannot silently diverge again.
+        run: |
+          case "${{ matrix.service }}" in
+            data_gateway)     FLOOR=55 ;;
+            interview_core)   FLOOR=68 ;;
+            feedback_billing) FLOOR=83 ;;
+            admin_ops)        FLOOR=78 ;;
+          esac
+          echo "Enforcing >= ${FLOOR}% line coverage for ${{ matrix.service }}"
+          python -m coverage report --fail-under="${FLOOR}"
+
+  migrations:
+    name: migrations (single linear head)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install alembic
+        run: |
+          python -m pip install --upgrade pip
+          pip install "alembic==1.16.6" "sqlalchemy[asyncio]==2.0.44" pgvector
+
+      - name: Assert a single linear migration head
+        working-directory: services/data_gateway
+        # CONTRIBUTING.md:16 has always said "CI asserts a single linear
+        # migration head; a branched or duplicate-id migration fails the build",
+        # and alembic/env.py cites this gate as the REASON a local check was
+        # removed. Neither was true — no such step existed. Two branched
+        # migrations would have merged green and then failed at deploy time,
+        # which is the worst place to find out.
+        #
+        # DATABASE_URL is required for Settings to import but is never
+        # connected to: `alembic heads` reads the versions/ directory only.
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+          EXAM_LINK_SECRET: ci-only-exam-secret-0123456789abcdef
+          INTERVIEW_LINK_SECRET: ci-only-interview-secret-0123456789ab
+          CONSENT_IP_SALT: ci-only-salt-0123456789abcdef
+        run: |
+          set -euo pipefail
+          heads="$(alembic heads 2>/dev/null | grep -c '(head)' || true)"
+          echo "alembic heads output:"
+          alembic heads
+          if [ "$heads" -ne 1 ]; then
+            echo "::error::Expected exactly 1 migration head, found ${heads}."
+            echo "Two migrations share a down_revision — the history has branched."
+            echo "Fix: repoint the newer migration's down_revision at the current"
+            echo "head, or add a merge revision (alembic merge -m ... <heads>)."
+            exit 1
+          fi
+          echo "OK: single linear head."
 
   web:
     name: web (typecheck + lint + test + build)
@@ -321,8 +402,34 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: intants-space:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Scan the image for CVEs
+        # .trivyignore is 1.5 KB of carefully reasoned accepted-risk entries and
+        # NOTHING consumed it — no Trivy step existed. A maintained ignore list
+        # for a scanner that never runs reads as coverage that is not there.
+        #
+        # Scoped honestly: Python dependency CVEs are already gated by pip-audit
+        # in the `security` job. This closes the OS/base-image half, which
+        # nothing checked.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: intants-space:ci
+          format: table
+          # HIGH/CRITICAL only, and only where a fix exists: an unfixable CVE in
+          # a base image is not something a PR author can act on, so failing the
+          # build on it just teaches people to ignore the job.
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '1'
+        env:
+          # GHCR mirror of the vulnerability DB; avoids the Docker Hub rate
+          # limit that makes this step flaky on shared runners.
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
 
   ci-ok:
     # The single required status. sync-to-space.yml keys its workflow_run gate
@@ -331,18 +438,20 @@ jobs:
     # check to require.
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [shared, services, web, security, docker]
+    needs: [shared, services, migrations, web, security, docker]
     if: always()
     steps:
       - name: Verify every job succeeded
         run: |
           echo "shared=${{ needs.shared.result }}"
           echo "services=${{ needs.services.result }}"
+          echo "migrations=${{ needs.migrations.result }}"
           echo "web=${{ needs.web.result }}"
           echo "security=${{ needs.security.result }}"
           echo "docker=${{ needs.docker.result }}"
           if [ "${{ needs.shared.result }}" != "success" ] \
             || [ "${{ needs.services.result }}" != "success" ] \
+            || [ "${{ needs.migrations.result }}" != "success" ] \
             || [ "${{ needs.web.result }}" != "success" ] \
             || [ "${{ needs.security.result }}" != "success" ] \
             || [ "${{ needs.docker.result }}" != "success" ]; then

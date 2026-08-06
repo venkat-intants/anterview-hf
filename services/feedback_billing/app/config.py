@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from shared.security import assert_strong_secrets
+from shared.security import assert_strong_secrets, normalise_app_env, validate_cors_origins
 
 
 class Settings(BaseSettings):
@@ -12,6 +12,14 @@ class Settings(BaseSettings):
 
     service_name: str = "feedback_billing"
     app_env: str = "development"
+
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def _normalise_app_env(cls, v: object) -> str:
+        """Lowercase/strip APP_ENV so `== "production"` gates cannot be bypassed
+        by `APP_ENV=Production`. Shared implementation — see shared/security.py
+        for why this must exist in every service, not just interview_core."""
+        return normalise_app_env(v)
     log_level: str = "INFO"
     host: str = "0.0.0.0"
     port: int = 8003
@@ -44,6 +52,12 @@ class Settings(BaseSettings):
 
     sentry_dsn: str = ""
     cors_allowed_origins: str = "http://localhost:5173"
+
+    @field_validator("cors_allowed_origins")
+    @classmethod
+    def _validate_cors_origins(cls, v: str) -> str:
+        """Reject wildcard / non-http(s) origins (shared/security.py)."""
+        return validate_cors_origins(v)
 
     # S3 / Cloudflare R2 settings for scorecard PDF storage
     s3_endpoint_url: str = ""

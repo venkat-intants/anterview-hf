@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, MutableMapping
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
-from typing import Any
 
 import structlog
 from fastapi import Depends, FastAPI
@@ -19,6 +18,7 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
+from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
 from app.admin_auth import verify_admin_role
@@ -37,16 +37,11 @@ from app.redis_client import close_redis, init_redis
 # Mirrors the same processor in data_gateway/app/main.py and
 # interview_core/app/main.py — MUST stay in sync.
 # ---------------------------------------------------------------------------
-_PII_FIELDS = frozenset({"email", "password", "phone", "full_name"})
-
-
-def _redact_pii_processor(
-    logger: Any, method: str, event_dict: MutableMapping[str, Any]
-) -> MutableMapping[str, Any]:
-    """Remove PII fields from structlog event dict before rendering."""
-    for field in _PII_FIELDS:
-        event_dict.pop(field, None)
-    return event_dict
+# Canonical set lives in shared/observability/pii.py so all four services
+# redact the same fields. They previously did not: this service redacted four
+# names while data_gateway redacted eleven, and the comment above claimed parity.
+_PII_FIELDS = PII_FIELDS
+_redact_pii_processor = redact_pii_processor
 
 
 structlog.configure(

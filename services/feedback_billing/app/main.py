@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator, MutableMapping
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
+from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
 from app.config import settings
@@ -29,16 +29,11 @@ from app.routers.scorecard_list import router as scorecard_list_router
 # Placed just before JSONRenderer in the processor chain — mirrors the same
 # processor used in data_gateway and interview_core.
 # ---------------------------------------------------------------------------
-_PII_FIELDS = frozenset({"email", "password", "phone", "full_name"})
-
-
-def _redact_pii_processor(
-    logger: Any, method: str, event_dict: MutableMapping[str, Any]
-) -> MutableMapping[str, Any]:
-    """Remove PII fields from structlog event dict before rendering."""
-    for field in _PII_FIELDS:
-        event_dict.pop(field, None)
-    return event_dict
+# Canonical set lives in shared/observability/pii.py so all four services
+# redact the same fields. They previously did not: this service redacted four
+# names while data_gateway redacted eleven, and the comment above claimed parity.
+_PII_FIELDS = PII_FIELDS
+_redact_pii_processor = redact_pii_processor
 
 
 structlog.configure(

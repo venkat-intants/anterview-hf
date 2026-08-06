@@ -1,12 +1,32 @@
-"""Production secret-strength guard (fail-fast).
+"""Config-time security guards, shared by all four services (fail-fast).
 
-A misconfigured production deploy that boots with an empty, placeholder, or
-too-short secret is a critical footgun: a known ``JWT_SECRET`` lets anyone forge
-tokens, and a known ``CONSENT_IP_SALT`` defeats the DPDP IP-hashing. This helper
-lets each service refuse to start in production/staging when any of its critical
-secrets is weak — surfacing the mistake at boot instead of silently running
-insecure. It is a deliberate NO-OP in development/test so local runs and the test
-suite are unaffected.
+Three guards live here rather than in each service's ``config.py``:
+
+``normalise_app_env``
+    Lowercases and strips ``APP_ENV``. Every production gate in this codebase
+    tests ``== "production"``, so ``APP_ENV=Production`` silently bypassed all of
+    them — including ``assert_strong_secrets`` below, which means a one-character
+    typo was enough to boot production with a placeholder JWT secret and no
+    complaint.
+
+``assert_strong_secrets``
+    A known ``JWT_SECRET`` lets anyone forge tokens and a known
+    ``CONSENT_IP_SALT`` defeats DPDP IP-hashing. Refuse to start rather than run
+    insecure.
+
+``validate_cors_origins``
+    Wildcard origins are incompatible with ``allow_credentials=True``.
+
+All three are deliberate NO-OPs (or permissive) in development/test so local
+runs and the suite are unaffected.
+
+Why shared and not copied into each config: they WERE copied, and they drifted.
+``normalise_app_env`` existed only in ``interview_core`` and ``validate_cors_origins``
+only in ``interview_core`` and ``data_gateway``, so the two services that
+enforce neither were the ones a capitalised ``APP_ENV`` would have walked
+straight past. A guard that exists in some services is a guard you cannot reason
+about. ``shared/security.py`` is stdlib-only and already imported by all four
+configs, so there is no dependency cost to putting them here.
 """
 
 from __future__ import annotations
@@ -27,6 +47,42 @@ _PLACEHOLDER_MARKERS = (
 _MIN_SECRET_LEN = 32
 
 _ENFORCED_ENVS = ("production", "staging")
+
+
+def normalise_app_env(value: object) -> str:
+    """Lowercase + strip an ``APP_ENV`` value.
+
+    Use as a ``@field_validator("app_env", mode="before")`` in every service's
+    Settings. Security gates compare ``app_env == "production"``, so without this
+    ``APP_ENV=Production`` or ``APP_ENV=PROD`` bypasses every one of them while
+    looking correct in the deploy config.
+    """
+    if not isinstance(value, str):
+        return str(value)
+    return value.strip().lower()
+
+
+def validate_cors_origins(value: str) -> str:
+    """Reject wildcard and non-http(s) CORS origins.
+
+    RFC 6454 and the CORS spec forbid combining credentials with ``*``, and every
+    service in this platform sets ``allow_credentials=True``. Browsers enforce
+    this too — the practical effect of a wildcard here is that auth breaks in a
+    confusing way, so failing at boot with a clear message is strictly better.
+
+    Returns *value* unchanged when valid; raises ValueError otherwise.
+    """
+    origins = [o.strip() for o in value.split(",") if o.strip()]
+    for origin in origins:
+        if origin in ("*", "null"):
+            raise ValueError(
+                "CORS allow_credentials=True is incompatible with wildcard '*' origin"
+            )
+        if not origin.startswith(("http://", "https://")):
+            raise ValueError(
+                f"CORS origin {origin!r} must start with http:// or https://"
+            )
+    return value
 
 
 def is_weak_secret(value: str | None) -> bool:

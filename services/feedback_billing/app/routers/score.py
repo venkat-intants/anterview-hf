@@ -17,7 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from pydantic import BaseModel, Field, field_validator
-from shared.auth.jwt import verify_access_token
+from shared.auth.jwt import (
+    USER_TOKEN_EPOCH_PREFIX,
+    is_token_revoked,
+    verify_access_token,
+)
 from shared.intelligence import RoleProfile
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import IntegrityError
@@ -30,8 +34,8 @@ from app.redis_client import get_redis
 from app.scorer import ScoringError, score_session
 
 # Redis key prefix for per-user token revocation epochs.
-# Kept in sync with shared.auth.local.USER_TOKEN_EPOCH_PREFIX — do not change.
-_TOKEN_EPOCH_PREFIX = "auth_epoch:"
+# Canonical value — see shared/auth/jwt.py.
+_TOKEN_EPOCH_PREFIX = USER_TOKEN_EPOCH_PREFIX
 
 
 def _get_settings() -> Settings:
@@ -235,20 +239,17 @@ async def _token_epoch_check(user_id: str, iat: Any) -> None:
     Fails OPEN: any Redis error is logged and silently ignored so a cache
     hiccup never blocks legitimate internal service calls.
     """
-    try:
-        raw = await get_redis().get(_TOKEN_EPOCH_PREFIX + user_id)
-        # `<=` and a None-check: both are whole-second timestamps and
-        # logout_all sets epoch = now(), so a token minted in the same
-        # second as the revocation has iat == epoch and survived a strict
-        # `<` for its full TTL. A missing iat is treated as revoked too —
-        # otherwise the claim the kill switch depends on is optional.
-        if raw is not None and (iat is None or int(iat) <= int(raw)):
-            log.info("score.auth.token_revoked", user_id=user_id)
-            raise _UNAUTHORIZED
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 — fail open on Redis/parse errors
-        log.warning("score.auth.epoch_check_skipped", error_type=type(exc).__name__)
+    # Comparison and fail-open live in shared/auth/jwt.py; see auth.py for why
+    # the previous local shape needed an `except HTTPException: raise` guard.
+    #
+    # Note this check is a deliberate no-op for the service tokens that
+    # dominate this route: their `sub` is "interview_core"/"data_gateway", and
+    # logout_all only ever writes auth_epoch:<user-uuid>, so no epoch is ever
+    # set for those subjects. Kept anyway — it costs one Redis GET and it is the
+    # right shape if a human sub ever reaches here.
+    if await is_token_revoked(get_redis, user_id, iat):
+        log.info("score.auth.token_revoked", user_id=user_id)
+        raise _UNAUTHORIZED
 
 
 async def _require_service_jwt(

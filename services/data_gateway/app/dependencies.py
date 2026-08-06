@@ -10,8 +10,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from shared.auth.base import AuthProvider, User
-from shared.auth.jwt import verify_access_token
-from shared.auth.local import USER_TOKEN_EPOCH_PREFIX
+from shared.auth.jwt import is_token_revoked, verify_access_token
 from sqlalchemy import text as sa_text
 
 from app.config import settings
@@ -50,20 +49,6 @@ _UNAUTHORIZED = HTTPException(
 )
 
 
-async def _token_epoch(user_id: str) -> int | None:
-    """Return the user's revocation epoch (Unix seconds), or None.
-
-    Fails OPEN: any Redis error returns None (no revocation applied) so a cache
-    hiccup can never lock every user out. Set by ``AuthProvider.logout_all``.
-    """
-    try:
-        raw = await get_redis().get(USER_TOKEN_EPOCH_PREFIX + user_id)
-        return int(raw) if raw is not None else None
-    except Exception as exc:  # noqa: BLE001 — fail open on any Redis/parse error
-        log.warning("auth.token_epoch.check_skipped", error_type=type(exc).__name__)
-        return None
-
-
 async def get_current_user(
     credentials: Annotated[
         HTTPAuthorizationCredentials | None,
@@ -97,18 +82,10 @@ async def get_current_user(
         raise _UNAUTHORIZED
 
     # Revocation check: reject tokens issued before a "log out all devices".
-    epoch = await _token_epoch(user_id)
-    if epoch is not None:
-        # `<=`, not `<`. Both are whole-second Unix timestamps, and logout_all
-        # sets epoch = now(). An access token minted in the SAME second as the
-        # revocation has iat == epoch, passed a strict `<`, and stayed valid for
-        # its full 15-minute TTL — right after the user asked to be logged out
-        # everywhere. shared/auth/local.py's refresh path already used `<=`;
-        # this is the access path catching up.
-        iat = payload.get("iat")
-        if iat is None or int(iat) <= epoch:
-            log.info("auth.token_revoked", user_id=user_id)
-            raise _UNAUTHORIZED
+    # Shared implementation — see shared/auth/jwt.py.
+    if await is_token_revoked(get_redis, user_id, payload.get("iat")):
+        log.info("auth.token_revoked", user_id=user_id)
+        raise _UNAUTHORIZED
 
     return User(
         user_id=user_id,

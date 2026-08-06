@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import AsyncGenerator, MutableMapping
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -39,6 +39,7 @@ from prometheus_client import (
     generate_latest,
 )
 from shared.auth.factory import get_auth_provider
+from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
 from app.config import settings
@@ -76,38 +77,19 @@ from app.routers.sso_naipunyam import router as sso_naipunyam_router
 # This catches cases where a developer accidentally logs a raw field.
 # Placed just before JSONRenderer in the processor chain.
 #
-# Deny-list policy:
-#   Identity PII   — email, password, phone, full_name
-#   Voice / text   — transcript, answer, question, text_content
-#   Document PII   — resume_text, jd_text (may contain candidate bio / job details)
+# Deny-list policy (canonical set: shared/observability/pii.py):
+#   Identity PII   — email, password, phone, full_name, candidate_name/email
+#   Voice / text   — transcript, answer, question, text_content, turn_text
+#   Document PII   — resume_text, jd_text, target_jd_text
 #   Contact / geo  — address
+#   Credentials    — token, raw_token, access_token, refresh_token
+#
+# This service used to own the list. It is shared now because the other three
+# had drifted to a four-field subset while their comments claimed parity — and
+# the one missing "transcript" was interview_core.
 # ---------------------------------------------------------------------------
-_PII_FIELDS = frozenset({
-    # identity
-    "email",
-    "password",
-    "phone",
-    "full_name",
-    # voice / interview transcript content
-    "transcript",
-    "answer",
-    "question",
-    "text_content",
-    # document PII (resume / job description free-text)
-    "resume_text",
-    "jd_text",
-    # contact / geo
-    "address",
-})
-
-
-def _redact_pii_processor(
-    logger: Any, method: str, event_dict: MutableMapping[str, Any]
-) -> MutableMapping[str, Any]:
-    """Remove PII fields from structlog event dict before rendering."""
-    for field in _PII_FIELDS:
-        event_dict.pop(field, None)
-    return event_dict
+_PII_FIELDS = PII_FIELDS
+_redact_pii_processor = redact_pii_processor
 
 
 structlog.configure(

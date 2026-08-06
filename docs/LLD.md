@@ -2480,6 +2480,25 @@ flags:
 
 **Coverage target:** 80% line coverage on services; 90% on critical paths (auth, billing, scoring).
 
+**Coverage ENFORCED in CI (as of 2026-08-06).** The target above was documented
+for months while nothing measured coverage, so it was an aspiration presented as
+a standard. `.github/workflows/ci.yml` now runs `pytest --cov` per service and
+fails the build below a floor:
+
+| Service | Measured | Enforced floor | Meets the 80% target |
+|---|---|---|---|
+| `data_gateway` | 59% | 55 | No |
+| `interview_core` | 72% | 68 | No |
+| `feedback_billing` | 87% | 83 | Yes |
+| `admin_ops` | 82% | 78 | Yes |
+
+The floors are a **ratchet, not the target**: each is the measured number minus a
+4-point margin for CI-vs-local variance, so the gate fails when coverage *drops*.
+Setting all four to 80 today would fail two services on the first run, and the
+options then are "block every PR" or "switch the gate off" — both end with no
+gate. Raise each floor as its number climbs; the 80/90 target above stands as
+the destination.
+
 ---
 
 ## 16. OBSERVABILITY

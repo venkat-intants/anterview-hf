@@ -169,8 +169,23 @@
 	# ------------------------------------------------------------------
 	# Logging — structured JSON for Loki scraping
 	# ------------------------------------------------------------------
+	# Access log — see space/Caddyfile for the full reasoning. Caddy redacts only
+	# Cookie/Authorization; the exam and interview magic-link tokens ride in
+	# custom headers and would otherwise be written verbatim to a persistent
+	# sink, defeating the #fragment design that keeps them out of URLs.
 	log {
 		output stdout
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Exam-Token delete
+				request>headers>X-Interview-Token delete
+				request>uri query {
+					replace code REDACTED
+					replace state REDACTED
+					replace token REDACTED
+				}
+			}
+		}
 	}
 }

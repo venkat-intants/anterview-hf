@@ -58,7 +58,12 @@ async def token_epoch_check(user_id: str, iat: Any, *, source: str) -> None:
     """
     try:
         raw = await get_redis().get(TOKEN_EPOCH_PREFIX + user_id)
-        if raw is not None and iat is not None and int(iat) < int(raw):
+        # `<=` and a None-check: both are whole-second timestamps and
+        # logout_all sets epoch = now(), so a token minted in the same
+        # second as the revocation has iat == epoch and survived a strict
+        # `<` for its full TTL. A missing iat is treated as revoked too —
+        # otherwise the claim the kill switch depends on is optional.
+        if raw is not None and (iat is None or int(iat) <= int(raw)):
             log.info(f"{source}.auth.token_revoked", user_id=user_id)
             raise UNAUTHORIZED
     except HTTPException:

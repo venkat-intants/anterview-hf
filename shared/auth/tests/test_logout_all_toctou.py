@@ -702,3 +702,97 @@ class TestMintRefreshSession:
         raw = await mint_refresh_session(_FailingIndexRedis(), "user-fail-index", ttl_seconds=3600)  # type: ignore[arg-type]
         assert raw, "raw token must still be returned even when session index fails"
         assert len(store) == 1, "the refresh:hash key must still be written"
+
+
+# ---------------------------------------------------------------------------
+# Durability of the revocation epoch, and the residual mid-rotation race.
+# ---------------------------------------------------------------------------
+
+
+class TestEpochOutlivesRefreshToken:
+    @pytest.mark.asyncio
+    async def test_epoch_ttl_covers_the_refresh_token_lifetime(self) -> None:
+        """The epoch must outlive the REFRESH token, not the access token.
+
+        It was ACCESS_TOKEN_TTL_SECONDS + 60 (16 min) while refresh tokens live
+        jwt_refresh_expiry_days (7-30 days). The epoch is the only backstop for
+        a refresh key the best-effort session index missed — a dropped SADD, or
+        one added by a refresh() that raced logout_all. With a 16-minute epoch
+        such a token became valid again on minute 17 and then rotated freely
+        for the rest of its life, so "log out all devices" after a compromise
+        did not actually end the session.
+        """
+        redis = _make_redis()
+        provider = LocalAuthProvider(
+            db_session_factory=lambda: _empty_db_factory(),
+            redis_client=redis,
+            settings=_make_settings(jwt_refresh_expiry_days=7),
+        )
+
+        await provider.logout_all("user-ttl")
+
+        redis.setex.assert_awaited()
+        _key, ttl, _epoch = redis.setex.await_args.args
+        assert ttl >= 7 * 86400, (
+            f"epoch TTL {ttl}s expires before the 7-day refresh token it must "
+            "revoke — the token becomes usable again once the epoch lapses"
+        )
+
+
+class TestRefreshRevokedMidRotation:
+    @pytest.mark.asyncio
+    async def test_logout_all_landing_during_the_db_roundtrip_still_revokes(self) -> None:
+        """Close the residual TOCTOU window inside refresh().
+
+        refresh() checks the epoch, then makes a DB round-trip for liveness and
+        roles, then mints. A logout_all that lands entirely inside that window
+        writes the epoch after the check passed, and runs its SMEMBERS purge
+        before the new key is added — so the new session escapes both. The
+        second epoch read, against the PRESENTED token's created_at, is what
+        catches it.
+
+        Modelled by returning no epoch on the first read and the epoch on the
+        second, which is exactly what a concurrent logout_all produces.
+        """
+        user_id = "user-midrotation"
+        created_at = 1000
+        epoch = 1500
+
+        redis = AsyncMock()
+        redis.get = AsyncMock(
+            side_effect=[
+                f"{user_id}:{created_at}",  # 1: the presented refresh token
+                None,                        # 2: epoch check BEFORE the DB call
+                str(epoch),                  # 3: epoch re-check AFTER minting
+            ]
+        )
+        redis.setex = AsyncMock(return_value=True)
+        redis.delete = AsyncMock(return_value=1)
+        redis.sadd = AsyncMock(return_value=1)
+        redis.srem = AsyncMock(return_value=1)
+        redis.expire = AsyncMock(return_value=True)
+        redis.smembers = AsyncMock(return_value=set())
+
+        live_session = MagicMock()
+        live_session.execute = AsyncMock(
+            return_value=MagicMock(scalar=MagicMock(return_value=user_id))
+        )
+
+        async def _db_factory() -> AsyncGenerator[Any, None]:
+            yield live_session
+
+        provider = LocalAuthProvider(
+            db_session_factory=lambda: _db_factory(),
+            redis_client=redis,
+            settings=_make_settings(),
+        )
+        provider._get_roles_for_user = AsyncMock(return_value=["candidate"])  # type: ignore[method-assign]
+
+        with pytest.raises(ValueError, match="invalid or expired refresh token"):
+            await provider.refresh("some-raw-refresh-token")
+
+        # And the token it minted before noticing must not be left usable.
+        assert redis.delete.await_count >= 2, (
+            "the freshly minted refresh key was not deleted after the "
+            "post-rotation epoch check failed — it would renew indefinitely"
+        )

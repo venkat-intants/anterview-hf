@@ -47,6 +47,7 @@ from livekit import rtc
 from livekit.agents import Agent, AgentSession, JobContext, JobProcess, WorkerOptions, cli
 from livekit.agents.llm.chat_context import ChatMessage as _ChatMessage
 from livekit.agents.voice.events import ConversationItemAddedEvent
+from livekit.agents.voice.room_io import RoomOptions
 
 # _ParticipantAudioOutput is the exact output RoomIO publishes TTS with in
 # voice-only mode. It is a private module (pinned livekit-agents==1.5.15 in
@@ -1819,6 +1820,25 @@ async def entrypoint(ctx: JobContext) -> None:
             )
         ),
         room=ctx.room,
+        # text_input=False is load-bearing, NOT tidiness. livekit-agents
+        # defaults it to ENABLED ("if text_input is not given, default to
+        # enabled" — room_io/types.py), which registers a handler on the
+        # `lk.chat` text stream. Its default callback feeds the text straight
+        # into generate_reply() as a user turn, so it lands in the same
+        # conversation_item stream we build the transcript from and count
+        # answers against.
+        #
+        # For a VOICE interview platform that is a total assessment bypass: a
+        # candidate opens devtools, publishes text on lk.chat instead of
+        # speaking, and the answer is scored as theirs — with Sarvam STT, the
+        # VAD turn detection, gaze/face proctoring and second-voice detection
+        # all sitting on the audio path that was never used. It is also the
+        # clean channel for prompt injection, since the text arrives verbatim
+        # rather than through STT.
+        #
+        # This default can flip on a livekit-agents bump — see the regression
+        # test in tests/unit/test_worker_reliability.py.
+        room_options=RoomOptions(text_input=False),
     )
     # Greet the candidate without waiting — the avatar should speak first on join.
     # This IS Q1 (the self-introduction question). Do NOT ask the candidate to

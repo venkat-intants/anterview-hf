@@ -98,8 +98,14 @@ async def get_current_user(
     # Revocation check: reject tokens issued before a "log out all devices".
     epoch = await _token_epoch(user_id)
     if epoch is not None:
+        # `<=`, not `<`. Both are whole-second Unix timestamps, and logout_all
+        # sets epoch = now(). An access token minted in the SAME second as the
+        # revocation has iat == epoch, passed a strict `<`, and stayed valid for
+        # its full 15-minute TTL — right after the user asked to be logged out
+        # everywhere. shared/auth/local.py's refresh path already used `<=`;
+        # this is the access path catching up.
         iat = payload.get("iat")
-        if iat is not None and int(iat) < epoch:
+        if iat is None or int(iat) <= epoch:
             log.info("auth.token_revoked", user_id=user_id)
             raise _UNAUTHORIZED
 

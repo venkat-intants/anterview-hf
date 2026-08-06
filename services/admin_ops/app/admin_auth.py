@@ -95,7 +95,12 @@ async def verify_admin_role(
     epoch = await _token_epoch(sub)
     if epoch is not None:
         iat = payload.get("iat")
-        if iat is not None and int(iat) < epoch:
+        # `<=` and a None-check: both are whole-second timestamps and
+        # logout_all sets epoch = now(), so a token minted in the same
+        # second as the revocation has iat == epoch and survived a strict
+        # `<` for its full TTL. A missing iat is treated as revoked too —
+        # otherwise the claim the kill switch depends on is optional.
+        if iat is None or int(iat) <= epoch:
             log.info("admin_auth.token_revoked", user_id=sub)
             raise _UNAUTHORIZED
 

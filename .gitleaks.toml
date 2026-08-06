@@ -11,7 +11,24 @@
 useDefault = true
 
 [allowlist]
-description = "Verifiably-fake fixtures and CI placeholders"
+description = "Verifiably-fake fixtures, CI placeholders, and already-exposed history"
+
+# The initial-import commit carries a real account password in three
+# browser-automation scripts (web/diag.mjs, web/login-verify.mjs and the old
+# web/e2e spec). All three files are DELETED at HEAD and the rule above now
+# blocks the pattern going forward — but git history is immutable and this repo
+# is public, so the secret cannot be un-published by any edit.
+#
+# Allowlisting the COMMIT, not the paths: a path allowlist would also excuse a
+# newly recreated file at the same path, whereas this one commit can never gain
+# new content. The scanner still fails on the same pattern in any future commit.
+#
+# THIS IS NOT THE FIX. The fix is rotating/disabling that account — see the
+# security report. This entry only stops an unfixable historical fact from
+# blocking every future CI run.
+commits = [
+  "0fb611886a98288702528c3fdde22860af294913",
+]
 
 regexes = [
   # services/interview_core/tests/unit/test_groq.py — a literal that spells out
@@ -26,12 +43,32 @@ regexes = [
   '''ci-only-[a-z-]*secret-[0-9a-f]+''',
   '''ci-only-salt-[0-9a-f]+''',
   '''ci-only-not-a-real-secret-[0-9a-f]+''',
+
+  # Placeholder values that live in the tracked *.env.example templates. These
+  # are EXACT literals, deliberately: the previous version allowlisted the
+  # PATHS `.*\.env\.example$` instead, which blinded the scanner over six live
+  # files — so a real DATABASE_URL or JWT_SECRET pasted into the .env.example
+  # sitting beside the .env a developer is editing would have passed CI
+  # silently. That is exactly the shortcut this file's own header warns against.
+  '''change-me-to-random-64-char-hex''',
+  '''sk-ant-your-key-here''',
+  '''intants_dev_pw''',
+  '''your-project\.livekit\.cloud''',
 ]
 
-paths = [
-  # Committed templates: every value in these is an empty placeholder, which is
-  # the whole point of the file. Verified — `grep -hE 'SECRET|KEY|TOKEN'` over
-  # them returns bare `KEY=` lines.
-  '''.*\.env\.example$''',
-  '''^space\.env\.example$''',
-]
+# Catch the class that already bit this repo once: a working login pasted into
+# a browser-automation script. `web/diag.mjs` and `web/login-verify.mjs` each
+# carried a real account password as a plain string literal — no provider
+# prefix, no entropy signature, so no default rule fired and CI stayed green
+# while the credential sat in a public repo.
+[[rules]]
+id = "playwright-hardcoded-password"
+description = "Hardcoded password in a browser-automation fill() call"
+regex = '''fill\(\s*['"][^'"]*(?:password|passwd|pwd)[^'"]*['"]\s*,\s*['"][^'"]{6,}['"]'''
+tags = ["password", "e2e"]
+
+# A broader `password\s*[:=]\s*"..."` rule was tried here and removed: it fired
+# 14 times on web/src/lib/i18n.ts alone ("Enter your password", the HI/TE
+# translations of it, and so on). A scanner that cries wolf on a translation
+# bundle is a scanner someone switches off, and the narrow fill() rule above
+# already covers the class that actually bit this repo.

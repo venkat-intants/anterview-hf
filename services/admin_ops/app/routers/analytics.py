@@ -528,8 +528,36 @@ _INTERVIEW_SELECT = """
 """
 
 
+# Characters that make a spreadsheet treat a cell as a formula rather than as
+# text. Tab and CR are included because Excel strips them and then re-reads the
+# first surviving character.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: str) -> str:
+    """Neutralise a spreadsheet formula prefix on a CSV cell.
+
+    csv.DictWriter quotes correctly for CSV *parsing*, but quoting does not stop
+    Excel or LibreOffice evaluating a cell that begins with '='. That matters
+    here because ``candidate_name`` is ``users.full_name``, which a candidate
+    sets themselves at open self-registration with no character restriction
+    (data_gateway auth.py: ``full_name: str = Field(min_length=1)``), and this
+    export is opened on the workstation of the highest-privilege operator on the
+    platform — while the same file carries every tenant's candidate PII, which
+    is what a HYPERLINK/WEBSERVICE payload would exfiltrate.
+
+    Prefixing with an apostrophe is the standard neutralisation: spreadsheets
+    treat the cell as text and do not display the quote.
+    """
+    if value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def _csv_line(row: Any) -> str:
     """Format one DB row mapping as a single CSV data line string.
+
+    Every free-text cell goes through ``_csv_safe`` — see CWE-1236.
 
     S4 fix: composite_score == 0.0 renders as '0.0' (not empty string).
     Uses explicit ``is None`` check instead of falsy ``or ""``.
@@ -545,11 +573,11 @@ def _csv_line(row: Any) -> str:
     writer.writerow(
         {
             "session_id": str(row["session_id"]),
-            "candidate_email": str(row["candidate_email"]),
-            "candidate_name": str(row["candidate_name"] or ""),
-            "job_title": str(row["job_title"] or ""),
-            "status": str(row["status"]),
-            "language": str(row["language"]),
+            "candidate_email": _csv_safe(str(row["candidate_email"])),
+            "candidate_name": _csv_safe(str(row["candidate_name"] or "")),
+            "job_title": _csv_safe(str(row["job_title"] or "")),
+            "status": _csv_safe(str(row["status"])),
+            "language": _csv_safe(str(row["language"])),
             "composite_score": composite_cell,
             "created_at": _iso(row["created_at"]) or "",
             "completed_at": _iso(row["completed_at"]) or "",

@@ -172,8 +172,34 @@
 		-Server
 	}
 
+	# Access log — with the bearer-equivalent credentials filtered OUT.
+	#
+	# Caddy auto-redacts only Cookie/Set-Cookie/Authorization/Proxy-Authorization.
+	# This app carries two credentials in CUSTOM headers, which are logged
+	# verbatim without this block:
+	#   X-Exam-Token      (web/src/api/publicExam.ts)      — 72h TTL
+	#   X-Interview-Token (web/src/api/publicInterview.ts) — 48h TTL, and it
+	#                     redeems to a full candidate session plus PII
+	# That would undo the deliberate #fragment design: the token is kept out of
+	# the URL precisely so it never reaches a server log, and then the header
+	# put it there anyway at the last hop.
+	#
+	# The query filter covers the one credential-bearing query string that does
+	# exist — the OAuth callback's ?code=&state= — since every other token in
+	# this app travels in the fragment.
 	log {
 		output stdout
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Exam-Token delete
+				request>headers>X-Interview-Token delete
+				request>uri query {
+					replace code REDACTED
+					replace state REDACTED
+					replace token REDACTED
+				}
+			}
+		}
 	}
 }

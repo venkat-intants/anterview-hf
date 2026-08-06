@@ -3,15 +3,20 @@
 Creates the user (with a bcrypt password hash compatible with LocalAuthProvider
 login) and grants the 'admin' role. Idempotent. Run from the data_gateway dir:
 
+    $env:APP_ENV = "development"
     $env:PYTHONPATH = (Get-Location).Path
-    poetry run python scripts/seed_admin.py [email] [password]
+    poetry run python scripts/seed_admin.py <email> <password>
 
-Defaults: admin@gmail.com / Admin123.  NOT for production.
+Both arguments are REQUIRED. There used to be hardcoded defaults — a tracked
+file in a public repo that wrote a known-password `admin` account into whatever
+DATABASE_URL the settings resolve to, which on this project is the live
+database. Same reasoning as scripts/seed_demo.py.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import uuid
 
@@ -21,10 +26,29 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import settings
 
+# Allow-list, not a deny-list — an unset APP_ENV must fail rather than proceed
+# against an unknown database.
+_ALLOWED_APP_ENVS = {"development", "dev", "local", "test"}
+
 
 async def _main() -> None:
-    email = sys.argv[1] if len(sys.argv) > 1 else "admin@gmail.com"
-    password = sys.argv[2] if len(sys.argv) > 2 else "Admin123"
+    app_env = (os.getenv("APP_ENV") or "").strip().lower()
+    if app_env not in _ALLOWED_APP_ENVS:
+        sys.exit(
+            f"REFUSING TO SEED: APP_ENV={os.getenv('APP_ENV')!r} is not one of "
+            f"{sorted(_ALLOWED_APP_ENVS)}. This grants the 'admin' analytics "
+            "role on whatever database settings.database_url points at."
+        )
+
+    if len(sys.argv) < 3:
+        sys.exit(
+            "Usage: python scripts/seed_admin.py <email> <password>\n"
+            "Both are required — there is deliberately no default."
+        )
+    email = sys.argv[1]
+    password = sys.argv[2]
+    if len(password) < 12:
+        sys.exit("REFUSING TO SEED: password must be at least 12 characters.")
 
     pw_hash = bcrypt.hashpw(
         password.encode(), bcrypt.gensalt(settings.password_hash_rounds)

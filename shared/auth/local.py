@@ -42,6 +42,7 @@ covered by ``logout_all`` and the admin delete/password-reset revocation paths.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import uuid
 from collections.abc import AsyncGenerator, Callable
@@ -434,8 +435,37 @@ class LocalAuthProvider(AuthProvider):
         await self._redis.delete(key)
         await self._untrack_session(user_id, key)
 
+        tokens = await self._issue_tokens(user_id, roles)
+
+        # Re-check the epoch AFTER minting, against the PRESENTED token's
+        # created_at — this closes the remaining TOCTOU window.
+        #
+        # The check above happens before a DB round-trip (liveness + roles),
+        # which is tens of milliseconds of WAN latency. A logout_all landing
+        # inside that window writes the epoch after we read it, and runs its
+        # SMEMBERS purge before _issue_tokens adds the new key — so the new
+        # session is neither caught by the epoch check nor deleted by the
+        # purge, and it renews itself indefinitely. An attacker holding a
+        # stolen refresh token only has to poll /auth/refresh while the victim
+        # resets their password.
+        #
+        # Comparing the PRESENTED created_at (not the new one) is what makes
+        # this correct: the new token is by definition younger than the epoch,
+        # so checking it would never fire.
+        if await self._is_session_revoked_by_epoch(user_id, created_at):
+            new_key = _RT_PREFIX + hash_refresh_token(tokens.refresh_token)
+            with contextlib.suppress(Exception):
+                await self._redis.delete(new_key)
+                await self._untrack_session(user_id, new_key)
+            log.warning(
+                "auth.refresh.revoked_mid_rotation",
+                user_id=user_id,
+                session_created_at=created_at,
+            )
+            raise ValueError("invalid or expired refresh token")
+
         log.info("auth.refresh", user_id=user_id)
-        return await self._issue_tokens(user_id, roles)
+        return tokens
 
     async def logout(
         self,
@@ -511,10 +541,23 @@ class LocalAuthProvider(AuthProvider):
         epoch = int(datetime.now(tz=UTC).timestamp())
 
         # Step 1 — write epoch FIRST so concurrent refresh() calls see it.
+        #
+        # The TTL must outlive the REFRESH token, not the access token. It used
+        # to be ACCESS_TOKEN_TTL_SECONDS + 60 (16 minutes) while refresh tokens
+        # live jwt_refresh_expiry_days (7 days by default). The epoch is the
+        # only backstop for a refresh key the best-effort session index missed
+        # — a dropped SADD, or one added by a refresh() that raced this call —
+        # so a 16-minute epoch meant such a token became valid again on minute
+        # 17 and then rotated freely for the rest of the week. "Log out all
+        # devices" after a compromise has to outlast the credential it revokes.
+        epoch_ttl = max(
+            ACCESS_TOKEN_TTL_SECONDS + 60,
+            int(getattr(self._settings, "jwt_refresh_expiry_days", 7)) * 86400 + 60,
+        )
         try:
             await self._redis.setex(
                 USER_TOKEN_EPOCH_PREFIX + user_id,
-                ACCESS_TOKEN_TTL_SECONDS + 60,  # outlive the access-token window
+                epoch_ttl,
                 epoch,
             )
         except Exception:  # noqa: BLE001 — epoch bump is best-effort

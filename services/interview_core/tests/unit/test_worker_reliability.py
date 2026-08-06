@@ -915,3 +915,97 @@ async def test_request_fnc_accepts_exactly_cap_jobs_sequentially() -> None:
         )
     finally:
         wk._active_jobs = original
+
+
+# ---------------------------------------------------------------------------
+# Assessment-integrity: the interview must never accept typed answers.
+# ---------------------------------------------------------------------------
+
+
+def test_livekit_text_input_default_is_still_enabled() -> None:
+    """Pin the upstream default this codebase defends against.
+
+    livekit-agents enables text input when `text_input` is not passed. If a
+    future bump makes it default-disabled, the explicit `text_input=False`
+    below stops being load-bearing and this test should be revisited — but
+    while the default is ENABLED, omitting the option is an assessment bypass.
+    """
+    from livekit.agents.voice.room_io import RoomOptions
+
+    assert RoomOptions().get_text_input_options() is not None, (
+        "upstream default changed — re-read the text_input comment in "
+        "interview_worker.entrypoint before relaxing anything"
+    )
+    assert RoomOptions(text_input=False).get_text_input_options() is None
+
+
+def test_session_start_disables_text_input() -> None:
+    """The worker must pass text_input=False when starting the session.
+
+    Without it, a candidate can publish on the `lk.chat` text stream from the
+    browser console; livekit-agents feeds that straight into generate_reply()
+    as a user turn, so it is recorded as their answer and scored — with the
+    microphone, Sarvam STT, VAD turn detection and every proctoring signal
+    bypassed, because none of them sit on the text path.
+
+    Asserted against the SOURCE rather than by running the entrypoint (which
+    needs a live LiveKit room), so it fails if the argument is ever dropped.
+    """
+    import ast
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[2] / "app" / "worker" / "interview_worker.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+
+    starts = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "start"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "session"
+    ]
+    assert starts, "session.start(...) not found — did the worker entrypoint move?"
+
+    for call in starts:
+        kwargs = {kw.arg for kw in call.keywords if kw.arg}
+        assert "room_options" in kwargs, (
+            f"session.start at line {call.lineno} passes no room_options, so "
+            "livekit-agents enables text input by default"
+        )
+        opts = next(kw.value for kw in call.keywords if kw.arg == "room_options")
+        rendered = ast.dump(opts)
+        assert "text_input" in rendered and "False" in rendered, (
+            f"session.start at line {call.lineno} does not disable text_input"
+        )
+
+
+def test_candidate_token_cannot_publish_data() -> None:
+    """Defence in depth: the candidate grant must not allow data publishing.
+
+    The viseme stream is agent -> client, so the candidate never needs it.
+    Granting it is what lets a candidate write to the `lk.chat` text stream.
+    """
+    import ast
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[2] / "app" / "routers" / "rooms.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+
+    grants = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "VideoGrants"
+    ]
+    assert grants, "VideoGrants(...) not found in rooms.py"
+
+    for call in grants:
+        for kw in call.keywords:
+            if kw.arg == "can_publish_data":
+                assert isinstance(kw.value, ast.Constant) and kw.value.value is False, (
+                    f"can_publish_data is granted at rooms.py:{call.lineno} — a "
+                    "candidate with it can submit typed answers over lk.chat"
+                )

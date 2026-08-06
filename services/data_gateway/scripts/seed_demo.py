@@ -1,37 +1,78 @@
 """Seed a coherent, presentation-ready demo dataset into the shared DB.
 
-Creates clean, known login accounts for every role and a self-consistent
-company story so every dashboard (candidate, HR, company admin, platform
-owner) looks alive:
+Creates login accounts for every role and a self-consistent company story so
+every dashboard (candidate, HR, company admin, platform owner) looks alive:
 
-    platform owner  superadmin@demo.intants.com   Demo@12345   (the Intants core)
-    company admin   companyadmin@demo.intants.com Demo@12345   (Acme Technologies)
-    platform admin  admin.demo@demo.intants.com   Demo@12345
-    HR manager      hr@demo.intants.com           Demo@12345   (Acme Technologies)
-    HR manager      hr2@demo.intants.com          Demo@12345   (Acme Technologies)
-    candidate       candidate@demo.intants.com    Demo@12345
+    platform owner  superadmin@demo.intants.com    (the Intants core)
+    company admin   companyadmin@demo.intants.com  (Acme Technologies)
+    platform admin  admin.demo@demo.intants.com
+    HR manager      hr@demo.intants.com            (Acme Technologies)
+    HR manager      hr2@demo.intants.com           (Acme Technologies)
+    candidate       candidate@demo.intants.com
 
 Idempotent: every row uses a deterministic uuid5 id, so re-running upserts the
 same rows instead of duplicating. It only ADDS demo rows — it never deletes or
-mutates existing data. NOT for production.
+mutates existing data.
+
+*** THE PASSWORD IS NO LONGER IN THIS FILE, AND MUST NOT BE PUT BACK. ***
+
+It used to be, and this script's only DB target is whatever DATABASE_URL sits
+in ../.env — which on this project is byte-identical to the live Space's
+database. So a tracked file in a PUBLIC repo carried a working platform_owner
+password for production, re-planted on every run, with
+must_change_password=false so there was not even a forced-reset speed bump.
+
+Two guards now stand between this script and that outcome:
+  1. It refuses to run unless APP_ENV is explicitly a development/test value.
+  2. The password must be supplied via SEED_DEMO_PASSWORD; there is no default.
 
 Run from the data_gateway dir with its venv:
 
-    ./.venv/Scripts/python.exe scripts/seed_demo.py
+    APP_ENV=development SEED_DEMO_PASSWORD='<choose-one>' \
+        ./.venv/Scripts/python.exe scripts/seed_demo.py
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import re
+import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+
+# ---------------------------------------------------------------------------
+# Refuse to run anywhere that is not explicitly a development environment.
+# ---------------------------------------------------------------------------
+# Allow-list, not a deny-list: an unset or misspelled APP_ENV must FAIL, since
+# the failure mode being prevented is "ran it without realising which database
+# it points at".
+_ALLOWED_APP_ENVS = {"development", "dev", "local", "test"}
+_APP_ENV = (os.getenv("APP_ENV") or "").strip().lower()
+
+if _APP_ENV not in _ALLOWED_APP_ENVS:
+    sys.exit(
+        f"REFUSING TO SEED: APP_ENV={os.getenv('APP_ENV')!r} is not one of "
+        f"{sorted(_ALLOWED_APP_ENVS)}.\n"
+        "This script writes demo accounts — including a platform_owner — into "
+        "whatever DATABASE_URL is in ../.env, and on this project that is the "
+        "LIVE database. Set APP_ENV=development and point ../.env at a "
+        "throwaway database first."
+    )
+
+_SEED_PASSWORD = os.getenv("SEED_DEMO_PASSWORD") or ""
+if len(_SEED_PASSWORD) < 12:
+    sys.exit(
+        "REFUSING TO SEED: set SEED_DEMO_PASSWORD to at least 12 characters.\n"
+        "There is deliberately no default — a default is what put a working "
+        "platform_owner password into a public git repository."
+    )
 
 # ---------------------------------------------------------------------------
 # Config — read straight from .env (avoids importing app.config, which can crash
@@ -61,7 +102,7 @@ def ago(days: float = 0, hours: float = 0, minutes: float = 0) -> datetime:
     return NOW - timedelta(days=days, hours=hours, minutes=minutes)
 
 
-PW_HASH = bcrypt.hashpw(b"Demo@12345", bcrypt.gensalt(12)).decode()
+PW_HASH = bcrypt.hashpw(_SEED_PASSWORD.encode(), bcrypt.gensalt(12)).decode()
 TOKEN_HASH = "demo-token-" + "0" * 32  # opaque placeholder; links aren't redeemed in the demo
 
 COMPANY_ID = did("company:acme")
@@ -533,7 +574,7 @@ async def main() -> None:  # noqa: C901, PLR0915 — a flat seed script reads be
     await eng.dispose()
 
     print("\n  Demo data seeded successfully.\n")
-    print("  Login (all passwords: Demo@12345)")
+    print("  Login (all accounts use the SEED_DEMO_PASSWORD you supplied)")
     print("  ---------------------------------------------------------")
     print("  platform owner  superadmin@demo.intants.com")
     print("  company admin   companyadmin@demo.intants.com  (Acme Technologies)")

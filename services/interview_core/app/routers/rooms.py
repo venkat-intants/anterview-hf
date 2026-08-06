@@ -184,9 +184,18 @@ async def create_room_token(
             api.VideoGrants(
                 room_join=True,
                 room=room_name,
-                can_publish=True,       # mic
-                can_subscribe=True,     # interviewer audio + avatar video
-                can_publish_data=True,  # client-viseme channel (bid path)
+                can_publish=True,     # mic
+                can_subscribe=True,   # interviewer audio + avatar video
+                # can_publish_data deliberately NOT granted. The viseme stream
+                # is agent -> client, so the candidate never needs to publish
+                # data; granting it let them write to the `lk.chat` text
+                # stream, which livekit-agents feeds in as a spoken answer.
+                # Defence in depth for the same bypass the worker now closes
+                # with text_input=False: a candidate typing answers would skip
+                # the microphone, the STT and every proctoring signal.
+                # Re-enable ONLY if a client->agent data channel actually
+                # ships, and disable text_input at the session regardless.
+                can_publish_data=False,
             )
         )
         .to_jwt()

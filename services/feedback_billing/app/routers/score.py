@@ -10,7 +10,7 @@ Idempotency: the scorecards table has a UNIQUE constraint on session_id.
 from __future__ import annotations
 
 import contextlib
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -72,7 +72,7 @@ class ScoreRequest(BaseModel):
     experience_level: str = Field(
         ..., min_length=1, description="Experience tier, e.g. 'entry', 'mid', 'senior'"
     )
-    language: str = Field(
+    language: Literal["en", "hi", "te"] = Field(
         default="en",
         description="BCP-47 language code: 'en', 'hi', or 'te'",
     )
@@ -281,6 +281,16 @@ async def _require_service_jwt(
     if "service" not in roles:
         log.warning(
             "score.auth.non_service_rejected",
+            sub=user_id,
+            roles=roles,
+        )
+        raise _FORBIDDEN
+
+    # Narrow the blast radius if a "service" role is ever assigned to a second
+    # principal: the role alone would let it call every /internal/* endpoint.
+    if user_id not in _ALLOWED_SERVICE_SUBS:
+        log.warning(
+            "score.auth.unknown_service_sub_rejected",
             sub=user_id,
             roles=roles,
         )

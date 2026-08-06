@@ -6,6 +6,7 @@ data_gateway and extracts the subject + roles for downstream use.
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated, Any, cast
 
 import structlog
@@ -116,3 +117,47 @@ async def get_non_guest_user(current_user: CurrentUserDep) -> dict[str, Any]:
 
 
 NonGuestUserDep = Annotated[dict[str, Any], Depends(get_non_guest_user)]
+
+
+async def get_guest_bound_user(
+    session_id: uuid.UUID,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Enforce that a guest token's ``session_id`` claim matches the
+    ``{session_id}`` path parameter (security-audit finding, 2026-08).
+
+    A magic-link interview guest is provisioned ONCE per applicant and reused
+    across invites (data_gateway ``interview_take.py`` — the same guest
+    ``users`` row is redeemed again on a new invite), so one guest identity
+    can end up owning SEVERAL sessions. A plain ownership check
+    (``session.user_id == sub``) is therefore not sufficient to isolate a
+    guest to the one session their link was for: a token minted for session B
+    would also pass an ownership check performed against session A, because
+    both sessions share the same ``sub``.
+
+    A guest token is minted with an explicit ``session_id`` claim baked in at
+    redeem time (see ``_issue_guest_token``); this binds the check to that
+    claim instead, at the transport/auth layer, so a guest token can act on
+    ONLY the one session it was issued for. Non-guest tokens (candidate/HR/
+    admin roles) are unaffected and fall through unchanged.
+
+    This dependency should be used on EVERY route with a ``{session_id}``
+    path parameter (rooms, integrity, and any future addition) rather than
+    re-implementing the check per router, so new endpoints inherit it instead
+    of repeating — or missing — the guard.
+    """
+    roles = current_user.get("roles") or []
+    if "guest_candidate" in roles and current_user.get("session_id") != str(session_id):
+        log.info(
+            "auth.guest_session_mismatch",
+            session_id=str(session_id),
+            user_id=current_user.get("sub"),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This guest token is not valid for this session.",
+        )
+    return current_user
+
+
+GuestBoundUserDep = Annotated[dict[str, Any], Depends(get_guest_bound_user)]

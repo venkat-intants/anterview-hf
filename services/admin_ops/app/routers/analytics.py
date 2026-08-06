@@ -10,6 +10,7 @@ GET /admin/overview                    — KPI tiles
 GET /admin/interviews                  — paginated interview list with filters
 GET /admin/interviews/export.csv       — streaming CSV export (same filters)
 GET /admin/interviews/{session_id}     — drill-in detail (audit-logged)
+GET /admin/interviews/{session_id}/transcript — conversation turns (audit-logged)
 GET /admin/analytics/by-role           — grouped by job title
 GET /admin/analytics/by-language       — grouped by language
 GET /admin/analytics/score-distribution — histogram + per-axis averages
@@ -29,6 +30,10 @@ PII note
 - The drill-in endpoint (GET /admin/interviews/{session_id}) writes an
   audit_log entry for every access: action "admin.interview.view",
   resource_type "session", resource_id = session_id.
+- The transcript endpoint (GET /admin/interviews/{session_id}/transcript)
+  writes an audit_log entry for every access: action
+  "admin.interview.transcript.view", resource_type "session",
+  resource_id = session_id.
 - The CSV export endpoint writes an audit_log entry: action
   "admin.interviews.export".
 - Candidate PII is NEVER written to structlog.
@@ -965,14 +970,19 @@ class TranscriptResponse(BaseModel):
 @router.get(
     "/interviews/{session_id}/transcript",
     response_model=TranscriptResponse,
-    summary="Interview transcript (ordered conversation turns)",
+    summary="Interview transcript (ordered conversation turns, audit-logged)",
+    description=(
+        "Every access is written to audit_log (action "
+        "'admin.interview.transcript.view'). Returns every word the "
+        "candidate spoke in the session."
+    ),
 )
 async def get_interview_transcript(
     session_id: uuid.UUID,
     admin_sub: AdminDep,
     db: DbSessionDep,
 ) -> TranscriptResponse:
-    """Ordered conversation turns for a session (admin drill-in)."""
+    """Ordered conversation turns for a session (admin drill-in). Audit-logs PII access."""
     rows = (
         await db.execute(
             sa_text(
@@ -987,6 +997,19 @@ async def get_interview_transcript(
             {"session_id": session_id},
         )
     ).mappings().all()
+
+    # This is the most sensitive artefact in the system — every word the
+    # candidate spoke — so it gets the same audit trail as the drill-in detail
+    # and CSV export endpoints, not just a structlog line.
+    await _write_audit(
+        db=db,
+        actor_id=admin_sub,
+        action="admin.interview.transcript.view",
+        resource_type="session",
+        resource_id=session_id,
+        details=None,
+    )
+
     log.info("analytics.interview.transcript", actor=admin_sub, session_id=str(session_id))
     return TranscriptResponse(
         session_id=str(session_id),

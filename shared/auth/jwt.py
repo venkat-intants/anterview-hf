@@ -83,10 +83,19 @@ def verify_access_token(
 
     Raises:
         JWTError: if the token is invalid, expired, tampered, or is missing
-                  required claims (iss, aud, jti).
+                  required claims (iss, aud, jti, iat).
 
     S3-005: iss and aud are validated against expected_issuer / expected_audience.
     jti presence is required — absence raises JWTError.
+
+    Security-audit follow-up (2026-08): require_iat is now enforced. The
+    "log out all devices" kill switch (app/dependencies.py in every service)
+    compares a token's ``iat`` against the user's revocation epoch in Redis —
+    a token minted without ``iat`` skipped that comparison entirely (`iat is
+    None` was treated as "can't compare, let it through" by some callers) and
+    was therefore silently unrevocable. Rejecting it here, at decode time, is
+    defence in depth on top of every verifier now also treating a missing
+    ``iat`` as revoked.
     """
     # python-jose options dict: each "require_<claim>" key forces the claim to
     # be present; combining with audience/issuer args also validates values.
@@ -96,6 +105,7 @@ def verify_access_token(
         "require_iss": True,
         "require_aud": True,
         "require_jti": True,
+        "require_iat": True,
     }
     payload = dict(
         jwt.decode(

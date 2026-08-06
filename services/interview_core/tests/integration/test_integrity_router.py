@@ -45,6 +45,21 @@ def _token(user_id: str) -> str:
     )
 
 
+def _guest_token(user_id: str, session_id: str | None = None) -> str:
+    """Mint a guest_candidate token, optionally bound to ``session_id``
+    (mirrors data_gateway's ``_issue_guest_token``)."""
+    extra_claims = {"session_id": session_id} if session_id is not None else None
+    return str(
+        issue_access_token(
+            user_id=user_id,
+            roles=["guest_candidate"],
+            secret=settings.jwt_secret,
+            algorithm=settings.jwt_algorithm,
+            extra_claims=extra_claims,
+        )
+    )
+
+
 def _patch_db(
     *,
     session_user_id: str | None,
@@ -490,3 +505,117 @@ async def test_get_integrity_no_token(client: AsyncClient) -> None:
     """Missing Authorization → 401."""
     resp = await client.get(f"/api/sessions/{uuid.uuid4()}/integrity")
     assert resp.status_code == 401, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Finding 2 (security-audit, 2026-08) — shared GuestBoundUserDep
+#
+# A guest identity is reused across invites (data_gateway interview_take.py),
+# so one users row can own several sessions. Before this fix, both routes
+# authorised on the JWT `sub` (ownership) alone, which a guest token minted
+# for a DIFFERENT session would still pass. These tests deliberately set the
+# session's owner to the SAME guest user_id as the token, so a 403 here can
+# only come from the session_id-claim binding, not from the ownership check.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_post_integrity_guest_token_for_another_session_is_forbidden(
+    client: AsyncClient,
+) -> None:
+    uid = str(uuid.uuid4())
+    session_a = str(uuid.uuid4())
+    session_b = str(uuid.uuid4())
+    guest_token = _guest_token(uid, session_id=session_b)
+
+    override = _patch_db(session_user_id=uid, event_rows=[])
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        with patch("app.routers.integrity.has_active_consent", return_value=True):
+            resp = await client.post(
+                f"/api/sessions/{session_a}/integrity-events",
+                json={"events": [{"type": "tab_blur", "started_at": _T0.isoformat()}]},
+                headers={"Authorization": f"Bearer {guest_token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 403, resp.text
+
+
+@pytest.mark.asyncio
+async def test_post_integrity_guest_token_with_no_session_id_claim_is_forbidden(
+    client: AsyncClient,
+) -> None:
+    uid = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
+    guest_token = _guest_token(uid)  # no session_id claim at all
+
+    override = _patch_db(session_user_id=uid, event_rows=[])
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        with patch("app.routers.integrity.has_active_consent", return_value=True):
+            resp = await client.post(
+                f"/api/sessions/{session_id}/integrity-events",
+                json={"events": [{"type": "tab_blur", "started_at": _T0.isoformat()}]},
+                headers={"Authorization": f"Bearer {guest_token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 403, resp.text
+
+
+@pytest.mark.asyncio
+async def test_post_integrity_guest_token_for_its_own_session_is_allowed(
+    client: AsyncClient,
+) -> None:
+    """Sanity check: the binding dependency does not reject a guest token
+    used against the exact session_id it was minted for."""
+    uid = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
+    guest_token = _guest_token(uid, session_id=session_id)
+
+    override = _patch_db(session_user_id=uid, event_rows=[])
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        with patch("app.routers.integrity.has_active_consent", return_value=True):
+            resp = await client.post(
+                f"/api/sessions/{session_id}/integrity-events",
+                json={"events": [{"type": "tab_blur", "started_at": _T0.isoformat()}]},
+                headers={"Authorization": f"Bearer {guest_token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_get_integrity_guest_token_for_another_session_is_forbidden(
+    client: AsyncClient,
+) -> None:
+    uid = str(uuid.uuid4())
+    session_a = str(uuid.uuid4())
+    session_b = str(uuid.uuid4())
+    guest_token = _guest_token(uid, session_id=session_b)
+
+    override = _patch_db_get(session_user_id=uid, started_at=_T0)
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        resp = await client.get(
+            f"/api/sessions/{session_a}/integrity",
+            headers={"Authorization": f"Bearer {guest_token}"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 403, resp.text

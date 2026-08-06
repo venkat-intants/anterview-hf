@@ -296,6 +296,36 @@ def test_internal_score_survives_candidate_name_lookup_failure(
     mock_db.rollback.assert_awaited_once()
 
 
+def test_internal_score_rejects_unsupported_language(client: TestClient) -> None:
+    """language is constrained to en/hi/te (Literal) — anything else is a 422,
+    never reaching pdf_render's lang_display fallback with unvalidated input.
+
+    get_db_session is overridden (not left to raise RuntimeError) so FastAPI's
+    dependency resolution reaches the point of surfacing the body validation
+    error as a 422, rather than a 500 from the unrelated uninitialised engine.
+    """
+    token = _make_jwt()
+    mock_db = _mock_db_session()
+
+    async def _override_db() -> AsyncSession:  # type: ignore[misc]
+        yield mock_db  # type: ignore[misc]
+
+    from app.database import get_db_session  # noqa: PLC0415
+
+    app.dependency_overrides[get_db_session] = _override_db
+
+    try:
+        resp = client.post(
+            "/internal/score",
+            json={**_VALID_BODY, "session_id": str(uuid.uuid4()), "language": "fr"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # test_internal_score_requires_jwt
 # ---------------------------------------------------------------------------
@@ -422,6 +452,19 @@ def test_internal_score_rejects_guest_token(client: TestClient) -> None:
 def test_internal_score_rejects_hr_token(client: TestClient) -> None:
     """An HR manager JWT — valid user token but not a service token → 403."""
     token = _make_jwt(sub="hr123", roles=["hr_manager"])
+    resp = client.post(
+        "/internal/score",
+        json=_VALID_BODY,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_internal_score_rejects_service_role_from_unknown_sub(client: TestClient) -> None:
+    """roles=['service'] alone must not be sufficient — sub must be an allowlisted
+    service principal (_ALLOWED_SERVICE_SUBS), or a second issuer with the
+    'service' role (e.g. a compromised/misconfigured token) could call Gemini."""
+    token = _make_jwt(sub="some_other_service", roles=["service"])
     resp = client.post(
         "/internal/score",
         json=_VALID_BODY,

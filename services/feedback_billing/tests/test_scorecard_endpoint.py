@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 from jose import jwt as jose_jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import Settings, settings
 from app.main import app
 
 # ---------------------------------------------------------------------------
@@ -286,6 +286,55 @@ def test_get_scorecard_pdf_url_null_when_no_key(client: TestClient) -> None:
 
     assert resp.status_code == 200
     assert resp.json()["report_pdf_url"] is None
+
+
+# ---------------------------------------------------------------------------
+# test_generate_presigned_url_default_expiry
+# ---------------------------------------------------------------------------
+
+
+async def test_generate_presigned_url_default_expiry_is_short_lived() -> None:
+    """A pre-signed URL is an unauthenticated bearer capability: it honours
+    neither the 15-minute access token nor the auth_epoch kill switch, and it
+    points at a PDF with the candidate's name, scores and AI narrative. The
+    default was 30 DAYS, which survives logout-all, password change, HR account
+    deletion and the candidate closing their account.
+
+    Asserted as a BOUND rather than an exact value: one hour is the current
+    choice (the frontend renders this into an <a href> the user may click after
+    reading for a while), but anything materially longer re-opens the finding.
+    """
+    from app.routers.scorecard import _generate_presigned_url
+
+    mock_s3 = AsyncMock()
+    mock_s3.generate_presigned_url = AsyncMock(return_value="https://example.com/signed")
+    mock_s3.__aenter__ = AsyncMock(return_value=mock_s3)
+    mock_s3.__aexit__ = AsyncMock(return_value=False)
+
+    mock_boto_session = MagicMock()
+    mock_boto_session.client = MagicMock(return_value=mock_s3)
+
+    presign_settings = Settings(
+        database_url="postgresql+asyncpg://test:test@localhost:5432/test",
+        redis_url="redis://localhost:6379/0",
+        jwt_secret="test-secret-that-is-at-least-32-chars-long!!",
+        s3_access_key_id="test-key-id",
+        s3_secret_access_key="test-secret",
+        s3_endpoint_url="https://fake.r2.cloudflarestorage.com",
+        s3_scorecard_bucket="intants-interview-scorecards",
+    )
+
+    with patch("aioboto3.Session", return_value=mock_boto_session):
+        url = await _generate_presigned_url(
+            "scorecards/x/report.pdf", presign_settings
+        )
+
+    assert url == "https://example.com/signed"
+    call_kwargs = mock_s3.generate_presigned_url.call_args.kwargs
+    assert call_kwargs["ExpiresIn"] <= 3600, (
+        f"pre-signed scorecard URL lives {call_kwargs['ExpiresIn']}s — long-lived "
+        "URLs bypass every revocation control the platform has"
+    )
 
 
 # ---------------------------------------------------------------------------

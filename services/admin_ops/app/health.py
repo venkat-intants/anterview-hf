@@ -24,8 +24,12 @@ async def _check_postgres() -> dict[str, Any]:
             row = result.scalar()
         return {"ok": row == 1}
     except Exception as exc:
+        # asyncpg/SQLAlchemy failures embed the Neon host, port and database
+        # name in str(exc). Full detail goes to structlog only; the API
+        # response (surfaced to any admin via /admin/system/health) gets the
+        # exception type alone.
         log.warning("health.postgres.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": type(exc).__name__}
 
 
 async def _check_redis() -> dict[str, Any]:
@@ -35,7 +39,7 @@ async def _check_redis() -> dict[str, Any]:
         return {"ok": pong is True}
     except Exception as exc:
         log.warning("health.redis.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": type(exc).__name__}
 
 
 @router.get("/live")

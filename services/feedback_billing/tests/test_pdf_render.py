@@ -251,6 +251,50 @@ def test_build_pdf_bytes_escapes_candidate_markup() -> None:
 
 
 # ---------------------------------------------------------------------------
+# test_build_pdf_bytes_escapes_language_fallback
+# ---------------------------------------------------------------------------
+
+
+def test_build_pdf_bytes_escapes_language_fallback() -> None:
+    """The `language` fallback branch (unrecognised code) is untrusted input too.
+
+    ScoreRequest constrains language to en/hi/te at the API boundary (Literal),
+    but _build_pdf_bytes has no such guarantee of its own — call it directly
+    with a hostile value and confirm the fallback still escapes before the
+    paraparser sees it, exactly like candidate_name/job_title/summary.
+    """
+    from xml.sax.saxutils import escape as _xml_escape  # noqa: PLC0415
+
+    from reportlab.platypus import Paragraph as _RealParagraph  # noqa: PLC0415
+
+    hostile_language = '<img src="http://169.254.169.254/latest/meta-data/"/>'
+
+    with patch("app.pdf_render.Paragraph", wraps=_RealParagraph) as mock_paragraph:
+        pdf = _build_pdf_bytes(
+            scorecard_id=_SCORECARD_ID,
+            candidate_name="Ravi Kumar",
+            job_title="Junior Java Developer",
+            language=hostile_language,
+            scores=_SAMPLE_SCORES,
+            composite_score=7.05,
+            strengths=_SAMPLE_STRENGTHS,
+            improvements=_SAMPLE_IMPROVEMENTS,
+            summary=_SAMPLE_SUMMARY,
+        )
+
+    assert pdf[:5] == b"%PDF-"
+
+    rendered = [call.args[0] for call in mock_paragraph.call_args_list if call.args]
+    for text in rendered:
+        assert "<img" not in text.lower(), f"live markup reached paraparser: {text!r}"
+
+    # The fallback branch is `language.upper()` escaped — confirm the exact
+    # escaped form is present, i.e. the text is rendered, not dropped.
+    expected_escaped = _xml_escape(hostile_language.upper())
+    assert expected_escaped in "\n".join(rendered)
+
+
+# ---------------------------------------------------------------------------
 # test_update_pdf_key_executes_update
 # ---------------------------------------------------------------------------
 

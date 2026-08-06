@@ -59,9 +59,11 @@ class _FakeResp:
 
 
 class _FakeClient:
-    """Records the request body so tests can assert on generationConfig."""
+    """Records the request body/url/headers so tests can assert on them."""
 
     last_body: dict[str, Any] | None = None
+    last_url: str | None = None
+    last_headers: dict[str, str] | None = None
 
     def __init__(self, resp: _FakeResp) -> None:
         self._resp = resp
@@ -72,13 +74,17 @@ class _FakeClient:
     async def __aexit__(self, *_: Any) -> bool:
         return False
 
-    async def post(self, *_: Any, **kwargs: Any) -> _FakeResp:
+    async def post(self, url: str, *_: Any, **kwargs: Any) -> _FakeResp:
         _FakeClient.last_body = kwargs.get("json")
+        _FakeClient.last_url = url
+        _FakeClient.last_headers = kwargs.get("headers")
         return self._resp
 
 
 def _patch_gemini(monkeypatch: pytest.MonkeyPatch, resp: _FakeResp) -> None:
     _FakeClient.last_body = None
+    _FakeClient.last_url = None
+    _FakeClient.last_headers = None
     monkeypatch.setattr(
         "app.exam_generator.httpx.AsyncClient", lambda *a, **k: _FakeClient(resp)
     )
@@ -108,6 +114,20 @@ async def test_thinking_disabled_on_25_models(monkeypatch: pytest.MonkeyPatch) -
 
     config = _FakeClient.last_body["generationConfig"]  # type: ignore[index]
     assert config["thinkingConfig"] == {"thinkingBudget": 0}
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_sends_api_key_via_header_not_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Gemini key must travel as x-goog-api-key, never ?key=<...> in the URL."""
+    payload = {"questions": [_question(0)]}
+    _patch_gemini(monkeypatch, _FakeResp(200, _envelope(json.dumps(payload))))
+
+    await generate_exam_questions(topic="t", num_questions=1, settings=_SETTINGS_25)
+
+    assert "key=" not in (_FakeClient.last_url or "")
+    assert _FakeClient.last_headers == {"x-goog-api-key": _SETTINGS_25.gemini_api_key}
 
 
 @pytest.mark.asyncio

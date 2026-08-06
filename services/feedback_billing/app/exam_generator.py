@@ -233,11 +233,11 @@ async def _call_gemini_json(
     Shared by the MCQ and coding generators. Raises ExamGenerationError on
     transport failure, unreadable response, or invalid JSON.
     """
-    url = (
-        f"{settings.gemini_api_base_url}"
-        f"/models/{settings.gemini_model}:generateContent"
-        f"?key={settings.gemini_api_key}"
-    )
+    # Auth via x-goog-api-key header (not ?key=) so the key never lands in
+    # request URLs / proxy access logs — see app/embedder.py for the same
+    # rationale, first applied there.
+    url = f"{settings.gemini_api_base_url}/models/{settings.gemini_model}:generateContent"
+    headers = {"x-goog-api-key": settings.gemini_api_key}
     generation_config: dict[str, Any] = {
         "temperature": 0.7,  # some variety across generations
         # Pure JSON output budget (thinking is disabled below on 2.5 models).
@@ -263,7 +263,7 @@ async def _call_gemini_json(
     async with httpx.AsyncClient(timeout=90.0) as client:
         for attempt in range(_MAX_ATTEMPTS):
             try:
-                response = await client.post(url, json=body)
+                response = await client.post(url, json=body, headers=headers)
             except httpx.RequestError as exc:
                 response = None
                 last_error = f"request error: {exc}"

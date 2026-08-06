@@ -95,6 +95,12 @@ class Job(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    # deleted_at: soft-delete marker, part of the jobs table since its
+    # original migration (20260527_0418) but not previously mapped here.
+    # NULL = live job. Mapped so session creation can exclude withdrawn
+    # postings (security-audit finding, 2026-08); every other consumer of
+    # `jobs` in data_gateway already filters on this column.
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     sessions: Mapped[list[Session]] = relationship("Session", back_populates="job")
 

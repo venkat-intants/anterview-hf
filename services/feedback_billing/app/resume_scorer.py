@@ -124,11 +124,11 @@ async def score_resume(
         .replace("{{RESUME_TEXT}}", resume_text[:8000])
     )
 
-    url = (
-        f"{settings.gemini_api_base_url}"
-        f"/models/{settings.gemini_model}:generateContent"
-        f"?key={settings.gemini_api_key}"
-    )
+    # Auth via x-goog-api-key header (not ?key=) so the key never lands in
+    # request URLs / proxy access logs — see app/embedder.py for the same
+    # rationale, first applied there.
+    url = f"{settings.gemini_api_base_url}/models/{settings.gemini_model}:generateContent"
+    headers = {"x-goog-api-key": settings.gemini_api_key}
     generation_config: dict[str, Any] = {
         "temperature": 0.2,
         # Generous budget so the structured JSON body is never truncated.
@@ -150,7 +150,7 @@ async def score_resume(
     async with httpx.AsyncClient(timeout=60.0) as client:
         for attempt in range(_MAX_ATTEMPTS):
             try:
-                response = await client.post(url, json=body)
+                response = await client.post(url, json=body, headers=headers)
             except httpx.RequestError as exc:
                 response = None
                 last_error = f"request error: {exc}"

@@ -559,6 +559,88 @@ def test_detail_happy_path_with_scorecard() -> None:
 
 
 # ===========================================================================
+# GET /admin/interviews/{session_id}/transcript
+# ===========================================================================
+
+
+def _fake_transcript_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "turn_number": 1,
+            "speaker": "interviewer",
+            "text_content": "Tell me about yourself.",
+            "created_at": _NOW,
+        },
+        {
+            "turn_number": 2,
+            "speaker": "candidate",
+            "text_content": "I am a backend developer.",
+            "created_at": _NOW + timedelta(seconds=10),
+        },
+    ]
+
+
+def test_transcript_requires_admin_jwt() -> None:
+    session = _make_session_with_results([])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+    resp = client.get(f"/admin/interviews/{_SESSION_ID}/transcript")
+    assert resp.status_code == 401
+
+
+def test_transcript_requires_admin_role() -> None:
+    session = _make_session_with_results([])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+    resp = client.get(
+        f"/admin/interviews/{_SESSION_ID}/transcript", headers=_auth_header(_user_token())
+    )
+    assert resp.status_code == 403
+
+
+def test_transcript_happy_path() -> None:
+    rows = _fake_transcript_rows()
+    session = _make_session_with_results([rows])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+    resp = client.get(
+        f"/admin/interviews/{_SESSION_ID}/transcript", headers=_auth_header(_admin_token())
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["session_id"] == _SESSION_ID
+    assert len(data["turns"]) == 2
+    assert data["turns"][0]["speaker"] == "interviewer"
+    assert data["turns"][0]["text"] == "Tell me about yourself."
+    assert data["turns"][1]["speaker"] == "candidate"
+
+
+def test_transcript_access_is_audit_logged() -> None:
+    """Security-audit fix: the transcript is the most sensitive artefact in the
+    system (every word the candidate spoke) yet, unlike the drill-in detail and
+    CSV export endpoints, wrote no audit_log entry — even though the module
+    docstring claimed transcript access was audited. Must write
+    admin.interview.transcript.view on every access."""
+    from unittest.mock import patch
+
+    from app.routers import analytics as analytics_mod
+
+    rows = _fake_transcript_rows()
+    session = _make_session_with_results([rows])
+    client = TestClient(_build_app(session), raise_server_exceptions=False)
+
+    with patch.object(analytics_mod, "_write_audit", AsyncMock()) as mock_write_audit:
+        resp = client.get(
+            f"/admin/interviews/{_SESSION_ID}/transcript", headers=_auth_header(_admin_token())
+        )
+
+    assert resp.status_code == 200, resp.text
+    mock_write_audit.assert_awaited_once()
+    call_kwargs = mock_write_audit.call_args.kwargs
+    assert call_kwargs["action"] == "admin.interview.transcript.view"
+    assert call_kwargs["resource_type"] == "session"
+    assert str(call_kwargs["resource_id"]) == _SESSION_ID
+    assert call_kwargs["actor_id"] == _ADMIN_SUB
+
+
+# ===========================================================================
 # 17–19: GET /admin/analytics/by-role
 # ===========================================================================
 

@@ -11,7 +11,9 @@ Contract:
     body : {"events": [{type, started_at, ended_at?, metadata?}, ...]}
     200  : {"integrity_score": int, "summary": {...}, "stored": int}
     401  : missing/invalid JWT
-    403  : session belongs to another user OR active recording consent absent
+    403  : session belongs to another user, OR a guest token's session_id
+           claim doesn't match the path parameter, OR active recording
+           consent is absent
     404  : session not found
 
   GET /api/sessions/{session_id}/integrity
@@ -19,11 +21,20 @@ Contract:
             "session_started_at": iso|null,
             "events": [{event_type, started_at, ended_at, duration_seconds}, ...]}
     401  : missing/invalid JWT
-    403  : session belongs to another user
+    403  : session belongs to another user, OR a guest token's session_id
+           claim doesn't match the path parameter
     404  : session not found
     Read-back of the candidate's OWN proctoring data (DPDP §11 right to access;
     no consent gate — reading your own stored data is not fresh processing).
     integrity_score null means proctoring never ran for this session.
+
+Guest-session binding (security-audit finding, 2026-08): both routes below
+take {session_id} and allow the guest_candidate role, so both use the shared
+``GuestBoundUserDep`` (app/dependencies.py) instead of the bare ``CurrentUserDep``.
+A guest identity is reused across invites (data_gateway interview_take.py), so
+one users row can own several sessions — an ownership check on user_id alone
+is not enough to stop a guest token minted for session B from reaching
+session A; GuestBoundUserDep rejects that before the handler body runs.
 
 DPDP note: gaze/face proctoring events are biometric-derived data under the
 DPDP Act 2023.  Storing them requires an active ``interview_voice_recording``
@@ -46,7 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.consent_guard import has_active_consent
 from app.database import get_db_session
-from app.dependencies import CurrentUserDep
+from app.dependencies import GuestBoundUserDep
 from app.models import IntegrityEvent
 from app.models import Session as InterviewSession
 from app.proctoring import (
@@ -105,7 +116,7 @@ class IntegrityBatchOut(BaseModel):
     summary="Ingest proctoring integrity events for a session",
 )
 async def post_integrity_events(
-    current_user: CurrentUserDep,
+    current_user: GuestBoundUserDep,
     db: DbSessionDep,
     body: IntegrityBatchIn,
     session_id: Annotated[_uuid_mod.UUID, Path()],
@@ -263,7 +274,7 @@ class IntegrityReportOut(BaseModel):
     summary="Read the session's integrity score, summary, and event timeline",
 )
 async def get_integrity_report(
-    current_user: CurrentUserDep,
+    current_user: GuestBoundUserDep,
     db: DbSessionDep,
     session_id: Annotated[_uuid_mod.UUID, Path()],
 ) -> IntegrityReportOut:
@@ -271,6 +282,8 @@ async def get_integrity_report(
 
     Owner-only: candidates can read the integrity data of THEIR sessions
     (DPDP right to access). HR/admin views go through admin_ops instead.
+    A guest token is additionally bound to its own session_id claim by
+    ``GuestBoundUserDep`` — see the module docstring.
     """
     sess = (
         await db.execute(

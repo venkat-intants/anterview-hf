@@ -1,7 +1,7 @@
 """GET /scorecards/{scorecard_id} — scorecard retrieval endpoint (S5-007).
 
-Auth: JWT required (same _require_jwt pattern as score.py).
-Returns scorecard data including a 30-day pre-signed S3 URL for the PDF.
+Auth: JWT required (shared app.auth.require_jwt — see that module's docstring).
+Returns scorecard data including a 15-minute pre-signed S3 URL for the PDF.
 
 Access control (IDOR fix):
   - The scorecard's owner (sessions.user_id == caller sub) may always read it.
@@ -17,27 +17,18 @@ from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError
 from pydantic import BaseModel, Field
-from shared.auth.jwt import verify_access_token
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import UNAUTHORIZED, require_jwt
 from app.config import Settings
 from app.config import settings as _app_settings
 from app.database import get_db_session
-from app.redis_client import get_redis
-
-# Redis key prefix for per-user token revocation epochs.
-# Kept in sync with shared.auth.local.USER_TOKEN_EPOCH_PREFIX — do not change.
-_TOKEN_EPOCH_PREFIX = "auth_epoch:"
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["scorecards"])
-
-_bearer_scheme = HTTPBearer(auto_error=False)
 
 # ---------------------------------------------------------------------------
 # Pydantic response model
@@ -105,83 +96,24 @@ class ScorecardResponse(BaseModel):
     summary: str
     report_pdf_url: str | None = Field(
         default=None,
-        description="30-day pre-signed S3 URL for the PDF report, or null if not yet generated.",
+        description="15-minute pre-signed S3 URL for the PDF report, or null if not yet generated.",
     )
 
 
 # ---------------------------------------------------------------------------
-# Auth dependency (shared pattern with score.py)
+# Auth dependency — imported, not reimplemented (see app/auth.py)
 # ---------------------------------------------------------------------------
 
-_UNAUTHORIZED = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED,
-    detail="Invalid or missing access token",
-    headers={"WWW-Authenticate": "Bearer"},
-)
+# A local copy is exactly how this router ended up as the fourth pasted
+# JWT verifier in this service; app/auth.py exists precisely to stop that
+# (see its docstring). Keep the module-local names so the rest of this file
+# and its tests are unaffected by the refactor.
+_UNAUTHORIZED = UNAUTHORIZED
+_require_jwt = require_jwt
 
 
 def _get_settings() -> Settings:
     return _app_settings
-
-
-async def _token_epoch_check(user_id: str, iat: Any) -> None:
-    """Raise HTTP 401 if the token was issued before the user's revocation epoch.
-
-    Fails OPEN: any Redis error is logged and silently ignored so a cache
-    hiccup never locks every user out.
-    """
-    try:
-        raw = await get_redis().get(_TOKEN_EPOCH_PREFIX + user_id)
-        # `<=` and a None-check: both are whole-second timestamps and
-        # logout_all sets epoch = now(), so a token minted in the same
-        # second as the revocation has iat == epoch and survived a strict
-        # `<` for its full TTL. A missing iat is treated as revoked too —
-        # otherwise the claim the kill switch depends on is optional.
-        if raw is not None and (iat is None or int(iat) <= int(raw)):
-            log.info("scorecard.auth.token_revoked", user_id=user_id)
-            raise _UNAUTHORIZED
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 — fail open on Redis/parse errors
-        log.warning(
-            "scorecard.auth.epoch_check_skipped",
-            error_type=type(exc).__name__,
-        )
-
-
-async def _require_jwt(
-    credentials: Annotated[
-        HTTPAuthorizationCredentials | None,
-        Depends(_bearer_scheme),
-    ],
-) -> dict[str, Any]:
-    """Verify Bearer JWT; return decoded payload.
-
-    Raises HTTP 401 on any auth failure, including tokens revoked by a
-    "log out all devices" whose ``iat`` predates the user's token epoch.
-    """
-    if credentials is None:
-        raise _UNAUTHORIZED
-
-    try:
-        payload = verify_access_token(
-            credentials.credentials,
-            secret=_app_settings.jwt_secret,
-            algorithm=_app_settings.jwt_algorithm,
-            expected_issuer=_app_settings.jwt_issuer,
-            expected_audience=_app_settings.jwt_audience,
-        )
-    except JWTError as exc:
-        log.warning("scorecard.auth.jwt_failed", error_type=type(exc).__name__)
-        raise _UNAUTHORIZED from exc
-
-    user_id: str | None = payload.get("sub")
-    if not user_id:
-        raise _UNAUTHORIZED
-
-    await _token_epoch_check(user_id, payload.get("iat"))
-
-    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -192,9 +124,31 @@ async def _require_jwt(
 async def _generate_presigned_url(
     s3_key: str,
     settings: Settings,
-    expiry_seconds: int = 86400 * 30,
+    expiry_seconds: int = 3600,
 ) -> str | None:
     """Generate a pre-signed GET URL for the given S3 key.
+
+    One hour. This was 30 DAYS, which is the thing being fixed: a pre-signed
+    URL is an unauthenticated bearer capability, so it honours neither the
+    15-minute access token nor the auth_epoch kill switch, and it points at a
+    PDF carrying the candidate's name, scores and the AI narrative. A month-long
+    window survives logout-all, password change, HR account deletion and the
+    candidate closing their account.
+
+    Not 15 minutes, though the exposure argument favours it: the frontend
+    renders this straight into an <a href> on the scorecard page
+    (web/src/pages/Scorecard.tsx), so the link has to still work when someone
+    reads their results for a while and then clicks Download — otherwise they
+    get a raw S3 AccessDenied XML page with no explanation. An hour covers a
+    realistic page view and is still a 720x reduction. Shortening further needs
+    the page to re-fetch the scorecard on click first.
+
+    The platform's revocation
+    model (short-lived tokens + the auth_epoch kill switch) means a pre-signed
+    URL that outlives it is an unauthenticated bearer capability honouring
+    neither: the PDF it points to carries the candidate's name, scores and the
+    AI narrative. The frontend fetches this endpoint and opens the URL
+    immediately, so 15 minutes costs it nothing.
 
     Returns None if S3 is not configured or on any error.
     """
@@ -245,7 +199,7 @@ _PRIVILEGED_ROLES = frozenset({"hr_manager", "super_admin", "admin", "platform_o
     summary="Retrieve a scorecard by ID",
     description=(
         "Returns the scorecard data for the given scorecard_id, including a "
-        "30-day pre-signed S3 URL for the PDF report if the PDF has been generated. "
+        "15-minute pre-signed S3 URL for the PDF report if the PDF has been generated. "
         "JWT required. "
         "Only the scorecard owner or an HR/admin from the same company may read it."
     ),

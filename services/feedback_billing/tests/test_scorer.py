@@ -146,6 +146,41 @@ async def test_score_session_returns_scorecard_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_score_session_sends_api_key_via_header_not_url() -> None:
+    """The Gemini key must travel as x-goog-api-key, never ?key=<...> in the URL.
+
+    URLs land in proxy access logs and exception strings (see embedder.py,
+    which fixed this first); the scorer must match.
+    """
+    mock_db = _make_db_session()
+    mock_settings = _make_settings()
+
+    mock_response = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
+
+    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        await score_session(
+            session_id=str(uuid.uuid4()),
+            job_title="Junior Java Developer",
+            experience_level="entry",
+            language="en",
+            turns=_SAMPLE_TURNS,
+            db_session=mock_db,
+            settings=mock_settings,
+        )
+
+    post_args, post_kwargs = mock_client.post.call_args
+    called_url = post_args[0]
+    assert "key=" not in called_url
+    assert post_kwargs["headers"] == {"x-goog-api-key": mock_settings.gemini_api_key}
+
+
+@pytest.mark.asyncio
 async def test_score_session_tolerates_trailing_commas() -> None:
     """Gemini emits a trailing comma before } / ] (invalid JSON) → must recover,
     not 502. Regression for the score.gemini_error seen in production logs."""

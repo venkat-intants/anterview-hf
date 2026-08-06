@@ -5,9 +5,14 @@ POST /api/rooms/{session_id}/token
 Mints a short-TTL LiveKit join token for ONE interview session, AFTER the same
 gates the deleted WebSocket handler enforced:
   - valid Bearer JWT            (CurrentUserDep -> 401)
-  - session exists              (404)
-  - session belongs to caller   (403)  — mirrors old WS close 4003
-  - active DPDP consent         (403)  — server-side, can't be bypassed via curl
+  - guest token session binding (GuestBoundUserDep -> 403) — a guest token's
+    session_id claim must match the path parameter (shared dependency, also
+    applied to the integrity router)
+  - session exists               (404)
+  - session belongs to caller    (403)  — mirrors old WS close 4003
+  - session is not already finished (409) — a completed/failed session, or
+    one with a scorecard already on file, can never be re-entered
+  - active DPDP consent          (403)  — server-side, can't be bypassed via curl
 
 The browser never holds LiveKit API credentials; it calls this endpoint and
 gets a scoped token that lets it join exactly its own room. The interview agent
@@ -27,14 +32,14 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from livekit import api
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.launcher import dispatch_interview_agent
 from app.config import settings
 from app.consent_guard import has_active_consent
 from app.database import get_db_session
-from app.dependencies import CurrentUserDep
+from app.dependencies import GuestBoundUserDep
 from app.graph.state import Language as InterviewLanguage
 from app.models import Job
 from app.models import Session as InterviewSession
@@ -58,6 +63,24 @@ class RoomTokenResponse(BaseModel):
     room_name: str = Field(..., description="Room name (== session_id).")
 
 
+async def _scorecard_exists(db: AsyncSession, session_id: uuid.UUID) -> bool:
+    """True iff a scorecard row exists for this session.
+
+    Scorecards are owned by feedback_billing; interview_core does not ORM-map
+    that table (same cross-service-boundary rule as ``app/consent_guard.py``
+    for ``dpdp_consent_ledger`` — see that module's docstring). A raw,
+    parameterized ``SELECT 1 ... LIMIT 1`` is the cheap, dependency-free way
+    to check. Mirrors data_gateway's ``interview_take.py::_scorecard_exists``,
+    which uses the same query as a durable backstop against re-entering a
+    session whose status write raced or whose scoring later failed.
+    """
+    result = await db.execute(
+        text("SELECT 1 FROM scorecards WHERE session_id = :sid LIMIT 1"),
+        {"sid": session_id},
+    )
+    return result.scalar_one_or_none() is not None
+
+
 @router.post(
     "/{session_id}/token",
     response_model=RoomTokenResponse,
@@ -66,10 +89,15 @@ class RoomTokenResponse(BaseModel):
 )
 async def create_room_token(
     session_id: uuid.UUID,
-    current_user: CurrentUserDep,
+    current_user: GuestBoundUserDep,
     db: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> RoomTokenResponse:
-    """Issue a LiveKit join token after auth + ownership + consent checks."""
+    """Issue a LiveKit join token after auth + ownership + consent checks.
+
+    Guest-session binding (Phase 3, B7 — a magic-link guest token carries a
+    session_id claim and may join ONLY that one session) is enforced by the
+    ``GuestBoundUserDep`` dependency before this function body runs.
+    """
     if not (settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret):
         # Misconfiguration — fail loud server-side, generic detail to client.
         log.error("rooms.token.livekit_not_configured")
@@ -79,19 +107,6 @@ async def create_room_token(
         )
 
     user_id_str: str = current_user["sub"]
-
-    # 0. Guest binding (Phase 3, B7): a magic-link guest token carries a
-    #    session_id claim and may join ONLY that one session — even though the
-    #    ownership check below would also pass (the guest IS the session's user),
-    #    this binds the token at the transport layer so a guest token can never be
-    #    pointed at another session id.
-    roles = current_user.get("roles") or []
-    if "guest_candidate" in roles and current_user.get("session_id") != str(session_id):
-        log.info("rooms.token.guest_session_mismatch", session_id=str(session_id))
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This guest token is not valid for this session.",
-        )
 
     # 1. Session must exist.
     result = await db.execute(
@@ -117,7 +132,33 @@ async def create_room_token(
             detail="You do not own this interview session.",
         )
 
-    # 3. Worker capacity check — BEFORE issuing a token.
+    # 3. A finished session is never re-enterable (security-audit finding,
+    #    2026-08). data_gateway's magic-link redeem path already refuses to
+    #    re-enter a finished interview (interview_take.py — "A finished
+    #    interview is never re-enterable"), but that control lived ONLY on
+    #    the redeem/resume path. Without this check here, a candidate's
+    #    still-valid 15-minute access token could re-POST for an already
+    #    COMPLETED (and possibly already-scored) session, get a fresh LiveKit
+    #    token, and the worker would run a SECOND full interview on it —
+    #    flipping status back to 'in_progress' and overwriting completed_at /
+    #    duration_seconds. 'failed' is included too (a session that errored
+    #    out mid-interview is also not resumable via this endpoint); a
+    #    scorecard row is checked as a durable backstop in case the status
+    #    write raced or never landed. 'abandoned' / 'in_progress' /
+    #    'created' are deliberately NOT blocked — those must stay
+    #    re-enterable within the token's TTL.
+    if session.status in ("completed", "failed") or await _scorecard_exists(db, session_id):
+        log.info(
+            "rooms.token.session_finished",
+            session_id=str(session_id),
+            status=session.status,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This interview session has already finished and cannot be re-entered.",
+        )
+
+    # 4. Worker capacity check — BEFORE issuing a token.
     #    The worker publishes its active-job count to Redis on every admission
     #    change.  We read it here so a full worker returns HTTP 503 with a clear
     #    human-readable message BEFORE the candidate enters a dead LiveKit room.
@@ -145,7 +186,7 @@ async def create_room_token(
                 ),
             )
 
-    # 4. DPDP consent must be present (server-side; can't bypass via curl).
+    # 5. DPDP consent must be present (server-side; can't bypass via curl).
     if not await has_active_consent(db, user_id_str):
         log.info("rooms.token.consent_required", session_id=str(session_id))
         raise HTTPException(
@@ -156,7 +197,7 @@ async def create_room_token(
             ),
         )
 
-    # 5. Dispatch the interview WORKER into this room with session metadata.
+    # 6. Dispatch the interview WORKER into this room with session metadata.
     #    The worker (app/worker/interview_worker.py) must be running separately;
     #    it drives the Simli avatar + Sarvam voice. Idempotent per room.
     room_name = str(session_id)
@@ -174,7 +215,7 @@ async def create_room_token(
     )
     log.info("rooms.token.agent_dispatch", session_id=str(session_id), dispatched=dispatched)
 
-    # 6. Mint the LiveKit join token, scoped to this one room.
+    # 7. Mint the LiveKit join token, scoped to this one room.
     token = (
         api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity(f"candidate-{user_id_str}")

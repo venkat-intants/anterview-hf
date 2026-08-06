@@ -35,6 +35,9 @@ class _FakeResp:
 
 
 class _FakeClient:
+    last_url: str | None = None
+    last_headers: dict[str, str] | None = None
+
     def __init__(self, resp: _FakeResp) -> None:
         self._resp = resp
 
@@ -44,11 +47,15 @@ class _FakeClient:
     async def __aexit__(self, *_: Any) -> bool:
         return False
 
-    async def post(self, *_: Any, **__: Any) -> _FakeResp:
+    async def post(self, url: str, *_: Any, **kwargs: Any) -> _FakeResp:
+        _FakeClient.last_url = url
+        _FakeClient.last_headers = kwargs.get("headers")
         return self._resp
 
 
 def _patch_gemini(monkeypatch: pytest.MonkeyPatch, resp: _FakeResp) -> None:
+    _FakeClient.last_url = None
+    _FakeClient.last_headers = None
     monkeypatch.setattr(
         "app.resume_scorer.httpx.AsyncClient", lambda *a, **k: _FakeClient(resp)
     )
@@ -79,6 +86,29 @@ async def test_score_resume_parses_and_clamps(monkeypatch: pytest.MonkeyPatch) -
     assert result["breakdown"]["skills_match"] == 80
     assert result["recommendation"] == "strong_fit"
     assert result["strengths"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_score_resume_sends_api_key_via_header_not_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Gemini key must travel as x-goog-api-key, never ?key=<...> in the URL."""
+    payload = {
+        "overall": 70,
+        "breakdown": {
+            "skills_match": 70, "experience_relevance": 70,
+            "education_fit": 70, "role_alignment": 70,
+        },
+        "strengths": [], "concerns": [],
+        "recommendation": "moderate_fit",
+        "summary": "ok",
+    }
+    _patch_gemini(monkeypatch, _FakeResp(200, _gemini_envelope(payload)))
+
+    await score_resume(resume_text="resume", job_title="Engineer", settings=_SETTINGS)
+
+    assert "key=" not in (_FakeClient.last_url or "")
+    assert _FakeClient.last_headers == {"x-goog-api-key": _SETTINGS.gemini_api_key}
 
 
 @pytest.mark.asyncio

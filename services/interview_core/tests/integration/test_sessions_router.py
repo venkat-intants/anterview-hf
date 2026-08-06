@@ -61,6 +61,7 @@ def _patch_db_session(
     *,
     job: MagicMock | None,
     consent_present: bool = True,
+    captured_sql: list[str] | None = None,
 ) -> Any:
     """Patch app.routers.sessions.get_db_session to yield a mock AsyncSession.
 
@@ -70,6 +71,11 @@ def _patch_db_session(
          ``consent_present`` is True, else None. This makes the consent
          gate exercisable in tests instead of trivially passing because
          the mock returns the job for every query.
+
+    ``captured_sql``, if given, collects ``str(stmt)`` for every ``execute()``
+    call — lets a test assert on the compiled WHERE clause (e.g. that a
+    ``deleted_at IS NULL`` predicate is actually present) since the mock
+    itself does not apply real SQL filtering.
 
     add() and commit() are recorded but no-op.
     """
@@ -86,6 +92,8 @@ def _patch_db_session(
         # TextClause stringifies to that literal SQL. The job lookup
         # uses select(Job) which has no "dpdp_consent_ledger" in its SQL.
         sql_str = str(stmt)
+        if captured_sql is not None:
+            captured_sql.append(sql_str)
         if "dpdp_consent_ledger" in sql_str:
             return consent_result
         return job_result
@@ -155,6 +163,45 @@ async def test_create_session_happy_path(client: AsyncClient) -> None:
     assert data["language"] == "en"
     # echo of user_id back is not part of contract, just confirms auth worked
     _ = user_id
+
+
+@pytest.mark.asyncio
+async def test_create_session_job_query_filters_soft_deleted(client: AsyncClient) -> None:
+    """The Job lookup must exclude soft-deleted (withdrawn) postings.
+
+    security-audit finding, 2026-08: interview_core's Job model did not map
+    ``deleted_at`` at all, so the WHERE clause could not filter on it even if
+    someone tried — a withdrawn posting stayed interviewable. This asserts
+    the actual SQL sent for the Job lookup carries a ``deleted_at IS NULL``
+    predicate; it fails if that filter is ever removed, even though the DB
+    mock always returns the configured job regardless of the WHERE clause.
+    """
+    token, _ = _valid_token()
+    fake_job = _build_fake_job(is_active=True)
+    body = {"job_id": str(fake_job.id), "language": "en"}
+
+    captured: list[str] = []
+    override = _patch_db_session(job=fake_job, captured_sql=captured)
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        resp = await client.post(
+            "/api/sessions",
+            json=body,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 201, resp.text
+    job_queries = [
+        sql for sql in captured if "dpdp_consent_ledger" not in sql and "jobs" in sql.lower()
+    ]
+    assert job_queries, f"no Job SELECT captured; got: {captured}"
+    assert "deleted_at" in job_queries[0].lower() and "is null" in job_queries[0].lower(), (
+        f"Job lookup must filter deleted_at IS NULL — got SQL: {job_queries[0]}"
+    )
 
 
 @pytest.mark.asyncio

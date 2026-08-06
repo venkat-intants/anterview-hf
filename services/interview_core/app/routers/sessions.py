@@ -280,7 +280,8 @@ async def create_session(
     """Create a new interview session for the authenticated user.
 
     Validates:
-    - ``job_id`` exists and ``is_active=True`` (404 if not found, 400 if inactive).
+    - ``job_id`` exists, is not soft-deleted, and ``is_active=True``
+      (404 if not found or soft-deleted, 400 if inactive).
     - ``language`` is in the allowed set (422 via Pydantic Literal).
     - Active DPDP consent exists (403 if missing).
 
@@ -291,7 +292,14 @@ async def create_session(
     # ------------------------------------------------------------------
     # Validate job exists and is active
     # ------------------------------------------------------------------
-    result = await db.execute(select(Job).where(Job.id == body.job_id))
+    # deleted_at IS NULL mirrors every other consumer of `jobs` in
+    # data_gateway (jobs.py list_jobs / get_job both filter it) — a
+    # withdrawn posting is treated as not-found, same as get_job's 404,
+    # rather than falling through to the separate is_active=False → 400
+    # branch below (security-audit finding, 2026-08).
+    result = await db.execute(
+        select(Job).where(Job.id == body.job_id, Job.deleted_at.is_(None))
+    )
     job: Job | None = result.scalar_one_or_none()
 
     if job is None:

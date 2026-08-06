@@ -188,8 +188,12 @@ def _build_pdf_bytes(
     )
 
     today = date.today().strftime("%d %B %Y")
+    # The three known codes map to static, trusted strings. Any other value is
+    # `language` echoed back — ScoreRequest constrains it to en/hi/te at the API
+    # boundary, but this function has no such guarantee of its own, so the
+    # fallback branch is escaped like every other candidate-influenced field.
     lang_display = {"en": "English", "hi": "Hindi (Hinglish)", "te": "Telugu (Tenglish)"}.get(
-        language, language.upper()
+        language, _esc(language.upper())
     )
 
     # ---- Header block -------------------------------------------------------

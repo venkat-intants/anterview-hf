@@ -14,7 +14,14 @@ from pydantic import ValidationError
 from app.config import Settings
 
 # Minimum viable env for a Settings() that only exercises validators.
-_BASE_ENV: dict[str, str] = {
+#
+# Every value is passed explicitly rather than relying on the process
+# environment. These tests originally passed locally and failed in CI, because a
+# developer checkout has services/data_gateway/.env sitting next to it and
+# pydantic-settings reads it — so the production-mode requirements below were
+# being satisfied invisibly by a file CI does not have. Anything a test depends
+# on has to be in the test.
+_BASE_ENV: dict[str, object] = {
     "database_url": "postgresql+asyncpg://u:p@localhost/db",
     "redis_url": "redis://localhost:6379/0",
     "jwt_secret": "a" * 48,
@@ -23,9 +30,26 @@ _BASE_ENV: dict[str, str] = {
     "consent_ip_salt": "d" * 48,
 }
 
+# What production/staging additionally demand. Kept separate from _BASE_ENV so
+# the development-mode tests still prove the defaults are permissive:
+#   AUTH_COOKIE_SECURE=true  — no plain-HTTP session cookies
+#   DATABASE_SSL             — no cleartext PII to Neon/Postgres
+_PROD_ENV: dict[str, object] = {
+    "auth_cookie_secure": True,
+    "database_ssl": "require",
+}
+
 
 def _settings(**overrides: object) -> Settings:
     return Settings(**{**_BASE_ENV, **overrides})  # type: ignore[arg-type]
+
+
+def _prod_settings(**overrides: object) -> Settings:
+    """Settings in production mode with its prerequisites satisfied.
+
+    Lets a test target one production gate without tripping the others first.
+    """
+    return Settings(**{**_BASE_ENV, **_PROD_ENV, **overrides})  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +67,7 @@ def test_app_env_normalises_to_lowercase(raw: str) -> None:
     assert_strong_secrets, so a placeholder JWT secret would boot unchallenged.
     A one-character casing difference should not be a security boundary.
     """
-    assert _settings(app_env=raw, auth_cookie_secure=True).app_env == "production"
+    assert _prod_settings(app_env=raw).app_env == "production"
 
 
 def test_app_env_normalisation_reaches_the_production_gates() -> None:
@@ -52,10 +76,25 @@ def test_app_env_normalisation_reaches_the_production_gates() -> None:
     APP_ENV=PRODUCTION must actually ARM the production checks. Asserting only
     that the string is lowercased would still pass if the gates read a different
     attribute.
+
+    Everything except the gate under test is satisfied, so the error can only be
+    the one this asserts on.
     """
     with pytest.raises(ValidationError) as exc:
-        _settings(app_env="PRODUCTION", auth_cookie_secure=False)
+        _prod_settings(app_env="PRODUCTION", auth_cookie_secure=False)
     assert "AUTH_COOKIE_SECURE" in str(exc.value)
+
+
+def test_database_ssl_is_required_in_production() -> None:
+    """The other production gate, pinned for the same reason.
+
+    Without SSL, PII travels in cleartext to Neon/Postgres. This test exists
+    because a missing DATABASE_SSL is what actually broke the suite in CI while
+    passing locally — it deserves to be asserted rather than stumbled into.
+    """
+    with pytest.raises(ValidationError) as exc:
+        _prod_settings(app_env="production", database_ssl="")
+    assert "DATABASE_SSL" in str(exc.value)
 
 
 def test_development_env_is_untouched() -> None:

@@ -12,5 +12,18 @@
       "source": "/:path*",
       "destination": "/index.html"
     }
+  ],
+
+  "//headers": "space/Caddyfile sets these for the HF Space origin; this is the same set for the Vercel origin, which had none. frame-ancestors is 'self' (not 'none') so the app stays embeddable by its own pages — unlike the Space, Vercel is not framed by huggingface.co, but 'self' costs nothing and keeps the two origins' policies comparable. No script-src: index.html has an inline pre-paint theme script and loads Google Fonts, so a real script-src needs a nonce rollout rather than a config line.",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "frame-ancestors 'self'; base-uri 'self'; object-src 'none'; form-action 'self'" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "X-Frame-Options", "value": "SAMEORIGIN" }
+      ]
+    }
   ]
 }

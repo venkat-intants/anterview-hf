@@ -35,6 +35,24 @@ _PII_KEYS = frozenset(
         "refresh_token",
         "jwt",
         "transcript",
+        # Names this codebase actually uses for the same data. Matching is
+        # exact, so "email" alone does not cover "user_email" or
+        # "candidate_email", and the resume/answer text is the largest block of
+        # candidate PII the platform holds.
+        "user_email",
+        "candidate_email",
+        "to_email",
+        "candidate_name",
+        "resume_text",
+        "resume_excerpt",
+        "jd_text",
+        "api_key",
+        "secret",
+        "client_secret",
+        "code_verifier",
+        "plain",
+        "password_hash",
+        "csrf_token",
     }
 )
 
@@ -58,13 +76,37 @@ def _before_send(event: dict, _hint: dict) -> dict:
         if isinstance(req, dict):
             req.pop("cookies", None)
             req.pop("data", None)
+            # The query string is populated by the ASGI integration, so a 500 on
+            # /auth/sso/google/callback?code=..&state=.. would ship the OAuth
+            # authorization code to a third-party SaaS. The URL is kept, minus
+            # its query, because the path alone is what makes an event useful.
+            req.pop("query_string", None)
+            url = req.get("url")
+            if isinstance(url, str) and "?" in url:
+                req["url"] = url.split("?", 1)[0]
             headers = req.get("headers")
             if isinstance(headers, dict):
                 for h in list(headers):
-                    if str(h).lower() in ("authorization", "cookie", "x-csrf-token"):
+                    if str(h).lower() in (
+                        "authorization",
+                        "cookie",
+                        "x-csrf-token",
+                        # Bearer-equivalent magic-link credentials — same
+                        # reasoning as the Caddy access-log filter.
+                        "x-exam-token",
+                        "x-interview-token",
+                    ):
                         headers[h] = "[redacted]"
         if "extra" in event:
             event["extra"] = _scrub(event["extra"])
+        # Breadcrumbs carry their own data maps and messages, and were never
+        # scrubbed — an HTTP breadcrumb or a log line recorded before the
+        # exception can hold the same PII the event body is cleaned of.
+        crumbs = event.get("breadcrumbs")
+        if isinstance(crumbs, dict) and isinstance(crumbs.get("values"), list):
+            crumbs["values"] = _scrub(crumbs["values"])
+        elif isinstance(crumbs, list):
+            event["breadcrumbs"] = _scrub(crumbs)
     except Exception:  # noqa: BLE001 — scrubbing must never break error reporting
         pass
     return event
@@ -101,6 +143,14 @@ def init_sentry(
             send_default_pii=False,  # never auto-attach IP / cookies / headers
             before_send=_before_send,
             server_name=service_name,
+            # The SDK defaults this to True, and _before_send never sees frame
+            # locals — so an unhandled 500 in a PII-handling endpoint would ship
+            # local variables to a third-party SaaS. Two concrete cases in this
+            # codebase: agent_panel holds `bundle` (candidate name + resume
+            # text) as a live local, and LocalAuthProvider._verify_password
+            # holds the PLAINTEXT password in `plain`. Neither name is in the
+            # SDK's built-in denylist.
+            include_local_variables=False,
         )
     except Exception as exc:  # noqa: BLE001 — observability must not break boot
         log.warning("sentry.init_failed", error=str(exc), service=service_name)

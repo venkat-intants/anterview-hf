@@ -12,6 +12,14 @@
 secrets/
 **/credentials.json
 
+# Catch-all for env files whose basename does NOT start with ".env" —
+# deploy.env, prod.env, staging.env. Every pattern above requires the basename
+# to START with ".env", which is why space.env needed its own line further down,
+# and why Caddyfile's own instructions ("put PUBLIC_API_DOMAIN in deploy.env")
+# name a file that was not ignored at all.
+*.env
+!*.env.example
+
 
 # ==============================================================================
 # PYTHON

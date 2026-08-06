@@ -29,8 +29,12 @@ web/node_modules/
 **/.env
 **/.env.*
 !**/.env.example
-space.env
-!space.env.example
+# Same basename gap as .gitignore: the patterns above only match files whose
+# name starts with ".env", so deploy.env / prod.env slipped through. **/*.env
+# also subsumes the old hand-written space.env line, which was
+# context-root-anchored and would not have caught services/foo/space.env.
+**/*.env
+!**/*.env.example
 
 # Dev artefacts
 **/*.log

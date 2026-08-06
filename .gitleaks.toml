@@ -50,6 +50,15 @@ regexes = [
   # files — so a real DATABASE_URL or JWT_SECRET pasted into the .env.example
   # sitting beside the .env a developer is editing would have passed CI
   # silently. That is exactly the shortcut this file's own header warns against.
+  # services/feedback_billing/tests/test_revocation_enforced.py — the HS256 key
+  # the cross-verifier revocation test signs its fixtures with. It has to be
+  # >=32 chars for the strength guard, which is the only reason generic-api-key
+  # fires on it; the value spells out what it is. Allowlisted as a literal
+  # rather than by path, per this file's header — and it must stay allowlisted
+  # even if the constant is renamed, because git history is immutable and the
+  # scanner walks every commit.
+  '''test-secret-at-least-32-bytes-long-xxxx''',
+
   '''change-me-to-random-64-char-hex''',
   '''sk-ant-your-key-here''',
   '''intants_dev_pw''',

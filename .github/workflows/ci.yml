@@ -59,9 +59,15 @@ jobs:
         # import them. shared/auth is NOT — it needs redis/jose/bcrypt/
         # sqlalchemy — so those are installed explicitly rather than the suite
         # being left unrun, which is what happened before.
+        # ruff and mypy are PINNED to the same versions the four services pin
+        # in their requirements.txt. Unpinned, this job lints shared/ with
+        # whatever ruff released most recently: 0.16 turns 17 new findings red
+        # in code 0.7.4 considers clean, so a commit that changed nothing would
+        # fail CI and block the deploy. A linter that can change its mind
+        # without a code change is not a gate.
         run: |
           python -m pip install --upgrade pip
-          pip install pydantic structlog pytest pytest-asyncio ruff mypy
+          pip install pydantic structlog pytest pytest-asyncio "ruff==0.7.4" "mypy==1.20.2"
           pip install redis "python-jose[cryptography]" bcrypt sqlalchemy
 
       - name: Lint
@@ -108,10 +114,13 @@ jobs:
 
       - name: Install
         working-directory: services/${{ matrix.service }}
+        # requirements.txt already pins ruff and mypy; installing them
+        # unpinned afterwards would silently upgrade past that pin and make
+        # the lint/type gate drift with upstream releases.
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio ruff mypy
+          pip install pytest pytest-asyncio
 
       - name: Lint
         working-directory: services/${{ matrix.service }}

@@ -35,6 +35,10 @@ PII note: user email and name from Google are NEVER written to logs.
 
 from __future__ import annotations
 
+import base64
+import contextlib
+import hashlib
+import hmac
 import json
 import secrets
 import uuid
@@ -119,7 +123,13 @@ def _require_google_configured() -> None:
         )
 
 
-def _build_authorize_url(state: str) -> str:
+# Name of the httpOnly cookie that binds an OAuth state token to the browser
+# that started the flow. Without it, `state` is a bearer value the attacker
+# generates for themselves — see the login-CSRF note on `initiate`.
+_STATE_COOKIE_NAME = "oauth_state"
+
+
+def _build_authorize_url(state: str, code_challenge: str = "") -> str:
     """Build the full Google OAuth2 authorization URL.
 
     Extracted as a pure function so the unit test can verify the URL
@@ -133,7 +143,19 @@ def _build_authorize_url(state: str) -> str:
         "state": state,
         "access_type": "offline",
     }
+    if code_challenge:
+        # PKCE. Even for a confidential client this binds the authorization
+        # code to the browser that started the flow, so a code captured in
+        # transit cannot be redeemed without the matching verifier.
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
     return f"{_GOOGLE_AUTHORIZE_URL}?{urlencode(params)}"
+
+
+def _pkce_challenge(verifier: str) -> str:
+    """S256 code challenge for *verifier* (RFC 7636 §4.2)."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 def _state_redis_key(state_token: str) -> str:
@@ -225,6 +247,24 @@ async def initiate(
 
     state = secrets.token_urlsafe(32)
 
+    # Bind this flow to THIS browser.
+    #
+    # Without it, `state` is just a value the caller holds: anyone can GET
+    # /initiate, complete Google sign-in with an account THEY control, and keep
+    # the resulting code+state without letting the SPA consume it. One
+    # top-level navigation by a victim to
+    # /auth/sso/google/callback?code=…&state=… then plants the ATTACKER's
+    # session cookies in the victim's browser (SameSite=Lax permits Set-Cookie
+    # on a top-level GET, and the SPA calls /auth/refresh unconditionally on
+    # mount). The victim is then silently signed in as the attacker, and every
+    # resume they upload lands in an account the attacker can log into.
+    #
+    # The cookie is httpOnly and only its SHA-256 goes to Redis, so neither
+    # script on the page nor a Redis read discloses the value needed to forge
+    # a callback.
+    state_binding = secrets.token_urlsafe(32)
+    code_verifier = secrets.token_urlsafe(64)
+
     # Carry the candidate's consent intent (and return_url) in the state payload so
     # the callback — which sees the candidate's real browser IP — records the DPDP
     # consent row atomically with account creation. JSON so it stays parseable.
@@ -233,6 +273,8 @@ async def initiate(
             "return_url": return_url or "",
             "consent": bool(consent),
             "consent_version": int(consent_version),
+            "binding": hashlib.sha256(state_binding.encode()).hexdigest(),
+            "code_verifier": code_verifier,
         }
     )
     await redis.set(
@@ -241,9 +283,23 @@ async def initiate(
         ex=_STATE_TTL_SECONDS,
     )
 
-    authorize_url = _build_authorize_url(state)
+    authorize_url = _build_authorize_url(state, _pkce_challenge(code_verifier))
     log.info("google.sso.initiate", state_prefix=state[:8], consent=bool(consent))
-    return RedirectResponse(url=authorize_url, status_code=status.HTTP_302_FOUND)
+    redirect = RedirectResponse(url=authorize_url, status_code=status.HTTP_302_FOUND)
+    redirect.set_cookie(
+        key=_STATE_COOKIE_NAME,
+        value=state_binding,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        # Lax, not Strict: the callback arrives as a cross-site top-level
+        # navigation FROM accounts.google.com, and Strict would withhold the
+        # cookie exactly then, breaking every legitimate sign-in.
+        samesite="lax",
+        domain=settings.auth_cookie_domain,
+        path="/",
+        max_age=_STATE_TTL_SECONDS,
+    )
+    return redirect
 
 
 @router.get(
@@ -305,6 +361,40 @@ async def callback(
     # Atomically delete so the state token cannot be replayed.
     await redis.delete(state_key)
 
+    # ------------------------------------------------------------------
+    # Step 2b: the state must belong to THIS browser (login-CSRF defence)
+    # ------------------------------------------------------------------
+    # Checked before the token exchange and before any session is minted, so a
+    # forged callback costs nothing and reveals nothing. Compared with
+    # compare_digest against the SHA-256 stored alongside the state.
+    _binding_cookie = request.cookies.get(_STATE_COOKIE_NAME, "")
+    _expected_binding = ""
+    _pkce_verifier = ""
+    with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+        _parsed = json.loads(stored_value)
+        if isinstance(_parsed, dict):
+            _expected_binding = str(_parsed.get("binding") or "")
+            _pkce_verifier = str(_parsed.get("code_verifier") or "")
+
+    if _expected_binding:
+        _presented = (
+            hashlib.sha256(_binding_cookie.encode()).hexdigest() if _binding_cookie else ""
+        )
+        if not _presented or not hmac.compare_digest(_presented, _expected_binding):
+            log.warning(
+                "google.sso.callback.state_not_bound_to_browser",
+                state_prefix=state[:8],
+                had_cookie=bool(_binding_cookie),
+            )
+            response.delete_cookie(_STATE_COOKIE_NAME, path="/")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_OR_EXPIRED_STATE",
+            )
+
+    # One-shot: the binding must not survive to authorise a second callback.
+    response.delete_cookie(_STATE_COOKIE_NAME, path="/")
+
     # Recover the candidate's consent intent from the state payload (JSON written
     # by initiate). Tolerate a legacy plain-string state (return_url only) — in
     # that case no consent was captured, so none is recorded here and the
@@ -324,17 +414,22 @@ async def callback(
             # ------------------------------------------------------------------
             # Step 3: Exchange code for tokens
             # ------------------------------------------------------------------
+            token_form: dict[str, str] = {
+                "client_id": settings.google_oauth_client_id,
+                "client_secret": settings.google_oauth_client_secret,
+                "redirect_uri": settings.google_oauth_redirect_uri,
+                "code": code,
+                "grant_type": "authorization_code",
+            }
+            # PKCE verifier, when initiate issued a challenge. Omitted for a
+            # state minted before this change so an in-flight sign-in does not
+            # break on deploy; Google only requires it when the authorize call
+            # carried a code_challenge.
+            if _pkce_verifier:
+                token_form["code_verifier"] = _pkce_verifier
+
             try:
-                token_resp = await http.post(
-                    _GOOGLE_TOKEN_URL,
-                    data={
-                        "client_id": settings.google_oauth_client_id,
-                        "client_secret": settings.google_oauth_client_secret,
-                        "redirect_uri": settings.google_oauth_redirect_uri,
-                        "code": code,
-                        "grant_type": "authorization_code",
-                    },
-                )
+                token_resp = await http.post(_GOOGLE_TOKEN_URL, data=token_form)
             except httpx.HTTPError as exc:
                 log.warning("google.sso.token_exchange.http_error", error=str(exc))
                 raise HTTPException(

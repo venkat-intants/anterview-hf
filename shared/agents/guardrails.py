@@ -29,6 +29,7 @@ ordered by how much they are worth:
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # Wrapped around every tool result before the model sees it (see
 # ``runtime.build_wire_messages``).
@@ -114,13 +115,71 @@ _INJECTION_MARKERS: tuple[str, ...] = (
 )
 
 
+# Hindi and Telugu equivalents. CLAUDE.md makes EN/HI/TE a Day-1 constraint, so
+# a non-English resume is the expected case here, not an edge case — an
+# English-only marker list means the model still reads the injected text while
+# the human is told nothing, which is worse than having no check at all.
+_INJECTION_MARKERS_HI: tuple[str, ...] = (
+    "पिछले निर्देश",
+    "निर्देशों को अनदेखा",
+    "अनदेखा करें",
+    "उपरोक्त को अनदेखा",
+    "नए निर्देश",
+    "सिस्टम प्रॉम्प्ट",
+    "अब आप",
+)
+
+_INJECTION_MARKERS_TE: tuple[str, ...] = (
+    "మునుపటి సూచనలు",
+    "సూచనలను విస్మరించు",
+    "విస్మరించండి",
+    "కొత్త సూచనలు",
+    "సిస్టమ్ ప్రాంప్ట్",
+    "ఇప్పుడు మీరు",
+)
+
+_ALL_INJECTION_MARKERS: tuple[str, ...] = (
+    _INJECTION_MARKERS + _INJECTION_MARKERS_HI + _INJECTION_MARKERS_TE
+)
+
+# Zero-width and bidi-control characters. Interleaving these inside a phrase
+# defeats plain substring matching while leaving the text visually identical
+# to the model — the cheapest possible evasion.
+_INVISIBLE_CHARS = dict.fromkeys(
+    [
+        0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF,  # zero-width space/joiners/BOM
+        0x202A, 0x202B, 0x202C, 0x202D, 0x202E,  # bidi overrides
+        0x00AD,                                   # soft hyphen
+    ]
+)
+
+
+def _normalise_for_matching(text: str) -> str:
+    """Fold the cheap evasions before substring matching.
+
+    NFKC collapses compatibility forms (fullwidth latin, ligatures) onto their
+    plain equivalents, invisible characters are dropped, and runs of whitespace
+    become single spaces so "ignore\\n\\n  previous instructions" still matches.
+    """
+    folded = unicodedata.normalize("NFKC", text).translate(_INVISIBLE_CHARS)
+    return " ".join(folded.lower().split())
+
+
 def detect_injection(text: str) -> list[str]:
     """Return the injection markers present in ``text``.
 
     Called by tools that surface candidate-authored documents, so the finding
     can travel to HR as an observation on the record.
+
+    Matching is deliberately generous about form and conservative about intent:
+    the output is a warning shown to a human, never an automatic rejection, so
+    a false positive costs a glance while a miss costs the whole control.
     """
     if not text:
         return []
-    lowered = text.lower()
-    return [marker for marker in _INJECTION_MARKERS if marker in lowered]
+    normalised = _normalise_for_matching(text)
+    return [
+        marker
+        for marker in _ALL_INJECTION_MARKERS
+        if _normalise_for_matching(marker) in normalised
+    ]

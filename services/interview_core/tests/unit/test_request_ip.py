@@ -177,15 +177,37 @@ def test_multiple_spoofed_entries_neutralised() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_xff_shorter_than_proxy_count_returns_leftmost() -> None:
-    """XFF has fewer entries than trusted_proxy_count → idx clamped to 0.
+def test_xff_shorter_than_proxy_count_falls_back_to_socket_peer() -> None:
+    """A SHORT X-Forwarded-For must not be trusted — fall back to the peer.
 
-    Only 1 XFF entry but trusted_proxy_count=2: idx = max(0, 1-2) = max(0,-1) = 0
-    → returns parts[0] as best-effort.
+    This previously clamped the index to 0 and returned parts[0] "as
+    best-effort". That is the worst available choice: every entry to the left
+    of the right-anchored index is attacker-PREPENDED, so index 0 is the one
+    value in the header the client fully controls. Any client could choose
+    their own apparent IP just by sending a one-entry XFF — and that value
+    keys the auth rate-limit buckets, so it hands out a fresh bucket per
+    request against login, register and password reset.
+
+    Fewer hops than configured means the request did not traverse the expected
+    proxy chain, so the socket peer is the only trustworthy answer.
     """
     request = _make_request(xff="1.2.3.4", client_host="10.0.0.1")
     result = get_client_ip(request, trusted_proxy_count=2)
-    assert result == "1.2.3.4"
+    assert result == "10.0.0.1"
+
+
+def test_non_ip_xff_entry_falls_back_to_socket_peer() -> None:
+    """Garbage in the selected XFF slot must not propagate.
+
+    The chosen entry is only trustworthy while the deployment really has
+    exactly trusted_proxy_count proxies in front of it. If that stops holding,
+    raw header text would otherwise reach the rate-limit key and, in
+    data_gateway, a Postgres INET column — where a non-IP raises
+    InvalidTextRepresentation and rolls back an unrelated write.
+    """
+    request = _make_request(xff="not-an-ip, 10.0.0.5", client_host="10.0.0.1")
+    result = get_client_ip(request, trusted_proxy_count=2)
+    assert result == "10.0.0.1"
 
 
 def test_empty_xff_header_falls_back_to_client_host() -> None:

@@ -30,6 +30,7 @@ S4-009 race safety:
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import uuid as _uuid_mod
 from datetime import UTC, datetime
 from typing import Annotated
@@ -165,7 +166,41 @@ def _extract_client_ip(request: Request) -> str:
         # picking a potentially attacker-controlled entry.
         return direct_host
 
-    return hops[real_index]
+    return _validated_ip(hops[real_index], fallback=direct_host)
+
+
+def _validated_ip(candidate: str, *, fallback: str) -> str:
+    """Return *candidate* only if it parses as an IP address.
+
+    Fail closed on anything else. Two reasons this is not cosmetic:
+
+    1. The XFF entry we select is only trustworthy while the deployment really
+       does have exactly ``trusted_proxy_count`` proxies in front of it. If that
+       assumption is ever wrong, this function returns raw attacker-chosen
+       header text — and the value feeds the rate-limit bucket key
+       (``rl:{bucket}:{ip}``), so arbitrary text means a fresh bucket per
+       request against login, register and password reset.
+    2. ``audit_log.ip_address`` is a Postgres INET column. A non-IP string
+       raises InvalidTextRepresentation, which rolls back the whole
+       transaction — so garbage here 500s an unrelated write instead of being
+       quietly wrong.
+
+    The caller's fallback is the direct socket peer, which is always a real
+    address. Note the literal "unknown" (used when request.client is None)
+    deliberately does NOT parse, so it is normalised here too.
+    """
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        log.warning("consent.client_ip.unparseable", length=len(candidate))
+        try:
+            ipaddress.ip_address(fallback)
+        except ValueError:
+            # Both unusable — surface a sentinel that is still a valid INET so
+            # an audit write cannot fail on it.
+            return "0.0.0.0"  # noqa: S104 — sentinel, never bound to a socket
+        return fallback
+    return candidate
 
 
 def _extract_user_agent(request: Request) -> str:

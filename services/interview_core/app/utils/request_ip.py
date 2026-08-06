@@ -49,6 +49,8 @@ Edge-case notes:
 
 from __future__ import annotations
 
+import ipaddress
+
 from fastapi import Request
 
 
@@ -87,12 +89,34 @@ def get_client_ip(request: Request, trusted_proxy_count: int) -> str:
 
     # Right-anchored: the real client IP is at index -(trusted_proxy_count)
     # from the right, i.e. parts[len(parts) - trusted_proxy_count].
-    # If the header is shorter than expected (fewer hops than the configured
-    # trust count), take the leftmost entry as a best-effort answer.
     idx: int = len(parts) - trusted_proxy_count
     if idx < 0:
-        idx = 0
-    return parts[idx]
+        # Header SHORTER than the configured trust count — the request did not
+        # traverse the proxy chain we expect. Fall back to the socket peer.
+        #
+        # This used to clamp to parts[0], which is the worst possible choice:
+        # every entry left of the right-anchored index is attacker-PREPENDED,
+        # so index 0 is the one value in the header the client fully controls.
+        # Anyone could pick their own IP just by sending a short XFF.
+        return _direct_host(request)
+
+    return _validated_ip(parts[idx], fallback=_direct_host(request))
+
+
+def _validated_ip(candidate: str, *, fallback: str) -> str:
+    """Return *candidate* only if it parses as an IP address, else *fallback*.
+
+    Fail closed: the selected XFF entry is only trustworthy while the
+    deployment really has exactly ``trusted_proxy_count`` proxies in front of
+    it. If that ever stops holding, this returns raw header text — and the
+    value keys rate-limit buckets, so arbitrary text means a fresh bucket per
+    request.
+    """
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        return fallback
+    return candidate
 
 
 def _direct_host(request: Request) -> str:

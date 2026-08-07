@@ -152,3 +152,109 @@ def test_absent_header_is_not_counted_as_a_degradation() -> None:
 @pytest.mark.parametrize("header", ["", "   ", " , , "])
 def test_empty_header_variants_fall_back_without_indexing(header: str) -> None:
     assert request_ip.get_client_ip(_request(xff=header), 1) == "203.0.113.9"
+
+
+# ---------------------------------------------------------------------------
+# DG-3 — the too-LOW direction now has a signal, not just a counter
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _fresh_hop_observation() -> Any:
+    """Each test starts with an unsampled topology observation."""
+    request_ip._reset_hop_observation()
+    yield
+    request_ip._reset_hop_observation()
+
+
+def _gauge_value(gauge: Any) -> float:
+    return gauge._value.get()  # noqa: SLF001 — prometheus_client has no public getter
+
+
+def _drive(xff: str, configured: int, times: int) -> None:
+    for _ in range(times):
+        request_ip.get_client_ip(_request(xff=xff), configured)
+
+
+def test_min_observed_hops_is_published_for_alerting() -> None:
+    """The alert expression is
+    ``client_ip_proxy_hops_min_observed > client_ip_trusted_proxy_count``, so
+    both sides have to exist as series before the sample completes."""
+    request_ip.get_client_ip(_request(xff="1.2.3.4, 198.51.100.7"), 1)
+
+    assert _gauge_value(request_ip._proxy_hops_min_observed) == 2
+    assert _gauge_value(request_ip._trusted_proxy_count_gauge) == 1
+
+
+def test_a_universally_excessive_chain_warns_once_the_sample_completes() -> None:
+    """Two real hops with TRUSTED_PROXY_COUNT=1: the extracted "client" is the
+    inner proxy, so every client shares one rate-limit bucket. The excess counter
+    alone cannot say this, because a single excess request is also what a benign
+    prepending client looks like."""
+    import structlog
+
+    with structlog.testing.capture_logs() as logs:
+        _drive("1.2.3.4, 198.51.100.7", 1, request_ip._HOP_SAMPLE_SIZE)
+
+    mismatches = [e for e in logs if e["event"] == "consent.client_ip.proxy_hop_mismatch"]
+    assert len(mismatches) == 1
+    assert mismatches[0]["log_level"] == "warning"
+    assert mismatches[0]["configured_proxy_count"] == 1
+    assert mismatches[0]["min_observed_hops"] == 2
+
+
+def test_the_zero_configured_case_is_observed_too() -> None:
+    """TRUSTED_PROXY_COUNT left at its safe default of 0 behind a real proxy is
+    the most likely form of this misconfiguration, and it returns before the hop
+    arithmetic ever runs — so an observation placed after that early return would
+    be blind to exactly the case it exists to catch."""
+    import structlog
+
+    with structlog.testing.capture_logs() as logs:
+        _drive("198.51.100.7", 0, request_ip._HOP_SAMPLE_SIZE)
+
+    mismatches = [e for e in logs if e["event"] == "consent.client_ip.proxy_hop_mismatch"]
+    assert len(mismatches) == 1
+    assert mismatches[0]["min_observed_hops"] == 1
+    assert mismatches[0]["configured_proxy_count"] == 0
+
+
+def test_a_correct_topology_reports_a_match_and_never_warns() -> None:
+    """One real hop, one configured — plus a prepending client on some requests,
+    which must NOT be enough to flip the verdict. That is why the statistic is
+    the minimum and not the mode or the maximum."""
+    import structlog
+
+    with structlog.testing.capture_logs() as logs:
+        _drive("198.51.100.7", 1, request_ip._HOP_SAMPLE_SIZE - 5)
+        _drive("1.2.3.4, 198.51.100.7", 1, 5)
+
+    assert not [e for e in logs if e["event"] == "consent.client_ip.proxy_hop_mismatch"]
+    matches = [e for e in logs if e["event"] == "consent.client_ip.proxy_hop_observation"]
+    assert len(matches) == 1
+    assert matches[0]["min_observed_hops"] == 1
+
+
+def test_the_verdict_is_emitted_exactly_once_per_process() -> None:
+    """A per-request warning on a misconfigured deployment is its own outage."""
+    import structlog
+
+    with structlog.testing.capture_logs() as logs:
+        _drive("1.2.3.4, 198.51.100.7", 1, request_ip._HOP_SAMPLE_SIZE * 3)
+
+    verdicts = [
+        e
+        for e in logs
+        if e["event"]
+        in ("consent.client_ip.proxy_hop_mismatch", "consent.client_ip.proxy_hop_observation")
+    ]
+    assert len(verdicts) == 1
+
+
+def test_header_less_requests_do_not_pin_the_minimum_at_zero() -> None:
+    """Health probes hit the container directly and carry no X-Forwarded-For. If
+    they were sampled the minimum would be 0 in every mixed topology and the
+    mismatch would be permanently invisible."""
+    _drive("1.2.3.4, 198.51.100.7", 1, 5)
+    for _ in range(20):
+        request_ip.get_client_ip(_request(), 1)
+
+    assert _gauge_value(request_ip._proxy_hops_min_observed) == 2

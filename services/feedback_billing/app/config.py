@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from shared.security import assert_strong_secrets, normalise_app_env, validate_cors_origins
+from shared.security import (
+    assert_strong_secrets,
+    normalise_app_env,
+    validate_cors_origins,
+    validate_database_ssl,
+)
 
 
 class Settings(BaseSettings):
@@ -29,6 +34,8 @@ class Settings(BaseSettings):
     # When non-empty, asyncpg passes ssl="require" + statement_cache_size=0
     # (required for pgBouncer/Prisma pooled endpoints). Set DATABASE_SSL=require
     # in any cloud env. Leave blank for local Postgres (no SSL, no pgBouncer).
+    # Required (not merely honoured) in production/staging — see
+    # _validate_database_ssl below.
     database_ssl: str = ""
 
     redis_url: str  # required — no default; service fails fast if unset
@@ -76,6 +83,29 @@ class Settings(BaseSettings):
         """Fail fast in production/staging if JWT_SECRET is a weak placeholder
         (must match data_gateway's). No-op in development/test."""
         assert_strong_secrets(self.app_env, {"JWT_SECRET": self.jwt_secret})
+        return self
+
+    @model_validator(mode="after")
+    def _validate_database_ssl(self) -> Settings:
+        """Refuse to start in production/staging with an unencrypted DB link.
+
+        XS-04: this guard existed only in data_gateway, so the other three
+        services — this one included, and it is the service that reads and
+        writes scorecards — could boot against a plaintext Postgres link and say
+        nothing (DPDP §8, CWE-319).
+
+        Assigns the RETURN value rather than just calling for the side effect:
+        the helper both enforces and normalises, stripping the
+        ``loopback-exempt`` acknowledgement token that asyncpg cannot
+        understand. ``object.__setattr__`` because a plain assignment inside a
+        model validator re-enters validation under ``validate_assignment``;
+        this model does not enable it today, but the shared helper documents
+        this call shape and a future config flag should not turn it into a
+        recursion bug.
+        """
+        object.__setattr__(
+            self, "database_ssl", validate_database_ssl(self.app_env, self.database_ssl)
+        )
         return self
 
     @property

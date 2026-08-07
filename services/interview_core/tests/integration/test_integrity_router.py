@@ -286,6 +286,96 @@ async def test_post_integrity_consent_db_error_is_forbidden(client: AsyncClient)
     )
 
 
+# ---------------------------------------------------------------------------
+# DPDP-5 — the gate must read the WEBCAM grant, not the audio one
+#
+# The frontend collects video_capture as its own opt-in. Until DPDP-5 this
+# route checked interview_voice_recording, so ticking "record my answers" was
+# silently taken as agreeing to be filmed and gaze-analysed. These tests use a
+# type-aware fake ledger so a route that reverts to the voice type fails here
+# rather than in a regulator's hands.
+# ---------------------------------------------------------------------------
+
+
+def _ledger(*granted_types: str) -> Any:
+    """A type-aware ``has_active_consent`` replacement over ``granted_types``.
+
+    ``return_value=True`` — what the tests above use — cannot tell the two
+    consent types apart, which is precisely the bug DPDP-5 describes.
+    """
+    calls: list[str] = []
+
+    async def _has_active_consent(
+        _db: Any, _user_id: str, consent_type: str = "interview_voice_recording"
+    ) -> bool:
+        calls.append(consent_type)
+        return consent_type in granted_types
+
+    _has_active_consent.calls = calls  # type: ignore[attr-defined]
+    return _has_active_consent
+
+
+@pytest.mark.asyncio
+async def test_post_integrity_voice_only_consent_is_forbidden(client: AsyncClient) -> None:
+    """Voice consent granted, camera consent declined → 403, nothing persisted.
+
+    This is the DPDP-5 regression itself: before the fix this request returned
+    200 and stored biometric-derived events for a candidate who had explicitly
+    said no to the camera.
+    """
+    uid = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+    override = _patch_db(session_user_id=uid, event_rows=[])
+    guard = _ledger("interview_voice_recording")
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        with patch("app.routers.integrity.has_active_consent", new=guard):
+            resp = await client.post(
+                f"/api/sessions/{sid}/integrity-events",
+                json={"events": [{"type": "gaze_away", "started_at": _T0.isoformat()}]},
+                headers={"Authorization": f"Bearer {_token(uid)}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 403, resp.text
+    assert guard.calls == ["video_capture"], (
+        "the proctoring route must ask the ledger about video_capture; it "
+        f"asked about {guard.calls!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_integrity_with_video_consent_succeeds(client: AsyncClient) -> None:
+    """Camera consent granted → the batch is stored exactly as before.
+
+    The negative test alone would also pass if the gate simply refused
+    everything, so pin the allowed direction too.
+    """
+    uid = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+    override = _patch_db(session_user_id=uid, event_rows=[("tab_blur", _T0, None)])
+    guard = _ledger("interview_voice_recording", "video_capture")
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        with patch("app.routers.integrity.has_active_consent", new=guard):
+            resp = await client.post(
+                f"/api/sessions/{sid}/integrity-events",
+                json={"events": [{"type": "tab_blur", "started_at": _T0.isoformat()}]},
+                headers={"Authorization": f"Bearer {_token(uid)}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["stored"] == 1
+    assert guard.calls == ["video_capture"]
+
+
 @pytest.mark.asyncio
 async def test_post_integrity_consent_checked_before_persist(client: AsyncClient) -> None:
     """The consent gate must fire BEFORE any db.add() / db.flush() call.

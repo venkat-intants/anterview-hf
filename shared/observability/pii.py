@@ -47,6 +47,15 @@ PII_FIELDS: frozenset[str] = frozenset(
         "email",
         "user_email",
         "to_email",
+        # The bare recipient names. ``email_util.py:145`` binds a raw address as
+        # ``to=`` (``log.info("email.sent", to=to, ...)``) — "to_email" above
+        # does not cover it, because matching is exact. "recipient" is the same
+        # field under the other name a mailer helper naturally reaches for.
+        # Nothing in this repo logs either as a non-PII value, so the only cost
+        # of covering them is that a future ops field called "to" would be
+        # blanked — which is the trade this whole set is built on.
+        "to",
+        "recipient",
         "password",
         "phone",
         "full_name",

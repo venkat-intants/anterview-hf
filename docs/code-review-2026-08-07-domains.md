@@ -11,6 +11,52 @@ configuration (`render.yaml`, `services/*/Dockerfile`, `space/`)
 **Grades (open):** 2 MUST FIX · 16 SHOULD FIX · 29 CONSIDER
 **Closed / confirmed this pass:** 30 (21 FIXED, 8 confirmed controls, 1 unverified)
 
+> ## ✅ REMEDIATION COMPLETE — 44 of 47 closed, 3 recorded as owner decisions
+>
+> **Status 2026-08-07.** Every finding below is either fixed in place or
+> explicitly recorded as an accepted risk. No file was deleted; the architecture
+> is unchanged.
+>
+> | Gate | Result |
+> |---|---|
+> | `data_gateway` | ruff ✅ mypy ✅ **545 passed** · **67%** (floor 62) |
+> | `interview_core` | ruff ✅ mypy ✅ **610 passed**, 1 skipped · **79%** (floor 74) |
+> | `feedback_billing` | ruff ✅ mypy ✅ **197 passed** · **92%** (floor 87) |
+> | `admin_ops` | ruff ✅ mypy ✅ **145 passed** · **90%** (floor 85) |
+> | `shared` | ruff ✅ mypy ✅ (37 files) · **524 passed**, 1 skipped |
+> | `web` | typecheck ✅ lint ✅ **504 passed** (44 files) |
+> | invariants | coverage floors ✅ · alert rules ✅ · **env parity ✅ (new)** |
+>
+> **1,497 backend + 524 shared + 504 frontend tests.** Coverage rose in every
+> service (66→67, 78→79, 91→92, 88→90) and floors were ratcheted to match.
+>
+> ### The three NOT fixed — recorded, not closed
+>
+> These cannot be resolved by code. Each is an accepted risk with an owner and a
+> revisit trigger, written up in the accepted-risk register rather than quietly
+> marked done:
+>
+> 1. **DPDP-3 — demo tier is not India-resident.** A Tier-2 infrastructure
+>    migration (Bedrock/RDS/S3 Mumbai), already documented at
+>    `docs/DATA-FLOW.md:12` with a per-processor region table. **Blocks any
+>    India-residency bid until Tier-2 executes.**
+> 2. **SEC-2 — one symmetric HS256 key across four services plus the worker.**
+>    Asymmetric signing is the Tier-2 answer. *Interim mitigation shipped:*
+>    `verify_access_token` now accepts a sequence of secrets, so a rotation
+>    window (`[new, old]` → drain → drop old) is expressible for the first time.
+> 3. **AG-05 — JDoodle is the default code-execution provider.** Switching to
+>    the hardened self-hosted Piston would break execution on the Space, which
+>    does not run it. JDoodle is now on the third-party processor register and
+>    the switch is one env var.
+>
+> ### Found during remediation
+>
+> - **DPDP-2 needed `pgvector/pgvector:pg16`, not stock `postgres:16`** — the
+>   migration fails with *"extension \"vector\" is not available"* on stock
+>   Postgres. Same server version, with the extension built in.
+> - **`interview_worker.py` is now 2,521 lines**, down from 2,972 (IC-4). Line
+>   references to that file elsewhere in this document predate the split.
+
 **Previous report:** [`code-review-2026-08-07.md`](code-review-2026-08-07.md) —
 now **SUPERSEDED** by this document
 **Companion reports:** [`code-review-full-repo-2026-08.md`](code-review-full-repo-2026-08.md),

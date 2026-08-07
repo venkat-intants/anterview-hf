@@ -5,11 +5,16 @@ as *behaviour* — "is this scrape allowed, and if not, what does the prober lea
 — because the whole point of the helper is that the answer is identical in all
 four services. In particular:
 
-* the production-with-no-token case must be a refusal, not a boot failure;
+* the hardened-env-with-no-token case must be a refusal, not a boot failure;
 * it must be a 404, so an unauthenticated prober cannot even confirm the route
   exists;
 * ``APP_ENV=Production`` must be treated as production (the capitalisation bug
-  ``shared/security.normalise_app_env`` was written to kill).
+  ``shared/security.normalise_app_env`` was written to kill);
+* **staging is hardened** (SEC-9). This module used to test ``== "production"``
+  while ``shared/security.ENFORCED_ENVS`` already treated staging as hardened for
+  secrets and TLS. The refusal cases below are parametrised over that imported
+  set rather than over a literal, so adding an environment to it cannot leave
+  this gate behind.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
+from shared.security import ENFORCED_ENVS
 
 _TOKEN = "metrics-token-not-real-0123456789abcdef"
 
@@ -105,26 +111,43 @@ def test_non_ascii_header_is_rejected_not_crashed() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_no_token_in_production_is_refused_as_404() -> None:
+@pytest.mark.parametrize("app_env", ENFORCED_ENVS)
+def test_no_token_in_a_hardened_env_is_refused_as_404(app_env: str) -> None:
     """Fail closed — and give a prober no confirmation the route exists."""
     with pytest.raises(MetricsAuthError) as exc_info:
-        check_metrics_auth(authorization=None, metrics_token=None, app_env="production")
+        check_metrics_auth(authorization=None, metrics_token=None, app_env=app_env)
     assert exc_info.value.status_code == 404
 
 
-def test_no_token_in_production_refuses_a_bearer_header_too() -> None:
+def test_no_token_in_staging_is_refused() -> None:
+    """SEC-9 stated as its own case, not only as a parametrisation.
+
+    Staging runs on public hostnames with the real route table, and
+    ``shared/security.py`` already refuses weak secrets and a plaintext DB link
+    there. An open ``/metrics`` was the one place the package still called
+    staging a development environment.
+    """
+    with pytest.raises(MetricsAuthError) as exc_info:
+        check_metrics_auth(authorization=None, metrics_token="", app_env="staging")
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.parametrize("app_env", ENFORCED_ENVS)
+def test_no_token_in_a_hardened_env_refuses_a_bearer_header_too(app_env: str) -> None:
     """With nothing configured there is no credential that can open the door."""
     with pytest.raises(MetricsAuthError) as exc_info:
         check_metrics_auth(
             authorization=f"Bearer {_TOKEN}",
             metrics_token=None,
-            app_env="production",
+            app_env=app_env,
         )
     assert exc_info.value.status_code == 404
 
 
-@pytest.mark.parametrize("app_env", ["Production", "PRODUCTION", "  production  "])
-def test_production_gate_is_case_and_whitespace_insensitive(app_env: str) -> None:
+@pytest.mark.parametrize(
+    "app_env", ["Production", "PRODUCTION", "  production  ", "Staging", "  STAGING "]
+)
+def test_hardened_gate_is_case_and_whitespace_insensitive(app_env: str) -> None:
     """``APP_ENV=Production`` must not buy an open metrics endpoint."""
     with pytest.raises(MetricsAuthError) as exc_info:
         check_metrics_auth(authorization=None, metrics_token=None, app_env=app_env)
@@ -132,7 +155,7 @@ def test_production_gate_is_case_and_whitespace_insensitive(app_env: str) -> Non
 
 
 @pytest.mark.parametrize("blank", [None, "", "   "])
-def test_blank_token_counts_as_unset_in_production(blank: str | None) -> None:
+def test_blank_token_counts_as_unset_in_a_hardened_env(blank: str | None) -> None:
     """``METRICS_TOKEN=`` in .env.example arrives as ``""``.
 
     Treating that as "configured" would require the literal header ``"Bearer "``
@@ -144,12 +167,28 @@ def test_blank_token_counts_as_unset_in_production(blank: str | None) -> None:
     assert exc_info.value.status_code == 404
 
 
-@pytest.mark.parametrize("app_env", ["development", "test", "staging", "local"])
+@pytest.mark.parametrize("app_env", ["development", "test", "local"])
 @pytest.mark.parametrize("blank", [None, "", "   "])
-def test_no_token_outside_production_is_allowed(app_env: str, blank: str | None) -> None:
-    """Local dev, docker-compose and CI keep scraping with no config change."""
+def test_no_token_outside_hardened_envs_is_allowed(app_env: str, blank: str | None) -> None:
+    """Local dev, docker-compose and CI keep scraping with no config change.
+
+    ``staging`` is deliberately absent from this list — see
+    ``test_no_token_in_staging_is_refused``.
+    """
     check_metrics_auth(authorization=None, metrics_token=blank, app_env=app_env)
 
 
-def test_no_token_outside_production_ignores_any_header() -> None:
+def test_no_token_outside_hardened_envs_ignores_any_header() -> None:
     check_metrics_auth(authorization="Bearer whatever", metrics_token=None, app_env="development")
+
+
+def test_the_gate_reads_the_shared_env_set_rather_than_its_own_literal() -> None:
+    """The actual SEC-9 fix: one definition, two consumers.
+
+    Asserted behaviourally — every env the secrets guard hardens must also
+    refuse an unauthenticated scrape — so a future edit that re-types the tuple
+    in ``metrics_auth`` fails here rather than drifting silently again.
+    """
+    for env in ENFORCED_ENVS:
+        with pytest.raises(MetricsAuthError):
+            check_metrics_auth(authorization=None, metrics_token=None, app_env=env)

@@ -73,7 +73,32 @@ jobs:
           # class-construction time without it, so the whole suite fails at
           # COLLECTION rather than in a test — which is why a machine that
           # happened to have it installed could not reproduce the failure.
-          pip install redis "python-jose[cryptography]" bcrypt sqlalchemy email-validator
+          #
+          # SQLAlchemy is PINNED to the version all four services ship, not left
+          # floating. shared/db/engine.py is now the single engine factory for
+          # all four, and its suite asserts library-specific behaviour — which
+          # pool class each branch selects, the exact asyncpg connect_args. A
+          # floating install had CI verifying those assertions against 2.0.51
+          # while every image runs 2.0.50; the gate would then be describing a
+          # library nothing deploys.
+          pip install redis "python-jose[cryptography]" bcrypt "SQLAlchemy==2.0.50" \
+            email-validator
+          # shared/http_observability.py, added 2026-08-07 (XS-01/XS-05/XS-06):
+          # the one HTTP metrics + unhandled-exception layer all four services
+          # install. It imports fastapi, starlette and prometheus_client at
+          # MODULE level, and so does shared/tests/test_http_observability.py.
+          # Without them here pytest stopped with "Interrupted: 1 error during
+          # collection" and NONE of the 518 tests then in this job ran — the
+          # third time this exact shape has bitten the job (email-validator, then
+          # aioboto3/httpx, now this). Verified by installing the list above and
+          # nothing else into a clean venv and watching the run abort.
+          #
+          # Versions are the four services' own pins, so this job exercises the
+          # libraries the images ship. prometheus_client comes from
+          # interview_core/feedback_billing's pin; data_gateway and admin_ops
+          # carry it as a floor (>=0.20.0), which the pin satisfies.
+          pip install "fastapi==0.115.14" "starlette==0.46.2" \
+            "prometheus_client==0.25.0"
           # shared/s3.py and shared/llm/gemini.py, added 2026-08-07 to
           # de-duplicate the seven aioboto3 constructions (SVC-1) and the three
           # Gemini callers (FB-1/FB-2). Both import at MODULE level, so their
@@ -112,16 +137,39 @@ jobs:
         # arguments, so anything not listed is silently unchecked and looks
         # exactly like something that passed.
         #
-        # metrics_auth.py, redis_factory.py, s3.py and security.py are top-level
-        # MODULES, not packages, so no directory argument reaches them. llm/ and
-        # observability/ are packages that simply post-date the original list —
-        # s3.py and llm/ landed on 2026-08-07 with the SVC-1 / FB-1 refactors and
-        # would have shipped unchecked. (shared/models/ and shared/voice/ are
-        # omitted on purpose: both are an empty __init__.py and nothing else.)
+        # http_observability.py, metrics_auth.py, redis_factory.py, s3.py and
+        # security.py are top-level MODULES, not packages, so no directory
+        # argument reaches them. db/, llm/ and observability/ are packages that
+        # simply post-date the original list — s3.py and llm/ landed on
+        # 2026-08-07 with the SVC-1 / FB-1 refactors and would have shipped
+        # unchecked. (shared/models/ and shared/voice/ are omitted on purpose:
+        # both are an empty __init__.py and nothing else.)
         #
-        # Adding a file under shared/ means adding it here.
+        # db/ and http_observability.py were the next two to prove the point:
+        # both landed later on 2026-08-07 — the XS-08 engine factory and the
+        # XS-01/XS-05/XS-06 middleware, code every one of the four services now
+        # imports at startup — and neither was listed, so both were silently
+        # unchecked while this step reported success.
+        #
+        # Adding a file under shared/ means adding it here — and that is now
+        # CHECKED rather than requested: shared/tests/test_ci_shared_job_paths.py
+        # parses this line and the pytest line below and fails if any path under
+        # shared/ that holds code or tests is missing. Four misses in one repo
+        # say a comment asking the next author to remember is not a mechanism.
+        #
+        # HONEST SCOPE — shared/auth is deliberately absent and is the one hole.
+        # It does not type-check clean today (4 errors: redis.get is typed
+        # `bytes | str | None` against three `str | None` annotations in
+        # local.py, plus the `list.append(...) or default` idiom in the
+        # logout-all TOCTOU test). None is a runtime defect — `int()` takes
+        # bytes and the idiom is intentional — but adding the path before
+        # fixing them turns this job red, and a red gate gets switched off
+        # rather than fixed. The exclusion is recorded as KNOWN_UNTYPECHECKED in
+        # that test, so it is one named hole rather than an invisible one; the
+        # work is to empty that set, never to grow it.
         run: >-
-          mypy shared/intelligence shared/agents shared/llm shared/observability
+          mypy shared/intelligence shared/agents shared/db shared/llm
+          shared/observability shared/http_observability.py
           shared/metrics_auth.py shared/redis_factory.py
           shared/s3.py shared/security.py
           --ignore-missing-imports
@@ -147,6 +195,16 @@ jobs:
         # test_shared_gemini.py, test_observability_pii.py) landed inside an
         # already-listed directory and needed no path change; what they DID need
         # was three packages the Install step above did not have.
+        #
+        # Re-verified again after the XS-08 / XS-01 refactors landed: the same
+        # `find` still reports exactly those four directories, so the path list
+        # is unchanged. test_db_engine.py, test_http_observability.py,
+        # test_jwt_rotation.py and test_security.py all landed inside
+        # shared/tests — and the second of those needed three MORE packages,
+        # which is the failure the Install step's comment now records. Running
+        # this line in a venv built from the Install step alone is the only way
+        # to catch that class; a laptop that happens to have fastapi installed
+        # cannot reproduce it.
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: python -m pytest shared/intelligence shared/agents shared/auth shared/tests -q
@@ -159,6 +217,47 @@ jobs:
       fail-fast: false
       matrix:
         service: [data_gateway, interview_core, feedback_billing, admin_ops]
+
+    # Live backing services for the `integration`-marked suites, which until now
+    # were deselected by `-m "not integration"` and therefore never ran anywhere
+    # (DPDP-2). They cover DPDP §8(7) retention purge and §6/§7 consent-ledger
+    # route behaviour — and DPDP-4, a HIGH finding, sits inside the purge code
+    # those tests exercise and was found by READING it, not by a red build.
+    #
+    # `services:` is evaluated for every matrix leg, so the images are gated on
+    # the service name inside the step that uses them; only data_gateway has
+    # integration suites. GitHub still pulls both images on all four legs, which
+    # costs ~10 s per leg and is the price of `services:` not taking an `if:`.
+    #
+    # pgvector/pgvector:pg16, NOT postgres:16. Verified by running the real
+    # migrations against both: `alembic upgrade head` dies on the FIRST
+    # migration with `extension "vector" is not available` on stock postgres:16,
+    # because applicants.embedding is a halfvec(3072) column. The image is the
+    # official pgvector build ON TOP of postgres:16 — same server, same 16.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ['5432:5432']
+        # Without a health check the steps start racing initdb, and the failure
+        # looks like a flaky test rather than a container that was not up yet.
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -251,6 +350,71 @@ jobs:
           python -m pytest tests/ -q -m "not integration" \
             --cov=app --cov-report=term-missing --cov-report=xml
 
+      - name: Migrate the CI database
+        # data_gateway owns the schema (its alembic/ is the only one in the
+        # repo), so only this leg has a database to migrate. A SEPARATE step
+        # from the tests below on purpose: a migration that fails to apply and a
+        # test that fails against a correctly-migrated schema are different
+        # defects with different owners, and one step reports them as one red X.
+        if: matrix.service == 'data_gateway'
+        working-directory: services/data_gateway
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+          EXAM_LINK_SECRET: ci-only-exam-secret-0123456789abcdef
+          INTERVIEW_LINK_SECRET: ci-only-interview-secret-0123456789ab
+          CONSENT_IP_SALT: ci-only-salt-0123456789abcdef
+          S3_ENDPOINT: http://localhost:9000
+          S3_ACCESS_KEY_ID: ci-access-key
+          S3_SECRET_ACCESS_KEY: ci-secret-key
+        # DATABASE_SSL is deliberately unset (the field defaults to ""): the
+        # service container speaks plaintext on the runner's loopback, and
+        # `require` would fail the handshake.
+        run: alembic -c alembic.ini upgrade head
+
+      - name: Integration tests (live Postgres + Redis)
+        # The other half of DPDP-2. `-m integration` is the exact complement of
+        # the `-m "not integration"` above, so between the two steps every test
+        # in the service now runs — which was the point: four files carrying the
+        # marker (retention, consent router, auth endpoints, jobs endpoints) were
+        # deselected in CI and selected nowhere else, so DPDP §8(7) storage
+        # limitation and §6/§7 consent behaviour were asserted only by tests
+        # nobody ran.
+        #
+        # NO --cov here, on purpose. The floors in the next step were measured
+        # against the unit run; appending integration coverage would raise
+        # data_gateway's number without anyone re-measuring, and the
+        # `check_coverage_floors.py` invariant would then be guarding a figure
+        # that no longer describes what it says it does.
+        #
+        # RATE_LIMIT_LOGIN_PER_MINUTE is raised for this step and this step only.
+        # httpx's ASGITransport has no socket, so every request in the suite
+        # arrives from the same synthetic client host and lands in ONE auth
+        # rate-limit bucket: at the production default of 5/min the sixth
+        # registration 429s and 33 tests error in fixture setup. Nothing is
+        # weakened by this — the limiter's own behaviour is covered by the
+        # offline suites in tests/unit, which assert the real default.
+        if: matrix.service == 'data_gateway'
+        working-directory: services/data_gateway
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+          EXAM_LINK_SECRET: ci-only-exam-secret-0123456789abcdef
+          INTERVIEW_LINK_SECRET: ci-only-interview-secret-0123456789ab
+          CONSENT_IP_SALT: ci-only-salt-0123456789abcdef
+          RATE_LIMIT_LOGIN_PER_MINUTE: '10000'
+          RATE_LIMIT_API_PER_MINUTE: '10000'
+          S3_ENDPOINT: http://localhost:9000
+          S3_ACCESS_KEY_ID: ci-access-key
+          S3_SECRET_ACCESS_KEY: ci-secret-key
+        run: python -m pytest tests/ -q -m integration
+
       - name: Coverage
         working-directory: services/${{ matrix.service }}
         # docs/LLD.md §15 documents "80% line coverage on services; 90% on
@@ -277,10 +441,10 @@ jobs:
         # previously-ignored offline SSO tests in data_gateway:
         #
         #                   was    now    floor   margin
-        #   data_gateway     60  ->  66  ->  61      5
-        #   interview_core   76  ->  78  ->  73      5
-        #   feedback_billing 89  ->  91  ->  86      5
-        #   admin_ops        84  ->  88  ->  83      5
+        #   data_gateway     66  ->  67  ->  62      5
+        #   interview_core   78  ->  79  ->  74      5
+        #   feedback_billing 91  ->  92  ->  87      5
+        #   admin_ops        88  ->  90  ->  85      5
         #
         # data_gateway's +6 is not new tests: it is the 31 offline SSO tests
         # that `--ignore=tests/integration` had been discarding. sso_google.py
@@ -301,10 +465,10 @@ jobs:
         # control — the target is a destination, not a standard.
         run: |
           case "${{ matrix.service }}" in
-            data_gateway)     FLOOR=61 ;;
-            interview_core)   FLOOR=73 ;;
-            feedback_billing) FLOOR=86 ;;
-            admin_ops)        FLOOR=83 ;;
+            data_gateway)     FLOOR=62 ;;
+            interview_core)   FLOOR=74 ;;
+            feedback_billing) FLOOR=87 ;;
+            admin_ops)        FLOOR=85 ;;
           esac
           echo "Enforcing >= ${FLOOR}% line coverage for ${{ matrix.service }}"
           python -m coverage report --fail-under="${FLOOR}"
@@ -318,7 +482,7 @@ jobs:
     #
     # Cheap on purpose: no service dependencies, no Docker, ~10 seconds. A gate
     # that costs a minute gets deleted the first time someone is in a hurry.
-    name: invariants (coverage floors + alert rules)
+    name: invariants (coverage floors + alert rules + env parity + SAST)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -326,12 +490,20 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install
-        # PyYAML is the only runtime dependency — check_coverage_floors.py is
-        # stdlib. Both scripts must stay runnable on a bare checkout so a
-        # contributor can reproduce a failure without installing a service's
-        # requirements. ruff is PINNED to 0.7.4 like every other job here; an
-        # unpinned linter can turn the build red without a code change.
-        run: pip install pyyaml "ruff==0.7.4"
+        # PyYAML is the only runtime dependency of the gate scripts —
+        # check_coverage_floors.py is pure stdlib, and check_env_parity.py
+        # parses the config files with `ast` rather than importing them for
+        # exactly this reason (importing a config.py runs `Settings()` at module
+        # scope and needs a full environment plus that service's whole
+        # dependency set). Every script must stay runnable on a bare checkout so
+        # a contributor can reproduce a failure without installing a service.
+        #
+        # ruff, pytest and bandit are all PINNED. An unpinned linter or scanner
+        # can turn the build red without a code change, which is the property
+        # that gets a gate switched off rather than fixed.
+        # pytest 8.4.2 and bandit 1.8.6 are the versions the ops/ci tests and
+        # the committed bandit baseline were produced and verified against.
+        run: pip install pyyaml "ruff==0.7.4" "pytest==8.4.2" "bandit[toml]==1.8.6"
 
       - name: Lint
         # ops/ is Python that no other job covers: the `shared` job lints
@@ -364,6 +536,59 @@ jobs:
         # ops/alerts/README.md; it is not run here because it needs a
         # Prometheus binary and this job must stay dependency-free.
         run: python ops/ci/check_alert_rules.py
+
+      - name: Deploy targets and Settings agree on env names
+        # DEP-ROOT / CICD-2. Every Settings sets extra="ignore", so an env var
+        # whose name a service does not declare is dropped with no log line and
+        # no startup error — indistinguishable from "not set". That is exactly
+        # how DEP-1 shipped: two services declare `s3_endpoint`, two declare
+        # `s3_endpoint_url`, a deploy supplied one spelling, and boto3 quietly
+        # targeted AWS with R2 credentials until someone noticed scorecard PDFs
+        # were not storing. It was fixed by hand-adding the second key in two
+        # files, which is a patch, not a cure — one typo re-arms it.
+        #
+        # This gate cross-references the four config.py files against
+        # render.yaml, space/entrypoint.sh, space/supervisord.conf and both
+        # compose files. Finding two live mismatches on its first run is the
+        # argument for it existing: render.yaml configured SMTP on a service
+        # with no email code at all, and supervisord set S3_BUCKET_NAME on
+        # feedback_billing, which declares only s3_scorecard_bucket (CICD-7).
+        run: python ops/ci/check_env_parity.py
+
+      - name: The gate scripts' own tests
+        # ops/ci/ had no tests, and the way a checker fails is silent: a parser
+        # stops matching, every set comes back empty, and it prints OK forever.
+        # These build deliberately-broken fake repositories and assert the exit
+        # status is 1, so "this gate can still go red" is itself checked.
+        # Everything else in this job trusts these scripts.
+        run: python -m pytest ops/ci/tests -q
+
+      - name: SAST (bandit, MEDIUM and above)
+        # CICD-9: the security job scans dependencies and secrets; nothing
+        # looked at the code itself. Injection, unsafe deserialization and
+        # path-traversal classes had no automated detector across four
+        # DPDP-scoped services.
+        #
+        # A RATCHET, like the coverage floors, and for the same reason: gating at
+        # zero would have turned the build red on arrival over 11 pre-existing
+        # findings, and the honest options then are "block every PR" or "switch
+        # the gate off". The baseline records what existed on the day SAST was
+        # switched on, each entry triaged in that file's own _README; anything
+        # NEW fails. Shrinking the baseline is the work.
+        #
+        # -ll (MEDIUM and above) rather than everything: the LOW tier is 584
+        # findings, overwhelmingly `assert` and try/except/pass. A gate whose
+        # first output is 584 lines does not get read.
+        #
+        # This command and the one recorded in ops/ci/bandit-baseline.json's
+        # _README must stay identical. Bandit matches baseline entries by file
+        # PATH, so a different path spelling — including a baseline regenerated
+        # on Windows, whose backslashes match nothing on ubuntu-latest —
+        # silently reports every known finding as new, or every new one as known.
+        run: |
+          bandit -r services/data_gateway/app services/interview_core/app \
+            services/feedback_billing/app services/admin_ops/app shared \
+            -ll -q -b ops/ci/bandit-baseline.json
 
   migrations:
     name: migrations (single linear head)
@@ -466,7 +691,8 @@ jobs:
       - name: Test
         working-directory: web
         # A vitest suite CI never ran — 262 tests when this step was added,
-        # 326 across 28 files as of 2026-08-07. The number is re-measured
+        # 326 across 28 files earlier on 2026-08-07, 504 across 44 files after
+        # that day's console/page suites landed. The number is re-measured
         # rather than left standing, because a count in a comment is exactly
         # the kind of claim this file keeps finding has outlived its code.
         run: npm test
@@ -475,11 +701,21 @@ jobs:
         working-directory: web
         # Same empty API bases the production image uses — every client call
         # becomes relative and Caddy fans it out (see the root Dockerfile).
+        #
+        # MEDIAPIPE_REQUIRED=1 makes the prebuild asset fetch
+        # (web/scripts/fetch-mediapipe.mjs) fatal. The flag existed, the strict
+        # branch was written, and the variable was set NOWHERE in the repo
+        # (CICD-5) — so the guard could never fire and a failed model download
+        # produced a green build shipping a frontend whose face/gaze proctoring
+        # is dead at runtime. Local development keeps the lenient default: run
+        # `npm run build` without this variable and a missing model is a loud
+        # warning, not a stopped machine.
         env:
           VITE_API_BASE_URL: ''
           VITE_INTERVIEW_API_URL: ''
           VITE_FEEDBACK_API_URL: ''
           VITE_ADMIN_API_URL: ''
+          MEDIAPIPE_REQUIRED: '1'
         run: npm run build
 
   security:
@@ -560,11 +796,28 @@ jobs:
         # fails the job without one — which would block every deploy for a
         # licensing reason rather than a security one. The scanner itself is
         # MIT-licensed and has no such gate.
+        #
+        # The tarball is SHA-256-PINNED and verified BEFORE extraction (CICD-8,
+        # CWE-494). A version tag is a mutable pointer: GitHub lets a release
+        # asset be deleted and re-uploaded under the same tag, so `v8.21.2`
+        # names an intent, not a byte sequence. Until this pin existed, CI
+        # fetched an arbitrary binary over the network and executed it with the
+        # whole checkout — including git history — readable. That is the
+        # supply-chain shape the secret scanner is here to defend against.
+        #
+        # The digest below was taken from the release's own
+        # gitleaks_8.21.2_checksums.txt AND independently recomputed from a
+        # fresh download; both agree. Bumping GITLEAKS_VERSION means bumping
+        # GITLEAKS_SHA256 in the same commit — the verification fails loudly if
+        # they drift, which is the intended behaviour.
         env:
           GITLEAKS_VERSION: 8.21.2
+          GITLEAKS_SHA256: 5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba
         run: |
+          set -euo pipefail
           curl -sSfL -o /tmp/gitleaks.tar.gz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum --check --strict -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           # --redact so a positive match never prints the secret into a public
           # build log, which would be a second disclosure.
@@ -574,22 +827,64 @@ jobs:
   docker:
     name: docker image builds
     runs-on: ubuntu-latest
+    strategy:
+      # One broken Dockerfile should not hide the state of the other four.
+      fail-fast: false
+      matrix:
+        # `space` is the ROOT ./Dockerfile — the single all-in-one image the
+        # Hugging Face Space runs. The four named services are the per-service
+        # images docker-compose.prod.yml:95-98,136-139,266-269 builds, i.e. the
+        # documented artefact of the supported Oracle-VM deploy.
+        #
+        # Before this matrix existed the job had no `file:` key at all, so
+        # buildx resolved ./Dockerfile and the four per-service Dockerfiles were
+        # NEVER built and NEVER scanned (CICD-1). A Dockerfile that is never
+        # built is a deploy that is never tested: a broken COPY, a removed apt
+        # runtime library (interview_core's libportaudio2/libgomp1) or an
+        # unresolvable pin shipped green and surfaced during a deploy. Worse,
+        # .trivyignore — a maintained accepted-risk list — was being applied to
+        # the one image while the four that actually run production went
+        # unscanned.
+        image: [space, data_gateway, interview_core, feedback_billing, admin_ops]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Build the Space image
+
+      - name: Resolve the Dockerfile for this leg
+        # The root image has no services/<name>/ directory, so the path cannot
+        # be a plain matrix expression. Emitted as an output rather than
+        # branching inside build-push-action, which takes no conditionals.
+        id: df
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.image }}" = "space" ]; then
+            echo "path=Dockerfile" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=services/${{ matrix.image }}/Dockerfile" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
         # The sole production artefact was never built in CI — it went straight
         # from a green lint run to a force-push at the live Space, so a broken
         # Dockerfile or an unresolvable requirements pin was only ever
         # discovered in production. Build only; nothing is pushed.
+        #
+        # context: . for every leg. All five Dockerfiles COPY `shared/` from the
+        # repo root, so a service-directory context cannot build any of them —
+        # and the root .dockerignore (the only one Docker reads, see CICD-6) is
+        # what keeps that context from carrying .env files into a layer.
+        #
+        # Cache scoped per image: one shared gha cache key across five very
+        # different images evicts constantly and ends up slower than no cache.
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ${{ steps.df.outputs.path }}
           push: false
           load: true
-          tags: intants-space:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: intants-${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
       - name: Scan the image for CVEs
         # .trivyignore is 1.5 KB of carefully reasoned accepted-risk entries and
@@ -603,13 +898,19 @@ jobs:
         # Run via the official image rather than the marketplace action. The
         # action reference was wrong first time round (`@0.28.0`; the repo tags
         # are v-prefixed), which failed the job in 3 seconds before it scanned
-        # anything. This form is also byte-for-byte the command that was
-        # verified locally against a real build of this image, so what CI runs
-        # and what was tested are the same thing.
+        # anything. Apart from the tag, this is the command that was verified
+        # locally against a real build, so what CI runs and what was tested are
+        # the same thing.
         #
         # HIGH/CRITICAL only, and only where a fix exists: an unfixable CVE in a
         # base image is not something a PR author can act on, so failing the
         # build on it just teaches people to ignore the job.
+        #
+        # IDENTICAL flags on every leg, deliberately: .trivyignore's accepted
+        # risks were reasoned about the python:3.12-slim base that all five
+        # images share, so a per-image ignore list would be five copies of one
+        # decision. If a service ever needs its own exception, that is a reason
+        # to split the file, not to loosen the flags here.
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -622,7 +923,7 @@ jobs:
               --scanners vuln \
               --exit-code 1 \
               --quiet \
-              intants-space:ci
+              intants-${{ matrix.image }}:ci
 
   ci-ok:
     # The single required status. sync-to-space.yml keys its workflow_run gate

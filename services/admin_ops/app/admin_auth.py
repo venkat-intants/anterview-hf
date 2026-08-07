@@ -1,8 +1,22 @@
-"""Shared admin-JWT dependency for admin_ops.
+"""Shared JWT dependencies for admin_ops.
 
-Single authoritative implementation of the admin-role guard, imported by
-every router that needs it.  Eliminates the duplicate copies that previously
-lived in main.py (verify_admin_role) and erasure.py (_verify_admin_role).
+Single authoritative implementation of the token guards, imported by every
+router that needs one.  Eliminates the duplicate copies that previously lived
+in main.py (verify_admin_role) and erasure.py (_verify_admin_role).
+
+Two dependencies, one decode
+----------------------------
+``verify_authenticated_user``
+    Any valid, non-revoked platform token. Returns the ``sub`` claim.
+``verify_admin_role``
+    The same, plus ``"admin"`` in the ``roles`` list.
+
+They share :func:`_authenticated_subject` rather than one calling the other,
+because the DPDP §11 self-service erasure endpoint (routers/erasure.py) needs
+the *identity* with no role requirement at all — a candidate erasing their own
+data holds no admin role and never will. Two independent decode paths would be
+two places for the revocation check to be forgotten, and the one that gets
+forgotten is always the newer one.
 
 Contract
 --------
@@ -10,8 +24,8 @@ Contract
 - Raises HTTP 401 if the Authorization header is absent or the token is
   invalid / expired, or has been revoked by a "log out all devices" (its
   ``iat`` predates the per-user epoch stored in Redis).
-- Raises HTTP 403 if the token is valid but the ``roles`` list does not
-  contain ``"admin"``.
+- Raises HTTP 403 (``verify_admin_role`` only) if the token is valid but the
+  ``roles`` list does not contain ``"admin"``.
 
 The platform issues a ``roles`` LIST claim, not a singular ``role`` string.
 """
@@ -40,13 +54,15 @@ _UNAUTHORIZED = HTTPException(
 )
 
 
-async def verify_admin_role(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-) -> str:
-    """FastAPI dependency — decodes the JWT and enforces role == 'admin'.
+async def _authenticated_subject(
+    credentials: HTTPAuthorizationCredentials | None,
+) -> tuple[str, dict[str, Any]]:
+    """Decode, validate and revocation-check a bearer token.
 
-    Returns the user_id (sub claim) on success.
-    Raises 401 if no/invalid token or token is revoked; 403 if valid but not admin.
+    Returns ``(sub, payload)``. Raises 401 for a missing / invalid / expired /
+    revoked token. Deliberately says nothing about roles — that is the caller's
+    decision, and keeping it here would make a role the price of being
+    authenticated.
     """
     if credentials is None:
         raise _UNAUTHORIZED
@@ -79,6 +95,33 @@ async def verify_admin_role(
         log.info("admin_auth.token_revoked", user_id=sub)
         raise _UNAUTHORIZED
 
+    return sub, payload
+
+
+async def verify_authenticated_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> str:
+    """FastAPI dependency — any valid, non-revoked token. Returns the sub claim.
+
+    The returned value is the ONLY acceptable source of identity for an endpoint
+    that acts on "the caller's own" data: it comes from a signature the platform
+    issued, whereas a user_id in a path or body comes from the caller. Endpoints
+    here must never accept the latter (see routers/erasure.py).
+    """
+    sub, _payload = await _authenticated_subject(credentials)
+    return sub
+
+
+async def verify_admin_role(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> str:
+    """FastAPI dependency — decodes the JWT and enforces role == 'admin'.
+
+    Returns the user_id (sub claim) on success.
+    Raises 401 if no/invalid token or token is revoked; 403 if valid but not admin.
+    """
+    sub, payload = await _authenticated_subject(credentials)
+
     roles: list[str] = payload.get("roles") or []
     if "admin" not in roles:
         raise HTTPException(
@@ -89,5 +132,6 @@ async def verify_admin_role(
     return sub
 
 
-# Convenience type alias — use in endpoint signatures as the annotated dep.
+# Convenience type aliases — use in endpoint signatures as the annotated dep.
 AdminDep = Annotated[str, Depends(verify_admin_role)]
+AuthenticatedDep = Annotated[str, Depends(verify_authenticated_user)]

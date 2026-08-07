@@ -267,6 +267,38 @@ async def _require_service_jwt(
         HTTP 401 — token absent, malformed, expired, or revoked.
         HTTP 403 — token is valid but the caller is not a service account
                    (prevents normal user / guest tokens from reaching Gemini).
+
+    Why this is a separate verifier from ``app.auth.require_jwt``
+    ------------------------------------------------------------
+    Because the two enforce **opposite** requirements on ``sub``, not because of
+    anything to do with guest sessions — an earlier review recorded a
+    guest-session-binding rationale here, and it is wrong (code review
+    2026-08-07, SEC-4). Read the two side by side:
+
+    * ``app/auth.py`` requires ``uuid.UUID(sub)`` to parse, because that ``sub``
+      is interpolated into queries against a ``uuid`` column and a non-UUID
+      string reaching the driver is a 500 where a 401 belongs.
+    * This one requires ``sub`` to be one of :data:`_ALLOWED_SERVICE_SUBS` —
+      ``"interview_core"`` / ``"data_gateway"`` — which are deliberately NOT
+      UUIDs, plus ``"service"`` in ``roles``.
+
+    So ``require_jwt`` rejects every token this function is built to accept, and
+    this function rejects every token ``require_jwt`` accepts. Unifying them
+    would mean a single dependency whose authorization policy is chosen by a
+    flag argument, and a call site that passes the wrong flag opens
+    ``/internal/*`` — the Gemini spend surface — to any logged-in candidate.
+    Two functions that cannot be confused for one another is the safer shape;
+    what is genuinely shared (signature, issuer, audience, expiry, the
+    fail-open epoch check) already lives in ``shared/auth/jwt.py`` and is called
+    from both.
+
+    (For the avoidance of doubt: there is no guest-session dependency anywhere
+    in feedback_billing at HEAD — no verifier in this service reads a
+    ``session_id`` claim. The old rationale described a constraint that is not
+    here, so following it leads nowhere.)
+
+    The duplication that is left is ~15 lines of dependency plumbing. Anyone
+    revisiting this should be arguing about *that*.
     """
     if credentials is None:
         raise _UNAUTHORIZED

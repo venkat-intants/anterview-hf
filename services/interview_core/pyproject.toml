@@ -6,6 +6,26 @@ authors = ["Intants <support@intants.com>"]
 readme = "README.md"
 package-mode = false
 
+# ---------------------------------------------------------------------------
+# NOT THE INSTALL SOURCE. `requirements.txt` is authoritative and is the only
+# thing that ever gets installed: the dev .venv, this service's Dockerfile, and
+# the CI matrix leg all run `pip install -r requirements.txt`. Nothing in the
+# repo runs `poetry install`, and the poetry.lock beside this file is an unused
+# artefact. The "poetry.lock is the CI test env" note that used to sit in the
+# Dockerfile header and dev-up.ps1 was wrong, and believing it is what let this
+# block drift.
+#
+# So this block is METADATA, not a contract — it lists the direct dependencies
+# worth naming in prose, with the runtime-parity pins that carry a reason. It is
+# NOT a complete import inventory. Verified 2026-08-07 against the actual
+# imports under app/ and tests/, these are imported and pinned in
+# requirements.txt but absent here: aiohttp, boto3, botocore, numpy,
+# prometheus_client, typing_extensions, plus sentry-sdk and json_repair, which
+# reach this service through `shared`. That is fine and expected; it is only a
+# problem if you believe this block is the truth. Add a dependency to
+# requirements.txt; add it here only if a future reader needs the *reason* for
+# it.  (Closes code-review finding DEP-1.)
+# ---------------------------------------------------------------------------
 [tool.poetry.dependencies]
 # <3.15 upper bound required by livekit-agents (pulled in via livekit-plugins-tavus)
 python = ">=3.11,<3.15"
@@ -28,8 +48,8 @@ shared = {path = "../../shared", develop = true}
 livekit = "^1.1.8"
 livekit-api = "^1.1.0"
 # The worker (app/worker/interview_worker.py) imports all of these at module
-# top — they must be installable from this pyproject or CI test collection
-# breaks. Versions match the pip-freeze pins in requirements.txt.
+# top. Versions mirror the pip-freeze pins in requirements.txt, which is what
+# CI actually installs.
 livekit-agents = "1.5.15"
 livekit-plugins-openai = "1.5.15"
 livekit-plugins-sarvam = "1.5.15"
@@ -38,9 +58,11 @@ livekit-plugins-simli = "1.5.15"
 livekit-plugins-tavus = "1.5.15"
 # ---------------------------------------------------------------------------
 # Transitive runtime-parity pins. requirements.txt (pip freeze of the proven
-# live voice stack) is what the Docker image and dev .venv install; these pins
-# force poetry.lock (the CI test env) to resolve the SAME versions, so what CI
-# tests is what ships. Bump here and in requirements.txt together.
+# live voice stack) is what CI, the Docker image and the dev .venv all install.
+# These versions are mirrored here so a reader of this file sees the same
+# numbers — they no longer "force poetry.lock to resolve the same versions",
+# because nothing resolves poetry.lock. Bump requirements.txt first; mirror
+# here.
 # ---------------------------------------------------------------------------
 av = "17.0.1"
 cryptography = "48.0.1"
@@ -69,8 +91,10 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM"]
-# E501: line-too-long — D-ID adapter and WS test fixtures contain long URLs/
-# docstring lines that are correct as-is. Formatting them would harm readability.
+# E501: line-too-long — the avatar adapters and WS test fixtures contain long
+# URLs/docstring lines that are correct as-is. Formatting them would harm
+# readability. (This used to name "the D-ID adapter"; D-ID was removed
+# 2026-05-31 — see docs/Final_stack.md TIER 1B.)
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
@@ -80,7 +104,12 @@ markers = [
     "integration: live external-service tests (hit real Gemini / Sarvam / etc.)",
 ]
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
-ignore_missing_imports = true
+# No [tool.mypy] here on purpose. CI type-checks from the REPO ROOT
+# (`mypy services/interview_core/app`), because services/ has an __init__.py and
+# running mypy from inside a service makes it see every file under two module
+# names. From the root mypy loads /mypy.ini and never looks at this file, so a
+# `[tool.mypy] strict = true` block here was dead config asserting a contract
+# nothing enforced — and its python_version = "3.11" contradicted the 3.12 CI
+# pin as well. Change type-checking behaviour in /mypy.ini; per-service
+# tightening goes there as a [mypy-app.*] section.
+# (Closes code-review finding XS-09 / CICD-4 / DEP-3.)

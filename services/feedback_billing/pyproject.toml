@@ -6,6 +6,24 @@ authors = ["Intants <support@intants.com>"]
 readme = "README.md"
 package-mode = false
 
+# ---------------------------------------------------------------------------
+# NOT THE INSTALL SOURCE. `requirements.txt` is authoritative and is the only
+# thing that ever gets installed: the dev .venv, this service's Dockerfile, and
+# the CI matrix leg all run `pip install -r requirements.txt`. Nothing in the
+# repo runs `poetry install`, and the poetry.lock beside this file is an unused
+# artefact.
+#
+# So this block is METADATA, not a contract — it lists the direct dependencies
+# worth naming in prose, with the runtime-parity pins that carry a reason. It is
+# NOT a complete import inventory. Verified 2026-08-07 against the actual
+# imports under app/ and tests/, these are imported and pinned in
+# requirements.txt but absent here: pydantic (imported directly; only arrives
+# via fastapi/pydantic-settings here), plus sentry-sdk and json_repair, which
+# reach this service through `shared`. That is fine and expected; it is only a
+# problem if you believe this block is the truth. Add a dependency to
+# requirements.txt; add it here only if a future reader needs the *reason* for
+# it.  (Closes code-review finding DEP-1.)
+# ---------------------------------------------------------------------------
 [tool.poetry.dependencies]
 python = "^3.11"
 fastapi = "^0.115"
@@ -17,8 +35,10 @@ redis = "^5.2"
 python-jose = {extras = ["cryptography"], version = "^3.3"}
 # Transitive pin: match the requirements.txt runtime stack (bump both together)
 cryptography = "48.0.1"
-# app/main.py wires /metrics via the instrumentator (versions match requirements.txt)
-prometheus-fastapi-instrumentator = "6.1.0"
+# app/main.py builds /metrics from prometheus_client directly, on the collectors
+# installed by shared/http_observability.py. prometheus-fastapi-instrumentator
+# used to be pinned here too; it was dropped when this service adopted the
+# shared layer (XS-05) and nothing imports it any more.
 prometheus-client = "0.25.0"
 httpx = "^0.27"
 structlog = "^24.4"
@@ -49,7 +69,12 @@ ignore = ["E501"]
 asyncio_mode = "auto"
 pythonpath = [".", "../.."]
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
-ignore_missing_imports = true
+# No [tool.mypy] here on purpose. CI type-checks from the REPO ROOT
+# (`mypy services/feedback_billing/app`), because services/ has an __init__.py
+# and running mypy from inside a service makes it see every file under two
+# module names. From the root mypy loads /mypy.ini and never looks at this file,
+# so a `[tool.mypy] strict = true` block here was dead config asserting a
+# contract nothing enforced — and its python_version = "3.11" contradicted the
+# 3.12 CI pin as well. Change type-checking behaviour in /mypy.ini; per-service
+# tightening goes there as a [mypy-app.*] section.
+# (Closes code-review finding XS-09 / CICD-4 / DEP-3.)

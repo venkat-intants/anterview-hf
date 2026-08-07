@@ -2510,10 +2510,10 @@ service and fails the build below a floor:
 
 | Service | Measured (2026-08-07) | Enforced floor | Margin | Meets the 80% target |
 |---|---|---|---|---|
-| `data_gateway` | 66% | 61% | 5 | No |
-| `interview_core` | 78% | 73% | 5 | No |
-| `feedback_billing` | 91% | 86% | 5 | Yes |
-| `admin_ops` | 88% | 83% | 5 | Yes |
+| `data_gateway` | 67% | 62% | 5 | No |
+| `interview_core` | 79% | 74% | 5 | No |
+| `feedback_billing` | 92% | 87% | 5 | Yes |
+| `admin_ops` | 90% | 85% | 5 | Yes |
 
 The floors are a **ratchet, not the target**: each is the measured number minus a
 5-point margin for CI-vs-local variance, so the gate fails when coverage *drops*.

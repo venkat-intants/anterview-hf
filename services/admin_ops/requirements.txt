@@ -68,5 +68,11 @@ websockets==16.0
 wrapt==1.17.3
 yarl==1.24.2
 sentry-sdk>=2.0,<3
-APScheduler==3.11.2
+# APScheduler was pinned here and never imported. admin_ops has no scheduler:
+# erasure_executor.py runs as a plain asyncio periodic task started at
+# lifespan, and APScheduler's own dependency (tzlocal) was not even pinned
+# alongside it — it was a copy-paste from data_gateway, which is the one
+# service that does use it (app/main.py, for the DPDP retention cron). Dropped
+# 2026-08-07; if admin_ops ever needs cron semantics, add it back naming the
+# job.  (Closes code-review finding DEP-5.)
 prometheus-client>=0.20,<1

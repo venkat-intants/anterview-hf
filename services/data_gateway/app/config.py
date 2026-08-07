@@ -5,6 +5,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.security import assert_strong_secrets, normalise_app_env
 from shared.security import validate_cors_origins as _validate_cors_origins
+from shared.security import validate_database_ssl as _validate_database_ssl
 
 log = structlog.get_logger(__name__)
 
@@ -301,6 +302,15 @@ class Settings(BaseSettings):
     s3_secret_access_key: str = ""
     s3_region: str = "auto"
     s3_use_ssl: bool = True
+    # The bucket feedback_billing writes scorecard PDFs and transcript JSON to.
+    # data_gateway never WRITES here — it deletes, because the DPDP §8(7)
+    # retention purge (app/retention.py) owns the session lifecycle and the
+    # scorecard is a session-derived artefact with no FK to cascade through
+    # (models.py: session_id is deliberately not a FK across the service
+    # boundary). Same default string as feedback_billing and admin_ops so a
+    # deployment that sets S3_SCORECARD_BUCKET for those two, or sets it
+    # nowhere, already points all three at one bucket.
+    s3_scorecard_bucket: str = "intants-interview-scorecards"
 
     sentry_dsn: str = ""
 
@@ -392,32 +402,23 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_database_ssl(self) -> "Settings":
-        """Enforce SSL for the database connection in production/staging.
+        """Enforce SSL for the database connection in production/staging (XS-04).
 
-        Without SSL, PII transits in cleartext between the app and Neon/Postgres —
-        this violates DPDP §8 data security requirements and creates a MitM risk.
+        The rule (production/staging must set DATABASE_SSL; ``loopback-exempt`` is
+        the written acknowledgement that TLS terminates upstream, and is stripped
+        before it can reach asyncpg) now lives in ``shared/security.py`` next to
+        its three sibling guards. It was written here and copied nowhere, so the
+        other three services could boot in production against a plaintext
+        Postgres link and say nothing — the same drift that put
+        ``normalise_app_env`` and ``validate_cors_origins`` in the shared module.
 
-        Rule: in 'production' or 'staging' APP_ENV, DATABASE_SSL must be set to a
-        non-empty value (e.g. 'require').  The check is intentionally permissive
-        about the exact value so operators can supply 'require', 'verify-full', etc.
-
-        Operators who genuinely need plain TCP in a prod-like env (e.g. a private
-        network with TLS terminated at the load-balancer and the loopback exposed to
-        the app) may set DATABASE_SSL=loopback-exempt to acknowledge the risk and
-        pass this check — but the value is never passed to asyncpg.
+        ``object.__setattr__`` rather than plain assignment: with
+        ``validate_assignment`` a normal write would re-enter model validation
+        from inside a model validator.
         """
-        loopback_exempt = "loopback-exempt"
-        if self.app_env in ("production", "staging") and not self.database_ssl:
-            raise ValueError(
-                f"APP_ENV={self.app_env!r} requires DATABASE_SSL to be set "
-                "(e.g. DATABASE_SSL=require).  Without SSL, PII travels in "
-                "cleartext to Neon/Postgres.  Set DATABASE_SSL=require in your "
-                "environment, or DATABASE_SSL=loopback-exempt if TLS is "
-                "terminated upstream and the DB socket is loopback-only."
-            )
-        # Strip the sentinel value before it reaches asyncpg.
-        if self.database_ssl == loopback_exempt:
-            object.__setattr__(self, "database_ssl", "")
+        object.__setattr__(
+            self, "database_ssl", _validate_database_ssl(self.app_env, self.database_ssl)
+        )
         return self
 
     cors_allowed_origins: str = "http://localhost:5173"

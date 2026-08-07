@@ -491,7 +491,15 @@ async def test_retention_purge_dry_run_counts_abandoned() -> None:
 
 @pytest.mark.asyncio
 async def test_retention_purge_live_deletes_abandoned() -> None:
-    """In live mode purge_expired_sessions must execute a DELETE (not just SELECT)."""
+    """In live mode purge_expired_sessions must execute DELETEs (not just SELECT).
+
+    Updated for DPDP-4: the purge is no longer one statement. It now materialises
+    the purge set, collects the scorecards' R2 keys, deletes those objects, then
+    deletes the scorecards and finally the sessions — so this mock has to answer
+    four different reads instead of returning one row-count to everything. The
+    assertion is unchanged in spirit and stronger in fact: the returned count is
+    still the SESSION row count, and the scorecard DELETE must have happened too.
+    """
     from app.config import settings as _app_settings
     from app.retention import purge_expired_sessions
 
@@ -499,18 +507,35 @@ async def test_retention_purge_live_deletes_abandoned() -> None:
         update={"retention_dry_run": False, "retention_days": 90}
     )
 
-    mock_delete_result = MagicMock()
-    mock_delete_result.rowcount = 7
+    session_ids = [uuid.uuid4() for _ in range(7)]
+
+    id_result = MagicMock()
+    id_result.scalars.return_value.all.return_value = session_ids
+
+    keys_result = MagicMock()
+    keys_result.all.return_value = []  # no scorecard has a generated PDF yet
+
+    scorecard_delete = MagicMock()
+    scorecard_delete.rowcount = 0
+
+    session_delete = MagicMock()
+    session_delete.rowcount = 7
 
     mock_db = AsyncMock()
-    mock_db.execute = AsyncMock(return_value=mock_delete_result)
+    mock_db.execute = AsyncMock(
+        side_effect=[id_result, keys_result, scorecard_delete, session_delete]
+    )
     mock_db.commit = AsyncMock()
 
-    count = await purge_expired_sessions(db=mock_db, settings=live_settings)
+    async def _no_objects(keys_by_bucket: dict[str, list[str]], **_: object) -> int:
+        return 0
+
+    with patch("app.s3_upload.delete_objects", _no_objects):
+        count = await purge_expired_sessions(db=mock_db, settings=live_settings)
+
     assert count == 7
     mock_db.commit.assert_awaited_once()
-    # execute must have been called (the DELETE statement)
-    mock_db.execute.assert_awaited_once()
+    assert mock_db.execute.await_count == 4
 
 
 # ---------------------------------------------------------------------------

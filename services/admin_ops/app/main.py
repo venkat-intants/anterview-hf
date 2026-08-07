@@ -18,6 +18,7 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
+from shared.http_observability import install_http_observability
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
@@ -69,9 +70,12 @@ log = structlog.get_logger(__name__)
 #
 # We do NOT use prometheus-fastapi-instrumentator because its latest version
 # requires starlette>=1.0 which conflicts with FastAPI 0.115.x (starlette<0.47).
-# Instead we define a minimal set of business-relevant metrics here and expose
-# them via a plain GET /metrics endpoint using prometheus_client.generate_latest().
-# HTTP request counts/latency can be added via middleware if needed later.
+# Instead we define the business-relevant metrics here and expose them via a
+# plain GET /metrics endpoint using prometheus_client.generate_latest().
+#
+# HTTP request counts / latency are NOT defined here: they come from
+# shared/http_observability.py, installed below onto this same private registry
+# so both kinds of metric land in the one exposition this service serves.
 # ---------------------------------------------------------------------------
 _registry = CollectorRegistry(auto_describe=True)
 
@@ -196,6 +200,18 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+# HTTP request metrics + the generic 500 handler (XS-01/XS-05, CWE-209).
+# Installed AFTER CORS so it is the OUTERMOST user middleware and the latency it
+# records is what the client experienced. The private registry is passed
+# deliberately: the default is the global one, which this service never exposes,
+# so the shared metrics would have been collected and never scraped.
+#
+# The exception handler matters as much as the metrics here. admin_ops had none,
+# so an unhandled error let the ASGI server answer — and asyncpg puts the failing
+# SQL and its bound parameters into str(exc). In this service those parameters
+# are erasure user_ids and analytics filters over candidate data.
+install_http_observability(app, service_name=settings.service_name, registry=_registry)
 
 app.include_router(health_router)
 app.include_router(admin_router)

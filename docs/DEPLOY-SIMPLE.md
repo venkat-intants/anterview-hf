@@ -117,9 +117,14 @@ Use these Dockerfile paths, one per service:
   ```
 - Turn on **"Never sleep" / always running**.
 
-> Tip: there is also a `render.yaml` file in the project. If you prefer
-> **Render** instead of Railway, you can import that one file and it creates all
-> services for you. The rest of this guide assumes Railway.
+> ⚠️ **Do not use `render.yaml`.** This guide used to suggest it as an easier
+> alternative to Railway. `render.yaml` is deprecated and unmaintained
+> (`render.yaml:1-7`), and its env-name assumptions no longer match the app —
+> importing it silently reproduces the `S3_ENDPOINT` config bug that stops
+> scorecard PDFs from ever storing. The live deploy target is the **Hugging Face
+> Space** ([`../README.md`](../README.md)); the supported self-hosted target is
+> [`DEPLOY-ORACLE.md`](DEPLOY-ORACLE.md). Follow one of those instead of this
+> whole document.
 
 ### 4b. Coding exams use JDoodle (no extra setup)
 

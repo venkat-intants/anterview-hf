@@ -21,25 +21,17 @@ Service lifecycle (managed by the ``lifespan`` async context manager):
 from __future__ import annotations
 
 import logging
-import re
-import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from prometheus_client import (
-    CONTENT_TYPE_LATEST,
-    Counter,
-    Histogram,
-    generate_latest,
-)
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from shared.auth.factory import get_auth_provider
+from shared.http_observability import install_http_observability
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
@@ -71,6 +63,7 @@ from app.routers.profile import router as profile_router
 from app.routers.resume import router as resume_router
 from app.routers.sso_google import router as sso_google_router
 from app.routers.sso_naipunyam import router as sso_naipunyam_router
+from app.s3_upload import StorageNotConfiguredError
 
 # ---------------------------------------------------------------------------
 # PII redaction processor (defense-in-depth — DPDP §8)
@@ -112,27 +105,21 @@ init_sentry(
 )
 
 # ---------------------------------------------------------------------------
-# Prometheus metrics — /metrics endpoint (CROSS-CUTTING fix 5a)
+# Prometheus metrics + unhandled-exception handling
 #
-# We use prometheus_client directly (no instrumentator) to avoid introducing
-# a starlette version conflict.  Two core metrics are defined:
-#   - http_requests_total  (Counter, labelled method/path/status)
-#   - http_request_duration_seconds (Histogram, labelled method/path)
-# Additional service-specific metrics can be added here.
+# Both used to be defined in this file — the Counter, the Histogram, a
+# BaseHTTPMiddleware timer and a regex that collapsed UUID path segments. All
+# four now come from ``shared/http_observability.py`` (installed below, after
+# CORS), because this service's implementation was the ONLY one of the four and
+# the other three therefore had neither HTTP metrics nor a 500 handler (XS-01,
+# XS-05). The shared version also fixes what this one got wrong: an unmatched
+# route was labelled with its RAW path, so an unauthenticated caller looping
+# /aaa, /aab, … minted a new time series per request (XS-06, CWE-770).
+#
+# Nothing here may re-declare http_requests_total / http_request_duration_seconds
+# — prometheus_client refuses a duplicate name on the same registry, and the
+# shared module raises with that instruction if it happens.
 # ---------------------------------------------------------------------------
-
-_http_requests_total = Counter(
-    "http_requests_total",
-    "Total HTTP requests received",
-    ["method", "path", "status_code"],
-)
-
-_http_request_duration_seconds = Histogram(
-    "http_request_duration_seconds",
-    "HTTP request latency in seconds",
-    ["method", "path"],
-    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
-)
 
 log = structlog.get_logger(__name__)
 
@@ -147,6 +134,22 @@ async def _run_retention_job() -> None:
     try:
         async with factory() as session:
             await purge_expired_sessions(db=session, settings=settings)
+    except StorageNotConfiguredError as exc:
+        # Named separately from the catch-all below so the log says "this
+        # deployment cannot delete scorecard objects" — an operator fix, one env
+        # var away — rather than burying it in a generic purge error. Nothing was
+        # deleted and nothing committed, so the next nightly run retries the same
+        # set; the purge is stalled, not partially applied.
+        log.error(
+            "retention.purge.storage_refusal",
+            exc_type=type(exc).__name__,
+            exc_msg=str(exc),
+            detail=(
+                "The DPDP §8(7) purge collected scorecard object keys but object "
+                "storage is not configured. Set S3_ENDPOINT and S3_ACCESS_KEY_ID. "
+                "No rows were deleted."
+            ),
+        )
     except Exception as exc:  # broad — transient DB errors must not kill the scheduler
         log.error(
             "retention.purge.error",
@@ -246,88 +249,18 @@ app = FastAPI(
 )
 
 
-# ---------------------------------------------------------------------------
-# Prometheus scrape middleware — records request count + latency per route.
-# Placed BEFORE CORSMiddleware so it captures all requests including OPTIONS.
-# The /metrics endpoint itself is excluded from its own counters to avoid
-# inflating noise in the scrape-cycle data.
-# ---------------------------------------------------------------------------
-def _normalise_path(path: str) -> str:
-    """Collapse UUID path segments to ``{id}`` so metric cardinality stays bounded."""
-    return re.sub(
-        r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-        "/{id}",
-        path,
-    )
-
-
-def _record(method: str, normalised: str, status_code: str, duration: float) -> None:
-    """Record one request in both metrics. /metrics excludes itself from its own
-    counters so scrape traffic does not dominate the data being scraped."""
-    if normalised == "/metrics":
-        return
-    _http_requests_total.labels(
-        method=method, path=normalised, status_code=status_code
-    ).inc()
-    _http_request_duration_seconds.labels(method=method, path=normalised).observe(duration)
-
-
-@app.middleware("http")
-async def _prometheus_middleware(request: Request, call_next: Any) -> Response:
-    normalised = _normalise_path(request.url.path)
-    method = request.method
-    start = time.perf_counter()
-    try:
-        response: Response = await call_next(request)
-    except Exception:
-        # DG-8. Without this branch an unhandled exception propagated straight
-        # past the middleware and http_requests_total never learned the request
-        # happened — so the series STRUCTURALLY could not contain a 5xx, and the
-        # one thing an operator most wants to alert on ("500s are climbing") was
-        # unalertable by construction. Note this counts before Starlette's
-        # ServerErrorMiddleware turns the exception into the response below;
-        # re-raising is what lets that happen, and is also what keeps the
-        # exception visible to Sentry and to the test client.
-        _record(method, normalised, "500", time.perf_counter() - start)
-        raise
-    _record(method, normalised, str(response.status_code), time.perf_counter() - start)
-    return response
-
-
-@app.exception_handler(Exception)
-async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Turn any unhandled exception into a generic 500 — DG-8.
-
-    FastAPI's default for an unhandled exception is to let it reach the ASGI
-    server, whose response body depends on the server and can carry a driver
-    message. asyncpg in particular puts the offending SQL and parameter values
-    into ``str(exc)``, and parameters are candidate PII. So the client gets a
-    fixed body with no exception text, and the detail goes to the log stream —
-    which is already PII-redacted by ``_redact_pii_processor`` above.
-
-    This handler runs in Starlette's ServerErrorMiddleware, OUTSIDE the metrics
-    middleware, which is why the counter is incremented there rather than here:
-    by the time we get called, the middleware has already re-raised. Starlette
-    re-raises again after we return, so Sentry and the test client still see the
-    original exception.
-    """
-    log.error(
-        "http.unhandled_exception",
-        path=_normalise_path(request.url.path),
-        method=request.method,
-        exc_type=type(exc).__name__,
-        exc_msg=str(exc),
-    )
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "Internal server error."},
-    )
-
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
+    # XS-10: this list is the UNION across the four services and is deliberately
+    # the widest of the four — the other three allow only
+    # GET/POST/PUT/DELETE/OPTIONS and only Authorization/Content-Type. Nothing at
+    # HEAD depends on the difference, but a PATCH route or a custom header added
+    # to another service would fail its preflight there and pass here, which is
+    # the confusing direction to fail. Keep this list as the reference; the
+    # convergence has to happen in the other three ``main.py`` files, which this
+    # service does not own. Do not narrow it to "match" them.
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     # "Cookie" is a forbidden CORS header name (browsers always send it, never
     # include it in preflight allow-lists — doing so is spec-invalid and ignored).
@@ -339,6 +272,13 @@ app.add_middleware(
         "Authorization", "Content-Type", "X-CSRF-Token", "X-Exam-Token", "X-Interview-Token"
     ],
 )
+
+# Installed LAST so it is the OUTERMOST middleware: Starlette pushes each new
+# middleware onto the outside of the stack, so the latency this records is what
+# the client experienced rather than what was left after CORS. Registers both the
+# HTTP metrics and the generic unhandled-exception handler (XS-01/XS-05/XS-06) —
+# see shared/http_observability.py.
+install_http_observability(app, service_name=settings.service_name)
 
 app.include_router(health_router)
 app.include_router(auth_router)

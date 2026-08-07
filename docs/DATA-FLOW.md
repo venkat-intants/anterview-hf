@@ -1,6 +1,6 @@
 # Data-Flow and Sub-processor Transparency
 
-> Last updated: 2026-07-01
+> Last updated: 2026-08-07 (see Change Log)
 > This document is the authoritative record of every third-party sub-processor
 > that handles candidate data and where that data flows geographically.
 > It is referenced from the in-app consent modal (all three Day-1 languages).
@@ -23,6 +23,10 @@ for government contracts and is the same codebase with environment-level
 configuration changes. See `Final_stack.md` for the Tier-2 stack and
 `docs/PROCUREMENT.md` for the migration checklist.
 
+This non-residency is recorded as an open, owned risk with a trigger for
+revisiting — **[`ACCEPTED-RISKS.md` → AR-1](ACCEPTED-RISKS.md)**. The banner
+above is the disclosure; AR-1 is the decision and who owns it.
+
 ---
 
 ## Sub-processor Table
@@ -43,7 +47,20 @@ configuration changes. See `Final_stack.md` for the Tier-2 stack and
 | **Vercel** | Frontend CDN | Browser static assets only (no PII in assets) | **Global edge** | Candidate PII never stored on Vercel; API calls go to the backend VM |
 | **Oracle Cloud Free Tier** (backend VM) | Compute host for 6 Docker containers | All traffic in transit between services | **Region chosen by operator** (guide uses Frankfurt or Ashburn for availability; not India) | The free tier does not offer Mumbai region; operator must choose a supported region |
 | **Sentry** | Error monitoring | Stack traces, request metadata (may include partial URLs) | **United States** | PII scrubbing configured; no full request bodies logged to Sentry |
-| **JDoodle** | Code execution (coding exams) | Candidate code submissions | **India** (JDoodle infrastructure) | No interview audio or personal data; code only |
+| **JDoodle** | Code execution (coding exams) | Candidate code submissions **and any custom stdin the candidate typed** | ⚠️ **UNVERIFIED — do not claim a country** | Default provider for every deploy target. See the note below; risk accepted as [`ACCEPTED-RISKS.md#ar-3`](ACCEPTED-RISKS.md) |
+
+> **Note on the JDoodle row.** This row previously read **"India (JDoodle
+> infrastructure)"**. That claim has been withdrawn: we have no evidence for it.
+> The API base is `https://api.jdoodle.com/v1` with no region selector, the
+> client negotiates no region, and there is no DPA or contractual residency term
+> on file. Because this document is linked from the in-app consent modal, an
+> unevidenced residency statement here is worse than an honest "unverified" —
+> it is the kind of claim a DPDP audit would ask us to substantiate. Restore a
+> country only against a written statement from the vendor.
+>
+> The self-hosted **Piston** alternative is the path to a known execution
+> location (see [`PISTON_SELFHOST.md`](PISTON_SELFHOST.md)); it is implemented
+> and swappable by config, but is **not** the default today.
 
 ---
 
@@ -101,5 +118,6 @@ only environment variables change.
 
 | Date | Change |
 |---|---|
+| 2026-08-07 | **JDoodle residency claim withdrawn** — the row said "India (JDoodle infrastructure)" with no evidence; now marked unverified (code-review finding AG-05). Candidate stdin added to the data-processed column. Cross-references added to the new `ACCEPTED-RISKS.md` register (AR-1 residency, AR-3 JDoodle). |
 | 2026-07-01 | Initial document created; cross-border disclosure added to consent modal (fixes DPDP audit finding) |
 | 2026-06-xx | Neon region moved from us-east-1 to ap-southeast-1 (Singapore) for lower India latency |

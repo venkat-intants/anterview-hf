@@ -533,7 +533,11 @@ async def test_execute_one_erasure_stamps_completed() -> None:
         "No UPDATE erasure_requests statement with status+completed_at was executed"
     )
     assert "completed_at" in artifacts
-    assert artifacts["executor_version"] == "1.1"
+    # 1.2 since step 5b (notifications) joined the erasure — DPDP-7. The version
+    # is asserted rather than ignored because the artifacts blob is the auditor's
+    # record of WHAT a completion covered, so widening coverage without moving
+    # the version leaves two incomparable records claiming the same one.
+    assert artifacts["executor_version"] == "1.2"
 
 
 # ---------------------------------------------------------------------------
@@ -1206,3 +1210,76 @@ async def test_poll_leaves_request_pending_when_storage_unconfigured() -> None:
     assert db.rollback.called, "the transaction must be rolled back so the row stays pending"
     assert not db.commit.called
     assert not any("erasure_requests" in s and "status" in s for s in executed)
+
+
+# ---------------------------------------------------------------------------
+# DPDP-7 — step 5b: notifications must be reached
+#
+# The cascade argument is what made this table invisible: notifications.user_id
+# is ON DELETE CASCADE, so it LOOKS handled. It is not, because step 7
+# anonymises the users row rather than deleting it (erasure_requests.user_id is
+# ON DELETE RESTRICT), and a cascade that never fires deletes nothing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_one_erasure_deletes_notifications() -> None:
+    """The user's in-app notifications carry their name in free text — go."""
+    db, executed = _make_key_collecting_db()
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+
+    artifacts = await _execute_one_erasure(
+        db=db, request=_make_erasure_request(), system_actor_id=_SYSTEM_ACTOR
+    )
+
+    assert any(
+        "DELETE FROM notifications" in sql and "user_id" in sql for sql in executed
+    ), (
+        "erasure must delete the user's notifications — the ON DELETE CASCADE "
+        "never fires because the users row is anonymised, not deleted"
+    )
+    assert "notifications_deleted" in artifacts
+
+
+@pytest.mark.asyncio
+async def test_notifications_are_deleted_before_the_user_is_anonymised() -> None:
+    """Ordering guard.
+
+    The DELETE keys off users.id, which survives anonymisation, so this is not
+    load-bearing today. It is asserted because the ordering is the class of bug
+    that produced the orphaned-resume-objects defect this module's docstring
+    already records: a collect/delete step that quietly started running after
+    the thing it depends on had changed.
+    """
+    db, executed = _make_key_collecting_db()
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+
+    await _execute_one_erasure(
+        db=db, request=_make_erasure_request(), system_actor_id=_SYSTEM_ACTOR
+    )
+
+    notif_idx = next(i for i, s in enumerate(executed) if "DELETE FROM notifications" in s)
+    user_idx = next(i for i, s in enumerate(executed) if "UPDATE users SET" in s)
+    assert notif_idx < user_idx
+
+
+@pytest.mark.asyncio
+async def test_audit_details_report_the_notification_count() -> None:
+    """An auditor reads audit_log, not the artifacts JSONB — both must say it."""
+    db, _executed = _make_key_collecting_db()
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+
+    await _execute_one_erasure(
+        db=db, request=_make_erasure_request(), system_actor_id=_SYSTEM_ACTOR
+    )
+
+    audit_rows = [
+        call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], AuditLog)
+    ]
+    assert audit_rows, "no audit_log row was written"
+    details = audit_rows[-1].details
+    assert details is not None
+    assert "notifications_deleted" in details

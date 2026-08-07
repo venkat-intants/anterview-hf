@@ -131,6 +131,139 @@ async def test_lookup_session_scans_but_never_alters_the_resume() -> None:
         "the resume must reach the prompt unmodified — this path detects, it "
         "does not sanitise"
     )
+    assert ctx.injection_markers, (
+        "the markers must ride on the SessionContext (AG-07) — the caller "
+        "persists them; a detection nobody can act on is not a control"
+    )
+
+
+# ---------------------------------------------------------------------------
+# AG-07 — the markers reach the reviewing HUMAN, not only the log stream
+#
+# The scan computed markers correctly and the caller logged and discarded them,
+# so a candidate who planted "ignore previous instructions" in their CV was
+# invisible to the HR manager reviewing them — while the SAME document on the
+# scoring path surfaced its markers next to the score. These tests pin the
+# write, and pin that only marker names are written (DPDP §8: the matching
+# resume text is the candidate's personal data).
+# ---------------------------------------------------------------------------
+
+
+def _recording_factory(
+    calls: list[tuple[str, Any]], *, fail: bool = False
+) -> Any:
+    """A session factory that captures every (SQL, params) pair it is handed."""
+
+    @asynccontextmanager
+    async def _factory() -> Any:
+        if fail:
+            raise RuntimeError("connection pool exhausted")
+        db = AsyncMock()
+
+        async def _execute(stmt: Any, params: Any = None) -> Any:
+            calls.append((str(stmt), params))
+            return MagicMock()
+
+        db.execute = _execute
+        db.commit = AsyncMock()
+        yield db
+
+    return _factory
+
+
+@pytest.mark.asyncio
+async def test_markers_are_written_to_the_session_row() -> None:
+    """A detected attempt must land on the row the reviewer already loads."""
+    calls: list[tuple[str, Any]] = []
+    room = str(uuid.uuid4())
+    factory = _recording_factory(calls)
+
+    with (
+        patch("app.database.init_engine"),
+        patch("app.database.get_session_factory", return_value=lambda: factory()),
+    ):
+        await wk._persist_injection_markers(room, ["ignore_previous_instructions"])
+
+    assert len(calls) == 1, "expected exactly one UPDATE for the marker write"
+    sql, params = calls[0]
+    assert "UPDATE sessions" in sql
+    # A merge, not a whole-document write: _update_session_status writes other
+    # columns of the same row concurrently.
+    assert "||" in sql, (
+        "markers must be merged into metadata, not overwrite it — a "
+        "read-modify-write of the whole document is a lost update"
+    )
+    assert json.loads(params["patch"]) == {
+        "injection_markers": ["ignore_previous_instructions"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_marker_write_never_carries_the_resume_text() -> None:
+    """Marker names are our literals; the matching text is PII (DPDP §8)."""
+    calls: list[tuple[str, Any]] = []
+    room = str(uuid.uuid4())
+    markers = _scan_resume_for_injection(room, f"{_CLEAN}\n{_ATTACK}")
+    assert markers, "the marker set failed to match a literal injection attempt"
+    factory = _recording_factory(calls)
+
+    with (
+        patch("app.database.init_engine"),
+        patch("app.database.get_session_factory", return_value=lambda: factory()),
+    ):
+        await wk._persist_injection_markers(room, markers)
+
+    payload = calls[0][1]["patch"]
+    for leaked in ("Ignore previous instructions", "payment systems"):
+        assert leaked not in payload, (
+            f"{leaked!r} reached sessions.metadata — the scan stores marker "
+            "NAMES only; the resume itself is the candidate's personal data"
+        )
+
+
+@pytest.mark.asyncio
+async def test_clean_session_costs_no_round_trip() -> None:
+    """Almost every session has no markers; that must not become a DB write."""
+    calls: list[tuple[str, Any]] = []
+    factory = _recording_factory(calls)
+
+    with (
+        patch("app.database.init_engine"),
+        patch("app.database.get_session_factory", return_value=lambda: factory()),
+    ):
+        await wk._persist_injection_markers(str(uuid.uuid4()), [])
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_non_uuid_room_is_skipped_not_raised() -> None:
+    """Bare/CI dispatch rooms have no session row — a no-op, not an error."""
+    calls: list[tuple[str, Any]] = []
+    factory = _recording_factory(calls)
+
+    with (
+        patch("app.database.init_engine"),
+        patch("app.database.get_session_factory", return_value=lambda: factory()),
+    ):
+        await wk._persist_injection_markers("not-a-uuid", ["ignore_previous_instructions"])
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_marker_write_failure_never_costs_the_interview() -> None:
+    """Telemetry is best-effort: a DB blip must not abort a live interview."""
+    factory = _recording_factory([], fail=True)
+
+    with (
+        patch("app.database.init_engine"),
+        patch("app.database.get_session_factory", return_value=lambda: factory()),
+    ):
+        # Must not raise.
+        await wk._persist_injection_markers(
+            str(uuid.uuid4()), ["ignore_previous_instructions"]
+        )
 
 
 # ---------------------------------------------------------------------------

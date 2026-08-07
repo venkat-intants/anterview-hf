@@ -8,6 +8,7 @@ import structlog
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from shared.http_observability import install_http_observability
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
@@ -110,6 +111,21 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+# XS-05/XS-01: until this line interview_core exposed ONLY default process
+# metrics (CPU, memory, FDs, GC) — no request rate, no error rate, no latency.
+# It is the real-time interview service and the one the p95 < 2s NFR is written
+# about, so the single service whose latency anyone would want to alert on was
+# the one with no series to alert on. The same call registers the generic
+# unhandled-exception handler, which matters here for a specific reason: an
+# asyncpg error puts the offending SQL *and its bound parameters* into
+# ``str(exc)``, and this service's parameters are session ids, resume text and
+# transcripts (CWE-209, DPDP §8).
+#
+# Installed LAST so it is the OUTERMOST middleware — Starlette pushes each new
+# middleware onto the outside of the stack, so the latency recorded is what the
+# candidate experienced rather than what was left after CORS.
+install_http_observability(app, service_name=settings.service_name)
+
 app.include_router(health_router)
 app.include_router(api_router)
 app.include_router(avatars_router)
@@ -135,7 +151,9 @@ async def root() -> dict[str, str]:
     "/metrics",
     summary="Prometheus metrics",
     description=(
-        "Exposes default process metrics (CPU, memory, open FDs, GC) "
+        "Exposes HTTP request metrics (http_requests_total, "
+        "http_request_duration_seconds — see shared/http_observability.py) "
+        "alongside default process metrics (CPU, memory, open FDs, GC) "
         "in Prometheus text format. Scraped by the deploy-cluster's "
         "Prometheus instance every 15 s. Requires "
         "'Authorization: Bearer <METRICS_TOKEN>' when METRICS_TOKEN is set, "

@@ -7,6 +7,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { uploadResume } from '../api/resume';
 import { uploadJd } from '../api/jd';
 
+// No Toaster is mounted in these tests and the session-expired path toasts.
+vi.mock('../lib/toast', () => ({
+  toast: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },
+}));
+
 // ---------------------------------------------------------------------------
 // Prime tokenStore with a known token so uploadWithProgress injects it.
 // ---------------------------------------------------------------------------
@@ -113,7 +118,13 @@ describe('uploadResume', () => {
     await expect(uploadResume(file)).rejects.toThrow('Only PDF files are accepted.');
   });
 
-  it('throws an Error with the server detail on 401', async () => {
+  // FE-1 changed what a 401 means here. It used to surface the server's detail
+  // verbatim; it now attempts a refresh first. With no csrf_token cookie there
+  // is no session to refresh, so the honest outcome is the same terminal
+  // "session expired" path clientFetch and fetchBlobWithAuth already take —
+  // NOT a message telling the candidate their upload was malformed.
+  // The refresh-succeeds branch is covered in uploadRefresh.test.ts.
+  it('takes the session-expired path on 401 when there is no session to refresh', async () => {
     const mock = createXhrMock({
       status: 401,
       responseText: JSON.stringify({ detail: 'Not authenticated' }),
@@ -121,7 +132,7 @@ describe('uploadResume', () => {
     global.XMLHttpRequest = vi.fn(() => mock) as unknown as typeof XMLHttpRequest;
 
     const file = new File(['%PDF'], 'cv.pdf', { type: 'application/pdf' });
-    await expect(uploadResume(file)).rejects.toThrow('Not authenticated');
+    await expect(uploadResume(file)).rejects.toThrow('Session expired');
   });
 
   it('throws a network error when XHR fires onerror', async () => {

@@ -1,5 +1,26 @@
 # Deploying Intants to Render
 
+> ## ⚠️ DEPRECATED / LEGACY — do not follow this guide for a new deploy.
+>
+> `render.yaml` carries a deprecation banner at its own head (`render.yaml:1-7`)
+> and is **unmaintained**: its routing and env-name assumptions no longer match
+> the app. Following this guide reintroduces the `S3_ENDPOINT` /
+> `S3_ENDPOINT_URL` class of config bug (finding DEP-1) on a deploy path nobody
+> monitors — pydantic's `extra="ignore"` means the wrong env name is dropped
+> *silently* at startup and only shows up as PDFs that never store.
+>
+> **Deploy targets that are actually current:**
+>
+> | Target | Guide | What it is |
+> |---|---|---|
+> | **Hugging Face Space** ← the live one | [`../README.md`](../README.md) | All six processes in one free Docker Space. This is what `.github/workflows/sync-to-space.yml` deploys on every green `main` build, and what `space/entrypoint.sh` + `space/supervisord.conf` configure. |
+> | Self-hosted VM | [`DEPLOY-ORACLE.md`](DEPLOY-ORACLE.md) | One Oracle Cloud free VM, `docker-compose.prod.yml` behind Caddy TLS. |
+> | Tier-2 production | [`Final_stack.md`](Final_stack.md) | AWS Mumbai EKS. Not yet built. |
+>
+> This document is kept for historical reference only — it records what the
+> Render blueprint expected, which is useful when reading `render.yaml`.
+> (Closes code-review finding **CICD-3**.)
+
 This deploys the full platform — 4 FastAPI APIs, the LiveKit worker, and the
 React/Vite frontend — from the [`render.yaml`](../render.yaml) Blueprint at the
 repo root. The database (Neon), cache (Upstash), storage (R2), LiveKit, Gemini,

@@ -15,14 +15,23 @@ service down:
 
 * ``METRICS_TOKEN`` set — the request must carry ``Authorization: Bearer
   <token>``. Anything else is a 401.
-* ``METRICS_TOKEN`` unset **in production** — 401/404 rather than open. Fail
-  closed, but as a *response*, not a startup crash: a forgotten token must never
-  turn a rolling deploy into an outage, and the operator sees the failure in the
-  scrape rather than in a crash loop. 404 (not 403) is chosen so an
-  unauthenticated prober learns nothing — the reply is indistinguishable from a
-  service that never registered the route.
-* ``METRICS_TOKEN`` unset outside production — allowed. Local ``dev-up.ps1``,
+* ``METRICS_TOKEN`` unset in a **hardened env** (``shared.security.ENFORCED_ENVS``
+  — production *and* staging) — 401/404 rather than open. Fail closed, but as a
+  *response*, not a startup crash: a forgotten token must never turn a rolling
+  deploy into an outage, and the operator sees the failure in the scrape rather
+  than in a crash loop. 404 (not 403) is chosen so an unauthenticated prober
+  learns nothing — the reply is indistinguishable from a service that never
+  registered the route.
+* ``METRICS_TOKEN`` unset in dev/test/local — allowed. Local ``dev-up.ps1``,
   docker-compose and CI keep scraping with no config change.
+
+Staging counts as hardened (SEC-9). This gate previously tested ``== "production"``
+while ``shared/security.py`` — the same package, one import away — already
+enforced weak-secret and TLS rules across ``("production", "staging")``. Two
+guards disagreeing about what staging *is* is worse than either answer: staging
+runs on public hostnames with real routes, so an open scrape there maps the same
+route table. The set is now imported, not restated, so they cannot drift apart
+again.
 
 Why an exception type instead of ``fastapi.HTTPException``: nothing under
 ``shared/`` imports fastapi or starlette, and ``shared/pyproject.toml`` declares
@@ -53,7 +62,7 @@ from __future__ import annotations
 
 import hmac
 
-from shared.security import normalise_app_env
+from shared.security import ENFORCED_ENVS, normalise_app_env
 
 
 class MetricsAuthError(Exception):
@@ -89,9 +98,9 @@ def check_metrics_auth(
     :param authorization: raw ``Authorization`` request header, or ``None``.
     :param metrics_token: the configured ``METRICS_TOKEN`` (``None``/blank = unset).
     :param app_env: raw ``APP_ENV``; normalised here, so ``"Production"`` cannot
-        slip past the production gate.
+        slip past the gate.
     :raises MetricsAuthError: 401 on a bad/missing bearer token, 404 when no
-        token is configured in production.
+        token is configured in a hardened env (production or staging).
     """
     # ``.env.example`` ships ``METRICS_TOKEN=`` (empty), and pydantic hands that
     # through as ``""`` rather than ``None``. Treating an empty string as "set"
@@ -100,12 +109,15 @@ def check_metrics_auth(
     token = (metrics_token or "").strip()
 
     if not token:
-        if normalise_app_env(app_env) == "production":
+        # ENFORCED_ENVS, not a literal: see the module docstring on SEC-9. The
+        # one place that decides which environments are hardened is
+        # shared/security.py, and every guard in this package reads it.
+        if normalise_app_env(app_env) in ENFORCED_ENVS:
             raise MetricsAuthError(
                 status_code=404,
                 detail="Not Found",
             )
-        # Dev/test/staging with no token configured: unchanged, open behaviour.
+        # Dev/test/local with no token configured: unchanged, open behaviour.
         return
 
     # Compare as bytes, not str. hmac.compare_digest raises TypeError on str

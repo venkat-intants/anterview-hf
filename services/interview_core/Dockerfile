@@ -2,15 +2,23 @@
 # ---------------------------------------------------------------------------
 # interview_core — LiveKit API + LiveKit worker (one image, two run modes).
 #
-# BUILD CONTEXT: repo root (Railway sets "root": "/" in railway.json).
+# BUILD CONTEXT: repo root — required, not conventional. This file does
+# `COPY shared /app/shared`, so a services/interview_core/ context cannot build
+# it. Every caller passes the root: docker-compose.prod.yml:136-139,
+# docker-compose.yml, render.yaml `dockerContext: .`, and the CI docker matrix.
+# (The old header cited a railway.json that does not exist in this repo —
+# CICD-6. Railway is not a deploy target; the supported one is the Oracle VM
+# via docker-compose.prod.yml, with the HF Space running the root Dockerfile.)
 #
 # RUN MODES (same image, different CMD):
 #   API:    uvicorn app.main:app --host 0.0.0.0 --port $PORT   (default CMD)
 #   Worker: python -m app.worker.interview_worker start         (override CMD)
 #
-# livekit-agents + livekit-plugins-* are pinned in BOTH pyproject.toml (CI
-# installs via poetry.lock) and requirements.txt (this image + dev .venv,
-# generated via `pip freeze`). Keep the two in sync:
+# livekit-agents + livekit-plugins-* are pinned in BOTH pyproject.toml and
+# requirements.txt. requirements.txt is the ONLY install source — this image,
+# the CI service matrix and the dev .venv all use it, and no job anywhere reads
+# poetry.lock (DEP-2: two in-repo docs claim otherwise). pyproject is
+# documentation; keep the two in sync anyway so it does not mislead:
 #   livekit-agents==1.5.15
 #   livekit-plugins-openai==1.5.15
 #   livekit-plugins-sarvam==1.5.15

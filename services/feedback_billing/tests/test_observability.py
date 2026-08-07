@@ -112,7 +112,8 @@ def test_metrics_endpoint_contains_http_histogram(client: TestClient) -> None:
     client.get("/health/live")
     resp = client.get("/metrics")
     body = resp.text
-    # prometheus-fastapi-instrumentator always exposes this metric.
+    # Both names come from shared/http_observability.py, which every service
+    # installs; test_http_observability.py pins the labels.
     assert "http_request_duration_seconds" in body or "http_requests_total" in body
 
 

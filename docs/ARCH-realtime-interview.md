@@ -27,17 +27,25 @@
 >
 > ### What exists but is not wired
 >
-> These modules form a **self-contained island**: they import each other and
-> nothing outside them imports in. They are the §5 design, built and unit-tested,
-> but no production traffic reaches them.
+> These modules are the §5 design, built and unit-tested, but **no production
+> traffic executes them**:
 >
 > ```
 > app/graph/brain.py  build.py  nodes.py
+> app/graph/prompts.py  personas.py                  ← island: only brain/nodes/livekit_agent import them
 > app/agent/orchestrator.py  livekit_agent.py
 > app/avatar/base.py  simli.py  voice_only.py        ← reachable only from livekit_agent.py
 > app/speech/sarvam_tts.py  sarvam_stt.py  sarvam_stt_stream.py  sentence_splitter.py
 > app/agent/audio_resample.py                        ← reachable only from avatar/simli.py
 > ```
+>
+> **They are imported at ASGI startup, but never executed.** `routers/rooms.py:38`
+> does `from app.agent.launcher import dispatch_interview_agent`, and
+> `app/agent/__init__.py:19` re-exports from `app.agent.orchestrator`, which pulls
+> in `graph.brain` → `graph.nodes`. So "dead code" is not a safe assumption for
+> dependency pruning, image size, or import-time failure analysis — a syntax or
+> import error in the island still breaks the ASGI service at boot. What is dead
+> is the *call path*, not the *import graph*.
 >
 > **This is deliberate and the modules are maintained, not abandoned.** Owner
 > decision, 2026-08-07: keep both paths. `avatar/base.py`'s `AvatarTransport` is
@@ -57,12 +65,21 @@
 > | If you are changing… | Edit |
 > |---|---|
 > | Live interview behaviour, question flow, avatar/voice in production | `app/worker/interview_worker.py` |
+> | **The prompt the live interviewer actually uses** | `interview_worker.py::_interviewer_instructions()` — **not** `graph/prompts.py` |
 > | The Tier-2 custom-avatar or self-hosted-speech path | `app/avatar/`, `app/speech/` |
-> | Prompts, personas, language, role-weighted question plans | `app/graph/{prompts,personas,state}.py` — **shared by both**, used by the worker |
+> | Role-weighted question plans, competency rubrics | `shared/intelligence/` — genuinely shared by both |
 >
-> `graph/prompts.py`, `graph/personas.py` and `graph/state.py` are **not** part
-> of the island — the shipped worker imports them, so changes there affect
-> production immediately.
+> **Corrected 2026-08-07 (finding IC-3).** An earlier version of this banner
+> claimed `graph/{prompts,personas,state}.py` were shared with the worker. That
+> was wrong and dangerously so: `grep "app.graph" app/worker/interview_worker.py`
+> returns **nothing**. The worker builds its prompt in
+> `_interviewer_instructions()`. Editing `graph/prompts.py` to change live
+> interview behaviour changes nothing in production, and — the sharper half —
+> hardening applied there does **not** protect the shipped path.
+>
+> The one real exception is `app/graph/state.py`, used in production for a single
+> type alias: `routers/rooms.py:43`, `from app.graph.state import Language`.
+> `graph/prompts.py` and `graph/personas.py` are island-only.
 >
 > ### Stale claims below, corrected
 >

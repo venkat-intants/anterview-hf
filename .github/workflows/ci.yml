@@ -83,15 +83,30 @@ jobs:
         run: ruff check --config shared/pyproject.toml shared/
 
       - name: Type-check
-        run: mypy shared/intelligence shared/agents --ignore-missing-imports
+        # metrics_auth.py and redis_factory.py are named EXPLICITLY. Both are
+        # top-level modules rather than packages, so neither is picked up by the
+        # two directory arguments — they would have shipped unchecked.
+        run: >-
+          mypy shared/intelligence shared/agents
+          shared/metrics_auth.py shared/redis_factory.py
+          --ignore-missing-imports
 
       - name: Test
         # shared/auth carries the AUTH-01 session-revocation regression suite
         # (including the logout-all TOCTOU test). It was named in this job's
         # title but never actually run.
+        #
+        # shared/tests added 2026-08-07: it holds the regression suites for
+        # metrics_auth (the /metrics auth gate — M-6 / CWE-497) and
+        # redis_factory (now the single source of the Upstash idle-drop
+        # hardening for ALL FOUR services). This job enumerates paths rather
+        # than collecting from the repo root, so a new directory is invisible
+        # until it is listed here — both suites existed and passed locally
+        # while never running in CI. Adding a shared/ test directory means
+        # adding it to this line.
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: python -m pytest shared/intelligence shared/agents shared/auth -q
+        run: python -m pytest shared/intelligence shared/agents shared/auth shared/tests -q
 
   services:
     name: ${{ matrix.service }}
@@ -182,13 +197,27 @@ jobs:
         # critical paths" and nothing measured it, so the number was a claim
         # rather than a gate.
         #
-        # Each floor is that service's MEASURED coverage minus a 4-point margin
-        # for CI-vs-local variance, not a guess and not the documented target:
+        # Each floor is that service's MEASURED coverage minus a margin for
+        # CI-vs-local variance, not a guess and not the documented target.
         #
-        #   data_gateway     59%  ->  55
-        #   interview_core   72%  ->  68
-        #   feedback_billing 87%  ->  83   (already above the documented 80%)
-        #   admin_ops        82%  ->  78   (already above the documented 80%)
+        # KEEP THIS TABLE AND THE `case` BELOW IN STEP. They had already
+        # drifted (this block documented 55/68/83/78 while the case enforced
+        # 50/62/78/72), which is precisely the failure mode the block was
+        # written to prevent. The `case` is the only executable value; if you
+        # change one, change the other in the same commit.
+        #
+        # Re-measured 2026-08-07 after the code-review hardening pass, which
+        # added regression suites across all four services:
+        #
+        #                   was    now    floor   margin
+        #   data_gateway     59  ->  60  ->  55      5
+        #   interview_core   72  ->  76  ->  71      5
+        #   feedback_billing 87  ->  89  ->  84      5
+        #   admin_ops        82  ->  84  ->  79      5
+        #
+        # A 5-point margin rather than 4: these numbers were measured on
+        # Python 3.13 locally while CI pins 3.12, and interview_core's audio
+        # stack has the most import-time platform divergence of the four.
         #
         # A ratchet, deliberately. Setting every floor to 80 today would turn the
         # build red on arrival for two services, and the honest options then are
@@ -199,10 +228,10 @@ jobs:
         # the two cannot silently diverge again.
         run: |
           case "${{ matrix.service }}" in
-            data_gateway)     FLOOR=50 ;;
-            interview_core)   FLOOR=62 ;;
-            feedback_billing) FLOOR=78 ;;
-            admin_ops)        FLOOR=72 ;;
+            data_gateway)     FLOOR=55 ;;
+            interview_core)   FLOOR=71 ;;
+            feedback_billing) FLOOR=84 ;;
+            admin_ops)        FLOOR=79 ;;
           esac
           echo "Enforcing >= ${FLOOR}% line coverage for ${{ matrix.service }}"
           python -m coverage report --fail-under="${FLOOR}"

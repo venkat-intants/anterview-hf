@@ -75,17 +75,26 @@ function readCookie(name: string): string | null {
 export function attemptRefresh(apiBase: string): Promise<boolean> {
   if (_refreshPromise) return _refreshPromise;
 
-  _refreshPromise = (async (): Promise<boolean> => {
+  // No readable csrf_token cookie ⇒ no valid logged-in session to refresh.
+  // A genuine session always carries the JS-readable csrf_token cookie
+  // alongside the httpOnly refresh_token. POSTing without it would hit a
+  // stale refresh_token cookie and return a confusing 403
+  // "CSRF validation failed" — so short-circuit to a clean "not logged in".
+  //
+  // Answered WITHOUT claiming the single-flight slot. This branch returns
+  // without ever awaiting, so when it lived inside the shared promise body its
+  // `finally` ran BEFORE the slot was assigned — and the assignment then
+  // re-installed an already-settled `false` that no later call could clear.
+  // AuthProvider fires exactly this probe on every cold load, so one logged-out
+  // page view pinned the slot for the whole session: the first token expiry
+  // after signing in logged the user straight back out instead of refreshing.
+  const csrf = readCookie('csrf_token');
+  if (!csrf) {
+    return Promise.resolve(false);
+  }
+
+  const attempt = (async (): Promise<boolean> => {
     try {
-      const csrf = readCookie('csrf_token');
-      if (!csrf) {
-        // No readable csrf_token cookie ⇒ no valid logged-in session to refresh.
-        // A genuine session always carries the JS-readable csrf_token cookie
-        // alongside the httpOnly refresh_token. POSTing without it would hit a
-        // stale refresh_token cookie and return a confusing 403
-        // "CSRF validation failed" — so short-circuit to a clean "not logged in".
-        return false;
-      }
       const headers: HeadersInit = {
         'Content-Type': 'application/json',
         'X-CSRF-Token': csrf,
@@ -106,10 +115,16 @@ export function attemptRefresh(apiBase: string): Promise<boolean> {
       return true;
     } catch {
       return false;
-    } finally {
-      _refreshPromise = null;
     }
   })();
+
+  // Clear the slot from a `.finally()` on the STORED promise rather than from a
+  // `finally` inside the body: the callback is guaranteed to run in a later
+  // microtask, so it can never undo the assignment below no matter how the body
+  // settles (including a fetch double that throws synchronously).
+  _refreshPromise = attempt.finally(() => {
+    _refreshPromise = null;
+  });
 
   return _refreshPromise;
 }
@@ -212,6 +227,56 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
   }
 
   return parseJsonOrEmpty<T>(response);
+}
+
+/**
+ * Authenticated fetch that returns the RAW Response instead of parsed JSON,
+ * carrying the same single-flight 401 → refresh → retry as clientFetch.
+ *
+ * Binary/streamed downloads (the admin CSV export, the XLSX question template)
+ * genuinely cannot go through clientFetch — it parses the body as JSON and
+ * forces a JSON Content-Type. Those call sites therefore used a bare fetch(),
+ * which also dropped the refresh-on-401: a candidate-facing token that expired
+ * mid-session turned the download into a dead button. This keeps the justified
+ * bypass of the JSON layer while restoring the auth layer.
+ *
+ * The caller owns the response — check `res.ok` and read `.blob()` / `.text()`.
+ */
+export async function fetchBlobWithAuth(
+  url: string,
+  options: Omit<ClientOptions, 'skipAuth'> = {},
+): Promise<Response> {
+  const { headers: extraHeaders = {}, ...fetchOptions } = options;
+
+  // No default Content-Type here (unlike clientFetch): these are GET downloads
+  // with no request body, and claiming application/json would be a lie that
+  // some proxies act on.
+  const send = (token: string | null): Promise<Response> =>
+    fetch(url, {
+      ...fetchOptions,
+      credentials: 'include',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...extraHeaders,
+      },
+    });
+
+  const response = await send(getToken());
+  if (response.status !== 401 || USE_MOCK) return response;
+
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+  const refreshed = await attemptRefresh(import.meta.env.VITE_API_BASE_URL);
+  if (!refreshed) {
+    // Same terminal path as clientFetch — clear, toast, bounce to /login.
+    clearToken();
+    toast.error('Session expired — please sign in');
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    throw new Error('Session expired');
+  }
+
+  return send(getToken());
 }
 
 // ---------------------------------------------------------------------------

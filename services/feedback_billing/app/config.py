@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 3072
 
     sentry_dsn: str = ""
+    # Bearer token required by GET /metrics. Blank = unset, which keeps /metrics
+    # open everywhere EXCEPT production, where shared/metrics_auth.py fails it
+    # closed with a 404. Blank rather than None because .env.example ships
+    # `METRICS_TOKEN=` and pydantic hands that through as "".
+    metrics_token: str = ""
     cors_allowed_origins: str = "http://localhost:5173"
 
     @field_validator("cors_allowed_origins")

@@ -30,7 +30,7 @@ from typing import Any
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -39,6 +39,7 @@ from prometheus_client import (
     generate_latest,
 )
 from shared.auth.factory import get_auth_provider
+from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
@@ -327,14 +328,33 @@ async def root() -> dict[str, str]:
     include_in_schema=False,  # not part of the public API contract
     summary="Prometheus metrics scrape endpoint",
 )
-async def metrics() -> Response:
+async def metrics(authorization: str | None = Header(default=None)) -> Response:
     """Expose Prometheus metrics for scraping by a collector (e.g. VictoriaMetrics,
     Prometheus server, or Railway's built-in metrics plugin).
 
     Returns text/plain in the standard Prometheus exposition format.
     The endpoint is excluded from OpenAPI docs (include_in_schema=False) since
     it is an ops endpoint, not part of the service's REST API.
+
+    A user JWT is deliberately NOT reused as the credential: a scrape job holds a
+    static secret, not a short-lived session token. The policy — and the
+    401-vs-404 choice — lives in shared/metrics_auth.py so all four services
+    refuse identically; this handler only translates it into HTTP. Note the edge
+    proxy already gates /metrics in the Caddy topologies, but render.yaml gives
+    each backend its own public hostname with no proxy in front, and a control
+    one deploy target lacks is not a control.
     """
+    try:
+        check_metrics_auth(
+            authorization=authorization,
+            metrics_token=settings.metrics_token,
+            app_env=settings.app_env,
+        )
+    except MetricsAuthError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.detail, headers=exc.headers
+        ) from exc
+
     return Response(
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST,

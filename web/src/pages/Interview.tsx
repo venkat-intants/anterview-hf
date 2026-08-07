@@ -16,6 +16,7 @@ import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import InterviewIntro from '@/components/InterviewIntro';
 import LiveKitInterview from '@/features/interview/LiveKitInterview';
+import InterviewErrorBoundary from '@/features/interview/InterviewErrorBoundary';
 import { preloadProctorAssets } from '@/features/interview/useProctoring';
 import { postConsent } from '@/api/consent';
 import type { Language } from '@/types/interview';
@@ -119,5 +120,12 @@ export default function Interview() {
     );
   }
 
-  return <LiveKitInterview sessionId={sessionId} cameraConsented={cameraConsented} />;
+  // Scoped boundary: a render crash inside the live panel must not take the whole
+  // app down with it (the root boundary in App.tsx would), because the candidate
+  // is mid-session and the room + server session are still alive to rejoin.
+  return (
+    <InterviewErrorBoundary>
+      <LiveKitInterview sessionId={sessionId} cameraConsented={cameraConsented} />
+    </InterviewErrorBoundary>
+  );
 }

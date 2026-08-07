@@ -27,8 +27,8 @@ router = APIRouter(prefix="/health", tags=["health"])
 async def _check_postgres() -> dict[str, Any]:
     """Execute ``SELECT 1`` via the shared async engine.
 
-    Returns ``{"ok": True}`` on success, or
-    ``{"ok": False, "error": "<ExcType>: <message>"}`` on any failure.
+    Returns ``{"ok": True}`` on success, or ``{"ok": False, "error": "<ExcType>"}``
+    on any failure — the exception TYPE only.
     """
     try:
         factory = get_session_factory()
@@ -37,19 +37,25 @@ async def _check_postgres() -> dict[str, Any]:
             row = result.scalar()
         return {"ok": row == 1}
     except Exception as exc:
+        # /health/deep is UNAUTHENTICATED (k8s/Railway probes hit it), and
+        # asyncpg/SQLAlchemy embed the Neon host, port, database and sometimes
+        # the user in str(exc) — a connection failure would hand a DSN fragment
+        # to anyone who curls the probe. Full detail goes to structlog, where
+        # an operator can still read it; the response carries the type alone.
+        # Same convention as admin_ops/app/health.py.
         log.warning(
             "health.postgres.fail",
             exc_type=type(exc).__name__,
             exc_msg=str(exc),
         )
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": type(exc).__name__}
 
 
 async def _check_redis() -> dict[str, Any]:
     """Call ``PING`` on the shared Redis singleton.
 
-    Returns ``{"ok": True}`` on success, or
-    ``{"ok": False, "error": "<ExcType>: <message>"}`` on any failure.
+    Returns ``{"ok": True}`` on success, or ``{"ok": False, "error": "<ExcType>"}``
+    on any failure — the exception TYPE only (see _check_postgres for why).
     """
     try:
         client = get_redis()
@@ -61,7 +67,7 @@ async def _check_redis() -> dict[str, Any]:
             exc_type=type(exc).__name__,
             exc_msg=str(exc),
         )
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": type(exc).__name__}
 
 
 @router.get("/live")
@@ -78,9 +84,12 @@ async def deep_health() -> JSONResponse:
 
         {
             "status": "ok" | "degraded",
-            "postgres": {"ok": true} | {"ok": false, "error": "..."},
-            "redis":    {"ok": true} | {"ok": false, "error": "..."}
+            "postgres": {"ok": true} | {"ok": false, "error": "<ExcType>"},
+            "redis":    {"ok": true} | {"ok": false, "error": "<ExcType>"}
         }
+
+    ``error`` is the exception class name and nothing else — this endpoint is
+    unauthenticated, so driver messages (which carry the DSN) stay in the logs.
 
     HTTP 200 when all dependencies are healthy, HTTP 503 otherwise.
     """

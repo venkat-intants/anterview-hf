@@ -3,31 +3,12 @@
 // While the AuthProvider is running its silent-refresh probe (isInitializing),
 // a loading spinner is shown instead of redirecting. This prevents a page
 // refresh from flashing the login screen before the refresh cookie is checked.
+//
+// Thin wrapper over RoleRoute (no `roles` ⇒ authentication-only gate), which
+// holds the one copy of the logic all five route guards share.
 
-import { Navigate, Outlet } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import RoleRoute from './RoleRoute';
 
 export default function ProtectedRoute() {
-  const { isAuthenticated, isInitializing } = useAuth();
-
-  if (isInitializing) {
-    return (
-      <main
-        className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-violet-50"
-        aria-label="Loading"
-      >
-        <div
-          className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent"
-          role="status"
-          aria-label="Checking session"
-        />
-      </main>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return <Outlet />;
+  return <RoleRoute />;
 }

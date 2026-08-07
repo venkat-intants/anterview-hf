@@ -3,8 +3,7 @@
 // Switches between mock and real backend via VITE_USE_MOCK env var.
 
 import { simulateDelay } from './mock';
-import { clientFetch } from './client';
-import { getToken } from './tokenStore';
+import { clientFetch, fetchBlobWithAuth } from './client';
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
 
@@ -20,12 +19,12 @@ function adminGet<T>(path: string): Promise<T> {
   return clientFetch<T>(`${ADMIN_BASE}${path}`);
 }
 
+// Streamed/binary responses (the CSV export) must skip clientFetch's JSON
+// parsing, but NOT its auth handling — fetchBlobWithAuth is the same wrapper
+// minus the parsing, so an access token that expires mid-session still
+// refreshes and retries instead of failing the download.
 function adminGetRaw(path: string): Promise<Response> {
-  const token = getToken();
-  return fetch(`${ADMIN_BASE}${path}`, {
-    credentials: 'include',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  return fetchBlobWithAuth(`${ADMIN_BASE}${path}`);
 }
 
 // ---------------------------------------------------------------------------

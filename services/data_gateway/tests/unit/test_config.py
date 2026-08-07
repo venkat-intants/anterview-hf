@@ -149,3 +149,14 @@ def test_cors_rejects_wildcard_and_non_http_origins(origin: str) -> None:
 def test_cors_accepts_a_normal_origin_list() -> None:
     value = "http://localhost:5173,https://app.intants.com"
     assert _settings(cors_allowed_origins=value).cors_allowed_origins == value
+
+
+def test_cors_checks_every_origin_not_just_the_first() -> None:
+    """The bad entry is in the middle, where a first-entry-only check misses it.
+
+    data_gateway was the last service still carrying its own copy of this
+    validator; it now delegates to shared/security.py. The delegation must not
+    quietly narrow what gets inspected.
+    """
+    with pytest.raises(ValidationError):
+        _settings(cors_allowed_origins="http://localhost:5173, *, https://app.intants.com")

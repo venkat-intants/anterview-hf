@@ -26,7 +26,7 @@ from shared.intelligence import (
 )
 
 from app.config import Settings
-from app.untrusted_input import frame_untrusted, scan_untrusted
+from app.untrusted_input import frame_untrusted, frame_untrusted_inline, scan_untrusted
 
 log = structlog.get_logger(__name__)
 
@@ -151,6 +151,10 @@ def _role_blueprint(
     if not title:
         return ""
     seniority = level if level in ("entry", "mid", "senior") else "mid"
+    # Classify and hash on the RAW title. profile_id is an audit handle — the
+    # rubric behind a score has to be reproducible from it — and the keyword
+    # classifier normalises punctuation away before matching, so neutralising
+    # first would change the handle without changing a single decision.
     profile = baseline_profile(
         profile_id=compute_profile_id(job_title=title, seniority=seniority),
         job_title=title,
@@ -163,7 +167,15 @@ def _role_blueprint(
             reason="family_not_applicable",
         )
         return ""
-    return render_exam_blueprint(profile, count)
+    # ...but the copy that reaches the model is neutralised. This is the only
+    # route by which job_title enters an exam prompt: render_exam_blueprint
+    # interpolates profile.job_title into a "Role : ..." line verbatim. Framing
+    # it here rather than in shared/intelligence keeps the prompt-hygiene
+    # convention where the rest of it lives (app/untrusted_input.py) and leaves
+    # the role engine free of a service's presentation rules.
+    return render_exam_blueprint(
+        profile.model_copy(update={"job_title": frame_untrusted_inline(title)}), count
+    )
 
 
 async def generate_exam_questions(
@@ -196,7 +208,11 @@ async def generate_exam_questions(
     # a prompt, and a pasted JD can carry whatever the poster put in it.
     topic_excerpt = topic[:300]
     scan_untrusted(
-        {"topic": topic_excerpt},
+        # job_title is not merely metadata here: it reaches the prompt through
+        # the role blueprint (see _role_blueprint), so it is scanned like every
+        # other string that gets there. It stays a log field as well, so the
+        # warning names the posting and not just the offending field.
+        {"topic": topic_excerpt, "job_title": job_title},
         event="exam_generator.injection_markers_detected",
         job_title=job_title,
         kind="mcq",
@@ -491,7 +507,10 @@ async def generate_coding_questions(
 
     topic_excerpt = topic[:300]
     scan_untrusted(
-        {"topic": topic_excerpt},
+        # Same reasoning as the MCQ path: job_title enters the prompt via the
+        # role blueprint, so it belongs in the scanned sources, not only in the
+        # log context.
+        {"topic": topic_excerpt, "job_title": job_title},
         event="exam_generator.injection_markers_detected",
         job_title=job_title,
         kind="coding",

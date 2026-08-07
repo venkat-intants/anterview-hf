@@ -18,7 +18,7 @@ import httpx
 import structlog
 
 from app.config import Settings
-from app.untrusted_input import frame_untrusted, scan_untrusted
+from app.untrusted_input import frame_untrusted, frame_untrusted_inline, scan_untrusted
 
 log = structlog.get_logger(__name__)
 
@@ -121,8 +121,22 @@ async def score_resume(
     resume_excerpt = resume_text[:8000]
     jd_excerpt = jd_text[:1200]
     injection_markers = scan_untrusted(
-        {"resume": resume_excerpt, "jd": jd_excerpt},
+        {
+            "resume": resume_excerpt,
+            "jd": jd_excerpt,
+            # job_title and level are HR-controlled and length-capped at the API
+            # boundary (routers/score.py), so they are the lowest-risk strings
+            # in this prompt — but they ARE substituted into it, and they used
+            # to reach this call as log context only. A `job_title=` keyword
+            # sitting next to a scan reads exactly like a scanned field; it was
+            # not one, which is the sort of gap that survives review.
+            "job_title": job_title,
+            "level": level,
+        },
         event="resume_scorer.injection_markers_detected",
+        # Still log context too: the marker list says WHICH field tripped, this
+        # says which posting it was. A job title is not candidate PII (this
+        # module already logs it on the success path).
         job_title=job_title,
     )
 
@@ -132,9 +146,12 @@ async def score_resume(
         if jd_text
         else ""
     )
+    # Title/level get the inline treatment, not the block treatment — see
+    # frame_untrusted_inline for why a "## Role" header block is the one place
+    # where full BEGIN/END delimiters would cost more than they buy.
     prompt = (
-        _PROMPT_TEMPLATE.replace("{{JOB_TITLE}}", job_title)
-        .replace("{{LEVEL}}", level)
+        _PROMPT_TEMPLATE.replace("{{JOB_TITLE}}", frame_untrusted_inline(job_title))
+        .replace("{{LEVEL}}", frame_untrusted_inline(level))
         .replace("{{JD_BLOCK}}", jd_block)
         .replace(
             "{{RESUME_TEXT}}", frame_untrusted(resume_excerpt, label="RESUME")

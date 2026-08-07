@@ -1,3 +1,14 @@
+"""Deep health checks for interview_core.
+
+Response-body rule (S-6, CWE-209): ``/health/deep`` is UNAUTHENTICATED, so a
+failing check may return only the exception *type*. Driver exceptions embed the
+thing that failed to connect — asyncpg puts the Neon host, port, user and
+database in ``str(exc)``; botocore names the R2 endpoint and bucket; httpx
+echoes the full request URL, which for Gemini carries ``?key=<API key>``. Full
+detail goes to structlog, where operators can see it and the internet cannot.
+This mirrors the convention already in services/admin_ops/app/health.py.
+"""
+
 import asyncio
 from typing import Any
 
@@ -29,8 +40,9 @@ async def _check_postgres() -> dict[str, Any]:
             has_vector = ext_result.first() is not None
         await engine.dispose()
         return {"ok": row == 1, "pgvector": has_vector}
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    except Exception as exc:
+        log.warning("health.postgres.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
+        return {"ok": False, "error": type(exc).__name__}
 
 
 async def _check_redis() -> dict[str, Any]:
@@ -39,8 +51,9 @@ async def _check_redis() -> dict[str, Any]:
         pong = await client.ping()
         await client.aclose()
         return {"ok": pong is True}
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    except Exception as exc:
+        log.warning("health.redis.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
+        return {"ok": False, "error": type(exc).__name__}
 
 
 async def _check_s3() -> dict[str, Any]:
@@ -61,8 +74,9 @@ async def _check_s3() -> dict[str, Any]:
             "ok": head["ResponseMetadata"]["HTTPStatusCode"] == 200,
             "bucket": settings.s3_bucket_name,
         }
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    except Exception as exc:
+        log.warning("health.s3.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
+        return {"ok": False, "error": type(exc).__name__}
 
 
 async def _check_anthropic() -> dict[str, Any]:
@@ -77,8 +91,9 @@ async def _check_anthropic() -> dict[str, Any]:
         )
         text_out = "".join(b.text for b in resp.content if hasattr(b, "text"))
         return {"ok": "PING" in text_out.upper(), "model": settings.anthropic_model}
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    except Exception as exc:
+        log.warning("health.anthropic.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
+        return {"ok": False, "error": type(exc).__name__}
 
 
 async def _check_gemini() -> dict[str, Any]:
@@ -98,11 +113,18 @@ async def _check_gemini() -> dict[str, Any]:
                 },
             )
         if r.status_code != 200:
-            return {"ok": False, "status": r.status_code, "body": r.text[:300]}
+            # Same rule as the except blocks: the upstream body is a third-party
+            # error document that has already been observed to echo the request
+            # (and the request URL carries ?key=<GEMINI_API_KEY>). Status code is
+            # enough to triage from an unauthenticated endpoint; the body goes to
+            # the log.
+            log.warning("health.gemini.http_error", status=r.status_code, body=r.text[:300])
+            return {"ok": False, "status": r.status_code}
         data = r.json()
         candidates = data.get("candidates") or []
         if not candidates:
-            return {"ok": False, "error": "no candidates in response", "body": str(data)[:300]}
+            log.warning("health.gemini.no_candidates", body=str(data)[:300])
+            return {"ok": False, "error": "no candidates in response"}
         finish_reason = candidates[0].get("finishReason")
         if finish_reason == "MAX_TOKENS":
             usage = data.get("usageMetadata", {})
@@ -119,8 +141,9 @@ async def _check_gemini() -> dict[str, Any]:
         if not text_out:
             return {"ok": False, "error": f"empty output, finishReason={finish_reason}"}
         return {"ok": "PING" in text_out.upper(), "model": settings.gemini_model}
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    except Exception as exc:
+        log.warning("health.gemini.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
+        return {"ok": False, "error": type(exc).__name__}
 
 
 async def _check_llm() -> dict[str, Any]:
@@ -146,8 +169,9 @@ async def _check_sarvam() -> dict[str, Any]:
                 },
             )
         return {"ok": r.status_code in (200, 201), "status": r.status_code}
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    except Exception as exc:
+        log.warning("health.sarvam.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
+        return {"ok": False, "error": type(exc).__name__}
 
 
 @router.get("/live")

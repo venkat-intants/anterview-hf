@@ -9,7 +9,9 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import pytest_asyncio
 from fastapi import HTTPException
+from httpx import ASGITransport, AsyncClient
 from shared.auth.base import User
 
 
@@ -266,6 +268,210 @@ async def test_semantic_search_binds_the_escaped_job_pattern() -> None:
         "the ILIKE must declare its escape character explicitly rather than "
         "relying on the server's standard_conforming_strings default"
     )
+
+
+# ---------------------------------------------------------------------------
+# S-9 — applicant email validated at the API boundary
+#
+# `email` used to be a bare `str | None` on both the request and the response
+# side, so a typo was accepted, written to the applicants row, and only failed
+# hours later inside the mailer worker — where it reads as an email-system fault
+# rather than as the upload that caused it.
+#
+# The two entry points are validated differently on purpose, and both halves of
+# that split are asserted below: what a human types is rejected loudly; what the
+# scorer reads off a PDF is dropped quietly.
+# ---------------------------------------------------------------------------
+
+
+def test_blank_email_is_absent_not_invalid() -> None:
+    """An untouched optional input arrives as "" — that must stay "no email".
+
+    Without this, adding EmailStr would turn every blank email box into a 422.
+    """
+    from app.routers.hr_applicants import _blank_to_none
+
+    assert _blank_to_none("") is None
+    assert _blank_to_none("   ") is None
+    assert _blank_to_none(" jane@example.com ") == "jane@example.com"
+    assert _blank_to_none(None) is None
+
+
+@pytest.mark.parametrize(
+    "extracted",
+    ["jane@", "@example.com", "not an email", "jane@@x.com", "jane@example", ""],
+)
+def test_extracted_email_is_dropped_when_malformed(extracted: str) -> None:
+    from app.routers.hr_applicants import _valid_email_or_none
+
+    assert _valid_email_or_none(extracted) is None
+
+
+def test_extracted_email_is_kept_when_real() -> None:
+    from app.routers.hr_applicants import _valid_email_or_none
+
+    # Domain is lower-cased by RFC normalisation; the local part is case-sensitive
+    # and must survive untouched.
+    assert _valid_email_or_none(" Jane.Doe@Example.com ") == "Jane.Doe@example.com"
+
+
+def test_extracted_email_unwraps_a_resume_style_display_name() -> None:
+    """"Jane Doe <jane@example.com>" is how a resume header usually reads.
+
+    The address is stored bare so the mailer gets a plain recipient rather than
+    a string it would have to parse again.
+    """
+    from app.routers.hr_applicants import _valid_email_or_none
+
+    assert _valid_email_or_none("Jane Doe <jane@example.com>") == "jane@example.com"
+
+
+@pytest.mark.asyncio
+async def test_ingest_drops_a_malformed_scorer_extracted_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bad extraction must cost the email, not the candidate.
+
+    The address here is read out of a PDF by the LLM scorer, so "jane@" is a
+    plausible OCR artefact. Raising would fail the whole bulk upload and lose an
+    applicant; storing it would give the mailer a permanently undeliverable row.
+    """
+    from app.routers import hr_applicants as mod
+
+    monkeypatch.setattr(mod, "_extract_pdf_text", AsyncMock(return_value="cv text"))
+    monkeypatch.setattr(mod, "_upload_to_s3", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        mod,
+        "score_resume_remote",
+        AsyncMock(
+            return_value={
+                "overall": 61,
+                "candidate_name": "Jane Doe",
+                "candidate_email": "jane@",
+            }
+        ),
+    )
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    applicant = await mod._ingest_resume(
+        db=db,
+        company_id=uuid.uuid4(),
+        hr_uid=uuid.uuid4(),
+        raw=b"%PDF-1.4",
+        fallback_name="cv",
+        job_title="Welder",
+        level="mid",
+        jd_text=None,
+    )
+
+    assert applicant.email is None
+    # The rest of the extraction is still honoured — only the email is dropped.
+    assert applicant.full_name == "Jane Doe"
+    assert applicant.ats_overall == 61
+
+
+@pytest.mark.asyncio
+async def test_ingest_keeps_a_valid_scorer_extracted_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The common case must be untouched — this is how bulk uploads get emails."""
+    from app.routers import hr_applicants as mod
+
+    monkeypatch.setattr(mod, "_extract_pdf_text", AsyncMock(return_value="cv text"))
+    monkeypatch.setattr(mod, "_upload_to_s3", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        mod,
+        "score_resume_remote",
+        AsyncMock(return_value={"overall": 61, "candidate_email": "jane@example.com"}),
+    )
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    applicant = await mod._ingest_resume(
+        db=db,
+        company_id=uuid.uuid4(),
+        hr_uid=uuid.uuid4(),
+        raw=b"%PDF-1.4",
+        fallback_name="cv",
+        job_title="Welder",
+        level="mid",
+        jd_text=None,
+    )
+
+    assert applicant.email == "jane@example.com"
+
+
+# --- the HTTP boundary -------------------------------------------------------
+#
+# These drive a real request so the assertion is on the status code an HR
+# manager's browser sees, not on a helper. A 422 here is only meaningful if the
+# same request WITHOUT the bad email gets past validation, which is what the
+# 400 in the companion test proves (the handler is reached and rejects the junk
+# PDF payload) — a blanket "everything 422s" would otherwise pass.
+
+
+@pytest_asyncio.fixture
+async def hr_client() -> AsyncClient:  # type: ignore[misc]
+    """POST /hr/applicants with the tenant + DB dependencies stubbed out."""
+    from app.database import get_db_session
+    from app.main import app
+    from app.routers.hr_applicants import get_hr_company
+
+    async def _fake_db() -> AsyncMock:
+        return AsyncMock()
+
+    app.dependency_overrides[get_hr_company] = lambda: (uuid.uuid4(), uuid.uuid4())
+    app.dependency_overrides[get_db_session] = _fake_db
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            yield ac  # type: ignore[misc]
+    finally:
+        app.dependency_overrides.pop(get_hr_company, None)
+        app.dependency_overrides.pop(get_db_session, None)
+
+
+def _upload_form(email: str | None) -> dict[str, object]:
+    data: dict[str, object] = {"full_name": "Jane Doe", "target_job_title": "Welder"}
+    if email is not None:
+        data["email"] = email
+    return data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["jane@", "not-an-email", "jane doe@example.com"])
+async def test_upload_rejects_a_malformed_email_with_422(
+    hr_client: AsyncClient, bad: str
+) -> None:
+    resp = await hr_client.post(
+        "/hr/applicants",
+        data=_upload_form(bad),
+        files={"file": ("cv.pdf", b"%PDF-1.4 junk", "application/pdf")},
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"][-1] == "email"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("email", [None, "", "jane@example.com"])
+async def test_upload_accepts_absent_blank_and_valid_emails(
+    hr_client: AsyncClient, email: str | None
+) -> None:
+    """None of these is a validation error.
+
+    The 400 comes from the deliberately-junk PDF body further down the handler,
+    which is precisely the point: the request got PAST the email check.
+    """
+    resp = await hr_client.post(
+        "/hr/applicants",
+        data=_upload_form(email),
+        files={"file": ("cv.pdf", b"%PDF-1.4 junk", "application/pdf")},
+    )
+
+    assert resp.status_code == 400, resp.text
 
 
 @pytest.mark.asyncio

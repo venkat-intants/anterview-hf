@@ -32,6 +32,7 @@ from app.config import Settings
 from app.untrusted_input import (
     UNTRUSTED_DATA_NOTICE,
     frame_untrusted,
+    frame_untrusted_inline,
     scan_untrusted,
 )
 
@@ -186,11 +187,19 @@ def _render_prompt(
     The notice is passed in rather than hardcoded in the template so the wording
     stays identical to the copilot path's — one definition in
     ``shared.agents.guardrails``, not two that can drift.
+
+    ``job_title`` and ``experience_level`` are HR-typed strings that land in the
+    "## Inputs" header block, which the template renders with ``autoescape=False``
+    — i.e. verbatim. They are neutralised here rather than at the caller because
+    this function is the one chokepoint every rendered prompt passes through;
+    doing it at ``score_session`` would leave any future caller unframed.
+    ``lang_name`` is not touched: it comes from ``_LANG_NAMES``, so it is one of
+    three literals this repo wrote, never user input.
     """
     template = _jinja_env.from_string(SCORER_PROMPT_TEMPLATE)
     return template.render(
-        job_title=job_title,
-        experience_level=experience_level,
+        job_title=frame_untrusted_inline(job_title),
+        experience_level=frame_untrusted_inline(experience_level),
         lang_name=lang_name,
         turns=turns,
         untrusted_notice=UNTRUSTED_DATA_NOTICE,
@@ -343,6 +352,13 @@ async def score_session(
         {
             "transcript": "\n".join(t["text"] for t in safe_turns),
             "jd": jd_text[:1200],
+            # Both are substituted into the "## Inputs" header of the prompt
+            # (see _render_prompt). HR-controlled and therefore low risk, but
+            # every other string reaching this prompt is scanned and these two
+            # were not — they were passed as log context, which reads like a
+            # scan without being one.
+            "job_title": job_title,
+            "experience_level": experience_level,
         },
         event="scorer.injection_markers_detected",
         session_id=str(session_id),

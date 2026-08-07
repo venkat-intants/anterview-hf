@@ -11,8 +11,29 @@ import i18n from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/lib/toast';
 
+/** Arguments handed to a custom `fallback` renderer. */
+export interface ErrorFallbackProps {
+  /** Message off the caught error; null when the thrown value was not an Error. */
+  errorMessage: string | null;
+  /**
+   * Clear the boundary and re-render its children. React has already unmounted
+   * the crashed subtree, so this is a genuine fresh mount — which is what makes
+   * a SCOPED boundary recoverable rather than merely informative.
+   */
+  reset: () => void;
+}
+
 interface Props {
   children: ReactNode;
+  /**
+   * Optional replacement for the default full-screen "reload the page" card.
+   *
+   * Exists for boundaries scoped to one subtree, where destroying the whole
+   * app is the wrong remedy — the live interview keeps its LiveKit room and
+   * server-side session across a client render crash, so its fallback offers a
+   * rejoin instead. Omitted ⇒ app-root behaviour is byte-for-byte unchanged.
+   */
+  fallback?: (props: ErrorFallbackProps) => ReactNode;
 }
 
 interface State {
@@ -46,8 +67,18 @@ export class ErrorBoundary extends Component<Props, State> {
     window.location.reload();
   };
 
+  handleReset = () => {
+    this.setState({ hasError: false, errorMessage: null });
+  };
+
   override render(): ReactNode {
     if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback({
+          errorMessage: this.state.errorMessage,
+          reset: this.handleReset,
+        });
+      }
       return (
         <main
           className="min-h-screen flex items-center justify-center bg-background px-4"

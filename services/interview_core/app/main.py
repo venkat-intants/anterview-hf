@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
@@ -52,10 +55,51 @@ init_sentry(
 
 log = structlog.get_logger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
+    """Service lifecycle. Replaces the deprecated ``@app.on_event`` hooks.
+
+    Starlette deprecated ``on_event`` in favour of this context manager and will
+    drop it at the next major; the other three services had already migrated, so
+    this one was the last place a Starlette bump could have broken. Same ordering
+    as the two handlers it replaces — engine before Redis on the way up, engine
+    disposed before Redis is closed on the way down — because the DB teardown may
+    still emit a log line and must not race a half-torn-down pool.
+
+    Behaviour is otherwise unchanged, including the S4-013 rule that the LLM
+    adapter lives on ``app.state`` rather than in a module-level singleton so
+    every WebSocket session reads it via ``websocket.app.state.llm_adapter``.
+    """
+    # --- startup ---
+    init_engine()
+    init_redis()
+    # Store the LLM adapter on app.state so all WebSocket sessions can read it
+    # via websocket.app.state.llm_adapter — no module-level singleton (S4-013).
+    application.state.llm_adapter = build_default_adapter()
+    log.info(
+        "service.start",
+        service=settings.service_name,
+        env=settings.app_env,
+        llm_provider=settings.llm_provider,
+        stt_provider=settings.speech_stt_provider,
+        tts_provider=settings.speech_tts_provider,
+        avatar_provider=settings.avatar_provider,
+    )
+
+    yield  # application runs here
+
+    # --- shutdown ---
+    await dispose_engine()
+    await close_redis()
+    log.info("service.stop", service=settings.service_name)
+
+
 app = FastAPI(
     title="Intants Interview Core",
     description="Voice interview WebSocket + LangGraph orchestrator + voice pipeline",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -93,38 +137,32 @@ async def root() -> dict[str, str]:
     description=(
         "Exposes default process metrics (CPU, memory, open FDs, GC) "
         "in Prometheus text format. Scraped by the deploy-cluster's "
-        "Prometheus instance every 15 s."
+        "Prometheus instance every 15 s. Requires "
+        "'Authorization: Bearer <METRICS_TOKEN>' when METRICS_TOKEN is set, "
+        "and is refused outright in production when it is not."
     ),
     response_class=Response,
     tags=["observability"],
     include_in_schema=True,
 )
-async def metrics() -> Response:
-    """Return prometheus_client default metrics in text exposition format."""
+async def metrics(authorization: str | None = Header(default=None)) -> Response:
+    """Return prometheus_client default metrics in text exposition format.
+
+    The service JWT is deliberately NOT reused here: a Prometheus scrape job
+    holds a static credential, not a short-lived user token. The policy (and the
+    401-vs-404 choice) lives in shared/metrics_auth.py so all four services
+    refuse identically; this handler only translates it into HTTP.
+    """
+    try:
+        check_metrics_auth(
+            authorization=authorization,
+            metrics_token=settings.metrics_token,
+            app_env=settings.app_env,
+        )
+    except MetricsAuthError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.detail, headers=exc.headers
+        ) from exc
+
     data = generate_latest()
     return Response(content=data, media_type=CONTENT_TYPE_LATEST)
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    init_engine()
-    init_redis()
-    # Store the LLM adapter on app.state so all WebSocket sessions can read it
-    # via websocket.app.state.llm_adapter — no module-level singleton (S4-013).
-    app.state.llm_adapter = build_default_adapter()
-    log.info(
-        "service.start",
-        service=settings.service_name,
-        env=settings.app_env,
-        llm_provider=settings.llm_provider,
-        stt_provider=settings.speech_stt_provider,
-        tts_provider=settings.speech_tts_provider,
-        avatar_provider=settings.avatar_provider,
-    )
-
-
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    await dispose_engine()
-    await close_redis()
-    log.info("service.stop", service=settings.service_name)

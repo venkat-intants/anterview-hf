@@ -211,6 +211,12 @@ class Settings(BaseSettings):
 
     sentry_dsn: str = ""
 
+    # Bearer token required by GET /metrics. Blank = unset, which keeps /metrics
+    # open everywhere EXCEPT production, where shared/metrics_auth.py fails it
+    # closed with a 404. Blank rather than None because .env.example ships
+    # `METRICS_TOKEN=` and pydantic hands that through as "".
+    metrics_token: str = ""
+
     # S5-006: feedback_billing service URL for fire-and-forget scoring calls.
     feedback_billing_url: str = "http://localhost:8003"
 

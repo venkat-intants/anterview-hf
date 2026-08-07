@@ -32,12 +32,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import uuid as _uuid_mod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -56,7 +57,7 @@ from livekit.agents.voice.room_io import RoomOptions
 # replacement ourselves. Revisit on any livekit-agents upgrade.
 from livekit.agents.voice.room_io._output import _ParticipantAudioOutput
 from livekit.plugins import openai, sarvam, silero, simli
-from shared.auth.jwt import issue_access_token
+from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
 
 # livekit-plugins-tavus is an optional dependency: the worker must still load
 # and run under Simli even when the tavus package is absent.  The module-level
@@ -78,6 +79,7 @@ from shared.intelligence import (
     render_plan_block,
     render_role_model_block,
 )
+from shared.redis_factory import build_redis_client
 
 from app.avatars import resolve_avatar
 from app.config import settings
@@ -164,10 +166,44 @@ _FALLBACK_AUDIO_SAMPLE_RATE: int = 24000
 _FALLBACK_SUBSCRIBE_TIMEOUT_SECONDS: float = 15.0
 
 # Service-to-service JWT TTL — generous but finite; scorer returns immediately.
-_SERVICE_JWT_TTL_SECONDS: int = 60
+# ALIASED, not redeclared: a service token's `sub` is a service name, so
+# logout_all (which only ever writes auth_epoch:<user-uuid>) cannot revoke it —
+# its lifetime IS its containment. A containment window with two definitions
+# drifts silently, and both happened to read 60 so no test could tell them
+# apart. The alias keeps this name for the existing call sites.
+_SERVICE_JWT_TTL_SECONDS: int = SERVICE_TOKEN_TTL_SECONDS
 # Scoring HTTP timeout and max retry count.
 _SCORE_TIMEOUT_SECONDS: float = 15.0
 _SCORE_MAX_RETRIES: int = 1
+
+# ---------------------------------------------------------------------------
+# Crash-recovery checkpoint (RT-4)
+# ---------------------------------------------------------------------------
+# Graceful shutdown is already covered (the drain hook handles tab close, abrupt
+# disconnect and SIGTERM). A HARD kill — OOM, SIGKILL, node loss — is not: the
+# answer count, the transcript and the close flag lived in process memory only,
+# so the session row stayed 'in_progress' forever, the transcript was lost, and
+# nothing ever scored it. These keys are the durable copy.
+_CHECKPOINT_KEY_PREFIX: str = "interview:checkpoint:"
+_CLOSE_GUARD_KEY_PREFIX: str = "interview:closed:"
+
+# Comfortably longer than any session (10 min nominal, SESSION_WALL_CLOCK_CAP_
+# SECONDS hard cap) so a checkpoint survives a crash, a worker restart and the
+# startup sweep — but finite, so orphaned keys evict themselves without an
+# operator having to clean Redis.
+SESSION_CHECKPOINT_TTL_SECONDS: int = 2 * 60 * 60  # 2 hours
+
+# Checkpoint writes are triggered from the turn loop (NFR: p95 turn latency
+# < 2 s), so they get a far tighter bound than the shared client's own 5 s
+# socket timeout plus retry schedule. Losing a checkpoint is recoverable;
+# stalling a turn is not.
+_CHECKPOINT_TIMEOUT_SECONDS: float = 2.0
+
+# A checkpoint that has not been refreshed for longer than this cannot belong to
+# a live interview — the wall-clock cap ends every session at 720 s. The margin
+# on top absorbs a slow close path (final scoring call + room delete) so the
+# reaper never races a session that is still finishing normally.
+CHECKPOINT_STALE_AFTER_SECONDS: int = SESSION_WALL_CLOCK_CAP_SECONDS + 300
 
 
 # ---------------------------------------------------------------------------
@@ -791,6 +827,44 @@ async def _update_session_status(
         )
 
 
+async def _read_session_status(room_name: str) -> str | None:
+    """Return ``sessions.status`` for a room, or None when it cannot be read.
+
+    Never raises. The None return deliberately conflates "no such row" with "the
+    DB refused to answer", because the only caller (the crash reaper) must treat
+    both the same way: do nothing. Guessing a status here would let a transient
+    DB blip flip a live interview to 'abandoned' out from under the candidate.
+    """
+    import contextlib
+
+    from sqlalchemy import select
+
+    from app.database import get_session_factory, init_engine
+    from app.models import Session as InterviewSession
+
+    with contextlib.suppress(Exception):
+        init_engine()
+    try:
+        sid = _uuid_mod.UUID(room_name)
+    except ValueError:
+        return None
+    try:
+        factory = get_session_factory()
+        async with factory() as db:
+            status = (
+                await db.execute(
+                    select(InterviewSession.status).where(InterviewSession.id == sid)
+                )
+            ).scalar_one_or_none()
+        return str(status) if status is not None else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker: session status read failed room=%s err=%s",
+            room_name, type(exc).__name__,
+        )
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Transcript persistence
 # ---------------------------------------------------------------------------
@@ -869,7 +943,7 @@ def _mint_service_jwt() -> str:
     dependency validates via shared.auth.jwt.verify_access_token:
       - iss: settings.jwt_issuer  ("intants-data-gateway")
       - aud: settings.jwt_audience ("intants-services")
-      - exp: now + _SERVICE_JWT_TTL_SECONDS
+      - exp: now + shared.auth.jwt.SERVICE_TOKEN_TTL_SECONDS
       - jti: fresh uuid4.hex (required by verify_access_token; empty jti raises)
       - sub: "interview_core" (service identity — no role restriction on scorer)
       - roles: ["service"]
@@ -882,6 +956,8 @@ def _mint_service_jwt() -> str:
     # nothing enforced that. The TTL is unchanged (60s) — issue_access_token
     # gained a ttl_seconds parameter for exactly this caller, because swapping to
     # its 900s default would have multiplied this credential's lifetime by 15.
+    # The number itself now comes from shared.auth.jwt (see the alias above):
+    # the same drift argument applies to the constant, not just the minting.
     return issue_access_token(
         user_id="interview_core",
         roles=["service"],
@@ -1104,6 +1180,399 @@ class InterviewState:
                 return True  # signal: caller should schedule close
 
         return False
+
+    # -- crash-recovery serialisation (RT-4) --------------------------------
+
+    def to_checkpoint(self) -> dict[str, Any]:
+        """Return the crash-recoverable slice of this state as plain JSON data.
+
+        Deliberately NOT the whole object: only the three fields that cannot be
+        rebuilt from anywhere else after a hard kill. Everything else the worker
+        needs on resume (job, language, avatar, role model) is re-derived from
+        the DB by ``_lookup_session``, so duplicating it here would just create
+        a second source of truth that can go stale.
+        """
+        return {
+            "candidate_answer_count": self.candidate_answer_count,
+            "transcript": list(self.transcript),
+            "close_triggered": self._close_triggered,
+        }
+
+    def restore_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Load a previously saved checkpoint over this state. Never raises.
+
+        Every field is validated rather than trusted. A checkpoint is read back
+        from Redis, possibly written by an older build of this worker, and this
+        runs on the path that starts a candidate's interview — a malformed value
+        must degrade to "resume what we could parse", never to an exception that
+        costs the candidate their session.
+        """
+        count = checkpoint.get("candidate_answer_count")
+        if isinstance(count, int) and count >= 0:
+            self.candidate_answer_count = count
+
+        raw_transcript = checkpoint.get("transcript")
+        if isinstance(raw_transcript, list):
+            self.transcript = [
+                {"role": str(item["role"]), "text": str(item["text"])}
+                for item in raw_transcript
+                if isinstance(item, dict) and "role" in item and "text" in item
+            ]
+
+        if checkpoint.get("close_triggered") is True:
+            self._close_triggered = True
+
+
+# ---------------------------------------------------------------------------
+# Durable session checkpoint — survives a hard worker kill (RT-4)
+# ---------------------------------------------------------------------------
+#
+# All four functions below are BEST-EFFORT in the same sense as _persist_turns:
+# a Redis outage must never crash, stall or alter an interview. Checkpointing is
+# a recovery aid, not a precondition — an interview that runs with Redis down is
+# exactly the interview we have always had.
+
+
+def _checkpoint_key(session_id: str) -> str:
+    return _CHECKPOINT_KEY_PREFIX + session_id
+
+
+def _close_guard_key(session_id: str) -> str:
+    return _CLOSE_GUARD_KEY_PREFIX + session_id
+
+
+# One client per job process, created on first use. The worker never runs the
+# FastAPI lifespan, so app.redis_client's singleton is not initialised here and
+# get_redis() would raise — this module owns its own. It is built through the
+# shared factory so the worker inherits the same serverless-Redis hardening
+# (idle health checks, keepalive, bounded timeouts, transport retries) as the
+# HTTP services; a hand-rolled pool here is the exact drift shared/redis_factory
+# .py exists to stop.
+_checkpoint_redis: Any | None = None
+
+
+def _get_checkpoint_redis() -> Any:
+    """Return this process's checkpoint Redis client, building it on first use.
+
+    Lazy rather than built at import: constructing it at import time would make
+    every unit test that merely imports the worker carry a connection pool, and
+    redis-py pools bind to the event loop that first uses them.
+    """
+    global _checkpoint_redis  # noqa: PLW0603 — per-process singleton, same as _active_jobs
+    if _checkpoint_redis is None:
+        _checkpoint_redis = build_redis_client(settings.redis_url)
+    return _checkpoint_redis
+
+
+async def save_checkpoint(
+    session_id: str,
+    state: InterviewState,
+    *,
+    started_at: datetime | None = None,
+) -> bool:
+    """Write the session's recoverable state to Redis. Never raises.
+
+    Returns True when the write landed, False on any failure — the caller uses
+    the flag for logging only, never for control flow.
+
+    ``started_at`` is carried so the reaper can record a truthful
+    ``duration_seconds`` for a session whose worker never reached the close path.
+    """
+    payload = {
+        "session_id": session_id,
+        "updated_at": datetime.now(tz=UTC).isoformat(),
+        "started_at": started_at.isoformat() if started_at is not None else None,
+        **state.to_checkpoint(),
+    }
+    try:
+        client = _get_checkpoint_redis()
+        await asyncio.wait_for(
+            client.set(
+                _checkpoint_key(session_id),
+                json.dumps(payload),
+                ex=SESSION_CHECKPOINT_TTL_SECONDS,
+            ),
+            timeout=_CHECKPOINT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001 — checkpointing must never affect the interview
+        logger.warning(
+            "interview-worker.checkpoint_write_failed room=%s err=%s",
+            session_id, type(exc).__name__,
+        )
+        return False
+    return True
+
+
+async def load_checkpoint(session_id: str) -> dict[str, Any] | None:
+    """Read a session's checkpoint back from Redis, or None. Never raises."""
+    try:
+        client = _get_checkpoint_redis()
+        raw = await asyncio.wait_for(
+            client.get(_checkpoint_key(session_id)),
+            timeout=_CHECKPOINT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker.checkpoint_read_failed room=%s err=%s",
+            session_id, type(exc).__name__,
+        )
+        return None
+    return _decode_checkpoint(raw)
+
+
+def _decode_checkpoint(raw: Any) -> dict[str, Any] | None:
+    """Parse a raw checkpoint value into a dict, or None if it is not one."""
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def clear_checkpoint(session_id: str, *, client: Any | None = None) -> None:
+    """Delete a session's checkpoint once it has been finalised. Never raises.
+
+    The close-guard key is deliberately NOT deleted with it: the checkpoint says
+    "this session may still need recovering", the guard says "this session has
+    already been finalised". Dropping the guard here would re-open the door to a
+    second scoring run for the rest of the TTL.
+    """
+    try:
+        rc = client if client is not None else _get_checkpoint_redis()
+        await asyncio.wait_for(
+            rc.delete(_checkpoint_key(session_id)),
+            timeout=_CHECKPOINT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker.checkpoint_clear_failed room=%s err=%s",
+            session_id, type(exc).__name__,
+        )
+
+
+async def claim_close(session_id: str, *, client: Any | None = None) -> bool:
+    """Claim the one-and-only finalisation of a session. True if we won it.
+
+    The durable counterpart to ``state.close_triggered``. That flag is a plain
+    instance attribute, so it dies with the process: a worker restarted after a
+    crash, or the startup reaper sweeping the same session, would run the close
+    path — and the scoring call — a second time. SET NX is the whole guard.
+
+    FAILS OPEN (returns True) when Redis cannot answer. The two failure modes
+    are not symmetric: a close that is wrongly skipped leaves a candidate with
+    no scorecard and a row stuck 'in_progress' forever, while a close that runs
+    twice costs at most a duplicate scoring request — which feedback_billing
+    already rejects on its own idempotency key (``_post_score`` treats the 409
+    as success). Losing the interview is the worse of the two.
+    """
+    try:
+        rc = client if client is not None else _get_checkpoint_redis()
+        claimed = await asyncio.wait_for(
+            rc.set(
+                _close_guard_key(session_id),
+                datetime.now(tz=UTC).isoformat(),
+                nx=True,
+                ex=SESSION_CHECKPOINT_TTL_SECONDS,
+            ),
+            timeout=_CHECKPOINT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker.close_claim_unavailable room=%s err=%s — proceeding",
+            session_id, type(exc).__name__,
+        )
+        return True
+    return bool(claimed)
+
+
+async def restore_state_from_checkpoint(session_id: str) -> InterviewState:
+    """Return the InterviewState for a session, resuming a checkpoint if present.
+
+    Called instead of ``InterviewState()`` at the top of every job. With no
+    checkpoint this is exactly the old behaviour; with one, the restarted worker
+    picks the interview up at the answer it had reached rather than restarting
+    the candidate at question one and orphaning the earlier transcript.
+
+    Note the restored ``close_triggered`` is honoured as written. A checkpoint
+    that says the close had already started belongs to a session that is being
+    finalised elsewhere, and re-running the close from here is precisely what
+    ``claim_close`` exists to prevent.
+    """
+    state = InterviewState()
+    checkpoint = await load_checkpoint(session_id)
+    if checkpoint is None:
+        return state
+    state.restore_checkpoint(checkpoint)
+    logger.warning(
+        "interview-worker.checkpoint_resumed room=%s answers=%d turns=%d closed=%s",
+        session_id, state.candidate_answer_count, len(state.transcript),
+        state.close_triggered,
+    )
+    return state
+
+
+def record_conversation_item(
+    item: object,
+    *,
+    state: InterviewState,
+    schedule_checkpoint: Callable[[], None],
+) -> bool:
+    """Fold one conversation item into *state*, checkpointing if it changed anything.
+
+    Returns the should-close signal from ``InterviewState.handle_conversation_item``
+    unchanged; the caller still owns scheduling the close.
+
+    Extracted from the entrypoint closure for the same reason
+    ``_run_consent_watchdog`` was: the behaviour that matters here — every turn
+    the candidate is credited with becomes durable before the process can die —
+    is otherwise only reachable through a live LiveKit session, so a dropped
+    checkpoint call would break crash recovery with nothing able to notice.
+    """
+    turns_before = len(state.transcript)
+    should_close = state.handle_conversation_item(item)
+    # Empty, system and non-chat items are dropped by handle_conversation_item;
+    # they changed nothing and are not worth a Redis write.
+    if len(state.transcript) != turns_before:
+        schedule_checkpoint()
+    return should_close
+
+
+def _checkpoint_age_seconds(checkpoint: dict[str, Any], now: datetime) -> float | None:
+    """Seconds since the checkpoint was last refreshed, or None if unknowable."""
+    raw = checkpoint.get("updated_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        updated_at = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return (now - updated_at).total_seconds()
+
+
+async def reap_stale_sessions(*, now: datetime | None = None) -> list[str]:
+    """Finalise sessions whose worker was killed mid-interview. Never raises.
+
+    Runs ONCE per worker process at startup. For every checkpoint that has gone
+    stale (no refresh for CHECKPOINT_STALE_AFTER_SECONDS — longer than any
+    session can legally run) and whose DB row still says 'in_progress':
+
+      1. claim the close, so a worker that is somehow still alive, or a second
+         reaper on another node, cannot finalise it twice;
+      2. flush the checkpointed transcript to ``turns`` — the crash is exactly
+         the case where the close-path flush never ran, so this is the only copy
+         of what the candidate said;
+      3. mark the row 'abandoned' with the duration it actually ran.
+
+    Deliberately does NOT score. 'abandoned' is the honest record for an
+    interview that was cut off at an unknown point: a scorecard generated from a
+    truncated transcript reads as a complete assessment of the candidate, and
+    this platform must not manufacture one. The transcript is preserved, so a
+    human can re-run scoring against it if they choose.
+
+    Returns the session ids it finalised — for logging and tests, not control
+    flow. An empty list is also what a Redis outage returns.
+    """
+    reaped: list[str] = []
+    # Its own client, not the process singleton: this runs on the heartbeat
+    # thread's event loop while the singleton belongs to the loop that conducts
+    # interviews, and a redis-py pool must not be shared across loops.
+    try:
+        client = build_redis_client(settings.redis_url)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker.reaper_client_failed err=%s", type(exc).__name__
+        )
+        return reaped
+
+    reference_now = now or datetime.now(tz=UTC)
+    try:
+        async for key in client.scan_iter(match=_CHECKPOINT_KEY_PREFIX + "*", count=100):
+            with contextlib.suppress(Exception):
+                await _reap_one(client, key, reference_now, reaped)
+    except Exception as exc:  # noqa: BLE001 — a broken sweep must not stop the worker booting
+        logger.warning("interview-worker.reaper_failed err=%s", type(exc).__name__)
+    finally:
+        with contextlib.suppress(Exception):
+            await client.aclose()
+
+    if reaped:
+        logger.warning(
+            "interview-worker.reaper_finalised count=%d sessions=%s",
+            len(reaped), ",".join(reaped),
+        )
+    else:
+        logger.info("interview-worker.reaper_clean — no stale sessions found")
+    return reaped
+
+
+async def _reap_one(
+    client: Any, key: Any, now: datetime, reaped: list[str]
+) -> None:
+    """Evaluate and, if warranted, finalise ONE checkpoint. See reap_stale_sessions."""
+    key_str = key.decode("utf-8") if isinstance(key, bytes) else str(key)
+    checkpoint = _decode_checkpoint(await client.get(key_str))
+    if checkpoint is None:
+        # Unparseable or already gone — nothing recoverable in it.
+        await client.delete(key_str)
+        return
+
+    age = _checkpoint_age_seconds(checkpoint, now)
+    if age is None or age < CHECKPOINT_STALE_AFTER_SECONDS:
+        # Still live (or too damaged to date) — leave it entirely alone. Reaping
+        # a running interview would cut off a candidate mid-answer.
+        return
+
+    session_id = str(checkpoint.get("session_id") or key_str.rsplit(":", 1)[-1])
+    status = await _read_session_status(session_id)
+    if status is None:
+        # Row missing, or the DB would not answer. Keep the checkpoint so the
+        # next sweep can retry rather than losing the transcript to a DB blip.
+        return
+    if status != "in_progress":
+        # Already finalised by the normal close path — the checkpoint is just
+        # litter at this point.
+        await client.delete(key_str)
+        return
+    if not await claim_close(session_id, client=client):
+        await client.delete(key_str)
+        return
+
+    state = InterviewState()
+    state.restore_checkpoint(checkpoint)
+    await _persist_turns(session_id, state.transcript)
+
+    # The session ended when its worker stopped refreshing the checkpoint, NOT
+    # when this sweep happened to notice. Recording the sweep time instead would
+    # inflate every crashed session's timings by the whole staleness window and
+    # quietly skew the duration analytics the dashboard reports.
+    last_seen = now - timedelta(seconds=age)
+    started_raw = checkpoint.get("started_at")
+    duration: int | None = None
+    if isinstance(started_raw, str):
+        with contextlib.suppress(ValueError):
+            started = datetime.fromisoformat(started_raw)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            duration = max(0, int((last_seen - started).total_seconds()))
+
+    logger.warning(
+        "interview-worker.reaper_abandoning room=%s age=%.0fs answers=%d turns=%d",
+        session_id, age, state.candidate_answer_count, len(state.transcript),
+    )
+    await _update_session_status(
+        session_id,
+        "abandoned",
+        completed_at=last_seen,
+        duration_seconds=duration,
+    )
+    await client.delete(key_str)
+    reaped.append(session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1433,8 +1902,13 @@ async def entrypoint(ctx: JobContext) -> None:
     # ------------------------------------------------------------------
     # Per-session state — single InterviewState instance; all mutations happen
     # inside the asyncio event loop thread so no lock is needed.
+    #
+    # Resumed from Redis when a checkpoint exists, so a worker restarted after a
+    # hard kill continues the interview at the answer it had reached instead of
+    # starting the candidate over and orphaning the earlier transcript. With no
+    # checkpoint (the normal case) this returns a fresh InterviewState.
     # ------------------------------------------------------------------
-    state = InterviewState()
+    state = await restore_state_from_checkpoint(session_id)
     session_started_at: datetime = datetime.now(tz=UTC)
 
     # ------------------------------------------------------------------
@@ -1489,6 +1963,21 @@ async def entrypoint(ctx: JobContext) -> None:
             return
         state.mark_close_triggered()
 
+        # Record that closing has begun BEFORE anything slow runs — the close
+        # path speaks a goodbye, writes the DB and makes an HTTP scoring call,
+        # and a hard kill anywhere in that window previously left no durable
+        # trace that it had started.
+        await save_checkpoint(session_id, state, started_at=session_started_at)
+
+        # Durable single-fire guard, checked in addition to the in-memory flag
+        # above. close_triggered dies with the process, so a worker restarted
+        # after a crash — or the startup reaper sweeping the same session —
+        # would write the status and fire the scorer a second time. Losing the
+        # claim means someone else already finalised this session: we still tear
+        # the room down locally (the candidate must not be left connected to a
+        # dead room) but touch nothing durable.
+        finalise = await claim_close(session_id)
+
         # Speak the closing line before shutting the agent down — but NOT on a
         # consent withdrawal, where we stop processing at once.
         if not consent_withdrawn:
@@ -1511,50 +2000,62 @@ async def entrypoint(ctx: JobContext) -> None:
                 session_id, type(exc).__name__,
             )
 
-        # DB: mark session completed/abandoned + timing.
-        now = datetime.now(tz=UTC)
-        elapsed = int((now - session_started_at).total_seconds())
-        final_status = "abandoned" if consent_withdrawn else state.final_status()
-        await _update_session_status(
-            session_id,
-            final_status,
-            completed_at=now,
-            duration_seconds=elapsed,
-        )
-
-        # Persist the transcript to the turns table (audit trail + admin
-        # drill-in view + re-scoring resilience). Done for every close, even
-        # abandoned sessions, so the DB always has whatever was said.
-        await _persist_turns(session_id, state.transcript)
-
-        # Score only if we have enough answers AND consent was not withdrawn. We
-        # AWAIT it (not fire-and-forget) so the scorecard row exists BEFORE we
-        # delete the room below — deleting the room tears this job down and would
-        # cancel a background task.
-        if consent_withdrawn:
+        if not finalise:
             logger.warning(
-                "interview-worker.consent_withdrawn.closed room=%s answers=%d — scoring skipped",
-                session_id, state.candidate_answer_count,
-            )
-        elif state.should_score():
-            logger.info(
-                "interview-worker.score.firing room=%s answers=%d turns=%d",
-                session_id, state.candidate_answer_count, len(state.transcript),
-            )
-            await _post_score(
-                session_id=session_id,
-                job_title=job_title,
-                experience_level=experience_level,
-                language=language,
-                jd_text=jd_text,
-                transcript=state.transcript,
-                role_profile=role_profile,
+                "interview-worker.close_already_finalised room=%s — skipping "
+                "status write, transcript flush and scoring",
+                session_id,
             )
         else:
-            logger.info(
-                "interview-worker.score.skipped room=%s answers=%d < min=%d",
-                session_id, state.candidate_answer_count, MIN_ANSWERS_TO_SCORE,
+            # DB: mark session completed/abandoned + timing.
+            now = datetime.now(tz=UTC)
+            elapsed = int((now - session_started_at).total_seconds())
+            final_status = "abandoned" if consent_withdrawn else state.final_status()
+            await _update_session_status(
+                session_id,
+                final_status,
+                completed_at=now,
+                duration_seconds=elapsed,
             )
+
+            # Persist the transcript to the turns table (audit trail + admin
+            # drill-in view + re-scoring resilience). Done for every close, even
+            # abandoned sessions, so the DB always has whatever was said.
+            await _persist_turns(session_id, state.transcript)
+
+            # Score only if we have enough answers AND consent was not withdrawn.
+            # We AWAIT it (not fire-and-forget) so the scorecard row exists BEFORE
+            # we delete the room below — deleting the room tears this job down and
+            # would cancel a background task.
+            if consent_withdrawn:
+                logger.warning(
+                    "interview-worker.consent_withdrawn.closed room=%s answers=%d — scoring skipped",
+                    session_id, state.candidate_answer_count,
+                )
+            elif state.should_score():
+                logger.info(
+                    "interview-worker.score.firing room=%s answers=%d turns=%d",
+                    session_id, state.candidate_answer_count, len(state.transcript),
+                )
+                await _post_score(
+                    session_id=session_id,
+                    job_title=job_title,
+                    experience_level=experience_level,
+                    language=language,
+                    jd_text=jd_text,
+                    transcript=state.transcript,
+                    role_profile=role_profile,
+                )
+            else:
+                logger.info(
+                    "interview-worker.score.skipped room=%s answers=%d < min=%d",
+                    session_id, state.candidate_answer_count, MIN_ANSWERS_TO_SCORE,
+                )
+
+            # The session is durably finalised — drop the checkpoint so the
+            # startup reaper has nothing left to find. The close-guard key stays
+            # for its full TTL; that is what keeps this single-fire.
+            await clear_checkpoint(session_id)
 
         # End the call: delete the LiveKit room so the candidate is disconnected
         # and the frontend navigates to the results page. session.shutdown() only
@@ -1581,6 +2082,26 @@ async def entrypoint(ctx: JobContext) -> None:
     # Conversation-item handler — wired to the REAL InterviewState.
     # ------------------------------------------------------------------
 
+    # Strong references to in-flight checkpoint writes. Without them a write can
+    # be garbage-collected mid-flight (the same hazard _teardown_task_holder
+    # exists for), which would silently defeat the crash recovery it enables.
+    checkpoint_tasks: set[asyncio.Task[bool]] = set()
+
+    def _checkpoint_soon() -> None:
+        """Schedule a best-effort checkpoint write. Never blocks the turn loop.
+
+        Awaiting the write inline would put a cloud Redis round-trip between the
+        candidate finishing a sentence and the interviewer replying, on the very
+        path the p95 < 2 s NFR measures. Scheduling it costs at most one answer's
+        worth of recovery if the process dies in the gap; awaiting it costs the
+        latency budget on every single turn.
+        """
+        task = asyncio.create_task(
+            save_checkpoint(session_id, state, started_at=session_started_at)
+        )
+        checkpoint_tasks.add(task)
+        task.add_done_callback(checkpoint_tasks.discard)
+
     def _on_conversation_item_added(event: ConversationItemAddedEvent) -> None:
         """Handle every committed conversation item.
 
@@ -1596,7 +2117,9 @@ async def entrypoint(ctx: JobContext) -> None:
           "assistant" -> ScoreRequest TurnIn role "ai"
         We skip "system" / "developer" messages (not present in normal interview flow).
         """
-        should_close = state.handle_conversation_item(event.item)
+        should_close = record_conversation_item(
+            event.item, state=state, schedule_checkpoint=_checkpoint_soon
+        )
         if should_close:
             logger.info(
                 "interview-worker.answer room=%s count=%d/%d — scheduling close",
@@ -1674,6 +2197,14 @@ async def entrypoint(ctx: JobContext) -> None:
         if state.close_triggered:
             return
         state.mark_close_triggered()
+        # Same durable single-fire guard as _on_close: the in-memory flag cannot
+        # survive the process, so it cannot stop a restarted worker or the
+        # startup reaper from finalising this session a second time.
+        if not await claim_close(session_id):
+            logger.warning(
+                "interview-worker.abrupt_close_already_finalised room=%s", session_id
+            )
+            return
         now = datetime.now(tz=UTC)
         elapsed = int((now - session_started_at).total_seconds())
         await _update_session_status(
@@ -1697,6 +2228,8 @@ async def entrypoint(ctx: JobContext) -> None:
                 transcript=state.transcript,
                 role_profile=role_profile,
             )
+        # Durably finalised — the reaper has nothing left to recover here.
+        await clear_checkpoint(session_id)
 
     def _on_session_close(_event: Any) -> None:
         """Handle session close: cancel background tasks; run DB+scoring if not done.
@@ -1817,6 +2350,13 @@ async def entrypoint(ctx: JobContext) -> None:
     await _update_session_status(
         session_id, "in_progress", started_at=session_started_at
     )
+
+    # First checkpoint, written the moment the row can get stuck 'in_progress'.
+    # The reaper sweeps CHECKPOINTS, so a session that dies before the
+    # candidate's first answer needs one to already exist — without this, a
+    # worker killed during avatar startup would leave exactly the kind of
+    # permanently-'in_progress' row the reaper was added to clean up.
+    await save_checkpoint(session_id, state, started_at=session_started_at)
 
     await session.start(
         agent=Agent(
@@ -2082,8 +2622,18 @@ def run() -> None:
     every worker_heartbeat_interval_seconds, but only while this worker's health
     endpoint answers — see _run_heartbeat for why the probe is what makes the
     Docker healthcheck meaningful.
+
+    Crash recovery: that same thread first runs reap_stale_sessions() once, which
+    finalises sessions whose previous worker was hard-killed mid-interview. It
+    runs THERE rather than on the interview loop so a slow Redis/DB sweep can
+    never delay the worker registering and accepting its first candidate.
     """
     import threading
+
+    async def _reap_then_heartbeat() -> None:
+        """Sweep crashed sessions once, then refresh the heartbeat forever."""
+        await reap_stale_sessions()
+        await _run_heartbeat()
 
     def _start_heartbeat_in_thread() -> None:
         """Run the heartbeat coroutine in a dedicated event loop on a daemon thread.
@@ -2095,7 +2645,7 @@ def run() -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(_run_heartbeat())
+            loop.run_until_complete(_reap_then_heartbeat())
         finally:
             loop.close()
 

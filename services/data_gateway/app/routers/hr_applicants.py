@@ -24,7 +24,7 @@ from typing import Annotated, Any
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator, EmailStr, TypeAdapter, ValidationError
 from shared.auth.base import User
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -118,9 +118,61 @@ HrCtxDep = Annotated[tuple[uuid.UUID, uuid.UUID], Depends(get_hr_company)]
 
 
 # ---------------------------------------------------------------------------
+# Email validation at the boundary
+#
+# A malformed address used to be stored verbatim and only surfaced hours later
+# in the mailer worker, where the failure looks like an email-system problem
+# rather than like the upload that caused it. Validate where it enters.
+#
+# The two entry points are deliberately validated DIFFERENTLY:
+#   * the HR-typed `email` form field — EmailStr, so a typo is a 422 the HR
+#     manager sees and can correct on the spot;
+#   * the scorer-extracted address — same rule, but a failure DROPS the address
+#     instead of raising, because that value is LLM output read off a PDF, not
+#     something a human typed. Failing a bulk upload over an OCR artefact would
+#     lose the candidate; a missing email is recoverable, a lost applicant is not.
+# ---------------------------------------------------------------------------
+def _blank_to_none(value: object) -> object:
+    """Treat an empty/whitespace field as "not supplied" rather than invalid.
+
+    Browsers submit an untouched optional input as ``""``, and the previous
+    ``str | None`` parameter accepted that. Without this, adding EmailStr would
+    turn every blank email box into a 422.
+    """
+    if isinstance(value, str):
+        return value.strip() or None
+    return value
+
+
+OptionalEmail = Annotated[EmailStr | None, BeforeValidator(_blank_to_none)]
+
+# Explicit annotation: mypy cannot infer the parameter of a TypeAdapter built
+# from an Annotated alias.
+_OPTIONAL_EMAIL: TypeAdapter[str | None] = TypeAdapter(OptionalEmail)
+
+
+def _valid_email_or_none(value: str | None) -> str | None:
+    """Return *value* if it is a real address, else ``None``. Never raises.
+
+    Used for machine-extracted addresses only — see the section note above.
+    The returned value is RFC-normalised, which matters here: pydantic unwraps
+    the ``Jane Doe <jane@example.com>`` form a resume header usually carries, so
+    the mailer is handed a bare recipient rather than a string it must re-parse.
+    """
+    try:
+        return _OPTIONAL_EMAIL.validate_python(value)
+    except ValidationError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
 class ApplicantOut(BaseModel):
+    # Response-side email stays a plain str: rows created before the checks
+    # above existed can hold an address the scorer hallucinated, and a response
+    # model that refuses to serialise them would turn one bad legacy row into a
+    # 500 on the whole applicant LIST. Tightening happens on the way in.
     id: str
     full_name: str
     email: str | None
@@ -338,7 +390,12 @@ async def _ingest_resume(
         if score.get("candidate_name"):
             full_name = str(score["candidate_name"]).strip()[:200] or fallback_name
         if score.get("candidate_email"):
-            email = str(score["candidate_email"]).strip()[:320] or None
+            # Dropped rather than stored when malformed: this address was read
+            # out of a PDF by the scorer, so "Jane Doe | jane@" is a plausible
+            # extraction and must not become a permanently un-emailable row.
+            email = _valid_email_or_none(str(score["candidate_email"])[:320])
+            if email is None:
+                log.info("hr.applicant.extracted_email_rejected")
     except ResumeScoreError as exc:
         log.warning("hr.applicant.bulk.score_unavailable", error=str(exc))
 
@@ -382,7 +439,10 @@ async def create_applicant(
     target_job_title: Annotated[str, Form()],
     ctx: HrCtxDep,
     db: DbSessionDep,
-    email: Annotated[str | None, Form()] = None,
+    # EmailStr, not str: a typo here used to persist and fail in the mailer.
+    # Blank is still "not supplied" (see _blank_to_none), so the field stays
+    # genuinely optional.
+    email: Annotated[OptionalEmail, Form()] = None,
     target_level: Annotated[str, Form()] = "mid",
     target_jd_text: Annotated[str | None, Form()] = None,
 ) -> ApplicantOut:
@@ -422,7 +482,8 @@ async def create_applicant(
         company_id=company_id,
         created_by_user_id=hr_uid,
         full_name=full_name.strip(),
-        email=(email.strip() if email and email.strip() else None),
+        # Already stripped and validated by OptionalEmail on the way in.
+        email=email,
         target_job_title=target_job_title.strip(),
         target_level=target_level.strip() or "mid",
         target_jd_text=target_jd_text,

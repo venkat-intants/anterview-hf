@@ -308,6 +308,44 @@ def test_mint_service_jwt_short_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
     assert 0 < ttl <= wk._SERVICE_JWT_TTL_SECONDS + 5  # +5s tolerance for test time
 
 
+def test_service_jwt_ttl_has_a_single_definition() -> None:
+    """The service-token TTL must come from shared.auth.jwt, not a local literal.
+
+    Value equality alone cannot guard this: both numbers are 60 today, so a
+    re-introduced local literal would pass an == check and the two definitions
+    would then drift apart silently. The AST assertion is what pins the SINGLE
+    definition — and that matters because a service token's ``sub`` is a service
+    name, so logout_all (which writes ``auth_epoch:<user-uuid>``) can never
+    revoke one. Its TTL is the only thing bounding a captured token, and a
+    security bound with two homes is a security bound nobody owns.
+    """
+    import ast
+    import pathlib
+
+    from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS
+
+    assert wk._SERVICE_JWT_TTL_SECONDS == SERVICE_TOKEN_TTL_SECONDS
+
+    src = pathlib.Path(__file__).resolve().parents[2] / "app" / "worker" / "interview_worker.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+
+    values = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "_SERVICE_JWT_TTL_SECONDS"
+        and node.value is not None
+    ]
+    assert len(values) == 1, (
+        f"_SERVICE_JWT_TTL_SECONDS is assigned {len(values)} times in the worker"
+    )
+    assert isinstance(values[0], ast.Name) and values[0].id == "SERVICE_TOKEN_TTL_SECONDS", (
+        "_SERVICE_JWT_TTL_SECONDS must alias shared.auth.jwt.SERVICE_TOKEN_TTL_SECONDS; "
+        "a local literal re-creates the duplicate definition this guards against"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers for the real InterviewState tests
 # ---------------------------------------------------------------------------

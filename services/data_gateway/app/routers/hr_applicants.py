@@ -23,15 +23,14 @@ from typing import Annotated, Any
 
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, BeforeValidator, EmailStr, TypeAdapter, ValidationError
-from shared.auth.base import User
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
-from app.database import get_db_session
-from app.dependencies import require_role_password_ok
+from app.database import DbSessionDep
+from app.dependencies import HrCtxDep, get_hr_company
 from app.embedding_client import (
     EmbeddingError,
     embed_one_remote,
@@ -43,6 +42,8 @@ from app.mailer import enqueue_email
 from app.models import Applicant
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
 from app.scoring_client import ResumeScoreError, score_resume_remote
+from app.utils.ownership import get_owned
+from app.utils.sql_like import LIKE_ESCAPE, like_literal
 
 log = structlog.get_logger(__name__)
 
@@ -54,7 +55,19 @@ _VALID_STATUSES = {"new", "shortlisted", "rejected", "interviewed", "hired"}
 # Status transitions that warrant a decision email to the candidate.
 _DECISION_EMAIL_STATUSES = {"shortlisted", "rejected", "hired"}
 
-DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+# DbSessionDep, get_hr_company and HrCtxDep are imported above and re-exported
+# from this module (DG-1): eight sibling routers still import them from here, and
+# the tests override FastAPI dependencies keyed on get_hr_company. They now live
+# beside what they wrap — the session alias in app/database.py, the tenant
+# resolver in app/dependencies.py — so a candidate-facing router no longer drags
+# the applicant module's S3, embedding and scoring clients into its import graph.
+__all__ = [
+    "DbSessionDep",
+    "HrCtxDep",
+    "email_applicant_decision",
+    "get_hr_company",
+    "router",
+]
 
 
 async def email_applicant_decision(
@@ -86,35 +99,6 @@ async def email_applicant_decision(
         related_kind="applicant_decision",
         related_id=applicant.id,
     )
-
-
-# ---------------------------------------------------------------------------
-# Tenant context — resolve the caller's company_id (the isolation boundary)
-# ---------------------------------------------------------------------------
-async def get_hr_company(
-    user: Annotated[User, Depends(require_role_password_ok("hr_manager"))],
-    db: DbSessionDep,
-) -> tuple[uuid.UUID, uuid.UUID]:
-    """Return (hr_user_id, company_id). 403 if the HR is not assigned a company."""
-    try:
-        uid = uuid.UUID(user.user_id)
-    except (ValueError, TypeError, AttributeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user identity."
-        ) from exc
-    company_id = await db.scalar(
-        text("SELECT company_id FROM users WHERE id = :uid AND deleted_at IS NULL"),
-        {"uid": uid},
-    )
-    if company_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account is not assigned to a company.",
-        )
-    return uid, company_id
-
-
-HrCtxDep = Annotated[tuple[uuid.UUID, uuid.UUID], Depends(get_hr_company)]
 
 
 # ---------------------------------------------------------------------------
@@ -326,16 +310,7 @@ async def _embed_applicants_batch(
 
 async def _get_owned(db: AsyncSession, company_id: uuid.UUID, applicant_id: uuid.UUID) -> Applicant:
     """Fetch an applicant scoped to the company, or 404 (tenant isolation)."""
-    a = await db.scalar(
-        select(Applicant).where(
-            Applicant.id == applicant_id,
-            Applicant.company_id == company_id,
-            Applicant.deleted_at.is_(None),
-        )
-    )
-    if a is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Applicant not found.")
-    return a
+    return await get_owned(db, Applicant, company_id, applicant_id, noun="Applicant")
 
 
 def _name_from_filename(filename: str) -> str:
@@ -647,33 +622,11 @@ _LIST_PAGE_SIZE = _SEARCH_LIMIT
 # rather than a bigger ceiling.
 _MAX_PAGE = 500
 
-# Escape character for the LIKE patterns below. Backslash is Postgres's default,
-# but both call sites pass ESCAPE '\' explicitly so the behaviour does not depend
-# on standard_conforming_strings or on the SQLAlchemy dialect's defaults.
-_LIKE_ESCAPE = "\\"
-
-
-def _like_literal(value: str) -> str:
-    """Escape LIKE wildcards so *value* matches itself and nothing else.
-
-    Not an injection fix — both call sites already bind the value as a parameter,
-    so it can never break out of the string. The bug is subtler: `%` and `_` are
-    wildcards inside a LIKE pattern, so a caller passing ``job=%`` matched EVERY
-    applicant and ``job=_`` matched any single character. The filter widened its
-    own result set beyond what the caller was authorised to narrow to.
-
-    Tenancy is unaffected either way (``company_id`` is a separate predicate), so
-    this widens results within the caller's own company rather than across
-    companies — a least-privilege and correctness fix, not a breach fix.
-
-    The escape character must be escaped first, or escaping `%` would re-escape
-    the backslash it just introduced.
-    """
-    return (
-        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
-        .replace("%", f"{_LIKE_ESCAPE}%")
-        .replace("_", f"{_LIKE_ESCAPE}_")
-    )
+# The LIKE escaping moved to app/utils/sql_like.py (DG-4) when the copilot tool
+# layer needed the same guard on its own ILIKE filter. Aliased, not copied — a
+# second implementation is exactly how the first ILIKE gap survived review.
+_LIKE_ESCAPE = LIKE_ESCAPE
+_like_literal = like_literal
 
 
 async def _semantic_search(

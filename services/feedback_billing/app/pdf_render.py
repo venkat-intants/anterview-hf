@@ -1,7 +1,8 @@
 """PDF scorecard generator — S5-007.
 
 Builds an HTML scorecard, renders it to PDF bytes via ReportLab, and uploads
-the result to S3 (Cloudflare R2-compatible) via aioboto3.
+the result to S3 (Cloudflare R2-compatible) via the shared aioboto3 client
+factory (``shared.s3``).
 
 Design decisions:
   - ReportLab chosen over WeasyPrint: WeasyPrint requires native Cairo/Pango
@@ -342,19 +343,25 @@ async def _upload_to_s3(
     """Upload PDF bytes to S3 / Cloudflare R2.
 
     Raises any exception encountered so the caller can catch and log.
+
+    The client comes from ``shared.s3`` rather than a local ``aioboto3.Session``
+    because this was one of the copies that had drifted: it omitted path-style
+    addressing (required by R2 and MinIO — virtual-host style resolves to a
+    ``bucket.<host>`` name that does not exist) and the ``""``→``None``
+    credential fallback. The caller only ever reaches this function when
+    ``s3_access_key_id`` is set (see scorer.py), so the fallback is a guard, not
+    a path we rely on.
     """
-    import aioboto3  # local import — optional dep at module level  # noqa: PLC0415
+    # Local import: shared.s3 pulls in aioboto3/botocore at module level, and
+    # this module is imported by the scoring path whether or not a PDF is ever
+    # rendered.
+    from shared.s3 import s3_client  # noqa: PLC0415
 
-    session = aioboto3.Session(
-        aws_access_key_id=settings.s3_access_key_id,
-        aws_secret_access_key=settings.s3_secret_access_key,
-        region_name=settings.s3_region,
-    )
-    endpoint = settings.s3_endpoint_url or None
-
-    async with session.client(
-        "s3",
-        endpoint_url=endpoint,
+    async with s3_client(
+        endpoint=settings.s3_endpoint_url,
+        region=settings.s3_region,
+        access_key=settings.s3_access_key_id,
+        secret_key=settings.s3_secret_access_key,
     ) as s3:
         await s3.put_object(
             Bucket=settings.s3_scorecard_bucket,

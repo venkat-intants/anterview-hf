@@ -105,6 +105,26 @@ def _mock_s3_settings() -> MagicMock:
     return settings
 
 
+def _fake_delete_objects(
+    sink: list[dict[str, list[str]]] | None = None,
+) -> AsyncMock:
+    """A delete_objects stand-in that honours the real contract: returns a count.
+
+    Every stub here must return the number of keys it was handed, because that
+    number is what the executor checks before it is willing to stamp
+    'completed'. A stub returning None (what the real function used to return)
+    is precisely the false-success this suite exists to catch — so the stub is
+    built in one place rather than re-typed per test.
+    """
+
+    async def _delete(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> int:
+        if sink is not None:
+            sink.append(dict(keys_by_bucket))
+        return sum(len(keys) for keys in keys_by_bucket.values())
+
+    return AsyncMock(side_effect=_delete)
+
+
 def _make_erasure_request(
     scheduled_for: datetime = _SCHEDULED_PAST,
     status: str = "pending",
@@ -242,11 +262,16 @@ async def test_execute_one_erasure_happy_path() -> None:
     db.execute = _execute
 
     request = _make_erasure_request()
-    artifacts = await _execute_one_erasure(
-        db=db,
-        request=request,
-        system_actor_id=_SYSTEM_ACTOR,
-    )
+    # This DB mock hands back object keys on every SELECT, so the happy path
+    # needs working storage: an erasure that collects keys it cannot delete is
+    # no longer allowed to complete.
+    with patch("app.s3_client.delete_objects", new=_fake_delete_objects()):
+        artifacts = await _execute_one_erasure(
+            db=db,
+            request=request,
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
 
     # artifacts must be a dict with all expected keys
     assert isinstance(artifacts, dict)
@@ -578,9 +603,13 @@ async def test_execute_one_erasure_scorecard_keys_in_artifacts() -> None:
     db, _ = _make_key_collecting_db(scorecard_keys=_scorecard_keys)
 
     request = _make_erasure_request()
-    artifacts = await _execute_one_erasure(
-        db=db, request=request, system_actor_id=_SYSTEM_ACTOR
-    )
+    with patch("app.s3_client.delete_objects", new=_fake_delete_objects()):
+        artifacts = await _execute_one_erasure(
+            db=db,
+            request=request,
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
 
     assert "scorecard_s3_keys" in artifacts
     assert len(artifacts["scorecard_s3_keys"]) == 2
@@ -633,18 +662,11 @@ async def test_execute_one_erasure_s3_delete_called_for_every_key() -> None:
     # ---- Patch delete_objects ----------------------------------------------
     delete_calls: list[dict[str, list[str]]] = []
 
-    async def _mock_delete_objects(
-        keys_by_bucket: dict[str, list[str]],
-        *,
-        settings: Any,
-    ) -> None:
-        delete_calls.append(dict(keys_by_bucket))
-
     request = _make_erasure_request()
 
     # Patch delete_objects at the source module (app.s3_client) so the local
     # import inside _execute_one_erasure picks up the mock.
-    with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_mock_delete_objects)):
+    with patch("app.s3_client.delete_objects", new=_fake_delete_objects(delete_calls)):
         artifacts = await _execute_one_erasure(
             db=db,
             request=request,
@@ -809,10 +831,7 @@ async def test_erasure_deletes_every_resume_version_object() -> None:
 
     delete_calls: list[dict[str, list[str]]] = []
 
-    async def _capture(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> None:
-        delete_calls.append(dict(keys_by_bucket))
-
-    with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_capture)):
+    with patch("app.s3_client.delete_objects", new=_fake_delete_objects(delete_calls)):
         artifacts = await _execute_one_erasure(
             db=db,
             request=_make_erasure_request(),
@@ -841,7 +860,7 @@ async def test_erasure_collects_resume_keys_before_deleting_the_rows() -> None:
     """
     db, executed = _make_key_collecting_db(resume_version_keys=["resumes/u1/v1.pdf"])
 
-    with patch("app.s3_client.delete_objects", new=AsyncMock()):
+    with patch("app.s3_client.delete_objects", new=_fake_delete_objects()):
         await _execute_one_erasure(
             db=db,
             request=_make_erasure_request(),
@@ -884,7 +903,7 @@ async def test_erasure_nulls_the_applicant_embedding() -> None:
     """
     db, executed = _make_key_collecting_db()
 
-    with patch("app.s3_client.delete_objects", new=AsyncMock()):
+    with patch("app.s3_client.delete_objects", new=_fake_delete_objects()):
         await _execute_one_erasure(
             db=db,
             request=_make_erasure_request(),
@@ -911,10 +930,7 @@ async def test_erasure_deletes_applicant_resume_objects() -> None:
     mock_settings = _mock_s3_settings()
     delete_calls: list[dict[str, list[str]]] = []
 
-    async def _capture(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> None:
-        delete_calls.append(dict(keys_by_bucket))
-
-    with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_capture)):
+    with patch("app.s3_client.delete_objects", new=_fake_delete_objects(delete_calls)):
         await _execute_one_erasure(
             db=db,
             request=_make_erasure_request(),
@@ -941,10 +957,7 @@ async def test_erasure_deletes_turn_audio_when_present() -> None:
     mock_settings = _mock_s3_settings()
     delete_calls: list[dict[str, list[str]]] = []
 
-    async def _capture(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> None:
-        delete_calls.append(dict(keys_by_bucket))
-
-    with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_capture)):
+    with patch("app.s3_client.delete_objects", new=_fake_delete_objects(delete_calls)):
         artifacts = await _execute_one_erasure(
             db=db,
             request=_make_erasure_request(),
@@ -981,10 +994,7 @@ async def test_erasure_artifacts_count_matches_keys_actually_deleted() -> None:
     mock_settings = _mock_s3_settings()
     delete_calls: list[dict[str, list[str]]] = []
 
-    async def _capture(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> None:
-        delete_calls.append(dict(keys_by_bucket))
-
-    with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_capture)):
+    with patch("app.s3_client.delete_objects", new=_fake_delete_objects(delete_calls)):
         artifacts = await _execute_one_erasure(
             db=db,
             request=_make_erasure_request(),
@@ -998,3 +1008,201 @@ async def test_erasure_artifacts_count_matches_keys_actually_deleted() -> None:
     assert artifacts["s3_objects_deleted"] == actually_deleted, (
         "artifacts must report the keys actually passed to delete_objects"
     )
+
+
+# ---------------------------------------------------------------------------
+# M-1a (2026-08-07) — unconfigured storage must not read as a successful delete
+#
+# delete_objects used to short-circuit and return None when credentials were
+# absent, which is indistinguishable from "deleted everything". The executor's
+# only guard was `settings is not None`, so a real-but-unconfigured Settings
+# took the deleted branch, wrote a NON-ZERO s3_objects_deleted, and stamped
+# status='completed' plus a dpdp_erasure_completed audit row over objects that
+# were all still in the bucket.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_erasure_refuses_to_complete_when_settings_missing() -> None:
+    """Keys collected + no Settings must raise, not stamp 'completed' with 0.
+
+    Reporting zero deletions in the artifacts record is not enough: the row is
+    still marked completed, so nothing will ever retry it and the audit trail
+    claims an erasure that did not happen.
+    """
+    from app.s3_client import StorageNotConfiguredError
+
+    db, executed = _make_key_collecting_db(
+        scorecard_keys=[("scorecards/sc1/report.pdf", None)],
+    )
+
+    with pytest.raises(StorageNotConfiguredError):
+        await _execute_one_erasure(
+            db=db,
+            request=_make_erasure_request(),
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=None,
+        )
+
+    update_stmt = next(
+        (s for s in executed if "erasure_requests" in s and "status" in s), None
+    )
+    assert update_stmt is None, (
+        "erasure_requests must NOT be stamped when the objects could not be deleted"
+    )
+    assert not db.add.called, "no dpdp_erasure_completed audit row on a refused erasure"
+
+
+@pytest.mark.asyncio
+async def test_erasure_completes_without_storage_when_there_is_nothing_to_delete() -> None:
+    """A user with no stored objects is fully erased by the DB steps alone.
+
+    The refusal above must be about undeleted objects, not about the absence of
+    credentials in itself — otherwise local dev and CI could never erase anyone
+    and the guard would be switched back off.
+    """
+    db, executed = _make_key_collecting_db()
+
+    artifacts = await _execute_one_erasure(
+        db=db,
+        request=_make_erasure_request(),
+        system_actor_id=_SYSTEM_ACTOR,
+        settings=None,
+    )
+
+    assert artifacts["s3_objects_deleted"] == 0
+    update_stmt = next(
+        (s for s in executed if "erasure_requests" in s and "status" in s), None
+    )
+    assert update_stmt is not None, "an erasure with no objects must still complete"
+
+
+@pytest.mark.asyncio
+async def test_erasure_refuses_to_complete_when_credentials_unset() -> None:
+    """A real-but-unconfigured Settings must fail the same way as no Settings.
+
+    This is the M-1a path exactly: settings is not None, so the old guard was
+    satisfied, and the unconfigured skip inside delete_objects returned None —
+    which the executor read as success.
+    """
+    from app.s3_client import StorageNotConfiguredError
+
+    db, executed = _make_key_collecting_db(
+        user_resume_key="resumes/u1/current.pdf",
+    )
+    unconfigured = _mock_s3_settings()
+    unconfigured.s3_endpoint_url = ""
+    unconfigured.s3_access_key_id = ""
+
+    # NOT patched: the real delete_objects is what must refuse, and it must do
+    # so before opening any client, so this makes no network call.
+    with pytest.raises(StorageNotConfiguredError):
+        await _execute_one_erasure(
+            db=db,
+            request=_make_erasure_request(),
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=unconfigured,
+        )
+
+    update_stmt = next(
+        (s for s in executed if "erasure_requests" in s and "status" in s), None
+    )
+    assert update_stmt is None, (
+        "an unconfigured deployment must leave the request pending, not completed"
+    )
+    assert not db.add.called
+
+
+@pytest.mark.asyncio
+async def test_erasure_refuses_to_complete_on_delete_shortfall() -> None:
+    """Storage reporting fewer deletions than keys collected must not complete.
+
+    Guards the contract itself: the executor trusts the returned count, so a
+    delete_objects that ever starts under-deleting silently must be caught here
+    rather than in an auditor's sample.
+    """
+    from app.erasure_executor import ErasureIncompleteError
+
+    db, executed = _make_key_collecting_db(
+        resume_version_keys=["resumes/u1/v1.pdf", "resumes/u1/v2.pdf"],
+    )
+
+    async def _under_deletes(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> int:
+        return 1  # two keys handed over, one reported deleted
+
+    with (
+        patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_under_deletes)),
+        pytest.raises(ErasureIncompleteError),
+    ):
+        await _execute_one_erasure(
+            db=db,
+            request=_make_erasure_request(),
+            system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
+
+    update_stmt = next(
+        (s for s in executed if "erasure_requests" in s and "status" in s), None
+    )
+    assert update_stmt is None
+    assert not db.add.called
+
+
+@pytest.mark.asyncio
+async def test_poll_leaves_request_pending_when_storage_unconfigured() -> None:
+    """The poll loop must roll back and NOT count a storage refusal as completed."""
+    db, executed = _make_key_collecting_db(
+        user_resume_key="resumes/u1/current.pdf",
+    )
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+
+    # The discovery session finds one due request; the work session is the
+    # key-collecting mock above, whose claim/reload SELECTs must return rows.
+    discovery = _empty_session()
+    discovery_result = MagicMock()
+    discovery_result.fetchall.return_value = [(str(_REQUEST_ID),)]
+    discovery.execute = AsyncMock(return_value=discovery_result)
+
+    claim_row = (str(_REQUEST_ID), str(_USER_ID), "pending")
+    full_row = (
+        str(_REQUEST_ID),
+        str(_USER_ID),
+        str(_SYSTEM_ACTOR),
+        "test",
+        "pending",
+        _SCHEDULED_PAST,
+        None,
+        None,
+        _SCHEDULED_PAST,
+    )
+    inner_execute = db.execute
+
+    async def _execute(stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
+        sql = str(stmt)
+        if "FOR UPDATE SKIP LOCKED" in sql:
+            result = MagicMock()
+            result.fetchone.return_value = claim_row
+            return result
+        if "FROM erasure_requests" in sql and "requested_by" in sql:
+            result = MagicMock()
+            result.fetchone.return_value = full_row
+            return result
+        return await inner_execute(stmt, *args, **kwargs)
+
+    db.execute = _execute
+
+    unconfigured = _mock_s3_settings()
+    unconfigured.s3_endpoint_url = ""
+    unconfigured.s3_access_key_id = ""
+
+    completed = await run_erasure_poll(
+        session_factory=_make_factory([discovery, db]),  # type: ignore[arg-type]
+        system_actor_id=_SYSTEM_ACTOR,
+        settings=unconfigured,
+    )
+
+    assert completed == 0, "a refused erasure must not be counted as completed"
+    assert db.rollback.called, "the transaction must be rolled back so the row stays pending"
+    assert not db.commit.called
+    assert not any("erasure_requests" in s and "status" in s for s in executed)

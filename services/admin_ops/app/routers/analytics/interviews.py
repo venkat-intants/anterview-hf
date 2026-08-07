@@ -1,316 +1,53 @@
-"""Admin analytics endpoints — read-only aggregate queries over the shared DB.
+"""Interview-level endpoints: list, CSV export, drill-in detail, transcript.
 
-All endpoints sit behind the shared verify_admin_role dependency (HTTP 401/403
-on missing or non-admin JWT).  All queries exclude soft-deleted rows via
-``users.deleted_at IS NULL`` and ``sessions.deleted_at IS NULL`` predicates.
+All four read the same sessions⋈users⋈jobs⋈scorecards join, and the list and
+the export MUST share one filter builder — a divergence there would mean the
+CSV silently exports a different row set than the screen it was launched from.
+That shared SQL is why these four live together rather than one module each.
 
-Endpoints
----------
-GET /admin/overview                    — KPI tiles
-GET /admin/interviews                  — paginated interview list with filters
-GET /admin/interviews/export.csv       — streaming CSV export (same filters)
-GET /admin/interviews/{session_id}     — drill-in detail (audit-logged)
-GET /admin/interviews/{session_id}/transcript — conversation turns (audit-logged)
-GET /admin/analytics/by-role           — grouped by job title
-GET /admin/analytics/by-language       — grouped by language
-GET /admin/analytics/score-distribution — histogram + per-axis averages
-GET /admin/analytics/trends            — daily series (date_trunc)
-
-Timezone note
--------------
-Calendar buckets ("interviews today", the daily trend series) break at midnight
-in the reporting timezone, not UTC — see ``_reporting_tz``.  Raw timestamps in
-responses stay UTC/ISO-8601.
-
-PII note
---------
-- Candidate email and full_name are returned in paginated lists and CSV
-  exports.  These are admin-only endpoints (JWT role check enforced at the
-  prefix level in main.py AND individually on each endpoint via AdminDep).
-- The drill-in endpoint (GET /admin/interviews/{session_id}) writes an
-  audit_log entry for every access: action "admin.interview.view",
-  resource_type "session", resource_id = session_id.
-- The transcript endpoint (GET /admin/interviews/{session_id}/transcript)
-  writes an audit_log entry for every access: action
-  "admin.interview.transcript.view", resource_type "session",
-  resource_id = session_id.
-- The CSV export endpoint writes an audit_log entry: action
-  "admin.interviews.export".
-- Candidate PII is NEVER written to structlog.
+Route ordering inside this module is load-bearing: ``/interviews/export.csv``
+is registered before ``/interviews/{session_id}`` so FastAPI does not try to
+parse "export.csv" as a UUID.
 """
 
 from __future__ import annotations
 
 import csv
 import io
-import os
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import UTC, date, datetime, time, timedelta, tzinfo
-from typing import Annotated, Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from datetime import UTC, datetime
+from typing import Any
 
-import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin_auth import AdminDep
-from app.database import get_db_session, get_session_factory
 from app.models import AuditLog
-
-log = structlog.get_logger(__name__)
+from app.routers.analytics._common import (
+    _AXES,
+    _CSV_COLUMNS,
+    DbSessionDep,
+    IntegrityEventItem,
+    InterviewDetailResponse,
+    InterviewListItem,
+    InterviewListResponse,
+    ScorecardDetail,
+    SessionFactoryDep,
+    _iso,
+    _round2,
+    log,
+)
 
 router = APIRouter(prefix="/admin", tags=["analytics"])
 
-DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
-# Injected as a plain (non-yield) dependency so it is NOT torn down with the
-# request exit stack — the CSV export needs it alive while the body streams.
-SessionFactoryDep = Annotated[
-    async_sessionmaker[AsyncSession], Depends(get_session_factory)
-]
 
-# ---------------------------------------------------------------------------
-# Score axes — 4 NOS-aligned axes defined in LLD §10 / scorer.py _WEIGHTS
-# ---------------------------------------------------------------------------
-
-_AXES: list[str] = ["communication", "technical", "problem_solving", "confidence"]
-
-# CSV export column order (mirrors InterviewListItem fields)
-_CSV_COLUMNS: list[str] = [
-    "session_id",
-    "candidate_email",
-    "candidate_name",
-    "job_title",
-    "status",
-    "language",
-    "composite_score",
-    "created_at",
-    "completed_at",
-    "duration_seconds",
-]
-
-# Fixed score histogram bucket labels (inclusive lower, exclusive upper)
-_SCORE_BUCKETS: list[str] = ["0-2", "2-4", "4-6", "6-8", "8-10"]
-
-# Timezone whose midnight starts a reporting "day".  Every operator reads these
-# tiles in IST (CLAUDE.md pins India residency and Indian buyers), and UTC
-# midnight is 05:30 IST — bucketing on UTC would put a day and a half of
-# sessions in "today" and file an 04:00 IST interview under "yesterday".
-# Overridable per deployment via the REPORTING_TIMEZONE env var.
-_DEFAULT_REPORTING_TZ = "Asia/Kolkata"
-
-# ---------------------------------------------------------------------------
-# Response models
-# ---------------------------------------------------------------------------
-
-
-class OverviewResponse(BaseModel):
-    """KPI tile data returned by GET /admin/overview."""
-
-    total_candidates: int = Field(..., description="Non-deleted users.")
-    total_interviews: int = Field(..., description="Non-deleted sessions.")
-    completed_interviews: int
-    completion_rate: float = Field(..., description="Fraction 0.0–1.0; 0 when no interviews.")
-    avg_composite_score: float | None = Field(None, description="Rounded to 2 dp; null if none.")
-    avg_duration_seconds: float | None = Field(None, description="Rounded to 1 dp; null if none.")
-    interviews_today: int
-    interviews_last_7d: int
-    interviews_last_30d: int
-
-
-class InterviewListItem(BaseModel):
-    """One row in the paginated interview list."""
-
-    session_id: str
-    candidate_email: str
-    candidate_name: str | None
-    job_title: str | None
-    status: str
-    language: str
-    composite_score: float | None = Field(None, description="Rounded to 2 dp.")
-    created_at: str = Field(..., description="ISO-8601 UTC timestamp.")
-    completed_at: str | None
-    duration_seconds: int | None
-
-
-class InterviewListResponse(BaseModel):
-    """Paginated response from GET /admin/interviews."""
-
-    items: list[InterviewListItem]
-    total: int
-    page: int
-    per_page: int
-
-
-class ScorecardDetail(BaseModel):
-    """Full scorecard embedded in the drill-in detail response."""
-
-    scorecard_id: str
-    composite_score: float | None
-    communication: float | None
-    technical: float | None
-    problem_solving: float | None
-    confidence: float | None
-    # Per-axis "why this score" explanation, keyed by axis. Empty dict for
-    # scorecards generated before the rationale feature.
-    rationale: dict[str, str] = {}
-    strengths: list[Any] | None
-    improvements: list[Any] | None
-    summary: str | None
-
-
-class IntegrityEventItem(BaseModel):
-    """One flagged proctoring event in the drill-in timeline."""
-
-    event_type: str
-    started_at: str
-    ended_at: str | None = None
-    duration_seconds: float | None = None
-
-
-class InterviewDetailResponse(BaseModel):
-    """Drill-in detail returned by GET /admin/interviews/{session_id}."""
-
-    session_id: str
-    candidate_email: str
-    candidate_name: str | None
-    candidate_preferred_language: str | None
-    job_title: str | None
-    status: str
-    language: str
-    started_at: str | None
-    completed_at: str | None
-    duration_seconds: int | None
-    scorecard: ScorecardDetail | None = Field(
-        None, description="null when the session has not been scored yet."
-    )
-    # Phase B proctoring. null when proctoring was off for this session.
-    integrity_score: int | None = Field(
-        None, description="0-100 integrity score, higher = cleaner. null if no proctoring."
-    )
-    proctoring_summary: dict[str, Any] | None = Field(
-        None, description="Per-type event counts + flagged seconds. null if no proctoring."
-    )
-    integrity_events: list[IntegrityEventItem] = Field(
-        default_factory=list,
-        description="Time-ordered flagged proctoring events (most recent first, capped).",
-    )
-
-
-class ByRoleItem(BaseModel):
-    """One job-role group from GET /admin/analytics/by-role."""
-
-    job_id: str
-    job_title: str
-    interview_count: int
-    avg_composite: float | None = Field(None, description="Rounded to 2 dp.")
-    avg_communication: float | None = Field(None, description="Rounded to 2 dp.")
-    avg_technical: float | None = Field(None, description="Rounded to 2 dp.")
-    avg_problem_solving: float | None = Field(None, description="Rounded to 2 dp.")
-    avg_confidence: float | None = Field(None, description="Rounded to 2 dp.")
-
-
-class ByLanguageItem(BaseModel):
-    """One language group from GET /admin/analytics/by-language."""
-
-    language: str
-    interview_count: int
-    avg_composite: float | None = Field(None, description="Rounded to 2 dp.")
-
-
-class ScoreBucket(BaseModel):
-    """One histogram bucket."""
-
-    label: str = Field(..., description="e.g. '0-2', '2-4', …")
-    count: int
-
-
-class ScoreDistributionResponse(BaseModel):
-    """Response from GET /admin/analytics/score-distribution."""
-
-    buckets: list[ScoreBucket]
-    avg_communication: float | None
-    avg_technical: float | None
-    avg_problem_solving: float | None
-    avg_confidence: float | None
-
-
-class TrendItem(BaseModel):
-    """One day in the trend series."""
-
-    date: str = Field(..., description="ISO-8601 date string, e.g. '2026-05-01'.")
-    interview_count: int
-    avg_composite: float | None = Field(None, description="Rounded to 2 dp.")
-
-
-class TrendsResponse(BaseModel):
-    """Response from GET /admin/analytics/trends."""
-
-    items: list[TrendItem]
-    date_from: str
-    date_to: str
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _reporting_tz() -> tuple[str, tzinfo]:
-    """Return the (IANA name, tzinfo) pair used for all calendar bucketing.
-
-    Both halves come from here so the Python-side day boundaries and the
-    Postgres-side ``AT TIME ZONE`` grouping can never drift apart.  Resolved per
-    call — ZoneInfo caches instances, so this is cheap, and a deployment can
-    change REPORTING_TIMEZONE without a code change.
-
-    Falls back to UTC when the host image ships no tz database: a tile that is
-    wrong by 5.5 hours beats a 500 on the whole admin dashboard.
-    """
-    name = os.getenv("REPORTING_TIMEZONE", _DEFAULT_REPORTING_TZ).strip() or _DEFAULT_REPORTING_TZ
-    try:
-        return name, ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError):
-        log.warning("analytics.reporting_tz_unavailable", requested=name)
-        return "UTC", UTC
-
-
-def _local_day_start(day: date, tz: tzinfo) -> datetime:
-    """Midnight at the start of ``day`` in ``tz``, as an aware datetime.
-
-    Built from the calendar date rather than by arithmetic on a timestamp so a
-    DST-observing reporting timezone still lands on the real local midnight.
-    """
-    return datetime.combine(day, time.min, tzinfo=tz)
-
-
-def _round2(value: Any) -> float | None:
-    """Return float rounded to 2 dp, or None if value is None."""
-    if value is None:
-        return None
-    return round(float(value), 2)
-
-
-def _round1(value: Any) -> float | None:
-    """Return float rounded to 1 dp, or None if value is None."""
-    if value is None:
-        return None
-    return round(float(value), 1)
-
-
-def _iso(value: Any) -> str | None:
-    """Return ISO-8601 string from a datetime-like, or None."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return str(value)
-
-
+# _write_audit lives here rather than in _common because all three of its call
+# sites — the export, the drill-in and the transcript — are in this module.
 async def _write_audit(
     *,
     db: AsyncSession,
@@ -344,103 +81,6 @@ async def _write_audit(
             exc_type=type(exc).__name__,
         )
 
-
-# ---------------------------------------------------------------------------
-# 1. GET /admin/overview
-# ---------------------------------------------------------------------------
-
-
-@router.get(
-    "/overview",
-    response_model=OverviewResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Admin KPI overview tiles",
-    description=(
-        "Returns platform-wide KPI tiles in one round-trip: total candidates, "
-        "total/completed interviews, completion rate, avg composite score, "
-        "avg duration, and interview counts for today / last 7 / last 30 days. "
-        "'Today' starts at midnight in the reporting timezone (Asia/Kolkata by "
-        "default). Soft-deleted users and sessions are excluded."
-    ),
-)
-async def get_overview(
-    admin_sub: AdminDep,
-    db: DbSessionDep,
-) -> OverviewResponse:
-    """Single aggregate query returning all KPI tiles."""
-    _, tz = _reporting_tz()
-    now_local = datetime.now(tz)
-    today_start = _local_day_start(now_local.date(), tz)
-    # Rolling windows, not calendar buckets — a relative offset is the same
-    # instant in every timezone, so these need no conversion.
-    last_7d = now_local - timedelta(days=7)
-    last_30d = now_local - timedelta(days=30)
-
-    sql = sa_text(
-        """
-        SELECT
-            (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL)
-                AS total_candidates,
-            COUNT(s.id)
-                AS total_interviews,
-            COUNT(s.id) FILTER (WHERE s.status = 'completed')
-                AS completed_interviews,
-            AVG(sc.composite_score)
-                AS avg_composite_score,
-            AVG(s.duration_seconds)
-                AS avg_duration_seconds,
-            COUNT(s.id) FILTER (WHERE s.created_at >= :today_start)
-                AS interviews_today,
-            COUNT(s.id) FILTER (WHERE s.created_at >= :last_7d)
-                AS interviews_last_7d,
-            COUNT(s.id) FILTER (WHERE s.created_at >= :last_30d)
-                AS interviews_last_30d
-        FROM sessions s
-        LEFT JOIN scorecards sc ON sc.session_id = s.id
-        WHERE s.deleted_at IS NULL
-        """
-    )
-    row = (
-        await db.execute(
-            sql,
-            {
-                "today_start": today_start,
-                "last_7d": last_7d,
-                "last_30d": last_30d,
-            },
-        )
-    ).mappings().first()
-
-    if row is None:
-        return OverviewResponse(
-            total_candidates=0,
-            total_interviews=0,
-            completed_interviews=0,
-            completion_rate=0.0,
-            avg_composite_score=None,
-            avg_duration_seconds=None,
-            interviews_today=0,
-            interviews_last_7d=0,
-            interviews_last_30d=0,
-        )
-
-    total = int(row["total_interviews"] or 0)
-    completed = int(row["completed_interviews"] or 0)
-    completion_rate = round(completed / total, 4) if total > 0 else 0.0
-
-    log.info("analytics.overview.fetched", actor=admin_sub, total_interviews=total)
-
-    return OverviewResponse(
-        total_candidates=int(row["total_candidates"] or 0),
-        total_interviews=total,
-        completed_interviews=completed,
-        completion_rate=completion_rate,
-        avg_composite_score=_round2(row["avg_composite_score"]),
-        avg_duration_seconds=_round1(row["avg_duration_seconds"]),
-        interviews_today=int(row["interviews_today"] or 0),
-        interviews_last_7d=int(row["interviews_last_7d"] or 0),
-        interviews_last_30d=int(row["interviews_last_30d"] or 0),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +231,6 @@ def _csv_line(row: Any) -> str:
     )
     return buf.getvalue()
 
-
 # ---------------------------------------------------------------------------
 # 2. GET /admin/interviews — paginated list
 # ---------------------------------------------------------------------------
@@ -684,7 +323,6 @@ async def list_interviews(
 
     log.info("analytics.interviews.list", actor=admin_sub, total=total, page=page)
     return InterviewListResponse(items=items, total=total, page=page, per_page=per_page)
-
 
 # ---------------------------------------------------------------------------
 # 8. GET /admin/interviews/export.csv — streaming CSV
@@ -786,7 +424,6 @@ async def export_interviews_csv(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=interviews.csv"},
     )
-
 
 # ---------------------------------------------------------------------------
 # 3. GET /admin/interviews/{session_id} — drill-in detail
@@ -949,7 +586,6 @@ async def get_interview_detail(
         integrity_events=integrity_events,
     )
 
-
 # ---------------------------------------------------------------------------
 # 3b. GET /admin/interviews/{session_id}/transcript — conversation turns
 # ---------------------------------------------------------------------------
@@ -1022,276 +658,4 @@ async def get_interview_transcript(
             )
             for r in rows
         ],
-    )
-
-
-# ---------------------------------------------------------------------------
-# 4. GET /admin/analytics/by-role
-# ---------------------------------------------------------------------------
-
-
-@router.get(
-    "/analytics/by-role",
-    response_model=list[ByRoleItem],
-    status_code=status.HTTP_200_OK,
-    summary="Interview counts and score averages grouped by job role",
-    description=(
-        "Groups non-deleted sessions by job_id / job title. "
-        "Score averages exclude sessions without a scorecard "
-        "(they still contribute to interview_count)."
-    ),
-)
-async def analytics_by_role(
-    admin_sub: AdminDep,
-    db: DbSessionDep,
-) -> list[ByRoleItem]:
-    """Single GROUP BY query — no N+1."""
-    sql = sa_text(
-        """
-        SELECT
-            s.job_id::text                          AS job_id,
-            COALESCE(j.title, '(unknown role)')     AS job_title,
-            COUNT(s.id)                             AS interview_count,
-            AVG(sc.composite_score)                 AS avg_composite,
-            AVG((sc.scores->>'communication')::float)   AS avg_communication,
-            AVG((sc.scores->>'technical')::float)       AS avg_technical,
-            AVG((sc.scores->>'problem_solving')::float) AS avg_problem_solving,
-            AVG((sc.scores->>'confidence')::float)      AS avg_confidence
-        FROM sessions s
-        JOIN users u ON u.id = s.user_id
-        LEFT JOIN jobs j ON j.id = s.job_id
-        LEFT JOIN scorecards sc ON sc.session_id = s.id
-        WHERE s.deleted_at IS NULL
-          AND u.deleted_at IS NULL
-        GROUP BY s.job_id, j.title
-        ORDER BY interview_count DESC
-        """
-    )
-    rows = (await db.execute(sql)).mappings().all()
-
-    log.info("analytics.by_role.fetched", actor=admin_sub, groups=len(rows))
-
-    return [
-        ByRoleItem(
-            job_id=str(row["job_id"]),
-            job_title=str(row["job_title"]),
-            interview_count=int(row["interview_count"]),
-            avg_composite=_round2(row["avg_composite"]),
-            avg_communication=_round2(row["avg_communication"]),
-            avg_technical=_round2(row["avg_technical"]),
-            avg_problem_solving=_round2(row["avg_problem_solving"]),
-            avg_confidence=_round2(row["avg_confidence"]),
-        )
-        for row in rows
-    ]
-
-
-# ---------------------------------------------------------------------------
-# 5. GET /admin/analytics/by-language
-# ---------------------------------------------------------------------------
-
-
-@router.get(
-    "/analytics/by-language",
-    response_model=list[ByLanguageItem],
-    status_code=status.HTTP_200_OK,
-    summary="Interview counts and score averages grouped by language",
-)
-async def analytics_by_language(
-    admin_sub: AdminDep,
-    db: DbSessionDep,
-) -> list[ByLanguageItem]:
-    """Single GROUP BY query over sessions.language."""
-    sql = sa_text(
-        """
-        SELECT
-            s.language                      AS language,
-            COUNT(s.id)                     AS interview_count,
-            AVG(sc.composite_score)         AS avg_composite
-        FROM sessions s
-        JOIN users u ON u.id = s.user_id
-        LEFT JOIN scorecards sc ON sc.session_id = s.id
-        WHERE s.deleted_at IS NULL
-          AND u.deleted_at IS NULL
-        GROUP BY s.language
-        ORDER BY interview_count DESC
-        """
-    )
-    rows = (await db.execute(sql)).mappings().all()
-
-    log.info("analytics.by_language.fetched", actor=admin_sub, groups=len(rows))
-
-    return [
-        ByLanguageItem(
-            language=str(row["language"]),
-            interview_count=int(row["interview_count"]),
-            avg_composite=_round2(row["avg_composite"]),
-        )
-        for row in rows
-    ]
-
-
-# ---------------------------------------------------------------------------
-# 6. GET /admin/analytics/score-distribution
-# ---------------------------------------------------------------------------
-
-
-@router.get(
-    "/analytics/score-distribution",
-    response_model=ScoreDistributionResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Composite score histogram (fixed buckets) + per-axis averages",
-    description=(
-        "Composite score histogram in five fixed buckets (0-2, 2-4, 4-6, 6-8, 8-10) "
-        "plus overall averages for each of the four NOS axes."
-    ),
-)
-async def analytics_score_distribution(
-    admin_sub: AdminDep,
-    db: DbSessionDep,
-) -> ScoreDistributionResponse:
-    """Two queries: bucket counts + axis averages."""
-    # C1: No ORDER BY label — Python fill loop over _SCORE_BUCKETS enforces order.
-    # C2: AND sc.composite_score IS NOT NULL — prevents NULL rows from falling
-    #     into the ELSE branch and inflating the '8-10' bucket.
-    bucket_sql = sa_text(
-        """
-        SELECT
-            CASE
-                WHEN sc.composite_score < 2  THEN '0-2'
-                WHEN sc.composite_score < 4  THEN '2-4'
-                WHEN sc.composite_score < 6  THEN '4-6'
-                WHEN sc.composite_score < 8  THEN '6-8'
-                ELSE '8-10'
-            END                             AS label,
-            COUNT(*)                        AS cnt
-        FROM scorecards sc
-        JOIN sessions s ON s.id = sc.session_id
-        WHERE s.deleted_at IS NULL
-          AND sc.composite_score IS NOT NULL
-        GROUP BY label
-        """
-    )
-
-    # AVG already ignores NULLs natively; JOIN ensures only non-deleted sessions
-    # contribute (soft-deleted sessions are excluded via s.deleted_at IS NULL).
-    axis_sql = sa_text(
-        """
-        SELECT
-            AVG((sc.scores->>'communication')::float)   AS avg_communication,
-            AVG((sc.scores->>'technical')::float)       AS avg_technical,
-            AVG((sc.scores->>'problem_solving')::float) AS avg_problem_solving,
-            AVG((sc.scores->>'confidence')::float)      AS avg_confidence
-        FROM scorecards sc
-        JOIN sessions s ON s.id = sc.session_id
-        WHERE s.deleted_at IS NULL
-        """
-    )
-
-    bucket_rows = (await db.execute(bucket_sql)).mappings().all()
-    axis_row = (await db.execute(axis_sql)).mappings().first()
-
-    # Ensure all 5 fixed buckets are present, even if count = 0
-    bucket_map = {str(r["label"]): int(r["cnt"]) for r in bucket_rows}
-    buckets = [
-        ScoreBucket(label=label, count=bucket_map.get(label, 0))
-        for label in _SCORE_BUCKETS
-    ]
-
-    log.info("analytics.score_distribution.fetched", actor=admin_sub)
-
-    return ScoreDistributionResponse(
-        buckets=buckets,
-        avg_communication=_round2(axis_row["avg_communication"]) if axis_row else None,
-        avg_technical=_round2(axis_row["avg_technical"]) if axis_row else None,
-        avg_problem_solving=_round2(axis_row["avg_problem_solving"]) if axis_row else None,
-        avg_confidence=_round2(axis_row["avg_confidence"]) if axis_row else None,
-    )
-
-
-# ---------------------------------------------------------------------------
-# 7. GET /admin/analytics/trends
-# ---------------------------------------------------------------------------
-
-_DEFAULT_TREND_DAYS = 30
-
-
-@router.get(
-    "/analytics/trends",
-    response_model=TrendsResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Daily interview count and avg composite score trend series",
-    description=(
-        "Returns a daily series (date_trunc day) of interview_count and "
-        "avg_composite. Days are calendar days in the reporting timezone "
-        "(Asia/Kolkata by default). Defaults to the last 30 days. "
-        "Empty days (no interviews) are omitted from the series."
-    ),
-)
-async def analytics_trends(
-    admin_sub: AdminDep,
-    db: DbSessionDep,
-    date_from: date | None = Query(
-        default=None,
-        description="Start date (inclusive). Defaults to 30 days ago.",
-    ),
-    date_to: date | None = Query(
-        default=None,
-        description="End date (inclusive). Defaults to today.",
-    ),
-) -> TrendsResponse:
-    """date_trunc('day') GROUP BY over the selected window."""
-    tz_name, tz = _reporting_tz()
-    now_local = datetime.now(tz)
-    resolved_to = date_to or now_local.date()
-    resolved_from = date_from or (now_local - timedelta(days=_DEFAULT_TREND_DAYS)).date()
-
-    # Local midnight bounds. The upper bound is the start of the day AFTER
-    # resolved_to and compared exclusively — an inclusive 23:59:59 bound drops
-    # every session created in the final second of the range.
-    from_dt = _local_day_start(resolved_from, tz)
-    to_dt_exclusive = _local_day_start(resolved_to + timedelta(days=1), tz)
-
-    # AT TIME ZONE shifts the timestamptz into reporting-local time before the
-    # truncation, so each bar is one Indian working day rather than a UTC day
-    # split across two of them.
-    sql = sa_text(
-        """
-        SELECT
-            date_trunc('day', s.created_at AT TIME ZONE :report_tz)::date AS day,
-            COUNT(s.id)                             AS interview_count,
-            AVG(sc.composite_score)                 AS avg_composite
-        FROM sessions s
-        LEFT JOIN scorecards sc ON sc.session_id = s.id
-        WHERE s.deleted_at IS NULL
-          AND s.created_at >= :from_dt
-          AND s.created_at < :to_dt_exclusive
-        GROUP BY day
-        ORDER BY day ASC
-        """
-    )
-    rows = (
-        await db.execute(
-            sql,
-            {
-                "report_tz": tz_name,
-                "from_dt": from_dt,
-                "to_dt_exclusive": to_dt_exclusive,
-            },
-        )
-    ).mappings().all()
-
-    log.info("analytics.trends.fetched", actor=admin_sub, rows=len(rows))
-
-    return TrendsResponse(
-        items=[
-            TrendItem(
-                date=str(row["day"]),
-                interview_count=int(row["interview_count"]),
-                avg_composite=_round2(row["avg_composite"]),
-            )
-            for row in rows
-        ],
-        date_from=str(resolved_from),
-        date_to=str(resolved_to),
     )

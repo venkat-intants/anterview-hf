@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.coding_grader import run_tests, weighted_raw
 from app.config import settings
+from app.database import DbSessionDep
 from app.exam_grading import GradeInput, GradeQuestion, grade_exam
 from app.exam_link import hash_exam_token
 from app.execution import run_code
@@ -54,7 +55,6 @@ from app.models import (
 )
 from app.rate_limit import rate_limit
 from app.redis_client import get_redis
-from app.routers.hr_applicants import DbSessionDep
 from app.routers.hr_interviews import advance_applicant_to_interview
 
 log = structlog.get_logger(__name__)

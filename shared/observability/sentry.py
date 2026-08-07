@@ -5,56 +5,68 @@ is installed, so development and tests are never affected. When active, PII is
 scrubbed from every event before it leaves the process (DPDP §8): cookies, auth
 headers, request bodies, and known PII keys are stripped, and ``send_default_pii``
 is disabled so Sentry never auto-attaches the client IP.
+
+The PII key set is derived from ``observability/pii.py`` — see ``_PII_KEYS``
+below for why it is derived rather than declared here.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from shared.observability.pii import PII_FIELDS
+
+if TYPE_CHECKING:
+    # Type-only. sentry-sdk is an OPTIONAL dependency — `init_sentry` imports it
+    # lazily inside a try/ImportError so a service without it still starts, and
+    # shared/ must stay importable without it. A TYPE_CHECKING import keeps the
+    # `before_send` callback correctly typed against the SDK's own signature
+    # (Callable[[Event, dict], Event | None]) without adding a runtime import.
+    # Where the SDK is absent, --ignore-missing-imports resolves Event to Any
+    # and the annotation stays valid.
+    from sentry_sdk.types import Event, Hint
+
 log = structlog.get_logger(__name__)
 
-# Keys whose values may carry PII / secrets and must never leave the process in an
-# error payload. Mirrors the structlog PII redaction each service already applies.
-_PII_KEYS = frozenset(
+# Wire-only names. Sentry sees these because the ASGI integration attaches the
+# request headers and because HTTP breadcrumbs carry their own header maps; a
+# structlog event dict never holds one, which is the whole reason they live here
+# and not in the canonical set. Used for both the header sweep in
+# ``_before_send`` and the recursive ``_scrub``, so the two cannot disagree.
+_TRANSPORT_HEADERS: frozenset[str] = frozenset(
     {
-        "email",
-        "password",
-        "phone",
-        "full_name",
-        "name",
-        "ip",
-        "ip_hash",
-        "user_agent_hash",
         "authorization",
         "cookie",
-        "token",
-        "access_token",
-        "refresh_token",
-        "jwt",
-        "transcript",
-        # Names this codebase actually uses for the same data. Matching is
-        # exact, so "email" alone does not cover "user_email" or
-        # "candidate_email", and the resume/answer text is the largest block of
-        # candidate PII the platform holds.
-        "user_email",
-        "candidate_email",
-        "to_email",
-        "candidate_name",
-        "resume_text",
-        "resume_excerpt",
-        "jd_text",
-        "api_key",
-        "secret",
-        "client_secret",
-        "code_verifier",
-        "plain",
-        "password_hash",
-        "csrf_token",
+        "set-cookie",
+        "x-api-key",
+        "x-csrf-token",
+        # Bearer-equivalent magic-link credentials — same reasoning as the
+        # Caddy access-log filter.
+        "x-exam-token",
+        "x-interview-token",
     }
 )
+
+# Keys whose values may carry PII / secrets and must never leave the process in
+# an error payload. DERIVED from the canonical structlog deny-list, not restated
+# beside it: this file used to keep its own copy under a comment claiming it
+# "mirrors" the structlog redaction, and the claim was false in both directions
+# — it missed answer / question / text_content / turn_text / target_jd_text /
+# address / raw_token, while the canonical set missed the credential and contact
+# names only this list had (those have since moved into pii.py). Two lists plus
+# a comment asserting parity is precisely the defect that hid the original
+# per-service drift; deriving makes the parity true by construction instead.
+#
+# "name" is the one data key that stays local. In a Sentry ``extra`` or
+# breadcrumb it is nearly always a serialised user object's name, but as a
+# structlog kwarg this codebase uses it for non-PII identifiers (see
+# ``circuit_breaker.closed name=...``), so promoting it would blank an ops
+# signal in four services without protecting a candidate. Log ``full_name``,
+# never ``name``, when the value really is a person.
+_PII_KEYS: frozenset[str] = PII_FIELDS | _TRANSPORT_HEADERS | frozenset({"name"})
 
 
 def _scrub(obj: Any) -> Any:
@@ -69,8 +81,14 @@ def _scrub(obj: Any) -> Any:
     return obj
 
 
-def _before_send(event: dict, _hint: dict) -> dict:
-    """Strip cookies / auth headers / bodies / PII before an event is sent."""
+def _before_send(event: Event, _hint: Hint) -> Event | None:
+    """Strip cookies / auth headers / bodies / PII before an event is sent.
+
+    Signature matches ``sentry_sdk.init(before_send=...)`` exactly. It was
+    previously ``(dict, dict) -> dict``, which only type-checked because
+    ``shared/observability`` was not in the mypy step's path list until
+    2026-08-07 — returning ``None`` to DROP an event was not expressible.
+    """
     try:
         req = event.get("request")
         if isinstance(req, dict):
@@ -87,15 +105,7 @@ def _before_send(event: dict, _hint: dict) -> dict:
             headers = req.get("headers")
             if isinstance(headers, dict):
                 for h in list(headers):
-                    if str(h).lower() in (
-                        "authorization",
-                        "cookie",
-                        "x-csrf-token",
-                        # Bearer-equivalent magic-link credentials — same
-                        # reasoning as the Caddy access-log filter.
-                        "x-exam-token",
-                        "x-interview-token",
-                    ):
+                    if str(h).lower() in _TRANSPORT_HEADERS:
                         headers[h] = "[redacted]"
         if "extra" in event:
             event["extra"] = _scrub(event["extra"])

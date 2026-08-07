@@ -8,6 +8,37 @@
 **Previous reports:** `docs/security-review-s4-bundle.md`,
 `docs/security-review-s3-011.md`, `docs/security-review-s3-004-s3-005.md`
 
+---
+
+> ## ⚠ SUPERSEDED — reconciled 2026-08-07
+>
+> **The `BLOCKED` verdict in §4 no longer applies. Both HIGH findings are fixed
+> and verified at `352f366`.** This banner was added because the most senior
+> security document in the repository was asserting a production block against
+> work that had already shipped — and a stale block is read by a bid reviewer
+> exactly as seriously as a live one.
+>
+> **Nothing below has been deleted.** The findings, evidence and reasoning are
+> retained verbatim as RFP-traceability evidence: they record what was wrong,
+> when it was found, and what the fix had to satisfy. Read the document as a
+> historical record of the 2026-08-06 state, with the statuses in this table
+> overriding it.
+>
+> | Finding | Status at `352f366` | Evidence at HEAD |
+> |---|---|---|
+> | **HIGH-1** — Naipunyam SSO `state` never validated (login CSRF, no PKCE, no privileged-account exclusion) | **FIXED** | One-shot Redis state with 600 s TTL written at `sso_naipunyam.py:251-261`, consumed get-then-delete before the token POST; binding cookie compared with `hmac.compare_digest` at `:396-398`; PKCE `code_challenge_method: "S256"` at `:276` (challenge built by `_pkce_challenge`, SHA-256 + url-safe base64, RFC 7636 §4.2); privileged-role rejection at `:493-509`, evaluated **before** the user upsert and before any token is issued |
+> | **HIGH-2** — Piston sandbox runs `--privileged` with `--dns 8.8.8.8` | **FIXED** | `scripts/piston-up.ps1:120-138` — `--cap-drop=ALL` with a named allow-list, `--cgroupns=private`, `--pids-limit 512`, loopback-only bind, networking disabled. No `--privileged`, no explicit DNS |
+> | **MEDIUM-1** — `trusted_proxy_count` unbounded and silently degrading | **FIXED (one direction)** | `config.py:283` `Field(default=0, ge=0, le=4)`; `client_ip_proxy_hop_underflow_total` counts the too-high case. The too-**low** case is still silent — carried forward as **DG-3** |
+> | **MEDIUM-2** — rate limiting fails open on any Redis error | **FIXED** | `rate_limit_check_skipped_total` in `rate_limit.py:45-50`, and — since 2026-08-07 — consumed by `ops/alerts/rate_limit_fail_open.rules.yml`. The metric alone was **not** enough to close this; that gap was itself re-reported as **DG-6** |
+> | **MEDIUM-3** — `/metrics` has no application-layer authentication | **FIXED** | `shared/metrics_auth.py` wired into all four services; bearer token required, fails **closed** (404) in production when `METRICS_TOKEN` is unset |
+>
+> **Current verdict lives in [`docs/code-review-2026-08-07.md`](code-review-2026-08-07.md)**,
+> which supersedes this report and its companion `code-review-s5.md`. That review
+> re-verified every item above by opening the file at HEAD rather than trusting
+> this document.
+
+---
+
 Audits the surfaces the Sprint-5 hardening cycle did **not** reach. It does not
 re-prove the vulnerabilities closed in that cycle — those are verified in §1 —
 and it changes no application code. Findings are ranked for later remediation
@@ -261,6 +292,13 @@ of Sensitive Information Before Storage or Transfer)
 ---
 
 ## 4. Verdict
+
+> **⚠ This verdict is HISTORICAL (2026-08-06) and no longer applies.** Both
+> HIGH findings were fixed at `352f366` and re-verified at HEAD on 2026-08-07 —
+> see the reconciliation table at the top of this file. Repeated here because a
+> reader arriving on a deep link to §4 would otherwise read a live production
+> block. The block below is preserved, not corrected: it is the record of why
+> the fixes were required.
 
 ```
 Verdict for production deploy: BLOCKED — on HIGH-1 and HIGH-2.

@@ -15,11 +15,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from shared.llm.gemini import MAX_ATTEMPTS
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.scorer import (
-    _GEMINI_MAX_ATTEMPTS,
     _WEIGHTS,
     ScoringError,
     _clamp,
@@ -113,7 +113,7 @@ async def test_score_session_returns_scorecard_id() -> None:
 
     mock_response = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
 
-    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -157,7 +157,7 @@ async def test_score_session_sends_api_key_via_header_not_url() -> None:
 
     mock_response = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
 
-    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -201,7 +201,7 @@ async def test_score_session_tolerates_trailing_commas() -> None:
     }
     mock_response.text = ""
 
-    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -238,7 +238,7 @@ async def test_score_session_includes_jd_in_prompt() -> None:
 
     jd = "Must know Spring Boot and Kubernetes."
 
-    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -297,7 +297,7 @@ async def test_score_session_clamps_out_of_range_scores() -> None:
 
     mock_db.execute = _capture_execute  # type: ignore[method-assign]
 
-    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -346,7 +346,12 @@ async def test_score_session_raises_on_gemini_error() -> None:
         text_body="Internal Server Error",
     )
 
-    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+    # 500 is a RETRY status, so this test walks the whole backoff ladder; the
+    # sleep is stubbed or the suite pays 1+2+4 real seconds for it.
+    with (
+        patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls,
+        patch("shared.llm.gemini.asyncio.sleep", new=AsyncMock()),
+    ):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -440,8 +445,8 @@ async def test_score_session_retries_on_503_then_succeeds() -> None:
     resp_200 = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
 
     with (
-        patch("app.scorer.httpx.AsyncClient") as mock_client_cls,
-        patch("app.scorer.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls,
+        patch("shared.llm.gemini.asyncio.sleep", new=AsyncMock()) as mock_sleep,
     ):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -468,15 +473,15 @@ async def test_score_session_retries_on_503_then_succeeds() -> None:
 
 @pytest.mark.asyncio
 async def test_score_session_gives_up_after_max_503() -> None:
-    """Persistent 503 → ScoringError after _GEMINI_MAX_ATTEMPTS, no DB write."""
+    """Persistent 503 → ScoringError after MAX_ATTEMPTS, no DB write."""
     mock_db = _make_db_session()
     mock_settings = _make_settings()
 
     resp_503 = _make_httpx_response(status_code=503, text_body="high demand")
 
     with (
-        patch("app.scorer.httpx.AsyncClient") as mock_client_cls,
-        patch("app.scorer.asyncio.sleep", new=AsyncMock()),
+        patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls,
+        patch("shared.llm.gemini.asyncio.sleep", new=AsyncMock()),
     ):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -495,7 +500,7 @@ async def test_score_session_gives_up_after_max_503() -> None:
                 settings=mock_settings,
             )
 
-        assert mock_client.post.await_count == _GEMINI_MAX_ATTEMPTS
+        assert mock_client.post.await_count == MAX_ATTEMPTS
     mock_db.commit.assert_not_called()
 
 
@@ -508,8 +513,8 @@ async def test_score_session_does_not_retry_on_403() -> None:
     resp_403 = _make_httpx_response(status_code=403, text_body="permission denied")
 
     with (
-        patch("app.scorer.httpx.AsyncClient") as mock_client_cls,
-        patch("app.scorer.asyncio.sleep", new=AsyncMock()),
+        patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls,
+        patch("shared.llm.gemini.asyncio.sleep", new=AsyncMock()),
     ):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -560,7 +565,7 @@ async def test_score_session_stores_axis_feedback_nested_in_rationale() -> None:
     }
     mock_response = _make_httpx_response(json_body=body)
 
-    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -597,7 +602,7 @@ async def test_score_session_missing_axis_feedback_does_not_fail() -> None:
     mock_db = _make_db_session()
     mock_response = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
 
-    with patch("app.scorer.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -629,3 +634,138 @@ def test_scorer_prompt_documents_axis_feedback() -> None:
     assert '"axis_feedback"' in SCORER_PROMPT_TEMPLATE
     assert '"went_wrong"' in SCORER_PROMPT_TEMPLATE
     assert '"how_to_improve"' in SCORER_PROMPT_TEMPLATE
+
+
+# ---------------------------------------------------------------------------
+# JSON recovery (FB-2)
+#
+# The scorer used to run the WEAKEST recovery of the three Gemini callers in
+# this service, on the one path whose output is the candidate's scorecard: it
+# handled a code fence and a trailing comma and nothing else. Each test below
+# is a response that the exam generator already salvaged (or already
+# diagnosed) and that this module used to turn into a lost scorecard.
+# ---------------------------------------------------------------------------
+
+
+def _raw_response(raw_text: str, finish_reason: str = "STOP") -> MagicMock:
+    """A 200 whose candidate carries *raw_text* verbatim — not json.dumps'd."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [
+            {"content": {"parts": [{"text": raw_text}]}, "finishReason": finish_reason}
+        ]
+    }
+    mock_resp.text = ""
+    return mock_resp
+
+
+async def _score_with(response: MagicMock, mock_db: AsyncMock) -> tuple[str, Any, Any]:
+    """Run score_session against a single mocked Gemini response."""
+    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=response)
+        mock_client_cls.return_value = mock_client
+
+        return await score_session(
+            session_id=str(uuid.uuid4()),
+            job_title="Junior Java Developer",
+            experience_level="entry",
+            language="en",
+            turns=_SAMPLE_TURNS,
+            db_session=mock_db,
+            settings=_make_settings(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_scorer_recovers_json_wrapped_in_prose() -> None:
+    """A stray sentence around the object must not cost the candidate a scorecard.
+
+    Brace-span extraction: the exam generator has had it since the HF Space
+    incident, the scorer never grew it, so the identical response produced exam
+    questions on one path and a 502 on the other.
+    """
+    mock_db = _make_db_session()
+    raw = (
+        "Here is the scorecard you asked for:\n"
+        + json.dumps(_GOOD_GEMINI_RESPONSE)
+        + "\nLet me know if you need anything else."
+    )
+
+    scorecard_id, scores, _ = await _score_with(_raw_response(raw), mock_db)
+
+    assert uuid.UUID(scorecard_id)
+    assert scores == dict(_GOOD_SCORES)
+    mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scorer_repairs_a_raw_newline_inside_a_string() -> None:
+    """Even in JSON mode Gemini emits raw newlines inside strings — a quoted
+    transcript line is exactly the payload that triggers it. json_repair
+    salvages it; scoring must not fail on a recoverable response."""
+    mock_db = _make_db_session()
+    broken = json.dumps(_GOOD_GEMINI_RESPONSE).replace(
+        "A solid entry-level", "A solid\nentry-level", 1
+    )
+
+    scorecard_id, scores, _ = await _score_with(_raw_response(broken), mock_db)
+
+    assert uuid.UUID(scorecard_id)
+    assert scores == dict(_GOOD_SCORES)
+    mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scorer_truncation_error_names_the_output_budget() -> None:
+    """A cut-off response is a budget ticket, not a model-quality ticket.
+
+    The old error said only "not valid JSON", which does not tell an operator
+    whether to raise maxOutputTokens or to go read the prompt. It must also NOT
+    be json_repair'd: closing the braces on a half-written scorecard would
+    persist invented scores.
+    """
+    mock_db = _make_db_session()
+    truncated = '{\n  "scores": {\n    "communication": 7,\n    "techni'
+
+    with pytest.raises(ScoringError) as excinfo:
+        await _score_with(_raw_response(truncated, finish_reason="MAX_TOKENS"), mock_db)
+
+    assert "MAX_TOKENS" in excinfo.value.message
+    assert "maxOutputTokens" in excinfo.value.message
+    mock_db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scorer_blocked_prompt_error_names_the_block_reason() -> None:
+    """A safety-blocked prompt returns promptFeedback and NO candidates.
+
+    The old code indexed candidates[0] and reported the resulting KeyError,
+    which reads like a bug in the scorer rather than a blocked prompt.
+    """
+    mock_db = _make_db_session()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"promptFeedback": {"blockReason": "SAFETY"}}
+    mock_resp.text = ""
+
+    with pytest.raises(ScoringError) as excinfo:
+        await _score_with(mock_resp, mock_db)
+
+    assert "SAFETY" in excinfo.value.message
+    mock_db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scorer_rejects_a_json_array_with_a_readable_error() -> None:
+    """A bare array would reach the axis validation as an AttributeError."""
+    mock_db = _make_db_session()
+
+    with pytest.raises(ScoringError) as excinfo:
+        await _score_with(_raw_response("[7, 6, 8, 7]"), mock_db)
+
+    assert "list" in excinfo.value.message
+    mock_db.commit.assert_not_called()

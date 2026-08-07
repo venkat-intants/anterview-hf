@@ -5,6 +5,35 @@
 
 ---
 
+> ## ⚠ SUPERSEDED — historical planning document (banner added 2026-08-07)
+>
+> **Last substantively updated 2026-05-29.** Roughly ten weeks of shipped work
+> are not reflected below: Sprints 5–7 are complete, the three-tier admin
+> hierarchy (`platform_owner` → `super_admin` → `hr_manager`) landed 2026-06-25,
+> the intelligence and agent packages landed 2026-08-01, and several vendor and
+> stack decisions have changed. Sprint statuses such as "IN SPRINT" and
+> "In progress" below are frozen at 2026-05-29 and should not be read as the
+> current state.
+>
+> **Kept, not deleted.** The Sprint 1–5 plan of record is RFP-traceability
+> evidence: it shows what was committed, when, and against which RFP clause.
+>
+> **For the current state, read [`CLAUDE.md`](../CLAUDE.md)** ("Current Phase"
+> and the two-tier stack tables), which is maintained.
+>
+> **Vendor lines have been corrected inline rather than left to this banner**,
+> because a stale *supplier* name in a bid-adjacent document is a factual error
+> about a third party, not merely an out-of-date status. **D-ID was removed on
+> 2026-05-31 and is not the avatar vendor.** The current demo-tier vendor is
+> **Tavus via LiveKit** (`AVATAR_PROVIDER=tavus`), with **Simli** supported as
+> the alternative (`AVATAR_PROVIDER=simli`) — so the old "Simli removed
+> 2026-05-28 — do not re-introduce" constraint is also void. Corrected: the
+> Phase 0 vendor line, the Phase 1 credentials line, the Sprint 10 row and the
+> Hard Constraints block. D-ID mentions in the *completed-sprint* rows are left
+> as written — they are an accurate record of what shipped at the time.
+
+---
+
 ## Phase 0 — Agent Team Setup (COMPLETE)
 **Duration:** ~1 week (pre-Sprint 1)
 
@@ -13,13 +42,22 @@
 - `interview_core` FastAPI scaffold running with `/health/deep` (all 6 deps green)
 - Local Docker stack: Postgres 16 + pgvector, Redis 7, MinIO, Mailpit
 - Design docs finalized: HLD, LLD, Final_stack v1.1
-- Avatar vendor: D-ID Talks Streams (demo-only, CFO-approved 2026-05-28, sunset 2026-11-28); Simli removed
+- Avatar vendor: ~~D-ID Talks Streams (demo-only, CFO-approved 2026-05-28, sunset 2026-11-28); Simli removed~~
+  **CORRECTED 2026-08-07 — D-ID was removed from the stack on 2026-05-31 and is
+  not a supplier to this project.** The demo-tier avatar vendor is **Tavus via
+  LiveKit** (`AVATAR_PROVIDER=tavus`, echo-mode persona), with **Simli** as the
+  supported alternative (`AVATAR_PROVIDER=simli`). Both are demo-only: neither
+  offers India data residency and both exceed the ₹12/session cap, so the
+  Tier-2 production path remains the custom Three.js + Ready Player Me +
+  Rhubarb-Lipsync avatar (`AVATAR_PROVIDER=custom`). See `CLAUDE.md`.
 
 ---
 
 ## Phase 1 — Foundation Build (Month 1–2)
 **Target:** End-to-end auth, database, full voice interview loop, multilingual avatar experience.
-**Demo-stack credentials active:** Gemini (LLM), Sarvam AI (STT/TTS), D-ID (avatar), OpenAI (embeddings).
+**Demo-stack credentials active:** Gemini (LLM), Sarvam AI (STT/TTS), ~~D-ID~~
+**Tavus via LiveKit** (avatar — corrected 2026-08-07; D-ID removed 2026-05-31),
+OpenAI (embeddings).
 
 | Sprint | Goal | Key Deliverable | Status |
 |---|---|---|---|
@@ -47,7 +85,7 @@
 | Sprint | Goal | Key Deliverable |
 |---|---|---|
 | Sprint 8–9 | AWS Tier 2 migration | AWS Bedrock LLM swap; AWS RDS + ElastiCache; S3 Mumbai (SSE-KMS); Helm charts; ArgoCD pipeline |
-| Sprint 10 | Custom avatar | Three.js + Ready Player Me replacing D-ID; Rhubarb-Lipsync pipeline |
+| Sprint 10 | Custom avatar | Three.js + Ready Player Me replacing the hosted avatar vendor (**Tavus** — corrected 2026-08-07; this row said "D-ID", removed 2026-05-31); Rhubarb-Lipsync pipeline |
 | Sprint 11 | Security + compliance | DPDP consent ledger hardening; penetration test + remediation; load test 20 lakh users capacity proof |
 | Sprint 12 | Bid submission | Final RFP traceability matrix review; security-auditor sign-off; submission package |
 
@@ -60,8 +98,15 @@
 - 22 Indian language support: EN/HI/TE Day-1 (Sprint 3 done); full 22 by Phase 3
 - All phases gate on `security-auditor` sign-off before production deploy
 - Naipunyam SSO (S5-003) — **shipping Sprint 5; APSSDC bid cannot be submitted without it**
-- D-ID avatar sunset: 2026-11-28 (hard gate; Three.js custom avatar must be live before then)
-- Simli removed entirely 2026-05-28 — do not re-introduce
+- ~~D-ID avatar sunset: 2026-11-28 (hard gate; Three.js custom avatar must be live before then)~~
+  **CORRECTED 2026-08-07:** D-ID was removed from the stack on 2026-05-31, so
+  this sunset date is void. The constraint it encoded still holds under a new
+  vendor: the hosted avatar (**Tavus via LiveKit**) has no India data residency
+  and is over the ₹12/session cap, so the custom Three.js avatar must be live
+  before any government bid or production deploy.
+- ~~Simli removed entirely 2026-05-28 — do not re-introduce~~
+  **CORRECTED 2026-08-07:** Simli is supported again as the alternative avatar
+  provider (`AVATAR_PROVIDER=simli`). This "do not re-introduce" line is void.
 
 ---
 

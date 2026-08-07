@@ -15,8 +15,10 @@ Cloud / pgBouncer note:
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from typing import Annotated
 from urllib.parse import urlsplit
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -104,3 +106,12 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     factory = get_session_factory()
     async with factory() as session:
         yield session
+
+
+# The annotated alias belongs next to the dependency it wraps (DG-1). Eight
+# routers used to import it from app/routers/hr_applicants.py, which made a
+# single applicant router the de-facto owner of every other router's DB session
+# — and pulled that router's S3, embedding and scoring clients into the import
+# graph of candidate-facing endpoints that never touch them. hr_applicants.py
+# re-exports this name, so existing call sites are unchanged.
+DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]

@@ -12,12 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import structlog
 from jinja2 import BaseLoader, Environment
 from shared.intelligence import (
@@ -26,6 +24,7 @@ from shared.intelligence import (
     render_competency_output_spec,
     render_scoring_rubric_block,
 )
+from shared.llm import call_gemini_json
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -44,16 +43,23 @@ log = structlog.get_logger(__name__)
 
 SCORER_VERSION: str = "1.0"
 
-# Removes a trailing comma before a closing } or ] (invalid JSON Gemini sometimes
-# emits): matches ",  }" / ",\n]" etc. and keeps just the bracket.
-_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+# The transport, retry ladder and JSON-recovery constants that used to live here
+# now live in shared.llm.gemini — see step 2 of score_session below for why this
+# path in particular had to stop owning its own copy.
 
-# Transient Gemini HTTP statuses worth retrying: 429 rate-limit, plus gateway /
-# overload errors (503 "high demand" is the common one on the free tier). A 4xx
-# like 400/403 is a real problem (bad prompt / key) and is NOT retried.
-_GEMINI_RETRY_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
-_GEMINI_MAX_ATTEMPTS: int = 4  # 1 initial + 3 retries
-_GEMINI_BACKOFF_BASE_SECONDS: float = 1.0  # exponential: 1s, 2s, 4s
+# Output budget for the scorer's JSON. Raised from 2048→4096→6144 as the output
+# grew (scores + per-axis rationale + per-axis went_wrong/how_to_improve bullets
+# + strengths + improvements + summary). With JSON mode and thinking disabled the
+# whole budget goes to the JSON; too small a cap truncates it mid-string.
+_MAX_OUTPUT_TOKENS: int = 6144
+
+# Scoring must be repeatable: the same transcript should not swing a grade
+# between runs, so this is the lowest temperature the axes still discriminate at.
+_TEMPERATURE: float = 0.2
+
+# Whole-request timeout per attempt. Scoring runs after the candidate has left,
+# so a slow response is cheaper than a lost scorecard.
+_TIMEOUT_SECONDS: float = 60.0
 
 # Axis weights for composite score (LLD §10).
 _WEIGHTS: dict[str, float] = {
@@ -392,91 +398,28 @@ async def score_session(
             "## Additional output\n" + render_competency_output_spec(role_profile),
         )
 
-    # ---- 2. Call Gemini ---------------------------------------------------
-    # Auth via x-goog-api-key header (not ?key=) so the key never lands in
-    # request URLs / proxy access logs — see app/embedder.py for the same
-    # rationale, first applied there.
-    url = f"{settings.gemini_api_base_url}/models/{settings.gemini_model}:generateContent"
-    headers = {"x-goog-api-key": settings.gemini_api_key}
-    generation_config: dict[str, Any] = {
-        "temperature": 0.2,
-        # Raised from 2048→4096→6144 as the output grew (scores + per-axis
-        # rationale + per-axis went_wrong/how_to_improve bullets + strengths +
-        # improvements + summary). With JSON mode + thinking disabled the whole
-        # budget goes to the JSON; a too-small cap truncates it mid-string and
-        # the parse fails.
-        "maxOutputTokens": 6144,
-        # JSON mode (B-041) — forces well-formed, fence-free JSON. Without it
-        # the scorer truncated/malformed its JSON and 502'd, so the candidate
-        # never got a scorecard.
-        "responseMimeType": "application/json",
-    }
-    # On Gemini 2.5 "thinking" models, hidden reasoning tokens count against
-    # maxOutputTokens and can truncate the JSON mid-string. Disable thinking so
-    # the whole budget is output. Guarded: pre-2.5 models 400 on thinkingConfig.
-    if "2.5" in settings.gemini_model:
-        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
-    body: dict[str, Any] = {
-        "contents": [{"role": "user", "parts": [{"text": rendered}]}],
-        "generationConfig": generation_config,
-    }
+    # ---- 2. Call Gemini (transport + JSON recovery: shared.llm.gemini) -----
+    # This module used to carry its own copy of the request/retry/parse
+    # scaffolding, and that copy had the WEAKEST JSON recovery of the three in
+    # this service: no outermost-{...} extraction, no finishReason in the error,
+    # no json_repair. So a response the exam generator salvaged became a 502
+    # here — on the one path where the output is the candidate's scorecard.
+    # The shared caller is the exam generator's version, not the average of the
+    # three, and header auth (never ?key=) travels with it.
+    parsed: dict[str, Any] = await call_gemini_json(
+        rendered,
+        api_base_url=settings.gemini_api_base_url,
+        model=settings.gemini_model,
+        api_key=settings.gemini_api_key,
+        temperature=_TEMPERATURE,
+        max_output_tokens=_MAX_OUTPUT_TOKENS,
+        timeout=_TIMEOUT_SECONDS,
+        # Kept as this module's own type: routers/score.py catches ScoringError
+        # by name and logs score.gemini_error.
+        error_cls=ScoringError,
+    )
 
-    # Retry on transient failures (notably 503 "high demand" on the free tier)
-    # with exponential backoff, so a momentary Gemini hiccup does not cost the
-    # candidate their scorecard. Non-transient errors (bad key/prompt) fail fast.
-    response = None
-    last_error = "no attempt made"
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        for attempt in range(_GEMINI_MAX_ATTEMPTS):
-            try:
-                response = await client.post(url, json=body, headers=headers)
-            except httpx.RequestError as exc:
-                response = None
-                last_error = f"request error: {exc}"
-            else:
-                if response.status_code == 200:
-                    break
-                last_error = f"HTTP {response.status_code}: {response.text[:300]}"
-                if response.status_code not in _GEMINI_RETRY_STATUSES:
-                    break  # non-transient (e.g. 400/403) — do not retry
-            if attempt < _GEMINI_MAX_ATTEMPTS - 1:
-                backoff = _GEMINI_BACKOFF_BASE_SECONDS * (2**attempt)
-                log.warning(
-                    "score.gemini_retry",
-                    attempt=attempt + 1,
-                    max_attempts=_GEMINI_MAX_ATTEMPTS,
-                    backoff_s=backoff,
-                    error=last_error,
-                )
-                await asyncio.sleep(backoff)
-
-    if response is None or response.status_code != 200:
-        raise ScoringError(
-            f"Gemini call failed after {_GEMINI_MAX_ATTEMPTS} attempt(s): {last_error}"
-        )
-
-    # ---- 3. Parse response -----------------------------------------------
-    try:
-        resp_data: dict[str, Any] = response.json()
-        raw_text: str = resp_data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError, json.JSONDecodeError) as exc:
-        raise ScoringError(f"Failed to extract text from Gemini response: {exc}") from exc
-
-    # Strip markdown fences if the model wrapped its JSON.
-    cleaned = raw_text.strip()
-    if cleaned.startswith("```"):
-        # Remove opening ```json or ``` fence, then closing ```, then whitespace.
-        cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    # Gemini occasionally emits a trailing comma before a closing } or ] which is
-    # invalid JSON — strip it so a recoverable response doesn't 502 the scorer.
-    cleaned = _TRAILING_COMMA_RE.sub(r"\1", cleaned)
-
-    try:
-        parsed: dict[str, Any] = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise ScoringError(f"Gemini response was not valid JSON: {exc}") from exc
-
-    # ---- 4. Validate and clamp scores ------------------------------------
+    # ---- 3. Validate and clamp scores -------------------------------------
     raw_scores: dict[str, Any] = parsed.get("scores", {})
     required_axes = list(_WEIGHTS.keys())
     for axis in required_axes:
@@ -546,10 +489,10 @@ async def score_session(
                 # self-serve practice plan reads on every dashboard load.
                 rationale["_competencies"] = breakdown
 
-    # ---- 5. Compute composite score --------------------------------------
+    # ---- 4. Compute composite score --------------------------------------
     composite = _compute_composite(scores, active_weights)
 
-    # ---- 6. Persist scorecard row ----------------------------------------
+    # ---- 5. Persist scorecard row ----------------------------------------
     # Import here to avoid circular — the Scorecard model lives in data_gateway
     # but feedback_billing uses its own shared DB session pointing at the same DB.
     # We do a raw INSERT via SQLAlchemy core to avoid an ORM model dependency
@@ -609,7 +552,7 @@ async def score_session(
         # NEVER log transcript text — PII.
     )
 
-    # ---- 7. Fire-and-forget PDF generation ----------------------------------
+    # ---- 6. Fire-and-forget PDF generation ----------------------------------
     # Only attempt if we have a candidate name and S3 credentials are configured.
     if candidate_name and settings.s3_access_key_id:
         from app.pdf_render import (

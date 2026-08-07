@@ -780,3 +780,97 @@ async def test_degrade_interrupt_failure_does_not_abort_swap() -> None:
 
     assert ok is True
     assert session.output.audio is fake_output
+
+
+# ---------------------------------------------------------------------------
+# IC-5 — the private livekit symbol the fallback depends on
+# ---------------------------------------------------------------------------
+# _ParticipantAudioOutput lives in livekit.agents.voice.room_io._output — a
+# PRIVATE module of a pinned dependency. It used to be imported unguarded at
+# module scope, so a livekit-agents upgrade that moved or renamed it would stop
+# the worker STARTING: every interview fails, including the ones that would
+# never need the mid-session fallback. It is now imported behind the same
+# try/except the tavus plugin uses, with a capability flag.
+#
+# The guard creates a new risk of its own — a silently-absent symbol degrading
+# an install nobody notices — so both halves are pinned: the symbol IS present
+# on the pinned version, AND its absence degrades cleanly rather than raising a
+# bare TypeError from calling None.
+# ---------------------------------------------------------------------------
+
+from app.worker.interview_worker import (  # noqa: E402 — grouped with its test section
+    _PARTICIPANT_AUDIO_OUTPUT_AVAILABLE,
+)
+
+
+def test_participant_audio_output_is_present_on_the_pinned_version() -> None:
+    """The guard must not be quietly hiding a broken install.
+
+    livekit-agents is pinned in requirements.txt, so on the supported version
+    this flag is True. When it flips, the mid-session voice-only fallback is
+    GONE — this test failing is the notice that an upgrade needs a new home for
+    the audio-output class, and is what the unguarded import used to provide by
+    crashing the worker.
+    """
+    assert _PARTICIPANT_AUDIO_OUTPUT_AVAILABLE is True, (
+        "livekit.agents.voice.room_io._output._ParticipantAudioOutput is no "
+        "longer importable. The worker still starts (that is the point of the "
+        "guard), but the mid-session avatar-death fallback is disabled: find "
+        "the class's new home before shipping this upgrade."
+    )
+
+
+@pytest.mark.asyncio
+async def test_degrade_returns_false_when_the_private_symbol_is_absent() -> None:
+    """With the symbol gone the fallback must degrade, not raise or half-swap."""
+    session = MagicMock()
+    original_output = session.output.audio
+    room = MagicMock()
+
+    with (
+        patch("app.worker.interview_worker._PARTICIPANT_AUDIO_OUTPUT_AVAILABLE", False),
+        patch("app.worker.interview_worker._ParticipantAudioOutput", None),
+    ):
+        ok = await _degrade_to_voice_only_midsession(session, room, session_id="s-1")
+
+    assert ok is False
+    assert session.output.audio is original_output, (
+        "an unavailable output class must leave the session's audio path alone"
+    )
+    # Nothing should be interrupted when the swap cannot happen: cutting the
+    # interviewer off mid-sentence buys nothing if no new audio path follows.
+    session.interrupt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_death_watch_recovery_survives_missing_symbol() -> None:
+    """The avatar-death handler must not blow up when the fallback is unavailable.
+
+    This is the path that actually runs in production on an upgrade: the avatar
+    dies, _recover() is scheduled, and the degrade fails. It must stay quiet
+    (the interview is already lost) rather than raising out of a task nobody
+    awaits.
+    """
+    avatar, session, room, state = _make_watch_fixtures()
+    _install_avatar_death_watch(
+        avatar=avatar, session=session, room=room, state=state, session_id="s-1"
+    )
+    handler = _installed_handler(room)
+
+    participant = MagicMock()
+    participant.identity = _AVATAR_ID
+
+    with (
+        patch("app.worker.interview_worker._PARTICIPANT_AUDIO_OUTPUT_AVAILABLE", False),
+        patch("app.worker.interview_worker._ParticipantAudioOutput", None),
+    ):
+        handler(participant)
+        # Drain the recovery task the handler just scheduled. gather() rather
+        # than a sleep so the test fails on a raised exception instead of
+        # racing it.
+        current = asyncio.current_task()
+        await asyncio.gather(*(t for t in asyncio.all_tasks() if t is not current))
+
+    # No reassurance should be spoken when the audio path was never restored —
+    # the candidate would hear nothing anyway.
+    session.generate_reply.assert_not_awaited()

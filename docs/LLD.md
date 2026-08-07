@@ -2478,26 +2478,63 @@ flags:
 
 > **Cut in v1.1:** Chaos testing (Litmus) removed from Phase-1. Reintroduce in Year-2 if budget allows.
 
-**Coverage target:** 80% line coverage on services; 90% on critical paths (auth, billing, scoring).
+### 15.1 Coverage — the TARGET and the ENFORCED floor are different numbers
 
-**Coverage ENFORCED in CI (as of 2026-08-06).** The target above was documented
-for months while nothing measured coverage, so it was an aspiration presented as
-a standard. `.github/workflows/ci.yml` now runs `pytest --cov` per service and
-fails the build below a floor:
+Two numbers live in this section and they must never be read as one. Keeping
+them visibly apart is the point of the layout below.
 
-| Service | Measured | Enforced floor | Meets the 80% target |
-|---|---|---|---|
-| `data_gateway` | 59% | 55 | No |
-| `interview_core` | 72% | 68 | No |
-| `feedback_billing` | 87% | 83 | Yes |
-| `admin_ops` | 82% | 78 | Yes |
+**Coverage TARGET (aspirational, not enforced):** 80% line coverage on services;
+90% on critical paths (auth, billing, scoring).
+
+> **Do not cite the 80/90 figure as a compliance control in a bid response.**
+> Nothing measures "90% on critical paths" at all — there is no critical-path
+> marker in the suite to measure against — and two of the four services are
+> below 80 today (`data_gateway` 60%, `interview_core` 76%). Citing it invites
+> an evaluator to ask for the evidence, and the evidence contradicts the claim.
+>
+> The **defensible** control is the ratchet in the table below: a gate that runs
+> on every push, fails the build the moment coverage drops, and is raised as the
+> numbers climb. "Coverage is enforced per service and cannot regress" survives
+> an audit. "We target 80%" does not.
+
+**Coverage ENFORCED in CI (re-measured 2026-08-07).** The target above was
+documented for months while nothing measured coverage, so it was an aspiration
+presented as a standard. `.github/workflows/ci.yml` now runs `pytest --cov` per
+service and fails the build below a floor:
+
+<!-- COVERAGE-FLOORS: these four rows are checked against the FLOOR values in
+     .github/workflows/ci.yml by ops/ci/check_coverage_floors.py, which runs in
+     the `invariants` CI job. Editing this table without editing ci.yml (or the
+     reverse) turns the build red. Do not remove the marker — it is what anchors
+     the parser to this table. Columns: measured, enforced floor, margin. -->
+
+| Service | Measured (2026-08-07) | Enforced floor | Margin | Meets the 80% target |
+|---|---|---|---|---|
+| `data_gateway` | 66% | 61% | 5 | No |
+| `interview_core` | 78% | 73% | 5 | No |
+| `feedback_billing` | 91% | 86% | 5 | Yes |
+| `admin_ops` | 88% | 83% | 5 | Yes |
 
 The floors are a **ratchet, not the target**: each is the measured number minus a
-4-point margin for CI-vs-local variance, so the gate fails when coverage *drops*.
+5-point margin for CI-vs-local variance, so the gate fails when coverage *drops*.
 Setting all four to 80 today would fail two services on the first run, and the
 options then are "block every PR" or "switch the gate off" — both end with no
 gate. Raise each floor as its number climbs; the 80/90 target above stands as
 the destination.
+
+A 5-point margin rather than 4: the measurements were taken on Python 3.13
+locally while CI pins 3.12, and `interview_core`'s audio stack has the most
+import-time platform divergence of the four.
+
+**Why this table is machine-checked.** It has drifted from `ci.yml` twice. The
+first time, `ci.yml`'s own comment documented one set of floors while the `case`
+block ten lines below enforced another; the second time (code review 2026-08-07,
+CI-1) this table disagreed with `ci.yml` on three of four floors while a comment
+in `ci.yml` vouched for a synchronisation that no longer held. A comment cannot
+enforce itself, so `ops/ci/check_coverage_floors.py` now does — it parses the
+`case` block, the `ci.yml` comment table and this table, and fails if any of the
+three disagree. **The `case` block is the only value that executes**; these two
+tables describe it.
 
 ---
 

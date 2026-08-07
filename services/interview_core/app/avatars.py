@@ -1,5 +1,14 @@
 """Avatar catalog for the Intants interview platform.
 
+NOT ``app.avatar`` (no trailing "s"). The two names differ by one character and
+both import cleanly, so the wrong one typechecks silently under this repo's
+non-strict mypy. THIS module — ``app.avatars`` — is the LIVE per-session
+catalog: which face and which Sarvam voice a session uses. ``app/avatar/`` is
+the DORMANT Tier-2 transport package holding the provider-neutral
+``AvatarTransport`` interface. If you want a replica_id or a voice, you are in
+the right file; if you want to send speech to an avatar vendor, you want
+``app.avatar``.
+
 Static, in-memory catalog — no DB table, no migration required.
 The ``presenter_id`` DB column (nullable Text) stores the chosen catalog
 ``id`` string (e.g. "anna") per session. Defaults to ``DEFAULT_AVATAR_ID``

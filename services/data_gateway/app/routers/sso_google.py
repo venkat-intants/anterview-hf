@@ -65,11 +65,9 @@ from app.redis_client import get_redis
 # Reuse the canonical, tested DPDP helpers (PII-safe IP/UA hashing with the
 # trusted-proxy gate) so a Google-signin consent row is recorded identically to
 # the POST /consent endpoint — single source of truth for the anti-spoofing logic.
-from app.routers.consent import (
-    _extract_client_ip,
-    _extract_user_agent,
-    _hash_value,
-)
+from app.routers.consent import _hash_value
+from app.utils.cookies import delete_cookie_headers
+from app.utils.request_ip import extract_client_ip, extract_user_agent
 
 log = structlog.get_logger(__name__)
 
@@ -376,24 +374,38 @@ async def callback(
             _expected_binding = str(_parsed.get("binding") or "")
             _pkce_verifier = str(_parsed.get("code_verifier") or "")
 
-    if _expected_binding:
-        _presented = (
-            hashlib.sha256(_binding_cookie.encode()).hexdigest() if _binding_cookie else ""
+    _presented = (
+        hashlib.sha256(_binding_cookie.encode()).hexdigest() if _binding_cookie else ""
+    )
+    # SSO-1: this used to be wrapped in `if _expected_binding:`, so a stored state
+    # whose JSON carried no "binding" key skipped browser binding ENTIRELY — the
+    # exact condition an attacker's forged state produces. The branch existed to
+    # let sessions already in flight when the binding shipped complete their
+    # login; state lives 600 seconds, so that window closed the same day. An
+    # unbound state is now treated the way sso_naipunyam.py has always treated
+    # one: as a forged state.
+    if not _expected_binding or not _presented or not hmac.compare_digest(
+        _presented, _expected_binding
+    ):
+        log.warning(
+            "google.sso.callback.state_not_bound_to_browser",
+            state_prefix=state[:8],
+            had_cookie=bool(_binding_cookie),
         )
-        if not _presented or not hmac.compare_digest(_presented, _expected_binding):
-            log.warning(
-                "google.sso.callback.state_not_bound_to_browser",
-                state_prefix=state[:8],
-                had_cookie=bool(_binding_cookie),
-            )
-            response.delete_cookie(_STATE_COOKIE_NAME, path="/")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="INVALID_OR_EXPIRED_STATE",
-            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="INVALID_OR_EXPIRED_STATE",
+            # Real deletion — see app/utils/cookies.py. The delete_cookie() call
+            # that used to sit here was dropped along with the injected response.
+            headers=delete_cookie_headers(
+                _STATE_COOKIE_NAME, path="/", domain=settings.auth_cookie_domain
+            ),
+        )
 
     # One-shot: the binding must not survive to authorise a second callback.
-    response.delete_cookie(_STATE_COOKIE_NAME, path="/")
+    # This one IS effective — the handler returns normally from here on, so
+    # FastAPI merges the injected response's headers into the real response.
+    response.delete_cookie(_STATE_COOKIE_NAME, path="/", domain=settings.auth_cookie_domain)
 
     # Recover the candidate's consent intent from the state payload (JSON written
     # by initiate). Tolerate a legacy plain-string state (return_url only) — in
@@ -633,8 +645,8 @@ async def callback(
         evidence = {
             "source": "google_sso",
             "version": consent_version,
-            "ip_hash": _hash_value(_extract_client_ip(request)),
-            "user_agent_hash": _hash_value(_extract_user_agent(request)),
+            "ip_hash": _hash_value(extract_client_ip(request)),
+            "user_agent_hash": _hash_value(extract_user_agent(request)),
             "consented_at_iso": now_utc.isoformat(),
         }
         await db.execute(

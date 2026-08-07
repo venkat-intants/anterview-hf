@@ -22,11 +22,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import DbSessionDep
+from app.dependencies import HrCtxDep
 from app.exam_ai_client import ExamGenerationError, generate_coding_questions_remote
 from app.execution import SUPPORTED_LANGUAGES
 from app.models import CodingQuestion, Exam
-from app.routers.hr_applicants import DbSessionDep, HrCtxDep
 from app.routers.hr_exams import _default_section, _get_owned_exam, _require_no_attempts
+from app.utils.ownership import get_owned
 
 log = structlog.get_logger(__name__)
 
@@ -180,17 +182,9 @@ async def _get_coding_exam(db: AsyncSession, company_id: uuid.UUID, exam_id: uui
 async def _get_owned_coding_question(
     db: AsyncSession, company_id: uuid.UUID, exam_id: uuid.UUID, qid: uuid.UUID
 ) -> CodingQuestion:
-    q = await db.scalar(
-        select(CodingQuestion).where(
-            CodingQuestion.id == qid,
-            CodingQuestion.exam_id == exam_id,
-            CodingQuestion.company_id == company_id,
-            CodingQuestion.deleted_at.is_(None),
-        )
+    return await get_owned(
+        db, CodingQuestion, company_id, qid, noun="Question", exam_id=exam_id
     )
-    if q is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found.")
-    return q
 
 
 def _test_cases_payload(items: list[TestCaseIn]) -> list[dict[str, Any]]:

@@ -58,8 +58,10 @@ For each claimed request (one at a time, SKIP LOCKED) it:
        - resume PDFs from users, all resume versions, and applicant rows
          (uploads bucket), deduplicated
      Only proceeds to step 9 when ALL deletes succeed (or the key was
-     already absent from the bucket).  If any delete fails the transaction
-     is rolled back and the row stays in 'pending' for the next poll cycle.
+     already absent from the bucket).  If any delete fails — including
+     "object storage is not configured", which is a failure and not a
+     no-op — the transaction is rolled back and the row stays in 'pending'
+     for the next poll cycle.
   9. Marks the erasure_request row: status='completed', completed_at=NOW(),
      artifacts=<summary dict>.
  10. Writes an audit_log entry with action='dpdp_erasure_completed'.
@@ -85,9 +87,17 @@ minutes of the 30-day scheduled_for timestamp reaching NOW().
 §12 false-claim prevention: the executor will NOT stamp status='completed'
 unless ALL of the following have succeeded:
   a) All DB PII rows have been deleted / anonymised (steps 1-7).
-  b) All collected S3 / R2 object keys have been physically deleted (step 8).
+  b) All collected S3 / R2 object keys have been physically deleted (step 8),
+     as counted by the storage layer itself — ``delete_objects`` returns how
+     many objects it removed and the executor compares that against how many
+     keys it collected.
   If any S3 delete fails the executor rolls back the DB transaction and leaves
   the request in 'pending' so it will be retried on the next poll cycle.
+  "S3 is not configured" is one of those failures. It used to be a silent
+  no-op that still stamped 'completed' with a non-zero object count, because
+  the unconfigured skip lived inside ``delete_objects`` and returned None
+  exactly like a successful delete did. Missing credentials are an operator
+  error to fix, not an erasure to claim.
 
 Tables NOT reached (flagged for review)
 ----------------------------------------
@@ -116,11 +126,22 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import AuditLog, ErasureRequest
+from app.s3_client import StorageNotConfiguredError
 
 if TYPE_CHECKING:
     from app.config import Settings
 
 log = structlog.get_logger(__name__)
+
+
+class ErasureIncompleteError(RuntimeError):
+    """Fewer objects were deleted than the erasure collected keys for.
+
+    Raised so the caller rolls back and the request stays 'pending'. It exists
+    to make the shortfall a *typed* failure rather than a smaller number in the
+    artifacts record that nobody reads until an auditor does.
+    """
+
 
 # How often the executor wakes up and checks for due erasure requests.
 # Configurable via the settings object passed at startup.
@@ -154,14 +175,22 @@ async def _execute_one_erasure(
         request:          The ErasureRequest ORM instance to process.
         system_actor_id:  UUID used as actor_id in the audit_log entry.
         settings:         Admin-ops Settings instance — supplies S3 credentials.
-                          When None, S3 deletion is skipped with a warning
-                          (only acceptable in local dev / CI without storage).
+                          When None, an erasure that collected NO object keys
+                          still completes (there is nothing to delete); one that
+                          collected keys raises, because a completion claim we
+                          cannot back up is worse than a retry.
 
     Raises:
-        SQLAlchemyError: On any DB failure — caller rolls back.
-        ClientError:     When an S3 delete call fails (non-absent key) —
-                         caller rolls back so the request stays in 'pending'.
-        Exception:       Any other unexpected error — caller rolls back.
+        SQLAlchemyError:            On any DB failure — caller rolls back.
+        ClientError:                When an S3 delete call fails (non-absent
+                                    key) — caller rolls back so the request
+                                    stays in 'pending'.
+        StorageNotConfiguredError:  Object keys were collected but storage has
+                                    no Settings / no credentials.
+        ErasureIncompleteError:     Storage reported fewer deletions than the
+                                    keys collected.
+        Exception:                  Any other unexpected error — caller rolls
+                                    back.
     """
     user_id: uuid.UUID = request.user_id
     uid_str = str(user_id)
@@ -431,8 +460,50 @@ async def _execute_one_erasure(
         )
     )
 
-    if settings is not None:
-        from app.s3_client import delete_objects  # local import — avoids circular
+    total_s3_keys = len(scorecard_bucket_keys) + len(resume_bucket_keys)
+
+    # s3_objects_deleted is what an auditor reads, so it is the count
+    # delete_objects REPORTS, never the count we hoped for. It used to be
+    # len(collected keys) guarded only by `settings is not None`, and
+    # delete_objects returned None both when it had deleted everything and when
+    # it had silently skipped the whole phase for want of credentials. A
+    # real-but-unconfigured Settings therefore took the "deleted" branch and
+    # stamped status='completed' with a non-zero count over objects that were
+    # all still in the bucket — the exact false completion this module's
+    # docstring claims to prevent.
+    s3_objects_deleted = 0
+
+    if total_s3_keys == 0:
+        # Nothing was ever stored for this user. Completing is honest here even
+        # with no storage configured, and it keeps local dev / CI usable.
+        log.info(
+            "erasure.executor.s3_delete_not_needed",
+            user_id=uid_str,
+            request_id=str(request.request_id),
+        )
+    elif settings is None:
+        # No Settings at all: we cannot delete, so we cannot claim completion.
+        # Raising leaves the request 'pending' for the next poll cycle, which is
+        # the retryable state — a wrong 'completed' is not retryable at all.
+        log.error(
+            "erasure.executor.s3_delete_unconfigured",
+            user_id=uid_str,
+            request_id=str(request.request_id),
+            total_keys=total_s3_keys,
+            reason="settings=None but object keys were collected — refusing to "
+                   "stamp 'completed'. The request stays pending for retry.",
+        )
+        raise StorageNotConfiguredError(
+            "Erasure collected object keys but no Settings were supplied; "
+            "refusing to claim DPDP §12 completion."
+        )
+    else:
+        # Imported per call, not at module scope: the tests patch
+        # ``app.s3_client.delete_objects``, and a module-scope `from … import`
+        # would capture the real function before any patch could reach it.
+        # (The typed errors above import fine at module scope — there is no
+        # cycle; app.s3_client imports nothing from here.)
+        from app.s3_client import delete_objects
 
         keys_by_bucket: dict[str, list[str]] = {}
         if scorecard_bucket_keys:
@@ -440,7 +511,6 @@ async def _execute_one_erasure(
         if resume_bucket_keys:
             keys_by_bucket[settings.s3_bucket_name] = resume_bucket_keys
 
-        total_s3_keys = len(scorecard_bucket_keys) + len(resume_bucket_keys)
         log.info(
             "erasure.executor.s3_delete_start",
             user_id=uid_str,
@@ -448,22 +518,32 @@ async def _execute_one_erasure(
             total_keys=total_s3_keys,
         )
 
-        # This raises on any non-absent S3 error — caller rolls back.
-        await delete_objects(keys_by_bucket, settings=settings)
+        # Raises on any non-absent S3 error, and on unconfigured storage —
+        # caller rolls back either way.
+        s3_objects_deleted = await delete_objects(keys_by_bucket, settings=settings)
+
+        if s3_objects_deleted < total_s3_keys:
+            # Belt-and-braces: delete_objects raises rather than under-deleting,
+            # so reaching here means its contract changed. Fail loudly instead
+            # of writing the shortfall into the DPDP artifacts record.
+            log.error(
+                "erasure.executor.s3_delete_shortfall",
+                user_id=uid_str,
+                request_id=str(request.request_id),
+                total_keys=total_s3_keys,
+                deleted=s3_objects_deleted,
+            )
+            raise ErasureIncompleteError(
+                f"S3 reported {s3_objects_deleted} of {total_s3_keys} objects "
+                "deleted; refusing to claim DPDP §12 completion."
+            )
 
         log.info(
             "erasure.executor.s3_delete_complete",
             user_id=uid_str,
             request_id=str(request.request_id),
             total_keys=total_s3_keys,
-        )
-    else:
-        log.warning(
-            "erasure.executor.s3_delete_skipped",
-            user_id=uid_str,
-            request_id=str(request.request_id),
-            reason="settings=None — S3 deletion skipped (local dev / CI only). "
-                   "This is NOT acceptable in production.",
+            deleted=s3_objects_deleted,
         )
 
     # ------------------------------------------------------------------
@@ -485,17 +565,12 @@ async def _execute_one_erasure(
         # which double-counted scorecards with a NULL transcript_key and
         # ignored resume versions entirely — so the number written to the DPDP
         # artifacts record did not describe the erasure it claimed to.
-        "s3_objects_deleted": (
-            len(scorecard_bucket_keys) + len(resume_bucket_keys)
-            if settings is not None
-            else 0
-        ),
-        "resume_objects_deleted": (
-            len(resume_bucket_keys) if settings is not None else 0
-        ),
-        "turn_audio_objects_deleted": (
-            len(turn_audio_keys) if settings is not None else 0
-        ),
+        "s3_objects_deleted": s3_objects_deleted,
+        # The per-category counts are safe as collected lengths only because we
+        # never get here unless every collected key was deleted (or there were
+        # none): step 8 raises otherwise.
+        "resume_objects_deleted": len(resume_bucket_keys),
+        "turn_audio_objects_deleted": len(turn_audio_keys),
     }
     await db.execute(
         update(ErasureRequest)
@@ -554,7 +629,8 @@ async def run_erasure_poll(
         system_actor_id:  UUID used as actor_id in audit_log entries.
         settings:         Admin-ops Settings — passed through to
                           ``_execute_one_erasure`` for S3 deletion.  When None,
-                          S3 deletion is skipped (local dev / CI only).
+                          a request with object keys is left pending rather
+                          than falsely completed.
 
     Returns:
         The number of requests successfully completed in this poll cycle.
@@ -652,6 +728,18 @@ async def run_erasure_poll(
                     user_id=str(er.user_id),
                 )
 
+            except (StorageNotConfiguredError, ErasureIncompleteError) as exc:
+                # Named separately from the catch-all below so the log says
+                # "this deployment cannot delete objects" — an operator fix —
+                # rather than burying it in unexpected_error. The row stays
+                # 'pending' and is retried every cycle until storage works.
+                await db.rollback()
+                log.error(
+                    "erasure.executor.storage_refusal",
+                    request_id=rid_str,
+                    exc_type=type(exc).__name__,
+                    exc_msg=str(exc),
+                )
             except SQLAlchemyError as exc:
                 await db.rollback()
                 log.error(

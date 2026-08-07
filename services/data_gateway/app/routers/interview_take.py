@@ -35,10 +35,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import DbSessionDep
 from app.interview_link import hash_interview_token
 from app.models import Applicant, InterviewInvite, Job
 from app.rate_limit import rate_limit
-from app.routers.hr_applicants import DbSessionDep
 
 log = structlog.get_logger(__name__)
 

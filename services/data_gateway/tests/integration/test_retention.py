@@ -46,6 +46,14 @@ from app.models import DpdpConsent, Turn, User
 from app.models import Session as InterviewSession
 from app.retention import purge_expired_sessions
 
+# Requires a LIVE Postgres. Marked so the CI leg's `-m "not integration"`
+# deselects it by MARKER rather than by directory: `--ignore=tests/integration`
+# also threw away the fully-offline SSO suites in this same folder, so 31 tests
+# covering the newest security code in the service never ran in CI. Excluding
+# by marker is what ci.yml's header already says this repo does; this file was
+# one of four that made data_gateway the exception.
+pytestmark = pytest.mark.integration
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

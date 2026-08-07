@@ -330,6 +330,12 @@ async def test_generate_presigned_url_default_expiry_is_short_lived() -> None:
         )
 
     assert url == "https://example.com/signed"
+    # Path-style addressing, from the shared factory. A pre-signed URL is signed
+    # over the host, so getting this wrong does not fail here — it produces a
+    # link to `<bucket>.<account>.r2.cloudflarestorage.com`, which does not
+    # resolve, and the 404 surfaces in the candidate's browser instead.
+    client_kwargs = mock_boto_session.client.call_args.kwargs
+    assert client_kwargs["config"].s3["addressing_style"] == "path"
     call_kwargs = mock_s3.generate_presigned_url.call_args.kwargs
     assert call_kwargs["ExpiresIn"] <= 3600, (
         f"pre-signed scorecard URL lives {call_kwargs['ExpiresIn']}s — long-lived "

@@ -1,0 +1,201 @@
+# Prometheus rules for the data_gateway controls that FAIL OPEN.
+#
+# Why this file exists (code review 2026-08-07, DG-6 / CWE-778):
+# `rate_limit_check_skipped_total` was added by an earlier cycle and correctly
+# named, but nothing in the repo consumed it. A counter nobody scrapes and
+# nobody alerts on is instrumentation, not observability — during an Upstash
+# outage the ONLY trace of "login is unthrottled" was a WARNING line in a log
+# stream nobody watches. This file is the consumer.
+#
+# What is actually off during that outage is broader than rate limiting.
+# `rate_limit.py` and `dependencies._token_epoch` share one Redis client, so
+# they fail open TOGETHER: brute-force protection on /auth/login,
+# /auth/register and /auth/forgot-password stops, AND "log out all devices"
+# stops revoking sessions. Both alerts below say so, because the person paged
+# at 03:00 needs the blast radius, not the metric name.
+#
+# Install: see ops/alerts/README.md. It is not enough to drop this file next to
+# prometheus.yml — the scrape must carry METRICS_TOKEN as a bearer token or
+# every target 401s and every rule here evaluates over no data, silently.
+# ops/alerts/prometheus-scrape.example.yml is that scrape config.
+#
+# Validate before installing (this is the authoritative check; CI runs the
+# structural one in ops/ci/check_alert_rules.py, which does not speak PromQL):
+#
+#   docker run --rm -v "$PWD/ops/alerts":/rules --entrypoint /bin/promtool \
+#     prom/prometheus:v3.1.0 check rules /rules/rate_limit_fail_open.rules.yml
+
+groups:
+  # ---------------------------------------------------------------------
+  # Redis-backed rate limiting (data_gateway/app/rate_limit.py)
+  # ---------------------------------------------------------------------
+  - name: intants.rate_limit.fail_open
+    # 30s rather than the global default: this group only evaluates two cheap
+    # aggregations, and a fail-open window is measured in minutes — a slower
+    # evaluation interval would spend a meaningful fraction of the outage
+    # before the `for:` clock even starts.
+    interval: 30s
+    rules:
+      # Recording rule first so the two alerts, the dashboard and any ad-hoc
+      # query all read the SAME series. When the alert and the graph compute
+      # their own rate() over different windows, an on-call engineer checking
+      # the graph "disproves" the page and closes it.
+      - record: job_bucket:rate_limit_check_skipped:rate5m
+        expr: |
+          sum by (job, instance, service, bucket, error_type) (
+            rate(rate_limit_check_skipped_total[5m])
+          )
+
+      # Rolled up across buckets — what a status page or a dashboard tile
+      # wants. Kept as a separate series rather than re-aggregating in the
+      # alert, so the alert cannot drift from the tile.
+      - record: job:rate_limit_check_skipped:rate5m
+        expr: |
+          sum by (job, instance, service) (
+            job_bucket:rate_limit_check_skipped:rate5m
+          )
+
+      # NOTE ON `absent()`: it is deliberately NOT used here. The counter is
+      # labelled (bucket, error_type), and prometheus_client does not export a
+      # labelled child until it is first incremented — so the series is absent
+      # in the HEALTHY state and absent() would fire permanently. Staleness of
+      # the whole pipeline is covered by MetricsScrapeDown below instead.
+      - alert: RateLimitFailingOpen
+        expr: job_bucket:rate_limit_check_skipped:rate5m > 0
+        # 2m, not 0m: a single Upstash connection reset produces one skip, and
+        # paging on one skipped check would train people to ignore this alert
+        # — which is how the control ends up unobserved again.
+        for: 2m
+        labels:
+          severity: warning
+          component: data_gateway
+          control: rate_limit
+        annotations:
+          summary: >-
+            Rate limiting is failing open on {{ $labels.service }}
+            (bucket {{ $labels.bucket }}, {{ $labels.error_type }})
+          description: >-
+            Redis is unreachable from data_gateway, so rate-limit checks are
+            being SKIPPED (fail-open by design, see rate_limit.py). While this
+            fires, brute-force protection on /auth/login, /auth/register and
+            /auth/forgot-password is inactive, and — because the JWT
+            revocation-epoch check uses the same Redis client — "log out all
+            devices" is not revoking sessions either.
+          impact: >-
+            Credential-stuffing against /auth/login is unthrottled. Compensating
+            controls that do NOT depend on Redis still hold: bcrypt cost 12,
+            256-bit opaque reset tokens, uniform 404s on enumeration probes.
+          runbook: >-
+            1. Check Upstash/Redis health and REDIS_URL for the data_gateway
+            instance. 2. Confirm the error_type label: ConnectionError points at
+            the network or a dropped idle connection (see
+            shared/redis_factory.py), ResponseError at credentials or a quota.
+            3. Watch rate_limit_exceeded_total return to non-zero once Redis is
+            back — that is the proof throttling resumed, not the absence of
+            this alert.
+
+      - alert: RateLimitFailingOpenSustained
+        expr: job:rate_limit_check_skipped:rate5m > 0
+        # 15m: past this point it is an outage, not a blip, and the security
+        # posture has been degraded long enough to be worth an incident and a
+        # look at the auth logs afterwards.
+        for: 15m
+        labels:
+          severity: critical
+          component: data_gateway
+          control: rate_limit
+        annotations:
+          summary: >-
+            Rate limiting has been failing open for 15m on
+            {{ $labels.service }}
+          description: >-
+            Sustained Redis unavailability. Authentication throttling and
+            session revocation have both been off for at least 15 minutes.
+          impact: >-
+            Treat as a security incident, not only an availability one. After
+            recovery, review auth logs for the outage window for a burst of
+            failed logins from a single IP or a spread of IPs against one
+            account.
+          runbook: >-
+            Restore Redis. If it cannot be restored quickly, consider putting
+            /auth/* behind an edge rate limit (Caddy) until it is — that is the
+            only throttle available while this fires.
+
+  # ---------------------------------------------------------------------
+  # The scrape itself.
+  # ---------------------------------------------------------------------
+  - name: intants.metrics.pipeline
+    interval: 30s
+    rules:
+      # The alerts above are worth exactly nothing if the scrape is broken, and
+      # a broken scrape looks IDENTICAL to a healthy service: no series, no
+      # alert, green dashboard. This is the guard for that, and it is the
+      # reason the scrape config is committed alongside the rules rather than
+      # left as an operator exercise.
+      #
+      # It also catches the specific misconfiguration this repo introduced with
+      # M-6: /metrics now requires `Authorization: Bearer $METRICS_TOKEN`, and
+      # with APP_ENV=production and METRICS_TOKEN unset the endpoint answers
+      # 404 (fail closed, see shared/metrics_auth.py). A rotated, missing or
+      # mistyped token turns every target down here — which is the intended
+      # signal, because at that point nothing else in this file can fire.
+      - alert: MetricsScrapeDown
+        expr: up{job="intants-services"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: observability
+        annotations:
+          summary: "Prometheus cannot scrape {{ $labels.instance }}"
+          description: >-
+            The target has been unscrapeable for 5 minutes. Every alert in
+            intants.rate_limit.fail_open is blind while this is firing.
+          runbook: >-
+            Check the scrape error on Prometheus' /targets page. A 401 means the
+            bearer token does not match METRICS_TOKEN for that service; a 404
+            with APP_ENV=production means METRICS_TOKEN is unset there (the
+            endpoint fails closed as 404 on purpose, so an unauthenticated
+            prober cannot distinguish it from a service that never registered
+            the route); a connection refusal means the service or the network
+            path is down.
+
+  # ---------------------------------------------------------------------
+  # Sibling fail-open control, same file because it is the same failure class.
+  # ---------------------------------------------------------------------
+  - name: intants.client_ip.fail_open
+    interval: 30s
+    rules:
+      # routers/consent.py's header comment states these counters exist "so the
+      # degraded state can be alerted on". This is that alert; without it the
+      # sentence was a claim about a file that did not exist.
+      #
+      # Note the asymmetry, recorded honestly: this counter only catches
+      # TRUSTED_PROXY_COUNT set too HIGH. Set too LOW, the extractor trusts a
+      # client-supplied hop and every attacker gets their own rate-limit
+      # bucket, with no counter to show for it (code review DG-3). Do not read
+      # a silent version of this alert as "the proxy count is correct".
+      - alert: ClientIpProxyHopUnderflow
+        expr: |
+          sum by (job, instance, service) (
+            rate(client_ip_proxy_hop_underflow_total[5m])
+          ) > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: data_gateway
+          control: client_ip
+        annotations:
+          summary: >-
+            TRUSTED_PROXY_COUNT looks too high on {{ $labels.service }}
+          description: >-
+            X-Forwarded-For arrived with fewer hops than TRUSTED_PROXY_COUNT, so
+            the socket peer was used as the client IP. Behind a proxy that peer
+            is the proxy, so per-IP rate limiting collapses into ONE global
+            bucket shared by every user, and the DPDP consent IP hash records
+            the proxy rather than the candidate.
+          runbook: >-
+            Count the proxies actually in front of data_gateway for this
+            deployment (Caddy = 1; Caddy behind a cloud LB = 2) and set
+            TRUSTED_PROXY_COUNT to exactly that. A steady low rate usually means
+            direct-to-service health checks bypassing the proxy, not a
+            misconfiguration.

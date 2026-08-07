@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     naipunyam_saml_cert_path: str = ""
     naipunyam_api_base_url: str = ""
     naipunyam_api_key: str = ""
+    # OUR public OAuth callback URL, sent as redirect_uri in the authorize
+    # request and echoed in the token exchange (RFC 6749 §4.1.3 requires the two
+    # to be identical, and a conforming IdP rejects the exchange when it is
+    # omitted). It was previously derived from naipunyam_api_base_url — the
+    # IdP's OWN host — which pointed the browser back at APSSDC rather than at
+    # us. That could only ever work if the IdP happened to be same-origin with
+    # this service. Kept separate from the SAML ACS URL (a different protocol's
+    # endpoint) so the OAuth flow no longer inherits a SAML fallback.
+    naipunyam_oauth_redirect_uri: str = ""
     # OAuth2 client_credentials for the Naipunyam REST API (S5-003a).
     # Left empty until APSSDC issues credentials during the bid process.
     naipunyam_client_id: str = ""

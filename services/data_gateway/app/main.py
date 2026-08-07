@@ -30,8 +30,9 @@ from typing import Any
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     Counter,
@@ -251,28 +252,76 @@ app = FastAPI(
 # The /metrics endpoint itself is excluded from its own counters to avoid
 # inflating noise in the scrape-cycle data.
 # ---------------------------------------------------------------------------
-@app.middleware("http")
-async def _prometheus_middleware(request: Request, call_next: Any) -> Response:
-    path = request.url.path
-    method = request.method
-    start = time.perf_counter()
-    response: Response = await call_next(request)
-    duration = time.perf_counter() - start
-    # Normalise high-cardinality UUIDs in paths to avoid metric explosion.
-    # Simple heuristic: replace UUID-like path segments with {id}.
-    normalised = re.sub(
+def _normalise_path(path: str) -> str:
+    """Collapse UUID path segments to ``{id}`` so metric cardinality stays bounded."""
+    return re.sub(
         r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         "/{id}",
         path,
     )
-    if normalised != "/metrics":
-        _http_requests_total.labels(
-            method=method,
-            path=normalised,
-            status_code=str(response.status_code),
-        ).inc()
-        _http_request_duration_seconds.labels(method=method, path=normalised).observe(duration)
+
+
+def _record(method: str, normalised: str, status_code: str, duration: float) -> None:
+    """Record one request in both metrics. /metrics excludes itself from its own
+    counters so scrape traffic does not dominate the data being scraped."""
+    if normalised == "/metrics":
+        return
+    _http_requests_total.labels(
+        method=method, path=normalised, status_code=status_code
+    ).inc()
+    _http_request_duration_seconds.labels(method=method, path=normalised).observe(duration)
+
+
+@app.middleware("http")
+async def _prometheus_middleware(request: Request, call_next: Any) -> Response:
+    normalised = _normalise_path(request.url.path)
+    method = request.method
+    start = time.perf_counter()
+    try:
+        response: Response = await call_next(request)
+    except Exception:
+        # DG-8. Without this branch an unhandled exception propagated straight
+        # past the middleware and http_requests_total never learned the request
+        # happened — so the series STRUCTURALLY could not contain a 5xx, and the
+        # one thing an operator most wants to alert on ("500s are climbing") was
+        # unalertable by construction. Note this counts before Starlette's
+        # ServerErrorMiddleware turns the exception into the response below;
+        # re-raising is what lets that happen, and is also what keeps the
+        # exception visible to Sentry and to the test client.
+        _record(method, normalised, "500", time.perf_counter() - start)
+        raise
+    _record(method, normalised, str(response.status_code), time.perf_counter() - start)
     return response
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Turn any unhandled exception into a generic 500 — DG-8.
+
+    FastAPI's default for an unhandled exception is to let it reach the ASGI
+    server, whose response body depends on the server and can carry a driver
+    message. asyncpg in particular puts the offending SQL and parameter values
+    into ``str(exc)``, and parameters are candidate PII. So the client gets a
+    fixed body with no exception text, and the detail goes to the log stream —
+    which is already PII-redacted by ``_redact_pii_processor`` above.
+
+    This handler runs in Starlette's ServerErrorMiddleware, OUTSIDE the metrics
+    middleware, which is why the counter is incremented there rather than here:
+    by the time we get called, the middleware has already re-raised. Starlette
+    re-raises again after we return, so Sentry and the test client still see the
+    original exception.
+    """
+    log.error(
+        "http.unhandled_exception",
+        path=_normalise_path(request.url.path),
+        method=request.method,
+        exc_type=type(exc).__name__,
+        exc_msg=str(exc),
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error."},
+    )
 
 
 app.add_middleware(

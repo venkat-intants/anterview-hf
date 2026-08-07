@@ -219,7 +219,7 @@ async def test_resume_scorer_frames_resume_and_reports_markers() -> None:
         },
     )()
 
-    with patch.object(resume_scorer.httpx, "AsyncClient", lambda **_: _FakeClient()):
+    with patch("shared.llm.gemini.httpx.AsyncClient", lambda **_: _FakeClient()):
         result = await resume_scorer.score_resume(
             resume_text=f"Welder, 5 years. {_INJECTION}",
             job_title="Welder",
@@ -329,7 +329,7 @@ async def test_resume_scorer_scans_and_frames_the_job_title() -> None:
         '"strengths":[],"concerns":[],"recommendation":"moderate_fit","summary":"s"}'
     )
 
-    with patch.object(resume_scorer.httpx, "AsyncClient", lambda **_: client):
+    with patch("shared.llm.gemini.httpx.AsyncClient", lambda **_: client):
         result = await resume_scorer.score_resume(
             resume_text="Welder, 5 years of structural fabrication.",
             job_title=_FORGED_SECTION_TITLE,
@@ -361,7 +361,7 @@ async def test_scorer_scans_job_title_and_experience_level() -> None:
     db = AsyncMock()
 
     with (
-        patch.object(scorer.httpx, "AsyncClient", lambda **_: client),
+        patch("shared.llm.gemini.httpx.AsyncClient", lambda **_: client),
         patch("app.untrusted_input.log") as mock_log,
     ):
         await scorer.score_session(
@@ -411,7 +411,7 @@ async def test_exam_generator_scans_and_frames_the_job_title() -> None:
     )
 
     with (
-        patch.object(exam_generator.httpx, "AsyncClient", lambda **_: client),
+        patch("shared.llm.gemini.httpx.AsyncClient", lambda **_: client),
         patch("app.untrusted_input.log") as mock_log,
     ):
         questions = await exam_generator.generate_exam_questions(

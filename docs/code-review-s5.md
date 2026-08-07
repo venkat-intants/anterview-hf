@@ -7,6 +7,48 @@
 **Previous reports:** `docs/security-review-s4-bundle.md`, `docs/security-review-s3-011.md`,
 `docs/security-review-s3-004-s3-005.md`
 
+---
+
+> ## ⚠ SUPERSEDED — reconciled 2026-08-07
+>
+> **The `REQUEST CHANGES` verdict below no longer applies. All three MUST FIX
+> items and every SHOULD FIX item are closed** (one deliberately partial — see
+> the table). The verdict was standing against work that had already shipped.
+>
+> This document opens by promising that *"where a previously reported item no
+> longer holds, that is stated explicitly rather than carried forward."* That
+> promise applies to the document itself, and this banner is it.
+>
+> **Nothing below has been deleted.** The findings are retained verbatim as
+> RFP-traceability evidence — they are the record of what was wrong and what the
+> fix had to satisfy. Read them as the 2026-08-06 state; the statuses here
+> override.
+>
+> ### MUST FIX — all closed
+>
+> | Item | Status | Evidence at HEAD |
+> |---|---|---|
+> | `sso_naipunyam.py` accepts `state` and never validates it | **FIXED** | One-shot Redis state at `sso_naipunyam.py:251-261`; binding cookie compared with `hmac.compare_digest` at `:396-398`; PKCE `S256` at `:276`; privileged-account rejection at `:493-509`, before the upsert and before any token is issued |
+> | `piston-up.ps1` runs the sandbox `--privileged --dns 8.8.8.8` | **FIXED** | `scripts/piston-up.ps1:120-138` — `--cap-drop=ALL` plus a named allow-list, `--cgroupns=private`, `--pids-limit 512`, loopback bind, networking disabled; no `--privileged`, no explicit DNS |
+> | `_mint_service_jwt` hand-rolls the claims dict | **FIXED** | `interview_worker.py:1082-1099` delegates to `shared.auth.jwt.issue_access_token`, passing `ttl_seconds=_SERVICE_JWT_TTL_SECONDS` so the 60 s lifetime is preserved rather than inheriting the 900 s default |
+>
+> ### SHOULD FIX — closed
+>
+> | Item | Status | Evidence at HEAD |
+> |---|---|---|
+> | `trusted_proxy_count` unbounded | **FIXED** | `config.py:283` `Field(default=0, ge=0, le=4)`, plus `client_ip_proxy_hop_underflow_total`. Residual: only the too-**high** direction is observable, carried as **DG-3** |
+> | No `test_config.py` | **FIXED** | `services/data_gateway/tests/unit/test_config.py` |
+> | No `alembic heads` gate in CI | **FIXED** | `ci.yml` job `migrations (single linear head)` |
+> | No coverage collection or threshold | **FIXED** | `ci.yml` `Coverage` step, per-service ratchet floors; documented and machine-checked against `docs/LLD.md §15.1` by `ops/ci/check_coverage_floors.py` |
+> | `.trivyignore` consumed by nothing | **FIXED** | `ci.yml` job `docker image builds` → `Scan the image for CVEs`, `--ignorefile .trivyignore` |
+> | JWT auth dependency in four near-identical copies | **CLOSED, one residual by design** | Crypto core and epoch check consolidated in `shared/auth/jwt.py`. A fifth verifier survives in `feedback_billing/app/routers/score.py::_require_service_jwt` **deliberately**: a guest dependency reads `session_id` off the raw payload, and standardising on the `User` model would make that comparison `None != str(...)` — returning 200 for everyone and silently undoing guest session binding |
+>
+> **Current verdict lives in [`docs/code-review-2026-08-07.md`](code-review-2026-08-07.md)**,
+> which supersedes this report and its companion `security-review-s5.md`. Every
+> item above was re-verified there by opening the file at HEAD.
+
+---
+
 This pass reviews the hardening work merged since the pre-audit baseline and the
 surfaces it did not reach. It is a **review-only phase — no application code is
 changed by this document.** Findings are ranked so later phases can pick them up
@@ -23,7 +65,9 @@ forward.
 Scope: services/data_gateway/**, services/interview_core/**,
        services/feedback_billing/**, services/admin_ops/**, shared/**,
        web/src/**, .github/workflows/**, scripts/**, docs/PISTON_SELFHOST.md
-Verdict: REQUEST CHANGES
+Verdict: REQUEST CHANGES        [HISTORICAL 2026-08-06 — see the SUPERSEDED
+                                 banner above. Every MUST FIX and SHOULD FIX
+                                 below is closed at HEAD.]
 
 MUST FIX:
 - services/data_gateway/app/routers/sso_naipunyam.py:227-412: `state` is accepted

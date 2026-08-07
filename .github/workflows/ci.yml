@@ -74,6 +74,30 @@ jobs:
           # COLLECTION rather than in a test — which is why a machine that
           # happened to have it installed could not reproduce the failure.
           pip install redis "python-jose[cryptography]" bcrypt sqlalchemy email-validator
+          # shared/s3.py and shared/llm/gemini.py, added 2026-08-07 to
+          # de-duplicate the seven aioboto3 constructions (SVC-1) and the three
+          # Gemini callers (FB-1/FB-2). Both import at MODULE level, so their
+          # suites — and, because pytest aborts the whole run on a collection
+          # error, all 397 tests in this job — died on ModuleNotFoundError.
+          # Same failure shape as email-validator above, verified by installing
+          # exactly the list above into a clean venv and watching the run stop
+          # with "Interrupted: 2 errors during collection". Nothing was
+          # "passing"; nothing ran at all.
+          #
+          # Versions are the ones ALL FOUR services already pin, so this job
+          # exercises the same library the images ship rather than whatever is
+          # newest on the day. That is what lets shared/s3.py's docstring claim
+          # it adds nothing to any requirements file.
+          #
+          # json_repair is the odd one out and is deliberate: shared/llm/gemini
+          # imports it INSIDE the function because only feedback_billing and
+          # interview_core ship it. Without it here the one test that drives the
+          # real library against the real live failure (a raw newline inside a
+          # JSON string) importorskip'd away, so the last rung of the recovery
+          # ladder was gated by a stub only. Pinned to feedback_billing's
+          # version — that service owns the scorecard path FB-2 is about.
+          pip install "aioboto3==15.5.0" "botocore==1.40.61" "httpx==0.27.2" \
+            "json_repair==0.60.1"
 
       - name: Lint
         # --config explicitly: run from the repo root and ruff finds no config
@@ -83,12 +107,23 @@ jobs:
         run: ruff check --config shared/pyproject.toml shared/
 
       - name: Type-check
-        # metrics_auth.py and redis_factory.py are named EXPLICITLY. Both are
-        # top-level modules rather than packages, so neither is picked up by the
-        # two directory arguments — they would have shipped unchecked.
+        # EVERY path under shared/ that holds code is named here, and that is
+        # the whole maintenance burden of this step: mypy takes explicit
+        # arguments, so anything not listed is silently unchecked and looks
+        # exactly like something that passed.
+        #
+        # metrics_auth.py, redis_factory.py, s3.py and security.py are top-level
+        # MODULES, not packages, so no directory argument reaches them. llm/ and
+        # observability/ are packages that simply post-date the original list —
+        # s3.py and llm/ landed on 2026-08-07 with the SVC-1 / FB-1 refactors and
+        # would have shipped unchecked. (shared/models/ and shared/voice/ are
+        # omitted on purpose: both are an empty __init__.py and nothing else.)
+        #
+        # Adding a file under shared/ means adding it here.
         run: >-
-          mypy shared/intelligence shared/agents
+          mypy shared/intelligence shared/agents shared/llm shared/observability
           shared/metrics_auth.py shared/redis_factory.py
+          shared/s3.py shared/security.py
           --ignore-missing-imports
 
       - name: Test
@@ -104,6 +139,14 @@ jobs:
         # until it is listed here — both suites existed and passed locally
         # while never running in CI. Adding a shared/ test directory means
         # adding it to this line.
+        #
+        # Re-verified 2026-08-07: `find shared -name conftest.py -o -name
+        # 'test_*.py'` finds tests in exactly four places — agents/tests,
+        # auth/tests, intelligence/tests and tests/ — so this list is complete.
+        # The suites added that day (shared/tests/test_s3.py,
+        # test_shared_gemini.py, test_observability_pii.py) landed inside an
+        # already-listed directory and needed no path change; what they DID need
+        # was three packages the Install step above did not have.
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: python -m pytest shared/intelligence shared/agents shared/auth shared/tests -q
@@ -147,10 +190,18 @@ jobs:
         run: ruff check app/ tests/
 
       - name: Type-check
-        # CLAUDE.md mandates "ruff + mypy strict", but mypy ran on shared/ only.
-        # It would have caught a live 500: hr_coding.py read body.job_title off
-        # a model that never declared it, so every call to the AI coding-question
-        # generator raised AttributeError.
+        # NON-STRICT, deliberately, and from the root mypy.ini — which is the
+        # only config CI can use (see below). The per-service
+        # `[tool.mypy] strict = true` blocks in each pyproject.toml are never
+        # loaded by this command and are dead configuration; mypy.ini's header
+        # explains why turning strict on across four services at once is not the
+        # honest option today. CLAUDE.md previously said "mypy strict" and was
+        # corrected on 2026-08-07 to say what actually runs.
+        #
+        # What IS new here is coverage: before this step, mypy ran on shared/
+        # only. It would have caught a live 500 — hr_coding.py read
+        # body.job_title off a model that never declared it, so every call to
+        # the AI coding-question generator raised AttributeError.
         #
         # Run from the repo ROOT: services/ has an __init__.py, so invoking
         # mypy from inside a service makes it see each file under two module
@@ -178,18 +229,27 @@ jobs:
           S3_ENDPOINT: http://localhost:9000
           S3_ACCESS_KEY_ID: ci-access-key
           S3_SECRET_ACCESS_KEY: ci-secret-key
-        # `-m "not integration"` alone deselects the suites that genuinely need
-        # live Neon/Upstash/R2/Sarvam credentials. data_gateway additionally
-        # needs a real Postgres for its integration dir, so that one keeps the
-        # directory ignore; the other three do not.
+        # `-m "not integration"` deselects the suites that genuinely need live
+        # Neon/Upstash/R2/Sarvam credentials. ALL FOUR services now use the same
+        # command — exclusion is by MARKER, never by directory.
+        #
+        # data_gateway used to add `--ignore=tests/integration` because four
+        # files in that folder need a live Postgres and none of the six carried
+        # the `integration` marker. The directory ignore also threw away
+        # tests/integration/test_sso_google.py and test_sso_naipunyam.py, which
+        # are fully offline (31 tests, ~1.4 s) and cover the newest security
+        # code in the service — the login-CSRF state binding and PKCE. They had
+        # never run in CI, so sso_google.py sat at 35% and sso_naipunyam.py at
+        # 34% coverage while the SSO-1 fix went in unguarded.
+        #
+        # The four Postgres-dependent files now carry
+        # `pytestmark = pytest.mark.integration`, so the marker does the work
+        # the ignore was doing and nothing else is caught by it. This restores
+        # the design this file's own header describes: "Live-service tests are
+        # excluded by MARKER, not by directory."
         run: |
-          if [ "${{ matrix.service }}" = "data_gateway" ]; then
-            python -m pytest tests/ -q -m "not integration" --ignore=tests/integration \
-              --cov=app --cov-report=term-missing --cov-report=xml
-          else
-            python -m pytest tests/ -q -m "not integration" \
-              --cov=app --cov-report=term-missing --cov-report=xml
-          fi
+          python -m pytest tests/ -q -m "not integration" \
+            --cov=app --cov-report=term-missing --cov-report=xml
 
       - name: Coverage
         working-directory: services/${{ matrix.service }}
@@ -200,20 +260,32 @@ jobs:
         # Each floor is that service's MEASURED coverage minus a margin for
         # CI-vs-local variance, not a guess and not the documented target.
         #
-        # KEEP THIS TABLE AND THE `case` BELOW IN STEP. They had already
-        # drifted (this block documented 55/68/83/78 while the case enforced
-        # 50/62/78/72), which is precisely the failure mode the block was
-        # written to prevent. The `case` is the only executable value; if you
-        # change one, change the other in the same commit.
+        # THIS TABLE, THE `case` BELOW AND docs/LLD.md §15.1 MUST AGREE, and
+        # that is now CHECKED rather than requested: ops/ci/check_coverage_floors.py
+        # parses all three and fails the `invariants` job if any disagree.
         #
-        # Re-measured 2026-08-07 after the code-review hardening pass, which
-        # added regression suites across all four services:
+        # The check exists because this sentence, in its previous form, did not
+        # work twice running. First this block documented 55/68/83/78 while the
+        # case enforced 50/62/78/72. Then LLD.md disagreed with the case on
+        # three of four floors while a comment here vouched for the
+        # synchronisation (code review 2026-08-07, CI-1). A comment cannot
+        # enforce itself. The `case` is the only executable value; the two
+        # tables describe it.
+        #
+        # Re-measured 2026-08-07 after the code-review remediation pass, which
+        # added regression suites across all four services and un-hid 31
+        # previously-ignored offline SSO tests in data_gateway:
         #
         #                   was    now    floor   margin
-        #   data_gateway     59  ->  60  ->  55      5
-        #   interview_core   72  ->  76  ->  71      5
-        #   feedback_billing 87  ->  89  ->  84      5
-        #   admin_ops        82  ->  84  ->  79      5
+        #   data_gateway     60  ->  66  ->  61      5
+        #   interview_core   76  ->  78  ->  73      5
+        #   feedback_billing 89  ->  91  ->  86      5
+        #   admin_ops        84  ->  88  ->  83      5
+        #
+        # data_gateway's +6 is not new tests: it is the 31 offline SSO tests
+        # that `--ignore=tests/integration` had been discarding. sso_google.py
+        # went 35% -> 89% and sso_naipunyam.py 34% -> 90% without a line of
+        # test code being written — they were always there, just never run.
         #
         # A 5-point margin rather than 4: these numbers were measured on
         # Python 3.13 locally while CI pins 3.12, and interview_core's audio
@@ -224,17 +296,74 @@ jobs:
         # "block every PR" or "switch the gate off" — both end with no gate. This
         # one fails the moment coverage DROPS, which is the property that
         # actually protects the suite, and the floors get raised as the numbers
-        # climb. docs/LLD.md now records the enforced floor next to the target so
-        # the two cannot silently diverge again.
+        # climb. docs/LLD.md §15.1 records the enforced floor next to the 80/90
+        # target and states plainly that only the ratchet is a defensible
+        # control — the target is a destination, not a standard.
         run: |
           case "${{ matrix.service }}" in
-            data_gateway)     FLOOR=55 ;;
-            interview_core)   FLOOR=71 ;;
-            feedback_billing) FLOOR=84 ;;
-            admin_ops)        FLOOR=79 ;;
+            data_gateway)     FLOOR=61 ;;
+            interview_core)   FLOOR=73 ;;
+            feedback_billing) FLOOR=86 ;;
+            admin_ops)        FLOOR=83 ;;
           esac
           echo "Enforcing >= ${FLOOR}% line coverage for ${{ matrix.service }}"
           python -m coverage report --fail-under="${FLOOR}"
+
+  invariants:
+    # Gates for the claims this repo makes about ITSELF — the ones that were
+    # previously enforced by a comment asking the next author to be careful.
+    # Both checks below exist because that failed in production twice: the
+    # coverage floors drifted from their own documentation twice (CI-1), and a
+    # correctly-named fail-open metric shipped with no consumer (DG-6).
+    #
+    # Cheap on purpose: no service dependencies, no Docker, ~10 seconds. A gate
+    # that costs a minute gets deleted the first time someone is in a hurry.
+    name: invariants (coverage floors + alert rules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install
+        # PyYAML is the only runtime dependency — check_coverage_floors.py is
+        # stdlib. Both scripts must stay runnable on a bare checkout so a
+        # contributor can reproduce a failure without installing a service's
+        # requirements. ruff is PINNED to 0.7.4 like every other job here; an
+        # unpinned linter can turn the build red without a code change.
+        run: pip install pyyaml "ruff==0.7.4"
+
+      - name: Lint
+        # ops/ is Python that no other job covers: the `shared` job lints
+        # shared/, the `services` matrix lints services/*/app and tests/, and
+        # nothing looks outside those. Unlinted gate scripts are a bad trade —
+        # everything else in this job trusts them.
+        #
+        # Honest scope: this covers ops/ only. `scripts/md_to_docs.py` is still
+        # unlinted; it is not in this change's ownership and is left as a known
+        # gap rather than quietly implied to be covered.
+        #
+        # --config explicitly, because there is no root pyproject.toml and ruff
+        # would otherwise silently fall back to its (much weaker) default
+        # ruleset — the exact bug the `shared` job's Lint step documents.
+        run: ruff check --config shared/pyproject.toml ops/
+
+      - name: Coverage floors agree with their documentation
+        # Parses the FLOOR values out of this file's `case` block, the
+        # `was -> now -> floor  margin` comment table above it, and the marked
+        # table in docs/LLD.md §15.1. Fails if any of the three disagree.
+        run: python ops/ci/check_coverage_floors.py
+
+      - name: Alerting config is well-formed and still matches the code
+        # ops/alerts/ is the consumer for rate_limit_check_skipped_total
+        # (DG-6). This asserts the rules parse, every alert carries a `for:`,
+        # a severity and a runbook, every metric they reference still exists in
+        # services/*/app or shared/, and the committed scrape config carries
+        # the bearer credentials /metrics now requires (M-6). promtool is the
+        # authoritative PromQL validator and is documented in
+        # ops/alerts/README.md; it is not run here because it needs a
+        # Prometheus binary and this job must stay dependency-free.
+        run: python ops/ci/check_alert_rules.py
 
   migrations:
     name: migrations (single linear head)
@@ -336,7 +465,10 @@ jobs:
 
       - name: Test
         working-directory: web
-        # 262 vitest tests that CI never ran.
+        # A vitest suite CI never ran — 262 tests when this step was added,
+        # 326 across 28 files as of 2026-08-07. The number is re-measured
+        # rather than left standing, because a count in a comment is exactly
+        # the kind of claim this file keeps finding has outlived its code.
         run: npm test
 
       - name: Build
@@ -499,19 +631,21 @@ jobs:
     # check to require.
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [shared, services, migrations, web, security, docker]
+    needs: [shared, services, invariants, migrations, web, security, docker]
     if: always()
     steps:
       - name: Verify every job succeeded
         run: |
           echo "shared=${{ needs.shared.result }}"
           echo "services=${{ needs.services.result }}"
+          echo "invariants=${{ needs.invariants.result }}"
           echo "migrations=${{ needs.migrations.result }}"
           echo "web=${{ needs.web.result }}"
           echo "security=${{ needs.security.result }}"
           echo "docker=${{ needs.docker.result }}"
           if [ "${{ needs.shared.result }}" != "success" ] \
             || [ "${{ needs.services.result }}" != "success" ] \
+            || [ "${{ needs.invariants.result }}" != "success" ] \
             || [ "${{ needs.migrations.result }}" != "success" ] \
             || [ "${{ needs.web.result }}" != "success" ] \
             || [ "${{ needs.security.result }}" != "success" ] \

@@ -5,6 +5,56 @@
 **Method:** every finding below was produced by opening the cited file at this
 commit. Nothing is inherited from a prior document without re-verification.
 
+> ## ✅ REMEDIATION COMPLETE — all 29 open findings closed
+>
+> **Status as of 2026-08-07.** Every finding in §3 has been fixed in place. No
+> file, function or module was deleted; the architecture is unchanged.
+>
+> | Gate | Result |
+> |---|---|
+> | `data_gateway` | ruff ✅ mypy ✅ **508 passed** · coverage **66%** (floor 61) |
+> | `interview_core` | ruff ✅ mypy ✅ **564 passed**, 1 skipped · coverage **78%** (floor 73) |
+> | `feedback_billing` | ruff ✅ mypy ✅ **169 passed** · coverage **91%** (floor 86) |
+> | `admin_ops` | ruff ✅ mypy ✅ **109 passed** · coverage **88%** (floor 83) |
+> | `shared` | ruff ✅ mypy ✅ (33 files) · **396 passed**, 1 skipped |
+> | `web` | typecheck ✅ lint ✅ **326 passed** (28 files) |
+> | invariants | coverage-floor checker ✅ · alert-rules checker ✅ |
+>
+> **1,350 backend + 396 shared + 326 frontend tests.** Coverage rose in every
+> service (60→66, 76→78, 89→91, 84→88) and the floors were ratcheted to match.
+>
+> ### Four things the remediation found that this review had missed
+>
+> Recorded because they are the same class as the findings themselves — a
+> control that looked real and was not:
+>
+> 1. **The `shared` CI job was silently broken.** `shared/s3.py` imports
+>    `aioboto3`/`botocore` and `shared/llm/gemini.py` imports `httpx`; the job's
+>    Install step listed none of them. pytest aborts the run on a collection
+>    error, so **all 397 tests in that job would have been unrun** — not failing,
+>    never collected. Identical in shape to the `email-validator` incident that
+>    step's own comment documents.
+> 2. **31 offline SSO tests had never run in CI.** `data_gateway`'s leg passed
+>    `--ignore=tests/integration`, and *none* of the six files in that directory
+>    carried the `integration` marker. Four genuinely need live Postgres; two —
+>    `test_sso_google.py` and `test_sso_naipunyam.py`, 31 tests, ~1.4 s, fully
+>    offline — were collateral. `sso_google.py` sat at **35%** and
+>    `sso_naipunyam.py` at **34%** while the SSO-1 fix landed unguarded. The four
+>    Postgres-dependent files are now marked and the directory ignore is gone, so
+>    exclusion is by marker — the design `ci.yml`'s own header already described.
+>    Those two files now sit at **89%** and **90%**, with no new test code.
+> 3. **`shared/observability` had never been type-checked**, and contained a
+>    real error: `_before_send` was typed `(dict, dict) -> dict` against an SDK
+>    signature of `(Event, Hint) -> Event | None`, so *dropping* an event by
+>    returning `None` was not expressible.
+> 4. **SVC-1 undercounted.** The review said five hand-rolled S3 clients; there
+>    were **seven** — `resume.py` holds two more. All seven now use `shared/s3.py`.
+>
+> ### What remains open
+>
+> Only the three owner-deferred DPDP items in §3.4, unchanged. `M-1a`'s
+> false-completion path — the code half of that cluster — **is** closed.
+
 > **Supersedes** [`code-review-s5.md`](code-review-s5.md),
 > [`security-review-s5.md`](security-review-s5.md) and the blocking-items table
 > in [`CHANGES.md`](CHANGES.md) — see [§5 Superseded documents](#5-superseded-documents).
@@ -545,9 +595,20 @@ in isolation, the drift is invisible in review — it surfaces as an environment
 
 Narrower than the brief stated: the **embedding-erasure and R2-erasure tests do
 run** in CI. What is genuinely unmeasured is the consent-ledger router and the
-retention purge, both of which need a live Postgres. When the DB consolidation
-lands the fix is small — add a `postgres:16` service container to the
-`data_gateway` matrix leg and drop the `--ignore=tests/integration`.
+retention purge, both of which need a live Postgres.
+
+**Corrected 2026-08-07.** An earlier version of this section attributed the
+whole `tests/integration` exclusion to "no live Postgres". That was wrong, and
+it concealed finding #2 in the remediation banner above: two of the six files in
+that directory need no database at all. Exclusion is now by **marker** — the
+four Postgres-dependent files carry `pytestmark = pytest.mark.integration` and
+`--ignore=tests/integration` is gone, so the offline SSO suites run and only the
+genuinely-live tests are deselected.
+
+What is left needs a database, not a CI-configuration change. When the DB
+consolidation lands, add a `postgres:16` service container to the
+`data_gateway` matrix leg and point `DATABASE_URL` at it; the marker already
+names exactly which tests it would unlock.
 
 ---
 
@@ -562,10 +623,14 @@ lands the fix is small — add a `postgres:16` service container to the
 
 Plus 18 closed, 13 confirmed controls, 6 obsolete documents, 3 owner-deferred.
 
-**Verdict: REQUEST CHANGES**, on DEP-1 and DEP-2 alone. Both are one-line
-`render.yaml` changes; both break a DPDP obligation on a supported deploy
-target; and they interact, so DEP-2 must land first or fixing DEP-1 activates a
-false-completion bug.
+**Verdict at review time: REQUEST CHANGES**, on DEP-1 and DEP-2 alone.
+**Verdict after remediation: APPROVE** — all 29 closed, gates green (see the
+banner at the top).
+
+DEP-1 and DEP-2 were both one-line `render.yaml` changes; both broke a DPDP
+obligation on a supported deploy target; and they interacted, so DEP-2 was
+landed **first** — fixing DEP-1 alone would have activated a false-completion
+bug rather than fixing anything.
 
 **The dominant pattern across all 29 open findings is unchanged from the
 previous two cycles: a claim outliving the code it describes.** DEP-1 and DEP-2

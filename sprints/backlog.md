@@ -7,6 +7,38 @@
 
 ---
 
+> ## ⚠ SUPERSEDED — historical planning document (banner added 2026-08-07)
+>
+> **Last substantively updated 2026-05-29.** Roughly ten weeks of shipped work
+> are not reflected below. Every "In Sprint" and "Backlog" status here is frozen
+> at that date and must not be read as the current state — a large share of the
+> Sprint 6 and Sprint 7 candidates have since shipped (B-031 resume upload and
+> parsing, B-032 JD document upload, OpenAI embeddings over resumes for ATS
+> matching, the 6-avatar catalogue and picker, `docker-compose.prod.yml`, admin
+> cohort analytics), alongside work that never appears here at all: the
+> three-tier admin hierarchy
+> (`platform_owner` → `super_admin` → `hr_manager`, 2026-06-25), the exam,
+> coding and multi-round ATS workflow, the `shared/intelligence` role engine and
+> `shared/agents` copilots (2026-08-01), and the CI, security and observability
+> hardening cycles of 2026-08.
+>
+> **Kept, not deleted.** The Sprint 1–5 record — what was committed, to whom,
+> at what estimate, and against which RFP clause — is RFP-traceability evidence
+> and is more useful intact than accurate.
+>
+> **For the current state, read [`CLAUDE.md`](../CLAUDE.md)** ("Current Phase"),
+> which is maintained, and [`docs/code-review-2026-08-07.md`](../docs/code-review-2026-08-07.md)
+> for the open engineering findings that would populate a real backlog today.
+>
+> **Vendor note:** rows B-012 and S4-001 record D-ID as the avatar integration.
+> That was accurate when written; **D-ID was removed from the stack on
+> 2026-05-31** and the demo-tier vendor is now Tavus via LiveKit, with Simli
+> supported as the alternative. Those two rows are left as the historical record
+> of a completed sprint; see the corrected vendor lines in
+> [`roadmap.md`](roadmap.md) for the current position.
+
+---
+
 ## Legend
 - **Estimate:** S = <=1 day | M = 2-3 days | L = 4-5 days
 - **Priority:** P0 = must-have (blocks demo/bid) | P1 = important | P2 = nice-to-have

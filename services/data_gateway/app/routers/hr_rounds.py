@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import DbSessionDep
+from app.dependencies import HrCtxDep
 from app.models import (
     CodingQuestion,
     ExamAttempt,
@@ -33,7 +35,6 @@ from app.models import (
     ExamRound,
     ExamSection,
 )
-from app.routers.hr_applicants import DbSessionDep, HrCtxDep
 from app.routers.hr_coding import (
     CodingQuestionIn,
     CodingQuestionOut,
@@ -47,6 +48,7 @@ from app.routers.hr_exams import (
     _get_owned_exam,
     _question_out,
 )
+from app.utils.ownership import get_owned
 
 log = structlog.get_logger(__name__)
 
@@ -134,33 +136,17 @@ class ExamStructureOut(BaseModel):
 async def _get_owned_round(
     db: AsyncSession, company_id: uuid.UUID, exam_id: uuid.UUID, round_id: uuid.UUID
 ) -> ExamRound:
-    rnd = await db.scalar(
-        select(ExamRound).where(
-            ExamRound.id == round_id,
-            ExamRound.exam_id == exam_id,
-            ExamRound.company_id == company_id,
-            ExamRound.deleted_at.is_(None),
-        )
+    return await get_owned(
+        db, ExamRound, company_id, round_id, noun="Round", exam_id=exam_id
     )
-    if rnd is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Round not found.")
-    return rnd
 
 
 async def _get_owned_section(
     db: AsyncSession, company_id: uuid.UUID, exam_id: uuid.UUID, section_id: uuid.UUID
 ) -> ExamSection:
-    sec = await db.scalar(
-        select(ExamSection).where(
-            ExamSection.id == section_id,
-            ExamSection.exam_id == exam_id,
-            ExamSection.company_id == company_id,
-            ExamSection.deleted_at.is_(None),
-        )
+    return await get_owned(
+        db, ExamSection, company_id, section_id, noun="Section", exam_id=exam_id
     )
-    if sec is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Section not found.")
-    return sec
 
 
 async def _require_no_round_attempts(

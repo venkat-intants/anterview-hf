@@ -23,11 +23,14 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import DbSessionDep
+from app.dependencies import HrCtxDep
 from app.interview_link import hash_interview_token, mint_interview_token
 from app.mailer import enqueue_email, notify
 from app.models import Applicant, InterviewInvite, Job, Scorecard
 from app.notifications_util import create_notification
-from app.routers.hr_applicants import DbSessionDep, HrCtxDep, _get_owned
+from app.routers.hr_applicants import _get_owned
+from app.utils.ownership import get_owned
 
 log = structlog.get_logger(__name__)
 
@@ -123,16 +126,7 @@ async def _has_passed_exam(db: AsyncSession, company_id: uuid.UUID, applicant_id
 async def _get_owned_invite(
     db: AsyncSession, company_id: uuid.UUID, invite_id: uuid.UUID
 ) -> InterviewInvite:
-    inv = await db.scalar(
-        select(InterviewInvite).where(
-            InterviewInvite.id == invite_id,
-            InterviewInvite.company_id == company_id,
-            InterviewInvite.deleted_at.is_(None),
-        )
-    )
-    if inv is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found.")
-    return inv
+    return await get_owned(db, InterviewInvite, company_id, invite_id, noun="Invite")
 
 
 async def _create_job_from_applicant(

@@ -73,14 +73,29 @@ envVarGroups:
         value: "2048"
 
       # --- Object storage (Cloudflare R2, S3-compatible) ---
+      # TWO NAMES FOR ONE URL, deliberately. data_gateway + interview_core
+      # declare `s3_endpoint`; feedback_billing + admin_ops declare
+      # `s3_endpoint_url`. Every Settings class sets extra="ignore", so the name
+      # a service does NOT declare is dropped *silently* — no startup error, just
+      # an empty endpoint, and boto3 then quietly targets AWS with R2 credentials
+      # (scorecard PDFs never store; DPDP §12 erasure never completes).
+      # space/entrypoint.sh:117-118 bridges this for the HF Space with
+      # `S3_ENDPOINT_URL="${S3_ENDPOINT_URL:-${S3_ENDPOINT:-}}"`. Render has no
+      # such shim — a Blueprint cannot interpolate one env var into another — so
+      # both names are supplied here and MUST BE SET TO THE SAME VALUE.
       - key: S3_ENDPOINT
         sync: false           # https://<account-id>.r2.cloudflarestorage.com
+      - key: S3_ENDPOINT_URL
+        sync: false           # ⚠ same value as S3_ENDPOINT above — do not diverge
       - key: S3_REGION
         value: auto
       - key: S3_ACCESS_KEY_ID
         sync: false
       - key: S3_SECRET_ACCESS_KEY
         sync: false
+      # Read only by data_gateway + interview_core (`s3_use_ssl`). feedback_billing
+      # and admin_ops do not declare it — boto3 derives TLS from the endpoint
+      # scheme there, so an https:// endpoint is already the whole control.
       - key: S3_USE_SSL
         value: "true"
 
@@ -100,6 +115,15 @@ envVarGroups:
 
       # --- Errors (optional) ---
       - key: SENTRY_DSN
+        sync: false
+
+      # --- Observability ---
+      # All four services gate GET /metrics on this bearer token. Blank is not
+      # "open" in production: shared/metrics_auth.py fails CLOSED with a 404 when
+      # APP_ENV=production and the token is unset, so leaving this empty means no
+      # scraper can ever reach /metrics on Render.
+      # generate: python -c "import secrets;print(secrets.token_hex(32))"
+      - key: METRICS_TOKEN
         sync: false
 
 services:
@@ -310,12 +334,17 @@ services:
         value: feedback_billing
       - key: REDIS_URL
         sync: false
-      - key: S3_BUCKET_NAME
+      # This service declares `s3_scorecard_bucket`, NOT `s3_bucket_name` — the
+      # latter was being dropped by extra="ignore" and the bucket only ever came
+      # from the Settings default. See the naming note in intants-shared above.
+      - key: S3_SCORECARD_BUCKET
         value: intants-interview-scorecards
-      - key: OPENAI_API_KEY
-        sync: false           # embeddings for JD/NOS retrieval during scoring
+      # Embeddings run on Gemini (app/embedder.py POSTs models/${EMBEDDING_MODEL}
+      # to generativelanguage.googleapis.com and reuses GEMINI_API_KEY). An
+      # OpenAI model id here would 404 on every resume/JD embed; there is no
+      # `openai_api_key` field to read a key from either.
       - key: EMBEDDING_MODEL
-        value: text-embedding-3-large
+        value: gemini-embedding-001
       - key: EMBEDDING_DIMENSIONS
         value: "3072"
       - key: FEATURE_BILLING
@@ -358,8 +387,19 @@ services:
         value: admin_ops
       - key: REDIS_URL
         sync: false
+      # S3_BUCKET_NAME here is the RESUME/JD uploads bucket (what data_gateway
+      # writes and the DPDP erasure executor purges) — NOT the audio bucket.
+      # Pointing this at the audio bucket made erasure look in the wrong bucket
+      # and silently skip resume/JD deletion (DPDP §12): s3_client._ABSENT_CODES
+      # treats a 404 as "already gone", so the executor would stamp the request
+      # `completed` while the candidate's CV was still in intants-uploads.
+      # Same hazard, same fix as space/supervisord.conf:105-109.
       - key: S3_BUCKET_NAME
-        value: intants-interview-audio
+        value: intants-uploads
+      # The other half of what erasure_executor.py purges: scorecard PDFs +
+      # transcript JSON, written by feedback_billing.
+      - key: S3_SCORECARD_BUCKET
+        value: intants-interview-scorecards
       # Private-network health/status fan-out to the other services.
       - key: INTERVIEW_CORE_URL
         value: http://intants-interview-core:8001

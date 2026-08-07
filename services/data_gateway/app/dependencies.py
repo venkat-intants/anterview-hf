@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
@@ -14,6 +15,7 @@ from shared.auth.jwt import is_token_revoked, verify_access_token
 from sqlalchemy import text as sa_text
 
 from app.config import settings
+from app.database import DbSessionDep
 from app.redis_client import get_redis
 
 log = structlog.get_logger(__name__)
@@ -194,6 +196,42 @@ def require_role_password_ok(*allowed: str) -> Callable[[User, User], Awaitable[
         return user
 
     return _dep
+
+
+# ---------------------------------------------------------------------------
+# Tenant context — resolve the caller's company_id (the isolation boundary)
+#
+# Lives here, not in a router (DG-1). Eight routers depend on this resolution,
+# and while it sat in app/routers/hr_applicants.py every one of them imported
+# that router — and with it the S3, embedding and resume-scoring clients — just
+# to learn which company the caller belongs to. hr_applicants.py re-exports both
+# names, so FastAPI's dependency_overrides keyed on get_hr_company (the tests do
+# this) still target the same function object.
+# ---------------------------------------------------------------------------
+async def get_hr_company(
+    user: Annotated[User, Depends(require_role_password_ok("hr_manager"))],
+    db: DbSessionDep,
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Return (hr_user_id, company_id). 403 if the HR is not assigned a company."""
+    try:
+        uid = uuid.UUID(user.user_id)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user identity."
+        ) from exc
+    company_id = await db.scalar(
+        sa_text("SELECT company_id FROM users WHERE id = :uid AND deleted_at IS NULL"),
+        {"uid": uid},
+    )
+    if company_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is not assigned to a company.",
+        )
+    return uid, company_id
+
+
+HrCtxDep = Annotated[tuple[uuid.UUID, uuid.UUID], Depends(get_hr_company)]
 
 
 async def _must_change_password(user_id: str) -> bool:

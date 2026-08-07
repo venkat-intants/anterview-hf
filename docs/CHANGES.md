@@ -267,10 +267,15 @@ consumers of the API need to know.
 
 ## Review documents
 
-| Document | Reviewer | Verdict |
-|---|---|---|
-| [`docs/code-review-s5.md`](code-review-s5.md) | code-reviewer | **REQUEST CHANGES** — 3 MUST FIX, 6 SHOULD FIX, 8 CONSIDER |
-| [`docs/security-review-s5.md`](security-review-s5.md) | security-auditor | **BLOCKED** — CRITICAL 0 / HIGH 2 / MEDIUM 3 / LOW 0 |
+| Document | Reviewer | Verdict when written | Status |
+|---|---|---|---|
+| [`docs/code-review-s5.md`](code-review-s5.md) | code-reviewer | **REQUEST CHANGES** — 3 MUST FIX, 6 SHOULD FIX, 8 CONSIDER | **SUPERSEDED 2026-08-07** |
+| [`docs/security-review-s5.md`](security-review-s5.md) | security-auditor | **BLOCKED** — CRITICAL 0 / HIGH 2 / MEDIUM 3 / LOW 0 | **SUPERSEDED 2026-08-07** |
+| [`docs/code-review-2026-08-07.md`](code-review-2026-08-07.md) | code-reviewer | current | **CURRENT** |
+
+Both S5 verdicts are historical. Each document now carries a dated
+reconciliation banner listing its findings with their status at HEAD; the
+documents themselves are retained in full as RFP-traceability evidence.
 
 Prior security reports in the same chain:
 [`security-review-s4-bundle.md`](security-review-s4-bundle.md),
@@ -289,12 +294,27 @@ database consolidation, and demo/seed credentials already published in git
 history are out of scope. Both are recorded in the security report's status
 tables for the audit trail; neither counts toward the verdict.
 
-## Blocking items (not yet remediated)
+## Blocking items — REMEDIATED
 
-| Ref | Item | Blocks |
-|---|---|---|
-| HIGH-1 | `sso_naipunyam.py` accepts `state` and never validates it — login CSRF, no PKCE, no privileged-account exclusion | Any deploy with `AUTH_PROVIDER=naipunyam`. Dormant today (`local`), but it is one env flip away and sits on the APSSDC bid path. |
-| HIGH-2 | `scripts/piston-up.ps1` runs the code-execution sandbox `--privileged` with `--dns 8.8.8.8` | Any use of the self-hosted Piston runner, including local dev. Hosted provider is the current default. |
+**There are no open blocking items.** Both HIGH findings raised by the S5
+security audit were fixed in `352f366` ("close all 18 open findings from the
+Aug-2026 full-repo code review", 2026-08-07) and independently re-verified at
+HEAD by [`docs/code-review-2026-08-07.md`](code-review-2026-08-07.md) §2.1.
+
+This section previously read "Blocking items (not yet remediated)" and still
+listed both. It is the fastest place a bid reader checks for open blockers, so
+it was reporting two production blocks that no longer existed. Kept as a
+remediation record rather than deleted — the audit trail is the point.
+
+| Ref | Item | What it blocked | Remediated in | Evidence at HEAD |
+|---|---|---|---|---|
+| HIGH-1 | `sso_naipunyam.py` accepts `state` and never validates it — login CSRF, no PKCE, no privileged-account exclusion | Any deploy with `AUTH_PROVIDER=naipunyam`. Dormant then (`local`), but one env flip away and on the APSSDC bid path. | `352f366` | One-shot Redis state, 600 s TTL, consumed before the token POST (`sso_naipunyam.py:251-261`); binding cookie compared with `hmac.compare_digest` (`:396-398`); PKCE `code_challenge_method: "S256"` (`:276`); privileged-role rejection **before** the user upsert and before any token is issued (`:493-509`) |
+| HIGH-2 | `scripts/piston-up.ps1` runs the code-execution sandbox `--privileged` with `--dns 8.8.8.8` | Any use of the self-hosted Piston runner, including local dev. Hosted provider was and remains the default. | `352f366` | `piston-up.ps1:120-138` — `--cap-drop=ALL` with a named capability allow-list, `--cgroupns=private`, `--pids-limit 512`, loopback-only bind, networking disabled. No `--privileged`, no explicit DNS |
+
+The three S5 MEDIUMs are also closed, with one recorded residual:
+`trusted_proxy_count` is now bounded (`config.py:283`, `ge=0, le=4`) and counts
+the too-high case, but a value set too **low** still degrades silently — carried
+forward as **DG-3** in the current review, not as a blocker.
 
 ## API contract and behaviour changes (already merged)
 

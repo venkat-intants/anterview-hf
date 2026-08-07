@@ -32,6 +32,38 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import structlog
+
+
+@pytest.fixture
+def restore_worker_logging() -> Any:
+    """Undo the process-global logging state ``_configure_worker_logging`` installs.
+
+    ``_prewarm`` configures the worker's PII redaction chain (SH-5), which is
+    correct in production — it is the framework's per-job-process init hook —
+    and leaky in a test suite: it reconfigures structlog process-wide and sets
+    ``propagate = False`` on the "interview-worker" logger, which would silently
+    stop ``caplog`` seeing that logger's records in every test that ran
+    afterwards. Any test that lets ``_configure_worker_logging`` actually run
+    must take this fixture.
+    """
+    import app.worker.interview_worker as wk
+
+    saved_config = structlog.get_config()
+    saved_handlers = list(wk.logger.handlers)
+    saved_propagate = wk.logger.propagate
+    saved_level = wk.logger.level
+    saved_flag = wk._worker_logging_configured
+    wk._worker_logging_configured = False
+    try:
+        yield
+    finally:
+        structlog.configure(**saved_config)
+        wk.logger.handlers = saved_handlers
+        wk.logger.propagate = saved_propagate
+        wk.logger.setLevel(saved_level)
+        wk._worker_logging_configured = saved_flag
+
 
 # ---------------------------------------------------------------------------
 # 1. Active-jobs counter
@@ -362,7 +394,7 @@ def test_run_binds_worker_http_server_to_loopback() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_prewarm_loads_vad_into_userdata() -> None:
+def test_prewarm_loads_vad_into_userdata(restore_worker_logging: Any) -> None:
     """_prewarm must load silero.VAD into proc.userdata['vad']."""
     from app.worker.interview_worker import _prewarm
 
@@ -380,7 +412,7 @@ def test_prewarm_loads_vad_into_userdata() -> None:
     mock_silero.VAD.load.assert_called_once()
 
 
-def test_prewarm_swallows_load_failure() -> None:
+def test_prewarm_swallows_load_failure(restore_worker_logging: Any) -> None:
     """_prewarm must not raise if silero.VAD.load() fails."""
     from app.worker.interview_worker import _prewarm
 
@@ -394,6 +426,29 @@ def test_prewarm_swallows_load_failure() -> None:
 
     # userdata["vad"] must NOT be set on failure (entrypoint will cold-load).
     assert "vad" not in mock_proc.userdata
+
+
+def test_prewarm_configures_the_redaction_chain(restore_worker_logging: Any) -> None:
+    """SH-5 — the JOB process must enter the PII chain before it logs anything.
+
+    Interviews run in the child process the framework spawns, not in the
+    supervisor that ``run()`` configures, and a spawned child inherits no
+    structlog configuration. ``_prewarm`` is the framework's only per-job-process
+    init hook, so if this call is ever dropped the redaction net covers
+    everything except the process that actually handles transcripts.
+    """
+    from shared.observability.pii import redact_pii_processor
+
+    import app.worker.interview_worker as wk
+
+    assert wk._worker_logging_configured is False  # fixture reset it
+
+    with patch("app.worker.interview_worker.silero") as mock_silero:
+        mock_silero.VAD.load.return_value = MagicMock()
+        wk._prewarm(MagicMock(userdata={}))
+
+    assert wk._worker_logging_configured is True
+    assert redact_pii_processor in structlog.get_config()["processors"]
 
 
 # ---------------------------------------------------------------------------
@@ -950,6 +1005,14 @@ def test_session_start_disables_text_input() -> None:
 
     Asserted against the SOURCE rather than by running the entrypoint (which
     needs a live LiveKit room), so it fails if the argument is ever dropped.
+
+    The receiver is matched as either ``session`` (a local, as it was while the
+    lifecycle lived in closures inside entrypoint) or ``self.session`` (the
+    InterviewJob attribute it became). Matching only the bare Name would have
+    made this test pass vacuously the moment the session moved onto an object —
+    the `assert starts` guard below is what catches that, and it is why the
+    matcher is widened here rather than the call site being aliased back to a
+    local to keep an AST shape alive.
     """
     import ast
     import pathlib
@@ -957,14 +1020,19 @@ def test_session_start_disables_text_input() -> None:
     src = pathlib.Path(__file__).resolve().parents[2] / "app" / "worker" / "interview_worker.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
 
+    def _is_session_receiver(node: ast.expr) -> bool:
+        """True for ``session`` and for ``<anything>.session``."""
+        if isinstance(node, ast.Name):
+            return node.id == "session"
+        return isinstance(node, ast.Attribute) and node.attr == "session"
+
     starts = [
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "start"
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "session"
+        and _is_session_receiver(node.func.value)
     ]
     assert starts, "session.start(...) not found — did the worker entrypoint move?"
 

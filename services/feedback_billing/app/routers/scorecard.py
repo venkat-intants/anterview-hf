@@ -156,16 +156,20 @@ async def _generate_presigned_url(
         return None
 
     try:
-        import aioboto3  # local import — optional dep  # noqa: PLC0415
+        # shared.s3 rather than a local aioboto3.Session: this was the copy that
+        # omitted path-style addressing, and a PRE-SIGN site is where that costs
+        # most. The URL is signed over the host, so virtual-host style does not
+        # fail here — it hands the candidate a link to
+        # `<bucket>.<account>.r2.cloudflarestorage.com`, which does not resolve,
+        # and the failure lands in their browser far from this log line.
+        from shared.s3 import s3_client  # local import — optional dep  # noqa: PLC0415
 
-        session = aioboto3.Session(
-            aws_access_key_id=settings.s3_access_key_id,
-            aws_secret_access_key=settings.s3_secret_access_key,
-            region_name=settings.s3_region,
-        )
-        endpoint = settings.s3_endpoint_url or None
-
-        async with session.client("s3", endpoint_url=endpoint) as s3:
+        async with s3_client(
+            endpoint=settings.s3_endpoint_url,
+            region=settings.s3_region,
+            access_key=settings.s3_access_key_id,
+            secret_key=settings.s3_secret_access_key,
+        ) as s3:
             url: str = await s3.generate_presigned_url(
                 "get_object",
                 Params={

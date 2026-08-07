@@ -4,6 +4,7 @@ import structlog
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.security import assert_strong_secrets, normalise_app_env
+from shared.security import validate_cors_origins as _validate_cors_origins
 
 log = structlog.get_logger(__name__)
 
@@ -81,6 +82,15 @@ class Settings(BaseSettings):
     naipunyam_saml_cert_path: str = ""
     naipunyam_api_base_url: str = ""
     naipunyam_api_key: str = ""
+    # OUR public OAuth callback URL, sent as redirect_uri in the authorize
+    # request and echoed in the token exchange (RFC 6749 §4.1.3 requires the two
+    # to be identical, and a conforming IdP rejects the exchange when it is
+    # omitted). It was previously derived from naipunyam_api_base_url — the
+    # IdP's OWN host — which pointed the browser back at APSSDC rather than at
+    # us. That could only ever work if the IdP happened to be same-origin with
+    # this service. Kept separate from the SAML ACS URL (a different protocol's
+    # endpoint) so the OAuth flow no longer inherits a SAML fallback.
+    naipunyam_oauth_redirect_uri: str = ""
     # OAuth2 client_credentials for the Naipunyam REST API (S5-003a).
     # Left empty until APSSDC issues credentials during the bid process.
     naipunyam_client_id: str = ""
@@ -294,6 +304,12 @@ class Settings(BaseSettings):
 
     sentry_dsn: str = ""
 
+    # Bearer token required by GET /metrics. Blank = unset, which keeps /metrics
+    # open everywhere EXCEPT production, where shared/metrics_auth.py fails it
+    # closed with a 404. Blank rather than None because .env.example ships
+    # `METRICS_TOKEN=` and pydantic hands that through as "".
+    metrics_token: str = ""
+
     # ---------------------------------------------------------------------------
     # httpOnly refresh-token cookie settings
     #
@@ -409,22 +425,14 @@ class Settings(BaseSettings):
     @field_validator("cors_allowed_origins")
     @classmethod
     def validate_cors_origins(cls, v: str) -> str:
-        """Reject wildcard origins when allow_credentials=True.
+        """Reject wildcard / non-http(s) origins (shared/security.py).
 
-        RFC 6454 + CORS spec forbid combining credentials with '*'.
-        Also validates each origin uses http:// or https:// scheme.
+        This service was the last one still carrying its own copy of the check.
+        A guard duplicated four ways is a guard that drifts — and the shared
+        version is byte-for-byte the same policy (reject '*' and 'null', require
+        an http:// or https:// scheme), so there was nothing left here to keep.
         """
-        origins = [o.strip() for o in v.split(",") if o.strip()]
-        for origin in origins:
-            if origin in ("*", "null"):
-                raise ValueError(
-                    "CORS allow_credentials=True is incompatible with wildcard '*' origin"
-                )
-            if not (origin.startswith("http://") or origin.startswith("https://")):
-                raise ValueError(
-                    f"CORS origin {origin!r} must start with http:// or https://"
-                )
-        return v
+        return _validate_cors_origins(v)
 
     @property
     def cors_origins_list(self) -> list[str]:

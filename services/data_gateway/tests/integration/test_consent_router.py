@@ -56,6 +56,14 @@ from app.main import app
 from app.models import DpdpConsent
 from app.routers.consent import _extract_client_ip, _hash_value
 
+# Requires a LIVE Postgres. Marked so the CI leg's `-m "not integration"`
+# deselects it by MARKER rather than by directory: `--ignore=tests/integration`
+# also threw away the fully-offline SSO suites in this same folder, so 31 tests
+# covering the newest security code in the service never ran in CI. Excluding
+# by marker is what ci.yml's header already says this repo does; this file was
+# one of four that made data_gateway the exception.
+pytestmark = pytest.mark.integration
+
 _REGISTER_URL = "/auth/register"
 _CONSENT_URL = "/consent"
 _CONSENT_STATUS_URL = "/consent/status"
@@ -733,25 +741,32 @@ def test_extract_client_ip_attacker_spoof_blocked(
     counting ``trusted_proxy_count`` entries from the RIGHT (the trusted end),
     any number of attacker-prepended entries on the LEFT are ignored. Even if a
     spoofed value somehow survived Caddy's stripping as:
-        X-Forwarded-For: attacker, real-client
-    trusted_proxy_count=1 reads the rightmost entry ('real-client'); 'attacker'
-    at index 0 is outside the trusted window and is never used.
+        X-Forwarded-For: 1.1.1.1, 198.51.100.7
+    trusted_proxy_count=1 reads the rightmost entry; the prepended one at index
+    0 is outside the trusted window and is never used.
+
+    The placeholders used to be the literal strings "attacker" and
+    "real-client", which made this test RED once ``_validated_ip`` began
+    failing closed on anything that is not an IP: the helper correctly refused
+    "real-client" and returned the socket peer, and the assertion read that
+    correct behaviour as a leak. Real addresses now, so the test asserts the
+    hop arithmetic rather than fighting the validator.
     """
     monkeypatch.setattr(settings, "trusted_proxy_count", 1)
 
     request = _make_request(
-        xff="attacker, real-client",
+        xff="1.1.1.1, 198.51.100.7",
         client_host="10.0.0.1",
     )
     ip = _extract_client_ip(request)
 
-    assert ip == "real-client", (
-        f"Expected 'real-client' (rightmost, trusted entry) but got '{ip}' — "
+    assert ip == "198.51.100.7", (
+        f"Expected '198.51.100.7' (rightmost, trusted entry) but got '{ip}' — "
         "attacker-prepended XFF entry leaked through the trusted-proxy gate"
     )
 
     # Verify the attacker's spoofed IP is not the recorded value.
-    assert ip != "attacker", "Attacker-supplied XFF entry must never be trusted"
+    assert ip != "1.1.1.1", "Attacker-supplied XFF entry must never be trusted"
 
 
 def test_extract_client_ip_missing_xff_falls_back(

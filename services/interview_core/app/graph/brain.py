@@ -41,6 +41,7 @@ names, turn counters, latency, token counts.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 
@@ -65,9 +66,92 @@ from app.graph.state import (
     TurnRecord,
     build_initial_state,
 )
-from app.llm.base import LLMAdapter, LLMMessage
+from app.llm.base import LLMAdapter, LLMError, LLMMessage
 
 log = structlog.get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# LLM failure policy
+#
+# A transient LLM failure is an EXPECTED event here, not an exceptional one:
+# the Gemini free tier is ~10 RPM and this project hits 429 routinely. Before
+# this guard existed, one 429 unwound out of ``generate_stream`` through
+# ``respond()`` into the LiveKit agent — which has no handler for it — and
+# ended the candidate's interview mid-session.
+#
+# Attempts are capped tight because the retry sits INSIDE the per-turn latency
+# budget (p95 < 2s). Two retries at 0.5s + 1.0s add at most 1.5s of wall clock
+# to a turn that has already blown its budget; the alternative is a dead
+# session, so the trade is worth it — but a third retry is not.
+# ---------------------------------------------------------------------------
+_MAX_LLM_ATTEMPTS: int = 3
+_LLM_RETRY_BASE_SECONDS: float = 0.5
+
+# Statuses worth a second attempt: rate limiting, request timeout, and the 5xx
+# family (provider-side, not caused by our payload). The rest of 4xx is the
+# provider's verdict on the REQUEST — a bad key (401/403), a malformed body
+# (400), a wrong model id (404) — and reproduces identically on retry, so
+# retrying only burns more of the candidate's turn.
+_TRANSIENT_STATUSES: frozenset[int] = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def _is_transient(exc: LLMError) -> bool:
+    """True if ``exc`` is worth retrying with the identical prompt."""
+    if exc.status is not None:
+        return exc.status in _TRANSIENT_STATUSES
+    # Statusless LLMErrors split two ways. The adapters wrap DNS / connect /
+    # read-timeout failures as ``LLMError("network: <ExcType>: ...")`` (see
+    # gemini.py, groq.py) — the model never reached a verdict, so a retry is a
+    # genuinely fresh attempt. Every OTHER statusless error ("empty response",
+    # "MAX_TOKENS ...") IS the model's verdict on this exact prompt and will
+    # reproduce.
+    return str(exc).startswith("network:")
+
+
+# ---------------------------------------------------------------------------
+# Degraded-turn copy — spoken when the LLM is unusable for a whole turn.
+#
+# Shape matters as much as language: the line MUST invite the candidate to
+# speak. The agent hands control back to the candidate after every interviewer
+# turn, so a turn that ends in a bare apology stalls the session for good — the
+# agent waits for speech the candidate has no reason to produce. The wording is
+# deliberately position-neutral so the same line works whether the failure hit
+# the opening question or a mid-interview follow-up.
+#
+# SCRIPT (B-038): HI/TE in NATIVE script with English loanwords left inline in
+# Latin — Sarvam bulbul TTS is trained on native script and mispronounces Roman
+# Hindi/Telugu letter-by-letter. Same rule as ``GREETING_TEMPLATES`` /
+# ``CLOSING_TEMPLATES`` in prompts.py.
+#
+# Lives here rather than in prompts.py because it is not a prompt: it is the
+# brain's own utterance on its error path, and it belongs next to the policy
+# that decides to say it.
+# ---------------------------------------------------------------------------
+LLM_FALLBACK_TEMPLATES: dict[Language, str] = {
+    "en": (
+        "Sorry, I lost my train of thought for a moment. Let's keep going — "
+        "could you tell me a bit more about your recent work and experience?"
+    ),
+    "hi": (
+        "माफ़ कीजिए, मैं एक पल के लिए अटक गया। चलिए आगे बढ़ते हैं — अपने recent "
+        "work और experience के बारे में थोड़ा और बताइए।"
+    ),
+    "te": (
+        "క్షమించండి, ఒక్క క్షణం ఆలోచన ఆగిపోయింది. పదండి ముందుకు వెళదాం — మీ recent "
+        "work, experience గురించి కొంచెం చెప్పండి."
+    ),
+}
+
+
+def render_llm_fallback(language: Language) -> str:
+    """Return the degraded-turn line for ``language``.
+
+    Same graceful-fallback contract as ``render_closing``: an unknown or future
+    language code returns English rather than raising, so the 22-language
+    rollout can never turn a missing translation into a dead session.
+    """
+    return LLM_FALLBACK_TEMPLATES.get(language, LLM_FALLBACK_TEMPLATES["en"])
 
 
 class InterviewBrain:
@@ -301,13 +385,82 @@ class InterviewBrain:
         interrupted), the ``async for`` simply ends early and we never reach the
         commit — so an interrupted interviewer turn is NOT persisted, exactly as
         the architecture requires.
+
+        LLM failures: this is the single funnel for BOTH entry points
+        (``first_question`` and ``follow_up``), so it is the one place that owns
+        retry + degradation.
+
+          * Retry ONLY while nothing has been yielded. Chunks are spoken the
+            moment they leave this generator, so retrying after a partial stream
+            would make the candidate hear the first half of the question a
+            second time. Resuming mid-response is not on offer either — the
+            adapter surface has no "continue from here" and the model would
+            re-plan the whole answer. So a mid-stream failure ends the attempts.
+          * Retry only genuinely transient failures (``_is_transient``), with
+            bounded exponential backoff.
+          * However the attempts end, the turn still emits a complete utterance:
+            whatever was already streamed, plus the canned fallback line. That
+            keeps the transcript equal to what the candidate actually heard AND
+            leaves the turn ending in an invitation to speak, so the session
+            continues instead of dying.
         """
         t_start = time.monotonic()
         parts: list[str] = []
-        async for chunk in self._adapter.generate_stream(system_prompt, history):
-            if chunk:
-                parts.append(chunk)
-                yield chunk
+        emitted = False
+        failure: LLMError | None = None
+        attempts = 0
+
+        for attempt in range(1, _MAX_LLM_ATTEMPTS + 1):
+            attempts = attempt
+            failure = None
+            try:
+                # ``parts`` is never carried across attempts: the only way to
+                # reach a second attempt is with nothing emitted, and nothing
+                # is appended to ``parts`` without also being yielded.
+                async for chunk in self._adapter.generate_stream(system_prompt, history):
+                    if chunk:
+                        parts.append(chunk)
+                        # Set BEFORE the yield — control leaves this coroutine
+                        # at the yield, so the flag must already be true by the
+                        # time a downstream failure is handled.
+                        emitted = True
+                        yield chunk
+            except LLMError as exc:
+                failure = exc
+                # PII: status + counters only. Never the prompt, the history or
+                # ``exc.body`` — provider error bodies echo the request back,
+                # and this service's log redaction only strips known key names.
+                log.warning(
+                    f"brain.{event}.llm_failed",
+                    session_id=self._state["session_id"],
+                    turn_count=self._state["turn_count"],
+                    attempt=attempt,
+                    status=exc.status,
+                    transient=_is_transient(exc),
+                    partial=emitted,
+                )
+                if emitted or not _is_transient(exc) or attempt == _MAX_LLM_ATTEMPTS:
+                    break
+                await asyncio.sleep(_LLM_RETRY_BASE_SECONDS * 2 ** (attempt - 1))
+                continue
+            break
+
+        # A stream that drains with no visible text is the same outcome as a
+        # failure from the candidate's seat — dead air, then a stalled session.
+        # The adapters raise ``LLMError`` for it today, but the degradation must
+        # not depend on every future adapter remembering to.
+        if failure is not None or not parts:
+            fallback = render_llm_fallback(self._state["language"])
+            parts.append(fallback)
+            yield fallback
+            log.error(
+                f"brain.{event}.degraded",
+                session_id=self._state["session_id"],
+                turn_count=self._state["turn_count"],
+                attempts=attempts,
+                status=failure.status if failure is not None else None,
+                partial=emitted,
+            )
 
         latency_ms = int((time.monotonic() - t_start) * 1000)
         self._state["last_llm_latency_ms"] = latency_ms

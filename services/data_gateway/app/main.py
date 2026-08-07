@@ -30,8 +30,9 @@ from typing import Any
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     Counter,
@@ -39,6 +40,7 @@ from prometheus_client import (
     generate_latest,
 )
 from shared.auth.factory import get_auth_provider
+from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
@@ -250,28 +252,76 @@ app = FastAPI(
 # The /metrics endpoint itself is excluded from its own counters to avoid
 # inflating noise in the scrape-cycle data.
 # ---------------------------------------------------------------------------
-@app.middleware("http")
-async def _prometheus_middleware(request: Request, call_next: Any) -> Response:
-    path = request.url.path
-    method = request.method
-    start = time.perf_counter()
-    response: Response = await call_next(request)
-    duration = time.perf_counter() - start
-    # Normalise high-cardinality UUIDs in paths to avoid metric explosion.
-    # Simple heuristic: replace UUID-like path segments with {id}.
-    normalised = re.sub(
+def _normalise_path(path: str) -> str:
+    """Collapse UUID path segments to ``{id}`` so metric cardinality stays bounded."""
+    return re.sub(
         r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         "/{id}",
         path,
     )
-    if normalised != "/metrics":
-        _http_requests_total.labels(
-            method=method,
-            path=normalised,
-            status_code=str(response.status_code),
-        ).inc()
-        _http_request_duration_seconds.labels(method=method, path=normalised).observe(duration)
+
+
+def _record(method: str, normalised: str, status_code: str, duration: float) -> None:
+    """Record one request in both metrics. /metrics excludes itself from its own
+    counters so scrape traffic does not dominate the data being scraped."""
+    if normalised == "/metrics":
+        return
+    _http_requests_total.labels(
+        method=method, path=normalised, status_code=status_code
+    ).inc()
+    _http_request_duration_seconds.labels(method=method, path=normalised).observe(duration)
+
+
+@app.middleware("http")
+async def _prometheus_middleware(request: Request, call_next: Any) -> Response:
+    normalised = _normalise_path(request.url.path)
+    method = request.method
+    start = time.perf_counter()
+    try:
+        response: Response = await call_next(request)
+    except Exception:
+        # DG-8. Without this branch an unhandled exception propagated straight
+        # past the middleware and http_requests_total never learned the request
+        # happened — so the series STRUCTURALLY could not contain a 5xx, and the
+        # one thing an operator most wants to alert on ("500s are climbing") was
+        # unalertable by construction. Note this counts before Starlette's
+        # ServerErrorMiddleware turns the exception into the response below;
+        # re-raising is what lets that happen, and is also what keeps the
+        # exception visible to Sentry and to the test client.
+        _record(method, normalised, "500", time.perf_counter() - start)
+        raise
+    _record(method, normalised, str(response.status_code), time.perf_counter() - start)
     return response
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Turn any unhandled exception into a generic 500 — DG-8.
+
+    FastAPI's default for an unhandled exception is to let it reach the ASGI
+    server, whose response body depends on the server and can carry a driver
+    message. asyncpg in particular puts the offending SQL and parameter values
+    into ``str(exc)``, and parameters are candidate PII. So the client gets a
+    fixed body with no exception text, and the detail goes to the log stream —
+    which is already PII-redacted by ``_redact_pii_processor`` above.
+
+    This handler runs in Starlette's ServerErrorMiddleware, OUTSIDE the metrics
+    middleware, which is why the counter is incremented there rather than here:
+    by the time we get called, the middleware has already re-raised. Starlette
+    re-raises again after we return, so Sentry and the test client still see the
+    original exception.
+    """
+    log.error(
+        "http.unhandled_exception",
+        path=_normalise_path(request.url.path),
+        method=request.method,
+        exc_type=type(exc).__name__,
+        exc_msg=str(exc),
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error."},
+    )
 
 
 app.add_middleware(
@@ -327,14 +377,33 @@ async def root() -> dict[str, str]:
     include_in_schema=False,  # not part of the public API contract
     summary="Prometheus metrics scrape endpoint",
 )
-async def metrics() -> Response:
+async def metrics(authorization: str | None = Header(default=None)) -> Response:
     """Expose Prometheus metrics for scraping by a collector (e.g. VictoriaMetrics,
     Prometheus server, or Railway's built-in metrics plugin).
 
     Returns text/plain in the standard Prometheus exposition format.
     The endpoint is excluded from OpenAPI docs (include_in_schema=False) since
     it is an ops endpoint, not part of the service's REST API.
+
+    A user JWT is deliberately NOT reused as the credential: a scrape job holds a
+    static secret, not a short-lived session token. The policy — and the
+    401-vs-404 choice — lives in shared/metrics_auth.py so all four services
+    refuse identically; this handler only translates it into HTTP. Note the edge
+    proxy already gates /metrics in the Caddy topologies, but render.yaml gives
+    each backend its own public hostname with no proxy in front, and a control
+    one deploy target lacks is not a control.
     """
+    try:
+        check_metrics_auth(
+            authorization=authorization,
+            metrics_token=settings.metrics_token,
+            app_env=settings.app_env,
+        )
+    except MetricsAuthError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.detail, headers=exc.headers
+        ) from exc
+
     return Response(
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST,

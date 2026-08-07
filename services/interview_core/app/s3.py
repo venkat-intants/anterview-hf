@@ -27,10 +27,9 @@ PII note:
 
 from __future__ import annotations
 
-import aioboto3
 import structlog
-from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
+from shared.s3 import s3_client as shared_s3_client
 
 from app.config import Settings
 
@@ -74,26 +73,23 @@ async def upload_audio(
 
     key = f"interviews/{session_id}/turn_{turn_seq:04d}.pcm"
 
-    # For local MinIO / Cloudflare R2, pass the custom endpoint.
-    # For real AWS S3, None tells boto3 to resolve the standard regional endpoint.
-    endpoint_url: str | None = settings.s3_endpoint if settings.s3_endpoint else None
-
-    # MinIO/R2 (custom endpoint) require path-style addressing; AWS keeps default.
-    boto_config: BotoConfig | None = (
-        BotoConfig(s3={"addressing_style": "path"}) if endpoint_url else None
-    )
-
+    # Client construction lives in shared.s3 (finding SVC-1): this was one of
+    # five hand-rolled aioboto3 sessions across four services. Endpoint
+    # resolution and the path-style rule for custom endpoints (MinIO/R2) now
+    # have one definition.
+    #
+    # This copy also passed the credentials WITHOUT the `or None` fallback the
+    # other four used, so an empty S3_ACCESS_KEY_ID was handed to botocore as
+    # "" — which is not the same as absent: it suppresses the credential chain
+    # instead of deferring to it. The shared helper applies `or None`, so that
+    # divergence is corrected here rather than preserved.
     try:
-        boto_session = aioboto3.Session(
-            aws_access_key_id=settings.s3_access_key_id,
-            aws_secret_access_key=settings.s3_secret_access_key,
-            region_name=settings.s3_region,
-        )
-        async with boto_session.client(
-            "s3",
-            endpoint_url=endpoint_url,
+        async with shared_s3_client(
+            endpoint=settings.s3_endpoint,
+            region=settings.s3_region,
+            access_key=settings.s3_access_key_id,
+            secret_key=settings.s3_secret_access_key,
             use_ssl=settings.s3_use_ssl,
-            config=boto_config,
         ) as s3_client:
             await s3_client.put_object(
                 Bucket=settings.s3_bucket_name,

@@ -1,8 +1,98 @@
 # Architecture — Real-Time Interview Engine (LiveKit + thin custom agent)
 
+> ## ⚠️ IMPLEMENTATION STATUS — read this before changing interview behaviour
+>
+> **Added 2026-08-07 (code review finding RT-5).** Everything below §1 is the
+> **original design record from 2026-05-31**, preserved as written. It is *not*
+> a description of what runs today. The build diverged, and a reader who follows
+> the design straight to the code lands in the wrong module — which is exactly
+> what this banner exists to prevent.
+>
+> ### What actually ships
+>
+> **`app/worker/interview_worker.py` is the only production path.** Every
+> deployment entrypoint runs it and nothing else:
+>
+> | Entrypoint | Command |
+> |---|---|
+> | `dev-up.ps1:79` | `python -m app.worker.interview_worker dev` |
+> | `docker-compose.yml:80` | `python -m app.worker.interview_worker start` |
+> | `docker-compose.prod.yml:205` | `python -m app.worker.interview_worker start` |
+> | `render.yaml:242` | `python -m app.worker.interview_worker start` |
+> | `space/supervisord.conf` | `[program:interview_worker]` |
+>
+> It drives turn cadence through the **LiveKit `AgentSession`** and its plugin
+> chain (`livekit.plugins.{openai, sarvam, silero, simli}`) — *not* through the
+> `InterviewBrain.next_turn()` + orchestrator design specified in §5 below.
+>
+> ### What exists but is not wired
+>
+> These modules are the §5 design, built and unit-tested, but **no production
+> traffic executes them**:
+>
+> ```
+> app/graph/brain.py  build.py  nodes.py
+> app/graph/prompts.py  personas.py                  ← island: only brain/nodes/livekit_agent import them
+> app/agent/orchestrator.py  livekit_agent.py
+> app/avatar/base.py  simli.py  voice_only.py        ← reachable only from livekit_agent.py
+> app/speech/sarvam_tts.py  sarvam_stt.py  sarvam_stt_stream.py  sentence_splitter.py
+> app/agent/audio_resample.py                        ← reachable only from avatar/simli.py
+> ```
+>
+> **They are imported at ASGI startup, but never executed.** `routers/rooms.py:38`
+> does `from app.agent.launcher import dispatch_interview_agent`, and
+> `app/agent/__init__.py:19` re-exports from `app.agent.orchestrator`, which pulls
+> in `graph.brain` → `graph.nodes`. So "dead code" is not a safe assumption for
+> dependency pruning, image size, or import-time failure analysis — a syntax or
+> import error in the island still breaks the ASGI service at boot. What is dead
+> is the *call path*, not the *import graph*.
+>
+> **This is deliberate and the modules are maintained, not abandoned.** Owner
+> decision, 2026-08-07: keep both paths. `avatar/base.py`'s `AvatarTransport` is
+> the seam the Tier-2 `AVATAR_PROVIDER=custom` migration builds on (Three.js +
+> Ready Player Me + Rhubarb-Lipsync), and `speech/` holds the hard-won Sarvam
+> work (B-038 native script, v3 params, streaming reconnect/finalize-grace) that
+> the Tier-2 self-hosted path needs. Deleting them would mean rebuilding that
+> seam from scratch.
+>
+> Because they are kept, they are held to production standards: the unhandled
+> `LLMError` in `brain.py::_stream_and_commit` (RT-2) and the missing
+> cancellation cleanup in `avatar/simli.py` (RT-3) were both fixed on
+> 2026-08-07 even though no session reaches them today.
+>
+> ### Which one do I change?
+>
+> | If you are changing… | Edit |
+> |---|---|
+> | Live interview behaviour, question flow, avatar/voice in production | `app/worker/interview_worker.py` |
+> | **The prompt the live interviewer actually uses** | `interview_worker.py::_interviewer_instructions()` — **not** `graph/prompts.py` |
+> | The Tier-2 custom-avatar or self-hosted-speech path | `app/avatar/`, `app/speech/` |
+> | Role-weighted question plans, competency rubrics | `shared/intelligence/` — genuinely shared by both |
+>
+> **Corrected 2026-08-07 (finding IC-3).** An earlier version of this banner
+> claimed `graph/{prompts,personas,state}.py` were shared with the worker. That
+> was wrong and dangerously so: `grep "app.graph" app/worker/interview_worker.py`
+> returns **nothing**. The worker builds its prompt in
+> `_interviewer_instructions()`. Editing `graph/prompts.py` to change live
+> interview behaviour changes nothing in production, and — the sharper half —
+> hardening applied there does **not** protect the shipped path.
+>
+> The one real exception is `app/graph/state.py`, used in production for a single
+> type alias: `routers/rooms.py:43`, `from app.graph.state import Language`.
+> `graph/prompts.py` and `graph/personas.py` are island-only.
+>
+> ### Stale claims below, corrected
+>
+> - **§2 "Streaming gap to close"** — describes closing a gap in `graph/` nodes.
+>   Not outstanding production work: the shipped worker streams via the LiveKit
+>   plugin chain. It remains accurate as a note about the island.
+> - **§9 item 4 / §11** — same; scoped to the island, not to production.
+> - **`routers/ws.py`** — correctly described as deleted. Findings written
+>   against it in earlier audits are void, not open.
+
 **Version:** 0.2 (revised after cto-architect review 2026-05-31 — verdict: GO-WITH-CHANGES)
-**Status:** Design — no code yet
-**Last updated:** 2026-05-31
+**Status:** Design record — superseded in part by the shipped worker; see the banner above
+**Last updated:** 2026-05-31 (design); status banner added 2026-08-07
 **Owner:** Founder + AI agent team
 **Branch context:** `feat/ui-redesign-v2`
 **Supersedes:** the hand-rolled WebSocket turn loop (`routers/ws.py`, deleted 2026-05-31)

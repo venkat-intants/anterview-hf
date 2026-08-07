@@ -1,0 +1,89 @@
+# Example Prometheus scrape configuration for the four Intants services.
+#
+# This is committed as a PREREQUISITE of rate_limit_fail_open.rules.yml, not as
+# documentation. Since security finding M-6, GET /metrics is gated by
+# `Authorization: Bearer $METRICS_TOKEN` (shared/metrics_auth.py), so a scrape
+# config written from memory 401s on every target, every rule evaluates over an
+# empty series set, and the alerting looks healthy because nothing ever fires.
+# Shipping the rules without the scrape config would have reproduced exactly the
+# defect DG-6 records.
+#
+# Copy the `scrape_configs` block into your prometheus.yml (or drop this file in
+# as a scrape_config_files entry) and adjust the targets to your topology —
+# see README.md, which covers the three deployments this repo actually has.
+
+global:
+  # 15s: the fail-open alerts use rate(...[5m]) and a `for:` of 2m, so the
+  # 5-minute window must contain enough samples for a single skipped check to
+  # produce a non-zero rate for two consecutive evaluations.
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/rules/*.rules.yml
+
+scrape_configs:
+  # One job for all four services. `up{job="intants-services"}` is what
+  # MetricsScrapeDown alerts on, so renaming this job silently disables that
+  # alert — change both together.
+  - job_name: intants-services
+    metrics_path: /metrics
+    scheme: http
+
+    # The token is the SAME for all four services: render.yaml puts
+    # METRICS_TOKEN in the `intants-shared` envVarGroup, and docker-compose
+    # feeds every service from one env file. One credentials_file is therefore
+    # correct here and not a shortcut.
+    #
+    # credentials_file, never inline `credentials:`. An inline token in a
+    # committed config is the secret-in-git class that .gitleaks.toml exists to
+    # catch, and rotating it would mean a commit. Mount the file instead:
+    #   docker run -v /run/secrets/metrics_token:/etc/prometheus/metrics_token:ro
+    # Prometheus re-reads the file on every scrape, so rotation needs no reload.
+    #
+    # `bearer_token_file` is the deprecated spelling of the same thing and still
+    # works; prefer this form on Prometheus >= 2.26.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics_token
+
+    static_configs:
+      # Hostnames as seen from INSIDE the `intants` docker network
+      # (docker-compose.prod.yml). The services use `expose:`, not `ports:`, so
+      # these are unreachable from the host — Prometheus must join that network.
+      #
+      # The `service` label is what the alert annotations interpolate; without
+      # it a page says "instance data_gateway:8002" and the on-call engineer has
+      # to know the port map.
+      - targets: ['data_gateway:8002']
+        labels:
+          service: data_gateway
+      - targets: ['interview_core:8001']
+        labels:
+          service: interview_core
+      - targets: ['feedback_billing:8003']
+        labels:
+          service: feedback_billing
+      - targets: ['admin_ops:8004']
+        labels:
+          service: admin_ops
+
+    # Drop the port from `instance` so a port change does not reset every
+    # series' identity (and break `for:` clocks mid-incident).
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '([^:]+)(:[0-9]+)?'
+        target_label: instance
+        replacement: '$1'
+
+    metric_relabel_configs:
+      # http_requests_total and http_request_duration_seconds are labelled by
+      # `path`. data_gateway's middleware (main.py:261-266) rewrites only
+      # canonical hyphenated UUID segments to /{id} — a bare 32-hex magic-link
+      # token or a numeric id in a path still reaches the label verbatim, one
+      # series each. This is the server-side backstop for that: an unbounded
+      # `path` label is how a TSDB falls over, and it would take the alerts in
+      # this directory down with it.
+      - source_labels: [path]
+        regex: '.*/(?:[0-9a-fA-F-]{16,}|[0-9]{6,}).*'
+        action: drop

@@ -32,31 +32,25 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import uuid as _uuid_mod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+import structlog
 from livekit import api as lk_api
 from livekit import rtc
 from livekit.agents import Agent, AgentSession, JobContext, JobProcess, WorkerOptions, cli
 from livekit.agents.llm.chat_context import ChatMessage as _ChatMessage
 from livekit.agents.voice.events import ConversationItemAddedEvent
 from livekit.agents.voice.room_io import RoomOptions
-
-# _ParticipantAudioOutput is the exact output RoomIO publishes TTS with in
-# voice-only mode. It is a private module (pinned livekit-agents==1.5.15 in
-# requirements.txt) — we need it directly for the MID-SESSION voice-only
-# fallback: when the avatar participant dies mid-interview, RoomIO's own audio
-# output was never created (the avatar owned the audio path), so we build the
-# replacement ourselves. Revisit on any livekit-agents upgrade.
-from livekit.agents.voice.room_io._output import _ParticipantAudioOutput
 from livekit.plugins import openai, sarvam, silero, simli
-from shared.auth.jwt import issue_access_token
+from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
 
 # livekit-plugins-tavus is an optional dependency: the worker must still load
 # and run under Simli even when the tavus package is absent.  The module-level
@@ -70,6 +64,29 @@ except ImportError:  # pragma: no cover — only absent in stripped envs
     _tavus_plugin = None  # type: ignore[assignment]
     _TAVUS_AVAILABLE = False
 
+# _ParticipantAudioOutput is the exact output RoomIO publishes TTS with in
+# voice-only mode. It is a PRIVATE module of livekit-agents (pinned 1.5.15 in
+# requirements.txt) — we need it directly for the MID-SESSION voice-only
+# fallback: when the avatar participant dies mid-interview, RoomIO's own audio
+# output was never created (the avatar owned the audio path), so we build the
+# replacement ourselves.
+#
+# Guarded like the tavus plugin above, and for a stronger reason: an unguarded
+# import of a private symbol turns any livekit-agents upgrade that renames or
+# moves it into a worker that will not START — i.e. every interview fails,
+# including the ones that would never need the fallback. Guarded, the same
+# upgrade costs only the mid-session degrade path, which is already a
+# best-effort branch. The capability flag is what
+# _degrade_to_voice_only_midsession checks so the loss is logged loudly rather
+# than surfacing as a bare TypeError from calling None.
+try:
+    from livekit.agents.voice.room_io._output import _ParticipantAudioOutput
+    _PARTICIPANT_AUDIO_OUTPUT_AVAILABLE = True
+except ImportError:  # pragma: no cover — only on a livekit-agents upgrade
+    _ParticipantAudioOutput = None  # type: ignore[assignment,misc]
+    _PARTICIPANT_AUDIO_OUTPUT_AVAILABLE = False
+
+from shared.agents.guardrails import detect_injection
 from shared.intelligence import (
     InMemoryProfileCache,
     RoleProfile,
@@ -78,12 +95,92 @@ from shared.intelligence import (
     render_plan_block,
     render_role_model_block,
 )
+from shared.observability.pii import redact_pii_processor
+from shared.redis_factory import build_redis_client
 
 from app.avatars import resolve_avatar
 from app.config import settings
 from app.worker_capacity import publish_active_jobs
 
 logger = logging.getLogger("interview-worker")
+
+
+# ---------------------------------------------------------------------------
+# Logging — bring the worker PROCESS inside the PII redaction chain (DPDP §8)
+# ---------------------------------------------------------------------------
+# The four FastAPI services install redact_pii_processor in app/main.py. The
+# worker is a separate process that never imports app.main, so it ran outside
+# that chain entirely — the one process whose whole job is handling interview
+# transcripts, resumes and JD text was the one process the net did not cover.
+#
+# Two halves, because this process logs two ways:
+#   1. structlog.configure() covers the shared libraries the worker calls into
+#      (shared.intelligence.derive, shared.agents, shared.auth.jwt all log via
+#      structlog); unconfigured, structlog renders with its defaults and no
+#      redaction at all.
+#   2. A ProcessorFormatter handler on the stdlib "interview-worker" logger
+#      routes this module's own records through the SAME processor chain.
+#
+# Honest scope: redaction matches on KEY NAME. It covers structlog kwargs and
+# stdlib ``extra={...}`` fields; it cannot reach PII interpolated into a %-style
+# message string, which every call in this file uses today. So this is the net
+# that makes a future structured log call fail safe — "never put PII in a log
+# message" remains the actual rule, exactly as shared/observability/pii.py says.
+_worker_logging_configured: bool = False
+
+
+def _configure_worker_logging() -> None:
+    """Install the shared PII redaction chain in this worker process. Idempotent.
+
+    Called from ``run()`` (the supervisor process) and from ``_prewarm()`` (once
+    per job process — livekit-agents runs interviews in child processes that do
+    not inherit a spawn-mode parent's structlog config, and prewarm is the
+    framework's per-job-process init hook).
+    """
+    global _worker_logging_configured  # noqa: PLW0603 — process-wide, one-shot
+    if _worker_logging_configured:
+        return
+    _worker_logging_configured = True
+
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    shared_processors: list[Any] = [
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.add_log_level,
+        # Immediately before the renderer: anything added after this point is
+        # not covered.
+        redact_pii_processor,
+    ]
+
+    structlog.configure(
+        processors=[*shared_processors, structlog.processors.JSONRenderer()],
+        wrapper_class=structlog.make_filtering_bound_logger(level),
+    )
+
+    # Bridge: stdlib records from this module through the same chain.
+    # foreign_pre_chain is what runs for records that did NOT originate in
+    # structlog — i.e. every logger.info() in this file.
+    #
+    # ExtraAdder FIRST, and it is what makes the bridge more than decoration:
+    # ProcessorFormatter otherwise builds the event dict from the rendered
+    # message alone, so ``extra={...}`` fields never enter it — the redactor
+    # would have nothing to redact and operational fields would be dropped
+    # silently along with the PII. Adding them puts both under the same rule.
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=[structlog.stdlib.ExtraAdder(), *shared_processors],
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                structlog.processors.JSONRenderer(),
+            ],
+        )
+    )
+    logger.handlers = [handler]
+    logger.setLevel(level)
+    # Do not also hand these records to livekit-agents' root handler: that would
+    # print every worker line twice, once redacted and once not — which is worse
+    # than not redacting at all, because the redacted copy makes it look covered.
+    logger.propagate = False
 
 # ---------------------------------------------------------------------------
 # Admission control — thread-safe counter of currently running interviews.
@@ -164,10 +261,44 @@ _FALLBACK_AUDIO_SAMPLE_RATE: int = 24000
 _FALLBACK_SUBSCRIBE_TIMEOUT_SECONDS: float = 15.0
 
 # Service-to-service JWT TTL — generous but finite; scorer returns immediately.
-_SERVICE_JWT_TTL_SECONDS: int = 60
+# ALIASED, not redeclared: a service token's `sub` is a service name, so
+# logout_all (which only ever writes auth_epoch:<user-uuid>) cannot revoke it —
+# its lifetime IS its containment. A containment window with two definitions
+# drifts silently, and both happened to read 60 so no test could tell them
+# apart. The alias keeps this name for the existing call sites.
+_SERVICE_JWT_TTL_SECONDS: int = SERVICE_TOKEN_TTL_SECONDS
 # Scoring HTTP timeout and max retry count.
 _SCORE_TIMEOUT_SECONDS: float = 15.0
 _SCORE_MAX_RETRIES: int = 1
+
+# ---------------------------------------------------------------------------
+# Crash-recovery checkpoint (RT-4)
+# ---------------------------------------------------------------------------
+# Graceful shutdown is already covered (the drain hook handles tab close, abrupt
+# disconnect and SIGTERM). A HARD kill — OOM, SIGKILL, node loss — is not: the
+# answer count, the transcript and the close flag lived in process memory only,
+# so the session row stayed 'in_progress' forever, the transcript was lost, and
+# nothing ever scored it. These keys are the durable copy.
+_CHECKPOINT_KEY_PREFIX: str = "interview:checkpoint:"
+_CLOSE_GUARD_KEY_PREFIX: str = "interview:closed:"
+
+# Comfortably longer than any session (10 min nominal, SESSION_WALL_CLOCK_CAP_
+# SECONDS hard cap) so a checkpoint survives a crash, a worker restart and the
+# startup sweep — but finite, so orphaned keys evict themselves without an
+# operator having to clean Redis.
+SESSION_CHECKPOINT_TTL_SECONDS: int = 2 * 60 * 60  # 2 hours
+
+# Checkpoint writes are triggered from the turn loop (NFR: p95 turn latency
+# < 2 s), so they get a far tighter bound than the shared client's own 5 s
+# socket timeout plus retry schedule. Losing a checkpoint is recoverable;
+# stalling a turn is not.
+_CHECKPOINT_TIMEOUT_SECONDS: float = 2.0
+
+# A checkpoint that has not been refreshed for longer than this cannot belong to
+# a live interview — the wall-clock cap ends every session at 720 s. The margin
+# on top absorbs a slow close path (final scoring call + room delete) so the
+# reaper never races a session that is still finishing normally.
+CHECKPOINT_STALE_AFTER_SECONDS: int = SESSION_WALL_CLOCK_CAP_SECONDS + 300
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +508,43 @@ def _extract_required_skills(competencies: Any) -> list[str]:
     return skills[:40]
 
 
+def _scan_resume_for_injection(room_name: str, resume_text: str) -> list[str]:
+    """Log any prompt-injection markers found in a candidate's resume. Never raises.
+
+    The resume goes verbatim into ``_interviewer_instructions``, so it is the
+    one piece of candidate-authored text in a live interview that reaches the
+    model before the candidate has said a word. ``feedback_billing`` already
+    scans the same document on the scoring path; the live path had no telemetry
+    at all, which meant an attempt was only ever visible after the interview —
+    if at all.
+
+    DETECTION ONLY, deliberately: we neither strip nor reject. Stripping would
+    silently mangle legitimate CVs ("Managed the team responsible for system
+    instructions") and would teach candidates to obfuscate rather than stop.
+    Same convention as ``feedback_billing/app/untrusted_input.py`` and the
+    copilot path — a warning a human sees, never an automatic rejection.
+
+    Only marker names are logged, never the resume text: markers are our own
+    literals, the resume is PII (DPDP §8).
+    """
+    if not resume_text:
+        return []
+    try:
+        markers = detect_injection(resume_text)
+    except Exception as exc:  # noqa: BLE001 — telemetry must never block an interview
+        logger.warning(
+            "interview-worker: injection scan failed room=%s err=%s",
+            room_name, type(exc).__name__,
+        )
+        return []
+    if markers:
+        logger.warning(
+            "interview-worker.injection_markers room=%s source=resume count=%d markers=%r",
+            room_name, len(markers), markers,
+        )
+    return markers
+
+
 async def _lookup_session(room_name: str) -> SessionContext:
     """Look up session fields needed by the worker for a given room/session.
 
@@ -422,6 +590,10 @@ async def _lookup_session(room_name: str) -> SessionContext:
                 ).scalar_one_or_none()
                 if user is not None:
                     resume_text = user.resume_text or ""
+            # Scanned here, once, on the single path that reads the resume —
+            # every SessionContext return below carries the same text, so one
+            # call covers them all (OWASP LLM01 telemetry, detection only).
+            _scan_resume_for_injection(room_name, resume_text)
             job = (
                 await db.execute(select(Job).where(Job.id == sess.job_id))
             ).scalar_one_or_none()
@@ -653,12 +825,12 @@ _lookup_candidate_user_id = resolve_consent_user_id
 # Consent watchdog — extracted module-level helper for testability
 # ---------------------------------------------------------------------------
 #
-# The core watchdog logic is split out from the entrypoint() closure so tests
-# can drive it directly without spinning up a full LiveKit session.  The
-# closure inside entrypoint() delegates to this function.  Any change to
+# The core watchdog logic is split out of the job object so tests can drive it
+# directly without spinning up a full LiveKit session.
+# ``InterviewJob._consent_watchdog`` delegates to this function.  Any change to
 # sentinel-branch behaviour here will be caught by the unit tests.
 #
-# ``on_close`` has the same signature as the ``_on_close`` closure:
+# ``on_close`` has the same signature as ``InterviewJob._on_close``:
 #     async def on_close(*, timed_out: bool, consent_withdrawn: bool = False) -> None
 
 _OnCloseFn = Callable[..., Awaitable[None]]
@@ -671,7 +843,7 @@ async def _run_consent_watchdog(
     state: InterviewState,
     session_id: str,
 ) -> None:
-    """Module-level consent watchdog body — delegates from the entrypoint closure.
+    """Module-level consent watchdog body — delegates from InterviewJob._consent_watchdog.
 
     Sentinel values for ``user_id`` (see ``resolve_consent_user_id`` docstring):
       - valid UUID string → poll the consent ledger for this user every
@@ -791,6 +963,44 @@ async def _update_session_status(
         )
 
 
+async def _read_session_status(room_name: str) -> str | None:
+    """Return ``sessions.status`` for a room, or None when it cannot be read.
+
+    Never raises. The None return deliberately conflates "no such row" with "the
+    DB refused to answer", because the only caller (the crash reaper) must treat
+    both the same way: do nothing. Guessing a status here would let a transient
+    DB blip flip a live interview to 'abandoned' out from under the candidate.
+    """
+    import contextlib
+
+    from sqlalchemy import select
+
+    from app.database import get_session_factory, init_engine
+    from app.models import Session as InterviewSession
+
+    with contextlib.suppress(Exception):
+        init_engine()
+    try:
+        sid = _uuid_mod.UUID(room_name)
+    except ValueError:
+        return None
+    try:
+        factory = get_session_factory()
+        async with factory() as db:
+            status = (
+                await db.execute(
+                    select(InterviewSession.status).where(InterviewSession.id == sid)
+                )
+            ).scalar_one_or_none()
+        return str(status) if status is not None else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker: session status read failed room=%s err=%s",
+            room_name, type(exc).__name__,
+        )
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Transcript persistence
 # ---------------------------------------------------------------------------
@@ -869,7 +1079,7 @@ def _mint_service_jwt() -> str:
     dependency validates via shared.auth.jwt.verify_access_token:
       - iss: settings.jwt_issuer  ("intants-data-gateway")
       - aud: settings.jwt_audience ("intants-services")
-      - exp: now + _SERVICE_JWT_TTL_SECONDS
+      - exp: now + shared.auth.jwt.SERVICE_TOKEN_TTL_SECONDS
       - jti: fresh uuid4.hex (required by verify_access_token; empty jti raises)
       - sub: "interview_core" (service identity — no role restriction on scorer)
       - roles: ["service"]
@@ -882,6 +1092,8 @@ def _mint_service_jwt() -> str:
     # nothing enforced that. The TTL is unchanged (60s) — issue_access_token
     # gained a ttl_seconds parameter for exactly this caller, because swapping to
     # its 900s default would have multiplied this credential's lifetime by 15.
+    # The number itself now comes from shared.auth.jwt (see the alias above):
+    # the same drift argument applies to the constant, not just the minting.
     return issue_access_token(
         user_id="interview_core",
         roles=["service"],
@@ -1105,6 +1317,399 @@ class InterviewState:
 
         return False
 
+    # -- crash-recovery serialisation (RT-4) --------------------------------
+
+    def to_checkpoint(self) -> dict[str, Any]:
+        """Return the crash-recoverable slice of this state as plain JSON data.
+
+        Deliberately NOT the whole object: only the three fields that cannot be
+        rebuilt from anywhere else after a hard kill. Everything else the worker
+        needs on resume (job, language, avatar, role model) is re-derived from
+        the DB by ``_lookup_session``, so duplicating it here would just create
+        a second source of truth that can go stale.
+        """
+        return {
+            "candidate_answer_count": self.candidate_answer_count,
+            "transcript": list(self.transcript),
+            "close_triggered": self._close_triggered,
+        }
+
+    def restore_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Load a previously saved checkpoint over this state. Never raises.
+
+        Every field is validated rather than trusted. A checkpoint is read back
+        from Redis, possibly written by an older build of this worker, and this
+        runs on the path that starts a candidate's interview — a malformed value
+        must degrade to "resume what we could parse", never to an exception that
+        costs the candidate their session.
+        """
+        count = checkpoint.get("candidate_answer_count")
+        if isinstance(count, int) and count >= 0:
+            self.candidate_answer_count = count
+
+        raw_transcript = checkpoint.get("transcript")
+        if isinstance(raw_transcript, list):
+            self.transcript = [
+                {"role": str(item["role"]), "text": str(item["text"])}
+                for item in raw_transcript
+                if isinstance(item, dict) and "role" in item and "text" in item
+            ]
+
+        if checkpoint.get("close_triggered") is True:
+            self._close_triggered = True
+
+
+# ---------------------------------------------------------------------------
+# Durable session checkpoint — survives a hard worker kill (RT-4)
+# ---------------------------------------------------------------------------
+#
+# All four functions below are BEST-EFFORT in the same sense as _persist_turns:
+# a Redis outage must never crash, stall or alter an interview. Checkpointing is
+# a recovery aid, not a precondition — an interview that runs with Redis down is
+# exactly the interview we have always had.
+
+
+def _checkpoint_key(session_id: str) -> str:
+    return _CHECKPOINT_KEY_PREFIX + session_id
+
+
+def _close_guard_key(session_id: str) -> str:
+    return _CLOSE_GUARD_KEY_PREFIX + session_id
+
+
+# One client per job process, created on first use. The worker never runs the
+# FastAPI lifespan, so app.redis_client's singleton is not initialised here and
+# get_redis() would raise — this module owns its own. It is built through the
+# shared factory so the worker inherits the same serverless-Redis hardening
+# (idle health checks, keepalive, bounded timeouts, transport retries) as the
+# HTTP services; a hand-rolled pool here is the exact drift shared/redis_factory
+# .py exists to stop.
+_checkpoint_redis: Any | None = None
+
+
+def _get_checkpoint_redis() -> Any:
+    """Return this process's checkpoint Redis client, building it on first use.
+
+    Lazy rather than built at import: constructing it at import time would make
+    every unit test that merely imports the worker carry a connection pool, and
+    redis-py pools bind to the event loop that first uses them.
+    """
+    global _checkpoint_redis  # noqa: PLW0603 — per-process singleton, same as _active_jobs
+    if _checkpoint_redis is None:
+        _checkpoint_redis = build_redis_client(settings.redis_url)
+    return _checkpoint_redis
+
+
+async def save_checkpoint(
+    session_id: str,
+    state: InterviewState,
+    *,
+    started_at: datetime | None = None,
+) -> bool:
+    """Write the session's recoverable state to Redis. Never raises.
+
+    Returns True when the write landed, False on any failure — the caller uses
+    the flag for logging only, never for control flow.
+
+    ``started_at`` is carried so the reaper can record a truthful
+    ``duration_seconds`` for a session whose worker never reached the close path.
+    """
+    payload = {
+        "session_id": session_id,
+        "updated_at": datetime.now(tz=UTC).isoformat(),
+        "started_at": started_at.isoformat() if started_at is not None else None,
+        **state.to_checkpoint(),
+    }
+    try:
+        client = _get_checkpoint_redis()
+        await asyncio.wait_for(
+            client.set(
+                _checkpoint_key(session_id),
+                json.dumps(payload),
+                ex=SESSION_CHECKPOINT_TTL_SECONDS,
+            ),
+            timeout=_CHECKPOINT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001 — checkpointing must never affect the interview
+        logger.warning(
+            "interview-worker.checkpoint_write_failed room=%s err=%s",
+            session_id, type(exc).__name__,
+        )
+        return False
+    return True
+
+
+async def load_checkpoint(session_id: str) -> dict[str, Any] | None:
+    """Read a session's checkpoint back from Redis, or None. Never raises."""
+    try:
+        client = _get_checkpoint_redis()
+        raw = await asyncio.wait_for(
+            client.get(_checkpoint_key(session_id)),
+            timeout=_CHECKPOINT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker.checkpoint_read_failed room=%s err=%s",
+            session_id, type(exc).__name__,
+        )
+        return None
+    return _decode_checkpoint(raw)
+
+
+def _decode_checkpoint(raw: Any) -> dict[str, Any] | None:
+    """Parse a raw checkpoint value into a dict, or None if it is not one."""
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def clear_checkpoint(session_id: str, *, client: Any | None = None) -> None:
+    """Delete a session's checkpoint once it has been finalised. Never raises.
+
+    The close-guard key is deliberately NOT deleted with it: the checkpoint says
+    "this session may still need recovering", the guard says "this session has
+    already been finalised". Dropping the guard here would re-open the door to a
+    second scoring run for the rest of the TTL.
+    """
+    try:
+        rc = client if client is not None else _get_checkpoint_redis()
+        await asyncio.wait_for(
+            rc.delete(_checkpoint_key(session_id)),
+            timeout=_CHECKPOINT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker.checkpoint_clear_failed room=%s err=%s",
+            session_id, type(exc).__name__,
+        )
+
+
+async def claim_close(session_id: str, *, client: Any | None = None) -> bool:
+    """Claim the one-and-only finalisation of a session. True if we won it.
+
+    The durable counterpart to ``state.close_triggered``. That flag is a plain
+    instance attribute, so it dies with the process: a worker restarted after a
+    crash, or the startup reaper sweeping the same session, would run the close
+    path — and the scoring call — a second time. SET NX is the whole guard.
+
+    FAILS OPEN (returns True) when Redis cannot answer. The two failure modes
+    are not symmetric: a close that is wrongly skipped leaves a candidate with
+    no scorecard and a row stuck 'in_progress' forever, while a close that runs
+    twice costs at most a duplicate scoring request — which feedback_billing
+    already rejects on its own idempotency key (``_post_score`` treats the 409
+    as success). Losing the interview is the worse of the two.
+    """
+    try:
+        rc = client if client is not None else _get_checkpoint_redis()
+        claimed = await asyncio.wait_for(
+            rc.set(
+                _close_guard_key(session_id),
+                datetime.now(tz=UTC).isoformat(),
+                nx=True,
+                ex=SESSION_CHECKPOINT_TTL_SECONDS,
+            ),
+            timeout=_CHECKPOINT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker.close_claim_unavailable room=%s err=%s — proceeding",
+            session_id, type(exc).__name__,
+        )
+        return True
+    return bool(claimed)
+
+
+async def restore_state_from_checkpoint(session_id: str) -> InterviewState:
+    """Return the InterviewState for a session, resuming a checkpoint if present.
+
+    Called instead of ``InterviewState()`` at the top of every job. With no
+    checkpoint this is exactly the old behaviour; with one, the restarted worker
+    picks the interview up at the answer it had reached rather than restarting
+    the candidate at question one and orphaning the earlier transcript.
+
+    Note the restored ``close_triggered`` is honoured as written. A checkpoint
+    that says the close had already started belongs to a session that is being
+    finalised elsewhere, and re-running the close from here is precisely what
+    ``claim_close`` exists to prevent.
+    """
+    state = InterviewState()
+    checkpoint = await load_checkpoint(session_id)
+    if checkpoint is None:
+        return state
+    state.restore_checkpoint(checkpoint)
+    logger.warning(
+        "interview-worker.checkpoint_resumed room=%s answers=%d turns=%d closed=%s",
+        session_id, state.candidate_answer_count, len(state.transcript),
+        state.close_triggered,
+    )
+    return state
+
+
+def record_conversation_item(
+    item: object,
+    *,
+    state: InterviewState,
+    schedule_checkpoint: Callable[[], None],
+) -> bool:
+    """Fold one conversation item into *state*, checkpointing if it changed anything.
+
+    Returns the should-close signal from ``InterviewState.handle_conversation_item``
+    unchanged; the caller still owns scheduling the close.
+
+    Extracted out of the job object for the same reason
+    ``_run_consent_watchdog`` was: the behaviour that matters here — every turn
+    the candidate is credited with becomes durable before the process can die —
+    is otherwise only reachable through a live LiveKit session, so a dropped
+    checkpoint call would break crash recovery with nothing able to notice.
+    """
+    turns_before = len(state.transcript)
+    should_close = state.handle_conversation_item(item)
+    # Empty, system and non-chat items are dropped by handle_conversation_item;
+    # they changed nothing and are not worth a Redis write.
+    if len(state.transcript) != turns_before:
+        schedule_checkpoint()
+    return should_close
+
+
+def _checkpoint_age_seconds(checkpoint: dict[str, Any], now: datetime) -> float | None:
+    """Seconds since the checkpoint was last refreshed, or None if unknowable."""
+    raw = checkpoint.get("updated_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        updated_at = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return (now - updated_at).total_seconds()
+
+
+async def reap_stale_sessions(*, now: datetime | None = None) -> list[str]:
+    """Finalise sessions whose worker was killed mid-interview. Never raises.
+
+    Runs ONCE per worker process at startup. For every checkpoint that has gone
+    stale (no refresh for CHECKPOINT_STALE_AFTER_SECONDS — longer than any
+    session can legally run) and whose DB row still says 'in_progress':
+
+      1. claim the close, so a worker that is somehow still alive, or a second
+         reaper on another node, cannot finalise it twice;
+      2. flush the checkpointed transcript to ``turns`` — the crash is exactly
+         the case where the close-path flush never ran, so this is the only copy
+         of what the candidate said;
+      3. mark the row 'abandoned' with the duration it actually ran.
+
+    Deliberately does NOT score. 'abandoned' is the honest record for an
+    interview that was cut off at an unknown point: a scorecard generated from a
+    truncated transcript reads as a complete assessment of the candidate, and
+    this platform must not manufacture one. The transcript is preserved, so a
+    human can re-run scoring against it if they choose.
+
+    Returns the session ids it finalised — for logging and tests, not control
+    flow. An empty list is also what a Redis outage returns.
+    """
+    reaped: list[str] = []
+    # Its own client, not the process singleton: this runs on the heartbeat
+    # thread's event loop while the singleton belongs to the loop that conducts
+    # interviews, and a redis-py pool must not be shared across loops.
+    try:
+        client = build_redis_client(settings.redis_url)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker.reaper_client_failed err=%s", type(exc).__name__
+        )
+        return reaped
+
+    reference_now = now or datetime.now(tz=UTC)
+    try:
+        async for key in client.scan_iter(match=_CHECKPOINT_KEY_PREFIX + "*", count=100):
+            with contextlib.suppress(Exception):
+                await _reap_one(client, key, reference_now, reaped)
+    except Exception as exc:  # noqa: BLE001 — a broken sweep must not stop the worker booting
+        logger.warning("interview-worker.reaper_failed err=%s", type(exc).__name__)
+    finally:
+        with contextlib.suppress(Exception):
+            await client.aclose()
+
+    if reaped:
+        logger.warning(
+            "interview-worker.reaper_finalised count=%d sessions=%s",
+            len(reaped), ",".join(reaped),
+        )
+    else:
+        logger.info("interview-worker.reaper_clean — no stale sessions found")
+    return reaped
+
+
+async def _reap_one(
+    client: Any, key: Any, now: datetime, reaped: list[str]
+) -> None:
+    """Evaluate and, if warranted, finalise ONE checkpoint. See reap_stale_sessions."""
+    key_str = key.decode("utf-8") if isinstance(key, bytes) else str(key)
+    checkpoint = _decode_checkpoint(await client.get(key_str))
+    if checkpoint is None:
+        # Unparseable or already gone — nothing recoverable in it.
+        await client.delete(key_str)
+        return
+
+    age = _checkpoint_age_seconds(checkpoint, now)
+    if age is None or age < CHECKPOINT_STALE_AFTER_SECONDS:
+        # Still live (or too damaged to date) — leave it entirely alone. Reaping
+        # a running interview would cut off a candidate mid-answer.
+        return
+
+    session_id = str(checkpoint.get("session_id") or key_str.rsplit(":", 1)[-1])
+    status = await _read_session_status(session_id)
+    if status is None:
+        # Row missing, or the DB would not answer. Keep the checkpoint so the
+        # next sweep can retry rather than losing the transcript to a DB blip.
+        return
+    if status != "in_progress":
+        # Already finalised by the normal close path — the checkpoint is just
+        # litter at this point.
+        await client.delete(key_str)
+        return
+    if not await claim_close(session_id, client=client):
+        await client.delete(key_str)
+        return
+
+    state = InterviewState()
+    state.restore_checkpoint(checkpoint)
+    await _persist_turns(session_id, state.transcript)
+
+    # The session ended when its worker stopped refreshing the checkpoint, NOT
+    # when this sweep happened to notice. Recording the sweep time instead would
+    # inflate every crashed session's timings by the whole staleness window and
+    # quietly skew the duration analytics the dashboard reports.
+    last_seen = now - timedelta(seconds=age)
+    started_raw = checkpoint.get("started_at")
+    duration: int | None = None
+    if isinstance(started_raw, str):
+        with contextlib.suppress(ValueError):
+            started = datetime.fromisoformat(started_raw)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            duration = max(0, int((last_seen - started).total_seconds()))
+
+    logger.warning(
+        "interview-worker.reaper_abandoning room=%s age=%.0fs answers=%d turns=%d",
+        session_id, age, state.candidate_answer_count, len(state.transcript),
+    )
+    await _update_session_status(
+        session_id,
+        "abandoned",
+        completed_at=last_seen,
+        duration_seconds=duration,
+    )
+    await client.delete(key_str)
+    reaped.append(session_id)
+
 
 # ---------------------------------------------------------------------------
 # Avatar factory — selects provider from settings.avatar_provider
@@ -1242,6 +1847,20 @@ async def _degrade_to_voice_only_midsession(
 
     Returns True when the swap succeeded (audio will flow again).
     """
+    if not _PARTICIPANT_AUDIO_OUTPUT_AVAILABLE:
+        # A livekit-agents upgrade moved or renamed the private output class.
+        # Say so plainly: without this branch the None below would surface as a
+        # bare TypeError inside the generic handler, which reads like a room
+        # problem rather than a dependency problem.
+        logger.error(
+            "interview-worker: voice-only degrade unavailable room=%s — "
+            "livekit.agents.voice.room_io._output._ParticipantAudioOutput is "
+            "absent (livekit-agents upgrade?); the avatar died and audio cannot "
+            "be re-routed",
+            session_id,
+        )
+        return False
+
     # Abort any speech currently draining into the dead avatar datastream —
     # its playout may never resolve now that the destination is gone.
     with contextlib.suppress(Exception):
@@ -1344,8 +1963,32 @@ def _install_avatar_death_watch(
 # ---------------------------------------------------------------------------
 
 
-async def entrypoint(ctx: JobContext) -> None:
-    """LiveKit job entrypoint — one invocation per interview room.
+class InterviewJob:
+    """One live interview: its state, its LiveKit session, and its task handles.
+
+    This was a 599-line ``entrypoint()`` with nine closures over shared mutable
+    locals. The extraction is behaviour-preserving — the statement order in
+    ``run()`` below is exactly the order the function body had — but it changes
+    two things that were load-bearing and only ever written down in prose:
+
+    **Task lifetime.** asyncio holds only WEAK references to tasks, so a task
+    nobody keeps can be collected mid-flight. The old body defended against that
+    three times over with ad-hoc holder dicts (``_teardown_task_holder``,
+    ``recover_task_holder``, the ``checkpoint_tasks`` set) and missed it once, on
+    the NORMAL close path (the task created after the candidate's tenth answer).
+    Task handles are now ATTRIBUTES, which are strong references by
+    construction: the holder dicts and the bug they were guarding against are the
+    same problem, and both are gone.
+
+    **Binding order.** Closures made "which name is bound before which handler is
+    registered" a correctness constraint — ``cap_task`` in particular carried a
+    comment about a fixed ``UnboundLocalError``. Attributes are initialised to
+    ``None`` in ``__init__``, so a handler that fires early now reads ``None``
+    and no-ops instead of raising. The ordering comments below are retained
+    because the ordering is still deliberate; they are no longer the only thing
+    holding it up.
+
+    Interview contract (unchanged):
 
     AUTOMATIC dispatch: the worker joins every room created (each room == one
     interview). It resolves the job/language from the DB by room name (==
@@ -1358,10 +2001,11 @@ async def entrypoint(ctx: JobContext) -> None:
         shutdown session, score transcript.
       - SESSION_WALL_CLOCK_CAP_SECONDS safety cap fires whichever comes first.
 
-    NOTE (duration accuracy): session_started_at is set here, BEFORE avatar.start()
-    and session.start(), so elapsed time includes cold-start setup time (~1-3s).
-    This is a known minor overcount; re-architecting it would require a separate
-    "first candidate audio" timestamp which adds complexity for negligible gain.
+    NOTE (duration accuracy): session_started_at is set in _resolve_context,
+    BEFORE avatar.start() and session.start(), so elapsed time includes
+    cold-start setup time (~1-3s). This is a known minor overcount;
+    re-architecting it would require a separate "first candidate audio"
+    timestamp which adds complexity for negligible gain.
 
     ADMISSION CONTROL: increments _active_jobs on entry; decrements via the
     framework's add_shutdown_callback so the counter is always consistent.
@@ -1372,110 +2016,344 @@ async def entrypoint(ctx: JobContext) -> None:
     common abrupt exit), which previously left sessions stuck 'in_progress'
     with no scorecard.
     """
-    _active_jobs_increment()
-    # Publish the updated count immediately so the HTTP server can reject
-    # further requests if we're now at the ceiling.  Best-effort — never raises.
-    await _publish_capacity()
 
-    # Register the decrement immediately so it fires on any exit path (normal
-    # close, abrupt disconnect, SIGTERM drain, crash).  add_shutdown_callback
-    # guarantees this runs even when the entrypoint raises.
-    async def _decrement_job_counter() -> None:
+    def __init__(self, ctx: JobContext) -> None:
+        self.ctx = ctx
+
+        # Bound in _resolve_context, NOT here: rtc.Room.name is empty until
+        # ctx.connect() has populated the room info, so reading it in __init__
+        # would silently give every job the session_id "".
+        self.session_id: str = ""
+
+        # Job metadata — read from the DB in _resolve_context. Defaults match
+        # SessionContext's, so a failed lookup still yields a usable interview.
+        self.session_ctx: SessionContext = SessionContext()
+        self.job_title: str = self.session_ctx.job_title
+        self.language: str = self.session_ctx.language
+        self.experience_level: str = self.session_ctx.experience_level
+        self.jd_text: str = self.session_ctx.jd_text
+        self.resume_text: str = self.session_ctx.resume_text
+        self.company_name: str = self.session_ctx.company_name
+
+        # Declared, not defaulted: every reader of these runs after the phase
+        # that binds them, and giving them a None state would put a guard on
+        # each call site to describe a situation that cannot occur.
+        self.role_profile: RoleProfile
+        self.session: AgentSession[None]
+        self.voice: str
+        self.avatar_replica_id: str
+        self.vendor_lang: str
+
+        self.state: InterviewState = InterviewState()
+        self.session_started_at: datetime = datetime.now(tz=UTC)
+
+        # --- task handles ---------------------------------------------------
+        # Every one of these is a STRONG reference to a task asyncio itself only
+        # references weakly. See the class docstring.
+        #
+        # cap_task and consent_task are read by _on_session_close, which the
+        # framework can fire at any point after the session exists — hence the
+        # None initialisation rather than an assume-bound attribute.
+        self.cap_task: asyncio.Task[None] | None = None
+        self.consent_task: asyncio.Task[None] | None = None
+        # The REAL inner teardown task created by _on_session_close (never the
+        # asyncio.shield wrapper — see _on_session_close for why).
+        self.teardown_task: asyncio.Task[None] | None = None
+        # The normal close, scheduled from the conversation-item handler after
+        # the candidate's final answer.
+        self.close_task: asyncio.Task[None] | None = None
+        # In-flight checkpoint writes; a set because several can overlap.
+        self.checkpoint_tasks: set[asyncio.Task[bool]] = set()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def run(self) -> None:
+        """Drive one interview from admission to first question.
+
+        THE ORDER OF THESE CALLS IS THE CONTRACT. Each step's docstring says
+        what the next one depends on; three are load-bearing enough to name
+        here:
+          • _resolve_context needs ctx.connect() to have populated room.name;
+          • _wire_lifecycle must run before _start_avatar, so a "close" event
+            during avatar startup finds its handler and its cap task;
+          • _start_avatar must run before _start_interview — avatar.start()
+            before session.start(), or the avatar never publishes video.
+
+        The framework keeps the session alive after this returns; teardown runs
+        through the "close" listener and the shutdown callbacks registered here.
+        """
+        await self._admit()
+        await self.ctx.connect()
+        await self._resolve_context()
+        self._build_agent_session()
+        self._wire_lifecycle()
+        await self._start_avatar()
+        await self._start_interview()
+        await self._start_consent_watchdog()
+
+    async def _admit(self) -> None:
+        """Count this job against the concurrency ceiling and register its release."""
+        _active_jobs_increment()
+        # Publish the updated count immediately so the HTTP server can reject
+        # further requests if we're now at the ceiling.  Best-effort — never raises.
+        await _publish_capacity()
+
+        # Register the decrement immediately so it fires on any exit path (normal
+        # close, abrupt disconnect, SIGTERM drain, crash).  add_shutdown_callback
+        # guarantees this runs even when the entrypoint raises.
+        self.ctx.add_shutdown_callback(self._decrement_job_counter)
+
+    async def _decrement_job_counter(self) -> None:
+        """Shutdown callback — free this job's slot in the admission counter."""
         _active_jobs_decrement()
         # Publish the decremented count so the HTTP server sees freed capacity.
         await _publish_capacity()
 
-    ctx.add_shutdown_callback(_decrement_job_counter)
+    async def _resolve_context(self) -> None:
+        """Resolve session metadata, role model and avatar. Requires a connected room."""
+        # DB lookup is best-effort and MUST NEVER crash the avatar path.
+        try:
+            self.session_ctx = await _lookup_session(self.ctx.room.name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "interview-worker: session lookup failed, using defaults: %s",
+                type(exc).__name__,
+            )
 
-    await ctx.connect()
+        # Attribute aliases — the close/scoring paths below read these names.
+        session_ctx = self.session_ctx
+        self.job_title = session_ctx.job_title
+        self.language = session_ctx.language
+        self.experience_level = session_ctx.experience_level
+        self.jd_text = session_ctx.jd_text
+        presenter_id = session_ctx.presenter_id
+        self.resume_text = session_ctx.resume_text
+        self.company_name = session_ctx.company_name
 
-    # DB lookup is best-effort and MUST NEVER crash the avatar path.
-    session_ctx = SessionContext()
-    try:
-        session_ctx = await _lookup_session(ctx.room.name)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "interview-worker: session lookup failed, using defaults: %s",
-            type(exc).__name__,
-        )
+        # Role model — drives question planning below. Never raises; degrades to
+        # the deterministic taxonomy baseline.
+        self.role_profile = await _derive_role_profile(session_ctx)
 
-    # Local aliases — the close/scoring paths below close over these names.
-    job_title = session_ctx.job_title
-    language = session_ctx.language
-    experience_level = session_ctx.experience_level
-    jd_text = session_ctx.jd_text
-    presenter_id = session_ctx.presenter_id
-    resume_text = session_ctx.resume_text
-    company_name = session_ctx.company_name
+        # Resolve the per-session avatar: voice (Sarvam TTS speaker) + replica_id
+        # (Tavus face). resolve_avatar() never raises — unknown/None → default "anna".
+        # Voice applies to BOTH simli and tavus paths (it's the TTS speaker layer).
+        # replica_id is only consumed by the tavus path; simli uses its fixed face.
+        resolved = resolve_avatar(presenter_id)
+        self.voice = resolved.voice
+        self.avatar_replica_id = resolved.replica_id
 
-    # Role model — drives question planning below. Never raises; degrades to
-    # the deterministic taxonomy baseline.
-    role_profile = await _derive_role_profile(session_ctx)
+        self.vendor_lang = _LANG_VENDOR[self.language]
+        self.session_id = self.ctx.room.name  # room name == session_id UUID string
 
-    # Resolve the per-session avatar: voice (Sarvam TTS speaker) + replica_id
-    # (Tavus face). resolve_avatar() never raises — unknown/None → default "anna".
-    # Voice applies to BOTH simli and tavus paths (it's the TTS speaker layer).
-    # replica_id is only consumed by the tavus path; simli uses its fixed face.
-    resolved = resolve_avatar(presenter_id)
-    voice = resolved.voice
-    avatar_replica_id: str = resolved.replica_id
-
-    vendor_lang = _LANG_VENDOR[language]
-    session_id = ctx.room.name  # room name == session_id UUID string
-
-    logger.info(
-        "interview-worker.start room=%s job_title=%r language=%s voice=%s "
-        "avatar_id=%s level=%s resume_chars=%d",
-        session_id, job_title, language, voice, resolved.id, experience_level,
-        len(resume_text or ""),
-    )
-
-    # ------------------------------------------------------------------
-    # Per-session state — single InterviewState instance; all mutations happen
-    # inside the asyncio event loop thread so no lock is needed.
-    # ------------------------------------------------------------------
-    state = InterviewState()
-    session_started_at: datetime = datetime.now(tz=UTC)
-
-    # ------------------------------------------------------------------
-    # Build the AgentSession — use the prewarmed VAD from prewarm_fnc if
-    # available; fall back to cold-loading in case prewarm failed.
-    # ------------------------------------------------------------------
-    _prewarmed_vad = getattr(ctx.proc, "userdata", {}).get("vad") if ctx.proc else None
-    vad_instance = _prewarmed_vad if _prewarmed_vad is not None else silero.VAD.load()
-    if _prewarmed_vad is not None:
-        logger.info("interview-worker: using prewarmed silero VAD room=%s", session_id)
-    else:
         logger.info(
-            "interview-worker: cold-loading silero VAD (prewarm unavailable) room=%s",
-            session_id,
+            "interview-worker.start room=%s job_title=%r language=%s voice=%s "
+            "avatar_id=%s level=%s resume_chars=%d",
+            self.session_id, self.job_title, self.language, self.voice, resolved.id,
+            self.experience_level, len(self.resume_text or ""),
         )
 
-    session: AgentSession[None] = AgentSession(
-        vad=vad_instance,
-        stt=sarvam.STT(
-            language=vendor_lang,
-            model=settings.sarvam_stt_model,
-            api_key=settings.sarvam_api_key,
-        ),
-        llm=openai.LLM(
-            model=_GROQ_MODEL,
-            api_key=settings.groq_api_key,
-            base_url=_GROQ_BASE_URL,
-        ),
-        tts=sarvam.TTS(
-            target_language_code=vendor_lang,
-            model="bulbul:v3",
-            speaker=voice,
-            api_key=settings.sarvam_api_key,
-        ),
-    )
+        # ------------------------------------------------------------------
+        # Per-session state — single InterviewState instance; all mutations happen
+        # inside the asyncio event loop thread so no lock is needed.
+        #
+        # Resumed from Redis when a checkpoint exists, so a worker restarted after a
+        # hard kill continues the interview at the answer it had reached instead of
+        # starting the candidate over and orphaning the earlier transcript. With no
+        # checkpoint (the normal case) this returns a fresh InterviewState.
+        # ------------------------------------------------------------------
+        self.state = await restore_state_from_checkpoint(self.session_id)
+        self.session_started_at = datetime.now(tz=UTC)
+
+    def _build_agent_session(self) -> None:
+        """Build the AgentSession (VAD + Sarvam STT/TTS + Groq LLM).
+
+        Uses the prewarmed VAD from prewarm_fnc if available; falls back to
+        cold-loading in case prewarm failed.
+        """
+        ctx = self.ctx
+        _prewarmed_vad = getattr(ctx.proc, "userdata", {}).get("vad") if ctx.proc else None
+        vad_instance = _prewarmed_vad if _prewarmed_vad is not None else silero.VAD.load()
+        if _prewarmed_vad is not None:
+            logger.info(
+                "interview-worker: using prewarmed silero VAD room=%s", self.session_id
+            )
+        else:
+            logger.info(
+                "interview-worker: cold-loading silero VAD (prewarm unavailable) room=%s",
+                self.session_id,
+            )
+
+        self.session = AgentSession(
+            vad=vad_instance,
+            stt=sarvam.STT(
+                language=self.vendor_lang,
+                model=settings.sarvam_stt_model,
+                api_key=settings.sarvam_api_key,
+            ),
+            llm=openai.LLM(
+                model=_GROQ_MODEL,
+                api_key=settings.groq_api_key,
+                base_url=_GROQ_BASE_URL,
+            ),
+            tts=sarvam.TTS(
+                target_language_code=self.vendor_lang,
+                model="bulbul:v3",
+                speaker=self.voice,
+                api_key=settings.sarvam_api_key,
+            ),
+        )
+
+    def _wire_lifecycle(self) -> None:
+        """Register every handler and background task the session close path needs.
+
+        Runs BEFORE avatar.start(): the "close" event can fire during avatar
+        startup, and it must find both its handler and a cap task to cancel.
+        """
+        self.session.on("conversation_item_added", self._on_conversation_item_added)
+
+        # Wall-clock safety cap — created BEFORE registering the "close" event
+        # handler and BEFORE avatar.start(), so _on_session_close can always
+        # safely cancel it regardless of when the "close" event fires.
+        # (The attribute defaults to None, so an out-of-order close now no-ops
+        # rather than raising — but the ordering is still the design.)
+        self.cap_task = asyncio.create_task(self._wall_clock_cap())
+
+        # "close" event handler — fires on ANY session close (normal or abrupt).
+        # This is the hook for post-session DB update and scoring when the
+        # candidate disconnects without triggering _on_close (e.g. browser tab
+        # closed mid-session). The state._close_triggered guard prevents
+        # double-execution.
+        self.session.on("close", self._on_session_close)
+
+        # Register a framework-level shutdown hook that awaits the teardown task.
+        # This hook fires when the job process is shutting down (SIGTERM / drain
+        # timeout) and ensures _abrupt_close always completes even if the LiveKit
+        # framework cancels tasks during the drain.
+        self.ctx.add_shutdown_callback(self._await_teardown_on_shutdown)
+
+    async def _start_avatar(self) -> None:
+        """Start the avatar, or degrade to voice-only. NEVER raises.
+
+        CRITICAL: this must happen before session.start(). Reversing it = the
+        avatar never publishes video. Enforced for every provider.
+        """
+        try:
+            # Pass the per-session replica_id so the tavus branch uses the chosen
+            # face. Simli and "none" providers ignore replica_id entirely.
+            avatar = _build_avatar(
+                settings.avatar_provider, replica_id=self.avatar_replica_id
+            )
+        except RuntimeError as exc:
+            # Misconfiguration (missing plugin / persona / replica). Loud, but the
+            # interview must still happen — degrade to voice-only.
+            logger.error(
+                "interview-worker: avatar setup failed provider=%r err=%s — "
+                "falling back to voice-only",
+                settings.avatar_provider, exc,
+            )
+            avatar = None
+
+        avatar = await _start_avatar_or_fallback(
+            avatar, self.session, self.ctx.room,
+            provider=settings.avatar_provider, session_id=self.session_id,
+        )
+        if avatar is None:
+            logger.info(
+                "interview-worker: running voice-only room=%s provider=%r",
+                self.session_id, settings.avatar_provider,
+            )
+        else:
+            # The provider can also kill the avatar MID-interview (e.g. Tavus ends
+            # the conversation when the plan's duration cap or credits run out —
+            # observed as "audio dies at ~3 minutes" on the free plan). Watch for
+            # the avatar participant leaving and continue the interview voice-only.
+            _install_avatar_death_watch(
+                avatar=avatar,
+                session=self.session,
+                room=self.ctx.room,
+                state=self.state,
+                session_id=self.session_id,
+            )
+
+    async def _start_interview(self) -> None:
+        """Mark the session live, checkpoint it, start the agent and ask Q1."""
+        # Mark session in_progress.
+        await _update_session_status(
+            self.session_id, "in_progress", started_at=self.session_started_at
+        )
+
+        # First checkpoint, written the moment the row can get stuck 'in_progress'.
+        # The reaper sweeps CHECKPOINTS, so a session that dies before the
+        # candidate's first answer needs one to already exist — without this, a
+        # worker killed during avatar startup would leave exactly the kind of
+        # permanently-'in_progress' row the reaper was added to clean up.
+        await save_checkpoint(
+            self.session_id, self.state, started_at=self.session_started_at
+        )
+
+        await self.session.start(
+            agent=Agent(
+                instructions=_interviewer_instructions(
+                    self.job_title, self.language, self.resume_text,
+                    self.company_name, self.role_profile,
+                )
+            ),
+            room=self.ctx.room,
+            # text_input=False is load-bearing, NOT tidiness. livekit-agents
+            # defaults it to ENABLED ("if text_input is not given, default to
+            # enabled" — room_io/types.py), which registers a handler on the
+            # `lk.chat` text stream. Its default callback feeds the text straight
+            # into generate_reply() as a user turn, so it lands in the same
+            # conversation_item stream we build the transcript from and count
+            # answers against.
+            #
+            # For a VOICE interview platform that is a total assessment bypass: a
+            # candidate opens devtools, publishes text on lk.chat instead of
+            # speaking, and the answer is scored as theirs — with Sarvam STT, the
+            # VAD turn detection, gaze/face proctoring and second-voice detection
+            # all sitting on the audio path that was never used. It is also the
+            # clean channel for prompt injection, since the text arrives verbatim
+            # rather than through STT.
+            #
+            # This default can flip on a livekit-agents bump — see the regression
+            # test in tests/unit/test_worker_reliability.py.
+            room_options=RoomOptions(text_input=False),
+        )
+        # Greet the candidate without waiting — the avatar should speak first on join.
+        # This IS Q1 (the self-introduction question). Do NOT ask the candidate to
+        # introduce themselves again later — the system prompt already lists Q1 as
+        # self-intro, and this greeting fulfils that slot. Ask no other question here.
+        await self.session.generate_reply(
+            instructions=(
+                "This is Q1. Greet the candidate warmly and ask them to briefly introduce "
+                "themselves. Do NOT ask any other question in this turn."
+            )
+        )
+        logger.info("interview-worker: session started room=%s", self.session_id)
+
+    async def _start_consent_watchdog(self) -> None:
+        """Start the DPDP consent watchdog now that the session is live.
+
+        resolve_consent_user_id covers both registered-candidate and guest
+        magic-link sessions (both always set sessions.user_id).
+        Returns:
+          str uuid   → valid user found; watchdog will poll consent.
+          None       → legit no-op (unrecognised/CI room); watchdog skips.
+          _CONSENT_RESOLVE_DB_ERROR → transient DB error after retries;
+                       watchdog will FAIL-CLOSED (end session) to protect DPDP §11.
+        """
+        candidate_user_id = await resolve_consent_user_id(self.session_id)
+        self.consent_task = asyncio.create_task(
+            self._consent_watchdog(candidate_user_id)
+        )
 
     # ------------------------------------------------------------------
-    # Shared close logic — fires exactly once regardless of trigger path.
+    # Close paths — shared close logic fires exactly once regardless of trigger.
     # ------------------------------------------------------------------
 
-    async def _on_close(*, timed_out: bool, consent_withdrawn: bool = False) -> None:
+    async def _on_close(self, *, timed_out: bool, consent_withdrawn: bool = False) -> None:
         """Warm close: say goodbye, update DB, fire scorer. Best-effort.
 
         consent_withdrawn=True (DPDP §11 right-to-withdraw): the candidate revoked
@@ -1485,16 +2363,33 @@ async def entrypoint(ctx: JobContext) -> None:
         transcript captured while consent WAS valid is still persisted for audit,
         and the session is marked 'abandoned'.
         """
+        state = self.state
+        session_id = self.session_id
         if state.close_triggered:
             return
         state.mark_close_triggered()
+
+        # Record that closing has begun BEFORE anything slow runs — the close
+        # path speaks a goodbye, writes the DB and makes an HTTP scoring call,
+        # and a hard kill anywhere in that window previously left no durable
+        # trace that it had started.
+        await save_checkpoint(session_id, state, started_at=self.session_started_at)
+
+        # Durable single-fire guard, checked in addition to the in-memory flag
+        # above. close_triggered dies with the process, so a worker restarted
+        # after a crash — or the startup reaper sweeping the same session —
+        # would write the status and fire the scorer a second time. Losing the
+        # claim means someone else already finalised this session: we still tear
+        # the room down locally (the candidate must not be left connected to a
+        # dead room) but touch nothing durable.
+        finalise = await claim_close(session_id)
 
         # Speak the closing line before shutting the agent down — but NOT on a
         # consent withdrawal, where we stop processing at once.
         if not consent_withdrawn:
             try:
-                closing_text = _get_closing_msg(language, timed_out=timed_out)
-                handle = session.say(closing_text, allow_interruptions=False)
+                closing_text = _get_closing_msg(self.language, timed_out=timed_out)
+                handle = self.session.say(closing_text, allow_interruptions=False)
                 await handle
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
@@ -1504,57 +2399,69 @@ async def entrypoint(ctx: JobContext) -> None:
 
         # Shutdown the agent session (clean, drain=True by default).
         try:
-            session.shutdown()
+            self.session.shutdown()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "interview-worker: session.shutdown() failed room=%s err=%s",
                 session_id, type(exc).__name__,
             )
 
-        # DB: mark session completed/abandoned + timing.
-        now = datetime.now(tz=UTC)
-        elapsed = int((now - session_started_at).total_seconds())
-        final_status = "abandoned" if consent_withdrawn else state.final_status()
-        await _update_session_status(
-            session_id,
-            final_status,
-            completed_at=now,
-            duration_seconds=elapsed,
-        )
-
-        # Persist the transcript to the turns table (audit trail + admin
-        # drill-in view + re-scoring resilience). Done for every close, even
-        # abandoned sessions, so the DB always has whatever was said.
-        await _persist_turns(session_id, state.transcript)
-
-        # Score only if we have enough answers AND consent was not withdrawn. We
-        # AWAIT it (not fire-and-forget) so the scorecard row exists BEFORE we
-        # delete the room below — deleting the room tears this job down and would
-        # cancel a background task.
-        if consent_withdrawn:
+        if not finalise:
             logger.warning(
-                "interview-worker.consent_withdrawn.closed room=%s answers=%d — scoring skipped",
-                session_id, state.candidate_answer_count,
-            )
-        elif state.should_score():
-            logger.info(
-                "interview-worker.score.firing room=%s answers=%d turns=%d",
-                session_id, state.candidate_answer_count, len(state.transcript),
-            )
-            await _post_score(
-                session_id=session_id,
-                job_title=job_title,
-                experience_level=experience_level,
-                language=language,
-                jd_text=jd_text,
-                transcript=state.transcript,
-                role_profile=role_profile,
+                "interview-worker.close_already_finalised room=%s — skipping "
+                "status write, transcript flush and scoring",
+                session_id,
             )
         else:
-            logger.info(
-                "interview-worker.score.skipped room=%s answers=%d < min=%d",
-                session_id, state.candidate_answer_count, MIN_ANSWERS_TO_SCORE,
+            # DB: mark session completed/abandoned + timing.
+            now = datetime.now(tz=UTC)
+            elapsed = int((now - self.session_started_at).total_seconds())
+            final_status = "abandoned" if consent_withdrawn else state.final_status()
+            await _update_session_status(
+                session_id,
+                final_status,
+                completed_at=now,
+                duration_seconds=elapsed,
             )
+
+            # Persist the transcript to the turns table (audit trail + admin
+            # drill-in view + re-scoring resilience). Done for every close, even
+            # abandoned sessions, so the DB always has whatever was said.
+            await _persist_turns(session_id, state.transcript)
+
+            # Score only if we have enough answers AND consent was not withdrawn.
+            # We AWAIT it (not fire-and-forget) so the scorecard row exists BEFORE
+            # we delete the room below — deleting the room tears this job down and
+            # would cancel a background task.
+            if consent_withdrawn:
+                logger.warning(
+                    "interview-worker.consent_withdrawn.closed room=%s answers=%d — scoring skipped",
+                    session_id, state.candidate_answer_count,
+                )
+            elif state.should_score():
+                logger.info(
+                    "interview-worker.score.firing room=%s answers=%d turns=%d",
+                    session_id, state.candidate_answer_count, len(state.transcript),
+                )
+                await _post_score(
+                    session_id=session_id,
+                    job_title=self.job_title,
+                    experience_level=self.experience_level,
+                    language=self.language,
+                    jd_text=self.jd_text,
+                    transcript=state.transcript,
+                    role_profile=self.role_profile,
+                )
+            else:
+                logger.info(
+                    "interview-worker.score.skipped room=%s answers=%d < min=%d",
+                    session_id, state.candidate_answer_count, MIN_ANSWERS_TO_SCORE,
+                )
+
+            # The session is durably finalised — drop the checkpoint so the
+            # startup reaper has nothing left to find. The close-guard key stays
+            # for its full TTL; that is what keeps this single-fire.
+            await clear_checkpoint(session_id)
 
         # End the call: delete the LiveKit room so the candidate is disconnected
         # and the frontend navigates to the results page. session.shutdown() only
@@ -1577,105 +2484,30 @@ async def entrypoint(ctx: JobContext) -> None:
                 session_id, type(exc).__name__,
             )
 
-    # ------------------------------------------------------------------
-    # Conversation-item handler — wired to the REAL InterviewState.
-    # ------------------------------------------------------------------
-
-    def _on_conversation_item_added(event: ConversationItemAddedEvent) -> None:
-        """Handle every committed conversation item.
-
-        Called by livekit-agents 1.5.x via AgentSession.on("conversation_item_added", ...).
-        The event carries a ChatMessage with:
-          item.role: "user" (candidate) | "assistant" (agent/interviewer)
-          item.text_content: str | None — the committed transcript text
-          item.interrupted: bool — True if the agent's speech was cut off mid-sentence
-
-        Only role=="user" items are candidate answers that count toward MAX_CANDIDATE_ANSWERS.
-        We include both "user" and "assistant" items in the transcript for scoring, mapping:
-          "user"      -> ScoreRequest TurnIn role "user"
-          "assistant" -> ScoreRequest TurnIn role "ai"
-        We skip "system" / "developer" messages (not present in normal interview flow).
-        """
-        should_close = state.handle_conversation_item(event.item)
-        if should_close:
-            logger.info(
-                "interview-worker.answer room=%s count=%d/%d — scheduling close",
-                session_id, state.candidate_answer_count, MAX_CANDIDATE_ANSWERS,
-            )
-            asyncio.create_task(_on_close(timed_out=False))
-
-    session.on("conversation_item_added", _on_conversation_item_added)
-
-    # ------------------------------------------------------------------
-    # Wall-clock safety cap — created BEFORE registering the "close" event
-    # handler and BEFORE avatar.start(), so _on_session_close can always
-    # safely cancel it regardless of when the "close" event fires.
-    # ------------------------------------------------------------------
-
-    async def _wall_clock_cap() -> None:
-        """Fire the close path after SESSION_WALL_CLOCK_CAP_SECONDS."""
-        await asyncio.sleep(SESSION_WALL_CLOCK_CAP_SECONDS)
-        if not state.close_triggered:
-            logger.warning(
-                "interview-worker.timeout room=%s cap=%ds answers=%d",
-                session_id, SESSION_WALL_CLOCK_CAP_SECONDS, state.candidate_answer_count,
-            )
-            await _on_close(timed_out=True)
-
-    async def _consent_watchdog(user_id: str | None) -> None:
-        """DPDP §11 — end the interview if recording consent is withdrawn mid-session.
-
-        Delegates to the module-level _run_consent_watchdog so the logic is
-        unit-testable without a live LiveKit session.  See that function's
-        docstring for the sentinel-value contract and fail-open/fail-closed rules.
-        """
-        await _run_consent_watchdog(
-            user_id=user_id,
-            on_close=_on_close,
-            state=state,
-            session_id=session_id,
-        )
-
-    # cap_task MUST be assigned before _on_session_close is registered (next block)
-    # and before avatar.start() below — otherwise the "close" handler could fire
-    # during avatar startup and reference an unbound name. (Fix for UnboundLocalError.)
-    cap_task = asyncio.create_task(_wall_clock_cap())
-    # The consent watchdog is started AFTER session.start() (needs the candidate
-    # resolved); this holder lets _on_session_close cancel it without an ordering
-    # hazard (it reads None until the task is actually created).
-    consent_task_holder: dict[str, asyncio.Task[None] | None] = {"task": None}
-
-    # ------------------------------------------------------------------
-    # "close" event handler — fires on ANY session close (normal or abrupt).
-    # This is the hook for post-session DB update and scoring when the
-    # candidate disconnects without triggering _on_close (e.g. browser tab
-    # closed mid-session). The state._close_triggered guard prevents double-execution.
-    # ------------------------------------------------------------------
-
-    # Holder for the REAL inner teardown task created by _on_session_close.
-    # Storing the real Task (not the asyncio.shield wrapper) gives us two
-    # guarantees:
-    #   1. A strong reference prevents GC of the coroutine while it is running.
-    #   2. The shutdown hook awaits the real Task, which survives cancellation of
-    #      the shield wrapper — so scoring/persist always completes on SIGTERM.
-    # asyncio.shield() is only used at the await site in the shutdown hook, not
-    # here, so we never store the ephemeral shield Future.
-    _teardown_task_holder: dict[str, asyncio.Task[None] | None] = {"task": None}
-
-    async def _abrupt_close() -> None:
+    async def _abrupt_close(self) -> None:
         """DB update + conditional scoring for unexpected disconnects.
 
-        Launched as a real asyncio.Task by _on_session_close and tracked in
-        _teardown_task_holder so the framework's shutdown hook can await it.
+        Launched as a real asyncio.Task by _on_session_close and held in
+        self.teardown_task so the framework's shutdown hook can await it.
         asyncio.shield() is applied at await-time (in _await_teardown_on_shutdown),
         not here, ensuring the coroutine body is never GC'd when the candidate
         closes their browser before it finishes.
         """
+        state = self.state
+        session_id = self.session_id
         if state.close_triggered:
             return
         state.mark_close_triggered()
+        # Same durable single-fire guard as _on_close: the in-memory flag cannot
+        # survive the process, so it cannot stop a restarted worker or the
+        # startup reaper from finalising this session a second time.
+        if not await claim_close(session_id):
+            logger.warning(
+                "interview-worker.abrupt_close_already_finalised room=%s", session_id
+            )
+            return
         now = datetime.now(tz=UTC)
-        elapsed = int((now - session_started_at).total_seconds())
+        elapsed = int((now - self.session_started_at).total_seconds())
         await _update_session_status(
             session_id,
             state.final_status(),
@@ -1690,58 +2522,141 @@ async def entrypoint(ctx: JobContext) -> None:
             # scorecard is written.  asyncio.shield() above keeps us alive.
             await _post_score(
                 session_id=session_id,
-                job_title=job_title,
-                experience_level=experience_level,
-                language=language,
-                jd_text=jd_text,
+                job_title=self.job_title,
+                experience_level=self.experience_level,
+                language=self.language,
+                jd_text=self.jd_text,
                 transcript=state.transcript,
-                role_profile=role_profile,
+                role_profile=self.role_profile,
             )
+        # Durably finalised — the reaper has nothing left to recover here.
+        await clear_checkpoint(session_id)
 
-    def _on_session_close(_event: Any) -> None:
+    # ------------------------------------------------------------------
+    # Event handlers and background tasks
+    # ------------------------------------------------------------------
+
+    def _checkpoint_soon(self) -> None:
+        """Schedule a best-effort checkpoint write. Never blocks the turn loop.
+
+        Awaiting the write inline would put a cloud Redis round-trip between the
+        candidate finishing a sentence and the interviewer replying, on the very
+        path the p95 < 2 s NFR measures. Scheduling it costs at most one answer's
+        worth of recovery if the process dies in the gap; awaiting it costs the
+        latency budget on every single turn.
+
+        self.checkpoint_tasks is the strong reference: without it a write can be
+        garbage-collected mid-flight, which would silently defeat the crash
+        recovery it enables.
+        """
+        task = asyncio.create_task(
+            save_checkpoint(
+                self.session_id, self.state, started_at=self.session_started_at
+            )
+        )
+        self.checkpoint_tasks.add(task)
+        task.add_done_callback(self.checkpoint_tasks.discard)
+
+    def _on_conversation_item_added(self, event: ConversationItemAddedEvent) -> None:
+        """Handle every committed conversation item.
+
+        Called by livekit-agents 1.5.x via AgentSession.on("conversation_item_added", ...).
+        The event carries a ChatMessage with:
+          item.role: "user" (candidate) | "assistant" (agent/interviewer)
+          item.text_content: str | None — the committed transcript text
+          item.interrupted: bool — True if the agent's speech was cut off mid-sentence
+
+        Only role=="user" items are candidate answers that count toward MAX_CANDIDATE_ANSWERS.
+        We include both "user" and "assistant" items in the transcript for scoring, mapping:
+          "user"      -> ScoreRequest TurnIn role "user"
+          "assistant" -> ScoreRequest TurnIn role "ai"
+        We skip "system" / "developer" messages (not present in normal interview flow).
+        """
+        should_close = record_conversation_item(
+            event.item, state=self.state, schedule_checkpoint=self._checkpoint_soon
+        )
+        if should_close:
+            logger.info(
+                "interview-worker.answer room=%s count=%d/%d — scheduling close",
+                self.session_id, self.state.candidate_answer_count, MAX_CANDIDATE_ANSWERS,
+            )
+            # Held on the instance, not dropped on the floor: this is the NORMAL
+            # close (fired after the candidate's final answer), and asyncio keeps
+            # only a weak reference to it. Collected mid-flight it would cost the
+            # closing line, the status write, the transcript, the scorecard AND
+            # the room deletion — the candidate left connected to a dead room
+            # until the reaper swept it 17 minutes later.
+            self.close_task = asyncio.create_task(self._on_close(timed_out=False))
+
+    async def _wall_clock_cap(self) -> None:
+        """Fire the close path after SESSION_WALL_CLOCK_CAP_SECONDS."""
+        await asyncio.sleep(SESSION_WALL_CLOCK_CAP_SECONDS)
+        if not self.state.close_triggered:
+            logger.warning(
+                "interview-worker.timeout room=%s cap=%ds answers=%d",
+                self.session_id, SESSION_WALL_CLOCK_CAP_SECONDS,
+                self.state.candidate_answer_count,
+            )
+            await self._on_close(timed_out=True)
+
+    async def _consent_watchdog(self, user_id: str | None) -> None:
+        """DPDP §11 — end the interview if recording consent is withdrawn mid-session.
+
+        Delegates to the module-level _run_consent_watchdog so the logic is
+        unit-testable without a live LiveKit session.  See that function's
+        docstring for the sentinel-value contract and fail-open/fail-closed rules.
+        """
+        await _run_consent_watchdog(
+            user_id=user_id,
+            on_close=self._on_close,
+            state=self.state,
+            session_id=self.session_id,
+        )
+
+    def _on_session_close(self, _event: Any) -> None:
         """Handle session close: cancel background tasks; run DB+scoring if not done.
 
-        The teardown coroutine is launched as a real asyncio.Task and its
-        reference is stored in _teardown_task_holder.  Storing the REAL task
-        (not the asyncio.shield wrapper) is critical: only a real Task has a
-        strong reference that prevents GC, and only the real Task can be reliably
-        awaited by the shutdown hook even after the shield wrapper is cancelled
-        by the LiveKit framework's drain path.
+        The teardown coroutine is launched as a real asyncio.Task and held in
+        self.teardown_task.  Holding the REAL task (not the asyncio.shield
+        wrapper) is critical: only a real Task has a strong reference that
+        prevents GC, and only the real Task can be reliably awaited by the
+        shutdown hook even after the shield wrapper is cancelled by the LiveKit
+        framework's drain path.
+
+        cap_task and consent_task are read defensively: the framework can fire
+        "close" during avatar startup, before either exists.
         """
-        cap_task.cancel()
-        consent_task = consent_task_holder["task"]
-        if consent_task is not None:
-            consent_task.cancel()
-        if not state.close_triggered:
+        if self.cap_task is not None:
+            self.cap_task.cancel()
+        if self.consent_task is not None:
+            self.consent_task.cancel()
+        if not self.state.close_triggered:
             # Candidate disconnected abruptly — create the REAL task first and
             # keep a strong reference to it.  asyncio.shield() is applied at
             # await-time in _await_teardown_on_shutdown, not here.
-            real_task: asyncio.Task[None] = asyncio.ensure_future(_abrupt_close())
-            _teardown_task_holder["task"] = real_task
+            self.teardown_task = asyncio.ensure_future(self._abrupt_close())
             logger.info(
-                "interview-worker.abrupt_close_scheduled room=%s", session_id
+                "interview-worker.abrupt_close_scheduled room=%s", self.session_id
             )
 
-    session.on("close", _on_session_close)
+    async def _await_teardown_on_shutdown(self) -> None:
+        """Shutdown callback — make sure _abrupt_close finishes before we exit.
 
-    # Register a framework-level shutdown hook that awaits the teardown task.
-    # This hook fires when the job process is shutting down (SIGTERM / drain
-    # timeout) and ensures _abrupt_close always completes even if the LiveKit
-    # framework cancels tasks during the drain.
-    #
-    # We use asyncio.shield() HERE (at await-time), wrapping the real Task stored
-    # in _teardown_task_holder.  This means:
-    #   • If the framework cancels THIS hook's coroutine, the shield absorbs the
-    #     CancelledError but the real Task continues running to completion.
-    #   • We then fall through to await the real task directly (unshielded) so we
-    #     can observe completion or timeout without losing the result.
-    # The hook is a no-op when close was already handled by _on_close
-    # (state.close_triggered is True) or when no abrupt close was needed.
-    async def _await_teardown_on_shutdown() -> None:
-        teardown_task = _teardown_task_holder["task"]
+        Fires when the job process is shutting down (SIGTERM / drain timeout).
+        We use asyncio.shield() HERE (at await-time), wrapping the real Task held
+        in self.teardown_task.  This means:
+          • If the framework cancels THIS hook's coroutine, the shield absorbs the
+            CancelledError but the real Task continues running to completion.
+          • We then fall through to await the real task directly (unshielded) so we
+            can observe completion or timeout without losing the result.
+        A no-op when close was already handled by _on_close
+        (state.close_triggered is True) or when no abrupt close was needed.
+        """
+        teardown_task = self.teardown_task
         if teardown_task is not None and not teardown_task.done():
             logger.info(
-                "interview-worker.shutdown_hook_awaiting_teardown room=%s", session_id
+                "interview-worker.shutdown_hook_awaiting_teardown room=%s",
+                self.session_id,
             )
             try:
                 # Shield the real task so a CancelledError from the framework
@@ -1755,123 +2670,32 @@ async def entrypoint(ctx: JobContext) -> None:
                 logger.info(
                     "interview-worker.shutdown_hook_shield_cancelled room=%s "
                     "— awaiting real task directly with timeout",
-                    session_id,
+                    self.session_id,
                 )
                 try:
                     await asyncio.wait_for(teardown_task, timeout=30.0)
                 except (TimeoutError, asyncio.CancelledError, Exception) as exc:
                     logger.warning(
                         "interview-worker.shutdown_hook_teardown_incomplete room=%s err=%s",
-                        session_id, type(exc).__name__,
+                        self.session_id, type(exc).__name__,
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "interview-worker.shutdown_hook_teardown_incomplete room=%s err=%s",
-                    session_id, type(exc).__name__,
+                    self.session_id, type(exc).__name__,
                 )
 
-    ctx.add_shutdown_callback(_await_teardown_on_shutdown)
 
-    # ------------------------------------------------------------------
-    # Avatar FIRST, then the agent session (proven ordering).
-    # CRITICAL: avatar.start() MUST be called before session.start().
-    # This ordering is enforced for every provider.
-    # ------------------------------------------------------------------
-    try:
-        # Pass the per-session replica_id so the tavus branch uses the chosen face.
-        # Simli and "none" providers ignore replica_id entirely.
-        avatar = _build_avatar(settings.avatar_provider, replica_id=avatar_replica_id)
-    except RuntimeError as exc:
-        # Misconfiguration (missing plugin / persona / replica). Loud, but the
-        # interview must still happen — degrade to voice-only.
-        logger.error(
-            "interview-worker: avatar setup failed provider=%r err=%s — "
-            "falling back to voice-only",
-            settings.avatar_provider, exc,
-        )
-        avatar = None
+async def entrypoint(ctx: JobContext) -> None:
+    """LiveKit job entrypoint — one invocation per interview room.
 
-    avatar = await _start_avatar_or_fallback(
-        avatar, session, ctx.room,
-        provider=settings.avatar_provider, session_id=session_id,
-    )
-    if avatar is None:
-        logger.info(
-            "interview-worker: running voice-only room=%s provider=%r",
-            session_id, settings.avatar_provider,
-        )
-    else:
-        # The provider can also kill the avatar MID-interview (e.g. Tavus ends
-        # the conversation when the plan's duration cap or credits run out —
-        # observed as "audio dies at ~3 minutes" on the free plan). Watch for
-        # the avatar participant leaving and continue the interview voice-only.
-        _install_avatar_death_watch(
-            avatar=avatar,
-            session=session,
-            room=ctx.room,
-            state=state,
-            session_id=session_id,
-        )
-
-    # Mark session in_progress.
-    await _update_session_status(
-        session_id, "in_progress", started_at=session_started_at
-    )
-
-    await session.start(
-        agent=Agent(
-            instructions=_interviewer_instructions(
-                job_title, language, resume_text, company_name, role_profile
-            )
-        ),
-        room=ctx.room,
-        # text_input=False is load-bearing, NOT tidiness. livekit-agents
-        # defaults it to ENABLED ("if text_input is not given, default to
-        # enabled" — room_io/types.py), which registers a handler on the
-        # `lk.chat` text stream. Its default callback feeds the text straight
-        # into generate_reply() as a user turn, so it lands in the same
-        # conversation_item stream we build the transcript from and count
-        # answers against.
-        #
-        # For a VOICE interview platform that is a total assessment bypass: a
-        # candidate opens devtools, publishes text on lk.chat instead of
-        # speaking, and the answer is scored as theirs — with Sarvam STT, the
-        # VAD turn detection, gaze/face proctoring and second-voice detection
-        # all sitting on the audio path that was never used. It is also the
-        # clean channel for prompt injection, since the text arrives verbatim
-        # rather than through STT.
-        #
-        # This default can flip on a livekit-agents bump — see the regression
-        # test in tests/unit/test_worker_reliability.py.
-        room_options=RoomOptions(text_input=False),
-    )
-    # Greet the candidate without waiting — the avatar should speak first on join.
-    # This IS Q1 (the self-introduction question). Do NOT ask the candidate to
-    # introduce themselves again later — the system prompt already lists Q1 as
-    # self-intro, and this greeting fulfils that slot. Ask no other question here.
-    await session.generate_reply(
-        instructions=(
-            "This is Q1. Greet the candidate warmly and ask them to briefly introduce "
-            "themselves. Do NOT ask any other question in this turn."
-        )
-    )
-    logger.info("interview-worker: session started room=%s", session_id)
-
-    # Start the DPDP consent watchdog now that the session is live.
-    # resolve_consent_user_id covers both registered-candidate and guest
-    # magic-link sessions (both always set sessions.user_id).
-    # Returns:
-    #   str uuid   → valid user found; watchdog will poll consent.
-    #   None       → legit no-op (unrecognised/CI room); watchdog skips.
-    #   _CONSENT_RESOLVE_DB_ERROR → transient DB error after retries;
-    #                watchdog will FAIL-CLOSED (end session) to protect DPDP §11.
-    candidate_user_id = await resolve_consent_user_id(session_id)
-    consent_task_holder["task"] = asyncio.create_task(
-        _consent_watchdog(candidate_user_id)
-    )
-
-    # The LiveKit framework keeps the session alive after the entrypoint returns.
-    # Teardown is handled via the "close" event listener registered above.
+    Kept as a module-level coroutine with this exact signature because it is
+    what ``WorkerOptions(entrypoint_fnc=...)`` is bound to and what the
+    deployment entrypoints (``python -m app.worker.interview_worker``) reach.
+    The lifecycle itself lives in :class:`InterviewJob`; see its docstring for
+    the interview contract and ``InterviewJob.run`` for the ordering contract.
+    """
+    await InterviewJob(ctx).run()
 
 
 # ---------------------------------------------------------------------------
@@ -1884,11 +2708,17 @@ def _prewarm(proc: JobProcess) -> None:
 
     Called by the LiveKit framework once when the worker process starts, before
     any job is dispatched.  Loading the model here (blocking, ~1-2 s) instead of
-    inside entrypoint() eliminates per-interview cold-start latency.
+    inside the job eliminates per-interview cold-start latency.
 
-    Usage in entrypoint():
+    Consumed by InterviewJob._build_agent_session():
         vad = ctx.proc.userdata.get("vad") or silero.VAD.load()
+
+    Also the per-job-process hook for logging setup: this is the first thing the
+    framework calls in a freshly spawned job process, and a spawned child does
+    not inherit the parent's structlog configuration. Interviews run HERE, so
+    this is the process the PII redaction chain most needs to cover.
     """
+    _configure_worker_logging()
     logger.info("interview-worker.prewarm: loading silero VAD model")
     try:
         proc.userdata["vad"] = silero.VAD.load()
@@ -2082,8 +2912,22 @@ def run() -> None:
     every worker_heartbeat_interval_seconds, but only while this worker's health
     endpoint answers — see _run_heartbeat for why the probe is what makes the
     Docker healthcheck meaningful.
+
+    Crash recovery: that same thread first runs reap_stale_sessions() once, which
+    finalises sessions whose previous worker was hard-killed mid-interview. It
+    runs THERE rather than on the interview loop so a slow Redis/DB sweep can
+    never delay the worker registering and accepting its first candidate.
     """
     import threading
+
+    # Before anything logs: the supervisor process reaps stale sessions and
+    # runs the heartbeat, both of which touch session rows.
+    _configure_worker_logging()
+
+    async def _reap_then_heartbeat() -> None:
+        """Sweep crashed sessions once, then refresh the heartbeat forever."""
+        await reap_stale_sessions()
+        await _run_heartbeat()
 
     def _start_heartbeat_in_thread() -> None:
         """Run the heartbeat coroutine in a dedicated event loop on a daemon thread.
@@ -2095,7 +2939,7 @@ def run() -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(_run_heartbeat())
+            loop.run_until_complete(_reap_then_heartbeat())
         finally:
             loop.close()
 

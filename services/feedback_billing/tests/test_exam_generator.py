@@ -86,7 +86,7 @@ def _patch_gemini(monkeypatch: pytest.MonkeyPatch, resp: _FakeResp) -> None:
     _FakeClient.last_url = None
     _FakeClient.last_headers = None
     monkeypatch.setattr(
-        "app.exam_generator.httpx.AsyncClient", lambda *a, **k: _FakeClient(resp)
+        "shared.llm.gemini.httpx.AsyncClient", lambda *a, **k: _FakeClient(resp)
     )
 
 
@@ -158,7 +158,10 @@ async def test_truncated_json_error_names_finish_reason(
     with pytest.raises(ExamGenerationError) as excinfo:
         await generate_exam_questions(topic="t", num_questions=5, settings=_SETTINGS_25)
     assert "MAX_TOKENS" in excinfo.value.message
-    assert "truncated" in excinfo.value.message
+    # Wording comes from shared.llm.gemini now that all three callers share one
+    # diagnosis; the guarantee is unchanged — the error must point at the output
+    # budget rather than reading as a generic model failure.
+    assert "cut off by maxOutputTokens" in excinfo.value.message
 
 
 @pytest.mark.asyncio

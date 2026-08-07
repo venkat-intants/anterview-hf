@@ -83,6 +83,10 @@ class SimliAvatar:
 
         self._http: aiohttp.ClientSession | None = None
         self._out: DataStreamAudioOutput | None = None
+        # ``close()`` is terminal: it releases the transport, so a later
+        # ``render()`` must fail loudly rather than push audio into a torn-down
+        # data stream (which silently re-opens a writer nothing will close).
+        self._closed = False
 
     @property
     def mode(self) -> AvatarMode:
@@ -125,6 +129,13 @@ class SimliAvatar:
         except AvatarError:
             await self._cleanup_http()
             raise
+        except asyncio.CancelledError:
+            # ``except Exception`` does NOT cover cancellation, so without this
+            # arm a session torn down mid-handshake leaks the open aiohttp
+            # session. Clean up, then re-raise — swallowing CancelledError
+            # would break cooperative cancellation for the caller.
+            await self._cleanup_http()
+            raise
         except Exception as exc:  # noqa: BLE001
             await self._cleanup_http()
             raise AvatarError(f"simli compose token error: {type(exc).__name__}") from exc
@@ -165,6 +176,9 @@ class SimliAvatar:
         except AvatarError:
             await self._cleanup_http()
             raise
+        except asyncio.CancelledError:
+            await self._cleanup_http()
+            raise
         except Exception as exc:  # noqa: BLE001
             await self._cleanup_http()
             raise AvatarError(f"simli integration error: {type(exc).__name__}") from exc
@@ -175,6 +189,12 @@ class SimliAvatar:
         except TimeoutError as exc:
             await self._cleanup_http()
             raise AvatarError("simli avatar did not join room within 20s") from exc
+        except asyncio.CancelledError:
+            # Longest window in the handshake (up to 20s) and the likeliest
+            # place for a session teardown to land — the HTTP session is open
+            # and nothing else would ever close it.
+            await self._cleanup_http()
+            raise
 
         self._out = DataStreamAudioOutput(
             room=self._room,
@@ -192,6 +212,8 @@ class SimliAvatar:
         is_first: bool = False,
     ) -> AvatarSpeechResult:
         """Resample our TTS audio to 16 kHz and push it to the Simli avatar."""
+        if self._closed:
+            raise AvatarError("simli render after close")
         if self._out is None:
             raise AvatarError("simli render before start_session")
 
@@ -210,6 +232,16 @@ class SimliAvatar:
         try:
             await self._out.capture_frame(frame)
             self._out.flush()
+        except asyncio.CancelledError:
+            # Barge-in cancels the orchestrator's turn task mid-push.
+            # ``capture_frame`` owns an open data-stream writer to the avatar
+            # participant; walking away from it leaves that writer and its
+            # buffered audio dangling — one leaked stream per barge-in, and a
+            # talkative candidate barges in a lot. Release it, then RE-RAISE:
+            # swallowing CancelledError would make the cancelled turn look
+            # like it completed and break cooperative cancellation.
+            await self._release_output()
+            raise
         except Exception as exc:  # noqa: BLE001
             raise AvatarError(f"simli push error: {type(exc).__name__}") from exc
 
@@ -219,17 +251,46 @@ class SimliAvatar:
 
     async def interrupt(self) -> None:
         """Barge-in: drop any buffered avatar audio immediately."""
-        if self._out is not None:
-            try:
-                self._out.clear_buffer()
-            except Exception as exc:  # noqa: BLE001
-                log.warning("avatar.simli.interrupt_error", error=type(exc).__name__)
+        await self._release_output()
 
     async def close(self) -> None:
+        """Tear down the avatar session. Idempotent.
+
+        Safe in any order and any number of times — after ``interrupt()``,
+        after a cancelled ``render()``, or twice — because both halves of the
+        teardown are individually idempotent.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        await self._release_output()
         await self._cleanup_http()
 
+    async def _release_output(self) -> None:
+        """Drop buffered avatar audio and the data-stream writer behind it.
+
+        Idempotent and never raises: the three callers (barge-in, ``render``'s
+        cancellation guard, ``close``) fire in any order and any number of
+        times, sometimes while the task is already being cancelled.
+        """
+        out = self._out
+        if out is None:
+            return
+        try:
+            out.clear_buffer()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("avatar.simli.release_error", error=type(exc).__name__)
+
     async def _cleanup_http(self) -> None:
-        if self._http is not None and not self._http.closed:
-            with contextlib.suppress(Exception):
-                await self._http.close()
-        self._http = None
+        """Close the vendor HTTP session. Idempotent, never raises.
+
+        The reference is dropped BEFORE the close is awaited: this also runs on
+        the cancellation path, where that await can be interrupted a second
+        time, and a half-run cleanup that left ``_http`` set would have a later
+        ``close()`` try to close the same session again.
+        """
+        http, self._http = self._http, None
+        if http is None or http.closed:
+            return
+        with contextlib.suppress(Exception):
+            await http.close()

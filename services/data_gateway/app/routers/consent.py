@@ -30,21 +30,19 @@ S4-009 race safety:
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import uuid as _uuid_mod
 from datetime import UTC, datetime
 from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from prometheus_client import Counter
 from shared.auth.base import User
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import get_db_session
+from app.database import DbSessionDep
 from app.dependencies import get_current_user
 from app.models import DpdpConsent
 from app.schemas.consent import (
@@ -55,23 +53,19 @@ from app.schemas.consent import (
     RevokedConsentItem,
 )
 
-log = structlog.get_logger(__name__)
-
-# Two security controls in this service fail open by design — the client-IP hop
-# arithmetic below and the Redis rate limiter. Failing open is the right call for
-# both (a blip must not lock every user out), but a control that switches itself
-# off without saying so is indistinguishable from one that is working. These
-# counters make the degraded state visible on /metrics so it can be alerted on.
-_proxy_hop_underflow = Counter(
-    "client_ip_proxy_hop_underflow_total",
-    "X-Forwarded-For had fewer hops than TRUSTED_PROXY_COUNT, so the socket peer "
-    "was used instead. Sustained non-zero means per-IP rate limiting is degraded "
-    "to a single global bucket.",
+# DG-2: the trusted-proxy hop arithmetic moved to app/utils/request_ip.py so
+# app/rate_limit.py — infrastructure that runs before a route is chosen — no
+# longer has to import this route module to resolve a client IP. The private
+# names below are kept as aliases because four modules and the consent tests
+# import them; they are the same objects, not copies.
+from app.utils.request_ip import (
+    extract_client_ip as _extract_client_ip,
+)
+from app.utils.request_ip import (
+    extract_user_agent as _extract_user_agent,
 )
 
-# Module-level, not per-request: a misconfiguration fires this on every request,
-# and an unthrottled WARNING per request is its own outage.
-_underflow_warned = False
+log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/consent", tags=["consent"])
 
@@ -94,7 +88,9 @@ _VALID_PURPOSES = frozenset({"interview"})
 # Dependency shortcuts
 # ---------------------------------------------------------------------------
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
-DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+# DbSessionDep now lives next to get_db_session in app/database.py (DG-1);
+# re-exported here so existing imports of app.routers.consent.DbSessionDep keep
+# resolving to the same alias object.
 
 
 # ---------------------------------------------------------------------------
@@ -110,142 +106,6 @@ def _hash_value(raw: str) -> str:
     """
     salted = raw + settings.consent_ip_salt
     return hashlib.sha256(salted.encode("utf-8")).hexdigest()
-
-
-def _extract_client_ip(request: Request) -> str:
-    """Extract the real client IP using the configured trusted-proxy count.
-
-    S4-012 — trusted proxy count gate:
-
-    The naive approach of reading the leftmost X-Forwarded-For value is
-    exploitable: any HTTP client can inject ``X-Forwarded-For: 1.2.3.4`` and
-    cause the server to record sha256("1.2.3.4"+salt) instead of the real IP.
-    This breaks audit integrity in the DPDP consent ledger.
-
-    Algorithm:
-      - If ``settings.trusted_proxy_count == 0``: ignore X-Forwarded-For
-        entirely and return ``request.client.host`` (or "unknown").  This is
-        the correct setting for local dev and any deployment with no reverse
-        proxy in front of the app.
-      - If ``settings.trusted_proxy_count > 0``: parse X-Forwarded-For as a
-        left-to-right list of IPs (original-client first). Each trusted proxy
-        appends the address it received the request FROM, so with N trusted
-        proxies the real client is the entry at index
-        ``len(hops) - trusted_proxy_count`` — i.e. the Nth entry counted from
-        the right (the standard Werkzeug-ProxyFix model). Counting from the
-        trusted right end means any number of attacker-*prepended* entries are
-        ignored. If the header is absent or has fewer entries than
-        ``trusted_proxy_count``, fall back to ``request.client.host``.
-
-    Our production topology is a single Caddy reverse proxy (Convention: it
-    sets X-Forwarded-For to the client IP it observed and STRIPS any client-
-    supplied XFF, because the public client is not in Caddy's trusted_proxies).
-    So Caddy emits a single-entry XFF and ``trusted_proxy_count=1`` is correct.
-
-    Example with trusted_proxy_count=1 (single Caddy hop):
-      X-Forwarded-For: "1.2.3.4"
-        hops = ["1.2.3.4"]
-        real_index = 1 - 1 = 0  →  "1.2.3.4"  ✓
-
-    Example with an attacker prepend that somehow survives, tpc=1:
-      X-Forwarded-For: "attacker, real-client"
-        hops = ["attacker", "real-client"]
-        real_index = 2 - 1 = 1  →  "real-client"  ✓  (prepend ignored)
-
-    Example with a future CDN in front of Caddy, trusted_proxy_count=2:
-      X-Forwarded-For: "1.2.3.4, <cdn-edge-ip>"
-        real_index = 2 - 2 = 0  →  "1.2.3.4"  ✓
-
-    Raw IP values are NEVER logged — only the sha256 hash is stored.
-    """
-    direct_host: str = request.client.host if request.client is not None else "unknown"
-
-    if settings.trusted_proxy_count == 0:
-        # No trusted proxies configured — ignore X-Forwarded-For entirely.
-        # A client-supplied header could spoof any IP; using the direct
-        # socket address is the only safe option in this topology.
-        return direct_host
-
-    # trusted_proxy_count > 0: infrastructure proxies sit between the client
-    # and the app.  Resolve the real client IP from the XFF chain.
-    xff: str = request.headers.get("X-Forwarded-For", "")
-    if not xff:
-        # No header present — the request arrived without passing through the
-        # expected proxy chain.  Fall back to the direct connection address.
-        return direct_host
-
-    hops: list[str] = [h.strip() for h in xff.split(",") if h.strip()]
-    real_index: int = len(hops) - settings.trusted_proxy_count
-
-    if real_index < 0:
-        # Fewer hops than expected (e.g. proxy chain not fully established in
-        # staging).  Fall back to the direct connection address rather than
-        # picking a potentially attacker-controlled entry.
-        #
-        # Falling back is correct, but doing it silently is not: if
-        # trusted_proxy_count is misconfigured this branch fires for EVERY
-        # request, every client resolves to the same proxy address, and per-IP
-        # rate limiting quietly becomes one global bucket. The control still
-        # reports success while protecting nothing. Warn (once per process, so a
-        # misconfiguration under load does not flood the log) and count it, so
-        # the wrong topology announces itself instead of being discovered later.
-        _proxy_hop_underflow.inc()
-        global _underflow_warned
-        if not _underflow_warned:
-            _underflow_warned = True
-            log.warning(
-                "consent.client_ip.proxy_hop_underflow",
-                configured_proxy_count=settings.trusted_proxy_count,
-                observed_hops=len(hops),
-                detail=(
-                    "X-Forwarded-For has fewer hops than TRUSTED_PROXY_COUNT; "
-                    "falling back to the socket peer for every such request. "
-                    "Per-IP rate limiting and consent-ledger IP hashing are "
-                    "degraded until this matches the real topology."
-                ),
-            )
-        return direct_host
-
-    return _validated_ip(hops[real_index], fallback=direct_host)
-
-
-def _validated_ip(candidate: str, *, fallback: str) -> str:
-    """Return *candidate* only if it parses as an IP address.
-
-    Fail closed on anything else. Two reasons this is not cosmetic:
-
-    1. The XFF entry we select is only trustworthy while the deployment really
-       does have exactly ``trusted_proxy_count`` proxies in front of it. If that
-       assumption is ever wrong, this function returns raw attacker-chosen
-       header text — and the value feeds the rate-limit bucket key
-       (``rl:{bucket}:{ip}``), so arbitrary text means a fresh bucket per
-       request against login, register and password reset.
-    2. ``audit_log.ip_address`` is a Postgres INET column. A non-IP string
-       raises InvalidTextRepresentation, which rolls back the whole
-       transaction — so garbage here 500s an unrelated write instead of being
-       quietly wrong.
-
-    The caller's fallback is the direct socket peer, which is always a real
-    address. Note the literal "unknown" (used when request.client is None)
-    deliberately does NOT parse, so it is normalised here too.
-    """
-    try:
-        ipaddress.ip_address(candidate)
-    except ValueError:
-        log.warning("consent.client_ip.unparseable", length=len(candidate))
-        try:
-            ipaddress.ip_address(fallback)
-        except ValueError:
-            # Both unusable — surface a sentinel that is still a valid INET so
-            # an audit write cannot fail on it.
-            return "0.0.0.0"  # noqa: S104 — sentinel, never bound to a socket
-        return fallback
-    return candidate
-
-
-def _extract_user_agent(request: Request) -> str:
-    """Extract User-Agent header, defaulting to empty string."""
-    return request.headers.get("User-Agent", "")
 
 
 async def _find_active_consent(

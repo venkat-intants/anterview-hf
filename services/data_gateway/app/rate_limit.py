@@ -36,7 +36,7 @@ from fastapi import Depends, HTTPException, Request, status
 from prometheus_client import Counter
 
 from app.redis_client import get_redis
-from app.routers.consent import _extract_client_ip
+from app.utils.request_ip import extract_client_ip
 
 log = structlog.get_logger(__name__)
 
@@ -65,7 +65,7 @@ def rate_limit(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
 
     async def _dep(request: Request) -> None:
         try:
-            ip = _extract_client_ip(request)
+            ip = extract_client_ip(request)
             redis = get_redis()
             key = f"rl:{bucket}:{ip}"
             count: int = await redis.incr(key)

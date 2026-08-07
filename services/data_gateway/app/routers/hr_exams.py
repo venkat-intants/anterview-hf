@@ -32,6 +32,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import DbSessionDep
+from app.dependencies import HrCtxDep
 from app.exam_ai_client import ExamGenerationError, generate_exam_questions_remote
 from app.exam_grading import GradeInput, GradeQuestion, grade_breakdown
 from app.exam_link import hash_exam_token, mint_exam_token
@@ -46,7 +48,7 @@ from app.models import (
     ExamRound,
     ExamSection,
 )
-from app.routers.hr_applicants import DbSessionDep, HrCtxDep
+from app.utils.ownership import get_owned
 
 log = structlog.get_logger(__name__)
 
@@ -283,14 +285,7 @@ class AttemptResultOut(BaseModel):
 # Helpers (tenant isolation lives here)
 # ---------------------------------------------------------------------------
 async def _get_owned_exam(db: AsyncSession, company_id: uuid.UUID, exam_id: uuid.UUID) -> Exam:
-    exam = await db.scalar(
-        select(Exam).where(
-            Exam.id == exam_id, Exam.company_id == company_id, Exam.deleted_at.is_(None)
-        )
-    )
-    if exam is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found.")
-    return exam
+    return await get_owned(db, Exam, company_id, exam_id, noun="Exam")
 
 
 async def _create_default_round_section(
@@ -417,17 +412,9 @@ async def _live_questions(
 async def _get_owned_question(
     db: AsyncSession, company_id: uuid.UUID, exam_id: uuid.UUID, qid: uuid.UUID
 ) -> ExamQuestion:
-    q = await db.scalar(
-        select(ExamQuestion).where(
-            ExamQuestion.id == qid,
-            ExamQuestion.exam_id == exam_id,
-            ExamQuestion.company_id == company_id,
-            ExamQuestion.deleted_at.is_(None),
-        )
+    return await get_owned(
+        db, ExamQuestion, company_id, qid, noun="Question", exam_id=exam_id
     )
-    if q is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found.")
-    return q
 
 
 async def _require_no_attempts(

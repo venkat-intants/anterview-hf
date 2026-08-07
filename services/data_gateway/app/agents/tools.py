@@ -36,6 +36,8 @@ from shared.agents import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils.sql_like import LIKE_ESCAPE, like_literal
+
 log = structlog.get_logger(__name__)
 
 registry = ToolRegistry()
@@ -77,8 +79,10 @@ def _applicant_citation(row: Any) -> Citation:
 # on what "interviewed" means. Divergence here would have the agent contradict
 # the screen the user is looking at, which destroys trust faster than a wrong
 # answer would.
+# f-string only so the ESCAPE character comes from the shared constant instead of
+# being retyped here (the SQL below contains no braces, so interpolation is safe).
 _PIPELINE_SQL = text(
-    """
+    f"""
 WITH agg AS (
   SELECT
       a.id, a.full_name, a.target_job_title, a.target_level,
@@ -123,11 +127,33 @@ WITH agg AS (
 SELECT * FROM agg
 WHERE (CAST(:status AS text) IS NULL OR status = CAST(:status AS text))
   AND (CAST(:job AS text) IS NULL
-       OR target_job_title ILIKE '%' || CAST(:job AS text) || '%')
+       OR target_job_title ILIKE CAST(:job AS text) ESCAPE '{LIKE_ESCAPE}')
 ORDER BY ats_overall DESC NULLS LAST, updated_at DESC
 LIMIT :limit
 """
 )
+
+
+def _job_filter(raw: Any) -> str | None:
+    """Build the bound ILIKE pattern for the copilot's job_title argument.
+
+    DG-4. The `%` wrappers used to be concatenated in SQL around a raw bound
+    value, so `%` and `_` inside the model's argument stayed live wildcards: a
+    copilot asked to "show applicants for the Nurse role" could be steered — by
+    text inside a resume it had just read — into passing ``job_title="%"``, and
+    the filter that was supposed to narrow the list returned the entire company
+    roster instead. Tenancy is unaffected (``a.company_id = :cid`` is a separate
+    predicate inside the CTE), so this is least-privilege within one company,
+    not a cross-tenant hole — but "the narrowing filter did not narrow" is
+    exactly the kind of quiet wrongness an agent surface must not have.
+
+    Returns None when no filter was requested, which the ``IS NULL`` leg of the
+    predicate turns into "no job filter at all".
+    """
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    return f"%{like_literal(value)}%"
 
 
 @registry.tool(
@@ -161,7 +187,7 @@ async def _list_applicants(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
             {
                 "cid": ctx.company_id,
                 "status": args.get("status") or None,
-                "job": args.get("job_title") or None,
+                "job": _job_filter(args.get("job_title")),
                 "limit": _limit(args),
             },
         )

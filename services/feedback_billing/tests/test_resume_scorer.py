@@ -57,7 +57,7 @@ def _patch_gemini(monkeypatch: pytest.MonkeyPatch, resp: _FakeResp) -> None:
     _FakeClient.last_url = None
     _FakeClient.last_headers = None
     monkeypatch.setattr(
-        "app.resume_scorer.httpx.AsyncClient", lambda *a, **k: _FakeClient(resp)
+        "shared.llm.gemini.httpx.AsyncClient", lambda *a, **k: _FakeClient(resp)
     )
 
 
@@ -158,3 +158,63 @@ async def test_score_resume_tolerates_trailing_commas(
     assert result["overall"] == 82
     assert result["breakdown"]["role_alignment"] == 84
     assert result["recommendation"] == "strong_fit"
+
+
+# ---------------------------------------------------------------------------
+# Recovery inherited from the shared caller (FB-2)
+# ---------------------------------------------------------------------------
+
+_VALID_PAYLOAD: dict[str, Any] = {
+    "candidate_name": "Jane",
+    "candidate_email": "j@x.com",
+    "overall": 82,
+    "breakdown": {
+        "skills_match": 80,
+        "experience_relevance": 78,
+        "education_fit": 85,
+        "role_alignment": 84,
+    },
+    "strengths": ["a"],
+    "concerns": ["b"],
+    "recommendation": "strong_fit",
+    "summary": "Solid.",
+}
+
+
+@pytest.mark.asyncio
+async def test_score_resume_repairs_a_raw_newline_inside_a_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resume bullet quoted back with a raw newline makes the JSON invalid.
+
+    This module had no json_repair rung before it moved onto the shared caller
+    — the same response the exam generator salvaged raised here.
+    """
+    broken = json.dumps(_VALID_PAYLOAD).replace("Solid.", "Sol\nid.", 1)
+    _patch_gemini(monkeypatch, _FakeResp(200, _raw_envelope(broken)))
+
+    result = await score_resume(resume_text="r", job_title="Dev", settings=_SETTINGS)
+    assert result["overall"] == 82
+
+
+@pytest.mark.asyncio
+async def test_score_resume_truncation_error_names_the_output_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MAX_TOKENS must be named: raising the budget and fixing the prompt are
+    different tickets, and the old error told them apart for neither."""
+    truncated = '{"overall": 82, "breakdown": {"skills_ma'
+    envelope = {
+        "candidates": [
+            {
+                "content": {"parts": [{"text": truncated}]},
+                "finishReason": "MAX_TOKENS",
+            }
+        ]
+    }
+    _patch_gemini(monkeypatch, _FakeResp(200, envelope))
+
+    with pytest.raises(ResumeScoringError) as excinfo:
+        await score_resume(resume_text="r", job_title="Dev", settings=_SETTINGS)
+    assert "MAX_TOKENS" in excinfo.value.message
+    assert "cut off by maxOutputTokens" in excinfo.value.message

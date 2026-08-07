@@ -24,8 +24,12 @@ async def _check_postgres() -> dict[str, Any]:
             row = result.scalar()
         return {"ok": row == 1}
     except Exception as exc:
+        # asyncpg/SQLAlchemy failures embed the Neon host, port and database
+        # name in str(exc), and /health/deep is unauthenticated. Full detail
+        # goes to structlog only; the response body gets the exception type
+        # alone — same convention as admin_ops/app/health.py.
         log.warning("health.postgres.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": type(exc).__name__}
 
 
 async def _check_redis() -> dict[str, Any]:
@@ -34,8 +38,10 @@ async def _check_redis() -> dict[str, Any]:
         pong = await client.ping()
         return {"ok": pong is True}
     except Exception as exc:
+        # redis-py puts the full rediss:// host (and, on auth failures, enough
+        # to identify the Upstash instance) in str(exc).
         log.warning("health.redis.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": type(exc).__name__}
 
 
 @router.get("/live")

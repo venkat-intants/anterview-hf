@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 
 import structlog
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from prometheus_client import (
@@ -18,6 +18,7 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
+from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
@@ -210,14 +211,31 @@ app.include_router(system_router)
     description=(
         "Exposes Prometheus-format metrics: erasure executor counters, "
         "poll duration histogram, and any future business metrics. "
-        "Not protected by admin JWT — bind this port behind an internal "
-        "firewall rule in production (not internet-facing)."
+        "Requires 'Authorization: Bearer <METRICS_TOKEN>' when METRICS_TOKEN is "
+        "set, and is refused outright in production when it is not."
     ),
     response_class=Response,
     include_in_schema=True,
 )
-async def metrics() -> Response:
-    """GET /metrics — Prometheus text exposition format."""
+async def metrics(authorization: str | None = Header(default=None)) -> Response:
+    """GET /metrics — Prometheus text exposition format.
+
+    The admin JWT is deliberately NOT reused here: a Prometheus scrape job holds
+    a static credential, not a short-lived user token. The policy (and the
+    401-vs-404 choice) lives in shared/metrics_auth.py so all four services
+    refuse identically; this handler only translates it into HTTP.
+    """
+    try:
+        check_metrics_auth(
+            authorization=authorization,
+            metrics_token=settings.metrics_token,
+            app_env=settings.app_env,
+        )
+    except MetricsAuthError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.detail, headers=exc.headers
+        ) from exc
+
     data = generate_latest(_registry)
     return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 

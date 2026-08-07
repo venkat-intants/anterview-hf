@@ -9,27 +9,27 @@ PII: NEVER log resume text. Only log job_title + overall score.
 
 from __future__ import annotations
 
-import asyncio
-import json
-import re
 from typing import Any
 
-import httpx
 import structlog
+from shared.llm import call_gemini_json
 
 from app.config import Settings
-from app.untrusted_input import frame_untrusted, scan_untrusted
+from app.untrusted_input import frame_untrusted, frame_untrusted_inline, scan_untrusted
 
 log = structlog.get_logger(__name__)
 
 RESUME_SCORER_VERSION: str = "1.0"
 
-# Strips a trailing comma before a closing } or ] (invalid JSON Gemini sometimes emits).
-_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+# Transport, retry and JSON recovery live in shared.llm.gemini — this module
+# owns only the prompt, the output contract and the clamping below.
 
-_RETRY_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
-_MAX_ATTEMPTS: int = 4
-_BACKOFF_BASE_SECONDS: float = 1.0
+# Generous budget so the structured JSON body is never truncated.
+_MAX_OUTPUT_TOKENS: int = 4096
+# ATS scores feed an HR shortlist, so they must be repeatable run to run.
+_TEMPERATURE: float = 0.2
+_TIMEOUT_SECONDS: float = 60.0
+
 _AXES: tuple[str, ...] = (
     "skills_match",
     "experience_relevance",
@@ -121,8 +121,22 @@ async def score_resume(
     resume_excerpt = resume_text[:8000]
     jd_excerpt = jd_text[:1200]
     injection_markers = scan_untrusted(
-        {"resume": resume_excerpt, "jd": jd_excerpt},
+        {
+            "resume": resume_excerpt,
+            "jd": jd_excerpt,
+            # job_title and level are HR-controlled and length-capped at the API
+            # boundary (routers/score.py), so they are the lowest-risk strings
+            # in this prompt — but they ARE substituted into it, and they used
+            # to reach this call as log context only. A `job_title=` keyword
+            # sitting next to a scan reads exactly like a scanned field; it was
+            # not one, which is the sort of gap that survives review.
+            "job_title": job_title,
+            "level": level,
+        },
         event="resume_scorer.injection_markers_detected",
+        # Still log context too: the marker list says WHICH field tripped, this
+        # says which posting it was. A job title is not candidate PII (this
+        # module already logs it on the success path).
         job_title=job_title,
     )
 
@@ -132,80 +146,36 @@ async def score_resume(
         if jd_text
         else ""
     )
+    # Title/level get the inline treatment, not the block treatment — see
+    # frame_untrusted_inline for why a "## Role" header block is the one place
+    # where full BEGIN/END delimiters would cost more than they buy.
     prompt = (
-        _PROMPT_TEMPLATE.replace("{{JOB_TITLE}}", job_title)
-        .replace("{{LEVEL}}", level)
+        _PROMPT_TEMPLATE.replace("{{JOB_TITLE}}", frame_untrusted_inline(job_title))
+        .replace("{{LEVEL}}", frame_untrusted_inline(level))
         .replace("{{JD_BLOCK}}", jd_block)
         .replace(
             "{{RESUME_TEXT}}", frame_untrusted(resume_excerpt, label="RESUME")
         )
     )
 
-    # Auth via x-goog-api-key header (not ?key=) so the key never lands in
-    # request URLs / proxy access logs — see app/embedder.py for the same
-    # rationale, first applied there.
-    url = f"{settings.gemini_api_base_url}/models/{settings.gemini_model}:generateContent"
-    headers = {"x-goog-api-key": settings.gemini_api_key}
-    generation_config: dict[str, Any] = {
-        "temperature": 0.2,
-        # Generous budget so the structured JSON body is never truncated.
-        "maxOutputTokens": 4096,
-        "responseMimeType": "application/json",
-    }
-    # On Gemini 2.5 "thinking" models, hidden reasoning tokens count against
-    # maxOutputTokens and can truncate the JSON mid-string. Disable thinking so
-    # the whole budget is output. Guarded: pre-2.5 models 400 on thinkingConfig.
-    if "2.5" in settings.gemini_model:
-        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
-    body: dict[str, Any] = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": generation_config,
-    }
-
-    response = None
-    last_error = "no attempt made"
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        for attempt in range(_MAX_ATTEMPTS):
-            try:
-                response = await client.post(url, json=body, headers=headers)
-            except httpx.RequestError as exc:
-                response = None
-                last_error = f"request error: {exc}"
-            else:
-                if response.status_code == 200:
-                    break
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-                if response.status_code not in _RETRY_STATUSES:
-                    break
-            if attempt < _MAX_ATTEMPTS - 1:
-                await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
-
-    if response is None or response.status_code != 200:
-        raise ResumeScoringError(
-            f"Gemini call failed after {_MAX_ATTEMPTS} attempt(s): {last_error}"
-        )
-
-    try:
-        raw_text: str = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError, json.JSONDecodeError) as exc:
-        raise ResumeScoringError(f"Failed to read Gemini response: {exc}") from exc
-
-    cleaned = raw_text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    # Tolerate any prose the model wraps around the object: parse the outermost
-    # {...} span. With responseMimeType=json this is usually a no-op, but it
-    # prevents brittle failures when the model prepends a stray token.
-    if not cleaned.startswith("{"):
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start != -1 and end > start:
-            cleaned = cleaned[start : end + 1]
-    # Tolerate a trailing comma before a closing } or ] (invalid JSON).
-    cleaned = _TRAILING_COMMA_RE.sub(r"\1", cleaned)
-    try:
-        parsed: dict[str, Any] = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise ResumeScoringError(f"Gemini response was not valid JSON: {exc}") from exc
+    # One shared caller for every Gemini JSON request in this service
+    # (shared.llm.gemini): header auth (never ?key=, so the key stays out of
+    # request URLs and proxy logs), the retry ladder, and a JSON-recovery ladder
+    # strictly wider than the one this module used to carry — it adds
+    # finishReason diagnosis and a json_repair rung on top of the fence /
+    # brace-span / trailing-comma handling that was here.
+    parsed: dict[str, Any] = await call_gemini_json(
+        prompt,
+        api_base_url=settings.gemini_api_base_url,
+        model=settings.gemini_model,
+        api_key=settings.gemini_api_key,
+        temperature=_TEMPERATURE,
+        max_output_tokens=_MAX_OUTPUT_TOKENS,
+        timeout=_TIMEOUT_SECONDS,
+        # data_gateway's HR endpoints catch ResumeScoringError by name — the
+        # exception types stay per-module, only the plumbing is shared.
+        error_cls=ResumeScoringError,
+    )
 
     raw_breakdown: dict[str, Any] = parsed.get("breakdown", {}) or {}
     breakdown = {axis: _clamp(raw_breakdown.get(axis, 0)) for axis in _AXES}

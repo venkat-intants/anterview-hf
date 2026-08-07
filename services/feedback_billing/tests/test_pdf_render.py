@@ -320,3 +320,53 @@ async def test_update_pdf_key_executes_update() -> None:
     params: dict[str, Any] = call_args.args[1]
     assert params["scorecard_id"] == _SCORECARD_ID
     assert params["key"] == f"scorecards/{_SCORECARD_ID}/report.pdf"
+
+
+# ---------------------------------------------------------------------------
+# _upload_to_s3 — the shared client factory (SVC-1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_upload_to_s3_uses_path_style_addressing_for_a_custom_endpoint() -> None:
+    """R2 / MinIO need PATH-style addressing; this call site used to omit it.
+
+    Virtual-host style resolves to `<bucket>.<endpoint-host>`, which does not
+    exist for R2 — the upload fails at DNS in exactly one deployment, which is
+    why the drift survived review. Asserted through the real shared.s3 factory
+    (only aioboto3.Session itself is faked) so a regression in either half is
+    caught here.
+    """
+    from app.pdf_render import _upload_to_s3  # noqa: PLC0415
+
+    settings = _make_settings(with_s3=True)
+    mock_s3 = AsyncMock()
+    mock_s3.__aenter__ = AsyncMock(return_value=mock_s3)
+    mock_s3.__aexit__ = AsyncMock(return_value=False)
+    mock_session = MagicMock()
+    mock_session.client = MagicMock(return_value=mock_s3)
+
+    with patch("aioboto3.Session", return_value=mock_session) as mock_session_cls:
+        await _upload_to_s3(
+            pdf_bytes=b"%PDF-1.4 fake",
+            s3_key=f"scorecards/{_SCORECARD_ID}/report.pdf",
+            settings=settings,
+        )
+
+    client_kwargs = mock_session.client.call_args.kwargs
+    assert client_kwargs["endpoint_url"] == settings.s3_endpoint_url
+    assert client_kwargs["config"].s3["addressing_style"] == "path"
+    # feedback_billing has no s3_use_ssl setting and talks to R2 over TLS, so
+    # the factory's default must not silently downgrade it.
+    assert client_kwargs["use_ssl"] is True
+    # Credentials still come from Settings, not from botocore's chain — on a
+    # non-AWS host the instance-metadata leg of that chain hangs for minutes.
+    session_kwargs = mock_session_cls.call_args.kwargs
+    assert session_kwargs["aws_access_key_id"] == settings.s3_access_key_id
+    assert session_kwargs["aws_secret_access_key"] == settings.s3_secret_access_key
+
+    put_kwargs = mock_s3.put_object.call_args.kwargs
+    assert put_kwargs["Bucket"] == settings.s3_scorecard_bucket
+    assert put_kwargs["Key"] == f"scorecards/{_SCORECARD_ID}/report.pdf"
+    assert put_kwargs["ContentType"] == "application/pdf"
+    assert put_kwargs["ContentDisposition"] == "inline"

@@ -171,7 +171,6 @@ export function extractGazeSignals(frame: FrameData): { n: number; signals: Gaze
   return { n, signals: { fwdX, fwdY, eyeMax, horiz, vert } };
 }
 
-/**
 /** A calibrated neutral head-pose baseline (the candidate's "facing forward"). */
 export interface NeutralPose {
   fwdX: number;

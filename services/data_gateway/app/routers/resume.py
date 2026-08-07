@@ -32,14 +32,13 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-import aioboto3
 import structlog
-from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from shared.auth.base import User
+from shared.s3 import s3_client
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -167,22 +166,15 @@ async def _presign_url(s3_key: str) -> str | None:
     if not settings.s3_access_key_id:
         return None
 
-    endpoint_url: str | None = settings.s3_endpoint if settings.s3_endpoint else None
-    boto_config: BotoConfig | None = (
-        BotoConfig(s3={"addressing_style": "path"}) if endpoint_url else None
-    )
-
+    # Client construction lives in shared.s3 (finding SVC-1). The original count
+    # of five hand-rolled sessions undercounted: this module holds two more.
     try:
-        session = aioboto3.Session(
-            aws_access_key_id=settings.s3_access_key_id or None,
-            aws_secret_access_key=settings.s3_secret_access_key or None,
-            region_name=settings.s3_region,
-        )
-        async with session.client(
-            "s3",
-            endpoint_url=endpoint_url,
+        async with s3_client(
+            endpoint=settings.s3_endpoint,
+            region=settings.s3_region,
+            access_key=settings.s3_access_key_id,
+            secret_key=settings.s3_secret_access_key,
             use_ssl=settings.s3_use_ssl,
-            config=boto_config,
         ) as s3:
             url: str = await s3.generate_presigned_url(
                 "get_object",
@@ -222,24 +214,16 @@ async def _delete_from_s3(s3_key: str) -> None:
     if not settings.s3_access_key_id:
         return  # No S3 configured (dev without MinIO) — nothing to clean up.
 
-    import aioboto3
-    from botocore.config import Config as BotoConfig
-
-    endpoint_url: str | None = settings.s3_endpoint if settings.s3_endpoint else None
-    boto_config: BotoConfig | None = (
-        BotoConfig(s3={"addressing_style": "path"}) if endpoint_url else None
-    )
+    # shared.s3 (finding SVC-1) — the local import that used to be here existed
+    # to keep aioboto3 off this module's import path; shared.s3 is already
+    # imported at module level for the presign helper above.
     try:
-        session = aioboto3.Session(
-            aws_access_key_id=settings.s3_access_key_id or None,
-            aws_secret_access_key=settings.s3_secret_access_key or None,
-            region_name=settings.s3_region,
-        )
-        async with session.client(
-            "s3",
-            endpoint_url=endpoint_url,
+        async with s3_client(
+            endpoint=settings.s3_endpoint,
+            region=settings.s3_region,
+            access_key=settings.s3_access_key_id,
+            secret_key=settings.s3_secret_access_key,
             use_ssl=settings.s3_use_ssl,
-            config=boto_config,
         ) as s3:
             await s3.delete_object(Bucket=settings.s3_bucket_name, Key=s3_key)
         log.info("resume.s3_cleanup.ok", s3_key=s3_key)

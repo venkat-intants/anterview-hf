@@ -25,16 +25,16 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from app.database import DbSessionDep
+from app.dependencies import HrCtxDep
 from app.models import AuditLog
-from app.routers.consent import _extract_client_ip, _extract_user_agent
 from app.routers.hr_applicants import (
     ApplicantOut,
-    DbSessionDep,
-    HrCtxDep,
     _get_owned,
     _to_out,
     email_applicant_decision,
 )
+from app.utils.request_ip import extract_client_ip, extract_user_agent
 
 log = structlog.get_logger(__name__)
 
@@ -356,8 +356,8 @@ async def decide_applicant(
                 "rationale": body.rationale,
                 "reversal": prev == "hired",
             },
-            ip_address=_extract_client_ip(request),
-            user_agent=_extract_user_agent(request),
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
             event_ts=now,
         )
     )

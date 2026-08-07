@@ -3,8 +3,16 @@
 // Tenant-scoped server-side by the HR's company. correct_index is returned here
 // (HR only); the applicant take path lives in publicExam.ts and never sees it.
 
-import { apiGet, apiPost, apiPut, apiDelete, apiPatch, clientFetch, uploadWithProgress } from './client';
-import { getToken } from './tokenStore';
+import {
+  apiGet,
+  apiPost,
+  apiPut,
+  apiDelete,
+  apiPatch,
+  clientFetch,
+  fetchBlobWithAuth,
+  uploadWithProgress,
+} from './client';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -268,11 +276,9 @@ export function importQuestions(examId: string, file: File): Promise<ImportResul
 
 /** Fetch the .xlsx bulk-upload template (auth-scoped) and trigger a browser download. */
 export async function downloadQuestionTemplate(): Promise<void> {
-  const token = getToken();
-  const res = await fetch(`${API_BASE}/hr/exam-question-template`, {
-    credentials: 'include',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  // The .xlsx body must bypass clientFetch's JSON parsing, but not its
+  // refresh-on-401 — fetchBlobWithAuth keeps the raw Response and the retry.
+  const res = await fetchBlobWithAuth(`${API_BASE}/hr/exam-question-template`);
   if (!res.ok) throw new Error(`Could not download template (HTTP ${res.status})`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

@@ -620,7 +620,10 @@ def test_transcript_access_is_audit_logged() -> None:
     admin.interview.transcript.view on every access."""
     from unittest.mock import patch
 
-    from app.routers import analytics as analytics_mod
+    # _write_audit is patched on the module that DEFINES it (analytics is a
+    # package since 2026-08-07); patching the package re-export would leave the
+    # endpoint's own binding untouched and silently assert nothing.
+    from app.routers.analytics import interviews as analytics_mod
 
     rows = _fake_transcript_rows()
     session = _make_session_with_results([rows])
@@ -861,7 +864,8 @@ def _build_export_app(
 def test_export_csv_happy_path() -> None:
     from unittest.mock import patch
 
-    from app.routers import analytics as analytics_mod
+    # Patched on the defining module — see test_transcript_access_is_audit_logged.
+    from app.routers.analytics import interviews as analytics_mod
 
     data_rows = [_fake_interview_row()]
     stream_session = _make_streaming_session(data_rows)

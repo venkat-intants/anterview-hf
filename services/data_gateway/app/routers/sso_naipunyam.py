@@ -69,6 +69,7 @@ from app.models import User
 from app.naipunyam.circuit_breaker import CircuitOpenError
 from app.naipunyam.client import NaipunyamClient, NaipunyamError
 from app.redis_client import get_redis
+from app.utils.cookies import delete_cookie_headers
 
 log = structlog.get_logger(__name__)
 
@@ -161,6 +162,30 @@ def _require_naipunyam_configured() -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="NAIPUNYAM_NOT_CONFIGURED",
         )
+
+
+def _oauth_redirect_uri() -> str:
+    """OUR public callback URL — SSO-2.
+
+    RFC 6749 §4.1.3: when ``redirect_uri`` was present in the authorization
+    request it MUST be sent again, byte-identical, in the token exchange. So
+    both call sites go through this function; there is no second place to get
+    the value slightly different.
+
+    It was previously derived from ``naipunyam_api_base_url`` — the IdP's own
+    host — which sends the candidate's browser back to APSSDC after login
+    instead of to us, and was then omitted from the exchange entirely (a
+    conforming IdP answers that with ``invalid_grant``). Both are day-one
+    integration failures rather than security holes, which is why the flow has
+    never been exercised end to end: it has never been switched on.
+    """
+    explicit = settings.naipunyam_oauth_redirect_uri.strip()
+    if not explicit:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="NAIPUNYAM_NOT_CONFIGURED",
+        )
+    return explicit
 
 
 def _set_session_cookies(response: Response, raw_refresh: str) -> None:
@@ -260,13 +285,9 @@ async def initiate(
         ex=_STATE_TTL_SECONDS,
     )
 
-    redirect_uri = settings.naipunyam_saml_acs_url or (
-        f"{settings.naipunyam_api_base_url.rstrip('/')}/auth/sso/naipunyam/callback"
-    )
-
     params: dict[str, str] = {
         "client_id": settings.naipunyam_client_id,
-        "redirect_uri": redirect_uri,
+        "redirect_uri": _oauth_redirect_uri(),
         "response_type": "code",
         "state": state,
         # PKCE. Even for a confidential client this binds the authorization
@@ -363,10 +384,16 @@ async def callback(
             "naipunyam.sso.callback.unknown_state",
             state_prefix=body.state[:8],
         )
-        response.delete_cookie(_STATE_COOKIE_NAME, path="/")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="INVALID_OR_EXPIRED_STATE",
+            # SSO-3: this used to be response.delete_cookie(), which never
+            # reached the browser — FastAPI merges the injected response's
+            # headers only when the endpoint RETURNS, and this path raises.
+            # The header rides on the exception so the deletion is real.
+            headers=delete_cookie_headers(
+                _STATE_COOKIE_NAME, path="/", domain=settings.auth_cookie_domain
+            ),
         )
     # Atomically drop it so the same state cannot authorise a second callback.
     await redis.delete(state_key)
@@ -401,14 +428,18 @@ async def callback(
             state_prefix=body.state[:8],
             had_cookie=bool(binding_cookie),
         )
-        response.delete_cookie(_STATE_COOKIE_NAME, path="/")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="INVALID_OR_EXPIRED_STATE",
+            headers=delete_cookie_headers(
+                _STATE_COOKIE_NAME, path="/", domain=settings.auth_cookie_domain
+            ),
         )
 
     # One-shot: the binding must not survive to authorise a second callback.
-    response.delete_cookie(_STATE_COOKIE_NAME, path="/")
+    # This call IS effective: the handler returns normally from here on, so
+    # FastAPI merges these headers into the real response.
+    response.delete_cookie(_STATE_COOKIE_NAME, path="/", domain=settings.auth_cookie_domain)
 
     client = _make_client()
     try:
@@ -421,6 +452,9 @@ async def callback(
             "code": body.code,
             "client_id": settings.naipunyam_client_id,
             "client_secret": settings.naipunyam_client_secret,
+            # RFC 6749 §4.1.3 — same value as the authorize request, or the IdP
+            # is entitled to reject the exchange. It was missing here (SSO-2).
+            "redirect_uri": _oauth_redirect_uri(),
         }
         if pkce_verifier:
             exchange_data["code_verifier"] = pkce_verifier

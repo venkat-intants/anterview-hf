@@ -12,32 +12,29 @@ Gemini to write the prompt + options in that language.
 
 from __future__ import annotations
 
-import asyncio
-import json
-import re
 from typing import Any
 
-import httpx
 import structlog
 from shared.intelligence import (
     baseline_profile,
     compute_profile_id,
     render_exam_blueprint,
 )
+from shared.llm import call_gemini_json
 
 from app.config import Settings
-from app.untrusted_input import frame_untrusted, scan_untrusted
+from app.untrusted_input import frame_untrusted, frame_untrusted_inline, scan_untrusted
 
 log = structlog.get_logger(__name__)
 
 EXAM_GENERATOR_VERSION: str = "1.0"
 
-# Strips a trailing comma before a closing } or ] (invalid JSON Gemini sometimes emits).
-_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
-
-_RETRY_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
-_MAX_ATTEMPTS: int = 4
-_BACKOFF_BASE_SECONDS: float = 1.0
+# Transport, retry and JSON recovery live in shared.llm.gemini, which was lifted
+# from the copy that used to sit in this module — see _call_gemini_json below.
+_TEMPERATURE: float = 0.7  # some variety across generations
+# Longer than the scorers': a coding generation asks for statements, reference
+# solutions and test cases in one response, and routinely takes ~a minute.
+_TIMEOUT_SECONDS: float = 90.0
 
 _OPTIONS_PER_QUESTION: int = 4
 _MAX_QUESTIONS: int = 30  # hard cap — guards token budget + abuse
@@ -151,6 +148,10 @@ def _role_blueprint(
     if not title:
         return ""
     seniority = level if level in ("entry", "mid", "senior") else "mid"
+    # Classify and hash on the RAW title. profile_id is an audit handle — the
+    # rubric behind a score has to be reproducible from it — and the keyword
+    # classifier normalises punctuation away before matching, so neutralising
+    # first would change the handle without changing a single decision.
     profile = baseline_profile(
         profile_id=compute_profile_id(job_title=title, seniority=seniority),
         job_title=title,
@@ -163,7 +164,15 @@ def _role_blueprint(
             reason="family_not_applicable",
         )
         return ""
-    return render_exam_blueprint(profile, count)
+    # ...but the copy that reaches the model is neutralised. This is the only
+    # route by which job_title enters an exam prompt: render_exam_blueprint
+    # interpolates profile.job_title into a "Role : ..." line verbatim. Framing
+    # it here rather than in shared/intelligence keeps the prompt-hygiene
+    # convention where the rest of it lives (app/untrusted_input.py) and leaves
+    # the role engine free of a service's presentation rules.
+    return render_exam_blueprint(
+        profile.model_copy(update={"job_title": frame_untrusted_inline(title)}), count
+    )
 
 
 async def generate_exam_questions(
@@ -196,7 +205,11 @@ async def generate_exam_questions(
     # a prompt, and a pasted JD can carry whatever the poster put in it.
     topic_excerpt = topic[:300]
     scan_untrusted(
-        {"topic": topic_excerpt},
+        # job_title is not merely metadata here: it reaches the prompt through
+        # the role blueprint (see _role_blueprint), so it is scanned like every
+        # other string that gets there. It stays a log field as well, so the
+        # warning names the posting and not just the offending field.
+        {"topic": topic_excerpt, "job_title": job_title},
         event="exam_generator.injection_markers_detected",
         job_title=job_title,
         kind="mcq",
@@ -245,102 +258,24 @@ async def _call_gemini_json(
 
     Shared by the MCQ and coding generators. Raises ExamGenerationError on
     transport failure, unreadable response, or invalid JSON.
+
+    The body of this used to live here; ``shared.llm.gemini`` was lifted FROM it
+    (brace-span extraction, ``finishReason`` capture, the gated ``json_repair``
+    rung) so the interview scorer and the resume scorer stop running weaker
+    recovery than the exam path. What remains is the Settings→primitives
+    mapping: ``shared/`` may not know the shape of any one service's config
+    class, so the field names stay here where they belong.
     """
-    # Auth via x-goog-api-key header (not ?key=) so the key never lands in
-    # request URLs / proxy access logs — see app/embedder.py for the same
-    # rationale, first applied there.
-    url = f"{settings.gemini_api_base_url}/models/{settings.gemini_model}:generateContent"
-    headers = {"x-goog-api-key": settings.gemini_api_key}
-    generation_config: dict[str, Any] = {
-        "temperature": 0.7,  # some variety across generations
-        # Pure JSON output budget (thinking is disabled below on 2.5 models).
-        "maxOutputTokens": max_output_tokens,
-        "responseMimeType": "application/json",
-    }
-    # Gemini 2.5 models are "thinking" models: their hidden reasoning tokens
-    # count against maxOutputTokens and on generation-heavy prompts can consume
-    # nearly the whole budget, truncating the JSON mid-string (seen live on the
-    # HF Space: output died at char 41 → "Unterminated string"). Structured
-    # authoring gains nothing from private reasoning, so spend the entire budget
-    # on output. thinkingConfig is only accepted by 2.5-family models — older
-    # models reject the field with HTTP 400, hence the version guard.
-    if "2.5" in settings.gemini_model:
-        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
-    body: dict[str, Any] = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": generation_config,
-    }
-
-    response = None
-    last_error = "no attempt made"
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        for attempt in range(_MAX_ATTEMPTS):
-            try:
-                response = await client.post(url, json=body, headers=headers)
-            except httpx.RequestError as exc:
-                response = None
-                last_error = f"request error: {exc}"
-            else:
-                if response.status_code == 200:
-                    break
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-                if response.status_code not in _RETRY_STATUSES:
-                    break
-            if attempt < _MAX_ATTEMPTS - 1:
-                await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
-
-    if response is None or response.status_code != 200:
-        raise ExamGenerationError(
-            f"Gemini call failed after {_MAX_ATTEMPTS} attempt(s): {last_error}"
-        )
-
-    try:
-        candidate: dict[str, Any] = response.json()["candidates"][0]
-        raw_text: str = candidate["content"]["parts"][0]["text"]
-    except (KeyError, IndexError, json.JSONDecodeError) as exc:
-        raise ExamGenerationError(f"Failed to read Gemini response: {exc}") from exc
-    # Surfaced in parse errors: MAX_TOKENS here means the JSON was truncated by
-    # the output budget — raise the budget rather than blaming the model output.
-    finish_reason = str(candidate.get("finishReason", ""))
-
-    cleaned = raw_text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    if not cleaned.startswith("{"):
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start != -1 and end > start:
-            cleaned = cleaned[start : end + 1]
-    cleaned = _TRAILING_COMMA_RE.sub(r"\1", cleaned)
-
-    try:
-        parsed: dict[str, Any] = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        # Even in JSON mode Gemini intermittently emits invalid escapes / raw
-        # newlines inside strings — especially when the payload embeds source
-        # code (coding questions). json_repair salvages those; per-question
-        # validation downstream still drops anything structurally unusable.
-        # Deliberately NOT attempted on MAX_TOKENS truncation: "repairing" a
-        # cut-off payload fabricates half-empty questions — report it instead.
-        repaired = None
-        if finish_reason != "MAX_TOKENS":
-            try:
-                import json_repair
-
-                repaired = json_repair.repair_json(cleaned, return_objects=True)
-            except Exception:  # noqa: BLE001 — fall through to the original error
-                repaired = None
-        if isinstance(repaired, dict) and repaired:
-            log.warning("exam_generator.json_repaired", parse_error=str(exc)[:120])
-            return repaired
-        hint = (
-            f" (finishReason={finish_reason} — output was truncated)"
-            if finish_reason == "MAX_TOKENS"
-            else ""
-        )
-        raise ExamGenerationError(
-            f"Gemini response was not valid JSON{hint}: {exc}"
-        ) from exc
-    return parsed
+    return await call_gemini_json(
+        prompt,
+        api_base_url=settings.gemini_api_base_url,
+        model=settings.gemini_model,
+        api_key=settings.gemini_api_key,
+        temperature=_TEMPERATURE,
+        max_output_tokens=max_output_tokens,
+        timeout=_TIMEOUT_SECONDS,
+        error_cls=ExamGenerationError,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +426,10 @@ async def generate_coding_questions(
 
     topic_excerpt = topic[:300]
     scan_untrusted(
-        {"topic": topic_excerpt},
+        # Same reasoning as the MCQ path: job_title enters the prompt via the
+        # role blueprint, so it belongs in the scanned sources, not only in the
+        # log context.
+        {"topic": topic_excerpt, "job_title": job_title},
         event="exam_generator.injection_markers_detected",
         job_title=job_title,
         kind="coding",

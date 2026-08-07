@@ -34,6 +34,7 @@ import json
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import quote
 
 import pytest
 import pytest_asyncio
@@ -53,6 +54,9 @@ _INITIATE_URL = "/auth/sso/naipunyam/initiate"
 _CALLBACK_URL = "/auth/sso/naipunyam/callback"
 
 _FAKE_NAIPUNYAM_BASE = "https://naipunyam.example.com"
+# Our own callback host — NOT the IdP's. The two must stay different or the
+# SSO-2 assertions cannot tell the fixed value from the old derived one.
+_FAKE_REDIRECT_URI = "https://app.intants.com/auth/sso/naipunyam/callback"
 _FAKE_CLIENT_ID = "test-client-id"
 _FAKE_CLIENT_SECRET = "test-client-secret"
 _FAKE_UID = "NAIP-UID-001"
@@ -226,6 +230,10 @@ _NAIPUNYAM_SETTINGS = {
     "naipunyam_client_id": _FAKE_CLIENT_ID,
     "naipunyam_client_secret": _FAKE_CLIENT_SECRET,
     "naipunyam_saml_acs_url": "",
+    # SSO-2: OUR public callback, explicit rather than derived from the IdP's own
+    # base URL. Deliberately on a different host from _FAKE_NAIPUNYAM_BASE so a
+    # regression back to the derived value is visible in the assertions below.
+    "naipunyam_oauth_redirect_uri": _FAKE_REDIRECT_URI,
     "jwt_secret": "test-secret-32-bytes-xxxxxxxxxxxx",
     "jwt_algorithm": "HS256",
     "jwt_issuer": "intants-data-gateway",
@@ -272,6 +280,21 @@ async def test_initiate_returns_302_when_naipunyam_provider(client: AsyncClient)
     assert "client_id=test-client-id" in location
     assert "response_type=code" in location
     assert "state=" in location
+    # SSO-2: redirect_uri must be OUR public callback, not a path derived from
+    # the IdP's own base URL — that pointed the browser back at APSSDC.
+    assert f"redirect_uri={quote(_FAKE_REDIRECT_URI, safe='')}" in location
+    assert f"redirect_uri={quote(_FAKE_NAIPUNYAM_BASE, safe='')}" not in location
+
+
+@pytest.mark.asyncio
+async def test_initiate_is_503_when_our_callback_url_is_unset(client: AsyncClient) -> None:
+    """SSO-2. Silently falling back to a derived URI is what shipped a callback
+    pointing at the IdP's own host, so an unset value now fails loudly instead."""
+    with _patch_settings(naipunyam_oauth_redirect_uri=""):
+        resp = await client.get(_INITIATE_URL)
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "NAIPUNYAM_NOT_CONFIGURED"
 
 
 # ---------------------------------------------------------------------------
@@ -738,3 +761,81 @@ async def test_callback_sends_pkce_verifier_in_token_exchange(
     assert resp.status_code == 200, resp.text
     sent = mock_instance._http.post.call_args.kwargs["data"]
     assert sent["code_verifier"] == "verifier-abc123"
+
+
+@pytest.mark.asyncio
+async def test_callback_echoes_redirect_uri_in_token_exchange(
+    client: AsyncClient, fake_redis: _FakeRedis
+) -> None:
+    """SSO-2 / RFC 6749 4.1.3: redirect_uri was in the authorize request, so it
+    MUST be repeated byte-identically at the token endpoint. It was omitted, and
+    a conforming IdP answers that with invalid_grant — a day-one integration
+    failure that no test would have caught."""
+    binding = _seed_state(fake_redis)
+    client.cookies.set(_STATE_COOKIE, binding)
+
+    patcher, mock_instance = _stub_naipunyam_client(_candidate_profile())
+    _test_app.dependency_overrides[get_db_session] = _override_db()
+    try:
+        with _patch_settings():
+            resp = await client.post(
+                _CALLBACK_URL, json={"code": "code", "state": "state-token"}
+            )
+    finally:
+        patcher.stop()
+        _test_app.dependency_overrides.clear()
+
+    assert resp.status_code == 200, resp.text
+    sent = mock_instance._http.post.call_args.kwargs["data"]
+    assert sent["redirect_uri"] == _FAKE_REDIRECT_URI
+
+
+@pytest.mark.asyncio
+async def test_callback_error_paths_really_expire_the_binding_cookie(
+    client: AsyncClient, fake_redis: _FakeRedis
+) -> None:
+    """SSO-3. The delete_cookie() call on this path used to be a no-op: FastAPI
+    merges the injected Response's headers only when the endpoint RETURNS, and
+    raising HTTPException skips the merge. The header now rides on the exception,
+    so assert it is actually on the wire."""
+    _seed_state(fake_redis, binding="the-real-binding")
+    client.cookies.set(_STATE_COOKIE, "some-other-binding")
+
+    patcher, _ = _stub_naipunyam_client(_candidate_profile())
+    _test_app.dependency_overrides[get_db_session] = _override_db()
+    try:
+        with _patch_settings():
+            resp = await client.post(
+                _CALLBACK_URL, json={"code": "code", "state": "state-token"}
+            )
+    finally:
+        patcher.stop()
+        _test_app.dependency_overrides.clear()
+
+    assert resp.status_code == 400
+    set_cookie = [v for k, v in resp.headers.multi_items() if k.lower() == "set-cookie"]
+    expiry = next(h for h in set_cookie if h.startswith(f"{_STATE_COOKIE}="))
+    assert 'Max-Age=0' in expiry or 'max-age=0' in expiry.lower()
+
+
+@pytest.mark.asyncio
+async def test_callback_on_unknown_state_really_expires_the_binding_cookie(
+    client: AsyncClient,
+) -> None:
+    """SSO-3, the other error path (state we never issued)."""
+    client.cookies.set(_STATE_COOKIE, "stale-binding")
+
+    patcher, _ = _stub_naipunyam_client(_candidate_profile())
+    _test_app.dependency_overrides[get_db_session] = _override_db()
+    try:
+        with _patch_settings():
+            resp = await client.post(
+                _CALLBACK_URL, json={"code": "code", "state": "never-issued"}
+            )
+    finally:
+        patcher.stop()
+        _test_app.dependency_overrides.clear()
+
+    assert resp.status_code == 400
+    set_cookie = [v for k, v in resp.headers.multi_items() if k.lower() == "set-cookie"]
+    assert any(h.startswith(f"{_STATE_COOKIE}=") for h in set_cookie)

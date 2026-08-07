@@ -11,9 +11,8 @@ Supports:
 
 from __future__ import annotations
 
-import aioboto3
 import structlog
-from botocore.config import Config as BotoConfig
+from shared.s3 import s3_client
 
 from app.config import Settings
 
@@ -55,27 +54,18 @@ async def upload_file(
         Any error from the underlying boto3 client is re-raised without
         wrapping so callers can handle ``ClientError`` specifically if needed.
     """
-    endpoint_url: str | None = settings.s3_endpoint if settings.s3_endpoint else None
-
-    # MinIO and R2 are reached via a custom endpoint and require PATH-style
-    # addressing (bucket in the path, not as a subdomain) — virtual-host style
-    # would resolve to "bucket.localhost:9000" / "bucket.<acct>.r2..." and fail.
-    # For real AWS S3 (no custom endpoint) we leave the default (virtual-host).
-    boto_config: BotoConfig | None = (
-        BotoConfig(s3={"addressing_style": "path"}) if endpoint_url else None
-    )
-
-    session = aioboto3.Session(
-        aws_access_key_id=settings.s3_access_key_id or None,
-        aws_secret_access_key=settings.s3_secret_access_key or None,
-        region_name=settings.s3_region,
-    )
-
-    async with session.client(
-        "s3",
-        endpoint_url=endpoint_url,
+    # Client construction lives in shared.s3 (finding SVC-1): this was one of
+    # five hand-rolled aioboto3 sessions across four services, and three of the
+    # five had already missed the path-style and use_ssl fixes. Endpoint
+    # resolution, the credential "or None" fallback and the path-style rule for
+    # custom endpoints (MinIO/R2 — virtual-host style would resolve to
+    # "bucket.localhost:9000" and fail) now have exactly one definition.
+    async with s3_client(
+        endpoint=settings.s3_endpoint,
+        region=settings.s3_region,
+        access_key=settings.s3_access_key_id,
+        secret_key=settings.s3_secret_access_key,
         use_ssl=settings.s3_use_ssl,
-        config=boto_config,
     ) as s3:
         await s3.put_object(
             Bucket=bucket,

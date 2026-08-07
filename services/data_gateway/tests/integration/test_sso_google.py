@@ -16,6 +16,7 @@ Test matrix (6 integration + 1 unit-level URL test):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from typing import Any
@@ -197,6 +198,37 @@ def _make_redis_override(fake: _FakeRedis) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# State helpers — put the router into the post-initiate state the callback
+# expects, without going through the redirect.
+#
+# These grew a binding when SSO-1 removed the `if _expected_binding:` compat
+# branch from the callback. Before that, a state whose JSON carried no
+# "binding" key skipped browser binding entirely — which is why these tests
+# used to pass while seeding a bare string. Seeding the real payload is what
+# makes them exercise the flow a browser actually performs.
+# ---------------------------------------------------------------------------
+
+_STATE_COOKIE = "oauth_state"
+
+
+def _seed_state(
+    redis: _FakeRedis,
+    state: str = _FAKE_STATE,
+    binding: str = "binding-secret",
+    **extra: Any,
+) -> str:
+    """Write a bound state payload and return the binding secret to send back."""
+    payload: dict[str, Any] = {
+        "return_url": "/dashboard",
+        "binding": hashlib.sha256(binding.encode()).hexdigest(),
+        "code_verifier": "pkce-verifier",
+    }
+    payload.update(extra)
+    redis._store[f"oauth:google:state:{state}"] = json.dumps(payload)
+    return binding
+
+
+# ---------------------------------------------------------------------------
 # Fixture — lightweight ASGI client against the minimal test app
 # ---------------------------------------------------------------------------
 
@@ -297,9 +329,10 @@ async def test_initiate_returns_503_when_not_configured(client: AsyncClient) -> 
 @pytest.mark.asyncio
 async def test_callback_valid_code_returns_jwt(client: AsyncClient) -> None:
     """Callback with a valid code + state → 200 with a valid Intants JWT."""
-    # Seed Redis with the expected state token
+    # Seed Redis with the expected state token, bound to this browser.
     fake_redis = _FakeRedis()
-    await fake_redis.set(f"oauth:google:state:{_FAKE_STATE}", "https://app.intants.com/dashboard")
+    binding = _seed_state(fake_redis, return_url="https://app.intants.com/dashboard")
+    client.cookies.set(_STATE_COOKIE, binding)
 
     # Build fake httpx responses for token exchange and userinfo
     fake_token_resp = MagicMock()
@@ -403,10 +436,8 @@ async def test_callback_with_consent_records_dpdp_ledger(client: AsyncClient) ->
     (interview_voice_recording / interview) atomically with the user upsert."""
     fake_redis = _FakeRedis()
     # State payload as written by initiate when the candidate ticked the box.
-    await fake_redis.set(
-        f"oauth:google:state:{_FAKE_STATE}",
-        json.dumps({"return_url": "/dashboard", "consent": True, "consent_version": 1}),
-    )
+    binding = _seed_state(fake_redis, consent=True, consent_version=1)
+    client.cookies.set(_STATE_COOKIE, binding)
 
     fake_token_resp = MagicMock()
     fake_token_resp.status_code = 200
@@ -418,6 +449,9 @@ async def test_callback_with_consent_records_dpdp_ledger(client: AsyncClient) ->
         "sub": _FAKE_GOOGLE_SUB,
         "email": "consenting.user@gmail.com",
         "name": "Consenting User",
+        # Google always returns this; without it the callback 403s on
+        # GOOGLE_EMAIL_UNVERIFIED before reaching what this test is about.
+        "email_verified": True,
     }
 
     mock_http_instance = AsyncMock()
@@ -460,10 +494,8 @@ async def test_callback_rejects_privileged_account(client: AsyncClient) -> None:
     403 and NO session (no access token, no refresh token, no cookies) is issued —
     closing the refresh-escalation path."""
     fake_redis = _FakeRedis()
-    await fake_redis.set(
-        f"oauth:google:state:{_FAKE_STATE}",
-        json.dumps({"return_url": "/dashboard", "consent": True, "consent_version": 1}),
-    )
+    binding = _seed_state(fake_redis, consent=True, consent_version=1)
+    client.cookies.set(_STATE_COOKIE, binding)
 
     fake_token_resp = MagicMock()
     fake_token_resp.status_code = 200
@@ -475,6 +507,9 @@ async def test_callback_rejects_privileged_account(client: AsyncClient) -> None:
         "sub": _FAKE_GOOGLE_SUB,
         "email": "hr.manager@company.com",
         "name": "HR Manager",
+        # Google always returns this; without it the callback 403s on
+        # GOOGLE_EMAIL_UNVERIFIED before reaching what this test is about.
+        "email_verified": True,
     }
 
     mock_http_instance = AsyncMock()
@@ -543,7 +578,8 @@ async def test_callback_invalid_state_returns_400(client: AsyncClient) -> None:
 async def test_callback_google_token_failure_returns_502(client: AsyncClient) -> None:
     """Callback where Google token endpoint returns 400 → 502 GOOGLE_TOKEN_EXCHANGE_FAILED."""
     fake_redis = _FakeRedis()
-    await fake_redis.set(f"oauth:google:state:{_FAKE_STATE}", "")
+    binding = _seed_state(fake_redis)
+    client.cookies.set(_STATE_COOKIE, binding)
 
     # Token endpoint returns an error status
     fake_token_resp = MagicMock()
@@ -574,3 +610,127 @@ async def test_callback_google_token_failure_returns_502(client: AsyncClient) ->
 
     assert resp.status_code == 502
     assert resp.json()["detail"] == "GOOGLE_TOKEN_EXCHANGE_FAILED"
+
+
+# ---------------------------------------------------------------------------
+# 7. Login-CSRF: browser binding is now MANDATORY (SSO-1)
+#
+# The callback used to wrap the whole comparison in `if _expected_binding:`, so
+# a state whose stored JSON had no "binding" key skipped the check entirely —
+# and a forged state is exactly a state with no binding. The branch existed to
+# let flows already in progress finish when the binding first shipped; state
+# lives 600 seconds, so that window expired the same day.
+#
+# Mutation-checked: restoring the `if` turns the two "no binding" tests red and
+# leaves the mismatched-cookie ones green. That is the split to expect — those
+# two pin the SECOND guard (the compare), which the compat branch never
+# bypassed. Same note as the sibling Naipunyam suite carries.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_state_with_no_binding(client: AsyncClient) -> None:
+    """A state stored WITHOUT a binding must not authorise a login."""
+    fake_redis = _FakeRedis()
+    await fake_redis.set(
+        f"oauth:google:state:{_FAKE_STATE}",
+        json.dumps({"return_url": "/dashboard", "consent": True}),
+    )
+    client.cookies.clear()
+
+    mock_http_instance = AsyncMock()
+    mock_http_instance.post = AsyncMock()
+    mock_http_instance.__aenter__ = AsyncMock(return_value=mock_http_instance)
+    mock_http_instance.__aexit__ = AsyncMock(return_value=None)
+
+    _test_app.dependency_overrides[get_db_session] = _override_db()
+    _test_app.dependency_overrides[get_redis] = _make_redis_override(fake_redis)
+    try:
+        with (
+            _patch_settings(),
+            patch("app.routers.sso_google.httpx.AsyncClient", return_value=mock_http_instance),
+        ):
+            resp = await client.get(
+                _CALLBACK_URL, params={"code": "attacker-code", "state": _FAKE_STATE}
+            )
+    finally:
+        _test_app.dependency_overrides.clear()
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "INVALID_OR_EXPIRED_STATE"
+    # Refused before the token exchange, so a forged callback costs nothing and
+    # reveals nothing about whether the code was real.
+    mock_http_instance.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_legacy_plain_string_state(client: AsyncClient) -> None:
+    """The pre-JSON state format (a bare return_url) carries no binding either.
+
+    This is the shape the old compat branch was written for, and it is the shape
+    an attacker can most easily cause to be stored. It must now be refused."""
+    fake_redis = _FakeRedis()
+    await fake_redis.set(f"oauth:google:state:{_FAKE_STATE}", "https://app.intants.com/dashboard")
+    client.cookies.clear()
+
+    _test_app.dependency_overrides[get_db_session] = _override_db()
+    _test_app.dependency_overrides[get_redis] = _make_redis_override(fake_redis)
+    try:
+        with _patch_settings():
+            resp = await client.get(
+                _CALLBACK_URL, params={"code": "any-code", "state": _FAKE_STATE}
+            )
+    finally:
+        _test_app.dependency_overrides.clear()
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "INVALID_OR_EXPIRED_STATE"
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_mismatched_binding_cookie(client: AsyncClient) -> None:
+    """A binding cookie from a different flow must not authorise this state."""
+    fake_redis = _FakeRedis()
+    _seed_state(fake_redis, binding="the-real-binding")
+    client.cookies.set(_STATE_COOKIE, "some-other-binding")
+
+    _test_app.dependency_overrides[get_db_session] = _override_db()
+    _test_app.dependency_overrides[get_redis] = _make_redis_override(fake_redis)
+    try:
+        with _patch_settings():
+            resp = await client.get(
+                _CALLBACK_URL, params={"code": "any-code", "state": _FAKE_STATE}
+            )
+    finally:
+        _test_app.dependency_overrides.clear()
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "INVALID_OR_EXPIRED_STATE"
+
+
+@pytest.mark.asyncio
+async def test_callback_binding_failure_really_expires_the_cookie(
+    client: AsyncClient,
+) -> None:
+    """SSO-3. delete_cookie() on this path was a no-op — FastAPI merges the
+    injected Response's headers only when the endpoint RETURNS, and this one
+    raises. The header now rides on the HTTPException, so assert it is on the
+    wire rather than trusting the call."""
+    fake_redis = _FakeRedis()
+    _seed_state(fake_redis, binding="the-real-binding")
+    client.cookies.set(_STATE_COOKIE, "some-other-binding")
+
+    _test_app.dependency_overrides[get_db_session] = _override_db()
+    _test_app.dependency_overrides[get_redis] = _make_redis_override(fake_redis)
+    try:
+        with _patch_settings():
+            resp = await client.get(
+                _CALLBACK_URL, params={"code": "any-code", "state": _FAKE_STATE}
+            )
+    finally:
+        _test_app.dependency_overrides.clear()
+
+    assert resp.status_code == 400
+    set_cookie = [v for k, v in resp.headers.multi_items() if k.lower() == "set-cookie"]
+    expiry = next(h for h in set_cookie if h.startswith(f"{_STATE_COOKIE}="))
+    assert "max-age=0" in expiry.lower()

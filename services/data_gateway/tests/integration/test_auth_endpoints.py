@@ -33,6 +33,14 @@ from httpx import ASGITransport, AsyncClient
 from app.config import settings
 from app.main import app
 
+# Requires a LIVE Postgres. Marked so the CI leg's `-m "not integration"`
+# deselects it by MARKER rather than by directory: `--ignore=tests/integration`
+# also threw away the fully-offline SSO suites in this same folder, so 31 tests
+# covering the newest security code in the service never ran in CI. Excluding
+# by marker is what ci.yml's header already says this repo does; this file was
+# one of four that made data_gateway the exception.
+pytestmark = pytest.mark.integration
+
 
 def _unique_email() -> str:
     return f"test-{uuid.uuid4().hex[:8]}@example.com"

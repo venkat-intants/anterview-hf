@@ -1,5 +1,19 @@
 # Code Review — 2026-08-07
 
+> ## 🗄️ SUPERSEDED — see [`code-review-2026-08-07-domains.md`](code-review-2026-08-07-domains.md)
+>
+> **Superseded 2026-08-07** by the domain-by-domain review, which reconciles
+> every finding recorded here and re-verifies each against `main` at `d1dd630`.
+>
+> **This document is retained unedited as historical evidence.** It is the
+> record of the review that found DEP-1/DEP-2 and drove the remediation merged
+> in PR #8 — the reconciliation table in the successor is keyed to the finding
+> IDs below, so this file is what those IDs mean. Nothing here has been deleted
+> or rewritten; the remediation banner further down was added at the time the
+> fixes landed and is accurate as of that commit.
+>
+> **For current status of any finding, read the successor, not this file.**
+
 **Reviewer:** `code-reviewer`
 **Head at review:** `352f366` (branch `fix/code-review-2026-08-hardening`)
 **Method:** every finding below was produced by opening the cited file at this

@@ -8,6 +8,13 @@ Coverage:
   test_upload_audio_returns_none_when_pcm_empty  empty bytes → None, S3 not called
 """
 
+# Patch target is ``shared.s3.aioboto3.Session``, not ``app.s3.aioboto3``:
+# client construction moved into the shared helper (finding SVC-1, which
+# consolidated seven hand-rolled aioboto3 sessions across four services).
+# These tests still assert exactly what they always did — endpoint_url,
+# use_ssl and the path-style config that reach boto — just one layer down,
+# so they now also pin that app.s3 forwards its settings correctly.
+
 from __future__ import annotations
 
 from typing import Any
@@ -107,7 +114,7 @@ async def test_upload_audio_returns_correct_key() -> None:
 
     mock_session = _mock_aioboto3_session()
 
-    with patch("app.s3.aioboto3.Session", return_value=mock_session):
+    with patch("shared.s3.aioboto3.Session", return_value=mock_session):
         s3_settings = _make_settings()
         result = await upload_audio(session_id, turn_seq, pcm_bytes, settings=s3_settings)
 
@@ -137,7 +144,7 @@ async def test_upload_audio_key_zero_padded_to_four_digits() -> None:
     pcm_bytes = b"\x00" * 64
     mock_session = _mock_aioboto3_session()
 
-    with patch("app.s3.aioboto3.Session", return_value=mock_session):
+    with patch("shared.s3.aioboto3.Session", return_value=mock_session):
         s3_settings = _make_settings()
         key7 = await upload_audio("sess-1", 7, pcm_bytes, settings=s3_settings)
         key42 = await upload_audio("sess-2", 42, pcm_bytes, settings=s3_settings)
@@ -163,7 +170,7 @@ async def test_upload_audio_returns_none_on_failure() -> None:
         put_object_side_effect=_make_client_error("NoSuchBucket")
     )
 
-    with patch("app.s3.aioboto3.Session", return_value=mock_session):
+    with patch("shared.s3.aioboto3.Session", return_value=mock_session):
         s3_settings = _make_settings()
         result = await upload_audio(session_id, turn_seq, pcm_bytes, settings=s3_settings)
 
@@ -184,7 +191,7 @@ async def test_upload_audio_returns_none_on_boto_core_error() -> None:
 
     mock_session = _mock_aioboto3_session(put_object_side_effect=_ConnTimeout())
 
-    with patch("app.s3.aioboto3.Session", return_value=mock_session):
+    with patch("shared.s3.aioboto3.Session", return_value=mock_session):
         s3_settings = _make_settings()
         result = await upload_audio("sess-x", 2, b"\x00" * 32, settings=s3_settings)
 
@@ -202,7 +209,7 @@ async def test_upload_audio_returns_none_when_pcm_empty() -> None:
 
     mock_session = _mock_aioboto3_session()
 
-    with patch("app.s3.aioboto3.Session", return_value=mock_session) as mock_session_cls:
+    with patch("shared.s3.aioboto3.Session", return_value=mock_session) as mock_session_cls:
         s3_settings = _make_settings()
         result = await upload_audio("sess-empty", 1, b"", settings=s3_settings)
 
@@ -220,7 +227,7 @@ async def test_upload_audio_uses_custom_endpoint_for_minio() -> None:
 
     mock_session = _mock_aioboto3_session()
 
-    with patch("app.s3.aioboto3.Session", return_value=mock_session):
+    with patch("shared.s3.aioboto3.Session", return_value=mock_session):
         s3_settings = _make_settings(s3_endpoint="http://minio:9000")
         await upload_audio("sess-minio", 1, b"\x00" * 64, settings=s3_settings)
 
@@ -237,7 +244,7 @@ async def test_upload_audio_no_endpoint_for_real_aws() -> None:
 
     mock_session = _mock_aioboto3_session()
 
-    with patch("app.s3.aioboto3.Session", return_value=mock_session):
+    with patch("shared.s3.aioboto3.Session", return_value=mock_session):
         s3_settings = _make_settings(s3_endpoint="")
         await upload_audio("sess-aws", 1, b"\x00" * 64, settings=s3_settings)
 

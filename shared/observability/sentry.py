@@ -6,6 +6,11 @@ scrubbed from every event before it leaves the process (DPDP §8): cookies, auth
 headers, request bodies, and known PII keys are stripped, and ``send_default_pii``
 is disabled so Sentry never auto-attaches the client IP.
 
+"Every event" means both classes of event. Errors and transactions leave through
+separate hooks (``before_send`` / ``before_send_transaction``) and the SDK never
+applies one to the other, so a single-hook install scrubs half the traffic. Both
+are wired to ``_before_send`` below.
+
 The PII key set is derived from ``observability/pii.py`` — see ``_PII_KEYS``
 below for why it is derived rather than declared here.
 """
@@ -84,8 +89,15 @@ def _scrub(obj: Any) -> Any:
 def _before_send(event: Event, _hint: Hint) -> Event | None:
     """Strip cookies / auth headers / bodies / PII before an event is sent.
 
-    Signature matches ``sentry_sdk.init(before_send=...)`` exactly. It was
-    previously ``(dict, dict) -> dict``, which only type-checked because
+    Wired to ``before_send`` AND ``before_send_transaction`` — the SDK routes
+    error events and transaction (performance) events through *different* hooks
+    and applies neither to the other, so an install that sets only ``before_send``
+    ships every traced request unscrubbed the moment ``traces_sample_rate`` goes
+    above 0 (SEC-8). A transaction carries the same ``request`` the error path
+    does, query string included.
+
+    Signature matches both ``sentry_sdk.init`` hooks exactly. It was previously
+    ``(dict, dict) -> dict``, which only type-checked because
     ``shared/observability`` was not in the mypy step's path list until
     2026-08-07 — returning ``None`` to DROP an event was not expressible.
     """
@@ -117,6 +129,21 @@ def _before_send(event: Event, _hint: Hint) -> Event | None:
             crumbs["values"] = _scrub(crumbs["values"])
         elif isinstance(crumbs, list):
             event["breadcrumbs"] = _scrub(crumbs)
+        # A transaction event keeps its payload in span ``data``/``tags`` rather
+        # than in ``extra``, so the surfaces above miss it entirely. Only those
+        # two maps are scrubbed, never the span dict itself: a span's own keys
+        # are structural (``op``, ``description``, ``trace_id``) and a
+        # transaction's include ``name`` — the route — which ``_PII_KEYS``
+        # contains and would blank, turning every performance event into
+        # "[redacted]" and destroying the signal we enabled tracing for.
+        spans = event.get("spans")
+        if isinstance(spans, list):
+            for span in spans:
+                if not isinstance(span, dict):
+                    continue
+                for field in ("data", "tags"):
+                    if isinstance(span.get(field), Mapping):
+                        span[field] = _scrub(span[field])
     except Exception:  # noqa: BLE001 — scrubbing must never break error reporting
         pass
     return event
@@ -152,6 +179,13 @@ def init_sentry(
             traces_sample_rate=traces_sample_rate,
             send_default_pii=False,  # never auto-attach IP / cookies / headers
             before_send=_before_send,
+            # Both hooks, same scrubber. before_send is NOT applied to
+            # transaction events — the SDK dispatches them separately
+            # (client.py: `before_send_transaction = self.options[...]`), so
+            # scrubbing only the error path left every sampled request
+            # unscrubbed. Silently: traces_sample_rate defaults to 0.0 here, so
+            # the gap is invisible until someone turns tracing on.
+            before_send_transaction=_before_send,
             server_name=service_name,
             # The SDK defaults this to True, and _before_send never sees frame
             # locals — so an unhandled 500 in a PII-handling endpoint would ship

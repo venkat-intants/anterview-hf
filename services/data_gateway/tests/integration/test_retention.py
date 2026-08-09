@@ -4,7 +4,7 @@ Runs against the real local Postgres (port 5433).
 Tests call purge_expired_sessions() directly — waiting for the cron trigger
 is an integration anti-pattern (slow, non-deterministic, hard to assert on).
 
-Test matrix (6 cases):
+Test matrix (7 cases):
   1. test_purge_dry_run_logs_but_does_not_delete
      — 2 expired sessions; dry_run=True; assert row count unchanged, log has
        dry_run=True and deleted_count=2.
@@ -21,10 +21,15 @@ Test matrix (6 cases):
      — sanity: revoked consent users are unaffected by the purge. The retention
        cron deletes sessions by age+status; consent state is irrelevant.
        This is documented as a no-op test (see docstring below).
+  7. test_purge_deletes_the_scorecard_row_too
+     — DPDP-4: scorecards.session_id is NOT a foreign key, so nothing cascades.
+       The purge must delete the row explicitly or it survives as an orphan
+       holding the candidate's summary, scores and composite score forever.
 
 FK CASCADE note:
   The migration eda3829ec95a defines fk_turns_session_id with ondelete='CASCADE'.
-  Test 3 verifies this holds at runtime (not just in DDL).
+  Test 3 verifies this holds at runtime (not just in DDL). Test 7 covers the
+  table that deliberately has NO such FK.
 """
 
 from __future__ import annotations
@@ -42,7 +47,7 @@ from app.config import Settings
 from app.config import settings as _app_settings
 from app.database import get_session_factory
 from app.main import app
-from app.models import DpdpConsent, Turn, User
+from app.models import DpdpConsent, Scorecard, Turn, User
 from app.models import Session as InterviewSession
 from app.retention import purge_expired_sessions
 
@@ -457,3 +462,64 @@ async def test_purge_respects_dpdp_consent_revoked(client: AsyncClient) -> None:
         "dpdp_consent_ledger row (even revoked) must never be deleted by the purge. "
         "Per-user immediate erasure is DPDP §12 task #46."
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — DPDP-4: the scorecard row goes with the session
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_purge_deletes_the_scorecard_row_too(client: AsyncClient) -> None:
+    """A purged session must not leave its scorecard behind.
+
+    ``scorecards.session_id`` is deliberately NOT a foreign key (models.py: the
+    table is written by feedback_billing while sessions live here), so no cascade
+    reaches it. Before DPDP-4 the purge issued one ``DELETE FROM sessions`` and
+    the scorecard survived indefinitely holding ``summary`` — a verdict on the
+    candidate — plus ``strengths``, ``improvements``, ``scores`` and
+    ``composite_score``, orphaned with no session to join back to and therefore
+    invisible to every session-scoped erasure or audit query.
+
+    Object-storage keys are left NULL here on purpose: this test asserts the ROW
+    deletion against a real database, while the collect-before-delete ordering
+    and the storage-failure abort are pinned in
+    ``tests/unit/test_retention_scorecards.py``, which runs without one.
+    """
+    factory = get_session_factory()
+    user_id = await _insert_user(factory)
+    session_id = await _insert_session(factory, user_id, "completed", _EXPIRED_AT)
+
+    scorecard_id = uuid.uuid4()
+    async with factory() as db:
+        db.add(
+            Scorecard(
+                scorecard_id=scorecard_id,
+                session_id=session_id,
+                scores={"communication": 7, "technical": 6},
+                composite_score=6.5,
+                strengths=["clear structure"],
+                improvements=[{"area": "depth", "suggestion": "give examples"}],
+                summary="Solid communicator, thin on specifics.",
+                lang="en",
+                report_pdf_key=None,
+                transcript_key=None,
+                created_at=_NOW,
+            )
+        )
+        await db.commit()
+
+    live_settings = _settings_with(dry_run=False)
+    async with factory() as db:
+        await purge_expired_sessions(db=db, settings=live_settings)
+
+    assert await _count_sessions(factory, [session_id]) == 0
+
+    async with factory() as db:
+        result = await db.execute(
+            select(Scorecard).where(Scorecard.scorecard_id == scorecard_id)
+        )
+        assert result.scalar_one_or_none() is None, (
+            "The scorecard must be deleted with its session. It does not cascade "
+            "— session_id is not a FK — so retention.py deletes it explicitly."
+        )

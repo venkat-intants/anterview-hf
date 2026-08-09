@@ -14,6 +14,10 @@
 //    and sends it as the X-CSRF-Token header (required by the backend).
 //  - Mock mode: when VITE_USE_MOCK=true the refresh endpoint is never hit; callers
 //    rely on mock data paths instead.
+//  - Three transports share that one refresh primitive: clientFetch (JSON),
+//    fetchBlobWithAuth (binary downloads) and uploadWithProgress (XHR multipart,
+//    the only one that can report upload progress). They differ in body handling
+//    ONLY — the auth behaviour must stay identical across all three.
 
 import { getToken, setToken, clearToken } from './tokenStore';
 import { toast } from '../lib/toast';
@@ -378,20 +382,25 @@ export function feedbackGet<T>(path: string, opts?: ClientOptions): Promise<T> {
   return clientFetch<T>(buildUrl(FEEDBACK_BASE, path), opts);
 }
 
+/** Raw outcome of one XHR attempt — status plus unparsed body. */
+interface XhrResult {
+  status: number;
+  responseText: string;
+}
+
 /**
- * Multipart upload via XHR (needed for real upload-progress callbacks).
- * Falls through to fetch when onProgress is not needed.
- *
- * The caller is responsible for NOT setting Content-Type — the browser must
- * set multipart/form-data with the correct boundary.
+ * One multipart POST over XHR. Resolves for EVERY HTTP status (including 401)
+ * and rejects only on a transport failure, so the caller — not this function —
+ * owns the auth decision. That split is what lets the 401 → refresh → retry
+ * live in exactly one place instead of being duplicated per attempt.
  */
-export function uploadWithProgress<T>(
+function sendMultipartXhr(
   url: string,
   formData: FormData,
+  token: string | null,
   onProgress?: (pct: number) => void,
-): Promise<T> {
+): Promise<XhrResult> {
   return new Promise((resolve, reject) => {
-    const token = getToken();
     const xhr = new XMLHttpRequest();
 
     if (onProgress) {
@@ -403,23 +412,7 @@ export function uploadWithProgress<T>(
     }
 
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const data = JSON.parse(xhr.responseText) as T;
-          resolve(data);
-        } catch {
-          reject(new Error('Invalid response from server'));
-        }
-      } else {
-        let detail = `HTTP ${xhr.status}`;
-        try {
-          const body = JSON.parse(xhr.responseText) as { detail?: string };
-          if (body.detail) detail = body.detail;
-        } catch {
-          // leave default
-        }
-        reject(new Error(detail));
-      }
+      resolve({ status: xhr.status, responseText: xhr.responseText });
     };
 
     xhr.onerror = () => {
@@ -434,6 +427,65 @@ export function uploadWithProgress<T>(
     xhr.withCredentials = true;
     xhr.send(formData);
   });
+}
+
+/**
+ * Multipart upload via XHR (needed for real upload-progress callbacks).
+ *
+ * XHR is not an accident here: `fetch` cannot report request-body progress, so
+ * this path could not be folded into `fetchBlobWithAuth`. It carries the same
+ * single-flight 401 → refresh → retry-once semantics by calling the SAME
+ * `attemptRefresh` primitive — a second refresh implementation would break the
+ * single-flight property that stops N concurrent uploads firing N refreshes and
+ * racing each other's rotated refresh cookie.
+ *
+ * Without this a candidate whose 15-minute access token expired mid-upload lost
+ * the upload — the highest-friction step in the funnel.
+ *
+ * The caller is responsible for NOT setting Content-Type — the browser must
+ * set multipart/form-data with the correct boundary.
+ */
+export async function uploadWithProgress<T>(
+  url: string,
+  formData: FormData,
+  onProgress?: (pct: number) => void,
+): Promise<T> {
+  let result = await sendMultipartXhr(url, formData, getToken(), onProgress);
+
+  if (result.status === 401 && !USE_MOCK) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    const refreshed = await attemptRefresh(import.meta.env.VITE_API_BASE_URL);
+    if (!refreshed) {
+      // Same terminal path as clientFetch / fetchBlobWithAuth.
+      clearToken();
+      toast.error('Session expired — please sign in');
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+      throw new Error('Session expired');
+    }
+    // Exactly ONE re-issue. A second 401 falls through to the error path below
+    // rather than looping: if a token minted seconds ago is still rejected, the
+    // problem is authorisation, not expiry, and retrying re-uploads the file.
+    result = await sendMultipartXhr(url, formData, getToken(), onProgress);
+  }
+
+  if (result.status >= 200 && result.status < 300) {
+    try {
+      return JSON.parse(result.responseText) as T;
+    } catch {
+      throw new Error('Invalid response from server');
+    }
+  }
+
+  let detail = `HTTP ${result.status}`;
+  try {
+    const body = JSON.parse(result.responseText) as { detail?: string };
+    if (body.detail) detail = body.detail;
+  } catch {
+    // leave default
+  }
+  throw new Error(detail);
 }
 
 /** Raw clientFetch for callers that need full control over the URL. */

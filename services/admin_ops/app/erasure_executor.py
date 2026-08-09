@@ -34,6 +34,11 @@ For each claimed request (one at a time, SKIP LOCKED) it:
   4. Hard-deletes scorecards for the user's sessions.
   5. Hard-deletes the sessions rows themselves (was soft-deleted on request;
      turns are already gone so the cascade is safe, but we delete explicitly).
+  5b. Hard-deletes the user's in-app notifications. notifications.user_id is
+     ON DELETE CASCADE, but the cascade never fires: step 7 anonymises the
+     users row instead of deleting it (erasure_requests.user_id is ON DELETE
+     RESTRICT). The rows carry a free-text title/body addressed to the person
+     by name, so leaving them is leaving PII behind.
   6. Anonymises applicant rows linked to this user (full_name, email,
      resume_text, resume_s3_key, embedding → redacted / NULL; user_id NULL).
      ``embedding`` is a halfvec(3072) derived from resume_text — leaving it
@@ -99,18 +104,22 @@ unless ALL of the following have succeeded:
   exactly like a successful delete did. Missing credentials are an operator
   error to fix, not an erasure to claim.
 
-Tables NOT reached (flagged for review)
-----------------------------------------
-- email_events.to_email: contains candidate email, but is linked to the
-  internal email outbox (no user_id FK). Purge is handled by the data_gateway
-  DPDP §8(7) retention cron (90-day rolling delete). Flagged for manual review
-  by security-auditor — admin_ops does not own that table.
-- dpdp_consent_ledger: the consent record is the legal basis for processing;
-  retaining it (with user_id pointing to an anonymised user) is permissible
-  under DPDP §7 to demonstrate prior consent. Flagged for legal review.
-- auth_tokens: single-use reset / verification tokens; these expire naturally
-  within 24 h. Soft-deleting the user prevents them from being redeemed.
-  Flagged for completeness.
+The table inventory (DPDP-7)
+----------------------------
+This section used to be three bullet points headed "Tables NOT reached (flagged
+for review)". Three is not the number of tables in the schema — it was the
+number someone had thought about. Everything else was neither erased nor
+declared, which is the state DPDP §12 does not forgive: an incomplete-but-
+declared exclusion is defensible, an undeclared one is not.
+
+The inventory therefore lives in ``ERASED_TABLES`` and ``EXCLUDED_TABLES``
+below, as data rather than prose, and ``tests/test_erasure_inventory.py``
+asserts that the two together partition every table the schema of record
+declares — ``services/data_gateway/app/models.py`` plus every ``op.create_table``
+in ``services/data_gateway/alembic/versions/``. Add a table in a migration and
+that test fails until someone writes down which side it belongs on. A one-time
+audit would have been correct on the day it was written and wrong by the next
+migration; this cannot go stale without going red.
 """
 
 from __future__ import annotations
@@ -146,6 +155,104 @@ class ErasureIncompleteError(RuntimeError):
 # How often the executor wakes up and checks for due erasure requests.
 # Configurable via the settings object passed at startup.
 ERASURE_POLL_INTERVAL_SECONDS: int = 300  # 5 minutes
+
+
+# ---------------------------------------------------------------------------
+# The DPDP §12 table inventory (DPDP-7)
+#
+# Every table in the schema of record appears in exactly one of the two maps
+# below. Both are keyed by table name; the value is the reason, written for the
+# auditor who asks "and what happened to THIS one?" — which is the question the
+# old three-bullet prose list could not answer.
+#
+# The partition is enforced by tests/test_erasure_inventory.py against
+# services/data_gateway/app/models.py AND services/data_gateway/alembic/versions/.
+# Both, not just the ORM: `integrity_events` and `feature_flags` exist only in
+# migrations, so a models-only check would have declared the inventory complete
+# while two user-linked tables were missing from it.
+# ---------------------------------------------------------------------------
+
+#: Tables this executor deletes from or anonymises. The value names the step.
+ERASED_TABLES: dict[str, str] = {
+    "users": "step 7 — anonymised in place (email → sentinel, every other "
+             "personal column NULLed). Not deleted, because "
+             "erasure_requests.user_id is ON DELETE RESTRICT and that row is "
+             "the §12 proof the erasure happened.",
+    "sessions": "step 5 — hard-deleted.",
+    "turns": "step 2 — hard-deleted; text_content is candidate speech.",
+    "scorecards": "step 4 — hard-deleted; PDF + transcript objects go in step 8.",
+    "resumes": "step 3 — hard-deleted, every version, objects in step 8.",
+    "notifications": "step 5b — hard-deleted; title/body address the person by name.",
+    "applicants": "step 6 — anonymised (name/email/resume_text/embedding/user_id). "
+                  "The row survives as the company's structural ATS record with "
+                  "nothing left that identifies a person.",
+    "integrity_events": "purged at REQUEST time by routers/erasure.py, not here: "
+                        "gaze/face-derived proctoring signals are too sensitive to "
+                        "sit through the 30-day grace window. Step 5 then cascades "
+                        "any row written between request and execution.",
+}
+
+#: Tables deliberately left standing, each with the reason it is defensible.
+EXCLUDED_TABLES: dict[str, str] = {
+    # --- Records that exist to prove the erasure / prior consent -----------
+    "erasure_requests": "the §12 record of this very erasure. Deleting it would "
+                        "destroy the evidence that the request was honoured.",
+    "audit_log": "immutable compliance trail. Carries user UUIDs and action "
+                 "names only — never email, name or phone (see PII safety above).",
+    "dpdp_consent_ledger": "the consent record is the legal basis for the "
+                           "processing that already happened; §7 requires being "
+                           "able to demonstrate it. The request path stamps "
+                           "revoked_at, so the row records a withdrawn consent "
+                           "pointing at an anonymised user.",
+    # --- Owned by another service's retention path -------------------------
+    "email_events": "to_email / to_user_id are candidate data, but this is "
+                    "data_gateway's outbox and admin_ops does not own it. The "
+                    "DPDP §8(7) retention cron there deletes rows on a 90-day "
+                    "roll. Reaching across the service boundary to delete them "
+                    "here would race that cron's own transaction.",
+    # --- User-linked but carrying no personal data -------------------------
+    "auth_tokens": "single-use HMAC hashes for reset / verify, TTL ≤ 24 h. The "
+                   "raw token never existed in the DB, and the soft-delete at "
+                   "request time already blocks redemption.",
+    "user_roles": "a role grant is a role id plus a timestamp. The anonymised "
+                  "users row is retained, so its grants are retained with it; "
+                  "login is impossible anyway (password_hash NULL, deleted_at set).",
+    "feature_flags": "platform toggles. updated_by points at whichever operator "
+                     "last flipped the flag — never a candidate.",
+    # --- Structural / catalogue data owned by the company or platform ------
+    "companies": "tenant record. created_by_user_id is provenance and now "
+                 "resolves to the anonymised users row.",
+    "jobs": "job catalogue. created_by_user_id likewise; sessions reference jobs "
+            "ON DELETE RESTRICT, so the catalogue outlives its sessions by design.",
+    "roles": "reference data — role names. No user column.",
+    "nos_competencies": "NOS competency catalogue. Reference data, no user column.",
+    "exams": "company-authored assessment content. No candidate column.",
+    "exam_rounds": "company-authored assessment content. No candidate column.",
+    "exam_sections": "company-authored assessment content. No candidate column.",
+    "exam_questions": "company-authored assessment content. No candidate column.",
+    "coding_questions": "company-authored assessment content. No candidate column.",
+    # --- Candidate-DERIVED, but reached through applicants ------------------
+    # These four are the judgement call in this list, so the reasoning is
+    # written out rather than asserted: they hang off `applicants`, which step 6
+    # anonymises rather than deletes. Once full_name is '[redacted]', email is
+    # NULL and user_id is NULL, an attempt and its proctoring events belong to
+    # an applicant that identifies nobody — they are the COMPANY's assessment
+    # record, not the erased user's. Deleting them would destroy a fiduciary's
+    # own hiring evidence to no privacy gain. This is why they differ from
+    # `integrity_events` above, which hangs off `sessions` — a session is the
+    # user's own practice run and is hard-deleted, so its events go with it.
+    "exam_assignments": "keys off applicants (anonymised in step 6); holds a "
+                        "token hash and a schedule, no personal data.",
+    "exam_attempts": "the company's graded assessment record, attached to the "
+                     "anonymised applicant rather than to the erased user.",
+    "exam_integrity_events": "proctoring events for an exam_attempts row — see "
+                             "exam_attempts. Event type + timestamp only; raw "
+                             "camera/keystroke input never leaves the browser.",
+    "interview_invites": "keys off applicants/company. guest_user_id and "
+                         "created_by_user_id resolve to anonymised users rows, "
+                         "and session_id nulls itself (ON DELETE SET NULL) when "
+                         "step 5 deletes the session.",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +461,29 @@ async def _execute_one_erasure(
     )
 
     # ------------------------------------------------------------------
+    # Step 5b: Hard-delete in-app notifications.
+    #
+    # notifications.user_id is ON DELETE CASCADE, which is why this was assumed
+    # to be handled and was in neither the erasure path nor the exclusion list
+    # (DPDP-7). The cascade cannot fire: step 7 anonymises the users row rather
+    # than deleting it, because erasure_requests.user_id is ON DELETE RESTRICT.
+    # notifications.title / body are free text written for a human ("Welcome,
+    # <name>") and link can embed session ids, so the rows are PII that survived
+    # a "completed" erasure.
+    # ------------------------------------------------------------------
+    notifications_result = await db.execute(
+        text("DELETE FROM notifications WHERE user_id = :uid"),
+        {"uid": uid_str},
+    )
+    notifications_deleted: int = getattr(notifications_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.notifications_deleted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        count=notifications_deleted,
+    )
+
+    # ------------------------------------------------------------------
     # Step 6: Anonymise applicant rows linked to this user_id
     # ------------------------------------------------------------------
     # embedding is NOT decoration on this list. applicants.embedding is a
@@ -552,12 +682,17 @@ async def _execute_one_erasure(
     # ------------------------------------------------------------------
     now_utc = datetime.now(UTC)
     artifacts: dict[str, Any] = {
-        "executor_version": "1.1",
+        # Bumped 1.1 → 1.2 when step 5b (notifications) joined the erasure: the
+        # artifacts record is what an auditor reads to know WHAT a given
+        # completion covered, so two records with different coverage must not
+        # claim the same version.
+        "executor_version": "1.2",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
         "scorecards_deleted": scorecards_deleted,
         "sessions_deleted": sessions_deleted,
+        "notifications_deleted": notifications_deleted,
         "applicants_anonymised": applicants_anonymised,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
@@ -597,6 +732,7 @@ async def _execute_one_erasure(
             "resumes_deleted": resumes_deleted,
             "scorecards_deleted": scorecards_deleted,
             "sessions_deleted": sessions_deleted,
+            "notifications_deleted": notifications_deleted,
             "applicants_anonymised": applicants_anonymised,
         },
         ip_address=None,

@@ -36,7 +36,7 @@ A **voice-first AI interview platform**. A candidate logs in, picks a job role, 
 |---|---|
 | LLM | AWS Bedrock Mumbai (`LLM_PROVIDER=bedrock`) |
 | Speech | Bhashini (unchanged) + AI4Bharat fallback |
-| Avatar | Three.js + Ready Player Me + Rhubarb-Lipsync (`AVATAR_PROVIDER=custom`) |
+| Avatar | Three.js + Ready Player Me + Rhubarb-Lipsync (`AVATAR_PROVIDER=custom`) — **not built yet**; `custom` is not a recognised value in the worker's avatar factory and silently falls back to Simli. See `docs/ACCEPTED-RISKS.md` AR-4. |
 | DB | AWS RDS Mumbai (Postgres 16 + pgvector + pg_partman) |
 | Cache | AWS ElastiCache Mumbai (Redis 7) |
 | Storage | AWS S3 Mumbai (SSE-KMS) |
@@ -116,7 +116,24 @@ Env: `GEMINI_API_KEY` (already required by the Space entrypoint),
 - `Final_stack.md` — Tech stack & economic model (~₹10–12/session variable cost)
 - `CHANGES.md` — Cuts made in v1.1 (and why) — historical context
 - `reserch.md` — Original RFP analysis (20 ambiguities flagged)
+- `docs/ACCEPTED-RISKS.md` — **Open risks we decided to live with**, each with an
+  owner and a trigger. Read before answering any compliance, residency or
+  security question about the platform — several things the design docs describe
+  as controls are not implemented, and this file is the list. Nothing in it is
+  fixed.
+- `docs/DATA-FLOW.md` — Authoritative sub-processor + data-residency record;
+  linked from the in-app consent modal, so treat every claim in it as a
+  statement we can be asked to substantiate.
 - `.env` — Every credential/API key the system needs (with `[GET NOW]` markers)
+
+**Documentation rule.** These documents are read by people who then *act* — a
+deploy, a bid answer, a config change. A claim that has outlived the code is
+therefore a defect, not untidiness, and the review register has now caught six
+of them (a D-ID production gate for a vendor deleted in May; `poetry.lock`
+named as the CI install source when CI has only ever used `requirements.txt`;
+a `jti` replay blocklist that does not exist). When you remove a capability,
+grep the docs for its name in the same change. When you cannot verify a claim,
+write "unverified" — never a plausible value.
 
 ## Current Phase
 

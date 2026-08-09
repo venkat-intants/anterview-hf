@@ -13,7 +13,9 @@ Contract:
   GET    /consent/status → 200 ConsentStatus
                          | 401
   DELETE /consent        → 200 ConsentRevocationResponse (ALL active rows revoked —
-                               both interview_voice_recording and video_capture)
+                               both interview_voice_recording and video_capture —
+                               and every non-terminal session stamped
+                               status='consent_withdrawn')
                          | 404 (no active consent of any type to revoke)
                          | 401
 
@@ -32,12 +34,13 @@ from __future__ import annotations
 import hashlib
 import uuid as _uuid_mod
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from shared.auth.base import User
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +48,8 @@ from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import get_current_user
 from app.models import DpdpConsent
+from app.models import Session as InterviewSession
+from app.retention import CONSENT_WITHDRAWN_STATUS
 from app.schemas.consent import (
     ConsentRequest,
     ConsentResponse,
@@ -127,6 +132,49 @@ async def _find_active_consent(
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
+
+
+# Sessions that have not reached a terminal state yet. These are the only rows a
+# withdrawal can change: a completed or failed session's status records what
+# happened to the interview, and rewriting it would falsify that history.
+_NON_TERMINAL_SESSION_STATUSES = ("created", "in_progress")
+
+
+async def _mark_sessions_consent_withdrawn(db: AsyncSession, user_id: str) -> int:
+    """Stamp the user's in-flight sessions ``consent_withdrawn`` (DPDP §6(4)).
+
+    Returns the number of session rows updated. Staged on the caller's
+    transaction — the caller commits.
+
+    DPDP-6: the status vocabulary has carried ``consent_withdrawn`` since the
+    retention job was written, and no code path wrote it. A candidate who
+    withdrew mid-interview therefore landed in the audit trail under a generic
+    terminal status, indistinguishable from one who closed the tab — which is
+    precisely the distinction §6(4) exists to make auditable, and precisely what
+    a regulator asks to see. It is also load-bearing downstream: ``retention.py``
+    purges this status at the NEXT nightly window instead of waiting out the
+    90-day retention window, so the status is what actually causes the withdrawn
+    candidate's data to leave the system early.
+
+    Scope note: this covers the sessions row, which data_gateway owns. Tearing
+    down a LIVE WebSocket belongs to the interview_core consent watchdog, which
+    re-reads consent per turn and closes with ``consent_required``; if that
+    watchdog later writes its own terminal status it must preserve this one
+    rather than overwrite it.
+    """
+    result = await db.execute(
+        update(InterviewSession)
+        .where(
+            InterviewSession.user_id == _uuid_mod.UUID(user_id),
+            InterviewSession.status.in_(_NON_TERMINAL_SESSION_STATUSES),
+        )
+        .values(status=CONSENT_WITHDRAWN_STATUS, updated_at=datetime.now(UTC))
+    )
+    # AsyncSession.execute is typed as returning Result, which declares no
+    # rowcount; a DML statement actually returns a CursorResult, which does.
+    # Narrowed rather than ignored, so a future change that stops issuing DML
+    # here is caught — same treatment as app/retention.py.
+    return int(cast("CursorResult[Any]", result).rowcount or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +389,10 @@ async def revoke_consent(
         for both types (its SQL already filters ``revoked_at IS NULL``).
       - Any attempt to open a new interview WebSocket is rejected with 4003
         ``consent_required`` until the user re-grants consent via POST /consent.
+      - Every non-terminal session of this user is stamped
+        ``status='consent_withdrawn'`` (DPDP-6), which both records the reason in
+        the audit trail and makes the session purgeable at the next nightly
+        retention window rather than after the full 90 days.
 
     PII safety:
       - Only user_id and consent_id(s) are logged — no PII.
@@ -370,6 +422,12 @@ async def revoke_consent(
             detail="No active consent to revoke",
         )
 
+    # DPDP-6 / §6(4): record WHY these sessions ended, on the same transaction as
+    # the revocation itself. Staging it separately would allow a crash between
+    # the two to leave a revoked consent whose in-flight sessions still read
+    # 'in_progress' — the exact ambiguity this write removes.
+    sessions_withdrawn = await _mark_sessions_consent_withdrawn(db, current_user.user_id)
+
     await db.commit()
 
     log.info(
@@ -377,6 +435,7 @@ async def revoke_consent(
         user_id=current_user.user_id,
         consent_types=[item.consent_type for item in revoked_items],
         consent_ids=[item.consent_id for item in revoked_items],
+        sessions_withdrawn=sessions_withdrawn,
     )
 
     return ConsentRevocationResponse(

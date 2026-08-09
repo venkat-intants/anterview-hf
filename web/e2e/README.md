@@ -30,3 +30,15 @@ tests under `services/*/tests/`, not from a browser.
 
 `web/playwright.config.ts`, the `e2e` script and the `@playwright/test`
 devDependency are still in place for that rewrite.
+
+## `npm run e2e` now fails instead of passing silently (FE-3)
+
+It used to run `playwright test` directly, and Playwright exits **0** when no
+spec files match — so the command reported success for a suite that asserted
+nothing, which is the exact confusion this file was written to prevent. It now
+runs `scripts/run-e2e.mjs`, which refuses with exit 1 and points back here while
+`e2e/` holds no specs, and hands off to Playwright unchanged the moment one
+lands. No edit to the script is needed to un-block it.
+
+`CLAUDE.md` still lists Playwright under the project's test stack without noting
+that the suite is empty — that file is outside `web/` and needs the same line.

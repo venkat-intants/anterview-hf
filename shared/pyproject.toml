@@ -5,6 +5,28 @@ description = "Shared Pydantic models, auth providers, LLM adapters, voice adapt
 authors = ["Intants <support@intants.com>"]
 packages = [{include = "shared", from = ".."}]
 
+# ---------------------------------------------------------------------------
+# NOT AN INSTALL SOURCE, and shared/ has no requirements.txt of its own. It is
+# never pip-installed: each service .venv gets it via a .pth file, and each
+# Dockerfile COPYs it into the image. Its dependencies are therefore satisfied
+# by whichever service imports it — that is why the rule in schema.py exists
+# ("stdlib + pydantic + structlog only, so all four service images can import
+# this").
+#
+# Which makes this block METADATA describing the INTENDED contract, not the
+# actual import set. Verified 2026-08-07: shared/ additionally imports
+# aioboto3, bcrypt, botocore, fastapi, httpx, json_repair, prometheus_client,
+# redis, sentry_sdk, sqlalchemy and starlette. Those live in the optional
+# sub-packages (shared/db, shared/s3, shared/observability,
+# shared/http_observability, shared/auth) that a service opts into, and every
+# service's requirements.txt pins them — nothing is missing at runtime. The
+# dependency-light rule still binds shared/intelligence and shared/agents
+# specifically, which is where it is load-bearing.
+#
+# Do not "fix" this by adding those to the block: that would read as permission
+# to import them from anywhere under shared/.  (Closes code-review finding
+# DEP-1 for shared/.)
+# ---------------------------------------------------------------------------
 [tool.poetry.dependencies]
 python = "^3.11"
 pydantic = {extras = ["email"], version = "^2.9"}

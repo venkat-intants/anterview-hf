@@ -1,3 +1,35 @@
+# =============================================================================
+# INERT. Docker never reads this file. Nothing you add here excludes anything.
+# =============================================================================
+# Docker resolves .dockerignore from the BUILD CONTEXT ROOT, and every build of
+# this image uses the repo root as context — it has to, because the Dockerfile
+# does `COPY shared /app/shared`. So the file that actually governs what reaches
+# the daemon is the repo-root ../../.dockerignore. Add exclusions THERE.
+#
+# Code review 2026-08-07 (CICD-6) proposed renaming this to
+# `Dockerfile.dockerignore`, which BuildKit does honour. That was rejected after
+# reading the patterns below, and the reason is worth keeping:
+#
+#   A `<dockerfile>.dockerignore` REPLACES the context-root file for that build
+#   rather than adding to it. Every pattern here is written relative to THIS
+#   directory — `tests/`, `.env`, `.venv/` — so against a repo-root context
+#   `tests/` would match only ./tests/ and `.env` only ./.env. Activating this
+#   file would therefore switch OFF the root file's `**/.env`, `**/*.env` and
+#   `services/*/.venv/` rules, and start shipping real credential files into the
+#   image. That is a worse outcome than the file doing nothing, and it is not
+#   obvious from reading either file alone.
+#
+#   Making the rename safe means rewriting all four of these as context-root
+#   patterns, at which point they are four copies of ../../.dockerignore, which
+#   is the drift the root file exists to prevent.
+#
+# Kept, not deleted, because the header is the finding: someone WILL open this
+# file expecting it to work, and this is where they need to be told it does not.
+# ops/ci/check_env_parity.py guards the sibling class of silent config.
+#
+# Historical contents follow, unchanged, so `git log` still explains them.
+# -----------------------------------------------------------------------------
+
 # Virtualenvs and caches
 .venv/
 __pycache__/

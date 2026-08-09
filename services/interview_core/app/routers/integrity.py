@@ -12,7 +12,7 @@ Contract:
     200  : {"integrity_score": int, "summary": {...}, "stored": int}
     401  : missing/invalid JWT
     403  : session belongs to another user, OR a guest token's session_id
-           claim doesn't match the path parameter, OR active recording
+           claim doesn't match the path parameter, OR active ``video_capture``
            consent is absent
     404  : session not found
 
@@ -37,10 +37,16 @@ is not enough to stop a guest token minted for session B from reaching
 session A; GuestBoundUserDep rejects that before the handler body runs.
 
 DPDP note: gaze/face proctoring events are biometric-derived data under the
-DPDP Act 2023.  Storing them requires an active ``interview_voice_recording``
-consent on the ``dpdp_consent_ledger``.  This endpoint is FAIL-CLOSED: if the
-consent check fails for any reason (DB error, revoked consent, missing entry)
-the batch is rejected with HTTP 403 and NO events are persisted.
+DPDP Act 2023.  Storing them requires an active ``video_capture`` consent on
+the ``dpdp_consent_ledger`` — NOT the ``interview_voice_recording`` one this
+route used to check (DPDP-5, code review 2026-08-07).  The frontend has always
+collected the two as separate opt-ins; reading the voice grant here meant a
+candidate who declined the camera still had proctoring events persisted, i.e.
+consent given for one purpose doing duty for another, which is what DPDP
+§6(1)/§7(a) purpose limitation exists to prevent.  This endpoint is
+FAIL-CLOSED: if the consent check fails for any reason (DB error, revoked
+consent, missing entry) the batch is rejected with HTTP 403 and NO events are
+persisted.
 """
 
 from __future__ import annotations
@@ -55,7 +61,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.consent_guard import has_active_consent
+from app.consent_guard import VIDEO_CONSENT_TYPE, has_active_consent
 from app.database import get_db_session
 from app.dependencies import GuestBoundUserDep
 from app.models import IntegrityEvent
@@ -144,18 +150,25 @@ async def post_integrity_events(
 
     # ---- DPDP consent gate (FAIL-CLOSED) ----
     # Gaze/face proctoring events are biometric-derived data under the DPDP Act
-    # 2023.  We require an active interview_voice_recording consent entry on the
-    # dpdp_consent_ledger before persisting ANY such data.  If the consent check
-    # itself raises (DB error, network partition) we reject the batch — fail-closed
-    # is the DPDP-correct posture; recording without confirmed consent is a
-    # violation, but refusing a batch during a transient outage is recoverable.
+    # 2023, so the grant that authorises storing them is the WEBCAM one
+    # (video_capture), not the audio one.  Checking the voice grant here — as
+    # this route did until DPDP-5 — treats a candidate who ticked "record my
+    # answers" as having also agreed to be filmed and analysed, which is the
+    # purpose-limitation failure DPDP §6(1)/§7(a) is written about.  If the
+    # consent check itself raises (DB error, network partition) we reject the
+    # batch — fail-closed is the DPDP-correct posture; recording without
+    # confirmed consent is a violation, but refusing a batch during a transient
+    # outage is recoverable.
     try:
-        consent_ok = await has_active_consent(db, current_user["sub"])
+        consent_ok = await has_active_consent(
+            db, current_user["sub"], consent_type=VIDEO_CONSENT_TYPE
+        )
     except Exception as _exc:
         log.warning(
             "integrity.consent_check_error",
             session_id=str(session_id),
             user_id=current_user["sub"],
+            consent_type=VIDEO_CONSENT_TYPE,
             err=type(_exc).__name__,
         )
         consent_ok = False
@@ -165,12 +178,13 @@ async def post_integrity_events(
             "integrity.consent_absent — rejecting biometric batch",
             session_id=str(session_id),
             user_id=current_user["sub"],
+            consent_type=VIDEO_CONSENT_TYPE,
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Active recording consent is required to persist proctoring events. "
-                "Please renew your consent or contact support."
+                "Active camera (video capture) consent is required to persist "
+                "proctoring events. Please renew your consent or contact support."
             ),
         )
 

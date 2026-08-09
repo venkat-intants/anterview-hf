@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from shared.security import assert_strong_secrets, normalise_app_env, validate_cors_origins
+from shared.security import (
+    assert_strong_secrets,
+    normalise_app_env,
+    validate_cors_origins,
+    validate_database_ssl,
+)
 
 
 class Settings(BaseSettings):
@@ -29,6 +34,9 @@ class Settings(BaseSettings):
     # When non-empty, asyncpg passes ssl="require" + statement_cache_size=0
     # (required for pgBouncer/Prisma pooled endpoints). Set DATABASE_SSL=require
     # in any cloud env. Leave blank for local Postgres (no SSL, no pgBouncer).
+    # REQUIRED in production/staging — see _validate_database_ssl below. Set it
+    # to "loopback-exempt" to acknowledge in writing that TLS is terminated
+    # upstream; that sentinel is stripped before it reaches the driver.
     database_ssl: str = ""
 
     redis_url: str  # required — no default; service fails fast if unset
@@ -78,6 +86,25 @@ class Settings(BaseSettings):
     s3_scorecard_bucket: str = "intants-interview-scorecards"
     # Bucket that holds resume PDFs + JD documents (data_gateway writes here).
     s3_bucket_name: str = "intants-uploads"
+
+    @model_validator(mode="after")
+    def _validate_database_ssl(self) -> Settings:
+        """Refuse to start in production/staging with a plaintext DB link.
+
+        admin_ops reads every table the erasure executor touches, so an unset
+        DATABASE_SSL here means candidate names, emails and transcripts crossing
+        the WAN in cleartext (DPDP §8, CWE-319). Shared implementation so all
+        four services enforce it identically — and so the ``loopback-exempt``
+        acknowledgement token is stripped by the same code that accepts it,
+        rather than being handed on to asyncpg, which cannot understand it.
+
+        ``object.__setattr__`` because a plain assignment inside a model
+        validator re-enters validation when ``validate_assignment`` is on.
+        """
+        object.__setattr__(
+            self, "database_ssl", validate_database_ssl(self.app_env, self.database_ssl)
+        )
+        return self
 
     @model_validator(mode="after")
     def validate_secret_strength(self) -> Settings:

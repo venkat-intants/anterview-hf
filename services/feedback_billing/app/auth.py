@@ -12,12 +12,24 @@ expired; a router that skips it is a hole in all five of those flows.
 Copying the helper a fourth time is what caused the bug, so it lives here once
 and the routers depend on it.
 
-Note on the epoch prefix: it is duplicated from
-``shared.auth.local.USER_TOKEN_EPOCH_PREFIX`` rather than imported, because
-importing that module pulls in bcrypt, which is deliberately NOT in
-feedback_billing's requirements.txt (see the per-service freeze files). The
-constant is a wire format shared with data_gateway — changing it on one side
-silently disables revocation on the other.
+Note on the epoch prefix: it IS imported, from ``shared.auth.jwt`` (see the
+re-export below). This paragraph used to say the opposite — that the value was
+hand-copied because importing it would drag in bcrypt — which was true of the
+*old* home, ``shared.auth.local``, and stopped being true when the constant
+moved. Left uncorrected it costs a reader real time: they go hunting for the
+other copies to keep in sync, and there are none (code review 2026-08-07,
+SEC-6).
+
+``shared.auth.jwt`` is bcrypt-free for exactly this reason — password hashing
+lives in ``shared.auth.local``, so a service that only *verifies* tokens can
+import the JWT half without pulling bcrypt into its requirements.txt, and
+feedback_billing deliberately does not ship bcrypt. Anything that would put a
+bcrypt import into ``shared.auth.jwt`` reintroduces the constraint this note
+describes.
+
+The constant is a wire format shared with data_gateway: it names the Redis key
+``logout_all`` writes and this service reads, so the two must agree or
+revocation silently stops working on one side.
 """
 
 from __future__ import annotations

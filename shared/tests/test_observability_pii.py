@@ -15,6 +15,8 @@ quietly narrows either consumer fails here.
 
 from __future__ import annotations
 
+import sys
+import types
 from typing import Any
 
 import pytest
@@ -248,3 +250,125 @@ def test_before_send_scrubs_pii_in_extra_and_breadcrumbs() -> None:
 def test_before_send_never_raises_on_a_malformed_event() -> None:
     """Scrubbing must not break error reporting, whatever shape the event has."""
     assert _before_send({"request": "not-a-dict", "extra": None}, {}) is not None
+
+
+# ---------------------------------------------------------------------------
+# SEC-7 — the bare recipient keys
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("key", ["to", "recipient"])
+def test_bare_recipient_keys_are_redacted_by_both_scrubbers(key: str) -> None:
+    """``email_util.py:145`` logs a raw address as ``to=``.
+
+    ``to_email`` was in the set and ``to`` was not; matching is exact, so the
+    one name actually used as a log kwarg was the one not covered. An email
+    address is personal data under DPDP §8 wherever it is spelled.
+    """
+    event: dict[str, Any] = {"event": "email.sent", key: "candidate@example.com"}
+    assert key not in redact_pii_processor(None, "info", event)
+    assert _scrub({key: "candidate@example.com"}) == {key: "[redacted]"}
+
+
+# ---------------------------------------------------------------------------
+# SEC-8 — transaction events go through the other hook
+# ---------------------------------------------------------------------------
+
+
+def test_transaction_span_data_and_tags_are_scrubbed() -> None:
+    """A transaction keeps its payload in span ``data``/``tags``, not ``extra``.
+
+    Wiring the scrubber to ``before_send_transaction`` is only a real fix if it
+    reaches the surface transactions actually carry.
+    """
+    event: dict[str, Any] = {
+        "type": "transaction",
+        "spans": [
+            {
+                "op": "db.query",
+                "data": {"candidate_email": "a@b.com", "rows": 3},
+                "tags": {"api_key": "sk-live-xxxx", "route": "/sessions"},
+            }
+        ],
+    }
+    result = _before_send(event, {})
+    span = result["spans"][0]
+    assert span["data"] == {"candidate_email": "[redacted]", "rows": 3}
+    assert span["tags"] == {"api_key": "[redacted]", "route": "/sessions"}
+
+
+def test_transaction_keeps_its_name_and_span_structure() -> None:
+    """``name`` is in ``_PII_KEYS`` and is also the transaction's route.
+
+    Scrubbing the event top level (or a whole span dict) would blank it and
+    make every performance event unreadable — which is why only ``data`` and
+    ``tags`` are scrubbed. This test is what stops a future "just _scrub the
+    event" simplification.
+    """
+    event: dict[str, Any] = {
+        "type": "transaction",
+        "name": "GET /api/v1/sessions/{id}",
+        "transaction": "GET /api/v1/sessions/{id}",
+        "spans": [{"op": "http.client", "description": "GET https://sarvam.ai/tts"}],
+    }
+    result = _before_send(event, {})
+    assert result["name"] == "GET /api/v1/sessions/{id}"
+    assert result["transaction"] == "GET /api/v1/sessions/{id}"
+    assert result["spans"][0]["description"] == "GET https://sarvam.ai/tts"
+
+
+def test_transaction_request_query_string_is_dropped() -> None:
+    """The OAuth-code leak, on the tracing path.
+
+    A sampled ``/auth/sso/google/callback?code=..`` transaction shipped the
+    authorization code to a third-party SaaS, because ``before_send`` is not
+    applied to transaction events at all.
+    """
+    event: dict[str, Any] = {
+        "type": "transaction",
+        "request": {
+            "url": "https://api.intants.com/auth/sso/google/callback?code=4/0Ab_secret",
+            "query_string": "code=4/0Ab_secret&state=xyz",
+            "headers": {"Cookie": "session=abc"},
+        },
+    }
+    req = _before_send(event, {})["request"]
+    assert "query_string" not in req
+    assert req["url"] == "https://api.intants.com/auth/sso/google/callback"
+    assert req["headers"]["Cookie"] == "[redacted]"
+
+
+def test_malformed_spans_do_not_break_scrubbing() -> None:
+    """Scrubbing must never break reporting — including on a shape no real SDK
+    emits, since ``_before_send`` also runs on hand-built events in tests."""
+    event: dict[str, Any] = {"type": "transaction", "spans": ["not-a-dict", {"data": None}]}
+    assert _before_send(event, {}) is not None
+
+
+def test_both_sentry_hooks_receive_the_same_scrubber(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SEC-8 itself: the SDK dispatches errors and transactions through
+    different hooks and applies neither to the other.
+
+    Verified at the ``sentry_sdk.init`` call, since that is where the omission
+    lived — every scrubbing test above would have passed unchanged while
+    transactions left the process in the clear.
+    """
+    import shared.observability.sentry as sentry_mod
+
+    captured: dict[str, Any] = {}
+    fake_sdk = types.ModuleType("sentry_sdk")
+    monkeypatch.setattr(fake_sdk, "init", lambda **kwargs: captured.update(kwargs), raising=False)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sdk)
+
+    assert sentry_mod.init_sentry(
+        "https://key@o0.ingest.sentry.io/1", environment="test", service_name="svc"
+    )
+
+    assert captured["before_send"] is sentry_mod._before_send
+    assert captured["before_send_transaction"] is sentry_mod._before_send
+    # The other two PII guards at the same call site, pinned here because they
+    # are just as invisible: send_default_pii would auto-attach the client IP,
+    # and include_local_variables would ship the PLAINTEXT password held in
+    # LocalAuthProvider._verify_password's `plain`.
+    assert captured["send_default_pii"] is False
+    assert captured["include_local_variables"] is False

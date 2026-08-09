@@ -2,7 +2,14 @@
 # ---------------------------------------------------------------------------
 # admin_ops — Admin dashboard APIs, analytics, ops endpoints.
 #
-# BUILD CONTEXT: repo root (Railway sets "root": "/" in railway.json).
+# BUILD CONTEXT: repo root — required, not conventional. This file does
+# `COPY shared /app/shared`, so a services/admin_ops/ context cannot build it.
+# Every caller passes the root: docker-compose.prod.yml, docker-compose.yml,
+# render.yaml `dockerContext: .`, and the CI docker matrix.
+# (The old header cited a railway.json that does not exist in this repo —
+# CICD-6. Railway is not a deploy target; the supported one is the Oracle VM
+# via docker-compose.prod.yml, with the HF Space running the root Dockerfile.)
+#
 # Multi-stage build. Non-root user (uid 1001). Binds to $PORT or 8004.
 # ---------------------------------------------------------------------------
 

@@ -22,9 +22,17 @@
 .NOTES
     All four services use their in-project .venv python directly (created with
     `py -3.12 -m venv .venv` + `pip install -r requirements.txt`). Do NOT
-    `poetry install` into these dev venvs -- they are pip-managed; poetry.lock
-    is the CI test env (kept version-matched to requirements.txt; bump both
-    together). `shared` is wired in via a .pth file in each .venv.
+    `poetry install` into these dev venvs -- they are pip-managed. `shared` is
+    wired in via a .pth file in each .venv.
+
+    requirements.txt is the ONLY install source anywhere: dev venvs, all four
+    services/*/Dockerfile builds, and CI (.github/workflows/ci.yml installs
+    `pip install -r requirements.txt` per service). This note used to say
+    "poetry.lock is the CI test env" -- it never was, and believing it is what
+    let the pyproject dependency blocks drift out of sync with what the services
+    actually import without anyone noticing. The poetry.lock files on disk are
+    unused build artefacts; do not hand-sync them and do not trust them to tell
+    you what ships. (Closes code-review finding DEP-2.)
 #>
 
 $ErrorActionPreference = 'Stop'

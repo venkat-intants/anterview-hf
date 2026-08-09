@@ -5,6 +5,7 @@ from shared.security import (
     normalise_app_env,
 )
 from shared.security import validate_cors_origins as _validate_cors_origins
+from shared.security import validate_database_ssl as _validate_database_ssl
 
 
 class Settings(BaseSettings):
@@ -233,6 +234,30 @@ class Settings(BaseSettings):
         """Fail fast in production/staging if JWT_SECRET is a weak placeholder
         (must match data_gateway's). No-op in development/test."""
         assert_strong_secrets(self.app_env, {"JWT_SECRET": self.jwt_secret})
+        return self
+
+    @model_validator(mode="after")
+    def validate_database_ssl(self) -> "Settings":
+        """Refuse to start in production/staging with no DATABASE_SSL (XS-04).
+
+        This guard lived in ``data_gateway`` alone, so the other three services
+        — this one included — could boot in production against a plaintext
+        Postgres link carrying candidate PII and say nothing (CWE-319, DPDP §8).
+        It is the same drift that put ``normalise_app_env`` and
+        ``validate_cors_origins`` in ``shared/security.py``; the rule now lives
+        there and every service calls it.
+
+        The helper also strips the ``loopback-exempt`` sentinel — the operator's
+        written acknowledgement that TLS terminates upstream — before the value
+        can reach asyncpg, which would reject it as an SSL mode.
+
+        ``object.__setattr__`` rather than plain assignment: with
+        ``validate_assignment`` a normal write re-enters model validation from
+        inside a model validator.
+        """
+        object.__setattr__(
+            self, "database_ssl", _validate_database_ssl(self.app_env, self.database_ssl)
+        )
         return self
 
     @property

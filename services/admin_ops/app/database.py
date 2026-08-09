@@ -1,29 +1,24 @@
 """Async SQLAlchemy engine + session factory for admin_ops.
 
-Cloud / pgBouncer note:
-  When DATABASE_SSL=require is set, the pool choice depends on which endpoint
-  the URL points at:
-    - "-pooler" host (pgBouncer):  connect_args={"ssl": ..., "statement_cache_size": 0}
-                                   + poolclass=NullPool (pgBouncer pools server-side)
-    - DIRECT host:                 a real client-side QueuePool, so connections are
-                                   reused instead of re-handshaking per request
-  Leave DATABASE_SSL blank for local Postgres (no SSL, QueuePool is fine).
-  Kept byte-for-byte in step with the other three services' database.py — this
-  branch drifting is exactly how admin_ops ended up handshaking per query.
+The three-way pool choice (pgBouncer -> NullPool, direct+SSL -> QueuePool with
+pool_recycle, local -> plain QueuePool) and the reasoning behind each branch now
+live once in ``shared/db/engine.py``. This module used to carry its own copy of
+that branch, as did the other three services; the copies were logically
+identical and stayed that way only because someone remembered to paste each
+change into four files. This one had already failed that once — its previous
+docstring records it "handshaking per query" — which is why it is a shared
+module now rather than a comment asking people to be careful.
+
+What remains here is the per-service part: reading this service's Settings, and
+owning the module-level engine/factory singletons and their lifecycle.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from urllib.parse import urlsplit
 
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-from sqlalchemy.pool import NullPool
+from shared.db.engine import build_engine, build_session_factory
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import settings
 
@@ -34,50 +29,12 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 def init_engine() -> None:
     global _engine, _session_factory
 
-    if settings.database_ssl:
-        # Cloud Postgres over SSL. The pool choice depends on the endpoint:
-        host = urlsplit(settings.database_url).hostname or ""
-        if "-pooler" in host:
-            # pgBouncer POOLED endpoint: NullPool so SQLAlchemy doesn't pool on
-            # top of pgBouncer, and statement_cache_size=0 because pgBouncer
-            # transaction mode rejects named prepared statements.
-            _engine = create_async_engine(
-                settings.database_url,
-                connect_args={"ssl": settings.database_ssl, "statement_cache_size": 0},
-                poolclass=NullPool,
-                pool_pre_ping=True,
-                echo=False,
-            )
-        else:
-            # DIRECT endpoint (no server-side pooler): keep a real client-side
-            # pool so connections are REUSED across requests instead of paying a
-            # full TLS + auth handshake (~1s+ over the WAN) on EVERY request — the
-            # cause of multi-second page loads when the DB is in a far region.
-            # Leave asyncpg's prepared-statement cache ON (default): a real session
-            # caches statements per pooled connection, so a repeated query costs ONE
-            # round-trip instead of prepare+execute. pool_pre_ping + pool_recycle
-            # survive the provider's idle autosuspend dropping connections.
-            _engine = create_async_engine(
-                settings.database_url,
-                connect_args={"ssl": settings.database_ssl},
-                pool_size=settings.database_pool_size,
-                max_overflow=5,
-                pool_pre_ping=True,
-                pool_recycle=280,
-                echo=False,
-            )
-    else:
-        _engine = create_async_engine(
-            settings.database_url,
-            pool_size=settings.database_pool_size,
-            pool_pre_ping=True,
-            echo=False,
-        )
-    _session_factory = async_sessionmaker(
-        _engine,
-        expire_on_commit=False,
-        class_=AsyncSession,
+    _engine = build_engine(
+        database_url=settings.database_url,
+        database_ssl=settings.database_ssl,
+        pool_size=settings.database_pool_size,
     )
+    _session_factory = build_session_factory(_engine)
 
 
 async def dispose_engine() -> None:

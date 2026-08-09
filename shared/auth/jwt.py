@@ -1,13 +1,27 @@
 """JWT helpers — issue and verify access tokens; manage refresh token lifecycle.
 
-Kept thin: one HS256 signing key, no rotation of signing keys in Sprint 1.
+Signing is HS256 with a single key. *Verification* accepts either that one key
+or a sequence of keys tried in order, which is what makes rotating a leaked
+``JWT_SECRET`` possible without logging every candidate out mid-interview — the
+procedure is written out above ``verify_access_token``.
 
-S3-005 additions:
-  - issue_access_token now includes iss, aud, jti claims.
-  - verify_access_token now requires iss and aud and validates them.
-  - jti is auto-generated (uuid4.hex) per token for replay prevention.
-  - iss/aud have safe defaults so existing callers without explicit args
-    continue to work without signature changes.
+Claims: ``iss`` and ``aud`` are validated on every decode; ``iat`` is required
+because the revocation epoch is compared against it; ``jti`` is required and
+must be non-empty. ``iss``/``aud`` have safe defaults so callers that pass
+neither keep working.
+
+What ``jti`` does NOT do: it is not checked against a denylist. Nothing in this
+repo reads a ``jti`` after the token is minted — it exists so that one token is
+distinguishable from another in logs and in an incident timeline. Replay of a
+captured access token is contained by two other mechanisms instead: the
+15-minute TTL (``ACCESS_TOKEN_TTL_SECONDS``) and the per-user revocation epoch
+(``is_token_revoked``), which invalidates every outstanding token for a user the
+moment they log out everywhere, reset a password, or are erased. That design is
+sound; what was not sound is the docstring this replaces, which asserted
+"replay prevention via a Redis blocklist in interview_core" (2026-08 review,
+SEC-5). No such blocklist was ever built, and a claim like that is the kind that
+makes a reviewer conclude replay is handled and stop looking for the real
+control.
 """
 
 from __future__ import annotations
@@ -15,12 +29,13 @@ from __future__ import annotations
 import hashlib
 import secrets
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 import structlog
 from jose import JWTError, jwt
+from jose.exceptions import ExpiredSignatureError, JWTClaimsError
 
 log = structlog.get_logger(__name__)
 
@@ -56,9 +71,15 @@ def issue_access_token(
 ) -> str:
     """Sign and return a JWT access token.
 
-    Includes required S3-005 claims: iss, aud, jti.
-    The jti (JWT ID) is a fresh uuid4.hex per call — used for replay prevention
-    via a Redis blocklist in interview_core.
+    Includes the required claims iss, aud, jti (plus sub/roles/iat/exp).
+
+    Signing takes exactly ONE secret even though verification accepts several:
+    a second signing key would be a second thing to leak while buying nothing —
+    a rotation window only needs the *verifiers* to straddle two keys.
+
+    The jti (JWT ID) is a fresh uuid4.hex per call. It is for traceability, not
+    replay prevention — nothing consults it. See the module docstring for what
+    actually contains a replayed token.
 
     extra_claims: optional additional claims (e.g. a ``session_id`` binding for a
         guest interview token). They are added via setdefault so they can NEVER
@@ -87,9 +108,45 @@ def issue_access_token(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Why verification takes a SEQUENCE of secrets (2026-08 review, SEC-1)
+# ---------------------------------------------------------------------------
+#
+# With a single key there is no way to change JWT_SECRET without invalidating
+# every live token at the same instant. On a platform whose unit of work is a
+# 10-minute voice interview that means dropping in-flight sessions and the
+# scorecards they were about to produce — so the rotation gets postponed, and a
+# key that can only be rotated by causing an outage is a key that never gets
+# rotated. The leak stays live indefinitely. Making the verifier accept several
+# keys is the cheap half of the fix: it makes a rotation *window* expressible.
+#
+#   1. deploy every verifier with secrets = [new, old]; keep signing with old
+#   2. flip the signing key to new (redeploy whatever calls issue_access_token)
+#   3. wait out ACCESS_TOKEN_TTL_SECONDS and watch
+#      `auth.jwt.verified_with_rotated_key` fall to zero — that event is the
+#      only evidence that old-key traffic has actually drained
+#   4. redeploy with secrets = [new] alone
+#
+# New key FIRST, always: the drain signal is "verified with something other
+# than candidates[0]", so an ordering where the current key is not at index 0
+# inverts its meaning and the operator can never tell when step 4 is safe.
+#
+# Nobody is logged out at any step, and the window is minutes, not days: every
+# JWT this platform signs is ≤ ACCESS_TOKEN_TTL_SECONDS (service tokens are
+# 60s), and refresh tokens are opaque random strings stored hashed — they are
+# not signed with this secret at all, so a refresh arriving mid-window simply
+# mints a new-key access token.
+#
+# This deliberately does NOT address SEC-2. HS256 means the verification key IS
+# the signing key, so one shared secret across four services plus the worker
+# gives read access in ANY of them the power to mint a token for any `sub` with
+# any `roles`, `service` included. The answer to that is asymmetric signing —
+# private key in data_gateway only, public key everywhere else, `kid` in the
+# header to select it — which is a Tier-2 change with a key-distribution story
+# of its own, not something to smuggle in behind a parameter type.
 def verify_access_token(
     token: str,
-    secret: str,
+    secret: str | Sequence[str],
     algorithm: str = "HS256",
     *,
     expected_issuer: str = _DEFAULT_ISSUER,
@@ -99,11 +156,15 @@ def verify_access_token(
 
     Returns the decoded payload dict.
 
-    Raises:
-        JWTError: if the token is invalid, expired, tampered, or is missing
-                  required claims (iss, aud, jti, iat).
+    ``secret`` is either a single key (what every caller passes today) or a
+    sequence of keys tried in order — first one whose signature matches wins.
 
-    S3-005: iss and aud are validated against expected_issuer / expected_audience.
+    Raises:
+        JWTError: if the token is invalid, expired, tampered, is missing
+                  required claims (iss, aud, jti, iat), or verifies against
+                  none of the supplied secrets.
+
+    iss and aud are validated against expected_issuer / expected_audience.
     jti presence is required — absence raises JWTError.
 
     Security-audit follow-up (2026-08): require_iat is now enforced. The
@@ -115,6 +176,18 @@ def verify_access_token(
     defence in depth on top of every verifier now also treating a missing
     ``iat`` as revoked.
     """
+    # `str` is itself a Sequence[str], so this test has to come before any
+    # iteration — otherwise a plain secret "abc" would be tried as the three
+    # one-character keys "a", "b", "c" and nothing would ever verify.
+    candidates: tuple[str, ...] = (secret,) if isinstance(secret, str) else tuple(secret)
+    if not candidates:
+        # An empty key list is a deployment mistake, never a bad token. Fail
+        # closed, and do it as a JWTError so it lands on every caller's existing
+        # `except JWTError -> 401` path instead of escaping as a 500 that a
+        # generic handler would file under "server error".
+        log.error("auth.jwt.no_verification_secret")
+        raise JWTError("no verification secret configured")
+
     # python-jose options dict: each "require_<claim>" key forces the claim to
     # be present; combining with audience/issuer args also validates values.
     # jose supports require_exp, require_iss, require_aud, require_jti etc.
@@ -125,22 +198,54 @@ def verify_access_token(
         "require_jti": True,
         "require_iat": True,
     }
-    payload = dict(
-        jwt.decode(
-            token,
-            secret,
-            algorithms=[algorithm],
-            audience=expected_audience,
-            issuer=expected_issuer,
-            options=decode_options,
-        )
-    )
-    # Explicit defence-in-depth check: jose raises JWTError when require_jti=True
-    # and jti is missing, but an empty string would pass the require check.
-    # Guard against that edge case explicitly.
-    if not payload.get("jti"):
-        raise JWTError("jti claim is empty")
-    return payload
+    errors: list[JWTError] = []
+    for index, candidate in enumerate(candidates):
+        try:
+            payload = dict(
+                jwt.decode(
+                    token,
+                    candidate,
+                    algorithms=[algorithm],
+                    audience=expected_audience,
+                    issuer=expected_issuer,
+                    options=decode_options,
+                )
+            )
+        except (ExpiredSignatureError, JWTClaimsError):
+            # python-jose verifies the signature BEFORE validating claims, so
+            # these two are only reachable once a key has matched: the token is
+            # genuinely ours and no later key can do better. Stop here, or a
+            # rotation window would turn every "expired" into the next key's
+            # "signature verification failed" and send an incident responder
+            # hunting a key mismatch that does not exist.
+            raise
+        except JWTError as exc:
+            errors.append(exc)
+            continue
+
+        # Explicit defence-in-depth check: jose raises JWTError when
+        # require_jti=True and jti is missing, but an empty string would pass
+        # the require check. Guard against that edge case explicitly. Raised
+        # rather than collected, for the same reason as the claim errors above:
+        # the signature already matched this key.
+        if not payload.get("jti"):
+            raise JWTError("jti claim is empty")
+
+        if index > 0:
+            # The signal that lets a rotation actually be finished. While this
+            # fires, tokens signed with a superseded key are still in
+            # circulation and the trailing secret must stay deployed; when it
+            # stops, dropping that secret is safe. Without it, "has everyone
+            # rotated yet?" is unanswerable and the old key stays valid forever.
+            log.info("auth.jwt.verified_with_rotated_key", key_index=index)
+        return payload
+
+    # Report the FIRST key's failure: candidates[0] is the current signing key,
+    # so its reason is the one worth having ("missing required key \"iat\"",
+    # say), whereas the trailing keys on a genuinely bad token contribute
+    # nothing but "signature verification failed". The list is non-empty here —
+    # the loop is entered at least once and every other exit returns or raises.
+    raise errors[0]
 
 
 # ---------------------------------------------------------------------------

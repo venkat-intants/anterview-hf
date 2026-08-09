@@ -24,6 +24,7 @@ import AdminRoute from '../components/AdminRoute';
 import HRRoute from '../components/HRRoute';
 import SuperAdminRoute from '../components/SuperAdminRoute';
 import PlatformOwnerRoute from '../components/PlatformOwnerRoute';
+import { homePathFor } from '../components/layout/navSections';
 
 const GUARDED_TEXT = 'guarded content';
 const LOGIN_TEXT = 'login page';
@@ -56,6 +57,13 @@ function renderGuard(Guard: ComponentType): void {
         </Route>
         <Route path="/login" element={<div>{LOGIN_TEXT}</div>} />
         <Route path="/dashboard" element={<div>{DASHBOARD_TEXT}</div>} />
+        {/* A denied user is now returned to THEIR OWN home rather than the
+            candidate dashboard, so every home target must be mountable here or
+            the redirect lands on an unregistered path and renders nothing. */}
+        <Route path="/hr" element={<div>home:/hr</div>} />
+        <Route path="/platform" element={<div>home:/platform</div>} />
+        <Route path="/superadmin" element={<div>home:/superadmin</div>} />
+        <Route path="/admin/overview" element={<div>home:/admin/overview</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -168,11 +176,18 @@ describe('role guards — permitted role set', () => {
 
 describe('role guards — denied role set', () => {
   for (const { name, Guard, denied } of ROLE_GUARDS) {
-    it.each(denied)(`${name} redirects a %s to /dashboard`, (role) => {
+    // Behaviour CHANGED here, deliberately. These used to assert /dashboard for
+    // every denied role. That was the defect: scoping the nav by role meant an
+    // admin- or HR-only account bounced to /dashboard saw a candidate page with
+    // no sidebar entry matching the URL. A denied user now returns to their own
+    // console, and the assertion pins that rather than a shared fallback.
+    it.each(denied)(`${name} returns a denied %s to their own home`, (role) => {
       setSession({ isAuthenticated: true, isInitializing: false, user: makeUser([role]) });
       renderGuard(Guard);
 
-      expect(screen.getByText(DASHBOARD_TEXT)).toBeInTheDocument();
+      const home = homePathFor([role]);
+      const expected = home === '/dashboard' ? DASHBOARD_TEXT : `home:${home}`;
+      expect(screen.getByText(expected)).toBeInTheDocument();
       expect(screen.queryByText(GUARDED_TEXT)).not.toBeInTheDocument();
     });
   }

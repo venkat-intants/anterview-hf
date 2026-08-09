@@ -112,7 +112,7 @@ Companion to HLD.md / LLD.md / CHANGES.md.
 | **STT (Indian languages)**        | **Bhashini ULCA** primary + **AI4Bharat IndicConformer** fallback                  | Bhashini is Govt-of-India backed — political and procurement bonus on a GoAP project. AI4Bharat fallback for resilience. Both handle Indian accents far better than Whisper or Google STT for HI/TE.                                                                                          |
 | **TTS (multi-voice Indic)**       | **Bhashini Indic TTS** + **AI4Bharat IndicTTS-v2** fallback                        | 54 voice IDs (6 avatars × 9 languages) map cleanly. Same Govt-of-India rationale. Streaming chunked output keeps first-audio latency <300 ms.                                                                                                                                                 |
 | **VAD (barge-in)**                | **Silero VAD v5 in WebAssembly** (client-side)                                     | Detect barge-in *before* the round-trip → enables the <2 s response target the RFP mandates. Server-side double-check with `webrtcvad`.                                                                                                                                                       |
-| **Avatars**                       | **Ready Player Me** (free GLB) + **Rhubarb-Lipsync** viseme driver                 | D-ID / HeyGen are ₹5–15 per minute → kills unit economics at 2M users. RPM + visemes runs entirely client-side, cost = ₹0. 6 distinct personas via wardrobe + voice pairing.                                                                                                                  |
+| **Avatars**                       | **Ready Player Me** (free GLB) + **Rhubarb-Lipsync** viseme driver (`AVATAR_PROVIDER=custom`) | Hosted talking-head APIs run ₹5–15 per minute → kills unit economics at 2M users. RPM + visemes runs entirely client-side, cost = ₹0. 6 distinct personas via wardrobe + voice pairing. **This is the Tier-2 / bid pick and is not yet built** — the demo runs on Tavus (see [TIER 1B](#tier-1b--demo-only-overrides-added-2026-05-28-rewritten-2026-08-07)). |
 | **Orchestration / state machine** | **LangGraph** (Python)                                                             | Deterministic FSM: Intro → Tech → Behavioral → Q&A → Close. Tool-calling native. Replays for debugging. Beats LangChain (too loose) and hand-rolled (15-day timeline).                                                                                                                        |
 | **Embeddings + vector store**     | `**text-embedding-3-large`** (OpenAI) stored in **pgvector**                       | India-region available, cheap, top-quality on multilingual. pgvector avoids a separate Qdrant/Weaviate cluster = one less thing to break in 15 days.                                                                                                                                          |
 | **Scoring**                       | **Claude Sonnet 4.6 as judge**, cached rubric, **end-of-session only**             | Same model, separate call, structured JSON for 4 axes. **Rolling per-turn scoring cut in v1.1** — saves ~₹1/session and 5 LLM calls per session.                                                                                                                                              |
@@ -204,7 +204,7 @@ Companion to HLD.md / LLD.md / CHANGES.md.
 
 1. **Bedrock Claude Sonnet 4.6**, not OpenAI/Gemini → India residency + prompt caching + tool use + multilingual quality.
 2. **Bhashini for STT+TTS**, not Whisper/Google → Govt-of-India alignment + Indic accent quality + procurement optics.
-3. **Ready Player Me viseme avatars**, not D-ID/HeyGen → client-side rendering kills 90% of avatar cost; lets per-session economics work at 2M scale.
+3. **Ready Player Me viseme avatars**, not a hosted talking-head API → client-side rendering kills 90% of avatar cost; lets per-session economics work at 2M scale. (The demo tier violates this deliberately and temporarily — Tavus, US-hosted, over the cap. See TIER 1B.)
 4. **LangGraph state machine**, not free-form prompting → deterministic interviewer policy, replayable, auditable for a government SLA.
 5. **AWS Mumbai EKS single region**, not multi-region/multi-cloud → 15-day deployment forbids cleverness; one region, one cloud, one K8s. DR added only if APSSDC mandates.
 
@@ -223,21 +223,53 @@ Companion to HLD.md / LLD.md / CHANGES.md.
 
 ---
 
-## TIER 1B — DEMO-ONLY OVERRIDES (added 2026-05-28)
+## TIER 1B — DEMO-ONLY OVERRIDES (added 2026-05-28, rewritten 2026-08-07)
 
 These do **not** alter the anchor decisions above and **must never enter the APSSDC bid unit economics**. They are sales-demo conveniences only.
 
-| Override | Provider | Per-session cost | Status |
+| Override | Provider | `AVATAR_PROVIDER` | Status |
 | --- | --- | --- | --- |
-| Avatar (demo) | **D-ID** real-time streaming (`AVATAR_PROVIDER=did`) | ~₹467 / 10-min (≈38× the ₹12 cap) | cfo-cost-watcher **CONDITIONALLY-APPROVED**, demo-only |
+| Avatar (demo default) | **Tavus** real-time streaming via LiveKit, echo-mode persona | `tavus` | Demo-only. US-hosted (no India residency); over the ₹12/session cap |
+| Avatar (demo alternate) | **Simli** real-time streaming via LiveKit | `simli` | Demo-only. US-hosted; same residency caveat |
+| Avatar (voice-only) | none — the interview runs without a face | `none` | The CI / no-key default (`services/interview_core/app/config.py`) |
+| Avatar (Tier-2 / bid path) | Three.js + **Ready Player Me** GLB + **Rhubarb-Lipsync** visemes | `custom` | **Not yet implemented in the worker** — see the gap note below |
 
-**Conditions (cfo-cost-watcher, 2026-05-28):**
-1. Adapter **hard-refuses `did` when `APP_ENV=production`**. APSSDC / govt deploys always use `AVATAR_PROVIDER=custom` (Ready Player Me, per anchor decision #3).
-2. Monthly spend cap **₹15,000** (alert at ₹12,000).
-3. Registered here + in `.env` as non-compliant with bid economics.
-4. **Sunset review 2026-11-28** — discontinue or renegotiate.
+**Why this section was rewritten.** It previously named **D-ID**
+(`AVATAR_PROVIDER=did`, ~₹467/session) and mandated a production gate on it.
+D-ID was removed from the codebase on **2026-05-31**; no `did` value exists in
+`interview_core`'s provider switch any more. A procurement document that names a
+supplier we do not use, and mandates a gate no deploy can pass or fail, is worse
+than silence — anyone auditing the stack against it reaches a contradiction.
+(Closes code-review finding **AG-06**.)
 
-> Note: HeyGen (~₹85–170/session) is 2.7–5.5× cheaper for the identical demo purpose; D-ID chosen by founder directive despite this.
+**Standing conditions (carried over from cfo-cost-watcher, 2026-05-28):**
+1. APSSDC / govt deploys must use `AVATAR_PROVIDER=custom` (Ready Player Me,
+   per anchor decision #3). Tavus and Simli are US-hosted and are
+   bid-disqualifying on residency alone, independent of cost.
+2. Registered here and in `.env` as **non-compliant with bid unit economics**.
+   No demo avatar cost may be carried into an L1 price.
+3. **Sunset review 2026-11-28** — discontinue or renegotiate.
+
+> **Known gap — do not read this table as an implemented control.** Two things
+> the old text implied are *not* true of the code at HEAD, and stating them
+> would repeat the AG-06 mistake in a new vendor's name:
+>
+> * There is **no `APP_ENV=production` hard-refuse** for the demo avatar
+>   providers. `_build_avatar()` in `services/interview_core/app/worker/
+>   interview_worker.py` selects purely on `AVATAR_PROVIDER`; nothing consults
+>   `APP_ENV`. The production gate is currently operator discipline, not code.
+> * `AVATAR_PROVIDER=custom` is **not implemented in the worker**. It is not a
+>   recognised value in the avatar factory, so it falls through the
+>   unknown-provider branch and silently becomes Simli with a warning. Tier-2
+>   needs the Three.js/RPM client-side renderer built before `custom` means
+>   anything.
+>
+> Both are tracked in [`ACCEPTED-RISKS.md`](ACCEPTED-RISKS.md).
+
+> Note on the historical comparison: HeyGen (~₹85–170/session) was cheaper than
+> D-ID for the identical demo purpose. It is recorded here only because the
+> original D-ID decision was taken against that alternative; HeyGen was never
+> integrated and is not a current option.
 
 ---
 

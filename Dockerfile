@@ -52,6 +52,18 @@ ENV VITE_API_BASE_URL="" \
     VITE_FEATURE_MULTILINGUAL="true" \
     VITE_RPM_SUBDOMAIN="${VITE_RPM_SUBDOMAIN}" \
     VITE_SENTRY_DSN="${VITE_SENTRY_DSN}"
+# `npm run build` fires the prebuild hook (web/scripts/fetch-mediapipe.mjs),
+# which vendors the FaceLandmarker model that proctoring loads from our own
+# origin. That script defaults to LOUD-but-non-fatal and documents
+# MEDIAPIPE_REQUIRED=1 as the switch "the container build does this" — and the
+# container build did not (CICD-5): the flag was set nowhere in the repo, so the
+# strict branch had never executed and a failed download shipped a green image
+# whose proctoring was silently dead at runtime. The trade is deliberate: this
+# build now depends on the pinned model URL being reachable, which is the right
+# dependency for an artefact that cannot be repaired after it ships. The file is
+# SHA-256-pinned, so a partial or substituted download fails here rather than
+# poisoning a cache.
+ENV MEDIAPIPE_REQUIRED="1"
 RUN npm run build
 
 # ---- Stage 2: python builder (four isolated venvs) --------------------------

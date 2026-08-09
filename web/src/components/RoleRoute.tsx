@@ -13,6 +13,7 @@
 // Shaped as a LAYOUT route (renders <Outlet />) because that is how App.tsx
 // mounts all five: <Route element={<HRRoute />}><Route path=… /></Route>.
 
+import { homePathFor } from './layout/navSections';
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -62,7 +63,9 @@ export default function RoleRoute({ roles }: RoleRouteProps) {
   // Treating that as "holds no roles" keeps the guard failing CLOSED, which is
   // exactly what each original did with its `!user?.roles.includes(…)` check.
   if (roles && !roles.some((role) => user?.roles.includes(role) ?? false)) {
-    return <Navigate to="/dashboard" replace />;
+    // Their own home, not the candidate dashboard: a denied HR manager landing
+    // on /dashboard saw a page with no matching nav entry.
+    return <Navigate to={homePathFor(user?.roles ?? [])} replace />;
   }
 
   return <Outlet />;

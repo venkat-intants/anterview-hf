@@ -50,7 +50,7 @@ import ipaddress
 
 import structlog
 from fastapi import Request
-from prometheus_client import Counter
+from prometheus_client import Counter, Gauge
 
 from app.config import settings
 
@@ -96,6 +96,121 @@ _proxy_hop_excess = Counter(
 _underflow_warned = False
 
 
+# ---------------------------------------------------------------------------
+# DG-3 — the too-LOW direction of the same misconfiguration.
+#
+# The too-high direction has ``_proxy_hop_underflow`` above and an alert rule.
+# The too-low direction had nothing, and it is the more likely mistake: deploy
+# behind Caddy with TRUSTED_PROXY_COUNT left at its safe default of 0 and every
+# client resolves to the edge's socket address, so per-IP rate limiting becomes
+# one global bucket and every consent-ledger row carries the same IP hash. The
+# control reports success and protects nothing.
+#
+# Why a per-request counter cannot solve it. A single request carrying MORE hops
+# than configured is ambiguous — a client may legitimately have prepended
+# entries of its own before the packet reached our edge, which is exactly the
+# attack the right-anchored index defeats. So ``_proxy_hop_excess`` can only ever
+# say "excess happens", never "the configuration is wrong", and a Counter is
+# monotonic: it cannot express the statistic that DOES distinguish the two.
+#
+# That statistic is the MINIMUM hop count over many header-bearing requests.
+# Proxies only ever APPEND, and clients only ever prepend, so the minimum
+# observed over a sample IS the number of infrastructure hops — a misconfigured
+# deployment shows min > configured on every single request, while ordinary
+# client noise leaves plenty of requests at exactly the configured count. The
+# sample deliberately EXCLUDES requests with no X-Forwarded-For at all
+# (health probes and direct-to-container traffic), which would otherwise pin the
+# minimum at 0 and hide the mismatch in any mixed topology.
+#
+# Two outputs, because the two audiences differ:
+#   * one log event, emitted ONCE after _HOP_SAMPLE_SIZE header-bearing requests,
+#     which is what an engineer reads after a deploy. Not a startup assertion:
+#     at startup no request has been seen, so the real topology is unknowable —
+#     the earliest honest moment is after the first N requests.
+#   * two Gauges, so the mismatch is alertable without parsing logs:
+#       client_ip_proxy_hops_min_observed > client_ip_trusted_proxy_count
+#     Gauges rather than a Counter precisely because the value can go DOWN, which
+#     is the whole point.
+# ---------------------------------------------------------------------------
+_HOP_SAMPLE_SIZE = 50
+
+_proxy_hops_min_observed = Gauge(
+    "client_ip_proxy_hops_min_observed",
+    "Smallest number of X-Forwarded-For hops seen on any request that carried "
+    "the header. Clients can only ADD hops, so this is the real infrastructure "
+    "hop count. Alert when it exceeds client_ip_trusted_proxy_count: the "
+    "configured value is too low and per-IP rate limiting is one global bucket.",
+)
+
+_trusted_proxy_count_gauge = Gauge(
+    "client_ip_trusted_proxy_count",
+    "The configured TRUSTED_PROXY_COUNT, published so the observed minimum "
+    "above can be compared against it in a single alert expression.",
+)
+
+# Sample state. Ints rather than a list: only the count and the running minimum
+# are ever read, and keeping 50 integers to compute one of them is storage for
+# its own sake.
+_hop_sample_count = 0
+_hop_min_observed: int | None = None
+_hop_observation_reported = False
+
+
+def _reset_hop_observation() -> None:
+    """Clear the sampling state. For tests only — the process never resets."""
+    global _hop_sample_count, _hop_min_observed, _hop_observation_reported
+    _hop_sample_count = 0
+    _hop_min_observed = None
+    _hop_observation_reported = False
+
+
+def _observe_hop_count(observed_hops: int, trusted_proxy_count: int) -> None:
+    """Fold one request's hop count into the topology observation.
+
+    Called for every request that carries a non-empty X-Forwarded-For, INCLUDING
+    when ``trusted_proxy_count`` is 0 — that configuration ignores the header for
+    IP extraction, but "0 configured, 1 real hop" is the single most likely form
+    of this misconfiguration and skipping it would leave the fix blind to it.
+    """
+    global _hop_sample_count, _hop_min_observed, _hop_observation_reported
+
+    _trusted_proxy_count_gauge.set(trusted_proxy_count)
+
+    if _hop_min_observed is None or observed_hops < _hop_min_observed:
+        _hop_min_observed = observed_hops
+        _proxy_hops_min_observed.set(observed_hops)
+
+    _hop_sample_count += 1
+    if _hop_observation_reported or _hop_sample_count < _HOP_SAMPLE_SIZE:
+        return
+
+    _hop_observation_reported = True
+    if _hop_min_observed == trusted_proxy_count:
+        log.info(
+            "consent.client_ip.proxy_hop_observation",
+            configured_proxy_count=trusted_proxy_count,
+            min_observed_hops=_hop_min_observed,
+            samples=_hop_sample_count,
+            detail="TRUSTED_PROXY_COUNT matches the observed proxy chain.",
+        )
+        return
+
+    log.warning(
+        "consent.client_ip.proxy_hop_mismatch",
+        configured_proxy_count=trusted_proxy_count,
+        min_observed_hops=_hop_min_observed,
+        samples=_hop_sample_count,
+        detail=(
+            "Every sampled X-Forwarded-For carried a different number of hops "
+            "than TRUSTED_PROXY_COUNT. Because proxies only append and clients "
+            "only prepend, the minimum observed IS the real infrastructure hop "
+            "count: set TRUSTED_PROXY_COUNT to it. Until then the extracted "
+            "client IP is a proxy address, so per-IP rate limiting and the "
+            "DPDP consent-ledger IP hash are degraded to a single bucket."
+        ),
+    )
+
+
 def get_client_ip(request: Request, trusted_proxy_count: int) -> str:
     """Extract the real client IP respecting *trusted_proxy_count*.
 
@@ -117,18 +232,29 @@ def get_client_ip(request: Request, trusted_proxy_count: int) -> str:
     """
     direct_host = _direct_host(request)
 
+    xff: str = request.headers.get("X-Forwarded-For", "")
+    hops: list[str] = [h.strip() for h in xff.split(",") if h.strip()]
+
+    # Sampled BEFORE the trusted_proxy_count == 0 early return, on purpose: that
+    # branch is itself the most common too-low misconfiguration (DG-3), and an
+    # observation placed after it could never see the case it exists to catch.
+    # Requests with no header contribute nothing — see _observe_hop_count.
+    if hops:
+        _observe_hop_count(len(hops), trusted_proxy_count)
+
     if trusted_proxy_count == 0:
         # No trusted proxies configured — ignore X-Forwarded-For entirely. A
         # client-supplied header could spoof any IP; the socket address is the
         # only safe option in this topology.
         return direct_host
 
-    xff: str = request.headers.get("X-Forwarded-For", "")
     if not xff:
         # No header — the request did not pass through the expected proxy chain.
+        # Tested on the RAW header, not on ``hops``: a header that is present but
+        # yields no usable entries ("  ,  ") is a broken proxy chain, and it must
+        # keep falling through to the underflow branch below so it is counted.
         return direct_host
 
-    hops: list[str] = [h.strip() for h in xff.split(",") if h.strip()]
     real_index: int = len(hops) - trusted_proxy_count
 
     if real_index < 0:

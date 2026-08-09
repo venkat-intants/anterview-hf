@@ -2,8 +2,13 @@
 # ---------------------------------------------------------------------------
 # data_gateway — Auth, user management, DPDP consent, jobs, resume upload.
 #
-# BUILD CONTEXT: repo root (Railway sets "root": "/" in railway.json so the
-# context includes both shared/ and services/data_gateway/).
+# BUILD CONTEXT: repo root — required, not conventional. This file does
+# `COPY shared /app/shared`, so a services/data_gateway/ context cannot build
+# it. Every caller passes the root: docker-compose.prod.yml:95-98,
+# docker-compose.yml, render.yaml `dockerContext: .`, and the CI docker matrix.
+# (The old header cited a railway.json that does not exist in this repo —
+# CICD-6. Railway is not a deploy target; the supported one is the Oracle VM
+# via docker-compose.prod.yml, with the HF Space running the root Dockerfile.)
 #
 # Multi-stage build. Non-root user (uid 1001). Binds to $PORT or 8002.
 # ---------------------------------------------------------------------------

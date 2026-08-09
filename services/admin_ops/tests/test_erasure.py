@@ -655,3 +655,82 @@ def test_admin_erasure_db_error_is_generic_and_leaks_no_driver_text() -> None:
     assert resp.status_code == 500
     assert leak not in resp.text
     assert mock_session.rollback.called
+
+
+# ---------------------------------------------------------------------------
+# Self-service erasure must reject NARROW, single-purpose credentials
+# ---------------------------------------------------------------------------
+#
+# Found by the security review of this change. The self-service endpoint was
+# gated on AuthenticatedDep — "any valid, non-revoked token". That correctly
+# stops a caller naming SOMEONE ELSE (identity comes from the signature, and
+# there is no user_id parameter), but it does not stop a narrow token acting for
+# its own subject.
+#
+# The interview-invite flow mints `guest_candidate` with a REAL user UUID as
+# `sub` and a `session_id` claim, signed with the one `jwt_secret` every service
+# shares — so it verified cleanly in admin_ops. The route is mounted at the app
+# root and both Caddyfiles proxy /users/*/dpdp/* here, so the whole chain was
+# publicly reachable: forwarded invite link -> redeem -> 15-minute guest token
+# -> irreversible erasure of that candidate's account AND the hiring company's
+# ATS record for them. No step-up auth, no undo.
+
+
+def _session_bound_token(role: str, sub: str = _CANDIDATE_SUB) -> str:
+    """A credential scoped to one interview room, as interview_take.py mints it."""
+    return issue_access_token(
+        user_id=sub,
+        roles=[role],
+        secret=settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+        issuer=settings.jwt_issuer,
+        audience=settings.jwt_audience,
+        extra_claims={"session_id": "77777777-8888-9999-aaaa-bbbbbbbbbbbb"},
+    )
+
+
+def test_self_erasure_rejects_a_guest_interview_token() -> None:
+    """A guest_candidate token must not be able to erase the account it names."""
+    mock_session = _make_mock_session(user=_fake_self_user())
+    client = TestClient(_build_test_app(mock_session), raise_server_exceptions=False)
+    resp = client.post(
+        _SELF_ERASURE_URL,
+        headers={"Authorization": f"Bearer {_session_bound_token('guest_candidate')}"},
+    )
+    assert resp.status_code == 403, resp.text
+    # 403 not 401: the token IS valid. Saying "invalid token" would send an
+    # operator hunting the wrong problem.
+    assert "sign" in resp.json()["detail"].lower()
+
+
+def test_self_erasure_rejects_any_session_bound_token() -> None:
+    """Belt and braces: a session_id claim marks a room-scoped credential.
+
+    Pinned separately from the role check so that adding a future scoped role
+    without updating _NON_ACCOUNT_ROLES still fails closed.
+    """
+    mock_session = _make_mock_session(user=_fake_self_user())
+    client = TestClient(_build_test_app(mock_session), raise_server_exceptions=False)
+    resp = client.post(
+        _SELF_ERASURE_URL,
+        headers={"Authorization": f"Bearer {_session_bound_token('candidate')}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+# A service-token case is deliberately NOT repeated here: a real service
+# token's `sub` is a service NAME, so it is rejected by the UUID guard, and
+# test_self_erasure_rejects_a_token_whose_subject_is_not_a_user already pins
+# that with the realistic token shape. `service` is correspondingly absent
+# from _NON_ACCOUNT_ROLES — see the comment there.
+
+
+def test_self_erasure_still_works_for_a_real_candidate() -> None:
+    """The fix must not break the statutory DPDP §11 path it guards."""
+    mock_session = _make_mock_session(user=_fake_self_user(), existing_erasure=None)
+    client = TestClient(_build_test_app(mock_session), raise_server_exceptions=False)
+    resp = client.post(
+        _SELF_ERASURE_URL,
+        headers={"Authorization": f"Bearer {_make_token(role='candidate', sub=_CANDIDATE_SUB)}"},
+    )
+    assert resp.status_code == 202, resp.text

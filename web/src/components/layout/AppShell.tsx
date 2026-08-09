@@ -13,20 +13,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AuroraBackground } from '@/components/fx';
 import {
-  LayoutDashboard,
-  Briefcase,
   History,
   FileText,
   LogOut,
   Menu,
-  BarChart2,
-  ClipboardList,
-  TrendingUp,
-  Upload,
-  Building2,
-  Users,
-  FileSearch,
-  Video,
   Bell,
   ChevronDown,
   ChevronLeft,
@@ -50,6 +40,12 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/s
 import { cn } from '@/lib/utils';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
 import ThemeToggle from '@/components/ThemeToggle';
+import {
+  homePathFor,
+  isCandidateOnly,
+  visibleNavSections,
+  type NavItem,
+} from './navSections';
 
 // The interview-language localStorage key (separate concern from UI language)
 const INTERVIEW_LANGUAGE_KEY = 'intants:interview-language';
@@ -86,13 +82,6 @@ function getRoleAccent(roles: string[]): string {
   return '#70757c';
 }
 
-const PRIVILEGED_ROLES = ['platform_owner', 'super_admin', 'admin', 'hr_manager'];
-
-/** True when the user holds no privileged role (plain candidate). */
-function isCandidateOnly(roles: string[]): boolean {
-  return !roles.some((r) => PRIVILEGED_ROLES.includes(r));
-}
-
 /** Derive initials from a display name for the avatar fallback */
 function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -101,50 +90,11 @@ function getInitials(name: string): string {
   return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase();
 }
 
-// ── Nav item definitions ──────────────────────────────────────────────────────
+// Nav item definitions, role scoping and isCandidateOnly live in
+// ./navSections.tsx — see that file for why. Split out so this component
+// module exports only components (react-refresh/only-export-components) and
+// so the role-scoping test has a UI-free surface to assert against.
 
-interface NavItem {
-  to: string;
-  /** i18n key (resolved via t) OR a literal label when labelKey is absent */
-  labelKey?: string;
-  label?: string;
-  icon: React.ReactNode;
-}
-
-const ICON = 'h-[18px] w-[18px]';
-
-const CANDIDATE_NAV: NavItem[] = [
-  { to: '/dashboard', labelKey: 'nav.dashboard', icon: <LayoutDashboard className={ICON} aria-hidden="true" /> },
-  { to: '/jobs', labelKey: 'nav.jobs', icon: <Briefcase className={ICON} aria-hidden="true" /> },
-  { to: '/history', labelKey: 'nav.history', icon: <History className={ICON} aria-hidden="true" /> },
-  { to: '/resume', labelKey: 'nav.resume', icon: <FileText className={ICON} aria-hidden="true" /> },
-];
-
-const HR_NAV: NavItem[] = [
-  { to: '/hr', label: 'Hiring', icon: <Users className={ICON} aria-hidden="true" /> },
-  { to: '/hr/applicants', label: 'Applicants', icon: <FileSearch className={ICON} aria-hidden="true" /> },
-  { to: '/hr/exams', label: 'Exams', icon: <ClipboardList className={ICON} aria-hidden="true" /> },
-  { to: '/hr/interviews', label: 'Interviews', icon: <Video className={ICON} aria-hidden="true" /> },
-  { to: '/hr/pipeline', label: 'Pipeline', icon: <TrendingUp className={ICON} aria-hidden="true" /> },
-  { to: '/hr/analytics', label: 'Analytics', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
-];
-
-const ADMIN_NAV: NavItem[] = [
-  { to: '/admin/overview', labelKey: 'nav.adminOverview', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
-  { to: '/admin/interviews', labelKey: 'nav.adminInterviews', icon: <ClipboardList className={ICON} aria-hidden="true" /> },
-  { to: '/admin/analytics', labelKey: 'nav.adminAnalytics', icon: <TrendingUp className={ICON} aria-hidden="true" /> },
-  { to: '/admin/jd', labelKey: 'nav.adminJd', icon: <Upload className={ICON} aria-hidden="true" /> },
-];
-
-// platform_owner — the Intants core: companies + their super admins.
-const PLATFORM_NAV: NavItem[] = [
-  { to: '/platform', label: 'Companies', icon: <Building2 className={ICON} aria-hidden="true" /> },
-];
-
-// super_admin — a company's super admin: its HR managers.
-const SUPER_NAV: NavItem[] = [
-  { to: '/superadmin', label: 'HR Managers', icon: <Users className={ICON} aria-hidden="true" /> },
-];
 
 // ── Sidebar nav link (vertical) ───────────────────────────────────────────────
 
@@ -225,7 +175,9 @@ function SidebarUser({
   });
 
   const displayName = user?.full_name ?? 'User';
-  const roleLabel = getRoleLabel(user?.roles ?? []);
+  const roles = user?.roles ?? [];
+  const roleLabel = getRoleLabel(roles);
+  const candidateOnly = isCandidateOnly(roles);
 
   return (
     <div className="relative border-t border-white/[0.06] p-3">
@@ -273,22 +225,31 @@ function SidebarUser({
             >
               <User size={15} aria-hidden="true" /> Profile
             </Link>
-            <Link
-              to="/resume"
-              role="menuitem"
-              onClick={() => { setOpen(false); onNavigate?.(); }}
-              className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#b8babf] hover:bg-white/[0.06] hover:text-white"
-            >
-              <FileText size={15} aria-hidden="true" /> {t('nav.resume')}
-            </Link>
-            <Link
-              to="/history"
-              role="menuitem"
-              onClick={() => { setOpen(false); onNavigate?.(); }}
-              className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#b8babf] hover:bg-white/[0.06] hover:text-white"
-            >
-              <History size={15} aria-hidden="true" /> {t('nav.history')}
-            </Link>
+            {/* Candidate-only, same rule as the candidate nav section above.
+                These are the signed-in person's OWN CV and OWN interview
+                history — an HR manager or platform owner has neither, so the
+                links led to empty pages. This menu was the second place
+                candidate items leaked to staff; the main nav was the first. */}
+            {candidateOnly && (
+              <>
+                <Link
+                  to="/resume"
+                  role="menuitem"
+                  onClick={() => { setOpen(false); onNavigate?.(); }}
+                  className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#b8babf] hover:bg-white/[0.06] hover:text-white"
+                >
+                  <FileText size={15} aria-hidden="true" /> {t('nav.resume')}
+                </Link>
+                <Link
+                  to="/history"
+                  role="menuitem"
+                  onClick={() => { setOpen(false); onNavigate?.(); }}
+                  className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#b8babf] hover:bg-white/[0.06] hover:text-white"
+                >
+                  <History size={15} aria-hidden="true" /> {t('nav.history')}
+                </Link>
+              </>
+            )}
             <div className="my-1 h-px bg-white/[0.06]" role="separator" />
             <button
               type="button"
@@ -333,7 +294,9 @@ function SidebarContent({
         )}
       >
         <Link
-          to="/dashboard"
+          /* Role home, not /dashboard: clicking the wordmark was the last
+             affordance dropping staff onto the candidate dashboard. */
+          to={homePathFor(roles)}
           onClick={onNavigate}
           className="flex items-center gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           aria-label="Anterview"
@@ -393,47 +356,23 @@ function SidebarContent({
 
       {/* Nav */}
       <nav aria-label="Primary" className="flex-1 space-y-5 overflow-y-auto px-3 py-2">
-        <div className="space-y-1">
-          {CANDIDATE_NAV.map((item) => (
-            <SideNavLink key={item.to} item={item} onNavigate={onNavigate} collapsed={collapsed} />
-          ))}
-        </div>
-
-        {roles.includes('hr_manager') && (
-          <div className="space-y-1">
-            <NavSectionLabel collapsed={collapsed}>Hiring</NavSectionLabel>
-            {HR_NAV.map((item) => (
+        {visibleNavSections(roles).map((section, index) => (
+          <div key={section.id} className="space-y-1">
+            {/* `index > 0`: collapsed, NavSectionLabel renders as a hairline
+                divider whose job is separating one group from the previous one.
+                Staff no longer render the unlabelled candidate group first, so
+                without this their rail opened with a divider above nothing. */}
+            {section.label && index > 0 && (
+              <NavSectionLabel collapsed={collapsed}>{section.label}</NavSectionLabel>
+            )}
+            {section.label && index === 0 && !collapsed && (
+              <NavSectionLabel collapsed={false}>{section.label}</NavSectionLabel>
+            )}
+            {section.items.map((item) => (
               <SideNavLink key={item.to} item={item} onNavigate={onNavigate} collapsed={collapsed} />
             ))}
           </div>
-        )}
-
-        {roles.includes('admin') && (
-          <div className="space-y-1">
-            <NavSectionLabel collapsed={collapsed}>Admin</NavSectionLabel>
-            {ADMIN_NAV.map((item) => (
-              <SideNavLink key={item.to} item={item} onNavigate={onNavigate} collapsed={collapsed} />
-            ))}
-          </div>
-        )}
-
-        {roles.includes('platform_owner') && (
-          <div className="space-y-1">
-            <NavSectionLabel collapsed={collapsed}>Platform</NavSectionLabel>
-            {PLATFORM_NAV.map((item) => (
-              <SideNavLink key={item.to} item={item} onNavigate={onNavigate} collapsed={collapsed} />
-            ))}
-          </div>
-        )}
-
-        {roles.includes('super_admin') && (
-          <div className="space-y-1">
-            <NavSectionLabel collapsed={collapsed}>Company</NavSectionLabel>
-            {SUPER_NAV.map((item) => (
-              <SideNavLink key={item.to} item={item} onNavigate={onNavigate} collapsed={collapsed} />
-            ))}
-          </div>
-        )}
+        ))}
       </nav>
 
       {/* Candidate "ready to practice" promo (design) — hidden when collapsed */}
@@ -627,7 +566,11 @@ function TopBar() {
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-black/50 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
       <MobileSidebar />
 
-      {/* Search — navigates to Jobs on submit (closest live target) */}
+      {/* Search — navigates to Jobs on submit (closest live target).
+          Candidate-only: it searches the job board and the candidate's own
+          history, so for staff it was a third route onto candidate pages
+          after the nav and the user menu. */}
+      {candidateOnly && (
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -645,6 +588,7 @@ function TopBar() {
           className="w-full bg-transparent text-[13px] text-white placeholder:text-[#5a5f66] focus:outline-none"
         />
       </form>
+      )}
 
       <div className="ml-auto flex items-center gap-2">
         <ThemeToggle />

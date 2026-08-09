@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { login, getMe } from '@/api/auth';
 import { googleLoginUrl } from '@/api/sso';
 import { useAuth } from '@/context/AuthContext';
+import { homePathFor } from '@/components/layout/navSections';
 import { toast } from '@/lib/toast';
 import type { AuthUser } from '@/types/auth';
 import AuthLayout from '@/components/layout/AuthLayout';
@@ -98,14 +99,11 @@ export default function Login() {
       setAuth(loginRes.access_token, user);
       if (me.must_change_password) {
         void navigate('/change-password', { replace: true });
-      } else if (me.roles.includes('platform_owner')) {
-        void navigate('/platform', { replace: true });
-      } else if (me.roles.includes('super_admin')) {
-        void navigate('/superadmin', { replace: true });
-      } else if (me.roles.includes('hr_manager')) {
-        void navigate('/hr', { replace: true });
       } else {
-        void navigate('/dashboard', { replace: true });
+        // homePathFor, not a local if-chain: this branch previously had no
+        // `admin` case and fell through to /dashboard, stranding admin-only
+        // accounts on a candidate page their sidebar does not link to.
+        void navigate(homePathFor(me.roles), { replace: true });
       }
     },
     onError: (err: unknown) => {

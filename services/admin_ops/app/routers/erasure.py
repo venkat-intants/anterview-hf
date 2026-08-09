@@ -69,7 +69,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.admin_auth import AdminDep, AuthenticatedDep
+from app.admin_auth import AccountHolderDep, AdminDep
 from app.database import get_db_session
 from app.models import AuditLog, ErasureRequest, Session, User
 from app.redis_client import get_redis
@@ -358,7 +358,7 @@ async def _find_pending_request(
     ),
 )
 async def request_own_erasure(
-    caller_sub: AuthenticatedDep,
+    caller_sub: AccountHolderDep,
     db: DbSessionDep,
     body: ErasureRequestBody | None = None,
 ) -> SelfErasureResponse:
@@ -369,6 +369,16 @@ async def request_own_erasure(
     user_id parameter to omit the check on: a self-service erasure endpoint that
     accepted one would be an unauthenticated account-deletion primitive for
     anyone holding any valid token.
+
+    AccountHolderDep, NOT AuthenticatedDep. Deriving identity from the signature
+    stops the caller naming someone else; it does not stop a NARROW token acting
+    for its own subject. The `guest_candidate` credential from an interview
+    invite carries a real user UUID and verifies here (one shared jwt_secret
+    across all four services), so "any authenticated token" would have let
+    anyone holding a forwarded invite link erase that candidate's account and
+    the hiring company's ATS record for them. This route is mounted at the app
+    root and both Caddyfiles proxy /users/*/dpdp/* here, so it is publicly
+    reachable — the constraint has to live in the dependency.
     """
     user_id = _subject_uuid(caller_sub)
 

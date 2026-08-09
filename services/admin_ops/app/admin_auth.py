@@ -135,3 +135,66 @@ async def verify_admin_role(
 # Convenience type aliases — use in endpoint signatures as the annotated dep.
 AdminDep = Annotated[str, Depends(verify_admin_role)]
 AuthenticatedDep = Annotated[str, Depends(verify_authenticated_user)]
+
+
+# Token classes that authenticate a REQUEST but do not represent an account
+# holder acting for themselves.
+#
+# `guest_candidate` is minted by data_gateway's interview-invite redeem
+# (routers/interview_take.py) as a deliberately narrow, single-purpose
+# credential: 15 minutes, one `session_id` claim, and a role its own module
+# docstring describes as "rejected by candidate/HR routes". Its `sub` is a real
+# UUID (guests are lazily provisioned as users), and every service shares one
+# `jwt_secret`, so it verifies cleanly here — meaning "any authenticated token"
+# silently includes it.
+#
+# That is fine for reading. It is not fine for an irreversible destructive
+# action: anyone who forwards or shares an interview invite would be handing
+# over the ability to erase that candidate's account and the hiring company's
+# ATS record for them.
+# NOT "service": a service token's `sub` is a service NAME, so it is already
+# rejected by the UUID guard in erasure.py with a 401 that the existing suite
+# documents ("the credential is the problem, and the caller cannot fix it by
+# changing the request"). Adding it here would only change that status code to
+# 403 for no security gain, so the narrower set is the right one.
+_NON_ACCOUNT_ROLES: frozenset[str] = frozenset({"guest_candidate"})
+
+
+async def verify_account_holder(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> str:
+    """FastAPI dependency — a token that represents its own account holder.
+
+    Same identity guarantee as :func:`verify_authenticated_user` (the subject
+    comes from the signature, never from the request), plus the constraint that
+    the token is not a narrow single-purpose credential.
+
+    Use this, not ``AuthenticatedDep``, for anything a caller cannot undo.
+    """
+    sub, payload = await _authenticated_subject(credentials)
+
+    raw_roles = payload.get("roles") or []
+    roles = {str(r) for r in raw_roles} if isinstance(raw_roles, list) else set()
+    if roles & _NON_ACCOUNT_ROLES:
+        log.warning(
+            "auth.account_holder.rejected_scoped_token",
+            sub=sub,
+            roles=sorted(roles),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This action requires signing in to your account.",
+        )
+    # A `session_id` claim marks a credential bound to one interview room rather
+    # than to an account — belt and braces if a future scoped role is added and
+    # nobody remembers this list.
+    if payload.get("session_id"):
+        log.warning("auth.account_holder.rejected_session_bound_token", sub=sub)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This action requires signing in to your account.",
+        )
+    return sub
+
+
+AccountHolderDep = Annotated[str, Depends(verify_account_holder)]

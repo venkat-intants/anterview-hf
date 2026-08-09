@@ -84,6 +84,7 @@ vi.mock('../context/AuthContext', () => ({
 
 import CompanyAdminConsole from '../pages/superadmin/CompanyAdminConsole';
 import SuperAdminRoute from '../components/SuperAdminRoute';
+import { homePathFor } from '../components/layout/navSections';
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -117,6 +118,12 @@ function renderGuarded(roles: string[]) {
             <Route path="/superadmin" element={<CompanyAdminConsole />} />
           </Route>
           <Route path="/dashboard" element={<div>dashboard page</div>} />
+          {/* A denied user now returns to their OWN console rather than the
+              candidate dashboard, so each home target must be mountable here.
+              See navSections.homePathFor. */}
+          <Route path="/hr" element={<div>home page</div>} />
+          <Route path="/platform" element={<div>home page</div>} />
+          <Route path="/admin/overview" element={<div>home page</div>} />
           <Route path="/login" element={<div>login page</div>} />
         </Routes>
       </MemoryRouter>
@@ -253,7 +260,11 @@ describe('CompanyAdminConsole — a wrong-role user sees nothing', () => {
     async (role) => {
       renderGuarded([role]);
 
-      expect(await screen.findByText('dashboard page')).toBeInTheDocument();
+      // Behaviour changed deliberately: a denied user lands on THEIR OWN home,
+      // not a shared /dashboard fallback their scoped nav does not link to. For
+      // a candidate that home genuinely is /dashboard, hence the branch.
+      const expected = homePathFor([role]) === '/dashboard' ? 'dashboard page' : 'home page';
+      expect(await screen.findByText(expected)).toBeInTheDocument();
       expect(screen.queryByRole('heading', { name: /super admin/i })).not.toBeInTheDocument();
       expect(api.listMyHrManagers).not.toHaveBeenCalled();
     },

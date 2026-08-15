@@ -131,6 +131,11 @@ _underflow_warned = False
 #       client_ip_proxy_hops_min_observed > client_ip_trusted_proxy_count
 #     Gauges rather than a Counter precisely because the value can go DOWN, which
 #     is the whole point.
+#
+# The sample can also come out BELOW the configured count, which is the opposite
+# misconfiguration and carries the opposite remediation — see the branch in
+# _observe_hop_count. The log event carries a ``direction`` field so the two are
+# distinguishable in a query without parsing prose.
 # ---------------------------------------------------------------------------
 _HOP_SAMPLE_SIZE = 50
 
@@ -195,18 +200,52 @@ def _observe_hop_count(observed_hops: int, trusted_proxy_count: int) -> None:
         )
         return
 
+    # The two directions are NOT the same finding and must not share a
+    # remediation. ``min_observed >= real_hop_count`` always holds — proxies only
+    # append, clients only prepend — so the inference "the minimum IS the real
+    # hop count, set the config to it" is only sound when the minimum is ABOVE
+    # the configured value. Below it, that same sentence would tell an operator
+    # to lower TRUSTED_PROXY_COUNT to a number the sample cannot justify, and
+    # ``real_index = len(hops) - trusted_proxy_count`` means a count set higher
+    # than the true chain is the SPOOFABLE direction: a client that prepends
+    # enough entries to reach the configured length has its own forged entry
+    # selected verbatim. Lowering blind is therefore not a safe default action.
+    if _hop_min_observed > trusted_proxy_count:
+        log.warning(
+            "consent.client_ip.proxy_hop_mismatch",
+            direction="configured_too_low",
+            configured_proxy_count=trusted_proxy_count,
+            min_observed_hops=_hop_min_observed,
+            samples=_hop_sample_count,
+            detail=(
+                "Every sampled X-Forwarded-For carried MORE hops than "
+                "TRUSTED_PROXY_COUNT. Because proxies only append and clients "
+                "only prepend, the minimum observed IS the real infrastructure "
+                "hop count: set TRUSTED_PROXY_COUNT to it. Until then the "
+                "extracted client IP is a proxy address, so per-IP rate limiting "
+                "and the DPDP consent-ledger IP hash are degraded to a single "
+                "bucket."
+            ),
+        )
+        return
+
     log.warning(
         "consent.client_ip.proxy_hop_mismatch",
+        direction="configured_too_high",
         configured_proxy_count=trusted_proxy_count,
         min_observed_hops=_hop_min_observed,
         samples=_hop_sample_count,
         detail=(
-            "Every sampled X-Forwarded-For carried a different number of hops "
-            "than TRUSTED_PROXY_COUNT. Because proxies only append and clients "
-            "only prepend, the minimum observed IS the real infrastructure hop "
-            "count: set TRUSTED_PROXY_COUNT to it. Until then the extracted "
-            "client IP is a proxy address, so per-IP rate limiting and the "
-            "DPDP consent-ledger IP hash are degraded to a single bucket."
+            "The shortest X-Forwarded-For sampled carried FEWER hops than "
+            "TRUSTED_PROXY_COUNT, so those requests underflow and fall back to "
+            "the socket peer: per-IP rate limiting and the DPDP consent-ledger IP "
+            "hash are keyed on the edge address, not the client. Do NOT simply "
+            "lower TRUSTED_PROXY_COUNT to min_observed_hops — clients can only "
+            "ADD entries, so that number is an upper bound on the real chain and "
+            "not a measurement of it. Check the deployment's actual proxy chain: "
+            "while TRUSTED_PROXY_COUNT exceeds it, any header long enough to "
+            "satisfy the count must contain client-prepended entries, and one of "
+            "those is what gets returned as the client IP."
         ),
     )
 

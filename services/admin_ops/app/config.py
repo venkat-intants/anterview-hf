@@ -102,7 +102,9 @@ class Settings(BaseSettings):
         validator re-enters validation when ``validate_assignment`` is on.
         """
         object.__setattr__(
-            self, "database_ssl", validate_database_ssl(self.app_env, self.database_ssl)
+            self,
+            "database_ssl",
+            validate_database_ssl(self.app_env, self.database_ssl, self.database_url),
         )
         return self
 

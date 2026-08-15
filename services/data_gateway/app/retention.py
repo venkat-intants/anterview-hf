@@ -54,6 +54,14 @@ ORDERING (load-bearing — mirrors admin_ops/app/erasure_executor.py):
   recoverable.  The other order leaves objects in the bucket with no row left
   pointing at them, which is not.
 
+PER-RUN CAP:
+  Step 1 takes at most ``MAX_SESSIONS_PER_RUN`` ids, and every later step
+  addresses that materialised batch — so the ordering guarantee above is
+  unchanged, it just applies to a bounded set. The rest waits for tomorrow's run.
+  The cap exists because the all-or-nothing guarantee that makes this job safe
+  also makes an unbounded run unable to finish: see the constant for the
+  reasoning and for why the default is what it is.
+
 INDEX NOTE (migration 20260807_0001_b4d6f8a0c2e5):
   ``idx_sessions_retention`` used to carry ``WHERE deleted_at IS NULL`` while
   ``_purge_predicate`` emitted no such clause, so Postgres could never use it and
@@ -94,8 +102,12 @@ Safety rail:
 
 Log events emitted:
   retention.purge.done   — one event per run; carries deleted_count, dry_run,
-                           cutoff_iso, retention_days, statuses_purged and, in
-                           live mode, scorecards_deleted + objects_deleted.
+                           cutoff_iso, retention_days, statuses_purged,
+                           max_sessions_per_run and, in live mode,
+                           scorecards_deleted + objects_deleted + capped (the run
+                           filled its cap, so more is waiting). Dry-run carries
+                           would_exceed_cap instead, because its count is the
+                           whole backlog and not one batch.
                            Never logs individual session IDs or user IDs.
   retention.purge.error  — unexpected exception; carries exc_type, exc_msg.
 """
@@ -158,6 +170,32 @@ CONSENT_WITHDRAWN_STATUS = "consent_withdrawn"
 # DELETEs in chunks below that ceiling, so one enormous backlog — the first live
 # run after RETENTION_DRY_RUN is flipped off — cannot fail on a protocol limit.
 _ID_CHUNK_SIZE = 1000
+
+# Ceiling on how many sessions ONE run may purge.
+#
+# _ID_CHUNK_SIZE bounds the bind parameters per STATEMENT; it does not bound the
+# run. Step 1 materialises every eligible id and step 2 every object key, then
+# steps 3-5 delete objects one HTTP round-trip at a time (s3_upload.delete_objects
+# loops per key) inside a single uncommitted transaction. At the 20-lakh-user
+# figure the first live run after RETENTION_DRY_RUN is flipped off is a backlog
+# of everything ever completed, and that shape has a worse failure than memory:
+# the purge is deliberately all-or-nothing, so one transient storage error aborts
+# before any row is deleted and the next night retries the WHOLE set. Uncapped, a
+# run long enough that at least one round-trip is likely to fail can never
+# commit, and the backlog never drains — the compliance job stops being merely
+# slow and stops working. A cap makes progress monotonic: each run commits its
+# own bounded batch.
+#
+# 10_000 because the binding cost is those sequential object deletes — worst case
+# two objects per session at ~50 ms per round-trip keeps a full batch inside the
+# off-peak window the 03:00 UTC cron exists for, while still being several times
+# a day's terminal sessions at the 20-lakh figure, so steady state is never
+# capped and a missed night still catches up. Whatever does not fit is picked up
+# by the next run; ``capped`` in retention.purge.done says when that is
+# happening. A deployment that must drain a large one-off backlog faster should
+# raise this deliberately (it belongs in Settings the day that is needed) rather
+# than have the ceiling removed.
+MAX_SESSIONS_PER_RUN = 10_000
 
 
 def _chunked(items: list[uuid.UUID]) -> list[list[uuid.UUID]]:
@@ -249,8 +287,9 @@ async def purge_expired_sessions(db: AsyncSession, settings: Settings) -> int:
                   retention_dry_run and the S3 scorecard-bucket credentials.
 
     Returns:
-        The number of session rows that were deleted (live mode) or that WOULD
-        have been deleted (dry-run mode).
+        The number of session rows that were deleted (live mode, at most
+        ``MAX_SESSIONS_PER_RUN`` — the remainder is purged by the next run) or
+        that WOULD have been deleted (dry-run mode, uncapped: the whole backlog).
 
     Raises:
         StorageNotConfiguredError: object keys were collected but S3 is not
@@ -277,6 +316,12 @@ async def purge_expired_sessions(db: AsyncSession, settings: Settings) -> int:
             cutoff_iso=cutoff_iso,
             retention_days=settings.retention_days,
             statuses_purged=sorted(_PURGEABLE_STATUSES),
+            max_sessions_per_run=MAX_SESSIONS_PER_RUN,
+            # Deliberately NOT capped: dry-run's job is to report the true size of
+            # the backlog before an operator flips the flag. Reporting the cap
+            # instead would hide exactly the fact this field exists to surface —
+            # that the first live run will only take a batch off the front.
+            would_exceed_cap=deleted_count > MAX_SESSIONS_PER_RUN,
         )
         return deleted_count
 
@@ -288,9 +333,24 @@ async def purge_expired_sessions(db: AsyncSession, settings: Settings) -> int:
     # statements (a session completing mid-run enters the predicate on the next
     # statement's snapshot), and the scorecard whose objects we deleted would
     # then not be the scorecard whose row we delete.
+    #
+    # LIMIT MAX_SESSIONS_PER_RUN — see the constant for why a run must be bounded.
+    # The cap is applied HERE and nowhere else on purpose: every later step
+    # addresses this one materialised list, so collect-before-delete and the
+    # fail-closed shortfall check below cover the capped batch exactly as they
+    # covered the whole set. No ORDER BY: the rows are all equally due, and the
+    # only property that matters is that each run removes the batch it took, so
+    # successive runs make progress regardless of which rows Postgres returns.
     # ------------------------------------------------------------------
-    id_result = await db.execute(select(InterviewSession.id).where(predicate))
+    id_result = await db.execute(
+        select(InterviewSession.id).where(predicate).limit(MAX_SESSIONS_PER_RUN)
+    )
     session_ids: list[uuid.UUID] = list(id_result.scalars().all())
+    # A full batch means there is probably more waiting. "Probably" because a
+    # backlog of exactly the cap reports capped=True on its final run — the
+    # cheaper wrong answer, since the alternative is a second COUNT over the same
+    # predicate on every single run to be sure.
+    capped: bool = len(session_ids) >= MAX_SESSIONS_PER_RUN
 
     if not session_ids:
         log.info(
@@ -302,6 +362,8 @@ async def purge_expired_sessions(db: AsyncSession, settings: Settings) -> int:
             cutoff_iso=cutoff_iso,
             retention_days=settings.retention_days,
             statuses_purged=sorted(_PURGEABLE_STATUSES),
+            max_sessions_per_run=MAX_SESSIONS_PER_RUN,
+            capped=False,
         )
         return 0
 
@@ -356,5 +418,7 @@ async def purge_expired_sessions(db: AsyncSession, settings: Settings) -> int:
         cutoff_iso=cutoff_iso,
         retention_days=settings.retention_days,
         statuses_purged=sorted(_PURGEABLE_STATUSES),
+        max_sessions_per_run=MAX_SESSIONS_PER_RUN,
+        capped=capped,
     )
     return deleted_count

@@ -199,6 +199,10 @@ def test_a_universally_excessive_chain_warns_once_the_sample_completes() -> None
     assert mismatches[0]["log_level"] == "warning"
     assert mismatches[0]["configured_proxy_count"] == 1
     assert mismatches[0]["min_observed_hops"] == 2
+    assert mismatches[0]["direction"] == "configured_too_low"
+    # This is the ONE direction where "the minimum is the real hop count" holds,
+    # so it is the one direction allowed to name the value to configure.
+    assert "set TRUSTED_PROXY_COUNT to it" in mismatches[0]["detail"]
 
 
 def test_the_zero_configured_case_is_observed_too() -> None:
@@ -247,6 +251,41 @@ def test_the_verdict_is_emitted_exactly_once_per_process() -> None:
         in ("consent.client_ip.proxy_hop_mismatch", "consent.client_ip.proxy_hop_observation")
     ]
     assert len(verdicts) == 1
+
+
+def test_a_chain_shorter_than_configured_never_advises_lowering_the_count() -> None:
+    """The opposite mismatch: TRUSTED_PROXY_COUNT=3 with a one-hop chain.
+
+    ``min_observed >= real_hop_count`` always holds (clients only prepend), so a
+    minimum BELOW the configured value is an upper bound on the real chain, not a
+    measurement of it — and the too-high direction is the spoofable one, because
+    ``real_index = len(hops) - trusted_proxy_count`` lets a client that prepends
+    its way up to the configured length have its own entry returned. Emitting the
+    "set TRUSTED_PROXY_COUNT to min_observed_hops" remediation here would hand an
+    operator a number the sample cannot justify.
+    """
+    import structlog
+
+    with structlog.testing.capture_logs() as logs:
+        _drive("198.51.100.7", 3, request_ip._HOP_SAMPLE_SIZE)
+
+    mismatches = [e for e in logs if e["event"] == "consent.client_ip.proxy_hop_mismatch"]
+    assert len(mismatches) == 1
+    assert mismatches[0]["direction"] == "configured_too_high"
+    assert mismatches[0]["configured_proxy_count"] == 3
+    assert mismatches[0]["min_observed_hops"] == 1
+    assert "set TRUSTED_PROXY_COUNT to it" not in mismatches[0]["detail"]
+    assert "Do NOT simply lower" in mismatches[0]["detail"]
+
+
+def test_the_too_high_direction_is_spoofable_which_is_why_it_reads_differently() -> None:
+    """Pins the fact the new message asserts. With one real proxy and
+    TRUSTED_PROXY_COUNT=2, a client that prepends one entry has that entry
+    returned verbatim as the client IP — so the remediation for this direction is
+    "check the real chain", never "lower the number to whatever was observed"."""
+    forged = request_ip.get_client_ip(_request(xff="9.9.9.9, 198.51.100.7"), 2)
+
+    assert forged == "9.9.9.9"
 
 
 def test_header_less_requests_do_not_pin_the_minimum_at_zero() -> None:

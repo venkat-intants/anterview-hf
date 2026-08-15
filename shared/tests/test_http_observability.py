@@ -5,6 +5,9 @@ implementation detail:
 
 * an unhandled exception produces a **generic** body — the asyncpg leak in
   ``str(exc)`` carries the SQL *and its parameter values* (CWE-209);
+* the same leak does not simply move into the log field: ``exc_msg`` is masked
+  and length-capped at the call site, because the structlog PII processor is
+  key-based and cannot see inside a value (DPDP §8);
 * an unhandled exception is nevertheless **counted as a 500**, because the alert
   every team writes first is "5xx are climbing" and on three of four services
   that series structurally could not exist;
@@ -27,8 +30,13 @@ from fastapi.testclient import TestClient
 from prometheus_client import CollectorRegistry
 
 from shared.http_observability import (
+    _MAX_EXC_MSG_CHARS,
+    _REDACTED,
+    _SCAN_WINDOW_CHARS,
+    _TRUNCATION_MARKER,
     UNKNOWN_METHOD,
     UNMATCHED_PATH,
+    _safe_exc_message,
     install_http_observability,
 )
 
@@ -152,7 +160,7 @@ def test_unknown_request_method_collapses_to_one_constant_label(
 
 
 # ---------------------------------------------------------------------------
-# XS-01 — the 500 path: generic body out, full detail to the log, counted
+# XS-01 — the 500 path: generic body out, MASKED detail to the log, counted
 # ---------------------------------------------------------------------------
 
 
@@ -188,18 +196,223 @@ def test_unhandled_exception_is_counted_exactly_once(
     assert _count(registry, "/boom", "500") == 2
 
 
-def test_unhandled_exception_detail_reaches_the_log(client: TestClient) -> None:
-    """The operator must lose nothing that the client was denied."""
+def test_unhandled_exception_detail_reaches_the_log_without_the_pii(
+    client: TestClient,
+) -> None:
+    """The operator keeps the diagnosis; the candidate's address does not travel.
+
+    INVERTED. This test previously pinned the opposite — it asserted
+    ``exc_msg == _DRIVER_LEAK``, i.e. that a candidate e-mail address reached the
+    log record, and called that "the operator must lose nothing that the client
+    was denied". The module docstring justified it by pointing at the structlog
+    PII processor, but ``shared/observability/pii.py`` matches on KEY NAME and
+    ``exc_msg`` is not one of those keys, so nothing was redacting it. Denying
+    the SQL to the client and then writing it to the log stream relocates a DPDP
+    §8 problem rather than fixing it.
+    """
     with structlog.testing.capture_logs() as logs:
         client.get("/boom")
 
     events = [entry for entry in logs if entry["event"] == "http.unhandled_exception"]
     assert len(events) == 1
-    assert events[0]["exc_type"] == "RuntimeError"
-    assert events[0]["exc_msg"] == _DRIVER_LEAK
-    assert events[0]["path"] == "/boom"
-    assert events[0]["service"] == _SERVICE
-    assert events[0]["log_level"] == "error"
+    event = events[0]
+
+    # The half an operator needs: what broke, and where.
+    assert event["exc_type"] == "RuntimeError"
+    assert event["path"] == "/boom"
+    assert event["service"] == _SERVICE
+    assert event["log_level"] == "error"
+    # Double-quoted identifiers are the diagnosis and must survive intact.
+    assert 'relation "sessions" does not exist' in event["exc_msg"]
+
+    # The half that must not travel.
+    assert "candidate@example.com" not in event["exc_msg"]
+    assert _REDACTED in event["exc_msg"]
+    # Belt and braces: no other field on the record smuggled it either.
+    assert "candidate@example.com" not in repr(event)
+
+
+def test_log_record_is_not_saved_by_the_structlog_pii_processor(
+    client: TestClient,
+) -> None:
+    """The masking must be at the call site, because the processor cannot help.
+
+    ``redact_pii_processor`` pops known PII *keys* off the event dict. Run it
+    over the record this handler produces and it changes nothing — which is
+    exactly why ``exc_msg`` had to be scrubbed before it was ever bound.
+    """
+    from shared.observability.pii import redact_pii_processor
+
+    with structlog.testing.capture_logs() as logs:
+        client.get("/boom")
+
+    event = next(e for e in logs if e["event"] == "http.unhandled_exception")
+    assert "exc_msg" in redact_pii_processor(None, "error", dict(event))
+
+
+@pytest.mark.parametrize(
+    ("raw", "must_go", "must_stay"),
+    [
+        # asyncpg renders bound parameters as single-quoted literals.
+        (
+            "INSERT INTO users (email) VALUES ('candidate@example.com')",
+            "candidate@example.com",
+            "INSERT INTO users",
+        ),
+        # A unique-violation DETAIL leaves the offending value UNQUOTED, so the
+        # literal rule alone would miss it. The column name stays: it is what
+        # makes the error actionable.
+        (
+            'duplicate key value violates unique constraint "users_email_key"\n'
+            "DETAIL:  Key (email)=(ravi@example.com) already exists.",
+            "ravi@example.com",
+            '"users_email_key"',
+        ),
+        # Non-e-mail PII in the same unquoted position: a phone number.
+        (
+            "DETAIL:  Key (phone)=(9876543210) already exists.",
+            "9876543210",
+            "(phone)",
+        ),
+        # A name has no lexical shape of its own — the =(...) rule is what
+        # catches it.
+        (
+            "DETAIL:  Key (full_name)=(Ravi Kumar) already exists.",
+            "Ravi Kumar",
+            "(full_name)",
+        ),
+        # Bare digit runs (roll number, Aadhaar) outside any delimiter.
+        (
+            "no row for candidate 200412345678 in cohort 7",
+            "200412345678",
+            "cohort 7",
+        ),
+    ],
+)
+def test_value_shapes_are_masked_but_identifiers_survive(
+    raw: str, must_go: str, must_stay: str
+) -> None:
+    scrubbed = _safe_exc_message(RuntimeError(raw))
+
+    assert must_go not in scrubbed
+    assert must_stay in scrubbed
+    assert _REDACTED in scrubbed
+
+
+@pytest.mark.parametrize(
+    ("raw", "must_go", "must_stay"),
+    [
+        # The measured leak: the apostrophe in "candidate's" paired with the
+        # opening quote of the literal, so the rule masked `'s stored name '` and
+        # emitted the name that followed it.
+        (
+            "candidate's stored name 'Ravi Kumar' is invalid",
+            "Ravi Kumar",
+            "candidate's",
+        ),
+        (
+            'relation "users" doesn\'t exist: INSERT INTO users VALUES (\'Ravi Kumar\')',
+            "Ravi Kumar",
+            "doesn't exist",
+        ),
+        (
+            "can't bind parameter $1 = 'ravi@example.com'",
+            "ravi@example.com",
+            "can't bind parameter",
+        ),
+    ],
+)
+def test_a_prose_apostrophe_does_not_unpair_the_literal_rule(
+    raw: str, must_go: str, must_stay: str
+) -> None:
+    """A contraction is not a delimiter, and misreading one shifts every pair."""
+    scrubbed = _safe_exc_message(RuntimeError(raw))
+
+    assert must_go not in scrubbed
+    assert must_stay in scrubbed
+
+
+def test_a_postgres_doubled_quote_escape_over_redacts_rather_than_leaks() -> None:
+    """Postgres escapes a quote inside a literal by doubling it: ``'it''s'``.
+
+    The pairwise rule reads that as two adjacent literals and masks both, which
+    is over-redaction — the direction this module picks on purpose. What the pin
+    is really for is the apostrophe parking added for prose contractions: ``''``
+    has no word character between its two quotes, so the parking must not reach
+    into escaped SQL and turn this case into a leak.
+    """
+    scrubbed = _safe_exc_message(RuntimeError("bad literal 'it''s Ravi'"))
+
+    assert "Ravi" not in scrubbed
+    assert "bad literal" in scrubbed
+
+
+def test_an_address_whose_local_part_has_an_apostrophe_is_masked_whole() -> None:
+    """Half an address is still personal data, and still identifies the person."""
+    scrubbed = _safe_exc_message(RuntimeError("no user for o'brien@example.com"))
+
+    assert scrubbed == f"no user for {_REDACTED}"
+
+
+def test_a_literal_with_no_closing_quote_is_still_masked() -> None:
+    """The scan window can cut a literal mid-value; our own cut must not expose it."""
+    scrubbed = _safe_exc_message(RuntimeError("bound arg 1: 'Ravi Kumar"))
+
+    assert "Ravi Kumar" not in scrubbed
+    assert "bound arg 1" in scrubbed
+
+
+def test_exception_text_is_length_capped() -> None:
+    """str(exc) is unbounded; a 500 in a retry loop must not fill the log store."""
+    scrubbed = _safe_exc_message(RuntimeError("boom " + "a" * 10_000))
+
+    assert len(scrubbed) == _MAX_EXC_MSG_CHARS + len(_TRUNCATION_MARKER)
+    assert scrubbed.endswith(_TRUNCATION_MARKER)
+
+
+def test_nothing_past_the_scan_window_can_reach_the_log() -> None:
+    """Masking runs before the cap, so it must not run over an unbounded string.
+
+    The window makes the emitted text a prefix of a string that was *fully*
+    masked: a huge literal early in the message collapses to nine characters, and
+    the address sitting past the window is dropped outright rather than pulled
+    into view unscanned.
+    """
+    raw = "'" + "x" * _SCAN_WINDOW_CHARS + "' candidate@example.com"
+
+    scrubbed = _safe_exc_message(RuntimeError(raw))
+
+    assert "candidate@example.com" not in scrubbed
+    assert scrubbed.endswith(_TRUNCATION_MARKER)
+    assert len(scrubbed) <= _MAX_EXC_MSG_CHARS + len(_TRUNCATION_MARKER)
+
+
+def test_masking_happens_before_truncation() -> None:
+    """Order matters: truncating first can leave half an address behind.
+
+    With the cap applied first, an address straddling the boundary is cut into a
+    fragment that is still personal data. Masking first removes it whole.
+    """
+    raw = "a" * (_MAX_EXC_MSG_CHARS - 20) + " candidate@example.com"
+
+    scrubbed = _safe_exc_message(RuntimeError(raw))
+
+    assert "candidate" not in scrubbed
+    assert scrubbed.endswith(_REDACTED)
+
+
+def test_an_exception_that_cannot_be_stringified_does_not_break_the_handler() -> None:
+    """This handler is the last thing that can fail; a broken __str__ must not.
+
+    If ``str(exc)`` raised here, Starlette would fall back to the bare ASGI 500
+    whose body is the CWE-209 leak this module exists to replace.
+    """
+
+    class UnprintableError(RuntimeError):
+        def __str__(self) -> str:
+            raise ValueError("nope")
+
+    assert _safe_exc_message(UnprintableError()) == "<unprintable UnprintableError>"
 
 
 def test_exception_still_propagates_to_the_server(registry: CollectorRegistry) -> None:

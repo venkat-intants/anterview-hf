@@ -104,7 +104,9 @@ class Settings(BaseSettings):
         recursion bug.
         """
         object.__setattr__(
-            self, "database_ssl", validate_database_ssl(self.app_env, self.database_ssl)
+            self,
+            "database_ssl",
+            validate_database_ssl(self.app_env, self.database_ssl, self.database_url),
         )
         return self
 

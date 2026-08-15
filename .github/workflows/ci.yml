@@ -486,6 +486,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # actions/checkout leaves the job's GITHUB_TOKEN in .git/config as an
+          # http.extraheader, where every later step can read it. This job runs
+          # pip installs and a bandit scan and never talks to git again after the
+          # clone, so the token has no job to do after checkout — dropping it
+          # removes the thing a compromised transitive dependency would go
+          # looking for. The workflow-level `permissions: contents: read` caps
+          # what that token could do; this removes the token itself.
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -690,11 +699,17 @@ jobs:
 
       - name: Test
         working-directory: web
-        # A vitest suite CI never ran — 262 tests when this step was added,
-        # 326 across 28 files earlier on 2026-08-07, 504 across 44 files after
-        # that day's console/page suites landed. The number is re-measured
-        # rather than left standing, because a count in a comment is exactly
-        # the kind of claim this file keeps finding has outlived its code.
+        # The vitest suite, which CI did not run at all until this step existed.
+        #
+        # This comment used to carry the test COUNT and re-measure it on every
+        # touch: 262 when the step was added, then 326/28 files, then 504/44.
+        # It was 534 across 46 files by 2026-08-09 — stale a fourth time, and
+        # stale again the moment anyone adds a test. A literal that every
+        # correct change invalidates is a stale-claim generator, and this file's
+        # own rule is that a claim which has outlived its code is a defect. The
+        # count is dropped rather than reset for a fifth time: it was never the
+        # load-bearing fact. What matters is that `npm test` runs here at all,
+        # and vitest reports its own totals in the log where they cannot drift.
         run: npm test
 
       - name: Build
@@ -848,6 +863,15 @@ jobs:
         image: [space, data_gateway, interview_core, feedback_billing, admin_ops]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Same reasoning as the `invariants` job, plus one this job owns
+          # alone: `context: .` ships the whole checkout to the build daemon,
+          # so a persisted token in .git/config would travel into the daemon's
+          # context and, if anything ever COPYd it, into a layer and the shared
+          # gha cache. The root .dockerignore excludes .git/, so that path is
+          # already shut — this closes the other half, since nothing after the
+          # clone (buildx, trivy) authenticates to git.
+          persist-credentials: false
       - uses: docker/setup-buildx-action@v3
 
       - name: Resolve the Dockerfile for this leg

@@ -474,7 +474,7 @@ async def _lookup_session(room_name: str) -> SessionContext:
     # defaults instead of propagating the exception to the avatar start path.
     try:
         with contextlib.suppress(Exception):
-            init_engine()  # idempotent-safe; builds the engine in this worker proc
+            init_engine()  # idempotent: builds once per worker proc, then reuses
         sid = _uuid_mod.UUID(room_name)
     except ValueError:
         return SessionContext()

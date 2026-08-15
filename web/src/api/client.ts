@@ -14,6 +14,8 @@
 //    and sends it as the X-CSRF-Token header (required by the backend).
 //  - Mock mode: when VITE_USE_MOCK=true the refresh endpoint is never hit; callers
 //    rely on mock data paths instead.
+//  - The XHR upload path carries a payload-sized deadline (see uploadTimeoutMs)
+//    because XHR's default is "wait forever", which strands the upload UI.
 //  - Three transports share that one refresh primitive: clientFetch (JSON),
 //    fetchBlobWithAuth (binary downloads) and uploadWithProgress (XHR multipart,
 //    the only one that can report upload progress). They differ in body handling
@@ -388,6 +390,56 @@ interface XhrResult {
   responseText: string;
 }
 
+// ---------------------------------------------------------------------------
+// Upload deadline
+// ---------------------------------------------------------------------------
+//
+// `xhr.timeout` defaults to 0 — no limit. A socket that dies AFTER send() (lid
+// closed, captive portal, a load balancer dropping the connection without an
+// RST) then fires neither `onload` nor `onerror`, so the promise never settles
+// and the upload UI sits at whatever percentage it reached, forever, with no
+// way back except a page reload. Everything below exists to guarantee the
+// promise settles.
+//
+// The deadline is derived from the payload rather than being one flat number,
+// because the permitted request sizes span two orders of magnitude:
+//   • exam import       2 MB        (data_gateway/app/routers/hr_exams.py)
+//   • resume            5 MB        (routers/resume.py, routers/hr_applicants.py)
+//   • JD               10 MB        (routers/jd.py)
+//   • bulk applicants  25 × 5 MB = 125 MB  (hr_applicants.py _MAX_BULK_FILES)
+// One constant that does not abort a legitimate 125 MB batch would be ~20
+// minutes, which for the common case (a 300 KB resume) is barely better than
+// no limit at all.
+
+/** Slowest uplink we still treat as a working connection: 1 Mbps ≈ 125 KB/s. */
+const MIN_UPLOAD_BYTES_PER_SEC = 125 * 1024;
+
+/**
+ * Time allowed on top of the transfer for the server's own work. The worst
+ * case is the bulk-applicant endpoint: it extracts, stores and ATS-scores each
+ * of up to 25 resumes SEQUENTIALLY after the body has arrived (~10 s each), and
+ * emits no upload progress while it does — which is also why this is a total
+ * deadline rather than a tighter no-bytes-moved inactivity timer, which would
+ * abort those batches mid-scoring.
+ */
+const UPLOAD_SERVER_GRACE_MS = 5 * 60_000;
+
+/**
+ * Deadline for one multipart POST: server grace plus the time the body itself
+ * needs on a bad link. A 300 KB resume gets ~5 min; a full 125 MB batch gets
+ * ~22 min. Both are a backstop against a hung socket, not a responsiveness
+ * target — a link healthy enough to be worth waiting on beats them easily.
+ */
+export function uploadTimeoutMs(formData: FormData): number {
+  let bytes = 0;
+  // Strings are the accompanying form fields (job title, level, JD text) and
+  // are negligible next to the files; only Blob/File entries carry a size.
+  formData.forEach((value) => {
+    if (typeof value !== 'string') bytes += value.size;
+  });
+  return UPLOAD_SERVER_GRACE_MS + Math.ceil((bytes / MIN_UPLOAD_BYTES_PER_SEC) * 1000);
+}
+
 /**
  * One multipart POST over XHR. Resolves for EVERY HTTP status (including 401)
  * and rejects only on a transport failure, so the caller — not this function —
@@ -419,7 +471,21 @@ function sendMultipartXhr(
       reject(new Error('Network error — could not reach server'));
     };
 
+    xhr.ontimeout = () => {
+      // Actionable, because the user's only lever is the connection or a
+      // smaller batch — the file was already accepted by the client-side size
+      // check, so "file too large" would be a lie.
+      reject(
+        new Error('Upload timed out — check your connection and try again with fewer files.'),
+      );
+    };
+
     xhr.open('POST', url);
+    // After open(), which is where every XHR implementation accepts it.
+    // A rejection here surfaces to uploadWithProgress's caller exactly like the
+    // onerror path; it never masks a 401, and the refresh retry builds a fresh
+    // XHR and so starts a fresh deadline.
+    xhr.timeout = uploadTimeoutMs(formData);
     // Do NOT set Content-Type — browser sets multipart/form-data with boundary
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`);

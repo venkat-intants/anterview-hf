@@ -110,10 +110,19 @@ describe('nav role scoping', () => {
     }
   });
 
-  it('sends a multi-role user to their most-privileged home', () => {
+  it('resolves a multi-role user by HOME_BY_ROLE order, not by role label', () => {
+    // Renamed from "…their most-privileged home", which was not what the third
+    // case asserts and read as a contradiction of AppShell's ROLE_PRIORITY —
+    // that list ranks `admin` above `hr_manager` for the display label.
     expect(homePathFor(['platform_owner', 'admin'])).toBe('/platform');
-    expect(homePathFor(['admin', 'hr_manager'])).toBe('/hr');
     expect(homePathFor(['candidate', 'hr_manager'])).toBe('/hr');
+
+    // The deliberate divergence, pinned so it is a decision rather than drift:
+    // this user is LABELLED "Platform Admin" and lands on /hr. `admin` is the
+    // analytics role and sits outside the hierarchy (CLAUDE.md), so for someone
+    // who also runs hiring, the hiring console is the useful place to open.
+    // See the HOME_BY_ROLE comment in navSections.tsx.
+    expect(homePathFor(['admin', 'hr_manager'])).toBe('/hr');
   });
 
   it('gives every staff role a home inside a section it can see', () => {

@@ -49,6 +49,29 @@ configuration (`render.yaml`, `services/*/Dockerfile`, `space/`)
 >    does not run it. JDoodle is now on the third-party processor register and
 >    the switch is one env var.
 >
+> ### One risk ADDED by the remediation — AR-4, not one of the 47
+>
+> [`ACCEPTED-RISKS.md`](ACCEPTED-RISKS.md) carries a fourth open entry, **AR-4**,
+> and it is deliberately *not* counted above. The 47 findings and the "three not
+> fixed" both stand. AR-4 is the residue of fixing **AG-06**: correcting the
+> D-ID text in `Final_stack.md` is what exposed two gaps the wrong document had
+> been concealing —
+>
+> 1. **No production avatar gate.** The gate AG-06 described was written for
+>    D-ID and was never rebuilt for Tavus or Simli. `_build_avatar()` selects
+>    purely on `AVATAR_PROVIDER` and never reads `APP_ENV`.
+> 2. **`AVATAR_PROVIDER=custom` is unimplemented.** The value is settable and
+>    the worker boots; it logs an unknown-provider warning and returns a Simli
+>    session — so a bid deploy setting `custom` to opt OUT of US-hosted avatars
+>    gets a US-hosted avatar.
+>
+> Counted as an addition rather than folded into the 47 because it was not
+> visible at `d1dd630` — the document said the opposite. **It carries the same
+> government-deployment blocker status as DPDP-3:** no APSSDC submission on this
+> stack at any `AVATAR_PROVIDER` value, and closing it needs the Tier-2 renderer
+> built, not a config change. Owner `cto-architect`; see `Final_stack.md` TIER 1B
+> standing condition 1.
+>
 > ### Found during remediation
 >
 > - **DPDP-2 needed `pgvector/pgvector:pg16`, not stock `postgres:16`** — the

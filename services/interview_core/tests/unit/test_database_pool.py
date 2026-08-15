@@ -34,7 +34,14 @@ LOCAL_URL = "postgresql+asyncpg://u:p@localhost:5432/db"
 
 @pytest_asyncio.fixture()
 async def clean_engine() -> AsyncGenerator[None, None]:
-    """Dispose whatever engine the test built so it cannot leak into the suite."""
+    """Start and finish with no engine on the module.
+
+    Disposing on the way IN matters now that ``init_engine()`` is idempotent:
+    an engine left behind by anything earlier in the suite would be returned
+    unchanged, and these tests would then assert the pool class of some other
+    test's DSN instead of the one they just monkeypatched.
+    """
+    await database_mod.dispose_engine()
     yield
     await database_mod.dispose_engine()
 
@@ -96,3 +103,86 @@ async def test_session_factory_refuses_before_init(
     monkeypatch.setattr(database_mod, "_session_factory", None)
     with pytest.raises(RuntimeError, match="not initialised"):
         database_mod.get_session_factory()
+
+
+# ---------------------------------------------------------------------------
+# Idempotence
+#
+# ``build_engine`` returns a NEW engine with a NEW pool on every call. The
+# worker's DB helpers call ``init_engine()`` before every single operation, so
+# without idempotence each persisted turn, status read and consent lookup would
+# orphan the previous engine — undisposed, its pooled sockets held open until
+# the GC finalised them — and a worker process that lives for days would climb
+# towards the database's max_connections.
+# ---------------------------------------------------------------------------
+
+
+async def test_init_engine_twice_reuses_the_same_engine(
+    monkeypatch: pytest.MonkeyPatch, clean_engine: None
+) -> None:
+    """A second ``init_engine()`` must return the first engine, not build another."""
+    first = _engine(DIRECT_URL, "require", monkeypatch)
+    first_factory = database_mod.get_session_factory()
+
+    database_mod.init_engine()
+
+    assert database_mod._engine is first
+    # The sessionmaker is rebuilt alongside the engine, so it must not be
+    # replaced either — a swapped factory would strand any session in flight.
+    assert database_mod.get_session_factory() is first_factory
+
+
+async def test_worker_call_pattern_does_not_accumulate_engines(
+    monkeypatch: pytest.MonkeyPatch, clean_engine: None
+) -> None:
+    """The worker's per-operation defensive call must build exactly one engine.
+
+    Counting ``build_engine`` calls rather than comparing identities is the
+    assertion that actually fails if someone reinstates the unconditional
+    rebind: identity would still hold for the LAST engine built.
+    """
+    builds: list[int] = []
+    real_build = database_mod.build_engine
+
+    def _counting_build(
+        *, database_url: str, database_ssl: str, pool_size: int
+    ) -> AsyncEngine:
+        builds.append(1)
+        return real_build(
+            database_url=database_url,
+            database_ssl=database_ssl,
+            pool_size=pool_size,
+        )
+
+    monkeypatch.setattr(settings, "database_url", DIRECT_URL)
+    monkeypatch.setattr(settings, "database_ssl", "require")
+    monkeypatch.setattr(database_mod, "build_engine", _counting_build)
+
+    # Five helpers firing on one interview's close path.
+    for _ in range(5):
+        database_mod.init_engine()
+
+    assert len(builds) == 1
+
+
+async def test_dispose_then_init_builds_a_fresh_engine(
+    monkeypatch: pytest.MonkeyPatch, clean_engine: None
+) -> None:
+    """Disposal is the supported way to swap engines — the lifespan relies on it.
+
+    A shutdown/startup cycle (or a test changing the DSN) must get an engine
+    built from the CURRENT settings, otherwise idempotence would pin the process
+    to whatever engine it first built.
+    """
+    first = _engine(POOLED_URL, "require", monkeypatch)
+    assert isinstance(first.pool, NullPool)
+
+    await database_mod.dispose_engine()
+    # Disposal clears the sessionmaker too: a factory bound to a disposed engine
+    # would hand out sessions that fail at their first query.
+    with pytest.raises(RuntimeError, match="not initialised"):
+        database_mod.get_session_factory()
+
+    second = _engine(LOCAL_URL, "", monkeypatch)
+    assert second is not first
+    assert isinstance(second.pool, QueuePool)

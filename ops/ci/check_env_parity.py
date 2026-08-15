@@ -40,12 +40,14 @@ What is checked
    the HF Space boot path) every required field of every service they run must be
    supplied — or, for the Space, at least named in ``entrypoint.sh``'s
    ``REQUIRED=()`` array, which is what turns a five-service crash-loop into one
-   readable message. ``docker-compose*.yml`` is exempt: it loads
-   ``services/<svc>/.env``, which is not in the repo, so absence there proves
-   nothing.
+   readable message. Checked per **deployed process**, not per code service:
+   Render's API entry and worker entry share one Dockerfile but each gets only
+   the keys its own entry lists, so a key present on one is nothing the other can
+   read. ``docker-compose*.yml`` is exempt: it loads ``services/<svc>/.env``,
+   which is not in the repo, so absence there proves nothing.
 4. **Alias-group coverage.** Where the services genuinely disagree on the name
-   for one resource (see ``ALIAS_GROUPS``), a target that supplies any spelling
-   must supply all of them. This is the DEP-ROOT re-arm guard: delete
+   for one resource (see ``ALIAS_GROUPS``), a deployed process that gets any
+   spelling must get all of them. This is the DEP-ROOT re-arm guard: delete
    ``S3_ENDPOINT_URL`` from ``render.yaml`` and this turns red instead of the
    scorecard bucket going quiet in production.
 
@@ -165,12 +167,50 @@ def parse_settings_fields(service: str) -> dict[str, bool]:
     sys.exit(f"FAIL: services/{service}/app/config.py declares no `class Settings`.")
 
 
-def parse_render(text: str) -> tuple[dict[str, set[str]], set[str], dict[str, str]]:
-    """``render.yaml`` -> (per-service keys, shared-group keys, service -> label).
+class RenderInstance(NamedTuple):
+    """One entry under ``render.yaml``'s ``services:`` — one deployed process."""
+
+    label: str
+    """The blueprint ``name:``, e.g. ``intants-interview-worker``."""
+    service: str
+    """The code service, resolved from ``dockerfilePath``."""
+    env: set[str]
+    """Everything THIS entry gets: its own ``envVars`` plus the groups it joins.
+
+    Deliberately not shared with the sibling entry that builds the same image.
+    Render hands each entry only the keys it lists, so two processes off one
+    Dockerfile can have genuinely different environments — see ``Render.own``.
+    """
+
+
+class Render(NamedTuple):
+    """``render.yaml`` split by the granularity each check actually needs."""
+
+    instances: list[RenderInstance]
+    """Per-entry effective environments — the unit a required field must exist in."""
+    own: dict[str, set[str]]
+    """``{code_service: keys set directly on ANY entry for it}``.
+
+    A union on purpose, and only sound for the orphan check: a key that no
+    ``Settings`` field declares is an orphan whichever entry set it.
+    """
+    pool: set[str]
+    """Every key of every referenced ``envVarGroup``, for the pool-orphan check."""
+
+
+def parse_render(text: str) -> Render:
+    """``render.yaml`` -> per-entry environments + the aggregates the pools need.
 
     A Render service is tied to a code service by its ``dockerfilePath``; the
     blueprint's own ``name:`` is cosmetic and two entries (the API and the
     worker) legitimately share one Dockerfile.
+
+    They do NOT, however, share an environment, and collapsing them into one
+    per-code-service set is how this gate went blind: the API entry supplying a
+    required key made the union look complete while the worker entry — a
+    separate process, with its own ``envVars`` list — still had nothing to read
+    and aborted at import. So each entry is kept as its own ``RenderInstance``
+    and the aggregates below are used only where a union is the correct model.
     """
     doc: dict[str, Any] = yaml.safe_load(text) or {}
     groups = {
@@ -178,8 +218,8 @@ def parse_render(text: str) -> tuple[dict[str, set[str]], set[str], dict[str, st
         for group in doc.get("envVarGroups", [])
     }
 
-    per_service: dict[str, set[str]] = {}
-    labels: dict[str, str] = {}
+    instances: list[RenderInstance] = []
+    own_by_service: dict[str, set[str]] = {}
     pool: set[str] = set()
     for svc in doc.get("services", []):
         match = re.search(r"services/([a-z_]+)/Dockerfile", svc.get("dockerfilePath", "") or "")
@@ -188,13 +228,18 @@ def parse_render(text: str) -> tuple[dict[str, set[str]], set[str], dict[str, st
             # with. VITE_* are inlined at build time, not read at runtime.
             continue
         code_service = match.group(1)
-        own = {entry["key"] for entry in svc.get("envVars", []) if "key" in entry}
-        per_service.setdefault(code_service, set()).update(own)
-        labels.setdefault(code_service, svc.get("name", code_service))
-        for entry in svc.get("envVars", []):
+        entries = svc.get("envVars", []) or []
+        own = {entry["key"] for entry in entries if "key" in entry}
+        joined: set[str] = set()
+        for entry in entries:
             if "fromGroup" in entry:
-                pool |= groups.get(entry["fromGroup"], set())
-    return per_service, pool, labels
+                joined |= groups.get(entry["fromGroup"], set())
+        own_by_service.setdefault(code_service, set()).update(own)
+        pool |= joined
+        instances.append(
+            RenderInstance(svc.get("name", code_service), code_service, own | joined)
+        )
+    return Render(instances, own_by_service, pool)
 
 
 class Space(NamedTuple):
@@ -275,7 +320,7 @@ def main() -> int:
     fields = {service: parse_settings_fields(service) for service in SERVICES}
     declared_anywhere = set().union(*(set(f) for f in fields.values()))
 
-    render_per_service, render_pool, render_labels = parse_render(_read(RENDER_YAML))
+    render = parse_render(_read(RENDER_YAML))
     space = parse_space(_read(ENTRYPOINT_SH), _read(SUPERVISORD_CONF))
 
     problems: list[str] = []
@@ -302,7 +347,7 @@ def main() -> int:
                     f'extra="ignore" drops it silently — the service runs on the default.',
                 )
 
-    check_orphans("render", render_per_service, "render.yaml")
+    check_orphans("render", render.own, "render.yaml")
     check_orphans("space", space.per_program, "space/supervisord.conf")
     for compose in sorted(REPO_ROOT.glob(COMPOSE_GLOB)):
         # env_file supplies the rest, so only what compose sets INLINE is checkable.
@@ -310,7 +355,7 @@ def main() -> int:
 
     # --- 2. pool orphans --------------------------------------------------- #
     for target, pool, where in (
-        ("render", render_pool, "render.yaml envVarGroups"),
+        ("render", render.pool, "render.yaml envVarGroups"),
         ("space", space.pool, "space/entrypoint.sh"),
     ):
         for name in sorted(pool - declared_anywhere - NON_SETTINGS_NAMES - space.machinery_refs):
@@ -323,20 +368,30 @@ def main() -> int:
             )
 
     # --- 3. required fields are actually supplied -------------------------- #
-    for service in SERVICES:
-        required = sorted(name for name, is_required in fields[service].items() if is_required)
-        supplied_render = render_per_service.get(service, set()) | render_pool
-        supplied_space = space.pool | space.per_program.get(service, set())
-        for name in required:
-            if service in render_per_service and name not in supplied_render:
+    # Render deploys one process per blueprint ENTRY and gives it only the keys
+    # that entry lists, so each entry is validated on its own environment. The
+    # union across entries that share a Dockerfile is NOT available to any of
+    # them, and treating it as if it were is what let a worker deploy with a
+    # required field the sibling API entry happened to supply.
+    for instance in render.instances:
+        declared = fields.get(instance.service, {})
+        for name in sorted(n for n, is_required in declared.items() if is_required):
+            if name not in instance.env:
                 report(
                     "render",
-                    service,
+                    instance.service,
                     name,
-                    f"render.yaml: {render_labels.get(service, service)} runs {service}, "
-                    f"which requires {name} (no default — the process aborts at import), "
-                    "and the blueprint never supplies it.",
+                    f"render.yaml: {instance.label} runs {instance.service}, which requires "
+                    f"{name} (no default — the process aborts at import), and that entry "
+                    "supplies it neither in its own envVars nor through a group it joins.",
                 )
+
+    # The Space runs all five programs in ONE container off one exported
+    # environment, so there the pool really is shared and per-service is the
+    # right granularity.
+    for service in SERVICES:
+        supplied_space = space.pool | space.per_program.get(service, set())
+        for name in sorted(n for n, is_required in fields[service].items() if is_required):
             if name not in supplied_space:
                 report(
                     "space",
@@ -348,10 +403,16 @@ def main() -> int:
                 )
 
     # --- 4. alias groups --------------------------------------------------- #
-    supply_by_target = {
-        "render": render_pool | set().union(*render_per_service.values()),
-        "space": space.pool | space.shell_refs | set().union(*space.per_program.values()),
-    }
+    # Same granularity argument as check 3: an alias spelling has to reach the
+    # process whose Settings declares it, and a sibling Render entry holding the
+    # other spelling is no help to it. The Space is one unit for the same reason
+    # as above.
+    supply_units: list[tuple[str, set[str]]] = [
+        (f"render.yaml ({instance.label})", instance.env) for instance in render.instances
+    ]
+    supply_units.append(
+        ("space", space.pool | space.shell_refs | set().union(*space.per_program.values()))
+    )
     for label, spellings in sorted(ALIAS_GROUPS.items()):
         undeclared = sorted(spellings - declared_anywhere)
         if undeclared:
@@ -361,7 +422,7 @@ def main() -> int:
                 "alias group makes this gate assert a divergence that no longer exists."
             )
             continue
-        for target, supplied in sorted(supply_by_target.items()):
+        for target, supplied in sorted(supply_units, key=lambda unit: unit[0]):
             present = spellings & supplied
             if present and present != spellings:
                 missing = ", ".join(sorted(spellings - present))

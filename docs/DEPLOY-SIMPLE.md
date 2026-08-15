@@ -1,22 +1,70 @@
-# Deploy Guide (Simple English)
+# Deploy Guide — Railway + Vercel (HISTORICAL RECORD)
 
-> ⚠️ **DEPRECATED / LEGACY — not the current deploy path.** This Railway + Vercel
-> guide is superseded by **[DEPLOY-ORACLE.md](DEPLOY-ORACLE.md)** (single Oracle
-> Cloud VM behind Caddy TLS + Vercel). It is kept for historical reference only;
-> its routing (`vercel.json` rewrites) and cross-origin assumptions no longer
-> match the app. Follow DEPLOY-ORACLE.md instead.
+> ## ⚠️ SUPERSEDED 2026-08-07 — do not follow this guide for a deploy.
+>
+> **Railway is not a supported deploy target.** Everything below section 1 is a
+> record of the Railway + Vercel setup as it was; it is not maintained and it is
+> not verified against the app at HEAD. Its `vercel.json` rewrite routing and
+> cross-origin assumptions no longer match the frontend, and nothing in CI
+> exercises this path.
+>
+> *(Date note: 2026-08-07 is when the supersession was recorded in the tree. The
+> Railway deploy itself was retired earlier — the exact date is **unverified**,
+> because the repository history before 2026-07-05 was squashed at import.)*
+>
+> **Deploy targets that are actually current:**
+>
+> | Target | Guide | What it is |
+> |---|---|---|
+> | **Hugging Face Space** ← the live one | [`../README.md`](../README.md) | All six processes in one free Docker Space, configured by `space/entrypoint.sh` + `space/supervisord.conf` + `space/Caddyfile`, deployed by `.github/workflows/sync-to-space.yml` on every green `main` build. |
+> | Self-hosted VM | [`DEPLOY-ORACLE.md`](DEPLOY-ORACLE.md) | One Oracle Cloud free VM running `docker-compose.prod.yml` behind Caddy TLS, set up by `scripts/oracle-setup.sh`. |
+> | Tier-2 production | [`Final_stack.md`](Final_stack.md) | AWS Mumbai EKS. Not yet built. |
+>
+> Two other legacy paths exist and are also superseded: `render.yaml` /
+> [`RENDER_DEPLOY.md`](RENDER_DEPLOY.md) (deprecated at `render.yaml:1-7`), and
+> this document. Neither is an alternative to the table above.
+>
+> **Why it is kept.** The section-by-section record below is still the clearest
+> statement of *what each of the five backend processes needs* — Dockerfile
+> paths, the worker's start command and no-domain rule, the shared-vs-per-service
+> split of environment variables, and the one-time migration step. Those facts
+> carry over to any host. Read it as reference material, then deploy using one of
+> the guides above.
 
-This guide explains how to put the whole project on the internet so anyone can
-use it from a web link. No deep technical knowledge needed — just follow the
-steps in order.
+This document explains how the project *was* put on the internet using Railway
+(backend) and Vercel (frontend), in plain language, step by step.
 
-> **Good news:** this project was already deployed once. The live backend links
-> are saved in `web/vercel.json`. So you are either (a) re-using that setup, or
-> (b) doing a fresh deploy. This guide covers a fresh deploy from zero.
+> **On `web/vercel.json` — the Railway links are GONE, and must not come back.**
+> This note used to say the file "still holds the backend links from that Railway
+> deploy". It does not: at HEAD the only rewrite left is the SPA fallback
+> (`/:path*` → `/index.html`), and the file carries a standing instruction not to
+> re-add the per-service `/api/*` rewrites, because they pointed at retired
+> Railway URLs and conflicted with the real routing (`web/vercel.json:9`). The
+> frontend now calls the API **directly** via the `VITE_*_API_URL` values, so
+> Section 8 step 3's `/api/...` values and step 4's "replace each
+> `up.railway.app` link" are both part of the historical record — following them
+> today re-introduces a routing conflict. The current targets reach the backend
+> differently: on the HF Space one Caddy serves the SPA and proxies the APIs on
+> the same origin, so no rewrite exists at all; on the Oracle VM the frontend
+> stays on Vercel and the
+> backend answers on its own `api.` domain, which is **cross-origin** and is why
+> `AUTH_COOKIE_SAMESITE=none` is set in `docker-compose.prod.yml:114` (see
+> [`DEPLOY-SECURITY.md`](DEPLOY-SECURITY.md)). The CSRF double-submit cookie that
+> makes `SameSite=none` survivable is *not* a deploy setting — `data_gateway`
+> issues it unconditionally (`services/data_gateway/app/config.py:343-357`), so
+> there is nothing to add on a new host and nothing to switch off by forgetting.
 
 ---
 
-## 1. What we are deploying (in plain words)
+## 1. What was deployed (in plain words)
+
+> **How to read sections 2–12.** They are written as instructions because that
+> is how they were written at the time, and rewording every sentence into the
+> past tense would only make them harder to reuse. They are *not* a live
+> runbook. Nothing below has been re-verified against the app at HEAD. Where a
+> step names a Railway screen, the equivalent on a current target is in
+> [`../README.md`](../README.md) (Space secrets) or
+> [`DEPLOY-ORACLE.md`](DEPLOY-ORACLE.md) (`.env` files on the VM).
 
 The project has **two parts**:
 
@@ -117,14 +165,12 @@ Use these Dockerfile paths, one per service:
   ```
 - Turn on **"Never sleep" / always running**.
 
-> ⚠️ **Do not use `render.yaml`.** This guide used to suggest it as an easier
-> alternative to Railway. `render.yaml` is deprecated and unmaintained
-> (`render.yaml:1-7`), and its env-name assumptions no longer match the app —
-> importing it silently reproduces the `S3_ENDPOINT` config bug that stops
-> scorecard PDFs from ever storing. The live deploy target is the **Hugging Face
-> Space** ([`../README.md`](../README.md)); the supported self-hosted target is
-> [`DEPLOY-ORACLE.md`](DEPLOY-ORACLE.md). Follow one of those instead of this
-> whole document.
+> ⚠️ **`render.yaml` is not the escape hatch either.** This guide used to suggest
+> Render as an easier alternative to Railway. `render.yaml` is deprecated and
+> unmaintained (`render.yaml:1-7`), and its env-name assumptions no longer match
+> the app — importing it silently reproduces the `S3_ENDPOINT` config bug that
+> stops scorecard PDFs from ever storing. Render and Railway are both superseded;
+> the current targets are in the banner at the top of this document.
 
 ### 4b. Coding exams use JDoodle (no extra setup)
 
@@ -234,6 +280,22 @@ see a line like `interview-worker — starting worker`.
 4. Open `web/vercel.json` and make sure the 4 links point to **your** Railway
    programs. Replace each `https://...up.railway.app` with your real Railway
    links (gateway, interview, feedback, admin). Save and push to GitHub.
+   > ⚠️ **Step 3 and step 4 no longer apply to the repo at HEAD.** The
+   > per-service `/api/*` rewrites they describe were deleted from
+   > `web/vercel.json`, and there is nothing in that file to edit. Re-adding the
+   > rewrites breaks routing — the file says so at `web/vercel.json:9`.
+   >
+   > What replaces them **depends on the target**, and the two current targets
+   > are opposites — so do not carry a value from one to the other:
+   >
+   > | Target | `VITE_*_API_URL` | Why |
+   > |---|---|---|
+   > | **Vercel + a separate backend** (this guide's shape, and the Oracle VM in [`DEPLOY-ORACLE.md`](DEPLOY-ORACLE.md)) | **Full HTTPS URLs** to each backend, e.g. `https://api.example.com` | The SPA and the API are on different origins, so a relative path would resolve to the Vercel host, which serves no API. Cross-origin is also why `AUTH_COOKIE_SAMESITE=none` is set — see the note in Section 1. |
+   > | **Hugging Face Space** ← the live one | **Left EMPTY** (the built-in default) | One Caddy serves the SPA and proxies the APIs on the *same* origin, so a relative path is correct and a full URL would break it. `Dockerfile:43-46` already sets these to `""`; `space/Caddyfile:7` records the assumption. There is nothing to configure. |
+   >
+   > A full HTTPS URL on the Space would send the browser cross-origin to reach
+   > a backend that is already same-origin — losing the cookie and the CORS
+   > allowance for no gain.
 5. Click **Deploy**.
 
 When it finishes, Vercel gives you a link like `https://your-site.vercel.app`.
@@ -299,13 +361,18 @@ giving the link to the public, do these:
 | Website loads but login fails | DB tables not set up | Run Section 6 (migrations) |
 | "CORS" error in browser | Vercel link not in `CORS_ALLOWED_ORIGINS` | Add it on all 5 services (Section 5) |
 | Interview avatar never appears | Worker not running | Check worker logs; set "Never sleep" (Section 4) |
-| 404 / "could not load" on a page | Wrong link in `web/vercel.json` | Fix the 4 Railway links (Section 8) |
+| 404 / "could not load" on a page | Wrong link in `web/vercel.json` | Fix the 4 Railway links (Section 8). **Historical:** `vercel.json` no longer holds backend links — on a current target check the `VITE_*_API_URL` values instead |
 | A service won't start | Missing a setting | Compare its Railway Variables with its `.env` |
 | Coding exam scores 0 / won't grade | JDoodle creds missing/wrong, or 200/day limit hit | Check `JDOODLE_*` vars (Section 4b); check daily credits |
 
 ---
 
-## Quick checklist
+## Quick checklist (of the historical Railway deploy)
+
+> This is the Railway checklist, kept because the *shape* of it — five backend
+> processes, shared secrets, one migration, four health checks — is the same on
+> every target. Do not work through it as a live to-do list; use the guide for
+> your actual target from the banner at the top.
 
 - [ ] Code pushed to GitHub
 - [ ] 5 Railway services created (correct Dockerfile path each)

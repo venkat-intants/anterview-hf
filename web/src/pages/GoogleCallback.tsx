@@ -15,6 +15,7 @@ import { motion } from 'framer-motion';
 import { completeGoogleLogin } from '@/api/sso';
 import { getMe } from '@/api/auth';
 import { useAuth } from '@/context/AuthContext';
+import { homePathFor } from '@/components/layout/navSections';
 import { toast } from '@/lib/toast';
 import { AuroraField } from '@/design/components/AuroraField';
 import { Pill } from '@/design/components/primitives';
@@ -68,7 +69,14 @@ export default function GoogleCallback() {
           roles: me.roles,
         };
         setAuth(tokens.access_token, user);
-        void navigate('/dashboard', { replace: true });
+        // Same landing rule as the password login (Login.tsx): SSO is a second
+        // door into the same app, not a second destination. Hardcoding
+        // /dashboard here sent a Google-authenticated admin / HR manager /
+        // super admin / platform owner to the candidate page, which their
+        // role-scoped sidebar does not even link to. homePathFor already
+        // returns /dashboard for candidates and for unknown/empty roles, so
+        // the candidate path is unchanged.
+        void navigate(homePathFor(me.roles), { replace: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : t('googleCallback.failed');
         setError(message);

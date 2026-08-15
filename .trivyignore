@@ -46,22 +46,56 @@ GHSA-f4xh-w4cj-qxq8
 # See the note at services/interview_core/requirements.txt:44.
 GHSA-xf7x-x43h-rpqh
 #
-# Caddy (usr/local/bin/caddy) — 5 HIGH in the vendored Go toolchain and deps of
-# the official `caddy:2-alpine` binary we COPY in (Dockerfile:89). We do not
+# Caddy (usr/local/bin/caddy) — 14 HIGH in the vendored Go toolchain and deps of
+# the official `caddy:2-alpine` binary we COPY in (Dockerfile:101). We do not
 # build Caddy, so there is nothing to bump on our side: the tag already floats
 # to the latest 2.x and upstream has not yet rebuilt against a patched Go.
 #
-# All five are denial-of-service or traversal in code paths our edge config does
-# not expose: no gRPC/xDS (grpc), no client-certificate verification
-# (crypto/x509), no MIME parsing of untrusted headers beyond what the reverse
-# proxy passes through, and `os.Root` is not used. Caddy here terminates TLS and
-# proxies to loopback services; it is not a multi-tenant ingress.
+# Re-verified 2026-08-15 with trivy 0.73.0 against the live registry:
+# `caddy:2-alpine`, `caddy:2` and `caddy:latest` ALL still ship a binary built
+# with Go **v1.26.3**. The previous unblock condition below said ">=1.26.5";
+# that was never met, and the batch of Go stdlib advisories fixed in 1.26.6 has
+# since landed on top, which is why this list grew from 5 IDs to 14 with no
+# change on our side. The condition is restated as >=1.26.6 to match.
 #
-# Unblock = a `caddy:2-alpine` rebuild on Go >=1.26.5. Re-check each sprint —
-# this is the entry most likely to become stale, and a DoS on the edge is a real
-# availability risk against the 99.5% NFR even if it is not a data risk.
+# Reachability, checked against BOTH Caddyfiles rather than assumed. The two
+# deploy targets differ and the difference matters:
+#
+#   * HF Space (space/Caddyfile, the live target) — `auto_https off`; Hugging
+#     Face terminates TLS and Caddy speaks plain HTTP on :7860. So the TLS and
+#     certificate paths are not reachable there at all: crypto/tls KeyUpdate
+#     (56862), ASN.1 cert parsing (33818), crypto/x509 SAN (27145) and the ACME
+#     DNS paths (46600) have no untrusted input. `file_server` is used WITHOUT
+#     `browse`, and no `templates` directive exists, so html/template (56858) is
+#     never invoked. Neither Caddyfile sets `h2c` or `protocols`, so the
+#     unencrypted-HTTP/2 DoS (56853) has no listener.
+#   * Oracle VM (root Caddyfile, docker-compose.prod.yml) — here Caddy DOES
+#     terminate TLS and obtain certs via ACME, so 56862 and 33818 ARE reachable
+#     on that target. It is not the live deploy, but it is a supported one.
+#
+# NOT waved through: CVE-2026-56860 (net/url quadratic path resolution) is
+# reachable on EVERY request on BOTH targets — the edge parses every inbound
+# URL. That is a genuine, accepted availability risk against the 99.5% NFR, not
+# a false positive, and it is the reason this block carries a re-review trigger
+# rather than being left to rot. Same honest caveat as before: a DoS on the edge
+# is real even when it is not a data risk. No gRPC/xDS is configured (grpc), and
+# `os.Root` is not used (39822).
+#
+# Unblock = a `caddy:2-alpine` rebuild on Go >=1.26.6; re-check each sprint. If
+# upstream stays behind for another sprint, the durable fix is to build Caddy
+# ourselves in a Go builder stage rather than to keep extending this list —
+# that is a Dockerfile change with its own review, deliberately not smuggled
+# into a remediation PR.
 CVE-2026-56852
 GHSA-hrxh-6v49-42gf
 CVE-2026-27145
 CVE-2026-39822
 CVE-2026-42504
+CVE-2026-33818
+CVE-2026-39821
+CVE-2026-46600
+CVE-2026-56853
+CVE-2026-56858
+CVE-2026-56859
+CVE-2026-56860
+CVE-2026-56862

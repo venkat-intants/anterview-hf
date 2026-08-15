@@ -48,17 +48,35 @@ Tier-2 exists. This is a deliberate, time-boxed trade, not an oversight.
 
 **Evidence, already documented.** This was *not* discovered by the review —
 [`DATA-FLOW.md`](DATA-FLOW.md) opens with an explicit residency banner
-(`:12-24`), carries a per-processor region table (`:30-46`) and a written
-Tier-2 mapping (`:82-96`). The review's contribution is grading the residual
+(`:12-24`), carries a per-processor region table (`:32-50`) and a written
+Tier-2 mapping (`:99-113`). The review's contribution is grading the residual
 risk, not finding it. Summary of where data actually sits: **Neon** Singapore,
 **Cloudflare R2 / Gemini / Groq / Tavus / Simli / LiveKit / Resend / OpenAI /
 Sentry** United States, **Upstash** global edge, the backend VM in an
 operator-chosen non-India region. **Sarvam** (speech) is the one processor
 confirmed in India.
 
-**Blast radius.** Zero for the demo tier, which is what the banner is for.
-Total for a government bid: APSSDC/NSDC residency clauses are pass/fail, so
-this blocks submission outright rather than costing marks.
+**Blast radius.** Not zero. This entry used to say "zero for the demo tier,
+which is what the banner is for" — but a banner is a disclosure, and disclosure
+changes who is *surprised* by an exposure, not whether the exposure exists. The
+honest position is three separate numbers, because conflating them is what
+produced the "zero":
+
+* **Candidate data — the full disclosed cross-border exposure.** Every account
+  record, voice recording, transcript and scorecard created on the demo tier is
+  processed outside India, by every row of [`DATA-FLOW.md`](DATA-FLOW.md)'s
+  sub-processor table except **Sarvam** (India) and **JDoodle** (country
+  unverified — see AR-3). That is true for every candidate who takes an
+  interview on this tier today, consent modal or not.
+* **Bid marks — zero, as of this entry's last review.** The Status line's
+  blocking rule has held: nothing has been submitted on the demo tier, so no
+  evaluation score has been lost to this. This is the only sense in which "zero"
+  was ever defensible, and it is a statement about what we have not done, not
+  about the platform. If a submission is ever made on this tier, the trigger
+  above has already fired and this bullet is void.
+* **Bid eligibility — total.** APSSDC/NSDC residency clauses are pass/fail, so
+  the demo tier blocks submission outright rather than costing marks. This is
+  why the Status line reads *blocking for any India-residency bid*.
 
 **What is NOT true.** There is no partial-residency story worth claiming. Do not
 describe the platform as "India-resident with some processors abroad" — the
@@ -177,13 +195,27 @@ Tavus or Simli. `_build_avatar()` in
 `AVATAR_PROVIDER` and never reads `APP_ENV`.
 
 Separately, `AVATAR_PROVIDER=custom` — the Tier-2 / bid-path value named in
-`CLAUDE.md` and `Final_stack.md` — is **not a recognised value in the avatar
-factory**. It falls through the unknown-provider branch and silently becomes
-Simli with a logged warning. A bid deploy that sets `custom` believing it has
-opted out of US-hosted avatars would get a US-hosted avatar.
+`CLAUDE.md` and `config.py:169` — is **not a recognised value in the avatar
+factory**. `_build_avatar()`'s first branch matches any value outside
+`{"tavus", "none"}` (`interview_worker.py:1284-1297`), so `custom` logs an
+unknown-provider warning and returns a `simli.AvatarSession`. A bid deploy that
+sets `custom` believing it has opted out of US-hosted avatars would get a
+US-hosted avatar.
+
+**Documentation consequence, corrected 2026-08-09.** `Final_stack.md` TIER 1B
+standing condition 1 used to *require* `AVATAR_PROVIDER=custom` for APSSDC /
+government deploys. That turned this gap from a missing feature into an active
+trap: following the procurement document produced the exact outcome it forbade.
+The condition now states the real position — **government deployment is blocked
+until the Tier-2 renderer exists, on any `AVATAR_PROVIDER` value** — and names
+`none` (voice-only) as the only setting that adds no US-hosted avatar processor,
+while noting that `none` does not make a deploy India-resident either (AR-1).
+The two documents must move together: if the renderer lands, both this entry and
+that condition close in the same change.
 
 **What is NOT true.** Neither "the production gate" nor "the Tier-2 avatar" is
-implemented. `Final_stack.md` TIER 1B now says so explicitly rather than
+implemented, and there is **no avatar configuration that makes a government
+deploy compliant**. `Final_stack.md` TIER 1B now says so explicitly rather than
 implying otherwise in a new vendor's name — which is the exact mistake AG-06
 was raised about.
 

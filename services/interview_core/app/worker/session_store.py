@@ -8,8 +8,11 @@ the same two rules, which is why they belong together:
   exception and logs the exception TYPE only.
 * **Engine-defensive.** The LiveKit worker is a separate process from the
   FastAPI app, so nothing has called ``init_engine()`` for it. Each entry point
-  calls it under ``contextlib.suppress`` — cheap, because SQLAlchemy pools are
-  lazy and no socket opens until the first checkout.
+  calls it under ``contextlib.suppress``. That is cheap only because
+  ``init_engine()`` is idempotent: the first call builds the engine (lazily —
+  no socket opens until the first checkout) and every later one returns it.
+  Before that guarantee existed, this per-operation pattern built a fresh pool
+  per write and orphaned the previous one undisposed.
 
 Logging goes to the ``"interview-worker"`` stdlib logger, the same one
 ``_configure_worker_logging`` fits with the PII redaction chain — a sibling

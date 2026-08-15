@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext';
+import { homePathFor } from '../components/layout/navSections';
 import GoogleCallback from '../pages/GoogleCallback';
 
 
@@ -40,7 +41,8 @@ describe('GoogleCallback page', () => {
     vi.clearAllMocks();
   });
 
-  it('exchanges code+state, then navigates to the dashboard', async () => {
+  /** Drive one full exchange for a user holding `roles`. */
+  async function completeLoginAs(roles: string[]): Promise<void> {
     mockComplete.mockResolvedValue({
       access_token: 'jwt',
       token_type: 'bearer',
@@ -50,15 +52,44 @@ describe('GoogleCallback page', () => {
       user_id: 'u1',
       full_name: 'Google User',
       email: 'g@example.com',
-      roles: ['candidate'],
+      roles,
     });
 
     renderAt('/auth/google/callback?code=abc&state=xyz');
 
     await waitFor(() => {
       expect(mockComplete).toHaveBeenCalledWith('abc', 'xyz');
-      expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
+      expect(mockNavigate).toHaveBeenCalled();
     });
+  }
+
+  it('exchanges code+state, then navigates a candidate to the dashboard', async () => {
+    await completeLoginAs(['candidate']);
+
+    expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
+  });
+
+  // SSO must land people where the password login lands them. Before this the
+  // callback hardcoded /dashboard, so a Google-authenticated privileged user
+  // arrived on the candidate page with a sidebar that has no link to it.
+  it.each([
+    ['platform_owner'],
+    ['super_admin'],
+    ['hr_manager'],
+    ['admin'],
+    ['candidate'],
+    ['some_future_role'],
+  ])('sends a %s to the same home as the password login', async (role) => {
+    await completeLoginAs([role]);
+
+    expect(mockNavigate).toHaveBeenCalledWith(homePathFor([role]), { replace: true });
+  });
+
+  it('never leaves a privileged user on the candidate dashboard', async () => {
+    await completeLoginAs(['hr_manager']);
+
+    expect(mockNavigate).toHaveBeenCalledWith('/hr', { replace: true });
+    expect(mockNavigate).not.toHaveBeenCalledWith('/dashboard', { replace: true });
   });
 
   it('shows an error when code/state are missing (no exchange attempted)', async () => {

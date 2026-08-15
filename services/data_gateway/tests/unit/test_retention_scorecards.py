@@ -305,6 +305,120 @@ async def test_nothing_to_purge_short_circuits_before_storage(
 
 
 # ---------------------------------------------------------------------------
+# The per-run cap — an unbounded run cannot finish, so it cannot comply
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_the_id_select_carries_the_per_run_limit(
+    deleted_buckets: dict[str, list[str]],
+) -> None:
+    """``_ID_CHUNK_SIZE`` bounds the bind parameters per statement, not the run.
+
+    Without a LIMIT on step 1 the first live run after RETENTION_DRY_RUN is
+    flipped off collects the entire backlog, deletes its objects one round-trip
+    at a time and holds one transaction open across all of it — and because the
+    job is deliberately all-or-nothing, a single transient storage failure at any
+    point discards the whole run. The cap is what makes progress monotonic.
+    """
+    limits: list[Any] = []
+
+    class _RecordingDb(_FakeDb):
+        async def execute(self, stmt: Any) -> Any:
+            if _target_table(stmt) == "sessions" and isinstance(stmt, Select):
+                limits.append(stmt._limit_clause)  # noqa: SLF001 — no public getter
+            return await super().execute(stmt)
+
+    db = _RecordingDb(session_ids=_SESSION_IDS, scorecard_rows=[])
+
+    await retention.purge_expired_sessions(db=db, settings=_settings())  # type: ignore[arg-type]
+
+    assert len(limits) == 1
+    assert limits[0] is not None
+    assert limits[0].value == retention.MAX_SESSIONS_PER_RUN
+
+
+@pytest.mark.asyncio
+async def test_a_full_batch_reports_capped_so_the_backlog_is_visible(
+    deleted_buckets: dict[str, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A capped run purges less than is due. That is correct — the rest goes in
+    the next run — but silent truncation of a compliance job is not."""
+    import structlog
+
+    monkeypatch.setattr(retention, "MAX_SESSIONS_PER_RUN", 2)
+    db = _FakeDb(session_ids=_SESSION_IDS, scorecard_rows=[])
+
+    with structlog.testing.capture_logs() as logs:
+        await retention.purge_expired_sessions(db=db, settings=_settings())  # type: ignore[arg-type]
+
+    done = [e for e in logs if e["event"] == "retention.purge.done"]
+    assert len(done) == 1
+    assert done[0]["capped"] is True
+    assert done[0]["max_sessions_per_run"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_partial_batch_is_not_reported_as_capped(
+    deleted_buckets: dict[str, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ordinary night. A ``capped`` that is true every run is not a signal."""
+    import structlog
+
+    monkeypatch.setattr(retention, "MAX_SESSIONS_PER_RUN", 50)
+    db = _FakeDb(session_ids=_SESSION_IDS, scorecard_rows=[])
+
+    with structlog.testing.capture_logs() as logs:
+        await retention.purge_expired_sessions(db=db, settings=_settings())  # type: ignore[arg-type]
+
+    done = [e for e in logs if e["event"] == "retention.purge.done"]
+    assert done[0]["capped"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_cap_does_not_weaken_the_fail_closed_storage_guarantee(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cap changes WHICH rows a run addresses, never whether a storage
+    shortfall may delete them. Same abort, on the capped batch."""
+
+    async def _short(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> int:
+        return 0
+
+    monkeypatch.setattr("app.s3_upload.delete_objects", _short)
+    monkeypatch.setattr(retention, "MAX_SESSIONS_PER_RUN", 1)
+    db = _FakeDb(session_ids=_SESSION_IDS, scorecard_rows=[("scorecards/a.pdf", None)])
+
+    with pytest.raises(RuntimeError):
+        await retention.purge_expired_sessions(db=db, settings=_settings())  # type: ignore[arg-type]
+
+    assert "delete:scorecards" not in db.calls
+    assert "delete:sessions" not in db.calls
+    assert db.committed is False
+
+
+@pytest.mark.asyncio
+async def test_dry_run_counts_the_whole_backlog_and_flags_that_it_exceeds_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dry-run exists to tell an operator what flipping the flag will do. Capping
+    its count would hide the one thing they need to know — that the backlog is
+    bigger than a single run can take."""
+    import structlog
+
+    monkeypatch.setattr(retention, "MAX_SESSIONS_PER_RUN", 1)
+    db = _FakeDb(session_ids=_SESSION_IDS, scorecard_rows=[])
+
+    with structlog.testing.capture_logs() as logs:
+        count = await retention.purge_expired_sessions(  # type: ignore[arg-type]
+            db=db, settings=_settings(retention_dry_run=True)
+        )
+
+    assert count == len(_SESSION_IDS)  # uncapped: the true backlog size
+    done = [e for e in logs if e["event"] == "retention.purge.done"]
+    assert done[0]["would_exceed_cap"] is True
+    assert done[0]["max_sessions_per_run"] == 1
+
+
+# ---------------------------------------------------------------------------
 # The storage helper's own guard
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio

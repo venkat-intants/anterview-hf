@@ -112,7 +112,7 @@ Companion to HLD.md / LLD.md / CHANGES.md.
 | **STT (Indian languages)**        | **Bhashini ULCA** primary + **AI4Bharat IndicConformer** fallback                  | Bhashini is Govt-of-India backed — political and procurement bonus on a GoAP project. AI4Bharat fallback for resilience. Both handle Indian accents far better than Whisper or Google STT for HI/TE.                                                                                          |
 | **TTS (multi-voice Indic)**       | **Bhashini Indic TTS** + **AI4Bharat IndicTTS-v2** fallback                        | 54 voice IDs (6 avatars × 9 languages) map cleanly. Same Govt-of-India rationale. Streaming chunked output keeps first-audio latency <300 ms.                                                                                                                                                 |
 | **VAD (barge-in)**                | **Silero VAD v5 in WebAssembly** (client-side)                                     | Detect barge-in *before* the round-trip → enables the <2 s response target the RFP mandates. Server-side double-check with `webrtcvad`.                                                                                                                                                       |
-| **Avatars**                       | **Ready Player Me** (free GLB) + **Rhubarb-Lipsync** viseme driver (`AVATAR_PROVIDER=custom`) | Hosted talking-head APIs run ₹5–15 per minute → kills unit economics at 2M users. RPM + visemes runs entirely client-side, cost = ₹0. 6 distinct personas via wardrobe + voice pairing. **This is the Tier-2 / bid pick and is not yet built** — the demo runs on Tavus (see [TIER 1B](#tier-1b--demo-only-overrides-added-2026-05-28-rewritten-2026-08-07)). |
+| **Avatars**                       | **Ready Player Me** (free GLB) + **Rhubarb-Lipsync** viseme driver (intended value `AVATAR_PROVIDER=custom` — **configurable but unimplemented**) | Hosted talking-head APIs run ₹5–15 per minute → kills unit economics at 2M users. RPM + visemes runs entirely client-side, cost = ₹0. 6 distinct personas via wardrobe + voice pairing. **This is the Tier-2 / bid pick and is not yet built** — the demo runs on Tavus (see [TIER 1B](#tier-1b--demo-only-overrides-added-2026-05-28-rewritten-2026-08-07)). `AVATAR_PROVIDER` is a free-form string, so `custom` IS accepted at config time and the service starts — it simply does not select this row: the worker's avatar factory does not recognise the value, logs an unknown-provider warning and returns **Simli**. That is the hazard: it is settable, it boots, and it is wrong. Do not copy it into a deploy config. |
 | **Orchestration / state machine** | **LangGraph** (Python)                                                             | Deterministic FSM: Intro → Tech → Behavioral → Q&A → Close. Tool-calling native. Replays for debugging. Beats LangChain (too loose) and hand-rolled (15-day timeline).                                                                                                                        |
 | **Embeddings + vector store**     | `**text-embedding-3-large`** (OpenAI) stored in **pgvector**                       | India-region available, cheap, top-quality on multilingual. pgvector avoids a separate Qdrant/Weaviate cluster = one less thing to break in 15 days.                                                                                                                                          |
 | **Scoring**                       | **Claude Sonnet 4.6 as judge**, cached rubric, **end-of-session only**             | Same model, separate call, structured JSON for 4 axes. **Rolling per-turn scoring cut in v1.1** — saves ~₹1/session and 5 LLM calls per session.                                                                                                                                              |
@@ -232,7 +232,7 @@ These do **not** alter the anchor decisions above and **must never enter the APS
 | Avatar (demo default) | **Tavus** real-time streaming via LiveKit, echo-mode persona | `tavus` | Demo-only. US-hosted (no India residency); over the ₹12/session cap |
 | Avatar (demo alternate) | **Simli** real-time streaming via LiveKit | `simli` | Demo-only. US-hosted; same residency caveat |
 | Avatar (voice-only) | none — the interview runs without a face | `none` | The CI / no-key default (`services/interview_core/app/config.py`) |
-| Avatar (Tier-2 / bid path) | Three.js + **Ready Player Me** GLB + **Rhubarb-Lipsync** visemes | `custom` | **Not yet implemented in the worker** — see the gap note below |
+| Avatar (Tier-2 / bid path) | Three.js + **Ready Player Me** GLB + **Rhubarb-Lipsync** visemes | `custom` — **settable, unimplemented** | **Not implemented.** The value is accepted and the worker starts; it logs an unknown-provider warning and selects **Simli**, not this row. See the gap note and standing condition 1 below |
 
 **Why this section was rewritten.** It previously named **D-ID**
 (`AVATAR_PROVIDER=did`, ~₹467/session) and mandated a production gate on it.
@@ -242,10 +242,29 @@ supplier we do not use, and mandates a gate no deploy can pass or fail, is worse
 than silence — anyone auditing the stack against it reaches a contradiction.
 (Closes code-review finding **AG-06**.)
 
-**Standing conditions (carried over from cfo-cost-watcher, 2026-05-28):**
-1. APSSDC / govt deploys must use `AVATAR_PROVIDER=custom` (Ready Player Me,
-   per anchor decision #3). Tavus and Simli are US-hosted and are
-   bid-disqualifying on residency alone, independent of cost.
+**Standing conditions (carried over from cfo-cost-watcher, 2026-05-28;
+condition 1 corrected 2026-08-09):**
+
+1. **Government / APSSDC deployment is BLOCKED — there is no avatar setting that
+   makes it compliant.** This condition previously read *"govt deploys must use
+   `AVATAR_PROVIDER=custom`"*. That instruction was harmful, not merely stale:
+   `custom` is not a recognised value in the worker's avatar factory, so setting
+   it selects **Simli** — the US-hosted demo provider the condition exists to
+   forbid. An operator following the old wording would have believed they had
+   opted out of a US avatar while shipping one. Until the Tier-2 renderer in the
+   table above is built, the position is:
+   * Tavus and Simli are bid-disqualifying on residency alone, independent of
+     cost, exactly as before.
+   * `custom` does not select a compliant renderer; it selects a
+     bid-disqualifying one.
+   * `none` (voice-only) is the only avatar setting that adds no US-hosted
+     avatar processor. It is a *degraded* configuration, not the Ready Player Me
+     avatar that anchor decision #3 promises, and it does not by itself make a deploy
+     India-resident — the database, storage and LLM are still outside India
+     ([`ACCEPTED-RISKS.md`](ACCEPTED-RISKS.md) AR-1).
+
+   So: no government submission on this stack, on any `AVATAR_PROVIDER` value.
+   Closing this needs the renderer built, not a config choice.
 2. Registered here and in `.env` as **non-compliant with bid unit economics**.
    No demo avatar cost may be carried into an L1 price.
 3. **Sunset review 2026-11-28** — discontinue or renegotiate.
@@ -258,14 +277,21 @@ than silence — anyone auditing the stack against it reaches a contradiction.
 >   providers. `_build_avatar()` in `services/interview_core/app/worker/
 >   interview_worker.py` selects purely on `AVATAR_PROVIDER`; nothing consults
 >   `APP_ENV`. The production gate is currently operator discipline, not code.
-> * `AVATAR_PROVIDER=custom` is **not implemented in the worker**. It is not a
->   recognised value in the avatar factory, so it falls through the
->   unknown-provider branch and silently becomes Simli with a warning. Tier-2
->   needs the Three.js/RPM client-side renderer built before `custom` means
->   anything.
+> * `AVATAR_PROVIDER=custom` is **not implemented anywhere**. In the worker's
+>   `_build_avatar()` (`interview_worker.py:1284-1297`) the first branch matches
+>   any value outside `{"tavus", "none"}`, so `custom` logs
+>   `unknown avatar_provider=...; falling back to simli` and returns a
+>   `simli.AvatarSession`. The value is nonetheless advertised as the production
+>   path in `config.py:169`. (The demo-script agent path,
+>   `agent/livekit_agent.py:209-248`, is used only by `scripts/run_demo.py` and
+>   `scripts/smoke_agent.py`; there `custom` degrades to voice-only instead —
+>   different wrong answer, same absence of an implementation.) Tier-2 needs the
+>   Three.js/RPM client-side renderer built before `custom` means anything.
 >
-> Both are tracked in [`ACCEPTED-RISKS.md`](ACCEPTED-RISKS.md).
-
+> Both are tracked in [`ACCEPTED-RISKS.md`](ACCEPTED-RISKS.md) as **AR-4**, and
+> standing condition 1 above states the consequence: government deployment is
+> blocked, not configurable.
+>
 > Note on the historical comparison: HeyGen (~₹85–170/session) was cheaper than
 > D-ID for the identical demo purpose. It is recorded here only because the
 > original D-ID decision was taken against that alternative; HeyGen was never

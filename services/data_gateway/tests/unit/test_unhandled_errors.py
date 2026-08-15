@@ -134,8 +134,17 @@ async def test_unhandled_exception_is_counted_as_a_500() -> None:
 @pytest.mark.asyncio
 async def test_the_500_body_carries_no_exception_text() -> None:
     """asyncpg puts the offending SQL and its parameters into str(exc), and
-    parameters are candidate PII. The client gets a fixed string; the detail
-    goes to the log stream, which the PII processor already redacts."""
+    parameters are candidate PII. The client gets a fixed string.
+
+    This docstring used to end "the detail goes to the log stream, which the PII
+    processor already redacts". That was false and is now corrected here as well
+    as in the shared module: ``shared/observability/pii.py`` pops known PII *key
+    names* off the event dict and never inspects a value, and ``exc_msg`` is not
+    one of those keys. The masking that makes the log side safe is
+    ``_safe_exc_message`` at the shared call site, and
+    ``shared/tests/test_http_observability.py`` owns asserting it. What this test
+    owns is the wire: nothing about the exception reaches the client body.
+    """
     async with await _client(_app(), raise_app_exceptions=False) as ac:
         resp = await ac.get("/boom")
 

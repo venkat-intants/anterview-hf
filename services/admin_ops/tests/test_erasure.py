@@ -19,8 +19,16 @@ outcome, and that difference is what those tests assert.
 All tests use an isolated FastAPI app that directly mounts the erasure
 router under /admin.  This makes the test suite runnable before the router
 wiring step in main.py is complete.  The isolated app preserves the same
-auth guards because the router declares them (AdminDep / AuthenticatedDep) on
-each endpoint itself, not just at the prefix level.
+auth guards because the router declares them on each endpoint itself, not just
+at the prefix level: ``AdminDep`` on the operator endpoints, and
+``AccountHolderDep`` on the self-service one.
+
+``AccountHolderDep``, not ``AuthenticatedDep`` — this docstring named the latter
+until 2026-08-15 and it mattered, because the difference is a security fix and
+not a rename. ``AuthenticatedDep`` means "any valid token", which let a
+15-minute `guest_candidate` interview token erase the account it names;
+``AccountHolderDep`` additionally rejects narrow, session-bound credentials.
+The tests at the end of this file are the ones that pin it.
 
 All tests mock the DB session — no live PostgreSQL connection required.
 PII note: no email / name / phone in any assertion or fixture.

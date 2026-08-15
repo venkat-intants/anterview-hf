@@ -36,7 +36,7 @@ A **voice-first AI interview platform**. A candidate logs in, picks a job role, 
 |---|---|
 | LLM | AWS Bedrock Mumbai (`LLM_PROVIDER=bedrock`) |
 | Speech | Bhashini (unchanged) + AI4Bharat fallback |
-| Avatar | Three.js + Ready Player Me + Rhubarb-Lipsync (`AVATAR_PROVIDER=custom`) — **not built yet**; `custom` is not a recognised value in the worker's avatar factory and silently falls back to Simli. See `docs/ACCEPTED-RISKS.md` AR-4. |
+| Avatar | Three.js + Ready Player Me + Rhubarb-Lipsync (`AVATAR_PROVIDER=custom`) — **not built yet**; `custom` is not a recognised value in the worker's avatar factory, so `_build_avatar()` logs `unknown avatar_provider=...; falling back to simli` and returns a Simli session. The fallback is logged, not silent — but it is a WARNING in the worker log, not a startup refusal, so a deploy that sets `custom` still runs, on a US-hosted avatar. See `docs/ACCEPTED-RISKS.md` AR-4. |
 | DB | AWS RDS Mumbai (Postgres 16 + pgvector + pg_partman) |
 | Cache | AWS ElastiCache Mumbai (Redis 7) |
 | Storage | AWS S3 Mumbai (SSE-KMS) |

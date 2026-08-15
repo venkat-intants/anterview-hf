@@ -7,6 +7,18 @@
 .env.bak*
 .env.*.bak
 *.env.bak*
+
+# Any SUFFIXED variant of ".env". The patterns above miss every one of them:
+# ".env" matches that exact basename only, and "*.env" below matches basenames
+# ENDING in ".env" — so ".env.hid" was ignored by neither. That is not a
+# hypothetical name: CONTRIBUTING.md's own pre-push procedure is
+# `mv .env .env.hid` ... `mv .env.hid .env`, and a run that stops before the
+# restore leaves a full set of live secrets sitting untracked-but-committable,
+# one `git add -A` from the history. Ignoring the whole suffix space is right
+# because a suffixed .env is always a copy of a real one.
+# Placed BEFORE the negations so the .example templates still win.
+.env.*
+!.env.example
 *.pem
 *.key
 secrets/

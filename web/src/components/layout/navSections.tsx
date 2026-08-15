@@ -136,8 +136,23 @@ export function visibleNavSections(roles: string[]): NavSection[] {
 // section AND still landed on /dashboard — a page with no nav entry matching it.
 // Signed in, on a candidate's home, with a sidebar offering only /admin/*.
 //
-// Order matters and mirrors ROLE_PRIORITY in AppShell: most-privileged wins, so
-// a platform owner who also holds `admin` lands on /platform, not /admin.
+// Order matters: first match wins, so a platform owner who also holds `admin`
+// lands on /platform, not /admin.
+//
+// It is NOT the same order as ROLE_PRIORITY in AppShell, which this comment used
+// to claim it mirrored. The two answer different questions and diverge on
+// exactly one pair. ROLE_PRIORITY ranks roles for the DISPLAY LABEL and puts
+// `admin` above `hr_manager`, so a user holding both is shown "Platform Admin".
+// This table puts `hr_manager` first, so that same user lands on /hr.
+//
+// That divergence is deliberate. Per CLAUDE.md, `admin` is the analytics
+// dashboard role and sits OUTSIDE the platform_owner → super_admin → hr_manager
+// hierarchy — it is granted alongside a real role, not instead of one. So for
+// someone who runs hiring and also has analytics, the hiring console is the
+// place to open, while "Platform Admin" is still the most senior thing to call
+// them. Both nav sections render either way, so nothing is unreachable.
+//
+// navRoleScoping.test.ts pins the pair explicitly; change one and it fails.
 const HOME_BY_ROLE: ReadonlyArray<readonly [string, string]> = [
   ['platform_owner', '/platform'],
   ['super_admin', '/superadmin'],

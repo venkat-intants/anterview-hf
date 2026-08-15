@@ -119,6 +119,30 @@ describe('AdminJobJd', () => {
     expect(screen.queryByText(/select a job above/i)).not.toBeInTheDocument();
   });
 
+  it('uploads against the job that was actually selected', async () => {
+    // The property the file header names first and the one nothing asserted:
+    // `uploadJd` was mocked but never inspected, so the page could have sent
+    // items[0] — or any hard-coded id — and every test here still passed. A JD
+    // filed against the wrong job silently re-derives that role's competencies,
+    // mis-scoring every interview for it, with no error anywhere.
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText(/select job posting/i));
+    await user.click(await screen.findByRole('option', { name: 'QA Engineer' }));
+    await screen.findByText(/jd document for/i);
+
+    await user.upload(
+      screen.getByLabelText('Job Description'),
+      new File(['%PDF-1.4 jd'], 'qa-jd.pdf', { type: 'application/pdf' }),
+    );
+
+    await waitFor(() => expect(uploadJd).toHaveBeenCalled());
+    // 'job-qa', not 'job-be' — the SECOND item in the list, chosen so a
+    // first-item default fails this assertion instead of passing by luck.
+    expect(uploadJd.mock.calls[0]?.[0]).toBe('job-qa');
+  });
+
   it('offers a retry rather than a dead page when the job list fails', async () => {
     getJobs.mockRejectedValue(new Error('jobs service unavailable'));
     renderPage();

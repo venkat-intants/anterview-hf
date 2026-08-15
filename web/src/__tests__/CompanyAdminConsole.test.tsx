@@ -84,7 +84,6 @@ vi.mock('../context/AuthContext', () => ({
 
 import CompanyAdminConsole from '../pages/superadmin/CompanyAdminConsole';
 import SuperAdminRoute from '../components/SuperAdminRoute';
-import { homePathFor } from '../components/layout/navSections';
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -117,13 +116,18 @@ function renderGuarded(roles: string[]) {
           <Route element={<SuperAdminRoute />}>
             <Route path="/superadmin" element={<CompanyAdminConsole />} />
           </Route>
-          <Route path="/dashboard" element={<div>dashboard page</div>} />
-          {/* A denied user now returns to their OWN console rather than the
+          {/* A denied user returns to their OWN console rather than the
               candidate dashboard, so each home target must be mountable here.
-              See navSections.homePathFor. */}
-          <Route path="/hr" element={<div>home page</div>} />
-          <Route path="/platform" element={<div>home page</div>} />
-          <Route path="/admin/overview" element={<div>home page</div>} />
+              See navSections.homePathFor.
+
+              Each renders DISTINCT text, following RoleRoute.test.tsx. They all
+              said "home page" before, which made the redirect assertion unable
+              to tell /hr from /platform from /admin/overview — sending every
+              denied role to any one of the three would have passed. */}
+          <Route path="/dashboard" element={<div>dashboard page</div>} />
+          <Route path="/hr" element={<div>hr page</div>} />
+          <Route path="/platform" element={<div>platform page</div>} />
+          <Route path="/admin/overview" element={<div>admin overview page</div>} />
           <Route path="/login" element={<div>login page</div>} />
         </Routes>
       </MemoryRouter>
@@ -255,20 +259,27 @@ describe('CompanyAdminConsole — removing an HR manager', () => {
 describe('CompanyAdminConsole — a wrong-role user sees nothing', () => {
   // Server-side scoping is the real boundary; this stops the UI offering an
   // HR-creation form to someone whose every submit would 403.
-  it.each([['platform_owner'], ['hr_manager'], ['admin'], ['candidate']])(
-    'redirects a %s away from the super-admin console',
-    async (role) => {
-      renderGuarded([role]);
+  // The destination is written out per role rather than derived from
+  // homePathFor. Deriving it made the assertion a tautology in the direction
+  // that matters: homePathFor is the function under test here, so a wrong
+  // mapping in it produced a matching wrong expectation and the test agreed
+  // with the bug. These literals are the ONLY statement in the suite that each
+  // role's own console is where it lands.
+  it.each([
+    ['platform_owner', 'platform page'],
+    ['hr_manager', 'hr page'],
+    ['admin', 'admin overview page'],
+    ['candidate', 'dashboard page'],
+  ])('redirects a %s to their own console, not the super-admin one', async (role, landing) => {
+    renderGuarded([role]);
 
-      // Behaviour changed deliberately: a denied user lands on THEIR OWN home,
-      // not a shared /dashboard fallback their scoped nav does not link to. For
-      // a candidate that home genuinely is /dashboard, hence the branch.
-      const expected = homePathFor([role]) === '/dashboard' ? 'dashboard page' : 'home page';
-      expect(await screen.findByText(expected)).toBeInTheDocument();
-      expect(screen.queryByRole('heading', { name: /super admin/i })).not.toBeInTheDocument();
-      expect(api.listMyHrManagers).not.toHaveBeenCalled();
-    },
-  );
+    // Behaviour changed deliberately: a denied user lands on THEIR OWN home,
+    // not a shared /dashboard fallback their scoped nav does not link to. For
+    // a candidate that home genuinely is /dashboard.
+    expect(await screen.findByText(landing)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /super admin/i })).not.toBeInTheDocument();
+    expect(api.listMyHrManagers).not.toHaveBeenCalled();
+  });
 
   it('lets a super_admin through to the console', async () => {
     renderGuarded(['super_admin']);

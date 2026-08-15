@@ -115,7 +115,7 @@ def test_supervisord_interpolation_counts_as_a_consumer(parity: ModuleType) -> N
 def test_render_is_keyed_by_dockerfile_not_by_blueprint_name(parity: ModuleType) -> None:
     """Two Render services (the API and the worker) share one Dockerfile; the
     blueprint `name:` is cosmetic and cannot be the join key."""
-    per_service, pool, labels = parity.parse_render(
+    render = parity.parse_render(
         textwrap.dedent(
             """
             envVarGroups:
@@ -139,10 +139,21 @@ def test_render_is_keyed_by_dockerfile_not_by_blueprint_name(parity: ModuleType)
             """
         )
     )
-    assert per_service == {"interview_core": {"PORT", "AVATAR_PROVIDER"}}
-    assert pool == {"JWT_SECRET"}
-    assert "VITE_API_BASE_URL" not in pool
-    assert labels["interview_core"] == "intants-interview-core"
+    assert render.own == {"interview_core": {"PORT", "AVATAR_PROVIDER"}}
+    assert render.pool == {"JWT_SECRET"}
+    assert "VITE_API_BASE_URL" not in render.pool
+
+    # ...and the two entries stay SEPARATE, because Render gives each process
+    # only what its own entry lists. The worker here joins no group, so it does
+    # not get JWT_SECRET and it does not get the API entry's PORT — collapsing
+    # these into one set per code service is what made the required-field check
+    # unable to see a half-configured worker.
+    assert [(i.label, i.service) for i in render.instances] == [
+        ("intants-interview-core", "interview_core"),
+        ("intants-interview-worker", "interview_core"),
+    ]
+    assert render.instances[0].env == {"PORT", "JWT_SECRET"}
+    assert render.instances[1].env == {"AVATAR_PROVIDER"}
 
 
 def test_compose_ignores_images_that_are_not_ours(parity: ModuleType) -> None:
@@ -293,6 +304,58 @@ def test_unsupplied_required_field_fails(fake: ModuleType, capsys: pytest.Captur
     )
     assert fake.main() == 1
     assert "entrypoint.sh" in capsys.readouterr().err
+
+
+def test_required_field_missing_from_one_of_two_render_entries_fails(
+    fake: ModuleType, capsys: pytest.CaptureFixture
+) -> None:
+    """Two Render entries can share one Dockerfile and NOT share an environment.
+
+    The API entry and the worker entry are two deployed processes; Render gives
+    each one only the keys in its own ``envVars`` plus the groups that entry
+    references. Merging both entries' keys into one per-code-service set and
+    validating required fields against that union made the gate blind to exactly
+    the failure it exists to catch: the API supplies DATABASE_URL, the worker
+    does not, the union says "supplied", and the worker crash-loops on its first
+    deploy with a pydantic ValidationError.
+    """
+    fake.RENDER_YAML.write_text(
+        textwrap.dedent(
+            """
+            envVarGroups:
+              - name: shared
+                envVars:
+                  - key: S3_ENDPOINT
+                  - key: S3_ENDPOINT_URL
+            services:
+              - name: dg-api
+                dockerfilePath: ./services/data_gateway/Dockerfile
+                envVars:
+                  - fromGroup: shared
+                  - key: DATABASE_URL
+                  - key: PORT
+              - name: dg-worker
+                dockerfilePath: ./services/data_gateway/Dockerfile
+                envVars:
+                  - fromGroup: shared
+                  - key: PORT
+              - name: fb
+                dockerfilePath: ./services/feedback_billing/Dockerfile
+                envVars:
+                  - fromGroup: shared
+                  - key: DATABASE_URL
+                  - key: PORT
+            """
+        ),
+        encoding="utf-8",
+    )
+    assert fake.main() == 1
+    err = capsys.readouterr().err
+    assert "DATABASE_URL" in err
+    # Named by BLUEPRINT entry, not by code service: "data_gateway is missing
+    # DATABASE_URL" would send the reader to the entry that already has it.
+    assert "dg-worker" in err
+    assert "dg-api" not in err
 
 
 def test_pool_name_no_service_declares_fails(

@@ -282,10 +282,20 @@ see a line like `interview-worker — starting worker`.
    links (gateway, interview, feedback, admin). Save and push to GitHub.
    > ⚠️ **Step 3 and step 4 no longer apply to the repo at HEAD.** The
    > per-service `/api/*` rewrites they describe were deleted from
-   > `web/vercel.json`; the app now calls each backend directly, so the
-   > `VITE_*_API_URL` values must be **full HTTPS URLs to your backend**, not
-   > `/api/...` paths, and there is nothing in `vercel.json` to edit. Re-adding
-   > the rewrites breaks routing — the file says so at `web/vercel.json:9`.
+   > `web/vercel.json`, and there is nothing in that file to edit. Re-adding the
+   > rewrites breaks routing — the file says so at `web/vercel.json:9`.
+   >
+   > What replaces them **depends on the target**, and the two current targets
+   > are opposites — so do not carry a value from one to the other:
+   >
+   > | Target | `VITE_*_API_URL` | Why |
+   > |---|---|---|
+   > | **Vercel + a separate backend** (this guide's shape, and the Oracle VM in [`DEPLOY-ORACLE.md`](DEPLOY-ORACLE.md)) | **Full HTTPS URLs** to each backend, e.g. `https://api.example.com` | The SPA and the API are on different origins, so a relative path would resolve to the Vercel host, which serves no API. Cross-origin is also why `AUTH_COOKIE_SAMESITE=none` is set — see the note in Section 1. |
+   > | **Hugging Face Space** ← the live one | **Left EMPTY** (the built-in default) | One Caddy serves the SPA and proxies the APIs on the *same* origin, so a relative path is correct and a full URL would break it. `Dockerfile:43-46` already sets these to `""`; `space/Caddyfile:7` records the assumption. There is nothing to configure. |
+   >
+   > A full HTTPS URL on the Space would send the browser cross-origin to reach
+   > a backend that is already same-origin — losing the cookie and the CORS
+   > allowance for no gain.
 5. Click **Deploy**.
 
 When it finishes, Vercel gives you a link like `https://your-site.vercel.app`.

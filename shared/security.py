@@ -77,6 +77,27 @@ ENFORCED_ENVS = ("production", "staging")
 # has to both accept it and strip it, and the two must be the same string.
 DATABASE_SSL_LOOPBACK_EXEMPT = "loopback-exempt"
 
+# libpq/asyncpg SSL modes that do NOT guarantee an encrypted link. These are the
+# one exception to this module's "permissive about the exact value" rule, and the
+# reason is that they are the only non-empty values that defeat the guard while
+# satisfying it: the production check is "did the operator set something", and
+# every one of these IS something.
+#
+# ``prefer`` is the dangerous one and the reason this list exists. It is libpq's
+# own default, it reads as security-conscious, and it silently DOWNGRADES to
+# plaintext whenever the server does not offer TLS — so a misconfigured or
+# impersonated endpoint gets candidate PII in clear with no error anywhere.
+# ``allow`` is the same downgrade with the preference inverted; ``disable``
+# refuses TLS outright.
+#
+# ``require`` and everything above it (``verify-ca``, ``verify-full``) are absent
+# because they all encrypt; they differ only in how much of the certificate they
+# check, which is a separate hardening decision this guard does not make. Values
+# outside this set stay permissive on purpose — enumerating every valid mode here
+# would mean re-releasing ``shared`` each time the driver grows one, and an
+# unrecognised value fails at connect time rather than silently going plaintext.
+_INSECURE_DATABASE_SSL_MODES = frozenset({"disable", "allow", "prefer"})
+
 # Shorthands an operator plausibly types for a hardened environment, mapped to
 # the canonical spelling ``ENFORCED_ENVS`` holds. Two deliberate limits:
 #
@@ -247,6 +268,16 @@ def validate_database_ssl(
     set *nothing*, and enumerating valid asyncpg SSL modes here would mean
     re-releasing ``shared`` every time the driver grows one.
 
+    With one exception, added because "permissive about the value" and "the test
+    is emptiness" together left a hole the size of the guard:
+    ``_INSECURE_DATABASE_SSL_MODES`` (``disable``/``allow``/``prefer``) is
+    refused in a hardened env. Those are the values that ARE set and still do
+    not encrypt — ``prefer`` in particular is libpq's own default and downgrades
+    to plaintext in silence — so accepting them let one env var buy exactly the
+    cleartext link this function exists to forbid. Denylist rather than
+    allowlist for the reason above: an unrecognised mode still passes and fails
+    loudly at connect time, which is the safe direction.
+
     The ``loopback-exempt`` sentinel is the one thing checked strictly, and it is
     why ``database_url`` is a parameter. The sentinel asserts "TLS terminates
     upstream of the app and the DB socket never leaves this machine" — a claim
@@ -267,7 +298,8 @@ def validate_database_ssl(
         staging. Always pass it.
     :returns: ``""`` for unset or for an accepted loopback-exempt sentinel,
         otherwise the value unchanged.
-    :raises ValueError: production/staging with no ``DATABASE_SSL`` set, or with
+    :raises ValueError: production/staging with no ``DATABASE_SSL`` set, with a
+        non-encrypting mode (``disable``/``allow``/``prefer``), or with
         ``loopback-exempt`` against an endpoint that is not loopback.
 
     Call it from a ``@model_validator(mode="after")``, assigning the result::
@@ -303,6 +335,17 @@ def validate_database_ssl(
             "cleartext to Neon/Postgres.  Set DATABASE_SSL=require in your "
             "environment, or DATABASE_SSL=loopback-exempt if TLS is "
             "terminated upstream and the DB socket is loopback-only."
+        )
+
+    if hardened and value.lower() in _INSECURE_DATABASE_SSL_MODES:
+        raise ValueError(
+            f"APP_ENV={app_env!r} with DATABASE_SSL={value!r} is not an encrypted "
+            "link. 'disable' refuses TLS; 'allow' and 'prefer' fall back to "
+            "plaintext without error whenever the server does not offer TLS, so "
+            "the setting looks deliberate while carrying candidate PII in clear "
+            "(DPDP §8, CWE-319). Set DATABASE_SSL=require (or verify-full), or "
+            f"DATABASE_SSL={DATABASE_SSL_LOOPBACK_EXEMPT} if TLS is terminated "
+            "upstream and the DB socket is loopback-only."
         )
 
     if value == DATABASE_SSL_LOOPBACK_EXEMPT:

@@ -242,6 +242,48 @@ def test_failure_reason_comes_from_the_current_signing_key() -> None:
     assert "iat" in str(excinfo.value)
 
 
+def test_claim_defect_on_a_rotated_key_is_reported_as_the_claim_defect() -> None:
+    """The mirror of the test above, and the case that was actually broken.
+
+    ``test_failure_reason_comes_from_the_current_signing_key`` passes a token
+    signed with candidates[0], so "raise the claim error" and "raise errors[0]"
+    are the same answer and it could not tell the two apart. Sign the same
+    defective token with candidates[1] and they diverge.
+
+    jose reports a missing required claim as a BARE ``JWTError`` — the message
+    is 'missing required key "iat" among claims' — not as ``JWTClaimsError``,
+    so the terminal clause for expiry/claims never caught it. It fell to the
+    collect-and-continue branch, the loop ran out of keys, and ``errors[0]``
+    reported candidates[0]'s "Signature verification failed."
+
+    That is the worst possible substitution during a rotation: the token IS
+    ours, the keys ARE fine, and the operator is told a key does not match at
+    the one moment they are already hunting a key mismatch. Meanwhile the real
+    defect — a token minted without ``iat``, i.e. one the revocation epoch
+    cannot ever kill — goes unnamed.
+    """
+    no_iat = _handcraft(_OLD_SECRET, iat=None)
+
+    with pytest.raises(JWTError) as excinfo:
+        verify_access_token(no_iat, [_NEW_SECRET, _OLD_SECRET])
+
+    assert "iat" in str(excinfo.value)
+    assert "Signature verification failed" not in str(excinfo.value)
+
+
+def test_a_token_matching_no_key_still_reports_a_signature_failure() -> None:
+    """The genuine key-mismatch case must not be swallowed by the fix above.
+
+    Making claim errors terminal is only safe if signature failures still fall
+    through to the next candidate — otherwise the first key would end the loop
+    and the rotation window would stop working entirely.
+    """
+    foreign = _handcraft("test-only-third-party-secret-0123456789")
+
+    with pytest.raises(JWTError, match="Signature verification failed"):
+        verify_access_token(foreign, [_NEW_SECRET, _OLD_SECRET])
+
+
 def test_empty_jti_still_rejected_with_multiple_secrets() -> None:
     """The empty-jti guard must not be skipped just because more keys remain."""
     empty_jti = _handcraft(_OLD_SECRET, jti="")

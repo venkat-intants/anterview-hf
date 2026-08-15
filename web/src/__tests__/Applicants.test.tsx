@@ -81,16 +81,25 @@ vi.mock('../components/agent/CandidatePanel', () => ({
 
 import Applicants from '../pages/hr/Applicants';
 
+// Returns the QueryClient alongside the render result. The reindex-status query
+// renders NOTHING when the backlog is zero, so a test asserting its absence has
+// no DOM signal to wait on — the cache is the only place that success is
+// observable. See "stays out of the way…" below.
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <Applicants />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  return {
+    client,
+    ...render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Applicants />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  };
 }
+
+const REINDEX_STATUS_KEY = ['hr', 'applicants', 'reindex-status'];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -193,9 +202,25 @@ describe('Applicants — search and filter', () => {
 
 describe('Applicants — search-index backfill', () => {
   it('stays out of the way when every resume is already indexed', async () => {
-    renderPage();
+    const { client } = renderPage();
 
     await screen.findByText('Bhavya Nair');
+
+    // Synchronise on the reindex-status query itself. It is a SEPARATE query
+    // from the applicant list, so waiting for the list proved nothing about the
+    // banner: at that moment getReindexStatus may not have resolved, and the
+    // button is absent for EVERY backlog value while it is pending. The
+    // assertion below therefore passed identically with remaining: 7 — the
+    // exact case the next test says must render a button.
+    //
+    // Waiting for the mock to have been *called* would not fix it either; that
+    // proves the request fired, not that its result reached the render. Cache
+    // status 'success' is the first moment the component has actually seen
+    // remaining: 0.
+    await waitFor(() =>
+      expect(client.getQueryState(REINDEX_STATUS_KEY)?.status).toBe('success'),
+    );
+
     expect(screen.queryByRole('button', { name: /make searchable/i })).not.toBeInTheDocument();
   });
 

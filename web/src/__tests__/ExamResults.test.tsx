@@ -188,6 +188,15 @@ describe('ExamResults', () => {
     renderResults();
 
     await screen.findByText('Bhavya Nair');
+
+    // Assert the AVERAGE, which is what the test is named for. It previously
+    // asserted the pass count and the threshold caption instead — both true
+    // whichever divisor the average used, so the arithmetic this test exists to
+    // pin was never checked and the 44-vs-67 bug would have shipped green.
+    expect(screen.getByText('67%')).toBeInTheDocument();
+    expect(screen.queryByText('44%')).not.toBeInTheDocument();
+
+    // Kept: they scope the number above to the right tile.
     expect(screen.getByText('1 passed')).toBeInTheDocument();
     expect(screen.getByText(/≥ 60% threshold/)).toBeInTheDocument();
   });

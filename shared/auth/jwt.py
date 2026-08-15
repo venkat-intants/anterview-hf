@@ -35,7 +35,7 @@ from typing import Any, Protocol
 
 import structlog
 from jose import JWTError, jwt
-from jose.exceptions import ExpiredSignatureError, JWTClaimsError
+from jose.exceptions import ExpiredSignatureError, JWSError, JWTClaimsError
 
 log = structlog.get_logger(__name__)
 
@@ -106,6 +106,30 @@ def issue_access_token(
         claims.setdefault(key, value)
     result: str = jwt.encode(claims, secret, algorithm=algorithm)
     return result
+
+
+def _is_signature_failure(exc: JWTError) -> bool:
+    """True when *exc* came from the SIGNATURE layer, so another key may help.
+
+    ``jwt.decode`` runs in two stages and reports both as a bare ``JWTError``,
+    which is why the class alone cannot separate them:
+
+    * the JWS stage (signature, header parsing) re-raises as
+      ``JWTError(JWSError(...))`` — the cause is an exception INSTANCE
+    * the claim stage raises ``JWTError("missing required key \\"iat\\" ...")``
+      directly — the argument is a plain string
+
+    So the wrapped cause is the discriminator, and it is a type check rather
+    than a match on message text: jose is free to reword "Signature
+    verification failed." in a patch release, and a verifier that silently
+    changed meaning when it did would be worse than no check.
+
+    A malformed token also lands here (``Invalid header string``) and is
+    key-independent, so retrying it against the remaining keys is wasted work
+    but not wrong — every candidate fails it identically and the loop ends at
+    ``errors[0]``, which is the right report for a token that is not a JWT.
+    """
+    return bool(exc.args) and isinstance(exc.args[0], JWSError)
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +244,21 @@ def verify_access_token(
             # hunting a key mismatch that does not exist.
             raise
         except JWTError as exc:
-            errors.append(exc)
-            continue
+            if _is_signature_failure(exc):
+                # The only error a LATER key can do better on. Collect and move
+                # to the next candidate.
+                errors.append(exc)
+                continue
+            # Any other JWTError means this key MATCHED and the token then failed
+            # a claim rule — the missing-``iat`` case above all, which jose
+            # reports as a bare JWTError ('missing required key "iat" among
+            # claims') rather than as JWTClaimsError, so the two-exception clause
+            # above never caught it. Collecting it meant `errors[0]` was raised
+            # instead: candidates[0]'s "Signature verification failed", i.e. a
+            # token rejected for a real, nameable claim defect was reported to
+            # the operator as a key mismatch, during the one window (rotation)
+            # when a key mismatch is what they are already looking for.
+            raise
 
         # Explicit defence-in-depth check: jose raises JWTError when
         # require_jti=True and jti is missing, but an empty string would pass
@@ -240,11 +277,13 @@ def verify_access_token(
             log.info("auth.jwt.verified_with_rotated_key", key_index=index)
         return payload
 
-    # Report the FIRST key's failure: candidates[0] is the current signing key,
-    # so its reason is the one worth having ("missing required key \"iat\"",
-    # say), whereas the trailing keys on a genuinely bad token contribute
-    # nothing but "signature verification failed". The list is non-empty here —
-    # the loop is entered at least once and every other exit returns or raises.
+    # Every collected error is now a signature-layer failure — a claim failure
+    # against a key that DID match is raised at the point it happens, because
+    # only that key's opinion is worth reporting. So what is left here is "this
+    # token verified against none of the deployed secrets", and candidates[0] is
+    # the current signing key, which makes its message the one an operator
+    # should read first. The list is non-empty: the loop is entered at least
+    # once and every other exit returns or raises.
     raise errors[0]
 
 

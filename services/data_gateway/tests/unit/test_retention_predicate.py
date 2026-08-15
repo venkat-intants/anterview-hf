@@ -17,6 +17,7 @@ forever.
 
 from __future__ import annotations
 
+import ast
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -41,19 +42,82 @@ def test_the_predicate_does_not_filter_on_deleted_at() -> None:
     assert "deleted_at" not in _sql()
 
 
+def _upgrade_statements() -> list[str]:
+    """The SQL ``upgrade()`` executes, one normalised statement per entry.
+
+    Parsed with ``ast`` rather than sliced out of the file as text, which is what
+    these tests used to do. Two reasons, both of which have bitten:
+
+    * **Comments are not SQL.** The migration's own prose names the indexes it
+      manages, so a substring search over the raw source can be satisfied by a
+      comment ABOUT a statement that is no longer there.
+    * **Formatting is not meaning.** Python concatenates adjacent string
+      literals, so wrapping one ``op.execute`` across two lines changed nothing
+      about the emitted SQL and still broke the assertion. ``ast`` folds them
+      back into one constant, so these tests fail only when the SQL changes.
+    """
+    tree = ast.parse(_MIGRATION.read_text(encoding="utf-8"))
+    upgrade = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "upgrade"
+    )
+    return [
+        " ".join(node.args[0].value.split())
+        for node in ast.walk(upgrade)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "execute"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ]
+
+
 def test_the_index_no_longer_carries_a_predicate_the_query_lacks() -> None:
-    source = _MIGRATION.read_text(encoding="utf-8")
-    upgrade = source.split("def upgrade()", 1)[1].split("def downgrade()", 1)[0]
-    assert "CREATE INDEX idx_sessions_retention ON sessions (status, completed_at)" in upgrade
-    assert "WHERE deleted_at IS NULL" not in upgrade
+    statements = _upgrade_statements()
+    assert (
+        "CREATE INDEX idx_sessions_retention ON sessions (status, completed_at)" in statements
+    )
+    # Only the upgrade. downgrade() restores the partial index on purpose.
+    assert not any("WHERE deleted_at IS NULL" in s for s in statements)
 
 
 def test_the_updated_at_branch_gets_an_index_of_its_own() -> None:
     """``status IN ('abandoned','failed') AND updated_at < cutoff`` had no usable
     index at all — ``updated_at`` was not in the original index's column list."""
-    source = _MIGRATION.read_text(encoding="utf-8")
-    upgrade = source.split("def upgrade()", 1)[1].split("def downgrade()", 1)[0]
-    assert "idx_sessions_retention_updated ON sessions (status, updated_at)" in upgrade
+    assert any(
+        "idx_sessions_retention_updated ON sessions (status, updated_at)" in s
+        for s in _upgrade_statements()
+    )
+
+
+def test_the_updated_index_is_created_idempotently_and_never_dropped() -> None:
+    """It is NEW in this migration, so no wrong prior definition exists to
+    replace — unlike ``idx_sessions_retention``, which must be dropped because
+    the name already carries the unusable partial index.
+
+    That asymmetry is load-bearing on a large live table. The module docstring
+    tells an operator to pre-create both CONCURRENTLY and let the migration find
+    them present; a DROP here would discard that work and rebuild the index
+    inside Alembic's transaction, taking exactly the ACCESS EXCLUSIVE lock the
+    CONCURRENTLY recipe exists to avoid.
+    """
+    statements = _upgrade_statements()
+
+    creates = [s for s in statements if "CREATE" in s and "idx_sessions_retention_updated" in s]
+    assert creates == [
+        "CREATE INDEX IF NOT EXISTS idx_sessions_retention_updated "
+        "ON sessions (status, updated_at)"
+    ]
+    assert not any(
+        "DROP" in s and "idx_sessions_retention_updated" in s for s in statements
+    )
+
+    # The other index keeps drop-then-create, and without IF NOT EXISTS: a
+    # silent no-op there would leave the unusable partial index in place, which
+    # is the whole point of the migration.
+    assert "DROP INDEX IF EXISTS idx_sessions_retention" in statements
 
 
 def test_every_predicate_branch_is_covered_by_one_of_the_two_indexes() -> None:

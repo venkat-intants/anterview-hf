@@ -537,6 +537,13 @@ export async function uploadWithProgress<T>(
   }
 
   if (result.status >= 200 && result.status < 300) {
+    // Mirrors parseJsonOrEmpty on the fetch path. A 204, or any 2xx with an
+    // empty body, is a success with nothing to parse — JSON.parse('') throws,
+    // so without this an endpoint that stops returning a body turns a
+    // successful upload into "Invalid response from server".
+    if (result.status === 204 || result.responseText.trim() === '') {
+      return undefined as T;
+    }
     try {
       return JSON.parse(result.responseText) as T;
     } catch {
@@ -551,7 +558,16 @@ export async function uploadWithProgress<T>(
   } catch {
     // leave default
   }
-  throw new Error(detail);
+  // ApiError, not Error, so the status survives to the caller — the same
+  // contract clientFetch and the typed helpers already have. isTransientApiError
+  // treats a plain Error as "no response was received, worth retrying", so every
+  // upload rejection (413 too large, 415 wrong type, 422 unparseable resume)
+  // was being classified as a transient network blip.
+  //
+  // Deliberately only THIS throw. The network, timeout and session-expired paths
+  // above stay plain Errors: no HTTP response was received in those cases, so
+  // there is no status to carry and "retry" really is the right reading.
+  throw new ApiError(detail, result.status);
 }
 
 /** Raw clientFetch for callers that need full control over the URL. */

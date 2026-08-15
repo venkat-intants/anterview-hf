@@ -65,9 +65,16 @@ def upgrade() -> None:
         "CREATE INDEX idx_sessions_retention ON sessions (status, completed_at)"
     )
 
-    op.execute("DROP INDEX IF EXISTS idx_sessions_retention_updated")
+    # IF NOT EXISTS, and NO drop first — the opposite of the pair above, because
+    # this index has no wrong prior definition to remove. It is new in this
+    # migration, so anything already carrying the name was created by the
+    # CONCURRENTLY recipe in the module docstring: dropping and rebuilding it
+    # would take the ACCESS EXCLUSIVE lock that recipe exists to avoid, inside
+    # Alembic's transaction, on the large live table it was run for. Finding it
+    # already present is the intended outcome, not a collision.
     op.execute(
-        "CREATE INDEX idx_sessions_retention_updated ON sessions (status, updated_at)"
+        "CREATE INDEX IF NOT EXISTS idx_sessions_retention_updated "
+        "ON sessions (status, updated_at)"
     )
 
 

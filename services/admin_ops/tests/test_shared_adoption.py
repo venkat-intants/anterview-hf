@@ -102,11 +102,36 @@ def test_capitalised_production_cannot_buy_a_plaintext_link() -> None:
 
 def test_loopback_exempt_sentinel_is_stripped_before_the_driver_sees_it() -> None:
     """asyncpg cannot understand 'loopback-exempt' — storing it would break the
-    connection the acknowledgement was meant to permit."""
+    connection the acknowledgement was meant to permit.
+
+    The URL is overridden to loopback because that is now a PRECONDITION of the
+    sentinel being honoured at all: the exemption claims TLS terminates upstream
+    on this machine, so the validator checks the endpoint before accepting it.
+    The default fixture URL is ``db.example.com`` — see the test below.
+    """
     cfg = Settings(  # type: ignore[arg-type]
-        **_settings_kwargs(app_env="production", database_ssl="loopback-exempt")
+        **_settings_kwargs(
+            app_env="production",
+            database_ssl="loopback-exempt",
+            database_url="postgresql+asyncpg://u:p@127.0.0.1:5432/db",
+        )
     )
     assert cfg.database_ssl == ""
+
+
+def test_loopback_exempt_is_refused_for_a_remote_database() -> None:
+    """The whole point of passing DATABASE_URL to the validator.
+
+    Before the URL was a parameter, this one env var turned off TLS to a remote
+    Neon instance and passed every startup guard — candidate PII in cleartext
+    across the internet with a written acknowledgement that it was fine
+    (DPDP §8, CWE-319). The sentinel is an assertion about the ENDPOINT, so an
+    endpoint that is not loopback must refuse to boot.
+    """
+    with pytest.raises(ValueError, match="loopback"):
+        Settings(  # type: ignore[arg-type]
+            **_settings_kwargs(app_env="production", database_ssl="loopback-exempt")
+        )
 
 
 def test_development_without_ssl_still_starts() -> None:

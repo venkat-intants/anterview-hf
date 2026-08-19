@@ -1,6 +1,6 @@
 # Data-Flow and Sub-processor Transparency
 
-> Last updated: 2026-08-07 (see Change Log)
+> Last updated: 2026-08-19 (see Change Log)
 > This document is the authoritative record of every third-party sub-processor
 > that handles candidate data and where that data flows geographically.
 > It is referenced from the in-app consent modal (all three Day-1 languages).
@@ -118,6 +118,7 @@ only environment variables change.
 
 | Date | Change |
 |---|---|
+| 2026-08-19 | **Groq cross-border processing disclosed as unconditional.** The Groq row previously read "active when `LLM_PROVIDER=groq`", which understated the transfer: the LiveKit worker wires Groq directly and never reads that setting, so every interview's candidate speech text is sent to the United States on every session, in real time. The row now says so, and names the model as `GROQ_MODEL` rather than a pinned id. The Gemini row was also corrected — it was credited as the "interview brain"; Gemini performs role-profile derivation, scoring, exam generation and the staff copilots, not the live turn loop. No new sub-processor was added: this is a correction of what was already happening. |
 | 2026-08-07 | **JDoodle residency claim withdrawn** — the row said "India (JDoodle infrastructure)" with no evidence; now marked unverified (code-review finding AG-05). Candidate stdin added to the data-processed column. Cross-references added to the new `ACCEPTED-RISKS.md` register (AR-1 residency, AR-3 JDoodle). |
 | 2026-07-01 | Initial document created; cross-border disclosure added to consent modal (fixes DPDP audit finding) |
 | 2026-06-xx | Neon region moved from us-east-1 to ap-southeast-1 (Singapore) for lower India latency |

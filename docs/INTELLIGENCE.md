@@ -137,8 +137,10 @@ The resulting per-console toolsets:
 
 `POST /agent/panel/{applicant_id}` returns resume + exam + coding + transcript
 in one response, so it is candidate PII in all but name and is `hr_manager`
-only — matching `get_hr_company`, which already gates every `/hr/*` REST
-endpoint on that role alone.
+only — matching `get_hr_company`, which gates every `/hr/*` REST endpoint on
+**two** conditions, not one: the caller must hold `hr_manager`, *and* their user
+row must resolve to a company. An `hr_manager` with no `company_id` is refused
+with a 403 rather than reaching a handler with an unscoped filter.
 
 **A super admin is deliberately not a superset of an HR manager.** "More senior
 therefore sees more" is the intuitive default and the reason this separation

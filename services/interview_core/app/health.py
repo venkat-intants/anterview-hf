@@ -10,6 +10,7 @@ This mirrors the convention already in services/admin_ops/app/health.py.
 """
 
 import asyncio
+import contextlib
 from typing import Any
 
 import boto3
@@ -179,6 +180,44 @@ async def _check_groq() -> dict[str, Any]:
             )
         if resp.status_code == 401:
             return {"ok": False, "error": "invalid GROQ_API_KEY", "model": settings.groq_model}
+        if resp.status_code == 403:
+            # A 403 has at least two unrelated causes and collapsing them sent
+            # this investigation down the wrong path once already:
+            #
+            #   * per-model entitlement — the org or project may not use this
+            #     model. Groq names that in the response body.
+            #   * an edge/WAF block on the CALLER — observed as a NON-JSON body
+            #     reading "error code: 1010" when the client's User-Agent was
+            #     rejected. Nothing to do with the key or the model, and
+            #     reporting it as a model problem is actively misleading.
+            #
+            # Only the first is claimed, and only on the documented codes. The
+            # body is logged, never returned: per the module docstring
+            # (S-6/CWE-209) this endpoint is unauthenticated and upstream error
+            # documents have been seen to echo the request.
+            # ValueError covers the WAF case: a non-JSON body (the observed
+            # "error code: 1010" is plain text) makes .json() raise, and an
+            # unparseable body simply means no error code to match on.
+            error_code = ""
+            with contextlib.suppress(ValueError):
+                error_code = str((resp.json().get("error") or {}).get("code") or "")
+            log.warning("health.groq.forbidden", code=error_code, body=resp.text[:300])
+            if error_code in (
+                "model_permission_blocked_org",
+                "model_permission_blocked_project",
+            ):
+                return {
+                    "ok": False,
+                    "error": "model blocked for this Groq organization or project",
+                    "model": settings.groq_model,
+                    "hint": "enable the model in the Groq console, or set GROQ_MODEL to one this project may use",
+                }
+            return {
+                "ok": False,
+                "error": "HTTP 403 — not a model-permission error",
+                "model": settings.groq_model,
+                "hint": "check for an edge/WAF block on the caller before suspecting the key",
+            }
         if resp.status_code == 404:
             return {
                 "ok": False,

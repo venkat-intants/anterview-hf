@@ -1093,11 +1093,20 @@ async def _get_company_overview(args: dict[str, Any], ctx: ToolContext) -> ToolO
 async def _get_hr_workload(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     """Staff activity counts for the caller's own company.
 
-    This returns employee PII (name, email) - deliberately, and only to the one
-    console that administers those employees. A super admin creates their
-    company's HR managers, so seeing who they are is their job. Every count is
-    correlated on BOTH created_by_user_id and company_id, so a staff member who
-    moved between companies cannot drag another tenant's totals across.
+    This returns employee identity - deliberately, and only to the one console
+    that administers those employees. A super admin creates their company's HR
+    managers, so seeing who they are is their job.
+
+    The address is NOT returned as a field of its own. Answering "who is
+    overloaded" needs a name, not a mailbox, and every field here is fed into an
+    LLM context, so the address would be PII shipped to a third-party model for
+    no gain. ``name`` still falls back to the email when a staff row has no
+    full_name - a blank row is useless to the reader - so an address can surface
+    there, but only when it is the only identifier the record has.
+
+    Every count is correlated on BOTH created_by_user_id and company_id, so a
+    staff member who moved between companies cannot drag another tenant's
+    totals across.
 
     EXISTS rather than a JOIN on user_roles: a user holding two roles would
     otherwise produce duplicate rows and double every count.
@@ -1140,7 +1149,6 @@ async def _get_hr_workload(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
             "hr_managers": [
                 {
                     "name": r.full_name or r.email,
-                    "email": r.email,
                     "active": bool(r.is_active),
                     "applicants_added": r.applicants_added,
                     "interviews_invited": r.interviews_invited,

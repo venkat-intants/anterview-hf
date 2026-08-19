@@ -100,7 +100,7 @@ def test_the_super_admin_console_is_not_a_superset_of_hr() -> None:
 
 
 def test_staff_tools_stay_inside_one_company() -> None:
-    """get_hr_workload returns employee names and emails.
+    """get_hr_workload returns employee staff records (names, activity counts).
 
     That is fine for the super admin who administers those employees, and never
     fine across a tenant boundary — so the class must not be cross-tenant.

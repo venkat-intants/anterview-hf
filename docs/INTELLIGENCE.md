@@ -93,6 +93,73 @@ identically.
 `CommitSpec.path` must be relative (validated), so a proposal can never point
 the commit button at another host.
 
+### The second invariant — a console cannot read outside its remit
+
+The write ban says what an agent may DO. This says what it may SEE, and it is
+enforced the same way — in the type, at construction:
+
+```python
+ToolDataClass = Literal[
+    "candidate_pii",       # a NAMED candidate: resume, transcript, axis scores
+    "company_scoped",      # aggregates inside one company, nobody identifiable
+    "company_staff",       # the company's own staff records
+    "platform_aggregate",  # crosses tenants; aggregate-only, always
+]
+
+DATA_CLASS_ROLES = {
+    "candidate_pii":      frozenset({"hr_manager"}),
+    "company_scoped":     frozenset({"hr_manager", "super_admin"}),
+    "company_staff":      frozenset({"super_admin"}),
+    "platform_aggregate": frozenset({"platform_owner", "admin"}),
+}
+```
+
+Every tool declares both a `data_class` and a non-empty `allowed_roles`;
+`ToolSpec` rejects any pair the matrix does not permit. That check runs when the
+tool is constructed, which is module import — so a mis-scoped tool fails the
+service at startup rather than at the request that would have leaked.
+
+The resulting per-console toolsets:
+
+| Tool | Class | hr_manager | super_admin | platform_owner | admin |
+|---|---|:--:|:--:|:--:|:--:|
+| `list_applicants` | candidate_pii | ✅ | — | — | — |
+| `get_applicant_detail` | candidate_pii | ✅ | — | — | — |
+| `draft_interview_invites` | candidate_pii | ✅ | — | — | — |
+| `draft_shortlist` | candidate_pii | ✅ | — | — | — |
+| `get_funnel_analytics` | company_scoped | ✅ | ✅ | — | — |
+| `get_exam_question_stats` | company_scoped | ✅ | ✅ | — | — |
+| `get_role_model` | company_scoped | ✅ | ✅ | — | — |
+| `get_company_overview` | company_staff | — | ✅ | — | — |
+| `get_hr_workload` | company_staff | — | ✅ | — | — |
+| `get_platform_overview` | platform_aggregate | — | — | ✅ | — |
+| `get_score_distribution` | platform_aggregate | — | — | ✅ | ✅ |
+
+`POST /agent/panel/{applicant_id}` returns resume + exam + coding + transcript
+in one response, so it is candidate PII in all but name and is `hr_manager`
+only — matching `get_hr_company`, which gates every `/hr/*` REST endpoint on
+**two** conditions, not one: the caller must hold `hr_manager`, *and* their user
+row must resolve to a company. An `hr_manager` with no `company_id` is refused
+with a 403 rather than reaching a handler with an unscoped filter.
+
+**A super admin is deliberately not a superset of an HR manager.** "More senior
+therefore sees more" is the intuitive default and the reason this separation
+would erode; `test_the_super_admin_console_is_not_a_superset_of_hr` exists to
+make that erosion fail CI. The super admin trades candidate depth for company
+breadth.
+
+Two further gates back this up:
+
+* `run_agent` refuses when `AgentSpec.role` and `ToolContext.role` disagree.
+  The persona and the toolset are chosen independently and nothing else forced
+  them to match.
+* `_agent_context` reads `users.company_id` on **every** path. A cross-tenant
+  console requires an account with no company, so a company user who also holds
+  `admin` is refused rather than silently handed the un-scoped analytics tools.
+
+Tests: `shared/agents/tests/test_access_matrix.py` (mechanism),
+`services/data_gateway/tests/unit/test_agent_role_isolation.py` (wiring).
+
 ### Defence in depth against prompt injection
 
 Everything interesting an agent reads is written by outsiders: resumes, JDs,

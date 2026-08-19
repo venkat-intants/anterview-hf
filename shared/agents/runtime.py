@@ -84,6 +84,26 @@ async def run_agent(
     """Run one agent turn to completion. Never raises."""
     run = AgentRun(agent=spec.name)
 
+    # The persona and the toolset are chosen independently — ``build_agent``
+    # picks the system prompt from a role, ``specs_for`` filters tools by the
+    # ctx role — and nothing else forces those two roles to be the same one. A
+    # caller that got them from different places would hand, say, the HR
+    # copilot's prompt a super-admin toolset. Neither role is escalated by
+    # that (tools stay gated on ctx.role), but the agent would be operating
+    # under instructions written for someone else, so refuse rather than guess
+    # which of the two was intended.
+    if spec.role != ctx.role:
+        log.error(
+            "agents.run.role_mismatch",
+            agent=spec.name,
+            spec_role=spec.role,
+            ctx_role=ctx.role,
+            actor_id=ctx.actor_id,
+        )
+        run.reply = "The assistant is unavailable for this account."
+        run.stop_reason = "role_mismatch"
+        return run
+
     if llm is None:
         # A deployment with no model key: say so rather than silently returning
         # an empty answer that reads like the agent had nothing to say.

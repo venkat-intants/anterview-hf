@@ -142,10 +142,17 @@ class ToolRegistry:
         name: str,
         description: str,
         parameters: dict[str, Any],
+        data_class: str,
+        allowed_roles: tuple[str, ...],
         effect: str = "read",
-        allowed_roles: tuple[str, ...] = (),
     ) -> Callable[[ToolHandler], ToolHandler]:
-        """Decorator form of ``register``, so a tool sits next to its schema."""
+        """Decorator form of ``register``, so a tool sits next to its schema.
+
+        ``data_class`` and ``allowed_roles`` are required positional-by-keyword
+        arguments with no defaults. A new tool cannot be added without stating
+        what it returns and who may call it, and ``ToolSpec`` then checks that
+        pair against ``DATA_CLASS_ROLES``.
+        """
 
         def decorator(handler: ToolHandler) -> ToolHandler:
             self.register(
@@ -154,6 +161,7 @@ class ToolRegistry:
                     description=description,
                     parameters=parameters,
                     effect=effect,  # type: ignore[arg-type]  # validated in register
+                    data_class=data_class,  # type: ignore[arg-type]  # validated in ToolSpec
                     allowed_roles=allowed_roles,  # type: ignore[arg-type]
                 ),
                 handler,

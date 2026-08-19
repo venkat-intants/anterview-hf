@@ -1,9 +1,13 @@
 """Groq REST adapter — fast OpenAI-compatible LLM provider.
 
-Groq exposes an OpenAI-compatible ``/chat/completions`` endpoint and
-consistently returns p50 latencies of ~300 ms on ``llama-3.3-70b-versatile``,
-making it an excellent swap-in when Gemini's free-tier rate limits bite during
-demos.
+Groq exposes an OpenAI-compatible ``/chat/completions`` endpoint and returns
+sub-second latencies on the models we use, making it an excellent swap-in when
+Gemini's free-tier rate limits bite during demos.
+
+The model is NOT pinned here — it comes from ``settings.groq_model``, because
+model availability is per-account on Groq and the catalogue changes. A pinned
+id that an account cannot access returns 404 on every call; in the interview
+turn loop that surfaced as an avatar that simply never spoke.
 
 Wire format is standard OpenAI Chat Completions v1:
   - ``POST {base_url}/chat/completions``

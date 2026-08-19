@@ -85,9 +85,21 @@ nightly watchers.
 > Adding write capability requires editing the type in `shared/agents/schema.py`
 > — make that a deliberate, reviewed change, never a call-site argument.
 
+> **The second invariant: a console cannot read outside its remit.** Every
+> tool declares a `data_class` (`candidate_pii` / `company_scoped` /
+> `company_staff` / `platform_aggregate`) and `ToolSpec` validates it against
+> `DATA_CLASS_ROLES` in `shared/agents/schema.py` **at construction**, so a
+> mis-scoped tool raises on import and the service refuses to start. Only
+> `hr_manager` is ever offered a tool that returns a named candidate — a
+> company `super_admin` runs hiring operations and is deliberately NOT a
+> superset of HR. Widening requires editing the matrix, never a call-site
+> argument.
+
 Tenancy comes from the authenticated session into `ToolContext`, never from a
-model argument. Cross-tenant tools (`platform_owner`) are aggregate-only and
-must stay `read`.
+model argument. Cross-tenant tools (`platform_owner`, `admin`) are
+aggregate-only and must stay `read`; the router refuses to build a cross-tenant
+context for an account that belongs to a company, so the un-scoped analytics
+tools cannot be reached from a tenant account.
 
 Env: `GEMINI_API_KEY` (already required by the Space entrypoint),
 `AGENTS_ENABLED`, `WATCHERS_ENABLED`, `WATCHERS_CRON_HOUR`.

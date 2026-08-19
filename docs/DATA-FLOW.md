@@ -1,6 +1,6 @@
 # Data-Flow and Sub-processor Transparency
 
-> Last updated: 2026-08-07 (see Change Log)
+> Last updated: 2026-08-19 (see Change Log)
 > This document is the authoritative record of every third-party sub-processor
 > that handles candidate data and where that data flows geographically.
 > It is referenced from the in-app consent modal (all three Day-1 languages).
@@ -36,8 +36,8 @@ above is the disclosure; AR-1 is the decision and who owns it.
 | **Neon** (managed Postgres) | Primary database | User accounts, session metadata, scorecards, DPDP consent ledger | **Singapore** (ap-southeast-1) | Moved from us-east-1 2026-06-xx for India latency; still outside India |
 | **Upstash** | Serverless Redis cache | Session tokens, ephemeral rate-limit counters (no PII stored) | Global edge (nearest PoP) | Volatile only; TTL ≤ 1 hour |
 | **Cloudflare R2** | Object storage | Voice audio recordings, uploaded resume PDFs | **United States** (Cloudflare default region) | SSE at rest; encrypted in transit |
-| **Google Gemini** (gemini-flash-lite-latest) | LLM — interview brain | Interview transcript (candidate speech text) | **United States** (Google Cloud) | No training on submitted data per Google API ToS |
-| **Groq** (llama-3.3-70b-versatile) | LLM — fallback / interview worker | Interview transcript (candidate speech text) | **United States** (Groq Cloud) | Listed as alternative provider; active when `LLM_PROVIDER=groq` |
+| **Google Gemini** (gemini-2.5-flash) | LLM — role-profile derivation, scoring, exam generation, staff copilots | Job descriptions, interview transcript, candidate answers | **United States** (Google Cloud) | No training on submitted data per Google API ToS |
+| **Groq** (`GROQ_MODEL`, currently openai/gpt-oss-120b) | LLM — the live interview turn loop | Interview transcript (candidate speech text), in real time, every session | **United States** (Groq Cloud) | **Unconditional, not optional.** The worker wires Groq directly and does NOT read `LLM_PROVIDER`; that setting routes only the non-realtime LLM paths. Every interview's speech text reaches the US via Groq. |
 | **Sarvam AI** | Speech-to-text (STT) and text-to-speech (TTS) | Raw voice audio (STT) and transcript text (TTS) | **India** (Sarvam infrastructure) | Indian company; data-processing location confirmed as India |
 | **Tavus** | Real-time avatar video | Avatar persona identifier only (no candidate biometric data) | **United States** | Demo-only; candidate's face is NOT sent to Tavus; only the TTS audio is relayed for lip-sync |
 | **Simli** | Real-time avatar video | TTS audio stream for lip-sync | **United States** | Demo-only; same biometric caveat as Tavus |
@@ -118,6 +118,7 @@ only environment variables change.
 
 | Date | Change |
 |---|---|
+| 2026-08-19 | **Groq cross-border processing disclosed as unconditional.** The Groq row previously read "active when `LLM_PROVIDER=groq`", which understated the transfer: the LiveKit worker wires Groq directly and never reads that setting, so every interview's candidate speech text is sent to the United States on every session, in real time. The row now says so, and names the model as `GROQ_MODEL` rather than a pinned id. The Gemini row was also corrected — it was credited as the "interview brain"; Gemini performs role-profile derivation, scoring, exam generation and the staff copilots, not the live turn loop. No new sub-processor was added: this is a correction of what was already happening. |
 | 2026-08-07 | **JDoodle residency claim withdrawn** — the row said "India (JDoodle infrastructure)" with no evidence; now marked unverified (code-review finding AG-05). Candidate stdin added to the data-processed column. Cross-references added to the new `ACCEPTED-RISKS.md` register (AR-1 residency, AR-3 JDoodle). |
 | 2026-07-01 | Initial document created; cross-border disclosure added to consent modal (fixes DPDP audit finding) |
 | 2026-06-xx | Neon region moved from us-east-1 to ap-southeast-1 (Singapore) for lower India latency |

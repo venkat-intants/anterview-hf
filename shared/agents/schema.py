@@ -31,7 +31,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # What a tool does to the world. There is deliberately no "write" member:
 # adding one would be the single change that breaks the guarantee above, so it
@@ -43,6 +43,54 @@ ToolEffect = Literal["read", "draft"]
 # declares which of these may call it, and the registry filters the tool list
 # per caller so an HR manager's agent never even SEES a platform-owner tool.
 AgentRole = Literal["hr_manager", "super_admin", "platform_owner", "admin"]
+
+# What KIND of data a tool returns. Declared per tool and checked against
+# ``DATA_CLASS_ROLES`` below, so "which console may read candidate PII" is one
+# reviewable table rather than a role tuple retyped at nine call sites.
+#
+#   candidate_pii      identifies or describes a NAMED candidate — resume text,
+#                      transcripts, per-axis scores, anything that reads as a
+#                      person rather than a number.
+#   company_scoped     aggregates inside one company. Counts, rates, per-role
+#                      roll-ups. No individual candidate is identifiable.
+#   company_staff      the company's own STAFF records (HR managers, their
+#                      workload). Employee data, not candidate data.
+#   platform_aggregate crosses tenants. Aggregate-only, always.
+ToolDataClass = Literal[
+    "candidate_pii",
+    "company_scoped",
+    "company_staff",
+    "platform_aggregate",
+]
+
+# The access matrix. A tool may name only roles listed for its data class, and
+# ``ToolSpec`` rejects anything wider at construction time — which means an
+# import of the tools module is enough to fail, so a mis-scoped tool cannot
+# reach a running console.
+#
+# Read this as the platform's data-minimisation policy in executable form:
+#
+#   * Only ``hr_manager`` ever sees a named candidate. A company super admin
+#     runs hiring OPERATIONS — throughput, bottlenecks, who on their team is
+#     overloaded — and none of that requires reading one applicant's resume.
+#     Removing that reach is the point: it is the difference between a super
+#     admin who cannot look up a candidate and one who merely should not.
+#   * ``platform_owner`` and the ``admin`` analytics console are cross-tenant
+#     by design, and therefore aggregate-only. A platform operator debugging
+#     tenant health has no route to a company's applicants through a copilot.
+#   * No role appears in more than one tenancy scope. Nothing here grants a
+#     company role a cross-tenant read, or a platform role a tenant read.
+DATA_CLASS_ROLES: dict[str, frozenset[str]] = {
+    "candidate_pii": frozenset({"hr_manager"}),
+    "company_scoped": frozenset({"hr_manager", "super_admin"}),
+    "company_staff": frozenset({"super_admin"}),
+    "platform_aggregate": frozenset({"platform_owner", "admin"}),
+}
+
+# Roles whose reads are NOT confined to a single company. Kept next to the
+# matrix because the router uses it to decide whether a ToolContext may carry a
+# NULL company_id, and the two must not drift.
+CROSS_TENANT_ROLES: frozenset[str] = frozenset({"platform_owner", "admin"})
 
 # Where a piece of evidence came from. The frontend maps these to deep links,
 # so an HR user can click any claim an agent makes and land on the record.
@@ -92,11 +140,15 @@ class ToolSpec(BaseModel):
     description: str
     parameters: dict[str, Any]
     effect: ToolEffect
-    # Empty means "every role". Most read tools are company-scoped at the
-    # handler level anyway, so the role gate is about which CONSOLE surfaces
-    # the capability, not about tenancy (tenancy is enforced separately and
-    # unconditionally — see ToolContext).
-    allowed_roles: tuple[AgentRole, ...] = ()
+    # What this tool returns. Required — there is deliberately no default,
+    # because the safe-looking default ("aggregate") is exactly the one a new
+    # tool that actually returns PII would inherit by accident.
+    data_class: ToolDataClass
+    # Which consoles may see and call this tool. Required and non-empty: an
+    # empty tuple used to mean "every role", which is the wrong default for a
+    # surface that reads candidate data. Every tool now states its audience,
+    # and ``_roles_match_data_class`` checks that audience against the matrix.
+    allowed_roles: tuple[AgentRole, ...] = Field(min_length=1)
 
     @field_validator("parameters")
     @classmethod
@@ -112,8 +164,38 @@ class ToolSpec(BaseModel):
         v.setdefault("properties", {})
         return v
 
+    @model_validator(mode="after")
+    def _roles_match_data_class(self) -> ToolSpec:
+        """Reject a tool offered to a role its data class does not permit.
+
+        This is the enforcement point for the access matrix. It runs at
+        construction, so a mis-scoped tool raises during module import and the
+        service fails to start rather than serving one company's candidates to
+        somebody who should never have been shown them.
+
+        Widening access therefore cannot be done at a call site. It requires
+        editing ``DATA_CLASS_ROLES`` — a visible, reviewable change, in the
+        same spirit as ``ToolEffect`` having no "write" member.
+        """
+        permitted = DATA_CLASS_ROLES[self.data_class]
+        overreach = tuple(r for r in self.allowed_roles if r not in permitted)
+        if overreach:
+            raise ValueError(
+                f"tool {self.name!r} is data_class={self.data_class!r} but names "
+                f"role(s) {overreach!r}, which that class does not permit "
+                f"(allowed: {sorted(permitted)}). Either the data class is "
+                f"wrong or this is a privilege widening — change "
+                f"DATA_CLASS_ROLES deliberately if the latter."
+            )
+        return self
+
     def permits(self, role: str) -> bool:
-        return not self.allowed_roles or role in self.allowed_roles
+        """Whether this role may see and call the tool.
+
+        No empty-means-everyone case: ``allowed_roles`` is validated non-empty,
+        so an unlisted role is always a denial.
+        """
+        return role in self.allowed_roles
 
 
 class ToolCall(BaseModel):
@@ -230,6 +312,7 @@ StopReason = Literal[
     "token_budget",  # hit the token budget
     "llm_error",  # provider failed and could not be recovered
     "no_llm",  # no provider configured
+    "role_mismatch",  # spec role and caller role disagreed — refused, see runtime
 ]
 
 

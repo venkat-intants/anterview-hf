@@ -121,7 +121,7 @@ TAVUS_PERSONA_ID          <echo-mode persona>
 SIMLI_API_KEY             <key>
 SIMLI_FACE_ID             <face>
 GROQ_API_KEY              <key>
-GROQ_MODEL                llama-3.3-70b-versatile
+GROQ_MODEL                openai/gpt-oss-120b
 SARVAM_API_KEY            <key>
 SARVAM_STT_MODEL          saaras:v3
 LLM_PROVIDER              groq
@@ -148,7 +148,7 @@ TAVUS_PERSONA_ID          <echo-mode persona>
 SIMLI_API_KEY             <key>
 SIMLI_FACE_ID             <face>
 GROQ_API_KEY              <key>
-GROQ_MODEL                llama-3.3-70b-versatile
+GROQ_MODEL                openai/gpt-oss-120b
 SARVAM_API_KEY            <key>
 SARVAM_STT_MODEL          saaras:v3
 FEEDBACK_BILLING_URL      https://<feedback-billing-railway-url>

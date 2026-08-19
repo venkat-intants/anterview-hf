@@ -47,8 +47,30 @@ registry = ToolRegistry()
 MAX_ROWS: int = 25
 MAX_TEXT: int = 2500
 
-HR_ROLES: tuple[str, ...] = ("hr_manager", "super_admin")
-ADMIN_ROLES: tuple[str, ...] = ("hr_manager", "super_admin", "platform_owner", "admin")
+# Console audiences, one per data class in shared/agents/schema.py.
+#
+# These are call-site labels, NOT the enforcement point. ``ToolSpec`` checks
+# every tool's (data_class, allowed_roles) pair against ``DATA_CLASS_ROLES`` at
+# construction, so a tool that names a role its class does not permit raises on
+# import of this module and the service refuses to start. Retyping a tuple here
+# cannot widen anything.
+
+# Named-candidate reads: the HR console only. A company super admin runs hiring
+# operations and does not need — and therefore does not get — a route to one
+# applicant's resume, transcript or per-axis scores.
+CANDIDATE_PII_ROLES: tuple[str, ...] = ("hr_manager",)
+
+# Company-scoped aggregates with no identifiable candidate in them. Both
+# consoles that run a single company's hiring may read these.
+COMPANY_ROLES: tuple[str, ...] = ("hr_manager", "super_admin")
+
+# The company's own STAFF records — who is on the team and how loaded they are.
+# A super admin's remit; an HR manager has no business auditing their peers.
+COMPANY_STAFF_ROLES: tuple[str, ...] = ("super_admin",)
+
+# Cross-tenant, aggregate-only.
+PLATFORM_OWNER_ROLES: tuple[str, ...] = ("platform_owner",)
+ANALYTICS_ROLES: tuple[str, ...] = ("admin", "platform_owner")
 
 
 def _db(ctx: ToolContext) -> AsyncSession:
@@ -178,7 +200,8 @@ def _job_filter(raw: Any) -> str | None:
             "limit": {"type": "integer", "description": f"1-{MAX_ROWS}, default 10."},
         },
     },
-    allowed_roles=HR_ROLES,
+    data_class="candidate_pii",
+    allowed_roles=CANDIDATE_PII_ROLES,
 )
 async def _list_applicants(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     rows = (
@@ -236,7 +259,8 @@ async def _list_applicants(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
         },
         "required": ["applicant_id"],
     },
-    allowed_roles=HR_ROLES,
+    data_class="candidate_pii",
+    allowed_roles=CANDIDATE_PII_ROLES,
 )
 async def _get_applicant_detail(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     applicant_id = str(args.get("applicant_id", "")).strip()
@@ -374,7 +398,8 @@ async def _get_applicant_detail(args: dict[str, Any], ctx: ToolContext) -> ToolO
         "bottleneck, and throughput questions."
     ),
     parameters={"type": "object", "properties": {}},
-    allowed_roles=HR_ROLES,
+    data_class="company_scoped",
+    allowed_roles=COMPANY_ROLES,
 )
 async def _get_funnel_analytics(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     db = _db(ctx)
@@ -451,7 +476,8 @@ async def _get_funnel_analytics(args: dict[str, Any], ctx: ToolContext) -> ToolO
             "exam_id": {"type": "string", "description": "Optional — omit for all exams."}
         },
     },
-    allowed_roles=HR_ROLES,
+    data_class="company_scoped",
+    allowed_roles=COMPANY_ROLES,
 )
 async def _get_exam_question_stats(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     # Answers live in the exam_attempts JSONB blobs, not a responses table —
@@ -529,7 +555,8 @@ async def _get_exam_question_stats(args: dict[str, Any], ctx: ToolContext) -> To
         },
         "required": ["job_title"],
     },
-    allowed_roles=HR_ROLES,
+    data_class="company_scoped",
+    allowed_roles=COMPANY_ROLES,
 )
 async def _get_role_model(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     # Deterministic baseline only — no LLM call. The copilot is explaining an
@@ -592,7 +619,8 @@ async def _get_role_model(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         "no individual candidate data."
     ),
     parameters={"type": "object", "properties": {}},
-    allowed_roles=("platform_owner",),
+    data_class="platform_aggregate",
+    allowed_roles=PLATFORM_OWNER_ROLES,
 )
 async def _get_platform_overview(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     db = _db(ctx)
@@ -679,7 +707,8 @@ async def _get_platform_overview(args: dict[str, Any], ctx: ToolContext) -> Tool
             }
         },
     },
-    allowed_roles=("admin", "platform_owner"),
+    data_class="platform_aggregate",
+    allowed_roles=ANALYTICS_ROLES,
 )
 async def _get_score_distribution(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     try:
@@ -775,7 +804,8 @@ async def _get_score_distribution(args: dict[str, Any], ctx: ToolContext) -> Too
         "required": ["applicant_ids"],
     },
     effect="draft",
-    allowed_roles=HR_ROLES,
+    data_class="candidate_pii",
+    allowed_roles=CANDIDATE_PII_ROLES,
 )
 async def _draft_interview_invites(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     raw_ids = args.get("applicant_ids")
@@ -861,7 +891,8 @@ async def _draft_interview_invites(args: dict[str, Any], ctx: ToolContext) -> To
         "required": ["applicant_ids"],
     },
     effect="draft",
-    allowed_roles=HR_ROLES,
+    data_class="candidate_pii",
+    allowed_roles=CANDIDATE_PII_ROLES,
 )
 async def _draft_shortlist(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
     raw_ids = args.get("applicant_ids")
@@ -919,6 +950,229 @@ async def _draft_shortlist(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
     )
 
 
+# ---------------------------------------------------------------------------
+# Company operations - the super-admin console
+#
+# A company super admin owns hiring OPERATIONS for one company: their HR
+# managers, their throughput, where work is piling up. None of that requires
+# reading a named candidate, so none of these tools return one. They are
+# data_class="company_staff", which the access matrix in
+# shared/agents/schema.py refuses to hand to any other console.
+# ---------------------------------------------------------------------------
+
+
+@registry.tool(
+    name="get_company_overview",
+    description=(
+        "This company's operating picture: staff headcount by role, applicant "
+        "totals by stage, exams by status, and interview volume in the last 30 "
+        "days. Counts only - no individual candidate appears in the result. Use "
+        "for 'how is the company doing' and capacity questions."
+    ),
+    parameters={"type": "object", "properties": {}},
+    data_class="company_staff",
+    allowed_roles=COMPANY_STAFF_ROLES,
+)
+async def _get_company_overview(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+    db = _db(ctx)
+
+    # A user holding two roles is counted under both - same caveat as the
+    # platform overview, and stated in the payload so the model does not
+    # present these as a partition of headcount.
+    staff = (
+        await db.execute(
+            text(
+                """
+                SELECT r.name AS role, COUNT(DISTINCT u.id) AS n
+                FROM users u
+                JOIN user_roles ur ON ur.user_id = u.id
+                JOIN roles r ON r.id = ur.role_id
+                WHERE u.company_id = CAST(:cid AS uuid) AND u.deleted_at IS NULL
+                GROUP BY r.name ORDER BY n DESC
+                """
+            ),
+            {"cid": ctx.company_id},
+        )
+    ).all()
+
+    pipeline = (
+        await db.execute(
+            text(
+                """
+                SELECT status, COUNT(*) AS n,
+                       COUNT(*) FILTER (
+                           WHERE created_at > NOW() - INTERVAL '30 days'
+                       ) AS added_30d
+                FROM applicants
+                WHERE company_id = CAST(:cid AS uuid) AND deleted_at IS NULL
+                GROUP BY status ORDER BY n DESC
+                """
+            ),
+            {"cid": ctx.company_id},
+        )
+    ).all()
+
+    exams = (
+        await db.execute(
+            text(
+                """
+                SELECT status, COUNT(*) AS n
+                FROM exams
+                WHERE company_id = CAST(:cid AS uuid) AND deleted_at IS NULL
+                GROUP BY status ORDER BY n DESC
+                """
+            ),
+            {"cid": ctx.company_id},
+        )
+    ).all()
+
+    # Interview volume is reached through interview_invites, which carries
+    # company_id; the sessions table does not, so counting sessions directly
+    # would silently cross tenants.
+    interviews = (
+        await db.execute(
+            text(
+                """
+                SELECT COUNT(*) AS invited,
+                       COUNT(sc.scorecard_id) AS completed
+                FROM interview_invites i
+                LEFT JOIN scorecards sc ON sc.session_id = i.session_id
+                WHERE i.company_id = CAST(:cid AS uuid)
+                  AND i.deleted_at IS NULL
+                  AND i.created_at > NOW() - INTERVAL '30 days'
+                """
+            ),
+            {"cid": ctx.company_id},
+        )
+    ).first()
+
+    return ToolOutput(
+        data={
+            "staff_by_role": {r.role: r.n for r in staff},
+            "staff_note": (
+                "A user holding two roles is counted under both, so these do "
+                "not sum to total headcount."
+            ),
+            "applicants_by_stage": {r.status: r.n for r in pipeline},
+            "applicants_total": sum(r.n for r in pipeline),
+            "applicants_added_last_30d": sum(r.added_30d for r in pipeline),
+            "exams_by_status": {r.status: r.n for r in exams},
+            "interviews_last_30d": {
+                "invited": interviews.invited if interviews else 0,
+                "completed": interviews.completed if interviews else 0,
+            },
+        },
+        citations=[
+            Citation(
+                kind="analytics",
+                id="company_overview",
+                label="Company overview",
+                href="/superadmin",
+            )
+        ],
+    )
+
+
+@registry.tool(
+    name="get_hr_workload",
+    description=(
+        "Per-HR-manager activity for this company: applicants added, interviews "
+        "invited, exams created, and whether the account is still active. Use to "
+        "find who is overloaded, who is idle, and whether a stalled pipeline is "
+        "a staffing problem. Returns staff records, never candidates."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "description": f"1-{MAX_ROWS}, default 10."}
+        },
+    },
+    data_class="company_staff",
+    allowed_roles=COMPANY_STAFF_ROLES,
+)
+async def _get_hr_workload(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+    """Staff activity counts for the caller's own company.
+
+    This returns employee identity - deliberately, and only to the one console
+    that administers those employees. A super admin creates their company's HR
+    managers, so seeing who they are is their job.
+
+    The address is NOT returned as a field of its own. Answering "who is
+    overloaded" needs a name, not a mailbox, and every field here is fed into an
+    LLM context, so the address would be PII shipped to a third-party model for
+    no gain. ``name`` still falls back to the email when a staff row has no
+    full_name - a blank row is useless to the reader - so an address can surface
+    there, but only when it is the only identifier the record has.
+
+    Every count is correlated on BOTH created_by_user_id and company_id, so a
+    staff member who moved between companies cannot drag another tenant's
+    totals across.
+
+    EXISTS rather than a JOIN on user_roles: a user holding two roles would
+    otherwise produce duplicate rows and double every count.
+    """
+    rows = (
+        await _db(ctx).execute(
+            text(
+                """
+                SELECT u.id, u.full_name, u.email, u.is_active,
+                       (SELECT COUNT(*) FROM applicants a
+                         WHERE a.created_by_user_id = u.id
+                           AND a.company_id = u.company_id
+                           AND a.deleted_at IS NULL) AS applicants_added,
+                       (SELECT COUNT(*) FROM interview_invites i
+                         WHERE i.created_by_user_id = u.id
+                           AND i.company_id = u.company_id
+                           AND i.deleted_at IS NULL) AS interviews_invited,
+                       (SELECT COUNT(*) FROM exams e
+                         WHERE e.created_by_user_id = u.id
+                           AND e.company_id = u.company_id
+                           AND e.deleted_at IS NULL) AS exams_created
+                FROM users u
+                WHERE u.company_id = CAST(:cid AS uuid)
+                  AND u.deleted_at IS NULL
+                  AND EXISTS (
+                      SELECT 1 FROM user_roles ur
+                      JOIN roles r ON r.id = ur.role_id
+                      WHERE ur.user_id = u.id AND r.name = 'hr_manager'
+                  )
+                ORDER BY applicants_added DESC, interviews_invited DESC
+                LIMIT :limit
+                """
+            ),
+            {"cid": ctx.company_id, "limit": _limit(args)},
+        )
+    ).all()
+
+    return ToolOutput(
+        data={
+            "hr_managers": [
+                {
+                    "name": r.full_name or r.email,
+                    "active": bool(r.is_active),
+                    "applicants_added": r.applicants_added,
+                    "interviews_invited": r.interviews_invited,
+                    "exams_created": r.exams_created,
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+            "note": (
+                "Counts are lifetime, attributed by who created the record. "
+                "Work someone inherited rather than created is not counted."
+            ),
+        },
+        citations=[
+            Citation(
+                kind="analytics",
+                id="hr_workload",
+                label="HR manager workload",
+                href="/superadmin",
+            )
+        ],
+    )
+
+
 # NOTE — no free-form candidate email tool.
 #
 # A "draft an email to this candidate" tool is an obvious and genuinely useful
@@ -940,4 +1194,13 @@ def registry_for(role: str) -> ToolRegistry:
     return registry
 
 
-__all__ = ["ADMIN_ROLES", "HR_ROLES", "MAX_ROWS", "registry", "registry_for"]
+__all__ = [
+    "ANALYTICS_ROLES",
+    "CANDIDATE_PII_ROLES",
+    "COMPANY_ROLES",
+    "COMPANY_STAFF_ROLES",
+    "MAX_ROWS",
+    "PLATFORM_OWNER_ROLES",
+    "registry",
+    "registry_for",
+]

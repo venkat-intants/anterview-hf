@@ -296,6 +296,10 @@ async def test_platform_roles_need_no_company(role: str) -> None:
     Demanding a company for it 403'd every message to the analytics copilot and
     left get_score_distribution — an un-scoped aggregate built for exactly that
     console — unreachable in every deployment.
+
+    The lookup is now performed for platform roles too (it used to be skipped),
+    because "this account has no company" is the thing that entitles them to a
+    cross-tenant toolset and therefore has to be checked rather than assumed.
     """
     db = MagicMock()
     db.scalar = AsyncMock(return_value=None)
@@ -303,7 +307,7 @@ async def test_platform_roles_need_no_company(role: str) -> None:
 
     assert ctx.role == role
     assert ctx.company_id is None
-    db.scalar.assert_not_awaited()
+    db.scalar.assert_awaited_once()
 
 
 async def test_a_tenant_role_without_a_company_is_refused() -> None:

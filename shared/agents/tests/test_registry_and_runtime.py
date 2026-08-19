@@ -39,6 +39,7 @@ def _registry_with_echo() -> ToolRegistry:
         name="echo_tool",
         description="echo",
         parameters=OBJ_SCHEMA,
+        data_class="company_scoped",
         allowed_roles=("hr_manager",),
     )
     async def _echo(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
@@ -85,6 +86,7 @@ def test_registry_refuses_a_mutating_tool() -> None:
         # ToolRegistry.register catches it too — belt and braces, because the
         # type alone would not stop a value arriving from JSON at runtime.
         effect="write",  # type: ignore[arg-type]
+        data_class="company_scoped",
         allowed_roles=(),
     )
 
@@ -103,6 +105,8 @@ def test_tool_effect_literal_admits_no_write_member() -> None:
             description="x",
             parameters=OBJ_SCHEMA,
             effect="write",  # type: ignore[arg-type]
+            data_class="company_scoped",
+            allowed_roles=("hr_manager",),
         )
 
 
@@ -124,6 +128,8 @@ def test_tool_parameters_must_be_an_object_schema() -> None:
             description="x",
             parameters={"type": "string"},
             effect="read",
+            data_class="company_scoped",
+            allowed_roles=("hr_manager",),
         )
 
 
@@ -172,7 +178,13 @@ async def test_unknown_tool_returns_an_error_not_an_exception() -> None:
 async def test_a_throwing_handler_does_not_abort_the_run() -> None:
     reg = ToolRegistry()
 
-    @reg.tool(name="boom", description="x", parameters=OBJ_SCHEMA)
+    @reg.tool(
+        name="boom",
+        description="x",
+        parameters=OBJ_SCHEMA,
+        data_class="company_scoped",
+        allowed_roles=("hr_manager",),
+    )
     async def _boom(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         raise RuntimeError("db is on fire")
 
@@ -212,13 +224,25 @@ async def test_a_failed_tool_leaves_the_session_usable_for_the_next_one() -> Non
     session = FakeSession()
     reg = ToolRegistry()
 
-    @reg.tool(name="bad_cast", description="x", parameters=OBJ_SCHEMA)
+    @reg.tool(
+        name="bad_cast",
+        description="x",
+        parameters=OBJ_SCHEMA,
+        data_class="company_scoped",
+        allowed_roles=("hr_manager",),
+    )
     async def _bad_cast(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         db = ctx.require("db")
         db.aborted = True  # what a rejected uuid cast does to the transaction
         raise RuntimeError("invalid input syntax for type uuid")
 
-    @reg.tool(name="good_read", description="x", parameters=OBJ_SCHEMA)
+    @reg.tool(
+        name="good_read",
+        description="x",
+        parameters=OBJ_SCHEMA,
+        data_class="company_scoped",
+        allowed_roles=("hr_manager",),
+    )
     async def _good_read(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         return ToolOutput(data={"rows": await ctx.require("db").query()})
 
@@ -236,7 +260,13 @@ async def test_a_resource_without_a_transaction_is_left_alone() -> None:
     """``resources`` is untyped — settings and http clients have no rollback."""
     reg = ToolRegistry()
 
-    @reg.tool(name="boom2", description="x", parameters=OBJ_SCHEMA)
+    @reg.tool(
+        name="boom2",
+        description="x",
+        parameters=OBJ_SCHEMA,
+        data_class="company_scoped",
+        allowed_roles=("hr_manager",),
+    )
     async def _boom2(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         raise RuntimeError("nope")
 
@@ -249,7 +279,13 @@ async def test_a_resource_without_a_transaction_is_left_alone() -> None:
 async def test_oversized_tool_output_is_truncated_with_guidance() -> None:
     reg = ToolRegistry()
 
-    @reg.tool(name="huge", description="x", parameters=OBJ_SCHEMA)
+    @reg.tool(
+        name="huge",
+        description="x",
+        parameters=OBJ_SCHEMA,
+        data_class="company_scoped",
+        allowed_roles=("hr_manager",),
+    )
     async def _huge(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         return ToolOutput(data={"rows": ["x" * 200 for _ in range(500)]})
 
@@ -267,7 +303,12 @@ def test_duplicate_registration_is_rejected() -> None:
     with pytest.raises(ValueError, match="already registered"):
         reg.register(
             ToolSpec(
-                name="echo_tool", description="x", parameters=OBJ_SCHEMA, effect="read"
+                name="echo_tool",
+                description="x",
+                parameters=OBJ_SCHEMA,
+                effect="read",
+                data_class="company_scoped",
+                allowed_roles=("hr_manager",),
             ),
             _noop,
         )
@@ -322,6 +363,7 @@ async def test_proposals_are_collected_from_draft_tools() -> None:
         description="draft",
         parameters=OBJ_SCHEMA,
         effect="draft",
+        data_class="candidate_pii",
         allowed_roles=("hr_manager",),
     )
     async def _draft(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:

@@ -26,6 +26,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from shared.agents import (
+    CROSS_TENANT_ROLES,
     AgentMessage,
     ToolContext,
     UnknownConsoleError,
@@ -66,7 +67,11 @@ MAX_MESSAGE_CHARS: int = 2000
 # grant_admin.py both create it with users.company_id NULL — so demanding a
 # company for it made the analytics copilot 403 on every message and left
 # get_score_distribution (its only tool, an un-scoped aggregate) unreachable.
-PLATFORM_ROLES: frozenset[str] = frozenset({"platform_owner", "admin"})
+#
+# Sourced from shared/agents/schema.py rather than redeclared: the same set
+# decides which tools are data_class="platform_aggregate", and a local copy
+# that drifted from it would hand a tenant role a cross-tenant toolset.
+PLATFORM_ROLES: frozenset[str] = CROSS_TENANT_ROLES
 
 _AGENT_DISABLED = HTTPException(
     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -113,13 +118,41 @@ async def _agent_context(user: User, db: Any) -> ToolContext:
     next request, not whenever their token happens to expire.
     """
     role = _primary_role(user)
-    company_id: str | None = None
 
-    if role not in PLATFORM_ROLES:
-        raw = await db.scalar(
-            text("SELECT company_id FROM users WHERE id = CAST(:uid AS uuid) AND deleted_at IS NULL"),
-            {"uid": user.user_id},
-        )
+    # Read the company on EVERY path, including the platform roles. The old
+    # version skipped the query for platform roles and simply assumed NULL,
+    # which made "is this really a platform account?" an article of faith
+    # rather than a check — and the platform tools are the un-scoped ones. A
+    # company user who also held `admin` (a grant script away, and the kind of
+    # thing that happens when someone is debugging) resolved to a NULL
+    # company_id and could read every tenant's score data through
+    # get_score_distribution.
+    raw = await db.scalar(
+        text("SELECT company_id FROM users WHERE id = CAST(:uid AS uuid) AND deleted_at IS NULL"),
+        {"uid": user.user_id},
+    )
+
+    if role in PLATFORM_ROLES:
+        if raw is not None:
+            # A cross-tenant console demands an account that belongs to no
+            # tenant. Fail closed rather than quietly downgrading to a
+            # company-scoped context: the caller asked for a console their
+            # account is not entitled to, and silently giving them a different
+            # one hides a misconfigured grant instead of surfacing it.
+            log.warning(
+                "agent.context.platform_role_with_company",
+                actor_id=str(user.user_id),
+                role=role,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This console is for platform accounts. Your account "
+                    "belongs to a company."
+                ),
+            )
+        company_id: str | None = None
+    else:
         if raw is None:
             # Fail closed. A scoped role with no company would otherwise reach
             # handlers with company_id=None, and any handler that failed to
@@ -263,10 +296,22 @@ async def agent_panel(applicant_id: uuid.UUID, user: UserDep, db: DbSessionDep) 
         raise _AGENT_DISABLED
 
     ctx = await _agent_context(user, db)
-    if ctx.role not in ("hr_manager", "super_admin"):
+    if ctx.role != "hr_manager":
+        # This route reads the DENSEST candidate record in the platform —
+        # resume, exam answers, coding submission and interview transcript, all
+        # in one response. It is therefore candidate_pii in everything but
+        # name, and belongs to the one console the access matrix
+        # (shared/agents/schema.py DATA_CLASS_ROLES) trusts with that class.
+        #
+        # It used to admit super_admin as well, which made the matrix a
+        # half-truth: every candidate TOOL was closed to that console while
+        # this endpoint handed it a fuller record than any of them returned.
+        # The REST layer already agrees — get_hr_company gates /hr/* on
+        # hr_manager alone — so this is the agent surface catching up, not a
+        # new restriction on anyone.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Candidate assessment is available to HR roles only.",
+            detail="Candidate assessment is available to HR managers only.",
         )
     assert ctx.company_id is not None  # non-platform roles always carry one
 

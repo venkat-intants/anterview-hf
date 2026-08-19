@@ -3,7 +3,10 @@
 Three capabilities on one runtime:
 
 * **Copilots** — a conversational agent per console (HR, super-admin, platform
-  owner, analytics), each with a role-scoped toolset.
+  owner, analytics), each with a role-scoped toolset. What a console may READ
+  is as structural as what it may WRITE: every tool declares a ``data_class``
+  and ``ToolSpec`` checks it against ``DATA_CLASS_ROLES``, so only the HR
+  console is ever offered a tool returning a named candidate.
 * **Panel** — four specialist agents read one candidate signal each, blind to
   one another, then a synthesizer reports where they disagree.
 * **Watchers** — deterministic rules that run on a schedule and raise
@@ -22,7 +25,8 @@ Wiring a service::
 
     @registry.tool(name="list_applicants", description="...",
                    parameters={"type": "object", "properties": {...}},
-                   allowed_roles=("hr_manager",))
+                   data_class="candidate_pii",        # checked against the matrix
+                   allowed_roles=("hr_manager",))     # required, non-empty
     async def _list_applicants(args, ctx):
         rows = await db_query(ctx.company_id, ...)   # scope from ctx, never args
         return ToolOutput(data=rows, citations=[...])
@@ -69,7 +73,10 @@ from shared.agents.runtime import (
     run_agent,
 )
 from shared.agents.schema import (
+    CROSS_TENANT_ROLES,
+    DATA_CLASS_ROLES,
     AgentMessage,
+    AgentRole,
     AgentRun,
     AssistantStep,
     Citation,
@@ -79,6 +86,7 @@ from shared.agents.schema import (
     Proposal,
     SignalAssessment,
     ToolCall,
+    ToolDataClass,
     ToolResult,
     ToolSpec,
     WatcherFinding,
@@ -96,12 +104,15 @@ from shared.agents.watchers import (
 
 __all__ = [
     "CONTRADICTION_THRESHOLD",
+    "CROSS_TENANT_ROLES",
+    "DATA_CLASS_ROLES",
     "SAFETY_CLAUSE",
     "UNTRUSTED_DATA_NOTICE",
     "WATCHERS",
     "AgentBudget",
     "AgentLLM",
     "AgentMessage",
+    "AgentRole",
     "AgentRun",
     "AgentSpec",
     "AssistantStep",
@@ -120,6 +131,7 @@ __all__ = [
     "StalledApplicant",
     "ToolCall",
     "ToolContext",
+    "ToolDataClass",
     "ToolHandler",
     "ToolOutput",
     "ToolPermissionError",

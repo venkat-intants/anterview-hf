@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     gemini_max_tokens: int = 1024
 
     groq_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     groq_api_base_url: str = "https://api.groq.com/openai/v1"
     # Reuse the same token budget as Gemini — Groq is stateless per call.
     groq_max_tokens: int = 1024

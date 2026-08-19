@@ -40,7 +40,7 @@ async def entrypoint(ctx: JobContext) -> None:
             api_key=settings.sarvam_api_key,
         ),
         llm=openai.LLM(
-            model="llama-3.3-70b-versatile",
+            model=settings.groq_model,
             api_key=settings.groq_api_key,
             base_url="https://api.groq.com/openai/v1",
         ),

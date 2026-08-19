@@ -146,12 +146,86 @@ async def _check_gemini() -> dict[str, Any]:
         return {"ok": False, "error": type(exc).__name__}
 
 
+async def _check_groq() -> dict[str, Any]:
+    """Verify the key AND that the configured model exists on this account.
+
+    Both halves matter, and the second is the one that bites. Model
+    availability on Groq is per-account and the catalogue changes; a model id
+    that the account cannot reach returns 404 on every call. In the interview
+    turn loop that surfaces as an avatar which simply never speaks, while the
+    room, the video and the audio pipeline all look perfectly healthy — so the
+    health endpoint is the only place that can name the real cause.
+    """
+    if not settings.groq_api_key:
+        return {"ok": False, "error": "GROQ_API_KEY not set"}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.groq_api_key}"},
+                json={
+                    "model": settings.groq_model,
+                    "messages": [{"role": "user", "content": "Reply with: PING"}],
+                    # Generous on purpose. gpt-oss-* are REASONING models: they
+                    # spend output tokens thinking before emitting any text, so
+                    # a tight cap returns finish_reason=length with an empty
+                    # string — indistinguishable from a broken model. Measured:
+                    # gpt-oss-120b needs ~186 tokens before its first character
+                    # at default effort. reasoning_effort=low cuts that to ~41
+                    # and is what a latency-bound health probe wants.
+                    "max_tokens": 512,
+                    "reasoning_effort": "low",
+                },
+            )
+        if resp.status_code == 401:
+            return {"ok": False, "error": "invalid GROQ_API_KEY", "model": settings.groq_model}
+        if resp.status_code == 404:
+            return {
+                "ok": False,
+                "error": "model not available on this Groq account",
+                "model": settings.groq_model,
+                "hint": "GET /openai/v1/models to list what this key can reach",
+            }
+        if resp.status_code != 200:
+            return {"ok": False, "error": f"HTTP {resp.status_code}", "model": settings.groq_model}
+        choices = resp.json().get("choices") or []
+        text_out = choices[0].get("message", {}).get("content", "") if choices else ""
+        if not text_out.strip():
+            # gpt-oss-20b does this: 200 OK with an empty completion, which the
+            # turn loop cannot distinguish from a model that had nothing to say.
+            return {"ok": False, "error": "empty completion", "model": settings.groq_model}
+        return {"ok": True, "model": settings.groq_model}
+    except Exception as exc:
+        log.warning("health.groq.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
+        return {"ok": False, "error": type(exc).__name__}
+
+
 async def _check_llm() -> dict[str, Any]:
+    """Check the provider this deployment actually talks to.
+
+    NOTE: the live interview turn loop wires Groq DIRECTLY in
+    ``worker/interview_worker.py`` and does not consult ``LLM_PROVIDER`` — so
+    with any other value set, this check covers a path the interview does not
+    use. Groq is checked unconditionally for that reason.
+    """
+    checks: dict[str, Any] = {}
+
+    # Always checked: the turn loop uses it no matter what LLM_PROVIDER says.
+    checks["groq"] = await _check_groq()
+
     if settings.llm_provider == "gemini":
-        return await _check_gemini()
-    if settings.llm_provider == "anthropic":
-        return await _check_anthropic()
-    return {"ok": False, "error": f"Unknown LLM_PROVIDER: {settings.llm_provider}"}
+        checks["gemini"] = await _check_gemini()
+    elif settings.llm_provider == "anthropic":
+        checks["anthropic"] = await _check_anthropic()
+    elif settings.llm_provider != "groq":
+        checks["provider"] = {
+            "ok": False,
+            "error": f"Unknown LLM_PROVIDER: {settings.llm_provider}",
+        }
+
+    if len(checks) == 1:
+        return checks["groq"]
+    return {"ok": all(c.get("ok") for c in checks.values()), **checks}
 
 
 async def _check_sarvam() -> dict[str, Any]:

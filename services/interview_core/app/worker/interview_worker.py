@@ -289,7 +289,14 @@ async def _publish_capacity() -> None:
 # Sarvam <lang>-IN codes for the STT/TTS plugins.
 _LANG_VENDOR: dict[str, str] = {"en": "en-IN", "hi": "hi-IN", "te": "te-IN"}
 _GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-_GROQ_MODEL = "llama-3.3-70b-versatile"
+
+# NOTE: the turn-loop model comes from settings.groq_model, NOT a constant here.
+# It used to be hardcoded while GROQ_MODEL sat in every .env doing nothing, so
+# the documented way to change the interviewer's model silently had no effect —
+# and when the pinned model stopped being available on the account, the session
+# 404'd on every reply and the avatar simply said nothing. A silent LLM is the
+# hardest failure to diagnose from the outside, because audio, video and the
+# room all look healthy.
 
 # MAX_CANDIDATE_ANSWERS, SESSION_WALL_CLOCK_CAP_SECONDS and MIN_ANSWERS_TO_SCORE
 # moved to app/worker/constants.py (IC-4) — the prompt builder and the consent
@@ -1743,7 +1750,7 @@ class InterviewJob:
                 api_key=settings.sarvam_api_key,
             ),
             llm=openai.LLM(
-                model=_GROQ_MODEL,
+                model=settings.groq_model,
                 api_key=settings.groq_api_key,
                 base_url=_GROQ_BASE_URL,
             ),

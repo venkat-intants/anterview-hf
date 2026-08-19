@@ -60,7 +60,26 @@ WORKDIR /app
 # libpq5:        asyncpg native driver
 # PyAV (av==17) and onnxruntime ship bundled native libs in their wheels;
 # no additional system libav or libonnxruntime needed.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Security updates from the base image, then the runtime libraries.
+#
+# `apt-get upgrade` here is deliberate. Every image in this repo shares
+# python:3.12-slim, so ONE fixable base CVE turns all five CI legs red at once
+# and stays red until someone edits five Dockerfiles — which is how
+# CVE-2026-53615 (util-linux, HIGH, fixed in 2.41.5-0+deb13u1) took the whole
+# pipeline down and, with it, the Space deploy that is gated on CI.
+#
+# The usual objection to `apt-get upgrade` is reproducibility, and it does not
+# apply cleanly here: the FROM tag already floats, so two builds a week apart
+# were never going to produce identical layers. What this buys is that a base
+# CVE with an available fix gets picked up at build time instead of being
+# argued into .trivyignore — which keeps that file meaning "accepted risk we
+# cannot act on" rather than "backlog".
+#
+# Runtime stage only. Trivy scans the final image; the builder stage ships
+# nothing but compiled wheels.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
         libffi8 \
         libpq5 \
         libportaudio2 \

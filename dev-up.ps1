@@ -6,22 +6,34 @@
     Opens each service in its own PowerShell window so you can watch its logs
     independently. Run from the repo root:  .\dev-up.ps1
 
-    The 5 processes:
+    The 6 processes:
       1. data_gateway      :8002   auth / users / DPDP consent   (in-project .venv)
       2. interview_core    :8001   API: sessions, room tokens, /api/avatars
-      3. feedback_billing  :8003   scoring (Gemini) + scorecard + PDF
-      4. interview_core    (no port) LiveKit worker -- the real-time avatar+voice
+      3. feedback_billing  :8003   scoring + scorecard + PDF. Follows
+                                     LLM_PROVIDER (groq locally, not Gemini) --
+                                     except embeddings, which are Gemini-only
+                                     because Groq serves no embeddings API.
+      4. admin_ops         :8004   admin/analytics dashboard API
+      5. interview_core    (no port) LiveKit worker -- the real-time avatar+voice
                                      engine. MUST be its own process (cli.run_app
                                      owns the process + spawns a job subprocess
                                      per interview; can't live inside uvicorn).
-      5. web               :5174   React/Vite frontend
+      6. web               :5174   React/Vite frontend
 
-    DB (Neon/Prisma Postgres) and Redis (Upstash) are cloud -- nothing local.
-    admin_ops (:8004) is not started (not needed for the candidate flow).
+    Datastores are LOCAL containers, not cloud: Postgres :55432, Redis :6379,
+    MinIO :9000, Mailpit :8025 (see docker-compose). Start them first -- every
+    service above fails its first query without them. This block used to say
+    the DB was Neon and Redis was Upstash with "nothing local", and that
+    .env stopped being true some time ago; it also said admin_ops "is not
+    started" while step 4 below has always started it.
 
 .NOTES
     All four services use their in-project .venv python directly (created with
-    `py -3.12 -m venv .venv` + `pip install -r requirements.txt`). Do NOT
+    `<python> -m venv .venv` + `pip install -r requirements.txt`), then a
+    .pth file pointing at the repo root so `shared` imports. The venvs on this
+    machine are 3.13.2, not the 3.12 this line used to name -- and the `py`
+    launcher it used to invoke is not installed here, so copy the interpreter
+    from a sibling service's .venv when creating a new one. Do NOT
     `poetry install` into these dev venvs -- they are pip-managed. `shared` is
     wired in via a .pth file in each .venv.
 

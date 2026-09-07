@@ -47,6 +47,7 @@ import {
 import { Reveal } from '@/design/components/Reveal';
 import { staggerParent, staggerChild } from '@/design/lib/motion';
 import { initialsOf, gradientFor, scoreColor } from '@/design/data/shared';
+import { ACTIVE_POLL_MS, LIVE_POLL_MS } from '../../lib/polling';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -81,6 +82,21 @@ const BREAKDOWN_LABELS: Record<string, string> = {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 type RecInfo = { label: string; tone: TagTone };
+
+/**
+ * The badge for a row whose resume has not been read yet.
+ *
+ * Separate from "Unscored" on purpose. Both have a null ats_overall, but one
+ * means "we looked and could not score this" and the other means "we have not
+ * looked yet" — and a manager triaging a list will treat an unscored candidate
+ * as a weak one if nothing says otherwise.
+ */
+function atsInfo(a: { ats_recommendation: string | null; pending_enrichment?: boolean }) {
+  if (a.pending_enrichment) {
+    return { label: 'Reading CV…', tone: 'electric' as const };
+  }
+  return recInfo(a.ats_recommendation);
+}
 
 function recInfo(rec: string | null): RecInfo {
   switch (rec) {
@@ -183,7 +199,7 @@ function ApplicantDrawer({
 
   const seed = seedFrom(a.full_name);
   const atsDisplay = a.ats_overall ?? null;
-  const rec = recInfo(a.ats_recommendation);
+  const rec = atsInfo(a);
 
   return createPortal(
     <motion.div
@@ -430,7 +446,7 @@ function ApplicantRow({
 }) {
   const seed = seedFrom(a.full_name);
   const atsDisplay = a.ats_overall;
-  const rec = recInfo(a.ats_recommendation);
+  const rec = atsInfo(a);
 
   return (
     <button
@@ -719,6 +735,8 @@ export default function Applicants() {
   // query resolves (no flicker between keystrokes).
   const { data: applicants, isLoading, isFetching } = useQuery({
     queryKey: ['hr', 'applicants', 'list', trimmedQuery, statusParam ?? 'all'],
+    // A5: new applicants arrive from bulk upload and, later, self-apply.
+    refetchInterval: LIVE_POLL_MS,
     queryFn: () => listApplicants({ q: trimmedQuery || undefined, status: statusParam }),
     placeholderData: (prev) => prev,
   });
@@ -726,6 +744,8 @@ export default function Applicants() {
   // How many existing applicants still need a search embedding (one-click backfill).
   const { data: reindexStatus } = useQuery({
     queryKey: ['hr', 'applicants', 'reindex-status'],
+    // A5: the reconciliation loop drains this without a click.
+    refetchInterval: ACTIVE_POLL_MS,
     queryFn: getReindexStatus,
   });
 
@@ -758,8 +778,12 @@ export default function Applicants() {
     onSuccess: (res) => {
       setLastResult(res);
       if (res.created_count > 0) {
+        // "added & scored" was true when scoring happened inside this request.
+        // It no longer does, and saying so would send someone looking for an
+        // ATS column that is deliberately still empty.
         toast.success(
-          `${res.created_count} resume${res.created_count === 1 ? '' : 's'} added & scored` +
+          `${res.created_count} resume${res.created_count === 1 ? '' : 's'} uploaded — ` +
+            'reading and scoring them now' +
             (res.failed_count > 0 ? ` · ${res.failed_count} skipped` : ''),
         );
       } else {

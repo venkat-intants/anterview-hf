@@ -190,6 +190,11 @@ ERASED_TABLES: dict[str, str] = {
                         "gaze/face-derived proctoring signals are too sensitive to "
                         "sit through the 30-day grace window. Step 5 then cascades "
                         "any row written between request and execution.",
+    "application_answers": "step 5c — hard-deleted. `answer` is prose the "
+                           "CANDIDATE wrote, so unlike exam_attempts it keeps "
+                           "identifying them after applicants is anonymised. "
+                           "Deleted, not redacted: here the content IS the "
+                           "personal data, with no structural residue to keep.",
 }
 
 #: Tables deliberately left standing, each with the reason it is defensible.
@@ -252,6 +257,51 @@ EXCLUDED_TABLES: dict[str, str] = {
                          "created_by_user_id resolve to anonymised users rows, "
                          "and session_id nulls itself (ON DELETE SET NULL) when "
                          "step 5 deletes the session.",
+    "enrolments": "the company's assessment record for one applicant against "
+                  "one requisition, on the exam_attempts precedent: it hangs "
+                  "off applicants, which step 6 anonymises. The ats_* columns "
+                  "are AI prose ABOUT the candidate, but they describe an "
+                  "applicant row that by then names nobody, and they are the "
+                  "fiduciary's own evidence for a hiring decision. NOTE the "
+                  "one thing that is NOT covered by that argument: "
+                  "scored_resume_s3_key points at a real resume object, so "
+                  "step 1c-ii collects it for deletion in step 8. Excluding "
+                  "the row must not mean orphaning the file.",
+    "round_results": "per-round scores for an enrolment — score, percent, "
+                     "criterion_scores, axes. Numbers and competency ids "
+                     "against an anonymised applicant; same reasoning as "
+                     "exam_attempts. grader_user_id is the HR grader, not the "
+                     "candidate.",
+    "stage_transitions": "the audit trail of who moved a candidate between "
+                         "statuses and whether a human or the workflow did it. "
+                         "Status enums, timestamps and the ACTOR's user id — "
+                         "no candidate column beyond enrolment_id. This is the "
+                         "D-05 evidence that a person, not the AI, decided; "
+                         "deleting it would destroy proof the platform is "
+                         "required to be able to show.",
+
+    # --- Company-authored structure and content ----------------------------
+    "job_requisitions": "the opening itself — title, JD, salary band, skills. "
+                        "owner_user_id / created_by_user_id are HR staff.",
+    "application_questions": "HR-authored screening prompts attached to a "
+                             "requisition. The company's form, not anyone's "
+                             "answer — the answers are erased in step 5c.",
+    "workflows": "the company's hiring process for a requisition: thresholds, "
+                 "automation toggles, round order. created_by_user_id is HR.",
+    "workflow_rounds": "a stage within that process (title, kind, pass "
+                       "threshold, time limit). No candidate column.",
+    "round_criteria": "the competencies and anchors a round scores against. "
+                      "Frozen rubric content, authored by the company.",
+
+    # --- Platform bookkeeping, no user column at all -----------------------
+    "reconciliation_state": "retry bookkeeping for the background reconciler "
+                            "(kind, ref_id, attempt counts, last error). "
+                            "ref_id can point at an applicant, but the row "
+                            "carries no personal data and is transient — the "
+                            "reconciler drops it once the work succeeds or "
+                            "gives up.",
+    "scheduled_job_runs": "one row per named cron job with its last run time "
+                          "and status. Operational telemetry; no user column.",
 }
 
 
@@ -360,6 +410,24 @@ async def _execute_one_erasure(
     )
     applicant_resume_keys: list[str] = [
         str(row[0]) for row in applicant_keys_result.fetchall() if row[0]
+    ]
+
+    # 1c-ii — the SCORED copy of the same resume. enrolments.scored_resume_s3_key
+    # is a second object, written by the ATS scoring path, and nothing else in
+    # this function collects it: the enrolments row is excluded from erasure
+    # (it is the company's assessment record against an anonymised applicant),
+    # so without this the object simply stays in the bucket after a completed
+    # erasure — the exact orphaning 1c exists to prevent, one table over.
+    scored_keys_result = await db.execute(
+        text(
+            "SELECT e.scored_resume_s3_key FROM enrolments e "
+            "JOIN applicants a ON a.id = e.applicant_id "
+            "WHERE a.user_id = :uid AND e.scored_resume_s3_key IS NOT NULL"
+        ),
+        {"uid": uid_str},
+    )
+    applicant_resume_keys += [
+        str(row[0]) for row in scored_keys_result.fetchall() if row[0]
     ]
 
     # 1d — scorecard PDF + transcript keys (from scorecards table)
@@ -481,6 +549,42 @@ async def _execute_one_erasure(
         user_id=uid_str,
         request_id=str(request.request_id),
         count=notifications_deleted,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5c: Hard-delete the candidate's own answers to screening questions
+    # ------------------------------------------------------------------
+    # application_answers.answer is free text the CANDIDATE typed — "why do you
+    # want this role", "notice period", "anything else we should know". That is
+    # what separates it from exam_attempts, which is excluded two lists up: an
+    # attempt is a set of selections against company-authored questions and
+    # identifies nobody once the applicant row is anonymised, whereas a prose
+    # answer routinely contains the writer's name, employer, notice terms or
+    # phone number. Anonymising `applicants` does not touch that text, so the
+    # row would survive a "completed" erasure still naming the person.
+    #
+    # Deleted rather than redacted because here the content IS the personal
+    # data — there is no structural residue worth keeping, unlike `applicants`
+    # where the anonymised row remains the company's ATS record.
+    #
+    # MUST run before step 6: the join reaches these rows through
+    # applicants.user_id, which step 6 sets to NULL.
+    answers_result = await db.execute(
+        text(
+            "DELETE FROM application_answers WHERE enrolment_id IN ("
+            "  SELECT e.id FROM enrolments e"
+            "  JOIN applicants a ON a.id = e.applicant_id"
+            "  WHERE a.user_id = :uid"
+            ")"
+        ),
+        {"uid": uid_str},
+    )
+    application_answers_deleted: int = getattr(answers_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.application_answers_deleted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        count=application_answers_deleted,
     )
 
     # ------------------------------------------------------------------

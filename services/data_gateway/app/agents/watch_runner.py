@@ -30,6 +30,7 @@ import structlog
 from shared.agents import (
     ErasureRequest,
     FunnelRow,
+    OpeningHealth,
     QuestionStat,
     StalledApplicant,
     WatcherFinding,
@@ -95,8 +96,55 @@ QUESTION_STATS_SQL = text(
 )
 
 
+# Per-opening health, for the E6 watchers. One query rather than one per
+# opening: the sweep runs for every company nightly, so round-trip count is
+# what decides whether this is cheap or a problem.
+#
+# "Awaiting a decision" is defined exactly as the decision-queue endpoint
+# defines it (workflow_runner.decision_queue) — held, or finished every round —
+# because a watcher that counted a different set from the screen it links to
+# would send people to a queue that does not match the alert.
+OPENING_HEALTH_SQL = text(
+    """
+    SELECT r.id,
+           r.title,
+           r.public_apply_enabled,
+           COUNT(e.id) FILTER (WHERE e.deleted_at IS NULL) AS live_enrolments,
+           COUNT(e.id) FILTER (
+               WHERE e.deleted_at IS NULL
+                 AND e.status NOT IN ('hired', 'rejected')
+                 AND (e.status = 'held' OR e.current_round_id IS NULL)
+           ) AS awaiting,
+           COUNT(e.id) FILTER (
+               WHERE e.deleted_at IS NULL AND e.status = 'held'
+           ) AS held,
+           COALESCE(MAX(
+               EXTRACT(EPOCH FROM (NOW() - e.updated_at)) / 86400.0
+           ) FILTER (
+               WHERE e.deleted_at IS NULL
+                 AND e.status NOT IN ('hired', 'rejected')
+                 AND (e.status = 'held' OR e.current_round_id IS NULL)
+           ), 0) AS longest_wait_days,
+           EXISTS (
+               SELECT 1 FROM workflows w
+                WHERE w.requisition_id = r.id
+                  AND w.status = 'published' AND w.deleted_at IS NULL
+           ) AS has_workflow
+      FROM job_requisitions r
+      LEFT JOIN enrolments e ON e.requisition_id = r.id
+     WHERE r.company_id = CAST(:cid AS uuid)
+       AND r.deleted_at IS NULL
+       -- A closed opening is finished, not neglected. Paused still counts:
+       -- candidates already inside it are still waiting on somebody.
+       AND r.status IN ('open', 'paused')
+     GROUP BY r.id, r.title, r.public_apply_enabled
+     LIMIT :limit
+    """
+)
+
+
 async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInput:
-    """Run the four gathering queries for one company."""
+    """Run the gathering queries for one company."""
     stalled = (
         await db.execute(
             text(
@@ -144,6 +192,10 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
         await db.execute(QUESTION_STATS_SQL, {"cid": company_id, "limit": MAX_ROWS_PER_QUERY})
     ).all()
 
+    openings = (
+        await db.execute(OPENING_HEALTH_SQL, {"cid": company_id, "limit": MAX_ROWS_PER_QUERY})
+    ).all()
+
     return WatcherInput(
         company_id=company_id,
         stalled=[
@@ -172,6 +224,19 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
                 correct=int(r.correct),
             )
             for r in questions
+        ],
+        openings=[
+            OpeningHealth(
+                requisition_id=str(r.id),
+                title=r.title,
+                awaiting_decision=int(r.awaiting or 0),
+                longest_wait_days=float(r.longest_wait_days or 0.0),
+                held=int(r.held or 0),
+                live_enrolments=int(r.live_enrolments or 0),
+                has_published_workflow=bool(r.has_workflow),
+                accepting_public_applications=bool(r.public_apply_enabled),
+            )
+            for r in openings
         ],
     )
 

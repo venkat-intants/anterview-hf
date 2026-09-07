@@ -26,6 +26,21 @@ from app.agents.watch_runner import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _watchers_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the feature flag instead of inheriting it from the developer's .env.
+
+    ``run_watcher_sweep`` short-circuits on ``watchers_enabled``, and every test
+    below except the one that deliberately disables it assumes the sweep runs.
+    That held only while nothing set the variable — the moment the shared root
+    ``.env`` carried ``WATCHERS_ENABLED=false``, three tests started failing on
+    a code path they are not about. A unit test must not depend on local
+    configuration; the one test that wants it off patches it itself, and that
+    patch still wins inside the test body.
+    """
+    monkeypatch.setattr(watch_runner.settings, "watchers_enabled", True, raising=False)
+
+
 def _row(**fields: Any) -> MagicMock:
     row = MagicMock()
     for key, value in fields.items():

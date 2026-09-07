@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import timedelta
+from typing import Any
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -36,6 +38,7 @@ from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
+from app import reconciliation, reminders
 from app.config import settings
 from app.database import dispose_engine, get_db_session, get_session_factory, init_engine
 from app.dependencies import set_auth_provider
@@ -46,24 +49,32 @@ from app.retention import purge_expired_sessions
 from app.routers.admin_hr import router as admin_hr_router
 from app.routers.agent import router as agent_router
 from app.routers.auth import router as auth_router
+from app.routers.candidate_applications import router as candidate_applications_router
+from app.routers.careers import router as careers_router
 from app.routers.consent import router as consent_router
 from app.routers.exam_take import router as exam_take_router
 from app.routers.hr_applicants import router as hr_applicants_router
+from app.routers.hr_attention import router as hr_attention_router
 from app.routers.hr_coding import router as hr_coding_router
 from app.routers.hr_exams import router as hr_exams_router
 from app.routers.hr_interviews import router as hr_interviews_router
 from app.routers.hr_pipeline import router as hr_pipeline_router
+from app.routers.hr_questions import router as hr_questions_router
+from app.routers.hr_requisitions import router as hr_requisitions_router
 from app.routers.hr_rounds import router as hr_rounds_router
+from app.routers.hr_workflows import router as hr_workflows_router
 from app.routers.interview_take import router as interview_take_router
 from app.routers.jd import router as jd_router
 from app.routers.jobs import router as jobs_router
 from app.routers.notifications import router as notifications_router
 from app.routers.onboarding import router as onboarding_router
 from app.routers.profile import router as profile_router
+from app.routers.public_apply import router as public_apply_router
 from app.routers.resume import router as resume_router
 from app.routers.sso_google import router as sso_google_router
 from app.routers.sso_naipunyam import router as sso_naipunyam_router
 from app.s3_upload import StorageNotConfiguredError
+from app.scheduling import run_overdue_jobs_on_startup, run_scheduled_job
 
 # ---------------------------------------------------------------------------
 # PII redaction processor (defense-in-depth — DPDP §8)
@@ -179,10 +190,24 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     )
     set_auth_provider(provider)
 
-    # --- retention scheduler (DPDP §8(7)) ---
+    # --- retention scheduler (DPDP §8(7)) + A6 run tracking ---
+    # CronTrigger cannot fire while the container is suspended, and the demo
+    # Space sleeps after ~48h. Wrapping each job in run_scheduled_job records
+    # the run and makes it replayable; the catch-up pass below replays anything
+    # whose interval elapsed while this process was not alive.
+    _factory = get_session_factory()
+
+    async def _retention_tracked() -> None:
+        await run_scheduled_job(
+            _factory,
+            job_id="retention_purge",
+            interval=timedelta(days=1),
+            fn=_run_retention_job,
+        )
+
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
-        _run_retention_job,
+        _retention_tracked,
         CronTrigger(hour=settings.retention_cron_hour, minute=0, timezone="UTC"),
         id="retention_purge",
         name="DPDP §8(7) 90-day session purge",
@@ -194,8 +219,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if settings.watchers_enabled:
         from app.agents.watch_runner import run_watcher_sweep
 
+        async def _watchers_tracked() -> None:
+            await run_scheduled_job(
+                _factory,
+                job_id="agent_watchers",
+                interval=timedelta(days=1),
+                fn=run_watcher_sweep,
+            )
+
         scheduler.add_job(
-            run_watcher_sweep,
+            _watchers_tracked,
             CronTrigger(hour=settings.watchers_cron_hour, minute=30, timezone="UTC"),
             id="agent_watchers",
             name="Pipeline watchers -> notifications",
@@ -207,6 +240,25 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- transactional email outbox worker ---
     start_email_worker()
+
+    # --- A1/A2: interval workers ---
+    # Deliberately plain asyncio tasks rather than scheduler jobs. These are
+    # interval work, not calendar work, so they follow the same pattern as the
+    # email outbox and the erasure executor — and an interval loop resumes
+    # correctly after the Space wakes, where a fixed-hour trigger would have
+    # silently skipped the window it slept through.
+    reconciliation.start(_factory)
+    reminders.start(_factory)
+
+    # --- A6: replay anything whose window passed while we were not running ---
+    # After the scheduler is up, so a job that is genuinely due now is claimed
+    # once rather than by both paths.
+    _catchup_jobs: list[tuple[str, timedelta, Any]] = [
+        ("retention_purge", timedelta(days=1), _run_retention_job)
+    ]
+    if settings.watchers_enabled:
+        _catchup_jobs.append(("agent_watchers", timedelta(days=1), run_watcher_sweep))
+    await run_overdue_jobs_on_startup(_factory, _catchup_jobs)
 
     # Determine next-run time for the startup log (may be None if no jobs yet).
     next_run_job = scheduler.get_job("retention_purge")
@@ -235,6 +287,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- shutdown ---
     scheduler.shutdown(wait=False)
+    await reconciliation.stop()
+    await reminders.stop()
     await stop_email_worker()
     await dispose_engine()
     await close_redis()
@@ -291,11 +345,19 @@ app.include_router(exam_take_router)
 app.include_router(hr_interviews_router)
 app.include_router(interview_take_router)
 app.include_router(hr_pipeline_router)
+app.include_router(hr_attention_router)
+app.include_router(hr_questions_router)
+app.include_router(hr_requisitions_router)
+app.include_router(hr_workflows_router)
+# Public, unauthenticated (rate-limited): the candidate-facing front door.
+app.include_router(public_apply_router)
+app.include_router(careers_router)
 app.include_router(agent_router)
 app.include_router(consent_router)
 app.include_router(jobs_router)
 app.include_router(notifications_router)
 app.include_router(onboarding_router)
+app.include_router(candidate_applications_router)
 app.include_router(profile_router)
 app.include_router(resume_router)
 app.include_router(jd_router)

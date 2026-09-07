@@ -1,3 +1,4 @@
+import pathlib
 from typing import Literal
 
 import structlog
@@ -10,9 +11,32 @@ from shared.security import validate_database_ssl as _validate_database_ssl
 log = structlog.get_logger(__name__)
 
 
+# app/config.py -> app -> <service> -> services -> repo root
+_SERVICE_DIR = pathlib.Path(__file__).resolve().parents[1]
+_REPO_ROOT = _SERVICE_DIR.parents[1]
+
+
 class Settings(BaseSettings):
+    # ONE .env for the whole backend, at the repo root, plus an optional
+    # per-service file that overrides it. Later files win (verified against
+    # pydantic-settings, not assumed), so `services/<name>/.env` can still
+    # differ where a service genuinely needs to — but the shared credentials
+    # live in exactly one place instead of being copy-pasted four ways and
+    # drifting.
+    #
+    # ABSOLUTE, not ".env". A relative path resolves against the CURRENT
+    # WORKING DIRECTORY, so the old value silently loaded nothing whenever a
+    # service was started from the repo root rather than its own folder — the
+    # service then booted on defaults and failed later, somewhere unrelated.
+    #
+    # What must NOT go in the shared file: PORT and SERVICE_NAME. Both differ
+    # per service (8001-8004), and a shared PORT would have all four fighting
+    # over one socket.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+        env_file=(_REPO_ROOT / ".env", _SERVICE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
     )
 
     service_name: str = "data_gateway"
@@ -48,9 +72,39 @@ class Settings(BaseSettings):
     # same DB session the request already holds, so the loop belongs here.
     # Empty key = copilots report "assistant unavailable"; the rest of the
     # service is unaffected.
+    # Which provider serves the console copilots and the assessment panel.
+    # Matches interview_core and feedback_billing so one env var moves the whole
+    # platform rather than a third of it.
+    llm_provider: str = "gemini"
+
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    # gemini-flash-lite-latest, which is also the default CLAUDE.md documents.
+    # Was pinned to "gemini-2.5-flash", which Google has since RETIRED for new
+    # users: every call returns HTTP 404 "no longer available to new users",
+    # naming gemini-3.6-flash as the replacement. Verified live 2026-09-04 --
+    # 2.5-flash and 2.5-flash-lite both 404; flash-lite-latest, 3.5-flash-lite,
+    # 3.5-flash and 3.6-flash all answer.
+    #
+    # The floating "-latest" alias is deliberate here rather than a new hard
+    # pin: a hard pin is what expired, silently, and the failure only surfaced
+    # because a live integration test happened to run. flash-LITE also keeps
+    # the per-session cost inside the <= Rs 12 cap that a full flash model
+    # would eat into.
+    #
+    # NOTE this is the chat/completions model only. Embeddings are a separate
+    # setting and were never affected -- semantic search kept working
+    # throughout, which is part of why this went unnoticed.
+    gemini_model: str = "gemini-flash-lite-latest"
     gemini_api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+
+    # Groq — OpenAI-compatible chat completions, including tool calling, which
+    # the copilot loop needs. The model is NOT pinned narrowly: availability is
+    # per-account on Groq and not every model there supports tools, so this is
+    # the one setting to check first when the copilot answers but never calls a
+    # tool.
+    groq_api_key: str = ""
+    groq_model: str = "openai/gpt-oss-120b"
+    groq_api_base_url: str = "https://api.groq.com/openai/v1"
     # Master switch, so an operator can disable copilots during an incident or
     # a cost spike without redeploying or rotating the key.
     agents_enabled: bool = True
@@ -153,6 +207,12 @@ class Settings(BaseSettings):
     email_verify_secret: str = ""
     # 7 days — verification window.
     email_verify_ttl_hours: int = 168
+    # 7 days — how long an applicant has to activate the account their public
+    # application created. Uses the password_reset token KIND (same secret) but
+    # its own window: a reset is requested by someone waiting at the screen,
+    # whereas an applicant reads their email whenever they next look, and an
+    # expiry here costs them their only route into their own application.
+    apply_activation_ttl_hours: int = 168
     # When True, email verification is MANDATORY: self-registered accounts are not
     # auto-logged-in and cannot sign in until they confirm their email. Existing
     # accounts and admin-provisioned accounts (still on their bootstrap password)
@@ -247,6 +307,21 @@ class Settings(BaseSettings):
     # Flip to False only after a dry-run cycle confirms expected delete counts.
     retention_dry_run: bool = True
 
+    # ── Reconciliation loop (A1) ──────────────────────────────────────────
+    # Interval, not cron: an interval loop resumes correctly after the Space
+    # wakes, whereas a fixed-hour trigger silently skips the window it slept
+    # through. 600s is short enough that a failed upload self-heals while the
+    # HR manager is still in the console, and long enough that a backlog does
+    # not hammer the scorer.
+    reconciliation_enabled: bool = True
+    reconciliation_interval_seconds: int = Field(default=600, ge=60, le=86_400)
+
+    # ── Deadline reminders (A2) ───────────────────────────────────────────
+    # Hourly. The sweep itself decides which candidates are inside a reminder
+    # window; email_events.dedupe_key stops a second send for the same window.
+    reminders_enabled: bool = True
+    reminders_interval_seconds: int = Field(default=3600, ge=300, le=86_400)
+
     # UTC hour for the daily retention cron.  03:00 UTC = ~08:30 IST (off-peak).
     retention_cron_hour: int = 3
 
@@ -296,6 +371,12 @@ class Settings(BaseSettings):
     # For local dev with MinIO: set S3_ENDPOINT=http://localhost:9000
     # For Cloudflare R2: set S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
     # For real AWS S3: leave S3_ENDPOINT empty and set the region.
+    # Development-only fallback: when object storage has no credentials and
+    # this is set, resumes are written here instead. Refused outright in
+    # production/staging — see app/local_storage.py for why a container
+    # filesystem is the wrong place for a stranger's CV.
+    storage_local_dir: str = ""
+
     s3_endpoint: str = ""
     s3_bucket_name: str = "intants-uploads"
     s3_access_key_id: str = ""
@@ -440,6 +521,29 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
+    # ── The active LLM, resolved once ────────────────────────────────────────
+    #
+    # The agent layer asks "is a model configured?" in three places — the chat
+    # route, the panel route and /agent/status — and each answer has to agree
+    # with the others or the console offers an assistant whose every message
+    # fails. One resolver, so they cannot disagree.
+
+    @property
+    def _is_groq(self) -> bool:
+        return self.llm_provider.strip().lower() == "groq"
+
+    @property
+    def llm_api_key(self) -> str:
+        return self.groq_api_key if self._is_groq else self.gemini_api_key
+
+    @property
+    def llm_model(self) -> str:
+        return self.groq_model if self._is_groq else self.gemini_model
+
+    @property
+    def llm_api_base_url(self) -> str:
+        return self.groq_api_base_url if self._is_groq else self.gemini_api_base_url
 
 
 settings = Settings()  # type: ignore[call-arg]

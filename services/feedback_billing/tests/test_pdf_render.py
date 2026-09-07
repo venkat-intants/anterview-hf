@@ -57,6 +57,12 @@ def _make_settings(*, with_s3: bool = True) -> Settings:
         database_url="postgresql+asyncpg://test:test@localhost:5432/test",
         redis_url="redis://localhost:6379/0",
         gemini_api_key="test-key",
+        # Pinned, not inherited. Settings() reads the developer's own .env for
+        # anything not passed here, so a machine configured for Groq with no key
+        # made these tests fail on a code path they are not testing. A unit test
+        # must not depend on the local environment.
+        llm_provider="gemini",
+        groq_api_key="",
         jwt_secret="test-secret-that-is-at-least-32-chars-long!!",
         s3_access_key_id="test-key-id" if with_s3 else "",
         s3_secret_access_key="test-secret" if with_s3 else "",

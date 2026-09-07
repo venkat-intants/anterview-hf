@@ -145,6 +145,7 @@ class ToolRegistry:
         data_class: str,
         allowed_roles: tuple[str, ...],
         effect: str = "read",
+        surfaces: tuple[str, ...] = (),
     ) -> Callable[[ToolHandler], ToolHandler]:
         """Decorator form of ``register``, so a tool sits next to its schema.
 
@@ -163,6 +164,7 @@ class ToolRegistry:
                     effect=effect,  # type: ignore[arg-type]  # validated in register
                     data_class=data_class,  # type: ignore[arg-type]  # validated in ToolSpec
                     allowed_roles=allowed_roles,  # type: ignore[arg-type]
+                    surfaces=surfaces,
                 ),
                 handler,
             )
@@ -170,10 +172,20 @@ class ToolRegistry:
 
         return decorator
 
-    def specs_for(self, role: str) -> list[ToolSpec]:
-        """The tools this role may see, in stable name order."""
+    def specs_for(self, role: str, surface: str | None = None) -> list[ToolSpec]:
+        """The tools this role may see on this screen, in stable name order.
+
+        ``surface`` narrows what is DESCRIBED to the model, never what is
+        permitted: ``invoke`` re-checks ``permits`` on every call and does not
+        consult the surface at all. So a tool omitted here is omitted from a
+        prompt, and a tool a role may not use is refused whatever the screen.
+        """
         return sorted(
-            (spec for spec, _ in self._tools.values() if spec.permits(role)),
+            (
+                spec
+                for spec, _ in self._tools.values()
+                if spec.permits(role) and spec.on_surface(surface)
+            ),
             key=lambda s: s.name,
         )
 

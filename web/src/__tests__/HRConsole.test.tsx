@@ -10,6 +10,7 @@
 // tile SUB-TEXT — plain interpolation of the same response — which is what
 // actually distinguishes live data from a placeholder.
 
+import { analyticsDefaults } from './analyticsFixture';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -29,6 +30,7 @@ const ANALYTICS: HrAnalytics = {
     rejected: 9,
   },
   averages: { avg_ats: 71.6, avg_exam_percent: 63.2, avg_interview_composite: 7.42 },
+  ...analyticsDefaults(),
 };
 
 const NOTIFS: NotificationList = {
@@ -132,6 +134,7 @@ describe('HRConsole — funnel strip', () => {
     getHrAnalytics.mockResolvedValue({
       ...ANALYTICS,
       averages: { avg_ats: null, avg_exam_percent: null, avg_interview_composite: null },
+  ...analyticsDefaults(),
     });
     renderConsole();
     await screen.findByRole('heading', { name: /welcome/i });

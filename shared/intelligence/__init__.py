@@ -44,6 +44,13 @@ from shared.intelligence.derive import (
     compute_profile_id,
     derive_role_profile,
 )
+from shared.intelligence.frozen import (
+    FrozenRubricError,
+    composite_from_criteria,
+    has_frozen_anchors,
+    profile_from_round_criteria,
+    renormalise,
+)
 from shared.intelligence.render import (
     DEFAULT_AXIS_WEIGHTS,
     axis_weights,
@@ -74,6 +81,7 @@ __all__ = [
     "Competency",
     "CoverageReport",
     "CoverageRow",
+    "FrozenRubricError",
     "InMemoryProfileCache",
     "LLMCaller",
     "ProfileCache",
@@ -84,11 +92,15 @@ __all__ = [
     "baseline_profile",
     "cache_key",
     "classify",
+    "composite_from_criteria",
     "compute_profile_id",
+    "has_frozen_anchors",
     "coverage_report",
     "derive_role_profile",
     "plan_for_turn",
     "plan_interview",
+    "profile_from_round_criteria",
+    "renormalise",
     "render_competency_output_spec",
     "render_exam_blueprint",
     "render_plan_block",

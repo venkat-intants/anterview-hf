@@ -5,6 +5,7 @@
 // is what these tests protect — an empty state that quietly turns into a chart
 // of zeros would read as "we screened nobody" rather than "no data yet".
 
+import { analyticsDefaults } from './analyticsFixture';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -22,6 +23,7 @@ const FULL: HrAnalyticsData = {
     rejected: 10,
   },
   averages: { avg_ats: 66.4, avg_exam_percent: 71.8, avg_interview_composite: 7.42 },
+  ...analyticsDefaults(),
 };
 
 const EMPTY: HrAnalyticsData = {
@@ -36,6 +38,7 @@ const EMPTY: HrAnalyticsData = {
     rejected: 0,
   },
   averages: { avg_ats: null, avg_exam_percent: null, avg_interview_composite: null },
+  ...analyticsDefaults(),
 };
 
 const getHrAnalytics = vi.fn();
@@ -103,6 +106,7 @@ describe('HRAnalytics — averages summary', () => {
     getHrAnalytics.mockResolvedValue({
       ...FULL,
       averages: { avg_ats: 66.4, avg_exam_percent: null, avg_interview_composite: null },
+  ...analyticsDefaults(),
     });
     renderWith(<HRAnalytics />);
 

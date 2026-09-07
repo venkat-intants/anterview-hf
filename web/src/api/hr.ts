@@ -157,9 +157,48 @@ export interface HrAverages {
   avg_interview_composite: number | null;
 }
 
+export interface HrOpenings {
+  open: number;
+  paused: number;
+  closed: number;
+}
+
+export interface HrVelocity {
+  /**
+   * A MEDIAN, not a mean — one candidate who sat in a pipeline for eight
+   * months drags an average somewhere no real hire ever was. Null when nobody
+   * has been hired yet, which is not the same as zero days.
+   */
+  median_time_to_hire_days: number | null;
+  hires_measured: number;
+  applications_last_7d: number;
+  applications_prev_7d: number;
+}
+
+export interface HrConversion {
+  applied: number;
+  ever_shortlisted: number;
+  ever_sat_exam: number;
+  ever_interviewed: number;
+  ever_hired: number;
+  /**
+   * Each a share of APPLICATIONS, not of the stage before it. The product lets
+   * HR assign an exam without shortlisting, so "% of the previous stage" can
+   * exceed 100% and mean nothing; against applications it is always readable.
+   * Null when nobody has applied — a rate out of nothing is not 0%.
+   */
+  pct_shortlisted: number | null;
+  pct_sat_exam: number | null;
+  pct_interviewed: number | null;
+  pct_hired: number | null;
+}
+
 export interface HrAnalytics {
   funnel: HrFunnel;
   averages: HrAverages;
+  openings: HrOpenings;
+  velocity: HrVelocity;
+  conversion: HrConversion;
 }
 
 export function getHrAnalytics(): Promise<HrAnalytics> {

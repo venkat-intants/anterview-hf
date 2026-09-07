@@ -3,6 +3,7 @@
 Three routes:
 
   POST /agent/chat                    talk to your console's copilot
+                                      (optionally on a specialised surface)
   POST /agent/panel/{applicant_id}    run the specialist panel on a candidate
   GET  /agent/status                  is the assistant available at all
 
@@ -32,12 +33,19 @@ from shared.agents import (
     UnknownConsoleError,
     assess_candidate,
     available_consoles,
+    available_surfaces,
     build_agent,
     run_agent,
 )
 from shared.auth.base import User
 from sqlalchemy import text
 
+# Imported for its side effect: the module's @registry.tool decorators run on
+# import, so without this line the workflow-builder surface gets a system
+# prompt describing tools that were never registered. Imported here in the
+# router that assembles the toolset rather than from a package __init__, where
+# a reader looking for "what tools exist?" would not find it.
+from app.agents import workflow_tools as _workflow_tools  # noqa: F401
 from app.agents.evidence import (
     ApplicantNotFoundError,
     apply_document_warnings,
@@ -92,6 +100,15 @@ class HistoryTurn(BaseModel):
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
     history: list[HistoryTurn] = Field(default_factory=list, max_length=MAX_HISTORY_TURNS)
+    # Which screen is asking. Selects a specialised system prompt; it does NOT
+    # widen the toolset, which stays filtered by ToolSpec.allowed_roles against
+    # the caller's real role.
+    surface: str | None = Field(default=None, max_length=64)
+    # What that screen is looking at — e.g. {"requisition_id": "..."} for the
+    # workflow builder. Validated and injected into ToolContext.resources
+    # below, so tools read the subject from ctx and the model cannot name a
+    # different one.
+    surface_context: dict[str, str] = Field(default_factory=dict)
 
 
 class ChatOut(BaseModel):
@@ -210,11 +227,52 @@ async def agent_status(user: UserDep) -> dict[str, Any]:
         "enabled": settings.agents_enabled and availability["configured"] and has_console,
         "model_configured": availability["configured"],
         "console": role,
+        # Specialised screens this account may open a copilot on. The client
+        # checks this before offering one, so a surface removed server-side
+        # stops being offered rather than failing on first message.
+        "surfaces": available_surfaces(role) if role else [],
         # Stated in the API so a client cannot present the copilot as more
         # capable than it is.
         "capabilities": ["read", "draft"],
         "note": "The assistant can read records and draft actions. Every action needs your approval.",
     }
+
+
+async def _bind_surface(ctx: ToolContext, surface: str, given: dict[str, str], db: Any) -> None:
+    """Validate what a specialised surface is looking at, and inject it.
+
+    The subject of the conversation goes into ``ctx.resources``, NOT into tool
+    arguments, and is checked against the caller's company before it gets
+    there. That keeps the layer's central invariant intact — scope comes from
+    the context, never from the model — and makes "design a workflow for
+    somebody else's opening" unaskable rather than merely refused: there is no
+    parameter through which another opening could be named.
+    """
+    if surface != "workflow_builder":
+        return
+
+    raw = (given.get("requisition_id") or "").strip()
+    try:
+        requisition_id = uuid.UUID(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This assistant needs the opening it is designing for.",
+        ) from exc
+
+    owned = await db.scalar(
+        text(
+            "SELECT 1 FROM job_requisitions"
+            " WHERE id = :r AND company_id = CAST(:c AS uuid) AND deleted_at IS NULL"
+        ),
+        {"r": requisition_id, "c": ctx.company_id},
+    )
+    if owned is None:
+        # 404, not 403: another tenant's opening must be indistinguishable from
+        # one that does not exist, exactly as the REST layer treats it.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opening not found.")
+
+    ctx.resources["requisition_id"] = str(requisition_id)
 
 
 @router.post("/chat", response_model=ChatOut)
@@ -224,8 +282,21 @@ async def agent_chat(body: ChatIn, user: UserDep, db: DbSessionDep) -> ChatOut:
         raise _AGENT_DISABLED
 
     ctx = await _agent_context(user, db)
+
+    if body.surface and body.surface not in available_surfaces(ctx.role):
+        # The (role, surface) pair is checked here as well as in build_agent,
+        # so a client naming a surface written for another console gets a plain
+        # refusal rather than an UnknownConsoleError rendered as "your role has
+        # no assistant", which is a different and misleading claim.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="That assistant is not available for your role.",
+        )
+    if body.surface:
+        await _bind_surface(ctx, body.surface, body.surface_context, db)
+
     try:
-        spec = build_agent(ctx.role, registry)
+        spec = build_agent(ctx.role, registry, body.surface)
     except UnknownConsoleError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -244,6 +315,7 @@ async def agent_chat(body: ChatIn, user: UserDep, db: DbSessionDep) -> ChatOut:
         actor_id=ctx.actor_id,
         role=ctx.role,
         agent=run.agent,
+        surface=body.surface,
         steps=run.steps_used,
         proposals=len(run.proposals),
         stop_reason=run.stop_reason,

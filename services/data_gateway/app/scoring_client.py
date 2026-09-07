@@ -16,6 +16,7 @@ import structlog
 from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
 
 from app.config import settings
+from app.remote import describe_unreachable
 
 log = structlog.get_logger(__name__)
 
@@ -85,7 +86,9 @@ async def score_resume_remote(
                 },
             )
     except httpx.RequestError as exc:
-        raise ResumeScoreError(f"resume scorer unreachable: {exc}") from exc
+        raise ResumeScoreError(
+            describe_unreachable(exc, what="Resume scoring", url=url)
+        ) from exc
     if resp.status_code != 200:
         raise ResumeScoreError(
             f"resume scorer returned HTTP {resp.status_code}: {resp.text[:160]}"

@@ -16,6 +16,7 @@ import structlog
 from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
 
 from app.config import settings
+from app.remote import describe_unreachable
 
 log = structlog.get_logger(__name__)
 
@@ -95,7 +96,9 @@ async def generate_exam_questions_remote(
                 },
             )
     except httpx.RequestError as exc:
-        raise ExamGenerationError(f"exam generator unreachable: {exc}") from exc
+        raise ExamGenerationError(
+            describe_unreachable(exc, what="Exam generation", url=url)
+        ) from exc
     if resp.status_code != 200:
         raise ExamGenerationError(
             f"exam generator returned HTTP {resp.status_code}: {resp.text[:160]}"
@@ -140,7 +143,9 @@ async def generate_coding_questions_remote(
                 },
             )
     except httpx.RequestError as exc:
-        raise ExamGenerationError(f"coding generator unreachable: {exc}") from exc
+        raise ExamGenerationError(
+            describe_unreachable(exc, what="Coding-question generation", url=url)
+        ) from exc
     if resp.status_code != 200:
         raise ExamGenerationError(
             f"coding generator returned HTTP {resp.status_code}: {resp.text[:160]}"

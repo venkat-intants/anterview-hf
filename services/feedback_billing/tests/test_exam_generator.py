@@ -24,11 +24,25 @@ _SETTINGS_25 = SimpleNamespace(
     gemini_api_base_url="https://example.test/v1beta",
     gemini_model="gemini-2.5-flash",
     gemini_api_key="test-key",
+    # Provider-resolved names, read by the call sites now that Groq is
+    # selectable. The gemini_* ones stay so nothing reading them directly
+    # changes behaviour.
+    llm_provider="gemini",
+    llm_api_base_url="https://example.test/v1beta",
+    llm_model="gemini-2.5-flash",
+    llm_api_key="test-key",
 )
 _SETTINGS_LITE = SimpleNamespace(
     gemini_api_base_url="https://example.test/v1beta",
     gemini_model="gemini-flash-lite-latest",
     gemini_api_key="test-key",
+    # Provider-resolved names, read by the call sites now that Groq is
+    # selectable. The gemini_* ones stay so nothing reading them directly
+    # changes behaviour.
+    llm_provider="gemini",
+    llm_api_base_url="https://example.test/v1beta",
+    llm_model="gemini-flash-lite-latest",
+    llm_api_key="test-key",
 )
 
 
@@ -86,7 +100,7 @@ def _patch_gemini(monkeypatch: pytest.MonkeyPatch, resp: _FakeResp) -> None:
     _FakeClient.last_url = None
     _FakeClient.last_headers = None
     monkeypatch.setattr(
-        "shared.llm.gemini.httpx.AsyncClient", lambda *a, **k: _FakeClient(resp)
+        "shared.llm._recovery.httpx.AsyncClient", lambda *a, **k: _FakeClient(resp)
     )
 
 

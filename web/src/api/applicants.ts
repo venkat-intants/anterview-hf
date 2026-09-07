@@ -12,6 +12,20 @@ export type ApplicantStatus = 'new' | 'shortlisted' | 'rejected';
 export interface Applicant {
   id: string;
   full_name: string;
+  /**
+   * What the CV said, when it disagrees with the name on file. Null when they
+   * agree — the server only sends it on a discrepancy, because "the CV says
+   * the same thing" is not information.
+   */
+  parsed_full_name?: string | null;
+  /** 'candidate' | 'hr' | 'filename' | 'resume' — who supplied the name. */
+  full_name_source?: string | null;
+  phone?: string | null;
+  years_experience?: number | null;
+  current_company?: string | null;
+  current_title?: string | null;
+  linkedin_url?: string | null;
+  github_url?: string | null;
   email: string | null;
   target_job_title: string;
   target_level: string;
@@ -23,6 +37,13 @@ export interface Applicant {
   ats_concerns: string[] | null;
   ats_recommendation: string | null;
   ats_summary: string | null;
+  /**
+   * True while this resume is stored but not yet read. The name comes from the
+   * filename and there is no score yet, so it must render as in-progress — an
+   * unscored row and a badly scored one look identical in a list and mean
+   * opposite things.
+   */
+  pending_enrichment?: boolean;
   created_at: string;
   /** Linked candidate user id (set after interview-invite redeem); null otherwise. */
   user_id?: string | null;
@@ -95,13 +116,19 @@ export interface BulkUploadResult {
   failed: { filename: string; error: string }[];
   created_count: number;
   failed_count: number;
+  /** How many of `created` are still being read and scored in the background. */
+  pending_enrichment?: number;
 }
 
 /**
- * Bulk-upload many resumes for ONE role. The candidate name + email are
- * auto-extracted from each resume server-side (no manual entry). Append each
- * PDF under the `files` key, plus target_job_title and optionally
- * target_level / target_jd_text.
+ * Bulk-upload many resumes for ONE role. Append each PDF under the `files`
+ * key, plus target_job_title and optionally target_level / target_jd_text.
+ *
+ * Returns as soon as the files are STORED. Scoring, embedding and pulling the
+ * candidate's real name out of the PDF happen in the background, so every row
+ * comes back with `pending_enrichment` true, a filename-derived name and no
+ * ATS score. Show them as in progress; they fill in within a minute and the
+ * list poll picks them up.
  */
 export function bulkUploadApplicants(
   form: FormData,

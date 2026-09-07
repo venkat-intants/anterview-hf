@@ -24,11 +24,16 @@ from typing import Annotated, Any
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, BeforeValidator, EmailStr, TypeAdapter, ValidationError
+from pydantic import BaseModel, BeforeValidator, EmailStr
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
+from app.applicant_enrichment import (
+    apply_ats_score,
+    store_embedding,
+    valid_email_or_none,
+)
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep, get_hr_company
 from app.embedding_client import (
@@ -40,17 +45,22 @@ from app.embedding_client import (
 )
 from app.mailer import enqueue_email
 from app.models import Applicant
+from app.requisitions import record_transition
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
 from app.scoring_client import ResumeScoreError, score_resume_remote
 from app.utils.ownership import get_owned
 from app.utils.sql_like import LIKE_ESCAPE, like_literal
+from app.workflow_runner import on_shortlisted, sole_live_enrolment
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/hr", tags=["hr-applicants"])
 
 _MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB
-_MAX_BULK_FILES = 25  # per batch; large batches should move to an async queue (Phase 5)
+# Per batch. The cap is now about request size rather than time: since Group E
+# the scoring happens in the background, so a batch costs one PDF extraction and
+# one upload per file instead of a ten-second model call.
+_MAX_BULK_FILES = 25
 _VALID_STATUSES = {"new", "shortlisted", "rejected", "interviewed", "hired"}
 # Status transitions that warrant a decision email to the candidate.
 _DECISION_EMAIL_STATUSES = {"shortlisted", "rejected", "hired"}
@@ -130,23 +140,11 @@ def _blank_to_none(value: object) -> object:
 
 OptionalEmail = Annotated[EmailStr | None, BeforeValidator(_blank_to_none)]
 
-# Explicit annotation: mypy cannot infer the parameter of a TypeAdapter built
-# from an Annotated alias.
-_OPTIONAL_EMAIL: TypeAdapter[str | None] = TypeAdapter(OptionalEmail)
-
-
-def _valid_email_or_none(value: str | None) -> str | None:
-    """Return *value* if it is a real address, else ``None``. Never raises.
-
-    Used for machine-extracted addresses only — see the section note above.
-    The returned value is RFC-normalised, which matters here: pydantic unwraps
-    the ``Jane Doe <jane@example.com>`` form a resume header usually carries, so
-    the mailer is handed a bare recipient rather than a string it must re-parse.
-    """
-    try:
-        return _OPTIONAL_EMAIL.validate_python(value)
-    except ValidationError:
-        return None
+# Aliased, not reimplemented. Reconciliation validates the same
+# machine-extracted addresses hours after upload does, and two copies of this
+# rule would drift into a mailer failure rather than into anything visibly
+# wrong here. Same reasoning as the sql_like alias below.
+_valid_email_or_none = valid_email_or_none
 
 
 # ---------------------------------------------------------------------------
@@ -159,9 +157,25 @@ class ApplicantOut(BaseModel):
     # 500 on the whole applicant LIST. Tightening happens on the way in.
     id: str
     full_name: str
+    # What the CV said, when it disagrees with the name on file. Surfaced so a
+    # recruiter can see the discrepancy rather than only ever seeing one of the
+    # two names — the reconciler no longer replaces a name a person typed, so
+    # without this the parsed one would be invisible.
+    parsed_full_name: str | None = None
+    # 'candidate' | 'hr' | 'filename' | 'resume'. Tells the console whether the
+    # name is somebody's answer or a machine's reading of a PDF.
+    full_name_source: str | None = None
     email: str | None
     target_job_title: str
     target_level: str
+    # Details the multi-step application collects. All optional — the older
+    # single-field form supplies none of them, and neither does bulk upload.
+    phone: str | None = None
+    years_experience: int | None = None
+    current_company: str | None = None
+    current_title: str | None = None
+    linkedin_url: str | None = None
+    github_url: str | None = None
     status: str
     ats_overall: int | None
     ats_breakdown: dict[str, int] | None
@@ -176,6 +190,11 @@ class ApplicantOut(BaseModel):
     # Relevance to the current semantic search query (0-100), set only on a
     # ?q= search response. A RELATIVE ranking signal — higher = better match.
     match_score: int | None = None
+    # True while this resume is stored but not yet read. The name is derived
+    # from the filename and there is no score yet, so the console must show it
+    # as in-progress rather than as a weak candidate — those look identical in
+    # a list and mean opposite things.
+    pending_enrichment: bool = False
 
 
 class WhyMatchOut(BaseModel):
@@ -197,6 +216,10 @@ class BulkUploadResult(BaseModel):
     failed: list[dict[str, str]]
     created_count: int
     failed_count: int
+    # How many of `created` are still waiting to be read. The console needs
+    # this to say "12 still being scored" instead of presenting filename-derived
+    # names and empty scores as if they were the finished answer.
+    pending_enrichment: int = 0
 
 
 def _to_out(a: Applicant) -> ApplicantOut:
@@ -204,6 +227,16 @@ def _to_out(a: Applicant) -> ApplicantOut:
     return ApplicantOut(
         id=str(a.id),
         full_name=a.full_name,
+        parsed_full_name=(
+            a.parsed_full_name if a.parsed_full_name != a.full_name else None
+        ),
+        full_name_source=a.full_name_source,
+        phone=a.phone,
+        years_experience=a.years_experience,
+        current_company=a.current_company,
+        current_title=a.current_title,
+        linkedin_url=a.linkedin_url,
+        github_url=a.github_url,
         email=a.email,
         target_job_title=a.target_job_title,
         target_level=a.target_level,
@@ -216,37 +249,16 @@ def _to_out(a: Applicant) -> ApplicantOut:
         ats_summary=a.ats_summary,
         created_at=a.created_at.isoformat(),
         user_id=str(a.user_id) if a.user_id else None,
+        pending_enrichment=a.pending_enrichment,
     )
 
 
-def _apply_score(a: Applicant, score: dict[str, Any]) -> None:
-    a.ats_overall = int(score.get("overall", 0))
-    a.ats_breakdown = score.get("breakdown")
-    a.ats_strengths = score.get("strengths")
-    a.ats_concerns = score.get("concerns")
-    a.ats_recommendation = score.get("recommendation")
-    a.ats_summary = score.get("summary")
-    a.updated_at = datetime.now(tz=UTC)
-
-
-async def _store_embedding(
-    db: AsyncSession, company_id: uuid.UUID, applicant_id: uuid.UUID, vec: list[float]
-) -> None:
-    """Persist a resume embedding on the applicant row (ORM does not map it).
-
-    company_id is in the predicate as defence-in-depth: every applicant write in
-    this module stays tenant-scoped, even though applicant_id is already owned.
-    """
-    if not vec:
-        return
-    await db.execute(
-        text(
-            "UPDATE applicants SET embedding = CAST(:emb AS halfvec) "
-            "WHERE id = :id AND company_id = :cid"
-        ),
-        {"emb": to_pgvector_literal(vec), "id": applicant_id, "cid": company_id},
-    )
-    await db.commit()
+# _apply_score / _store_embedding now live in app.applicant_enrichment so the
+# reconciliation loop can share the ATS field mapping rather than copy it.
+# Aliased to their original private names to leave this module's call sites
+# (and the unit test that imports _apply_score from here) unchanged.
+_apply_score = apply_ats_score
+_store_embedding = store_embedding
 
 
 async def _embed_applicant(db: AsyncSession, applicant: Applicant, hr_uid: uuid.UUID) -> None:
@@ -333,14 +345,24 @@ async def _ingest_resume(
     job_title: str,
     level: str,
     jd_text: str | None,
+    score_now: bool = True,
 ) -> Applicant:
-    """Extract → store → score → persist ONE resume.
+    """Extract → store → (optionally score) → persist ONE resume.
 
-    The candidate's name + email are auto-extracted from the resume by the scorer
-    (so the score happens *before* insert and the extracted name lands on the
-    initial row). Falls back to ``fallback_name`` if extraction yields nothing or
-    the scorer is unavailable. Raises ``ValueError`` (bad PDF / DB) or a botocore
-    error (storage) so the caller can record it as a per-file failure.
+    The candidate's name + email are auto-extracted from the resume by the
+    scorer, so with ``score_now`` the score happens *before* insert and the
+    extracted name lands on the initial row. Falls back to ``fallback_name`` if
+    extraction yields nothing or the scorer is unavailable. Raises
+    ``ValueError`` (bad PDF / DB) or a botocore error (storage) so the caller
+    can record it as a per-file failure.
+
+    ``score_now=False`` stores the resume and returns immediately, flagging the
+    row ``pending_enrichment`` for the Group A reconciler to score, embed and
+    name later. That is not a shortcut — it is the difference between an HTTP
+    request that holds a connection open for four minutes and one that answers
+    in seconds. The trade is that the row carries a filename-derived
+    placeholder until the reconciler catches up, which is why the flag exists
+    and why the UI has to say so rather than showing a name it made up.
     """
     try:
         resume_text = await _extract_pdf_text(raw)
@@ -354,25 +376,30 @@ async def _ingest_resume(
     full_name = fallback_name
     email: str | None = None
     score: dict[str, Any] | None = None
-    try:
-        score = await score_resume_remote(
-            resume_text=resume_text,
-            job_title=job_title,
-            level=level,
-            jd_text=jd_text,
-            acting_user_id=str(hr_uid),
-        )
-        if score.get("candidate_name"):
-            full_name = str(score["candidate_name"]).strip()[:200] or fallback_name
-        if score.get("candidate_email"):
-            # Dropped rather than stored when malformed: this address was read
-            # out of a PDF by the scorer, so "Jane Doe | jane@" is a plausible
-            # extraction and must not become a permanently un-emailable row.
-            email = _valid_email_or_none(str(score["candidate_email"])[:320])
-            if email is None:
-                log.info("hr.applicant.extracted_email_rejected")
-    except ResumeScoreError as exc:
-        log.warning("hr.applicant.bulk.score_unavailable", error=str(exc))
+    # Both the deferred path and the scorer-unavailable path fall through with
+    # score=None and a placeholder name — deliberately the same row, so the
+    # reconciler has exactly one shape to finish rather than two.
+    if score_now:
+        try:
+            score = await score_resume_remote(
+                resume_text=resume_text,
+                job_title=job_title,
+                level=level,
+                jd_text=jd_text,
+                acting_user_id=str(hr_uid),
+            )
+            if score.get("candidate_name"):
+                full_name = str(score["candidate_name"]).strip()[:200] or fallback_name
+            if score.get("candidate_email"):
+                # Dropped rather than stored when malformed: this address was
+                # read out of a PDF by the scorer, so "Jane Doe | jane@" is a
+                # plausible extraction and must not become a permanently
+                # un-emailable row.
+                email = _valid_email_or_none(str(score["candidate_email"])[:320])
+                if email is None:
+                    log.info("hr.applicant.extracted_email_rejected")
+        except ResumeScoreError as exc:
+            log.warning("hr.applicant.bulk.score_unavailable", error=str(exc))
 
     now = datetime.now(tz=UTC)
     applicant = Applicant(
@@ -380,6 +407,10 @@ async def _ingest_resume(
         company_id=company_id,
         created_by_user_id=hr_uid,
         full_name=full_name,
+        # Derived from the uploaded file's name — a placeholder, and the one
+        # case where the scorer replacing it is an improvement rather than a
+        # correction nobody asked for.
+        full_name_source="filename",
         email=email,
         target_job_title=job_title,
         target_level=level,
@@ -387,6 +418,12 @@ async def _ingest_resume(
         resume_text=resume_text,
         resume_s3_key=s3_key,
         status="new",
+        # Set whenever the row was stored without being read — which is exactly
+        # when full_name is a placeholder the reconciler may replace.
+        # True whenever nothing read this PDF — the deferred path, and also a
+        # synchronous upload whose scorer was down. Both leave a placeholder
+        # name, and both want the reconciler to come back for it.
+        pending_enrichment=score is None,
         created_at=now,
         updated_at=now,
     )
@@ -457,6 +494,9 @@ async def create_applicant(
         company_id=company_id,
         created_by_user_id=hr_uid,
         full_name=full_name.strip(),
+        # A recruiter typed this, so the reconciler may not replace it — same
+        # rule as a candidate typing their own name on the public form.
+        full_name_source="hr",
         # Already stripped and validated by OptionalEmail on the way in.
         email=email,
         target_job_title=target_job_title.strip(),
@@ -521,11 +561,17 @@ async def bulk_upload_applicants(
 ) -> BulkUploadResult:
     """Upload many resumes at once for a SINGLE role.
 
-    For each resume the candidate's name + email are auto-extracted from the
-    resume (no manual entry), then it is stored and ATS-scored. A bad/empty/oversized
-    file is reported in ``failed`` without aborting the rest of the batch. Processing
-    is sequential per file (the scorer is the slow step) — large batches should move
-    to an async queue (Phase 5).
+    Each PDF is read and stored; scoring, embedding and name extraction happen
+    afterwards in the background (Group A's reconciler). A bad, empty or
+    oversized file is reported in ``failed`` without aborting the rest.
+
+    Scoring used to run inside this request, sequentially, at roughly ten
+    seconds a file — so a full twenty-five-resume batch held one connection
+    open for four minutes, and a dropped connection lost the tail of it. That
+    is why every row comes back with ``pending_enrichment`` true and no ATS
+    score: the work is queued, not skipped, and the response says which rows
+    are still being read so the console can say so too rather than showing
+    filename-derived names as though they were real.
     """
     hr_uid, company_id = ctx
     if not files:
@@ -570,6 +616,7 @@ async def bulk_upload_applicants(
                 job_title=job_title,
                 level=level,
                 jd_text=target_jd_text,
+                score_now=False,
             )
             created.append(_to_out(applicant))
             embed_ids.append(applicant.id)
@@ -587,20 +634,24 @@ async def bulk_upload_applicants(
             )
             failed.append({"filename": fname, "error": "unexpected error"})
 
-    # Embed the whole batch in one or two calls (best-effort — never fails upload).
-    await _embed_applicants_batch(db, company_id, hr_uid, embed_ids)
+    # Embedding is left to the reconciler along with the scoring. Doing it here
+    # would put a network round-trip back into a request whose whole purpose is
+    # now to return quickly, and the reconciler already finds unembedded rows by
+    # the same absence it uses for unscored ones.
 
     log.info(
         "hr.applicant.bulk.complete",
         company_id=str(company_id),
         created=len(created),
         failed=len(failed),
+        deferred=len(embed_ids),
     )
     return BulkUploadResult(
         created=created,
         failed=failed,
         created_count=len(created),
         failed_count=len(failed),
+        pending_enrichment=len(created),
     )
 
 
@@ -875,6 +926,46 @@ async def update_applicant_status(
         await email_applicant_decision(
             db, applicant=a, decision=body.status, company_id=company_id
         )
+        # Start the workflow, when this applicant has exactly one application to
+        # start. This board is applicant-shaped and the runner is enrolment-
+        # shaped, so the two only line up when there is no ambiguity: somebody
+        # with three live applications who gets shortlisted here has not been
+        # shortlisted for all three, and sending three exam links because a
+        # recruiter clicked once would be worse than doing nothing.
+        #
+        # The ambiguous case is not lost, it is deferred — the per-opening
+        # action on the requisition dashboard names the application it starts.
+        if body.status == "shortlisted":
+            enrolment_id = await sole_live_enrolment(
+                db, applicant_id=a.id, company_id=company_id
+            )
+            if enrolment_id is None:
+                log.info(
+                    "hr.applicant.shortlist.not_started",
+                    applicant_id=str(a.id),
+                    reason="no single live application to start",
+                )
+            else:
+                outcome = await on_shortlisted(
+                    db, enrolment_id=enrolment_id, actor_user_id=_hr_uid
+                )
+                await record_transition(
+                    db,
+                    enrolment_id=enrolment_id,
+                    company_id=company_id,
+                    to_status="shortlisted",
+                    actor_user_id=_hr_uid,
+                    automated=False,
+                    reason="shortlisted from the applicant board",
+                )
+                log.info(
+                    "hr.applicant.shortlisted",
+                    applicant_id=str(a.id),
+                    enrolment_id=str(enrolment_id),
+                    action=outcome.action,
+                    to_round=outcome.to_round,
+                    reason=outcome.reason,
+                )
     await db.commit()
     return _to_out(a)
 

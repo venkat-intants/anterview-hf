@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 import structlog
+from shared.llm import call_llm_json
 
 from app.config import Settings
 
@@ -136,15 +137,27 @@ async def embed_texts(
     return vectors
 
 
+# The key name is load-bearing, not decoration. This prompt goes through
+# call_llm_json, which asks the provider for a JSON OBJECT and hands back the
+# parsed dict — so the prompt has to name the field the reader below looks up.
+# It used to end "No preamble, no markdown — just the sentence", which
+# contradicted the JSON mode it was being called under: the model obeyed the
+# transport and invented its own key ("match", on gpt-oss-120b), so a perfectly
+# good explanation was thrown away by .get("reason") and reached HR as a 502.
+# An unnamed key is an unspecified contract, and an unspecified contract varies
+# by model and by run.
 _REASON_PROMPT = """\
 You are a recruiter explaining, in ONE short sentence (max 30 words), why a
 candidate's resume matches an HR search. Be concrete and ground it in the resume;
-if the match is weak, say so plainly. No preamble, no markdown — just the sentence.
+if the match is weak, say so plainly.
 
 HR is searching for: {{QUERY}}
 
 Resume:
-{{RESUME}}"""
+{{RESUME}}
+
+## Output (STRICT JSON, no markdown, no code fences)
+{"reason": "<the one sentence, max 30 words>"}"""
 
 
 async def generate_match_reason(
@@ -159,15 +172,20 @@ async def generate_match_reason(
             "{{RESUME}}", (resume_text or "").strip()[:6000]
         )
     )
-    url = f"{settings.gemini_api_base_url}/models/{settings.gemini_model}:generateContent"
-    headers = {"x-goog-api-key": settings.gemini_api_key}
-    body: dict[str, Any] = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 256},
-    }
-    response = await _post_with_retry(url, body, timeout=30.0, headers=headers)
-    try:
-        text: str = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError, ValueError) as exc:
-        raise EmbeddingError(f"Failed to read Gemini reason response: {exc}") from exc
-    return text.strip()[:400]
+    parsed = await call_llm_json(
+        prompt,
+        provider=settings.llm_provider,
+        api_base_url=settings.llm_api_base_url,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        temperature=0.2,
+        # Generous for one sentence, but JSON mode spends a few tokens on the
+        # wrapper and a truncated object is an error rather than a short answer.
+        max_output_tokens=400,
+        timeout=30.0,
+        error_cls=EmbeddingError,
+    )
+    reason = parsed.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise EmbeddingError("model returned no reason")
+    return reason.strip()[:400]

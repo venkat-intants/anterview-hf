@@ -399,9 +399,18 @@ async def test_execute_one_erasure_applicants_anonymised() -> None:
     assert "full_name" in applicant_update
     assert "[redacted]" in applicant_update
 
-    # There must NOT be a DELETE applicants statement
+    # There must NOT be a DELETE applicants statement.
+    #
+    # Matched on the delete TARGET, not on the two words appearing anywhere in
+    # the statement. The loose version ("DELETE" in s and "applicants" in s)
+    # fired on step 5c, which deletes application_answers and names applicants
+    # only in a JOIN — a false positive on a statement that does exactly what
+    # this test wants. The invariant is unchanged and still catches the
+    # regression it exists for: erasure_requests.user_id is ON DELETE RESTRICT,
+    # so deleting the applicant instead of anonymising it destroys the §12
+    # proof that the erasure happened.
     applicant_delete = next(
-        (s for s in executed_stmts if "DELETE" in s and "applicants" in s),
+        (s for s in executed_stmts if "DELETE FROM applicants" in s),
         None,
     )
     assert applicant_delete is None, (
@@ -1283,3 +1292,75 @@ async def test_audit_details_report_the_notification_count() -> None:
     details = audit_rows[-1].details
     assert details is not None
     assert "notifications_deleted" in details
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — the candidate's own prose, and the second copy of their resume
+# ---------------------------------------------------------------------------
+# The inventory test next door asserts these tables are DECLARED. Declaring is
+# not doing, so the two behaviours are asserted here as well: an entry in
+# ERASED_TABLES that no statement implements would read as compliance while
+# leaving the data in place.
+
+
+async def _run_capturing(scored_keys: list[str] | None = None) -> list[str]:
+    """Execute one erasure against a stub session, returning the SQL it ran."""
+    db = AsyncMock()
+    db.add = MagicMock()
+    stmts: list[str] = []
+
+    async def _execute(stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
+        sql = str(stmt)
+        stmts.append(sql)
+        result = MagicMock()
+        result.rowcount = 1
+        result.fetchone.return_value = None
+        result.fetchall.return_value = (
+            [(k,) for k in (scored_keys or [])]
+            if "scored_resume_s3_key" in sql
+            else []
+        )
+        return result
+
+    db.execute = _execute
+    await _execute_one_erasure(
+        db=db, request=_make_erasure_request(), system_actor_id=_SYSTEM_ACTOR
+    )
+    return stmts
+
+
+@pytest.mark.asyncio
+async def test_the_candidates_written_answers_are_deleted() -> None:
+    """application_answers.answer is prose the candidate wrote about themselves,
+    so anonymising `applicants` leaves it still naming them."""
+    stmts = await _run_capturing()
+    assert any("DELETE FROM application_answers" in s for s in stmts)
+
+
+@pytest.mark.asyncio
+async def test_the_answers_go_before_the_applicant_is_anonymised() -> None:
+    """Ordering is load-bearing, not incidental: the delete reaches those rows
+    through applicants.user_id, and step 6 sets that column to NULL. Run it
+    after and the DELETE matches nothing — silently, with a rowcount of 0."""
+    stmts = await _run_capturing()
+    delete_at = next(i for i, s in enumerate(stmts) if "DELETE FROM application_answers" in s)
+    anonymise_at = next(i for i, s in enumerate(stmts) if "UPDATE applicants" in s)
+    assert delete_at < anonymise_at
+
+
+@pytest.mark.asyncio
+async def test_the_scored_copy_of_the_resume_is_collected_for_deletion() -> None:
+    """enrolments is excluded from erasure, but scored_resume_s3_key points at a
+    real object. Excluding the row must not mean orphaning the file."""
+    stmts = await _run_capturing()
+    assert any("scored_resume_s3_key" in s and "SELECT" in s for s in stmts)
+
+
+@pytest.mark.asyncio
+async def test_the_scored_key_is_collected_before_anything_nulls_it() -> None:
+    """Same failure mode as 1c one table over: read the key first, or step 8
+    has nothing to delete and the object stays in the bucket for good."""
+    stmts = await _run_capturing()
+    select_at = next(i for i, s in enumerate(stmts) if "scored_resume_s3_key" in s)
+    anonymise_at = next(i for i, s in enumerate(stmts) if "UPDATE applicants" in s)
+    assert select_at < anonymise_at

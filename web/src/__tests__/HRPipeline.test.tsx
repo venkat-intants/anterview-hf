@@ -8,6 +8,7 @@
 //   • hire/reject are offered only at stages where they make sense, so a
 //     candidate cannot be hired before anyone has looked at them.
 
+import { analyticsDefaults } from './analyticsFixture';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -80,6 +81,7 @@ const ANALYTICS: HrAnalytics = {
     rejected: 0,
   },
   averages: { avg_ats: 72, avg_exam_percent: 83, avg_interview_composite: 8.4 },
+  ...analyticsDefaults(),
 };
 
 const getPipeline = vi.fn();
@@ -256,5 +258,34 @@ describe('HRPipeline — hire / reject', () => {
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Applicant already decided'));
     expect(toastSuccess).not.toHaveBeenCalled();
+  });
+});
+
+describe('HRPipeline — list and board are the same data', () => {
+  it('offers both views', async () => {
+    renderPipeline();
+    await screen.findByText('Bhavya Nair');
+    expect(screen.getByRole('group', { name: 'Pipeline view' })).toBeInTheDocument();
+  });
+
+  it('switches to the board without refetching', async () => {
+    // The board is an arrangement, not a different dataset. A switch that
+    // refetched would paginate differently and quietly show a different set.
+    const user = userEvent.setup();
+    renderPipeline();
+    await screen.findByText('Bhavya Nair');
+    const before = getPipeline.mock.calls.length;
+
+    await user.click(screen.getByRole('button', { name: 'board' }));
+    expect(screen.getByRole('region', { name: 'Candidate pipeline board' })).toBeInTheDocument();
+    expect(getPipeline.mock.calls.length).toBe(before);
+  });
+
+  it('remembers the choice', async () => {
+    const user = userEvent.setup();
+    renderPipeline();
+    await screen.findByText('Bhavya Nair');
+    await user.click(screen.getByRole('button', { name: 'board' }));
+    expect(localStorage.getItem('intants:pipeline-view')).toBe('board');
   });
 });

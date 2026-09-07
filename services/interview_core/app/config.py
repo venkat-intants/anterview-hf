@@ -1,3 +1,5 @@
+import pathlib
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.security import (
@@ -7,10 +9,32 @@ from shared.security import (
 from shared.security import validate_cors_origins as _validate_cors_origins
 from shared.security import validate_database_ssl as _validate_database_ssl
 
+# app/config.py -> app -> <service> -> services -> repo root
+_SERVICE_DIR = pathlib.Path(__file__).resolve().parents[1]
+_REPO_ROOT = _SERVICE_DIR.parents[1]
+
 
 class Settings(BaseSettings):
+    # ONE .env for the whole backend, at the repo root, plus an optional
+    # per-service file that overrides it. Later files win (verified against
+    # pydantic-settings, not assumed), so `services/<name>/.env` can still
+    # differ where a service genuinely needs to — but the shared credentials
+    # live in exactly one place instead of being copy-pasted four ways and
+    # drifting.
+    #
+    # ABSOLUTE, not ".env". A relative path resolves against the CURRENT
+    # WORKING DIRECTORY, so the old value silently loaded nothing whenever a
+    # service was started from the repo root rather than its own folder — the
+    # service then booted on defaults and failed later, somewhere unrelated.
+    #
+    # What must NOT go in the shared file: PORT and SERVICE_NAME. Both differ
+    # per service (8001-8004), and a shared PORT would have all four fighting
+    # over one socket.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+        env_file=(_REPO_ROOT / ".env", _SERVICE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
     )
 
     service_name: str = "interview_core"
@@ -45,7 +69,23 @@ class Settings(BaseSettings):
     llm_provider: str = "gemini"
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    # gemini-flash-lite-latest, which is also the default CLAUDE.md documents.
+    # Was pinned to "gemini-2.5-flash", which Google has since RETIRED for new
+    # users: every call returns HTTP 404 "no longer available to new users",
+    # naming gemini-3.6-flash as the replacement. Verified live 2026-09-04 --
+    # 2.5-flash and 2.5-flash-lite both 404; flash-lite-latest, 3.5-flash-lite,
+    # 3.5-flash and 3.6-flash all answer.
+    #
+    # The floating "-latest" alias is deliberate here rather than a new hard
+    # pin: a hard pin is what expired, silently, and the failure only surfaced
+    # because a live integration test happened to run. flash-LITE also keeps
+    # the per-session cost inside the <= Rs 12 cap that a full flash model
+    # would eat into.
+    #
+    # NOTE this is the chat/completions model only. Embeddings are a separate
+    # setting and were never affected -- semantic search kept working
+    # throughout, which is part of why this went unnoticed.
+    gemini_model: str = "gemini-flash-lite-latest"
     gemini_api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     # MUST be >=256 for thinking models (2.5-flash burns ~10-20 tokens on thoughts)
     gemini_max_tokens: int = 1024
@@ -74,7 +114,18 @@ class Settings(BaseSettings):
     # saaras:v3 is the current model (mode="transcribe"). saarika:v2.5 is
     # deprecating — do NOT revert. See research/sarvam-pricing-2026-05.md §4.
     sarvam_stt_model: str = "saaras:v3"
-    sarvam_tts_model: str = "bulbul:v2"
+    # bulbul:v3. Was "bulbul:v2", which Sarvam has since RETIRED — every
+    # synthesis call now returns HTTP 400 "Model 'bulbul:v2' has been
+    # deprecated", so the interviewer could not speak at all.
+    #
+    # This was a one-line drift, not a migration that was never done:
+    # speech/sarvam_tts.py had already moved to v3 throughout — DEFAULT_VOICE
+    # "pooja", SPEECH_SAMPLE_RATE 24000, the per-language map (kavya / shreya /
+    # pooja), and comments reading "currently bulbul:v3". Only this default
+    # stayed on v2, and it is the one that wins at runtime. The v2 speakers
+    # those comments list (anushka / manisha / vidya) are rejected by v3, so a
+    # half-revert here fails as loudly as the full one.
+    sarvam_tts_model: str = "bulbul:v3"
 
     openai_api_key: str = ""
     openai_whisper_model: str = "whisper-1"

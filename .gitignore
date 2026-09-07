@@ -199,3 +199,14 @@ space.env
 # referenced by code — if you need one, write it under a path already ignored.
 **/raw_gen_debug.txt
 **/gemini_debug*.txt
+
+# Local resume store — REAL CANDIDATE CVs, never commit.
+# STORAGE_LOCAL_DIR (services/data_gateway/.env) defaults to ./.local-cvs when
+# STORAGE_BACKEND=local, so a dev machine accumulates uploaded PDFs under the
+# service directory. This machine had 39 of them and no rule covered the path:
+# the DB-dump section above says "these can contain PII — never commit", and
+# these ARE the PII, in the original file the candidate uploaded. Ignored by
+# directory name rather than by *.pdf so a committed sample PDF elsewhere in
+# the repo still works.
+.local-cvs/
+

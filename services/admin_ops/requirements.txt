@@ -76,3 +76,12 @@ sentry-sdk>=2.0,<3
 # 2026-08-07; if admin_ops ever needs cron semantics, add it back naming the
 # job.  (Closes code-review finding DEP-5.)
 prometheus-client>=0.20,<1
+
+# Analytics reports in a named timezone (_common.py: Asia/Kolkata by default),
+# and zoneinfo has no bundled database — it reads the host's. Linux images have
+# one, so the Dockerfile and CI never noticed; a Windows dev venv has none, and
+# every analytics test dies on ZoneInfoNotFoundError at import. data_gateway
+# already pinned this; admin_ops is the service that actually calls ZoneInfo
+# and was the one missing it.
+tzdata==2026.2
+

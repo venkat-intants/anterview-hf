@@ -91,7 +91,7 @@ export AUTH_COOKIE_SAMESITE="${AUTH_COOKIE_SAMESITE:-lax}"
 export TRUSTED_PROXY_COUNT="${TRUSTED_PROXY_COUNT:-2}"   # HF edge + our Caddy
 
 export LLM_PROVIDER="${LLM_PROVIDER:-gemini}"
-export GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
+export GEMINI_MODEL="${GEMINI_MODEL:-gemini-flash-lite-latest}"
 # Console copilots + assessment panel (data_gateway). GEMINI_API_KEY is
 # already required above, so the agents run wherever the interviewer does.
 # Set AGENTS_ENABLED=false to switch them off during an incident or a cost

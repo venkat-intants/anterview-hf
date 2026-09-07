@@ -68,7 +68,7 @@ envVarGroups:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
-        value: gemini-2.5-flash
+        value: gemini-flash-lite-latest
       - key: GEMINI_MAX_TOKENS
         value: "2048"
 

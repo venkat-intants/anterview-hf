@@ -29,7 +29,7 @@ reaches a candidate only after two deliberate human acts.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from shared.agents import (
@@ -40,6 +40,7 @@ from shared.agents import (
     ToolOutput,
 )
 from shared.intelligence import baseline_profile, compute_profile_id
+from shared.intelligence.schema import Seniority
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,7 +108,10 @@ async def _requisition(ctx: ToolContext) -> dict[str, Any]:
 
 
 def _profile_for(req: dict[str, Any]) -> Any:
-    level = req["level"] if req["level"] in _LEVELS else "mid"
+    # req comes from a DB row (dict[str, Any]), so the ternary widens to
+    # Any | str. The membership test against _LEVELS is the runtime
+    # guarantee the cast asserts statically.
+    level = cast(Seniority, req["level"] if req["level"] in _LEVELS else "mid")
     return baseline_profile(
         profile_id=compute_profile_id(job_title=req["title"], seniority=level),
         job_title=req["title"],

@@ -13,15 +13,17 @@
 // through the enrolment endpoint, which records who moved them and why.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Applicant } from '../api/applicants';
 import type { ApplicationAnswer } from '../api/questions';
 
 const getApplicant = vi.fn();
+const listRoundResults = vi.fn();
 vi.mock('../api/applicants', () => ({
   getApplicant: (...a: unknown[]) => getApplicant(...a) as unknown,
+  listRoundResults: (...a: unknown[]) => listRoundResults(...a) as unknown,
 }));
 
 const listAnswers = vi.fn();
@@ -72,6 +74,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   getApplicant.mockResolvedValue(applicant());
   listAnswers.mockResolvedValue([]);
+  listRoundResults.mockResolvedValue([]);
 });
 
 describe('CandidateDrawer', () => {
@@ -221,5 +224,76 @@ describe('CandidateDrawer', () => {
     for (const label of [/advance/i, /reject/i, /hire/i, /shortlist/i]) {
       expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument();
     }
+  });
+
+  // ── Why a score is what it is (§7, C8) ──────────────────────────────────
+  describe('per-round scores', () => {
+    const round = {
+      round_id: 'r-1',
+      round_title: 'Technical Interview',
+      position: 2,
+      kind: 'ai_interview',
+      percent: 84,
+      passed: true,
+      graded_by: 'ai',
+      evidence: null,
+      criteria: [
+        {
+          competency_id: 'c-sysdesign',
+          name: 'System design',
+          score: 88,
+          evidence: 'Walked through a sharded write path unprompted.',
+        },
+      ],
+      axes: { communication: 76 },
+      created_at: new Date().toISOString(),
+    };
+
+    it('shows the criterion behind a score, and its evidence', async () => {
+      // The whole point of §7: a score must not be an unexplained number.
+      listRoundResults.mockResolvedValue([round]);
+      renderDrawer();
+      expect(await screen.findByText('System design')).toBeInTheDocument();
+      expect(screen.getByText(/sharded write path/)).toBeInTheDocument();
+      expect(screen.getByText('3. Technical Interview')).toBeInTheDocument();
+    });
+
+    it('separates the frozen axes from the criteria that decided progression', async () => {
+      // Reading the axes as the reason for a decision would be wrong — they are
+      // the cross-role comparison (D-02), not the evaluation.
+      listRoundResults.mockResolvedValue([round]);
+      renderDrawer();
+      expect(await screen.findByText('Comparable axes')).toBeInTheDocument();
+    });
+
+    it('never says a candidate failed', async () => {
+      // D-05: below a threshold is held, not rejected. The word must not appear.
+      listRoundResults.mockResolvedValue([{ ...round, passed: false, percent: 41 }]);
+      renderDrawer();
+      expect(await screen.findByText(/held for your decision/)).toBeInTheDocument();
+      expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
+    });
+
+    it('shows nothing at all when no round has been scored', async () => {
+      // A candidate who has not sat a round yet is a normal state, not an
+      // empty-state worth a heading.
+      //
+      // waitFor, not a bare assertion: the section renders its heading over a
+      // skeleton while the read is in flight, which is deliberate (it reserves
+      // the space rather than shifting the drawer when scores land). The claim
+      // being made here is about the settled state.
+      renderDrawer();
+      await screen.findByText('Nadia Newbie');
+      await waitFor(() =>
+        expect(screen.queryByText('Assessment')).not.toBeInTheDocument(),
+      );
+    });
+
+    it('distinguishes "could not load" from "not assessed"', async () => {
+      // Rendering a failed read as "no scores" would mislead a decision.
+      listRoundResults.mockRejectedValue(new Error('boom'));
+      renderDrawer();
+      expect(await screen.findByText(/Scores could not be loaded/)).toBeInTheDocument();
+    });
   });
 });

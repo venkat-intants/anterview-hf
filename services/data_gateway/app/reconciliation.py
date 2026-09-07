@@ -58,6 +58,7 @@ from app.applicant_enrichment import (
 from app.config import settings
 from app.embedding_client import embed_texts_remote
 from app.models import Applicant
+from app.notifications_util import create_notification
 from app.scoring_client import score_resume_remote
 
 log = structlog.get_logger(__name__)
@@ -91,6 +92,9 @@ class PassResult:
     # Rows whose real name (and sometimes email) were read out of the PDF and
     # written over the filename-derived placeholder a deferred ingest left.
     named: int = 0
+    # Bulk uploads whose last outstanding row finished during this pass, and
+    # which therefore produced one "upload complete" notification (A4).
+    batches_finished: int = 0
     failed: int = 0
     gave_up: int = 0
     outstanding: dict[str, int] = field(default_factory=dict)
@@ -100,6 +104,7 @@ class PassResult:
             "scored": self.scored,
             "embedded": self.embedded,
             "named": self.named,
+            "batches_finished": self.batches_finished,
             "failed": self.failed,
             "gave_up": self.gave_up,
             "outstanding": self.outstanding,
@@ -189,6 +194,53 @@ _DUE_PREDICATE = """
 """
 
 
+async def _notify_batch_done(db: AsyncSession, applicant: Applicant) -> bool:
+    """Tell the uploader when the LAST row of their bulk upload finishes (A4).
+
+    Called after a row has been scored and committed, so the count below already
+    excludes it. Zero remaining means this row was the last one and the batch is
+    now fully read.
+
+    One notification per batch, not per applicant: the whole point of the batch
+    id is that twenty-five separate reconciler passes are one event to the
+    person who started them. It is emitted at most once because the condition —
+    "no pending rows left" — can only become true on the transition, and the
+    rows that would re-trigger it have already been cleared.
+
+    Returns True when a notification was staged, purely so the pass can count
+    it. Failure here must never fail the enrichment that succeeded: the score is
+    written and committed before this runs.
+    """
+    batch_id = applicant.upload_batch_id
+    if batch_id is None or applicant.created_by_user_id is None:
+        return False
+    remaining = await db.scalar(
+        text(
+            "SELECT count(*) FROM applicants"
+            " WHERE upload_batch_id = :b AND pending_enrichment AND deleted_at IS NULL"
+        ),
+        {"b": batch_id},
+    )
+    if remaining:
+        return False
+    total = await db.scalar(
+        text("SELECT count(*) FROM applicants WHERE upload_batch_id = :b"),
+        {"b": batch_id},
+    )
+    await create_notification(
+        db,
+        user_id=applicant.created_by_user_id,
+        kind="bulk_upload",
+        title="Bulk upload finished",
+        body=(
+            f"{total} resume{'' if total == 1 else 's'} have been read and scored."
+        ),
+        link="/hr/applicants",
+    )
+    await db.commit()
+    return True
+
+
 async def _score_pass(db: AsyncSession, result: PassResult) -> None:
     """Retry ATS scoring for applicants that have none."""
     now = datetime.now(tz=UTC)
@@ -240,6 +292,19 @@ async def _score_pass(db: AsyncSession, result: PassResult) -> None:
         await _clear_state(db, KIND_ATS, aid)
         await db.commit()
         result.scored += 1
+        # After the commit: the batch is only finished once this row's own
+        # pending flag is durably cleared, and a notification is never worth
+        # rolling back a score for.
+        try:
+            if await _notify_batch_done(db, applicant):
+                result.batches_finished += 1
+        except Exception as exc:  # noqa: BLE001 — notification is not the work
+            await db.rollback()
+            log.warning(
+                "reconcile.batch_notify_failed",
+                applicant_id=str(aid),
+                error_type=type(exc).__name__,
+            )
 
 
 async def _embed_pass(db: AsyncSession, result: PassResult) -> None:

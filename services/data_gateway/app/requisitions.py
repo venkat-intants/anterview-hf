@@ -445,3 +445,80 @@ async def split_requisition(
         "moved": len(moved_ids),
         "left_behind": len(rows) - len(moved_ids),
     }
+
+
+# ---------------------------------------------------------------------------
+# Delivery risk (E3)
+# ---------------------------------------------------------------------------
+# The roll-up board's job is "which of these needs me?", and a list of openings
+# sorted by nothing answers it no better than the openings themselves. E3 asks
+# for a computed signal "derived from the observed transition rate against the
+# closing date" — i.e. project the rate a role has actually hired at forward to
+# its close, and say whether that lands on target.
+#
+# Deliberately arithmetic, not a model. This drives an HR manager's attention,
+# and a number they cannot reproduce on paper is one they will not trust or act
+# on. Every input is visible on the same card: hires so far, target, and the
+# dates.
+#
+# It is also deliberately NOT a decision about any person — it describes an
+# opening's throughput, never a candidate — so nothing here touches D-05.
+
+# Below this fraction of the target at the projected rate, the opening is not
+# going to make it without intervention. 0.6 rather than a tighter number
+# because early noise is large: two weeks into a ten-week opening a single hire
+# swings the projection wildly, and a board that cries "off track" at every new
+# role stops being read.
+_OFF_TRACK_RATIO = 0.6
+# An opening younger than this has no meaningful rate yet. Projecting from three
+# days of data produces confident nonsense in both directions.
+_MIN_DAYS_FOR_A_RATE = 7
+
+DeliveryRisk = str  # 'on_track' | 'at_risk' | 'off_track'
+
+
+def delivery_risk(
+    *,
+    target_hires: int | None,
+    hired: int,
+    created_at: datetime | None,
+    closes_at: datetime | None,
+    now: datetime | None = None,
+) -> DeliveryRisk | None:
+    """Project hiring throughput forward to the closing date.
+
+    Returns None — meaning "no signal", which the board renders as nothing at
+    all — when the question cannot honestly be asked:
+
+      * no closing date, so there is nothing to be late for;
+      * no target, so there is no definition of enough;
+      * the opening is younger than a week, so there is no rate to project.
+
+    A returned band is one of on_track / at_risk / off_track. Meeting the target
+    is on_track whatever the dates say, and a closing date already past with the
+    target unmet is off_track without needing a projection.
+    """
+    if not target_hires or target_hires <= 0 or closes_at is None or created_at is None:
+        return None
+
+    now = now or datetime.now(tz=UTC)
+    if hired >= target_hires:
+        return "on_track"
+
+    days_open = (now - created_at).total_seconds() / 86_400
+    days_left = (closes_at - now).total_seconds() / 86_400
+    if days_left <= 0:
+        # The window has closed and the target was not met. No projection needed
+        # — this is an observation, not a forecast.
+        return "off_track"
+    if days_open < _MIN_DAYS_FOR_A_RATE:
+        return None
+
+    # Hires per day so far, carried forward over the days that remain.
+    rate = hired / days_open
+    projected = hired + rate * days_left
+    if projected >= target_hires:
+        return "on_track"
+    if projected >= target_hires * _OFF_TRACK_RATIO:
+        return "at_risk"
+    return "off_track"

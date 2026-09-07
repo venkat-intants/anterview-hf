@@ -35,6 +35,7 @@ from app.models import AuditLog
 from app.requisitions import (
     TERMINAL_STATUSES,
     VALID_STATUSES,
+    delivery_risk,
     merge_applicants,
     merge_candidates,
     normalise_title,
@@ -205,6 +206,10 @@ class RequisitionOut(BaseModel):
     hired: int = 0
     awaiting_decision: int = 0
     funnel: list[FunnelStage] = Field(default_factory=list)
+    # 'on_track' | 'at_risk' | 'off_track', or null when the projection cannot
+    # honestly be made (no closing date, no target, or too new to have a rate).
+    # Null is rendered as nothing rather than as "fine" — see delivery_risk.
+    delivery_risk: str | None = None
 
 
 class EnrolmentOut(BaseModel):
@@ -314,6 +319,12 @@ def _to_out(row: dict[str, Any], counts: dict[str, int] | None = None) -> Requis
             v for k, v in counts.items() if k not in TERMINAL_STATUSES
         ),
         funnel=[FunnelStage(status=k, count=v) for k, v in sorted(counts.items())],
+        delivery_risk=delivery_risk(
+            target_hires=row.get("target_hires"),
+            hired=counts.get("hired", 0),
+            created_at=row["created_at"],
+            closes_at=row["closes_at"],
+        ),
     )
 
 
@@ -557,6 +568,19 @@ async def set_requisition_status(
     ends a candidacy, so an opening that closes with people still in it reports
     them as unresolved rather than quietly rejecting them; the response carries
     that count so the console can prompt for the decisions.
+
+    AC-12 asks for more than reporting: a requisition "cannot be closed while
+    candidates remain unresolved". Closing is therefore refused with 409 while
+    anyone is still mid-process, and the refusal carries the count and the
+    decision-queue path so the caller can act rather than guess. An HR manager
+    who has seen that list and still wants the opening shut passes
+    ``acknowledge_unresolved``; the people stay exactly as they are, neither
+    rejected nor hidden, and remain in the decision queue.
+
+    Deliberately not a silent success with a count in the body: the previous
+    shape returned 200 and nothing in the console read the number, which is the
+    failure AC-12 describes — an opening closes and the candidates in it are
+    stranded with nobody prompted.
     """
     hr_uid, company_id = ctx
     new_status = (body or {}).get("status", "")
@@ -565,6 +589,36 @@ async def set_requisition_status(
             status_code=400, detail=f"status must be one of {sorted(_VALID_REQ_STATUS)}"
         )
     row = await _owned(db, company_id, requisition_id)
+
+    # Only on the open/paused -> closed edge. Re-closing a closed opening is a
+    # no-op and must not re-prompt.
+    closing = new_status == "closed" and row["status"] != "closed"
+    pending = 0
+    if closing:
+        pending = _to_out(
+            row, (await _counts(db, [requisition_id])).get(str(requisition_id), {})
+        ).awaiting_decision
+        # Truthy check, not `is True`: the flag arrives as JSON and an operator
+        # curling this endpoint may well send the string "true".
+        ack = str((body or {}).get("acknowledge_unresolved", "")).lower() in {
+            "true", "1", "yes",
+        }
+        if pending and not ack:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "unresolved_candidates",
+                    "unresolved": pending,
+                    "message": (
+                        f"{pending} candidate(s) are still in this opening. "
+                        "Decide on each, or close anyway — they stay in the "
+                        "decision queue either way and are never rejected "
+                        "automatically."
+                    ),
+                    "decision_queue": f"/hr/requisitions/{requisition_id}/decisions",
+                },
+            )
+
     now = datetime.now(tz=UTC)
     await db.execute(
         text("UPDATE job_requisitions SET status = :s, updated_at = :n WHERE id = :i"),
@@ -577,8 +631,15 @@ async def set_requisition_status(
             action=f"requisition.status.{new_status}",
             resource_type="job_requisition",
             resource_id=requisition_id,
+            # closed_with_unresolved is the compliance-relevant half: it records
+            # that a person was shown the count and chose to close anyway.
+            # Without it the audit trail cannot tell that apart from closing an
+            # opening that was already settled. Absent unless it actually
+            # happened, so its presence means something.
             details={"company_id": str(company_id), "previous_status": row["status"],
-                     "title": row["title"]},
+                     "title": row["title"],
+                     **({"closed_with_unresolved": pending} if closing and pending
+                        else {})},
             ip_address=extract_client_ip(request),
             user_agent=extract_user_agent(request),
             event_ts=now,

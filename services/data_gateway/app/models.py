@@ -225,6 +225,14 @@ class Applicant(Base):
     # flag, or it would silently revert what a person typed.
     pending_enrichment: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Which bulk upload this row arrived in (A4/E5). NULL for anything that did
+    # not come through /hr/applicants/bulk — a single upload, a public
+    # application, or any row created before batches were tracked. Its only
+    # reader is the reconciler, which uses it to tell when the last row of a
+    # batch has finished enriching and one "upload complete" notification is
+    # therefore due.
+    upload_batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     # Where full_name came from, and what the CV said regardless.
     #
     # 'candidate' and 'hr' mean a person typed it and it is authoritative.

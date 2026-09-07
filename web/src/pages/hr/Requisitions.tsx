@@ -102,6 +102,15 @@ function RequisitionRow({ req }: { req: Requisition }) {
             {req.public_apply_enabled && req.status === 'open' ? (
               <StatusTag tone="electric">accepting applications</StatusTag>
             ) : null}
+            {/* E3. Only the two bands worth acting on are shown: an
+                "on track" badge on every healthy opening is noise, and a
+                board of green ticks is one nobody scans. */}
+            {req.status === 'open' && req.delivery_risk === 'at_risk' ? (
+              <StatusTag tone="amber">behind target</StatusTag>
+            ) : null}
+            {req.status === 'open' && req.delivery_risk === 'off_track' ? (
+              <StatusTag tone="ember">will miss target</StatusTag>
+            ) : null}
           </span>
           <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-[#888b91]">
             <span>{req.level}</span>

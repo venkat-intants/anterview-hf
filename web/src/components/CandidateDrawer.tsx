@@ -23,6 +23,7 @@ import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getApplicant } from '@/api/applicants';
 import { listAnswers, type ApplicationAnswer } from '@/api/questions';
+import { listRoundResults, type RoundResult } from '@/api/applicants';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { AlertTriangle, Info, User, X } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
@@ -48,6 +49,135 @@ export interface DrawerCandidate {
   linkedin_url?: string | null;
   github_url?: string | null;
   current_round_title?: string | null;
+}
+
+/* ── Why a score is what it is (§7, C8) ─────────────────────────────────── */
+
+/** Colour by band, but never colour ALONE — the number is always present. */
+function scoreTone(pct: number | null): string {
+  if (pct === null) return 'text-[#888b91]';
+  if (pct >= 75) return 'text-[#5ec27a]';
+  if (pct >= 50) return 'text-[#ffb764]';
+  return 'text-[#ff8f8f]';
+}
+
+/**
+ * Per-round scores, criterion by criterion.
+ *
+ * The specification's §7 is explicit that a score must not be presented as an
+ * unexplained truth, and the data to explain it has existed since C8 — per
+ * criterion, each with the evidence the model cited. Nothing read it back, so
+ * the console showed a composite and no way to ask what produced it.
+ *
+ * Two layers, shown in that order and labelled differently on purpose. The
+ * criteria decided whether this candidate advanced; the axes are the frozen
+ * comparison that makes composites mean the same thing across roles. Reading
+ * the axes as the reason for a decision would be wrong, so they are visually
+ * secondary.
+ *
+ * `passed` is rendered as "advanced / held", never as pass/fail: under D-05 a
+ * candidate below a threshold is held and nothing here has ended their
+ * candidacy.
+ */
+function RoundScores({ applicantId }: { applicantId: string }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['hr', 'applicant', applicantId, 'round-results'],
+    queryFn: () => listRoundResults(applicantId),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="mt-5">
+        <h3 className="text-[13px] font-medium text-white">Assessment</h3>
+        <div className="mt-2 h-16 animate-pulse rounded-[10px] bg-white/[0.04]" />
+      </div>
+    );
+  }
+  // A failed read must not imply "not assessed" — those are different facts and
+  // one of them would mislead a decision.
+  if (isError) {
+    return (
+      <div className="mt-5">
+        <h3 className="text-[13px] font-medium text-white">Assessment</h3>
+        <p className="mt-1.5 text-[12.5px] text-[#888b91]">
+          Scores could not be loaded. Reopen to retry.
+        </p>
+      </div>
+    );
+  }
+  if (!data?.length) return null;
+
+  return (
+    <div className="mt-5">
+      <h3 className="text-[13px] font-medium text-white">Assessment</h3>
+      <ul className="mt-2 flex flex-col gap-3">
+        {data.map((r: RoundResult) => (
+          <li key={r.round_id} className="rounded-[10px] border border-white/[0.08] p-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 truncate text-[12.5px] text-white">
+                {r.position + 1}. {r.round_title}
+              </span>
+              <span className={cn('text-[15px] font-semibold', scoreTone(r.percent))}>
+                {r.percent === null ? '—' : `${Math.round(r.percent)}%`}
+              </span>
+            </div>
+
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px] text-[#70757c]">
+              <span>
+                {r.graded_by === 'ai'
+                  ? 'AI-graded'
+                  : r.graded_by === 'human'
+                    ? 'Reviewed by a person'
+                    : 'Auto-graded'}
+              </span>
+              {r.passed !== null ? (
+                <span className={r.passed ? 'text-[#5ec27a]' : 'text-[#ffb764]'}>
+                  · {r.passed ? 'advanced' : 'held for your decision'}
+                </span>
+              ) : null}
+            </div>
+
+            {r.criteria.length ? (
+              <ul className="mt-2.5 flex flex-col gap-1.5">
+                {r.criteria.map((c) => (
+                  <li key={c.competency_id}>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="min-w-0 truncate text-[12px] text-[#d5d7da]">
+                        {c.name}
+                      </span>
+                      <span className={cn('text-[12px]', scoreTone(c.score))}>
+                        {c.score === null ? '—' : Math.round(c.score)}
+                      </span>
+                    </div>
+                    {c.evidence ? (
+                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-[#70757c]">
+                        {c.evidence}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            {Object.keys(r.axes).length ? (
+              <div className="mt-2.5 border-t border-white/[0.06] pt-2">
+                <p className="text-[11px] uppercase tracking-wide text-[#5a5f66]">
+                  Comparable axes
+                </p>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                  {Object.entries(r.axes).map(([axis, v]) => (
+                    <span key={axis} className="text-[11.5px] text-[#888b91]">
+                      {axis} <span className="text-[#d5d7da]">{Math.round(v)}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 const STATUS_TONE: Record<string, TagTone> = {
@@ -241,6 +371,8 @@ export default function CandidateDrawer({
             ) : null}
           </div>
         ) : null}
+
+        <RoundScores applicantId={candidate.applicant_id} />
 
         <div className="mt-5">
           <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-white">

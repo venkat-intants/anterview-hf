@@ -190,6 +190,11 @@ async def get_board(
     # four years wants roles they can apply to, not roles whose minimum happens
     # to be four.
     max_experience_years: Annotated[int | None, Query(ge=0, le=60)] = None,
+    # "Pays at least this much." Same shape as max_experience_years and for the
+    # same reason: phrased around what the candidate wants, not around the
+    # posting's fields.
+    min_salary: Annotated[int | None, Query(ge=0, le=1_000_000_000)] = None,
+    sort: Annotated[str, Query(pattern="^(newest|relevance)$")] = "newest",
     page: Annotated[int, Query(ge=1, le=500)] = 1,
     per_page: Annotated[int, Query(ge=1, le=_MAX_PER_PAGE)] = _DEFAULT_PER_PAGE,
 ) -> CareersBoard:
@@ -214,6 +219,15 @@ async def get_board(
             "(r.experience_min_years IS NULL OR r.experience_min_years <= :maxexp)"
         )
         params["maxexp"] = max_experience_years
+    if min_salary is not None:
+        # A role that does not PUBLISH a salary stays in. Absence is not a
+        # mismatch — same rule as the experience filter above — and hiding every
+        # unpublished role behind a salary preference would empty most boards.
+        # salary_max is the top of the advertised band, so "could pay this".
+        where.append(
+            "(NOT r.salary_visible OR r.salary_max IS NULL OR r.salary_max >= :minsal)"
+        )
+        params["minsal"] = min_salary
     if q and q.strip():
         # Title and skills. Escaped so a visitor typing '%' searches for a
         # percent sign rather than matching every role — the filter must not
@@ -226,6 +240,21 @@ async def get_board(
         params["q"] = f"%{like_literal(q.strip())}%"
         params["esc"] = LIKE_ESCAPE
     clause = " AND ".join(where)
+
+    # Relevance only means anything when there is a search term; without one it
+    # would be an arbitrary permutation presented as a ranking, so it falls back
+    # to newest. The expression is built from a fixed set of in-code strings —
+    # `sort` is constrained to two values by the route's own pattern and never
+    # reaches SQL as text.
+    if sort == "relevance" and q and q.strip():
+        # Title beats skills beats everything else, then newest inside a band.
+        order_by = (
+            "CASE WHEN r.title ILIKE :q ESCAPE :esc THEN 0"
+            "      WHEN r.required_skills::text ILIKE :q ESCAPE :esc THEN 1"
+            "      ELSE 2 END, r.created_at DESC"
+        )
+    else:
+        order_by = "r.created_at DESC"
 
     total = await db.scalar(
         text(f"SELECT count(*) FROM job_requisitions r WHERE {clause}"), params
@@ -240,7 +269,7 @@ async def get_board(
                 "       r.salary_visible, r.created_at"
                 "  FROM job_requisitions r"
                 f" WHERE {clause}"
-                " ORDER BY r.created_at DESC"
+                f" ORDER BY {order_by}"
                 " LIMIT :lim OFFSET :off"
             ),
             {**params, "lim": per_page, "off": (page - 1) * per_page},

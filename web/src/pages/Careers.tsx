@@ -124,6 +124,22 @@ function Card({ job }: { job: JobCard }) {
 const SELECT_CLASS =
   'rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13px] text-white focus:border-[var(--accent)] focus:outline-none';
 
+/**
+ * Salary rungs for the filter, in rupees.
+ *
+ * Fixed steps rather than a slider or a free number: the board is public and
+ * unauthenticated, the underlying column is an annual figure, and a candidate
+ * choosing "at least 12L" is expressing a band rather than a precise number.
+ */
+const SALARY_STEPS = [
+  { value: 300000, label: '₹3L+' },
+  { value: 600000, label: '₹6L+' },
+  { value: 1000000, label: '₹10L+' },
+  { value: 1500000, label: '₹15L+' },
+  { value: 2500000, label: '₹25L+' },
+  { value: 4000000, label: '₹40L+' },
+];
+
 export default function Careers() {
   const { companySlug = '' } = useParams<{ companySlug: string }>();
   const [params, setParams] = useSearchParams();
@@ -133,6 +149,10 @@ export default function Careers() {
     department: params.get('department') ?? undefined,
     location: params.get('location') ?? undefined,
     employment_type: params.get('employment_type') ?? undefined,
+    // Number('') is 0, which would filter on "pays at least nothing" and read
+    // as an active filter. Only send it when a real figure was chosen.
+    min_salary: params.get('min_salary') ? Number(params.get('min_salary')) : undefined,
+    sort: params.get('sort') === 'relevance' ? 'relevance' : undefined,
     page: Number(params.get('page') ?? '1') || 1,
   };
 
@@ -186,9 +206,13 @@ export default function Careers() {
 
   const data = board.data;
   const filters = data?.filters;
-  const activeCount = ['q', 'department', 'location', 'employment_type'].filter((k) =>
-    params.get(k),
-  ).length;
+  const activeCount = [
+    'q',
+    'department',
+    'location',
+    'employment_type',
+    'min_salary',
+  ].filter((k) => params.get(k)).length;
 
   return (
     <Shell>
@@ -269,6 +293,40 @@ export default function Careers() {
                   {EMPLOYMENT_LABELS[t] ?? t}
                 </option>
               ))}
+            </select>
+          ) : null}
+
+          {/* Salary is a band, not a free-text box: a candidate thinks in
+              "at least X", and an open number field on a public page invites
+              nonsense that returns nothing. */}
+          <select
+            aria-label="Minimum salary"
+            value={params.get('min_salary') ?? ''}
+            onChange={(e) => setFilter('min_salary', e.target.value)}
+            className={SELECT_CLASS}
+          >
+            <option value="">Any salary</option>
+            {SALARY_STEPS.map((s) => (
+              <option key={s.value} value={String(s.value)}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+
+          {/* Relevance is offered only alongside a search term, because
+              without one it has nothing to rank and would silently behave as
+              newest while claiming otherwise. */}
+          {params.get('q') ? (
+            <select
+              aria-label="Sort by"
+              value={params.get('sort') ?? 'newest'}
+              onChange={(e) =>
+                setFilter('sort', e.target.value === 'relevance' ? 'relevance' : '')
+              }
+              className={SELECT_CLASS}
+            >
+              <option value="newest">Newest first</option>
+              <option value="relevance">Most relevant</option>
             </select>
           ) : null}
 

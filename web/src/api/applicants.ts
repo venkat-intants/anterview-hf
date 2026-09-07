@@ -154,3 +154,45 @@ export function updateApplicantStatus(
 export function rescoreApplicant(id: string): Promise<Applicant> {
   return apiPost<Applicant>(`/hr/applicants/${id}/rescore`, {});
 }
+
+/* ── Per-round scores (C8 two-layer scoring) ────────────────────────────── */
+
+/** One competency's score inside a round, with the evidence behind it. */
+export interface CriterionScore {
+  competency_id: string;
+  name: string;
+  score: number | null;
+  evidence: string | null;
+}
+
+/**
+ * One round a candidate has sat, in both layers.
+ *
+ * `criteria` is the evaluation that decided progression — it varies per round.
+ * `axes` is the frozen four-axis comparison, present on interview rounds only,
+ * which is what keeps composites comparable across roles (D-02).
+ */
+export interface RoundResult {
+  round_id: string;
+  round_title: string;
+  position: number;
+  kind: string;
+  percent: number | null;
+  passed: boolean | null;
+  graded_by: string;
+  evidence: string | null;
+  criteria: CriterionScore[];
+  axes: Record<string, number>;
+  created_at: string;
+}
+
+/**
+ * Why a candidate scored what they scored.
+ *
+ * Superseded retakes are excluded server-side, so this is what actually
+ * counted. Empty for a candidate who has not sat a scored round yet — which
+ * is a normal state, not an error.
+ */
+export function listRoundResults(applicantId: string): Promise<RoundResult[]> {
+  return apiGet<RoundResult[]>(`/hr/applicants/${applicantId}/round-results`);
+}

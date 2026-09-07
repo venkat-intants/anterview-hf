@@ -103,6 +103,14 @@ export interface Requisition extends PostingFields {
   /** People sitting on a completed workflow or on hold, waiting for a human. */
   awaiting_decision: number;
   funnel: FunnelStage[];
+  /**
+   * Projected hiring throughput against the closing date (E3).
+   *
+   * Null means the projection cannot honestly be made — no closing date, no
+   * target, or the opening is too new to have a rate — and MUST render as
+   * nothing rather than as "on track".
+   */
+  delivery_risk?: 'on_track' | 'at_risk' | 'off_track' | null;
 }
 
 export interface Enrolment {
@@ -170,21 +178,59 @@ export function updateRequisition(
 }
 
 /**
+ * Raised when closing an opening that still has candidates mid-process.
+ *
+ * Not an error in the usual sense — it is the AC-12 prompt. The caller is
+ * expected to show `unresolved` to the HR manager, offer the decision queue,
+ * and only then retry with `acknowledgeUnresolved`.
+ */
+export class UnresolvedCandidatesError extends Error {
+  readonly unresolved: number;
+  constructor(unresolved: number, message: string) {
+    super(message);
+    this.name = 'UnresolvedCandidatesError';
+    this.unresolved = unresolved;
+  }
+}
+
+/**
  * Open, pause or close an opening.
  *
- * The response reports how many candidates were left unresolved rather than
- * closing them out — see the endpoint's own note. Callers should surface that
- * count instead of treating a close as "done".
+ * Closing is REFUSED with 409 while candidates are still mid-process (AC-12);
+ * that surfaces here as {@link UnresolvedCandidatesError} carrying the count.
+ * Pass `acknowledgeUnresolved` to close anyway. Nobody is rejected either way —
+ * held and in-flight candidates stay in the decision queue.
  */
-export function setRequisitionStatus(
+export async function setRequisitionStatus(
   id: string,
   status: RequisitionStatus,
-  reason?: string,
+  opts: { reason?: string; acknowledgeUnresolved?: boolean } = {},
 ): Promise<Requisition & { unresolved?: number }> {
-  return apiPost<Requisition & { unresolved?: number }>(`/hr/requisitions/${id}/status`, {
-    status,
-    ...(reason ? { reason } : {}),
-  });
+  try {
+    return await apiPost<Requisition & { unresolved?: number }>(
+      `/hr/requisitions/${id}/status`,
+      {
+        status,
+        ...(opts.reason ? { reason: opts.reason } : {}),
+        ...(opts.acknowledgeUnresolved ? { acknowledge_unresolved: true } : {}),
+      },
+    );
+  } catch (err) {
+    const detail = (err as { status?: number; detail?: unknown })?.detail;
+    if (
+      (err as { status?: number })?.status === 409 &&
+      detail &&
+      typeof detail === 'object' &&
+      (detail as { error?: string }).error === 'unresolved_candidates'
+    ) {
+      const d = detail as { unresolved?: number; message?: string };
+      throw new UnresolvedCandidatesError(
+        d.unresolved ?? 0,
+        d.message ?? 'Candidates are still in this opening.',
+      );
+    }
+    throw err;
+  }
 }
 
 // ── Enrolments ──────────────────────────────────────────────────────────────

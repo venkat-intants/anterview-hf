@@ -11,13 +11,15 @@
     "it back into the new file, then re-check every line against the new results",
     "before committing \u2014 restoring it verbatim would re-assert a triage nobody",
     "performed, which is the failure mode the counts below already had once.",
-    "This is a RATCHET, not an acceptance: the 11 entries below are what existed",
-    "when SAST was first switched on. Gating at zero would have turned the build",
+    "This is a RATCHET, not an acceptance. 11 of the entries below are what",
+    "existed when SAST was first switched on; 11 more were added 2026-09-07 and",
+    "are triaged in their own group at the end. Gating at zero would have turned",
+    "the build",
     "red on arrival, and the honest options then are block-every-PR or switch-the-",
     "gate-off. Anything NEW at MEDIUM or above fails the build. Shrinking this file",
     "is the work; growing it needs a reason in the commit message.",
-    "Known entries, each triaged rather than waved through. The five groups below",
-    "sum to 11, which is the number of results in this file — an inventory that",
+    "Known entries, each triaged rather than waved through. The six groups below",
+    "sum to 22, which is the number of results in this file — an inventory that",
     "does not add up is how an untriaged entry hides in a list that looks",
     "complete, and this one did not add up until 2026-08-15 (it described 10).",
     "  B104 host=\"0.0.0.0\" x4, one per service config.py - containers must bind",
@@ -38,7 +40,35 @@
     "       the compose healthcheck; not a shared-host temp file.",
     "  B701 jinja2 autoescape=False in feedback_billing/app/scorer.py - the template",
     "       renders an LLM PROMPT, not HTML. Autoescaping would corrupt the prompt.",
-    "       Flagged here so the next reader checks it is still not HTML."
+    "       Flagged here so the next reader checks it is still not HTML.",
+    "ADDED 2026-09-07 (PR #13, candidate<->HR bridge). Eleven more B608 across six",
+    "new query modules. REASON FOR GROWING THIS FILE: the finding class is the one",
+    "already accepted four lines up - the interpolated text is always in-code, and",
+    "every value a caller supplies is a bound parameter. No new class appeared.",
+    "Each was re-read against the source rather than assumed from the class:",
+    "  B608 x2 application_questions.py:83,239 - :83 concatenates a STATIC",
+    "       fragment chosen by an if; nothing is interpolated at all. :239 builds",
+    "       SET from QuestionPatch.model_dump() keys - the pydantic model's own",
+    "       declared field names. No model in this service sets extra=allow, so a",
+    "       request body cannot introduce a key.",
+    "  B608 x2 reconciliation.py:200,251 - both concatenate _DUE_PREDICATE, a",
+    "       module-level constant.",
+    "  B608 x1 requisitions.py:304 - {table} and {col} come from the hardcoded",
+    "       tuple the enclosing for-loop iterates over.",
+    "  B608 x3 routers/careers.py:231,237,254 - this endpoint is PUBLIC and",
+    "       unauthenticated, so it was read hardest. The WHERE clause is joined",
+    "       from static in-code fragments; every visitor-supplied value",
+    "       (department, location, employment_type, max_experience_years, q) is a",
+    "       bound parameter, and q is additionally LIKE-escaped so a typed '%'",
+    "       cannot widen the result set. :254 interpolates the _VISIBLE constant.",
+    "  B608 x1 routers/hr_requisitions.py:521 - SET built from",
+    "       RequisitionPatch.model_dump() keys; same pydantic argument as above.",
+    "  B608 x2 workflows.py:412,523 - SET built from keys filtered through an",
+    "       'allowed' literal set defined a few lines up in each function.",
+    "NOTE these 11 were appended rather than merged in sorted order, and were",
+    "generated on Windows with the paths normalised to forward slashes by hand,",
+    "because no Linux was available on the machine that added them. The next",
+    "regeneration on Linux will re-sort them; that is expected and not a change."
   ],
   "errors": [],
   "generated_at": "2026-08-07T16:14:36Z",
@@ -3092,6 +3122,244 @@
       "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b108_hardcoded_tmp_directory.html",
       "test_id": "B108",
       "test_name": "hardcoded_tmp_directory"
+    },
+    {
+      "code": "82             text(\n83                 \"SELECT id, position, prompt, kind, help_text, required, options\"\n84                 \"  FROM application_questions\"\n85                 \" WHERE requisition_id = :r AND deleted_at IS NULL\"\n86                 + (\" AND company_id = :c\" if company_id else \"\")\n87                 + \" ORDER BY position\"\n",
+      "col_offset": 16,
+      "end_col_offset": 67,
+      "filename": "services/data_gateway/app/application_questions.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 83,
+      "line_range": [
+        83,
+        84,
+        85,
+        86
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "238         text(\n239             f\"UPDATE application_questions SET {sets}, updated_at = now()\"\n240             \" WHERE id = :q AND company_id = :c\"\n241         ),\n",
+      "col_offset": 14,
+      "end_col_offset": 47,
+      "filename": "services/data_gateway/app/application_questions.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 239,
+      "line_range": [
+        239,
+        240
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "199                 text(\n200                     \"SELECT a.id FROM applicants a WHERE a.ats_overall IS NULL\"\n201                     + _DUE_PREDICATE\n202                     + \" ORDER BY a.created_at LIMIT :lim\"\n",
+      "col_offset": 20,
+      "end_col_offset": 79,
+      "filename": "services/data_gateway/app/reconciliation.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 200,
+      "line_range": [
+        200,
+        201
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "250             text(\n251                 \"SELECT a.id, a.company_id, a.resume_text FROM applicants a \"\n252                 \"WHERE a.embedding IS NULL\"\n253                 + _DUE_PREDICATE\n254                 + \" ORDER BY a.created_at LIMIT :lim\"\n",
+      "col_offset": 16,
+      "end_col_offset": 43,
+      "filename": "services/data_gateway/app/reconciliation.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 251,
+      "line_range": [
+        251,
+        252,
+        253
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "303         res = await db.execute(\n304             text(f\"UPDATE {table} SET {col} = :s WHERE {col} = ANY(:ids)\"),\n305             {\"s\": survivor_id, \"ids\": absorbed_ids},\n",
+      "col_offset": 19,
+      "end_col_offset": 26,
+      "filename": "services/data_gateway/app/requisitions.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 304,
+      "line_range": [
+        304
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "230     total = await db.scalar(\n231         text(f\"SELECT count(*) FROM job_requisitions r WHERE {clause}\"), params\n232     )\n",
+      "col_offset": 15,
+      "end_col_offset": 61,
+      "filename": "services/data_gateway/app/routers/careers.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 231,
+      "line_range": [
+        231
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "236             text(\n237                 \"SELECT r.id, r.title, r.level, r.department, r.location,\"\n238                 \"       r.employment_type, r.experience_min_years, r.experience_max_years,\"\n239                 \"       r.required_skills, r.salary_min, r.salary_max, r.salary_currency,\"\n240                 \"       r.salary_visible, r.created_at\"\n241                 \"  FROM job_requisitions r\"\n242                 f\" WHERE {clause}\"\n243                 \" ORDER BY r.created_at DESC\"\n244                 \" LIMIT :lim OFFSET :off\"\n245             ),\n",
+      "col_offset": 16,
+      "end_col_offset": 25,
+      "filename": "services/data_gateway/app/routers/careers.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 237,
+      "line_range": [
+        237,
+        238,
+        239,
+        240,
+        241,
+        242,
+        243,
+        244
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "253             text(\n254                 \"SELECT DISTINCT r.department, r.location, r.employment_type\"\n255                 \"  FROM job_requisitions r\"\n256                 f\" WHERE {_VISIBLE} AND r.company_id = :c\"\n257             ),\n",
+      "col_offset": 16,
+      "end_col_offset": 25,
+      "filename": "services/data_gateway/app/routers/careers.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 254,
+      "line_range": [
+        254,
+        255,
+        256
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "520             text(\n521                 f\"UPDATE job_requisitions SET {sets}, updated_at = :n\"\n522                 \" WHERE id = :i AND company_id = :c\"\n523             ),\n",
+      "col_offset": 18,
+      "end_col_offset": 46,
+      "filename": "services/data_gateway/app/routers/hr_requisitions.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 521,
+      "line_range": [
+        521,
+        522
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "411         text(\n412             f\"UPDATE workflow_rounds SET {sets}, updated_at = :n\"\n413             \" WHERE id = :r AND workflow_id = :w AND deleted_at IS NULL\"\n414         ),\n",
+      "col_offset": 14,
+      "end_col_offset": 41,
+      "filename": "services/data_gateway/app/workflows.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 412,
+      "line_range": [
+        412,
+        413
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "522     await db.execute(\n523         text(f\"UPDATE workflows SET {sets}, updated_at = :n WHERE id = :i\"),\n524         {**updates, \"i\": workflow_id, \"n\": datetime.now(tz=UTC)},\n",
+      "col_offset": 15,
+      "end_col_offset": 36,
+      "filename": "services/data_gateway/app/workflows.py",
+      "issue_confidence": "LOW",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 523,
+      "line_range": [
+        523
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.6/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
     }
   ]
 }

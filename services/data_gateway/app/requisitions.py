@@ -32,10 +32,10 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import CursorResult, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -304,7 +304,10 @@ async def merge_applicants(
             text(f"UPDATE {table} SET {col} = :s WHERE {col} = ANY(:ids)"),
             {"s": survivor_id, "ids": absorbed_ids},
         )
-        moved[key] = int(res.rowcount or 0)
+        # AsyncSession.execute is typed Result[Any]; rowcount is a DBAPI
+        # cursor attribute and lives on CursorResult. Every branch here is a
+        # plain UPDATE, which always returns one.
+        moved[key] = int(cast("CursorResult[Any]", res).rowcount or 0)
 
     await db.execute(
         text("UPDATE applicants SET deleted_at = :n, updated_at = :n WHERE id = ANY(:ids)"),

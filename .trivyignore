@@ -99,3 +99,31 @@ CVE-2026-56858
 CVE-2026-56859
 CVE-2026-56860
 CVE-2026-56862
+#
+# Caddy, continued — added 2026-09-07. Two MORE ids in the same binary, from
+# the same cause: upstream still has not rebuilt `caddy:2-alpine`, so its
+# vendored dependency tree keeps ageing while ours does not change. These are
+# the first in this block that are NOT Go-toolchain ids — they are vendored
+# libraries — so they get their own reachability read rather than inheriting
+# the one above.
+#
+#   * CVE-2026-56854 (CRITICAL) — golang.org/x/crypto/ssh v0.52.0, fixed in
+#     0.55.0: authentication bypass through unenforced source-address
+#     restrictions. Scored CRITICAL because for an SSH SERVER it is exactly
+#     that. Caddy is not one. The package is vendored into the binary but no
+#     SSH listener exists in either Caddyfile, and Caddy ships no SSH module to
+#     enable; grepped both files for `ssh` and the only hit is the string
+#     "includeSubDomains" inside an HSTS header. Unreachable — this is severity
+#     inherited from the library's own threat model, not ours.
+#   * CVE-2026-84304 (HIGH) — google.golang.org/grpc v1.81.0, fixed in 1.83.1.
+#     The block above already recorded "No gRPC/xDS is configured"; re-checked
+#     rather than carried over. Still true: neither Caddyfile names a grpc
+#     transport, and the one explicit transport (root Caddyfile:138) is
+#     `transport http`.
+#
+# Same unblock as the block above — a `caddy:2-alpine` rebuild — and the same
+# standing recommendation: two consecutive sprints of upstream lag is the
+# trigger to build Caddy in our own Go builder stage instead of extending this
+# list a third time. That is now overdue by this file's own rule.
+CVE-2026-56854
+CVE-2026-84304

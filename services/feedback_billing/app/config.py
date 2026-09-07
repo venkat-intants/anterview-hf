@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pathlib
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.security import (
@@ -9,10 +11,32 @@ from shared.security import (
     validate_database_ssl,
 )
 
+# app/config.py -> app -> <service> -> services -> repo root
+_SERVICE_DIR = pathlib.Path(__file__).resolve().parents[1]
+_REPO_ROOT = _SERVICE_DIR.parents[1]
+
 
 class Settings(BaseSettings):
+    # ONE .env for the whole backend, at the repo root, plus an optional
+    # per-service file that overrides it. Later files win (verified against
+    # pydantic-settings, not assumed), so `services/<name>/.env` can still
+    # differ where a service genuinely needs to — but the shared credentials
+    # live in exactly one place instead of being copy-pasted four ways and
+    # drifting.
+    #
+    # ABSOLUTE, not ".env". A relative path resolves against the CURRENT
+    # WORKING DIRECTORY, so the old value silently loaded nothing whenever a
+    # service was started from the repo root rather than its own folder — the
+    # service then booted on defaults and failed later, somewhere unrelated.
+    #
+    # What must NOT go in the shared file: PORT and SERVICE_NAME. Both differ
+    # per service (8001-8004), and a shared PORT would have all four fighting
+    # over one socket.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+        env_file=(_REPO_ROOT / ".env", _SERVICE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
     )
 
     service_name: str = "feedback_billing"
@@ -45,15 +69,50 @@ class Settings(BaseSettings):
     jwt_issuer: str = "intants-data-gateway"
     jwt_audience: str = "intants-services"
 
+    # Which provider serves the JSON-producing calls in this service: the
+    # interview scorer, the resume/ATS scorer and the exam + coding generator.
+    # Matches interview_core's LLM_PROVIDER so one env var moves the whole
+    # platform rather than half of it.
+    llm_provider: str = "gemini"
+
     # Gemini settings for end-of-session scorer (S5-006)
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    # gemini-flash-lite-latest, which is also the default CLAUDE.md documents.
+    # Was pinned to "gemini-2.5-flash", which Google has since RETIRED for new
+    # users: every call returns HTTP 404 "no longer available to new users",
+    # naming gemini-3.6-flash as the replacement. Verified live 2026-09-04 --
+    # 2.5-flash and 2.5-flash-lite both 404; flash-lite-latest, 3.5-flash-lite,
+    # 3.5-flash and 3.6-flash all answer.
+    #
+    # The floating "-latest" alias is deliberate here rather than a new hard
+    # pin: a hard pin is what expired, silently, and the failure only surfaced
+    # because a live integration test happened to run. flash-LITE also keeps
+    # the per-session cost inside the <= Rs 12 cap that a full flash model
+    # would eat into.
+    #
+    # NOTE this is the chat/completions model only. Embeddings are a separate
+    # setting and were never affected -- semantic search kept working
+    # throughout, which is part of why this went unnoticed.
+    gemini_model: str = "gemini-flash-lite-latest"
     gemini_api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+
+    # Groq — OpenAI-compatible chat completions. The model is NOT pinned to a
+    # narrow default on purpose: availability is per-account on Groq and the
+    # catalogue moves, and a pinned id an account cannot reach 404s on every
+    # call.
+    groq_api_key: str = ""
+    groq_model: str = "openai/gpt-oss-120b"
+    groq_api_base_url: str = "https://api.groq.com/openai/v1"
 
     # Embeddings for semantic resume search (HR workflow).
     # gemini-embedding-001 is free (no card) and emits up to 3072 dims via
     # outputDimensionality; 3072 is the native size and is already L2-normalized,
     # so it slots straight into the applicants.embedding halfvec(3072) column.
+    #
+    # NOT affected by LLM_PROVIDER. Groq serves no embeddings API, so semantic
+    # applicant search keeps using Gemini even when everything else is on Groq
+    # — which means GEMINI_API_KEY stays required for search alone. Stated here
+    # because the failure is silent: search simply stops returning matches.
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 3072
 
@@ -113,6 +172,29 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
+    # ── The active LLM, resolved once ────────────────────────────────────────
+    #
+    # Three properties rather than a per-call-site branch. The scorer, the
+    # resume scorer and the exam generator all need the same triple, and a
+    # provider check copy-pasted into each is how one of them ends up sending a
+    # Groq key to Gemini's endpoint months later.
+
+    @property
+    def _is_groq(self) -> bool:
+        return self.llm_provider.strip().lower() == "groq"
+
+    @property
+    def llm_api_key(self) -> str:
+        return self.groq_api_key if self._is_groq else self.gemini_api_key
+
+    @property
+    def llm_model(self) -> str:
+        return self.groq_model if self._is_groq else self.gemini_model
+
+    @property
+    def llm_api_base_url(self) -> str:
+        return self.groq_api_base_url if self._is_groq else self.gemini_api_base_url
 
 
 settings = Settings()

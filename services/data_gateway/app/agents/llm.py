@@ -1,4 +1,10 @@
-"""Gemini adapters for the agent layer.
+"""LLM adapters for the agent layer — provider selection plus the Gemini pair.
+
+``build_agent_llm`` / ``build_panel_llm`` / ``describe_availability`` are the
+only three names the rest of the service uses. Each reads ``LLM_PROVIDER`` and
+hands back the right implementation, so the router, the panel and the status
+endpoint stay provider-agnostic and cannot disagree about which model is live.
+The Groq pair lives in ``llm_groq.py``; the Gemini pair is below.
 
 Two shapes are needed and they are genuinely different calls:
 
@@ -10,8 +16,8 @@ Two shapes are needed and they are genuinely different calls:
   specialist go looking at signals it is supposed to be blind to.
 
 Both return ``None`` when no key is configured, which every caller treats as
-"assistant unavailable" rather than an error — a deployment without a Gemini
-key must still serve the rest of data_gateway normally.
+"assistant unavailable" rather than an error — a deployment without a model key
+must still serve the rest of data_gateway normally.
 """
 
 from __future__ import annotations
@@ -190,7 +196,7 @@ def _parse_step(data: dict[str, Any]) -> AssistantStep:
     return step
 
 
-def build_agent_llm() -> AgentLLM | None:
+def build_gemini_agent_llm() -> AgentLLM | None:
     """Function-calling adapter for the copilot loop, or None if unconfigured."""
     if not settings.gemini_api_key:
         return None
@@ -225,7 +231,7 @@ def build_agent_llm() -> AgentLLM | None:
     return call
 
 
-def build_panel_llm() -> PanelLLM | None:
+def build_gemini_panel_llm() -> PanelLLM | None:
     """Structured-JSON adapter for panel specialists, or None if unconfigured.
 
     No tools by design: a specialist must see only the one signal it was given,
@@ -253,16 +259,50 @@ def build_panel_llm() -> PanelLLM | None:
     return call
 
 
+# ---------------------------------------------------------------------------
+# Provider selection
+# ---------------------------------------------------------------------------
+def _use_groq() -> bool:
+    return settings.llm_provider.strip().lower() == "groq"
+
+
+def build_agent_llm() -> AgentLLM | None:
+    """The copilot's function-calling adapter for the configured provider."""
+    if _use_groq():
+        from app.agents.llm_groq import build_groq_agent_llm
+
+        return build_groq_agent_llm()
+    return build_gemini_agent_llm()
+
+
+def build_panel_llm() -> PanelLLM | None:
+    """The panel's structured-JSON adapter for the configured provider."""
+    if _use_groq():
+        from app.agents.llm_groq import build_groq_panel_llm
+
+        return build_groq_panel_llm()
+    return build_gemini_panel_llm()
+
+
 def describe_availability() -> dict[str, Any]:
-    """Health/debug payload — never echoes the key itself."""
+    """Health/debug payload — never echoes the key itself.
+
+    ``configured`` reads the key for the ACTIVE provider. Reading Gemini's
+    unconditionally would report the assistant as available on a Groq
+    deployment that has no Groq key, and the console gates purely on this flag
+    — so every message would 503 behind a button that looked ready.
+    """
     return {
-        "configured": bool(settings.gemini_api_key),
-        "model": settings.gemini_model if settings.gemini_api_key else None,
+        "provider": settings.llm_provider,
+        "configured": bool(settings.llm_api_key),
+        "model": settings.llm_model if settings.llm_api_key else None,
     }
 
 
 __all__ = [
     "build_agent_llm",
+    "build_gemini_agent_llm",
+    "build_gemini_panel_llm",
     "build_panel_llm",
     "describe_availability",
     "json",  # re-exported for tests that assert payload shape

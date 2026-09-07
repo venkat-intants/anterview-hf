@@ -21,6 +21,7 @@ import {
   XCircle,
   Clock,
 } from '@/design/components/icons';
+import { ACTIVE_POLL_MS } from '../../lib/polling';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,8 @@ export default function ExamResults() {
 
   const { data: attempts, isLoading } = useQuery({
     queryKey: ['hr', 'exam', examId, 'attempts'],
+    // A5: attempts land while the manager watches.
+    refetchInterval: ACTIVE_POLL_MS,
     queryFn: () => listAttempts(examId),
   });
 

@@ -26,6 +26,13 @@ const NotFound = lazy(() => import('./pages/NotFound'));
 const PublicExam = lazy(() => import('./pages/PublicExam'));
 // Public applicant interview landing (magic-link, no login).
 const InterviewInvite = lazy(() => import('./pages/InterviewInvite'));
+// Public job application — no login, no shell (Group E, E4).
+const PublicApply = lazy(() => import('./pages/PublicApply'));
+// Public because the emailed token IS the credential — the applicant has no
+// session yet, which is the whole point of the page.
+const ActivateAccount = lazy(() => import('./pages/ActivateAccount'));
+// The public job board — one company's open roles, no session.
+const Careers = lazy(() => import('./pages/Careers'));
 
 // ── Authenticated shell pages ─────────────────────────────────────────────────
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -34,6 +41,7 @@ const JobsList = lazy(() => import('./pages/JobsList'));
 const StartInterview = lazy(() => import('./pages/StartInterview'));
 const History = lazy(() => import('./pages/History'));
 const Resume = lazy(() => import('./pages/Resume'));
+const Applications = lazy(() => import('./pages/Applications'));
 const Profile = lazy(() => import('./pages/Profile'));
 const ProfileView = lazy(() => import('./pages/ProfileView'));
 
@@ -61,6 +69,12 @@ const ExamResults = lazy(() => import('./pages/hr/ExamResults'));
 const ExamAttemptDetail = lazy(() => import('./pages/hr/ExamAttemptDetail'));
 const HRInterviews = lazy(() => import('./pages/hr/HRInterviews'));
 const HRPipeline = lazy(() => import('./pages/hr/HRPipeline'));
+// Phase 2 — openings, the visual workflow builder, and the human decision point.
+const Requisitions = lazy(() => import('./pages/hr/Requisitions'));
+const RequisitionReview = lazy(() => import('./pages/hr/RequisitionReview'));
+const WorkflowBuilder = lazy(() => import('./pages/hr/WorkflowBuilder'));
+const DecisionQueue = lazy(() => import('./pages/hr/DecisionQueue'));
+const RequisitionDashboard = lazy(() => import('./pages/hr/RequisitionDashboard'));
 const HRAnalyticsPage = lazy(() =>
   import('./pages/hr/HRAnalytics').then((m) => ({ default: m.HRAnalyticsPage })),
 );
@@ -111,6 +125,10 @@ export default function App() {
           <Route path="/exam" element={<PublicExam />} />
           {/* Public applicant interview landing — magic-link token in the URL #fragment */}
           <Route path="/interview-invite" element={<InterviewInvite />} />
+          {/* Public job application — anyone with the link, no account. */}
+          <Route path="/apply/:requisitionId" element={<PublicApply />} />
+          <Route path="/activate" element={<ActivateAccount />} />
+          <Route path="/careers/:companySlug" element={<Careers />} />
 
           {/* Authenticated routes rendered INSIDE AppShell */}
           <Route element={<ProtectedRoute />}>
@@ -121,6 +139,7 @@ export default function App() {
               <Route path="/start" element={<StartInterview />} />
               <Route path="/history" element={<History />} />
               <Route path="/resume" element={<Resume />} />
+              <Route path="/applications" element={<Applications />} />
               <Route path="/profile" element={<Profile />} />
               {/* View another user's profile — HR/admin only (enforced server-side) */}
               <Route path="/u/:userId" element={<ProfileView />} />
@@ -175,6 +194,21 @@ export default function App() {
               />
               <Route path="/hr/interviews" element={<HRInterviews />} />
               <Route path="/hr/pipeline" element={<HRPipeline />} />
+              {/* /review before /:requisitionId so the literal wins the match. */}
+              <Route path="/hr/requisitions" element={<Requisitions />} />
+              <Route path="/hr/requisitions/review" element={<RequisitionReview />} />
+              <Route
+                path="/hr/requisitions/:requisitionId"
+                element={<RequisitionDashboard />}
+              />
+              <Route
+                path="/hr/requisitions/:requisitionId/workflow"
+                element={<WorkflowBuilder />}
+              />
+              <Route
+                path="/hr/requisitions/:requisitionId/decisions"
+                element={<DecisionQueue />}
+              />
               <Route path="/hr/analytics" element={<HRAnalyticsPage />} />
             </Route>
           </Route>

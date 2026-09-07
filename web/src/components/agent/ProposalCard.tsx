@@ -28,6 +28,9 @@ const KIND_LABEL: Record<Proposal['kind'], string> = {
   shortlist: 'Shortlist',
   pipeline_decision: 'Decision',
   note: 'Note',
+  workflow: 'Hiring process',
+  workflow_round: 'Round',
+  workflow_settings: 'Automation',
 };
 
 interface ProposalCardProps {

@@ -149,6 +149,18 @@ class ToolSpec(BaseModel):
     # surface that reads candidate data. Every tool now states its audience,
     # and ``_roles_match_data_class`` checks that audience against the matrix.
     allowed_roles: tuple[AgentRole, ...] = Field(min_length=1)
+    # Which specialised SCREEN this tool belongs to, if any. Empty (the
+    # default) means the general console copilot, which is where almost every
+    # tool belongs.
+    #
+    # This is presentation, not authorisation — ``allowed_roles`` is the
+    # security boundary and is checked independently on every invocation. What
+    # this does is keep a tool out of a prompt that has no use for it: a
+    # workflow-authoring tool offered to someone asking about their pipeline is
+    # prompt bloat that invites a confused call and a refusal the user cannot
+    # interpret. An empty tuple is deliberately the permissive default, because
+    # the property being managed here is relevance rather than access.
+    surfaces: tuple[str, ...] = ()
 
     @field_validator("parameters")
     @classmethod
@@ -196,6 +208,16 @@ class ToolSpec(BaseModel):
         so an unlisted role is always a denial.
         """
         return role in self.allowed_roles
+
+    def on_surface(self, surface: str | None) -> bool:
+        """Whether this tool belongs in the toolset for a given screen.
+
+        A tool with no declared surfaces is general and appears everywhere,
+        including on specialised screens — the workflow copilot can still look
+        up a role model. A tool WITH surfaces appears only on those, so it does
+        not clutter the general console.
+        """
+        return not self.surfaces or surface in self.surfaces
 
 
 class ToolCall(BaseModel):
@@ -264,6 +286,15 @@ ProposalKind = Literal[
     "shortlist",
     "pipeline_decision",
     "note",
+    # Hiring-workflow authoring. Three kinds rather than one because the
+    # builder renders them differently: a whole process is previewed as ghost
+    # rounds on the canvas, a single round attaches to an existing draft, and
+    # settings change no rounds at all. Note that none of these reaches a
+    # candidate — they author a process, and the process is not live until the
+    # human publishes it, which is a separate act from committing the proposal.
+    "workflow",
+    "workflow_round",
+    "workflow_settings",
 ]
 
 

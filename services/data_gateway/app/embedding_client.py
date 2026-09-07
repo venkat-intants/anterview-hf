@@ -17,6 +17,7 @@ import structlog
 from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
 
 from app.config import settings
+from app.remote import describe_unreachable
 
 log = structlog.get_logger(__name__)
 
@@ -84,7 +85,9 @@ async def embed_texts_remote(
                 json={"texts": texts, "task_type": task_type},
             )
     except httpx.RequestError as exc:
-        raise EmbeddingError(f"embedding service unreachable: {exc}") from exc
+        raise EmbeddingError(
+            describe_unreachable(exc, what="Semantic search indexing", url=url)
+        ) from exc
     if resp.status_code != 200:
         raise EmbeddingError(f"embedding service returned HTTP {resp.status_code}: {resp.text[:160]}")
     vectors: list[list[float]] = resp.json().get("embeddings", [])
@@ -111,7 +114,9 @@ async def why_match_remote(*, resume_text: str, query: str, acting_user_id: str)
                 json={"resume_text": resume_text, "query": query},
             )
     except httpx.RequestError as exc:
-        raise EmbeddingError(f"match-reason service unreachable: {exc}") from exc
+        raise EmbeddingError(
+            describe_unreachable(exc, what="Match explanation", url=url)
+        ) from exc
     if resp.status_code != 200:
         raise EmbeddingError(f"match-reason service returned HTTP {resp.status_code}: {resp.text[:160]}")
     reason: str = resp.json().get("reason", "")

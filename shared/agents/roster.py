@@ -95,6 +95,48 @@ ANALYTICS_COPILOT_PROMPT: str = (
 )
 
 
+WORKFLOW_BUILDER_PROMPT: str = (
+    "You are the workflow copilot inside the visual hiring-workflow builder on "
+    "the Intants platform. Your user is an HR manager designing the hiring "
+    "process for ONE job opening: an ordered chain of rounds, each with a pass "
+    "threshold and a rubric saying what it assesses.\n\n"
+    "Start by reading the opening\u2019s role model and any existing draft. Design "
+    "against what the ROLE actually needs, not a generic funnel.\n\n"
+    "The four kinds of round:\n"
+    "- mcq \u2014 multiple-choice questions from one of their exams. Scored "
+    "automatically. Needs an exam attached before it can be published.\n"
+    "- coding \u2014 programming problems from an exam, run against test cases. "
+    "Also needs an exam attached.\n"
+    "- ai_interview \u2014 a live voice interview. The competencies chosen for it "
+    "are exactly what it probes, and nothing else.\n"
+    "- human_review \u2014 a deliberate stop. Nothing advances until a person "
+    "looks.\n\n"
+    "How to design well:\n"
+    "- Fewer rounds than you think. Every round is something a real person has "
+    "to find time for, and each one loses candidates who were fine. Justify "
+    "each round by naming what it tells you that the previous one did not.\n"
+    "- Cheap and broad first, expensive and narrow later. A written screen "
+    "before a live interview; never the reverse.\n"
+    "- Cover the competencies the role weights most heavily. Say plainly when "
+    "a design leaves a heavily weighted competency unmeasured \u2014 that is the "
+    "most useful thing you can tell them.\n"
+    "- Assessing the same competency in three rounds is usually an accident. "
+    "Twice can be deliberate reinforcement; say which you mean.\n"
+    "- Thresholds are percentages, always, for every kind of round.\n\n"
+    "What a threshold does, and what it does not: scoring below it NEVER "
+    "rejects anybody. It routes that candidate to the HR manager\u2019s decision "
+    "queue for a person to look at. Say so whenever you suggest one \u2014 users "
+    "assume the opposite, and the assumption changes what number they pick. "
+    "There is no setting anywhere in this product that rejects a candidate "
+    "automatically, and you must never imply there is or offer to add one.\n\n"
+    "Use the draft_* tools to propose a design. Each draft appears on the "
+    "canvas as a preview the user approves; nothing is created by you, and "
+    "even once approved a workflow is a DRAFT that the user must separately "
+    "publish before any candidate sees it. Tell them what you drafted and what "
+    "you left out, then stop \u2014 do not claim anything is live."
+)
+
+
 # Console → (agent name, prompt). The role strings match the DB role column and
 # the ToolSpec.allowed_roles gate.
 _PROMPTS: dict[str, tuple[str, str]] = {
@@ -115,17 +157,60 @@ _BUDGETS: dict[str, AgentBudget] = {
 }
 
 
+# Surfaces — a specialised prompt for one screen, within a console.
+#
+# A surface swaps the SYSTEM PROMPT only. It does not touch the toolset, which
+# is filtered by ``ToolSpec.allowed_roles`` against ``ctx.role``, and it does
+# not touch the role, which ``run_agent`` checks against the context. So a
+# surface can change how the copilot talks and what it is trying to do, and
+# cannot change what it may read — which is the property that makes adding one
+# a prompt decision rather than a security decision.
+#
+# Keyed by (role, surface): the pair is checked, so a surface written for the
+# HR console cannot be requested by another role even if the client asks for it
+# by name.
+_SURFACES: dict[tuple[str, str], tuple[str, str]] = {
+    ("hr_manager", "workflow_builder"): ("workflow_copilot", WORKFLOW_BUILDER_PROMPT),
+}
+
+# Workflow design fans out further than a pipeline question: read the role
+# model, read the draft, look at the available exams, then draft. The extra
+# room is why this is a separate entry rather than the HR default.
+_SURFACE_BUDGETS: dict[tuple[str, str], AgentBudget] = {
+    ("hr_manager", "workflow_builder"): AgentBudget(max_steps=8, max_tool_calls=16),
+}
+
+
 class UnknownConsoleError(Exception):
-    """Raised for a role with no copilot defined."""
+    """Raised for a role with no copilot defined, or an unknown surface."""
 
 
-def build_agent(role: str, registry: ToolRegistry) -> AgentSpec:
-    """Return the ``AgentSpec`` for a console role.
+def build_agent(role: str, registry: ToolRegistry, surface: str | None = None) -> AgentSpec:
+    """Return the ``AgentSpec`` for a console role, optionally specialised.
 
     Raises ``UnknownConsoleError`` rather than falling back to a default agent:
     silently handing an unrecognised role the HR copilot would be a privilege
-    bug wearing the costume of a convenience.
+    bug wearing the costume of a convenience. The same applies to an unknown
+    ``surface`` — falling back to the general console prompt would answer a
+    workflow-design question with a pipeline persona and look like the model
+    simply misunderstanding, which is a much harder bug to see.
     """
+    if surface:
+        entry = _SURFACES.get((role, surface))
+        if entry is None:
+            raise UnknownConsoleError(
+                f"no copilot surface {surface!r} is defined for role {role!r}"
+            )
+        name, prompt = entry
+        return AgentSpec(
+            name=name,
+            role=role,
+            system_prompt=with_safety_clause(prompt),
+            registry=registry,
+            budget=_SURFACE_BUDGETS.get((role, surface), AgentBudget()),
+            surface=surface,
+        )
+
     entry = _PROMPTS.get(role)
     if entry is None:
         raise UnknownConsoleError(f"no copilot is defined for role {role!r}")
@@ -141,3 +226,8 @@ def build_agent(role: str, registry: ToolRegistry) -> AgentSpec:
 
 def available_consoles() -> list[str]:
     return sorted(_PROMPTS)
+
+
+def available_surfaces(role: str) -> list[str]:
+    """The specialised surfaces this role may request."""
+    return sorted(surface for (r, surface) in _SURFACES if r == role)

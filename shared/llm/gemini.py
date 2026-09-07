@@ -20,22 +20,15 @@ salvageable Gemini response therefore becomes a set of exam questions on one
 path and a 502 with no scorecard on the other. One caller cannot drift from
 itself.
 
-What this module inherits from
-------------------------------
-It lifts the *strongest* of the three (the exam generator), not the intersection
-of all three, so adopting it is an upgrade for every caller rather than an
-averaging-down. The recovery ladder, in order:
+What lives here, and what does not
+----------------------------------
+Only the Gemini-specific half: building the ``:generateContent`` request,
+reading its envelope, and naming its truncation marker. Retry, backoff and the
+JSON recovery ladder moved to ``shared/llm/_recovery.py`` when Groq became a
+first-class provider, so both providers share one copy of the part that was
+worth centralising. That module's docstring carries the ladder's reasoning.
 
-1. strip a markdown code fence if the model wrapped its object in one;
-2. if the text still does not start with ``{``, take the outermost ``{...}``
-   span — this is what rescues a response with a stray sentence around the
-   object, and is precisely what the scorer lacked;
-3. drop a trailing comma before ``}``/``]`` (invalid JSON, emitted occasionally
-   even in JSON mode);
-4. as a last resort hand the text to ``json_repair`` — but only when the output
-   was *not* truncated (see ``_repair_json``).
-
-``finishReason`` is captured **before** the text is extracted, because the
+``finishReason`` is still captured **before** the text is extracted, because the
 failure that most needs explaining — a 2.5 model that spent its whole budget and
 returned a candidate with no ``parts`` at all — has no text to attach a message
 to. Carrying it means an operator reading the error can tell "raise
@@ -64,45 +57,45 @@ Dependency rule
 ---------------
 ``shared/`` is COPY'd into all four service images, so this module imports only
 stdlib + httpx + structlog — all four already depend on httpx. ``json_repair``
-is the exception and is imported *inside* the function, guarded, because only
-feedback_billing and interview_core ship it; hoisting that import to module
-level would break the other two at container start.
+is the exception and is imported *inside* the function in ``_recovery``,
+guarded, because only feedback_billing and interview_core ship it; hoisting that
+import to module level would break the other two at container start.
 ``shared/tests/test_shared_gemini.py`` asserts both halves of that mechanically.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import re
 from typing import Any, Final
 
-import httpx
 import structlog
+
+from shared.llm._recovery import (
+    BACKOFF_BASE_SECONDS,
+    MAX_ATTEMPTS,
+    RETRY_STATUSES,
+    TRUNCATED_FINISH_REASON,
+    finish_hint,
+    parse_json_object,
+    post_with_retry,
+)
 
 log = structlog.get_logger(__name__)
 
-# Transient Gemini statuses worth retrying: 429 rate-limit plus gateway /
-# overload errors (503 "high demand" is the common one on the free tier). A
-# 400/403 is a real problem — a bad prompt or a bad key — and retrying it only
-# multiplies the latency of a failure that was never going to succeed.
-RETRY_STATUSES: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
-MAX_ATTEMPTS: Final[int] = 4  # 1 initial + 3 retries
-BACKOFF_BASE_SECONDS: Final[float] = 1.0  # exponential: 1s, 2s, 4s
+_PROVIDER: Final[str] = "Gemini"
+# The knob an operator raises when output is truncated. Named in the error.
+_BUDGET_PARAM: Final[str] = "maxOutputTokens"
 
-# Gemini's own name for "I ran out of output budget mid-answer". Named because
-# two decisions turn on it: the wording of the error, and whether json_repair is
-# allowed to run at all.
-TRUNCATED_FINISH_REASON: Final[str] = "MAX_TOKENS"
+# Re-exported so the existing importers of these names from this module keep
+# working — three services and the shared test suite reference them.
+__all__ = [
+    "BACKOFF_BASE_SECONDS",
+    "MAX_ATTEMPTS",
+    "RETRY_STATUSES",
+    "TRUNCATED_FINISH_REASON",
+    "call_gemini_json",
+]
 
-# Removes a trailing comma before a closing } or ]: matches ",  }" / ",\n]" and
-# keeps just the bracket.
-_TRAILING_COMMA_RE: Final[re.Pattern[str]] = re.compile(r",(\s*[}\]])")
 
-# Error bodies are echoed into the message that is raised (and usually logged),
-# so they are truncated: an unbounded provider body in a log line is a log-flood
-# risk, and prompts on this platform carry transcript and resume text.
-_ERROR_BODY_CHARS: Final[int] = 200
 
 
 async def call_gemini_json(
@@ -142,6 +135,14 @@ async def call_gemini_json(
     # Auth via the x-goog-api-key header (not ?key=) so the key never lands in
     # request URLs, proxy access logs or exception text — see
     # feedback_billing/app/embedder.py, where this was first applied.
+    # Same reason as the Groq guard: an empty key here reaches Google as a
+    # header with no value and comes back as an opaque 400 after four retries,
+    # when the real answer is that nothing was configured.
+    if not (api_key or "").strip():
+        raise error_cls(
+            "No GEMINI_API_KEY is configured — set one, or set LLM_PROVIDER=groq."
+        )
+
     url = f"{api_base_url}/models/{model}:generateContent"
     headers = {"x-goog-api-key": api_key}
 
@@ -169,12 +170,13 @@ async def call_gemini_json(
         "generationConfig": generation_config,
     }
 
-    response = await _post_with_retry(
+    response = await post_with_retry(
         url,
         body=body,
         headers=headers,
         timeout=timeout,
         model=model,
+        provider=_PROVIDER,
         error_cls=error_cls,
     )
 
@@ -184,74 +186,14 @@ async def call_gemini_json(
         raise error_cls(f"Gemini returned a non-JSON body: {exc}") from exc
 
     raw_text, finish_reason = _extract_text(payload, error_cls=error_cls)
-    cleaned = _clean(raw_text)
-
-    try:
-        parsed: Any = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        parsed = _repair_json(
-            cleaned,
-            parse_error=exc,
-            finish_reason=finish_reason,
-            model=model,
-            error_cls=error_cls,
-        )
-
-    if not isinstance(parsed, dict):
-        # Every caller does parsed.get(...) on the result. A bare JSON array
-        # would reach them as an AttributeError from inside their own parsing
-        # code, which reads like a bug in the caller rather than a bad response.
-        raise error_cls(
-            f"Gemini returned a JSON {type(parsed).__name__}, not an object"
-            f"{_finish_hint(finish_reason)}"
-        )
-    return parsed
-
-
-async def _post_with_retry(
-    url: str,
-    *,
-    body: dict[str, Any],
-    headers: dict[str, str],
-    timeout: float,
-    model: str,
-    error_cls: type[Exception],
-) -> httpx.Response:
-    """POST with bounded exponential backoff; return the 200 response.
-
-    Retries transient failures so a momentary Gemini hiccup does not cost a
-    candidate their scorecard, and fails fast on everything else.
-    """
-    last_error = "no attempt made"
-
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        for attempt in range(MAX_ATTEMPTS):
-            try:
-                response = await client.post(url, json=body, headers=headers)
-            except httpx.RequestError as exc:
-                last_error = f"request error: {exc}"
-            else:
-                if response.status_code == 200:
-                    return response
-                last_error = f"HTTP {response.status_code}: {response.text[:_ERROR_BODY_CHARS]}"
-                if response.status_code not in RETRY_STATUSES:
-                    break  # non-transient (e.g. 400/403) — do not retry
-            if attempt < MAX_ATTEMPTS - 1:
-                backoff = BACKOFF_BASE_SECONDS * (2**attempt)
-                log.warning(
-                    "shared.llm.gemini_retry",
-                    # caller: the exception type is what distinguishes the call
-                    # sites in the logs now that the code path is one module.
-                    caller=error_cls.__name__,
-                    model=model,
-                    attempt=attempt + 1,
-                    max_attempts=MAX_ATTEMPTS,
-                    backoff_s=backoff,
-                    error=last_error,
-                )
-                await asyncio.sleep(backoff)
-
-    raise error_cls(f"Gemini call failed after {MAX_ATTEMPTS} attempt(s): {last_error}")
+    return parse_json_object(
+        raw_text,
+        finish_reason=finish_reason,
+        model=model,
+        provider=_PROVIDER,
+        budget_param=_BUDGET_PARAM,
+        error_cls=error_cls,
+    )
 
 
 def _extract_text(payload: Any, *, error_cls: type[Exception]) -> tuple[str, str]:
@@ -286,88 +228,5 @@ def _extract_text(payload: Any, *, error_cls: type[Exception]) -> tuple[str, str
         if isinstance(part, dict) and isinstance(part.get("text"), str) and not part.get("thought")
     ]
     if not texts:
-        raise error_cls(f"Gemini returned no text part{_finish_hint(finish_reason)}")
+        raise error_cls(f"Gemini returned no text part{finish_hint(finish_reason, _BUDGET_PARAM)}")
     return "".join(texts), finish_reason
-
-
-def _clean(raw_text: str) -> str:
-    """Apply the non-destructive half of the recovery ladder (steps 1-3)."""
-    cleaned = raw_text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    if not cleaned.startswith("{"):
-        # Tolerate prose the model wrapped around the object by parsing the
-        # outermost {...} span. With responseMimeType=json this is usually a
-        # no-op — and "usually" is exactly the gap the scorer fell into: the
-        # exam generator has this step and the scorer never grew it.
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start != -1 and end > start:
-            cleaned = cleaned[start : end + 1]
-    return _TRAILING_COMMA_RE.sub(r"\1", cleaned)
-
-
-def _repair_json(
-    cleaned: str,
-    *,
-    parse_error: json.JSONDecodeError,
-    finish_reason: str,
-    model: str,
-    error_cls: type[Exception],
-) -> dict[str, Any]:
-    """Last rung of the ladder: ``json_repair``, or a diagnosed failure.
-
-    Even in JSON mode Gemini intermittently emits invalid escapes or raw
-    newlines inside strings — especially when the payload embeds source code
-    (coding questions) or a quoted transcript line. json_repair salvages those;
-    per-item validation downstream still drops anything structurally unusable.
-
-    Deliberately NOT attempted on a truncated response: "repairing" a cut-off
-    payload closes the braces and yields a half-empty object, which is worse
-    than an error because it looks like a real result. A truncation is a budget
-    problem and the error says so.
-    """
-    repaired: Any = None
-    if finish_reason != TRUNCATED_FINISH_REASON:
-        try:
-            import json_repair
-
-            repaired = json_repair.repair_json(cleaned, return_objects=True)
-        except Exception:
-            # Two failures collapse into one branch on purpose: json_repair is
-            # not installed in every service image (see the dependency rule),
-            # and it can also choke on the input. Both mean "no repair" and
-            # neither should mask the original parse error.
-            repaired = None
-
-    if isinstance(repaired, dict) and repaired:
-        log.warning(
-            "shared.llm.gemini_json_repaired",
-            caller=error_cls.__name__,
-            model=model,
-            # The parse error names an offset, never the payload — response text
-            # can contain transcript/resume PII and must not be logged.
-            parse_error=str(parse_error)[:120],
-        )
-        return repaired
-
-    raise error_cls(
-        f"Gemini response was not valid JSON{_finish_hint(finish_reason)}: {parse_error}"
-    ) from parse_error
-
-
-def _finish_hint(finish_reason: str) -> str:
-    """Turn ``finishReason`` into the sentence an operator needs.
-
-    The whole point: "raise maxOutputTokens" and "the model returned prose" are
-    different tickets, and before this the error text could not tell them apart.
-    """
-    if finish_reason == TRUNCATED_FINISH_REASON:
-        return (
-            f" (finishReason={TRUNCATED_FINISH_REASON} — the output was cut off by"
-            " maxOutputTokens; raise the budget rather than blaming the model)"
-        )
-    if finish_reason and finish_reason != "STOP":
-        # SAFETY, RECITATION, OTHER... — not a budget problem, and not something
-        # a retry fixes either.
-        return f" (finishReason={finish_reason})"
-    return ""

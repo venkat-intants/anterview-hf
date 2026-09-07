@@ -20,7 +20,7 @@ A **voice-first AI interview platform**. A candidate logs in, picks a job role, 
 **Tier 1 — Demo stack (current default, ships in 10–14 days):**
 | Layer | Choice |
 |---|---|
-| LLM | Google Gemini (`gemini-flash-lite-latest`) — primary; Groq as the listed alternative provider for disclosure parity (`LLM_PROVIDER=gemini\|groq\|anthropic\|bedrock`) |
+| LLM | Google Gemini (`gemini-flash-lite-latest`) — default; **Groq is a fully wired alternative**, not just a listed one: `LLM_PROVIDER=groq` moves the interview turn loop, the scorers, exam generation and the console copilots together. Embeddings do NOT move — Groq serves no embeddings API, so semantic applicant search still needs `GEMINI_API_KEY` whatever `LLM_PROVIDER` says. (`LLM_PROVIDER=gemini\|groq\|anthropic\|bedrock`; anthropic/bedrock remain listed-only.) |
 | Speech | Sarvam (live) + Bhashini ULCA (pending approval, env-swappable via `SPEECH_*_PROVIDER`) |
 | Avatar | **Tavus via LiveKit** (`AVATAR_PROVIDER=tavus`, echo-mode persona; Simli also supported via `AVATAR_PROVIDER=simli`) — demo-only (no India residency, over the ₹12 cap). D-ID was removed 2026-05-31. |
 | DB | Neon (managed Postgres + pgvector) |
@@ -62,8 +62,9 @@ so all four service images can import them — same rule as `shared/auth`.
 job *is*. A weighted keyword classifier files any role into one of 18
 occupational families (trades, healthcare, agriculture, retail, teaching,
 finance, …), each supplying weighted competencies with weak/adequate/strong
-anchors. Gemini refines the baseline per posting when a key is set; when it
-fails the deterministic baseline stands and `profile.source` records that.
+anchors. The configured LLM refines the baseline per posting when a key is set
+(the caller is injected, so it follows `LLM_PROVIDER`); when it fails the
+deterministic baseline stands and `profile.source` records that.
 Consumed by:
 - the live interviewer (question plan weighted per role, replacing the fixed
   `Q2–Q6 technical / Q7–Q9 behavioural` split)
@@ -101,8 +102,11 @@ aggregate-only and must stay `read`; the router refuses to build a cross-tenant
 context for an account that belongs to a company, so the un-scoped analytics
 tools cannot be reached from a tenant account.
 
-Env: `GEMINI_API_KEY` (already required by the Space entrypoint),
-`AGENTS_ENABLED`, `WATCHERS_ENABLED`, `WATCHERS_CRON_HOUR`.
+Env: `LLM_PROVIDER` (`gemini` default, `groq` supported end to end) plus that
+provider's key — `GEMINI_API_KEY` or `GROQ_API_KEY`/`GROQ_MODEL` — then
+`AGENTS_ENABLED`, `WATCHERS_ENABLED`, `WATCHERS_CRON_HOUR`. Note that not every
+Groq model supports tool calling, and the copilot needs it: a copilot that
+answers but never looks anything up is a `GROQ_MODEL` problem.
 
 ## Architecture — 4 Microservices
 

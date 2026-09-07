@@ -25,6 +25,8 @@ import {
   type ApplicantDecision,
 } from '@/api/pipeline';
 import { toast } from '@/lib/toast';
+import CandidateDrawer from '@/components/CandidateDrawer';
+import PipelineBoard from '@/components/PipelineBoard';
 import { cn } from '@/lib/utils';
 import {
   GlassCard,
@@ -35,6 +37,7 @@ import {
 } from '@/design/components/primitives';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import HRAnalytics from './HRAnalytics';
+import { LIVE_POLL_MS } from '../../lib/polling';
 
 const PAGE_SIZE = 50;
 
@@ -126,6 +129,8 @@ function statusBadge(s: Row['status']): BadgeInfo | null {
 
 /* ── Stage tabs ─────────────────────────────────────────────────────────────── */
 
+const VIEW_KEY = 'intants:pipeline-view';
+
 const STAGE_TABS: { value: PipelineStage; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'shortlisted', label: 'Shortlisted' },
@@ -155,7 +160,7 @@ function StageScore({
 
 /* ── Single pipeline card ───────────────────────────────────────────────────── */
 
-function PipelineCard({ a }: { a: Row }) {
+function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [rationale, setRationale] = useState('');
@@ -191,6 +196,17 @@ function PipelineCard({ a }: { a: Row }) {
           : 'border-white/[0.08] hover:border-[rgba(var(--accent-rgb),0.2)]',
       )}
     >
+      {/* Opens the drawer rather than expanding in place: the full record is
+          more than a row can hold, and it is a read — a recruiter looking
+          somebody up should not lose their place in the list. */}
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open details for ${a.full_name}`}
+        className="float-right m-3 rounded-[8px] border border-white/[0.1] px-2.5 py-1 text-[11.5px] text-[#888b91] hover:text-white focus:outline-none focus-visible:border-[var(--accent)]"
+      >
+        Details
+      </button>
       {/* ── Collapsed row ── */}
       <div className="flex items-center gap-3 p-3.5">
         {/* Avatar */}
@@ -443,9 +459,34 @@ function PipelineCard({ a }: { a: Row }) {
 export default function HRPipeline() {
   const [stage, setStage] = useState<PipelineStage>('all');
   const [offset, setOffset] = useState(0);
+  // Which candidate's drawer is open. Null is closed — one piece of state
+  // rather than a boolean plus an id that can disagree with it.
+  const [drawerId, setDrawerId] = useState<string | null>(null);
+
+  // Remembered, because re-picking a view on every visit is the kind of small
+  // friction that makes one feel like a toy. Wrapped: a browser with site data
+  // blocked throws on read, and a preference is not worth a blank page.
+  const [view, setView] = useState<'list' | 'board'>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'board' ? 'board' : 'list';
+    } catch {
+      return 'list';
+    }
+  });
+
+  function pickView(next: 'list' | 'board'): void {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // A remembered preference is a convenience, not a feature to fail over.
+    }
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['hr', 'pipeline', stage, offset],
+    // A5: candidates advance between stages unattended.
+    refetchInterval: LIVE_POLL_MS,
     queryFn: () => getPipeline({ stage, limit: PAGE_SIZE, offset }),
   });
 
@@ -489,6 +530,28 @@ export default function HRPipeline() {
           active={stage}
           onChange={(k) => pickStage(k as PipelineStage)}
         />
+
+        {/* Same rows, same query — an arrangement, not a different dataset. */}
+        <div
+          role="group"
+          aria-label="Pipeline view"
+          className="mt-3 inline-flex rounded-[10px] border border-white/[0.1] p-0.5"
+        >
+          {(['list', 'board'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => pickView(v)}
+              aria-pressed={view === v}
+              className={cn(
+                'rounded-[8px] px-3 py-1.5 text-[12.5px] capitalize',
+                view === v ? 'bg-white/[0.1] text-white' : 'text-[#888b91] hover:text-white',
+              )}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
       </Reveal>
 
       {/* ── Candidates list ── */}
@@ -515,13 +578,17 @@ export default function HRPipeline() {
           </GlassCard>
         ) : (
           <>
-            <Stagger className="flex flex-col gap-2.5">
-              {items.map((a) => (
-                <StaggerItem key={a.applicant_id}>
-                  <PipelineCard a={a} />
-                </StaggerItem>
-              ))}
-            </Stagger>
+            {view === 'board' ? (
+              <PipelineBoard rows={items} onOpen={(id) => setDrawerId(id)} />
+            ) : (
+              <Stagger className="flex flex-col gap-2.5">
+                {items.map((a) => (
+                  <StaggerItem key={a.applicant_id}>
+                    <PipelineCard a={a} onOpen={() => setDrawerId(a.applicant_id)} />
+                  </StaggerItem>
+                ))}
+              </Stagger>
+            )}
 
             {/* Pagination */}
             {count > PAGE_SIZE && (
@@ -552,6 +619,8 @@ export default function HRPipeline() {
           </>
         )}
       </section>
+
+      <CandidateDrawer applicantId={drawerId} onClose={() => setDrawerId(null)} />
     </div>
   );
 }

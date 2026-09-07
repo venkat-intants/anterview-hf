@@ -67,6 +67,9 @@ class AgentSpec:
     system_prompt: str
     registry: ToolRegistry
     budget: AgentBudget = None  # type: ignore[assignment]  # defaulted in __post_init__
+    # The specialised screen this agent runs on, if any. Narrows the toolset
+    # described to the model; it is not an authorisation boundary.
+    surface: str | None = None
 
     def __post_init__(self) -> None:
         if self.budget is None:
@@ -114,7 +117,7 @@ async def run_agent(
         run.stop_reason = "no_llm"
         return run
 
-    tools = spec.registry.specs_for(ctx.role)
+    tools = spec.registry.specs_for(ctx.role, spec.surface)
     messages: list[AgentMessage] = list(history or [])
     messages.append(AgentMessage(role="user", text=user_message))
 

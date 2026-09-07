@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from shared.llm import call_gemini_json
+from shared.llm import call_llm_json
 
 from app.config import Settings
 from app.untrusted_input import frame_untrusted, frame_untrusted_inline, scan_untrusted
@@ -164,11 +164,12 @@ async def score_resume(
     # strictly wider than the one this module used to carry — it adds
     # finishReason diagnosis and a json_repair rung on top of the fence /
     # brace-span / trailing-comma handling that was here.
-    parsed: dict[str, Any] = await call_gemini_json(
+    parsed: dict[str, Any] = await call_llm_json(
         prompt,
-        api_base_url=settings.gemini_api_base_url,
-        model=settings.gemini_model,
-        api_key=settings.gemini_api_key,
+        provider=settings.llm_provider,
+        api_base_url=settings.llm_api_base_url,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
         temperature=_TEMPERATURE,
         max_output_tokens=_MAX_OUTPUT_TOKENS,
         timeout=_TIMEOUT_SECONDS,

@@ -56,6 +56,7 @@ from app.models import (
 from app.rate_limit import rate_limit
 from app.redis_client import get_redis
 from app.routers.hr_interviews import advance_applicant_to_interview
+from app.workflow_runner import enrolment_awaiting_exam_round, record_result
 
 log = structlog.get_logger(__name__)
 
@@ -865,6 +866,43 @@ async def _grade_and_finalize(
             fresh_assignment.status = "completed"
             fresh_assignment.consumed_at = now
             fresh_assignment.updated_at = now
+
+        # Tell the workflow runner this round produced a result — the second
+        # place the runner was never called from, and the reason a candidate who
+        # sat and passed an exam still sat at the same round afterwards.
+        #
+        # NOT wrapped in try/except, unlike the auto-advance below. A graded
+        # attempt whose enrolment did not move is the exact defect being fixed
+        # here, so if this cannot be written the submit should fail and be
+        # retried rather than quietly reproduce it. Grading is idempotent and
+        # the Redis claim is released in `finally`, so a retry is safe.
+        #
+        # No enrolment is the normal case for an exam HR assigned by hand,
+        # outside any workflow. It skips.
+        pair = await enrolment_awaiting_exam_round(
+            db, applicant_id=ctx.applicant.id, exam_round_id=ctx.exam_round.id
+        )
+        if pair is not None:
+            enrolment_id, workflow_round_id = pair
+            outcome = await record_result(
+                db,
+                enrolment_id=enrolment_id,
+                round_id=workflow_round_id,
+                # Already a percentage, so the max is 100 — record_result
+                # converts to percent on the round's own scale, and letting it
+                # infer one would treat 67% as 67 out of 10.
+                score=float(percent),
+                max_score=100.0,
+                graded_by="deterministic",
+                attempt_ref=fresh_attempt.id if fresh_attempt is not None else None,
+            )
+            log.info(
+                "exam.round.runner",
+                enrolment_id=str(enrolment_id),
+                action=outcome.action,
+                to_round=outcome.to_round,
+                reason=outcome.reason,
+            )
 
         # Auto-advance: best-effort + idempotent (advance_applicant_to_interview
         # guards duplicate invites). Staged on the SAME transaction so the invite

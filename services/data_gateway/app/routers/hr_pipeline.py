@@ -90,9 +90,85 @@ class HrAverages(BaseModel):
     avg_interview_composite: float | None
 
 
+class HrOpenings(BaseModel):
+    """The headline counts. Openings are counted by state, not summed — an
+    opening that is closed is not hiring, and a single "openings" number that
+    includes it answers the wrong question."""
+
+    open: int = 0
+    paused: int = 0
+    closed: int = 0
+
+
+class HrVelocity(BaseModel):
+    """How long hiring takes, and whether it is speeding up.
+
+    ``median_time_to_hire_days`` is a MEDIAN, deliberately. One candidate who
+    sat in a pipeline for eight months drags a mean somewhere no real hire ever
+    was, and the number is read as "how long should I expect this to take".
+
+    None means nobody has been hired yet. Not zero — zero is a claim about
+    speed, and "no data" is not a fast hire.
+    """
+
+    median_time_to_hire_days: float | None = None
+    hires_measured: int = 0
+    applications_last_7d: int = 0
+    applications_prev_7d: int = 0
+
+
+class HrConversion(BaseModel):
+    """Stage-to-stage conversion, as percentages of the stage before.
+
+    Two things had to be got right here, and both were wrong first time.
+
+    THE SOURCE. Read from the transition LEDGER, not from ``HrFunnel``. The
+    funnel counts applicants by current status, so somebody shortlisted and
+    then hired has left "shortlisted" — dividing one of those fields by another
+    produced 175%, which is the arithmetic saying the stages are a snapshot
+    rather than a sequence.
+
+    THE DENOMINATOR. Every rate is a share of APPLICATIONS rather than of the
+    stage before it. Stage-to-stage assumes a chain, and this product does not
+    enforce one: HR can assign an exam by hand, outside any workflow, so more
+    people can sit an exam than were ever shortlisted. That is a legitimate
+    route through the product, not bad data, and a "shortlist → exam" rate
+    would report it as an impossibility.
+
+    Computed here rather than in the client so the definition lives in one
+    place, and the raw counts ship alongside because a percentage with no
+    denominator beside it is unreadable at small numbers — "50%" out of two
+    candidates and out of two hundred are different facts.
+
+    None where nobody has applied — a rate out of nothing is not 0%.
+
+    The counts are also exposed, because a percentage with no denominator
+    beside it is unreadable at small numbers: "50%" out of two candidates and
+    out of two hundred are different facts.
+    """
+
+    applied: int = 0
+    ever_shortlisted: int = 0
+    ever_sat_exam: int = 0
+    ever_interviewed: int = 0
+    ever_hired: int = 0
+
+    # Each as a share of APPLICATIONS, not of the stage before. Named so it
+    # cannot be misread: pct_shortlisted is "of everyone who applied", which is
+    # how a funnel chart is read and the only denominator that stays valid when
+    # a candidate skips a stage.
+    pct_shortlisted: float | None = None
+    pct_sat_exam: float | None = None
+    pct_interviewed: float | None = None
+    pct_hired: float | None = None
+
+
 class HrAnalytics(BaseModel):
     funnel: HrFunnel
     averages: HrAverages
+    openings: HrOpenings = Field(default_factory=HrOpenings)
+    velocity: HrVelocity = Field(default_factory=HrVelocity)
+    conversion: HrConversion = Field(default_factory=HrConversion)
 
 
 class DecisionIn(BaseModel):
@@ -252,6 +328,85 @@ WHERE a.company_id = :cid AND a.deleted_at IS NULL
 """
 )
 
+_OPENINGS_SQL = text(
+    """
+SELECT status, COUNT(*) AS n
+FROM job_requisitions
+WHERE company_id = :cid AND deleted_at IS NULL
+GROUP BY status
+"""
+)
+
+# Time from the application landing to the hire being recorded, per hired
+# candidate. Read off the transition ledger rather than from
+# updated_at: the ledger is what actually records when each move happened,
+# and updated_at moves for reasons that have nothing to do with a stage.
+_VELOCITY_SQL = text(
+    """
+WITH hires AS (
+    SELECT e.id,
+           MIN(t.occurred_at) FILTER (WHERE t.to_status = 'new')   AS applied_at,
+           MIN(t.occurred_at) FILTER (WHERE t.to_status = 'hired') AS hired_at
+    FROM enrolments e
+    JOIN stage_transitions t ON t.enrolment_id = e.id
+    WHERE e.company_id = :cid AND e.deleted_at IS NULL
+    GROUP BY e.id
+)
+SELECT
+  PERCENTILE_CONT(0.5) WITHIN GROUP (
+      ORDER BY EXTRACT(EPOCH FROM (hired_at - applied_at)) / 86400.0
+  ) FILTER (WHERE hired_at IS NOT NULL AND applied_at IS NOT NULL) AS median_days,
+  COUNT(*) FILTER (WHERE hired_at IS NOT NULL AND applied_at IS NOT NULL) AS hires_measured
+FROM hires
+"""
+)
+
+# Cumulative-ever, off the transition ledger. Scoped to ENROLMENTS, which is
+# what a stage is a property of — an applicant HR uploaded by hand has no
+# enrolment and no stages, so including them would put people in the
+# denominator who were never in the process being measured.
+_CONVERSION_SQL = text(
+    """
+WITH mine AS (
+    SELECT id, applicant_id FROM enrolments
+    WHERE company_id = :cid AND deleted_at IS NULL
+),
+reached AS (
+    SELECT m.id,
+           bool_or(t.to_status = 'shortlisted') AS ever_shortlisted,
+           bool_or(t.to_status = 'interviewed') AS ever_interviewed,
+           bool_or(t.to_status = 'hired')       AS ever_hired
+    FROM mine m
+    LEFT JOIN stage_transitions t ON t.enrolment_id = m.id
+    GROUP BY m.id
+),
+sat_exam AS (
+    SELECT DISTINCT m.id
+    FROM mine m
+    JOIN exam_attempts ea ON ea.applicant_id = m.applicant_id
+    WHERE ea.status = 'submitted' AND ea.deleted_at IS NULL
+)
+SELECT
+  (SELECT COUNT(*) FROM mine)                                        AS applied,
+  COUNT(*) FILTER (WHERE r.ever_shortlisted)                         AS shortlisted,
+  (SELECT COUNT(*) FROM sat_exam)                                    AS sat_exam,
+  COUNT(*) FILTER (WHERE r.ever_interviewed)                         AS interviewed,
+  COUNT(*) FILTER (WHERE r.ever_hired)                               AS hired
+FROM reached r
+"""
+)
+
+_RECENT_SQL = text(
+    """
+SELECT
+  COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')  AS last_7d,
+  COUNT(*) FILTER (WHERE created_at >= now() - interval '14 days'
+                     AND created_at <  now() - interval '7 days')  AS prev_7d
+FROM applicants
+WHERE company_id = :cid AND deleted_at IS NULL
+"""
+)
+
 _AVERAGES_SQL = text(
     """
 SELECT
@@ -287,6 +442,22 @@ async def get_analytics(ctx: HrCtxDep, db: DbSessionDep) -> HrAnalytics:
     _hr_uid, company_id = ctx
     f = (await db.execute(_FUNNEL_SQL, {"cid": company_id})).mappings().one()
     avg = (await db.execute(_AVERAGES_SQL, {"cid": company_id})).mappings().one()
+    openings = {
+        r["status"]: int(r["n"])
+        for r in (await db.execute(_OPENINGS_SQL, {"cid": company_id})).mappings().all()
+    }
+    vel = (await db.execute(_VELOCITY_SQL, {"cid": company_id})).mappings().one()
+    conv = (await db.execute(_CONVERSION_SQL, {"cid": company_id})).mappings().one()
+    recent = (await db.execute(_RECENT_SQL, {"cid": company_id})).mappings().one()
+
+    def _rate(part: int, whole: int) -> float | None:
+        """A percentage, or None when there is nothing to divide by.
+
+        Zero would be a claim — "nobody converted" — and an empty funnel has
+        not made that claim.
+        """
+        return round(100.0 * part / whole, 1) if whole else None
+
     return HrAnalytics(
         funnel=HrFunnel(
             total_applicants=int(f["total_applicants"]),
@@ -302,6 +473,32 @@ async def get_analytics(ctx: HrCtxDep, db: DbSessionDep) -> HrAnalytics:
             avg_ats=_round2(avg["avg_ats"]),
             avg_exam_percent=_round2(avg["avg_exam_percent"]),
             avg_interview_composite=_round2(avg["avg_interview_composite"]),
+        ),
+        openings=HrOpenings(
+            open=openings.get("open", 0),
+            paused=openings.get("paused", 0),
+            closed=openings.get("closed", 0),
+        ),
+        velocity=HrVelocity(
+            median_time_to_hire_days=_round2(vel["median_days"]),
+            hires_measured=int(vel["hires_measured"] or 0),
+            applications_last_7d=int(recent["last_7d"] or 0),
+            applications_prev_7d=int(recent["prev_7d"] or 0),
+        ),
+        conversion=HrConversion(
+            applied=int(conv["applied"] or 0),
+            ever_shortlisted=int(conv["shortlisted"] or 0),
+            ever_sat_exam=int(conv["sat_exam"] or 0),
+            ever_interviewed=int(conv["interviewed"] or 0),
+            ever_hired=int(conv["hired"] or 0),
+            pct_shortlisted=_rate(
+                int(conv["shortlisted"] or 0), int(conv["applied"] or 0)
+            ),
+            pct_sat_exam=_rate(int(conv["sat_exam"] or 0), int(conv["applied"] or 0)),
+            pct_interviewed=_rate(
+                int(conv["interviewed"] or 0), int(conv["applied"] or 0)
+            ),
+            pct_hired=_rate(int(conv["hired"] or 0), int(conv["applied"] or 0)),
         ),
     )
 

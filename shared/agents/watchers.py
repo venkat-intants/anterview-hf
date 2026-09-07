@@ -58,6 +58,18 @@ TRIVIAL_QUESTION_CORRECT_RATE: float = 0.98
 # early enough that a human has a working day to act.
 ERASURE_WARN_HOURS: int = 48
 
+# How long someone may sit in a decision queue before it is worth interrupting
+# a person about. Much shorter than STALLED_DAYS, and deliberately so: a
+# stalled applicant is one nobody has got to, while these are candidates the
+# automation has already carried as far as it is allowed to and deliberately
+# handed over. Under D-05 no automation can decide their outcome, which makes
+# an unread decision queue the one backlog that cannot clear itself.
+DECISION_WAIT_DAYS: int = 3
+
+# Below this there is nothing to alert about — one person waiting a day is a
+# working queue, not a backlog.
+DECISION_MIN_WAITING: int = 1
+
 
 @dataclass
 class StalledApplicant:
@@ -92,6 +104,29 @@ class ErasureRequest:
 
 
 @dataclass
+class OpeningHealth:
+    """One job opening's state, as the per-requisition watchers see it.
+
+    Per OPENING rather than per company, because that is the unit a hiring
+    process is configured and run in since Phase 2. "Three people are waiting"
+    is not actionable; "three people are waiting on Backend Engineer" is, and
+    it names the screen to open.
+    """
+
+    requisition_id: str
+    title: str
+    # Candidates the workflow has taken as far as it can — finished every
+    # round, or held below a threshold — now waiting on a human (D-05).
+    awaiting_decision: int
+    longest_wait_days: float
+    # Of those, how many are held rather than simply finished.
+    held: int
+    live_enrolments: int
+    has_published_workflow: bool
+    accepting_public_applications: bool
+
+
+@dataclass
 class WatcherInput:
     """Everything the watchers need, gathered by the service in one pass.
 
@@ -105,6 +140,7 @@ class WatcherInput:
     funnels: list[FunnelRow] = field(default_factory=list)
     question_stats: list[QuestionStat] = field(default_factory=list)
     erasure_requests: list[ErasureRequest] = field(default_factory=list)
+    openings: list[OpeningHealth] = field(default_factory=list)
 
 
 def watch_stalled_applicants(data: WatcherInput) -> list[WatcherFinding]:
@@ -263,11 +299,116 @@ def watch_dpdp_deadlines(data: WatcherInput) -> list[WatcherFinding]:
     ]
 
 
+def watch_decision_backlog(data: WatcherInput) -> list[WatcherFinding]:
+    """People the workflow has handed to a human who has not looked yet — E6.
+
+    The most important watcher in the product, because it guards the rule
+    everything else is built on. D-05 says no automation ends a candidacy: a
+    candidate who clears every round is not hired, one who falls short is not
+    rejected, and both wait for a person. That is only a protection if somebody
+    opens the queue. If nobody does, "a human decides" degrades into "nobody
+    decides", which is worse for the candidate than an automatic rejection
+    would have been — they are not turned down, they are left.
+
+    Per opening, and it names the opening, because "you have decisions waiting"
+    across six roles tells a manager nothing about where to start.
+    """
+    findings: list[WatcherFinding] = []
+    for opening in data.openings:
+        if opening.awaiting_decision < DECISION_MIN_WAITING:
+            continue
+        if opening.longest_wait_days < DECISION_WAIT_DAYS:
+            continue
+
+        waiting = opening.awaiting_decision
+        held_note = (
+            f" {opening.held} of them scored just below a round threshold and were "
+            "held rather than dropped."
+            if opening.held
+            else ""
+        )
+        findings.append(
+            WatcherFinding(
+                watcher="decision_backlog",
+                # Critical once someone has waited over a fortnight: at that
+                # point the candidate has almost certainly concluded they were
+                # rejected, and the decision is being made by default.
+                severity="critical" if opening.longest_wait_days >= 14 else "warning",
+                title=f"{waiting} candidate(s) waiting on you — {opening.title}",
+                body=(
+                    f"{waiting} candidate(s) have finished everything the workflow "
+                    f"can do for {opening.title}. The longest has been waiting "
+                    f"{opening.longest_wait_days:.0f} days.{held_note} "
+                    "Nothing advances them without a person."
+                ),
+                link=f"/hr/requisitions/{opening.requisition_id}/decisions",
+                # Keyed on the opening and the size of the queue, so it re-fires
+                # when the backlog grows but not every night while it sits.
+                dedupe_key=f"decisions:{opening.requisition_id}:{waiting}",
+                citations=[
+                    Citation(
+                        kind="job",
+                        id=opening.requisition_id,
+                        label=opening.title,
+                        href=f"/hr/requisitions/{opening.requisition_id}/decisions",
+                    )
+                ],
+            )
+        )
+    return findings
+
+
+def watch_openings_without_workflow(data: WatcherInput) -> list[WatcherFinding]:
+    """Candidates arriving somewhere with no process to put them through — E6.
+
+    Reachable in exactly one way that matters: an opening was published to the
+    public apply form before its workflow was. Applications then accumulate and
+    nothing happens to any of them — no scoring gate, no first round, no
+    invitation — and from the outside it looks identical to a company ignoring
+    its applicants, because functionally it is.
+    """
+    findings: list[WatcherFinding] = []
+    for opening in data.openings:
+        if opening.has_published_workflow or opening.live_enrolments == 0:
+            continue
+        public = (
+            " It is also live on your public apply link, so more are arriving."
+            if opening.accepting_public_applications
+            else ""
+        )
+        findings.append(
+            WatcherFinding(
+                watcher="openings_without_workflow",
+                severity="warning",
+                title=f"{opening.live_enrolments} candidate(s) and no workflow — {opening.title}",
+                body=(
+                    f"{opening.title} has {opening.live_enrolments} candidate(s) but no "
+                    f"published hiring workflow, so none of them can be moved "
+                    f"forward automatically.{public} Publishing a workflow starts "
+                    "them from the first round."
+                ),
+                link=f"/hr/requisitions/{opening.requisition_id}/workflow",
+                dedupe_key=f"noworkflow:{opening.requisition_id}",
+                citations=[
+                    Citation(
+                        kind="job",
+                        id=opening.requisition_id,
+                        label=opening.title,
+                        href=f"/hr/requisitions/{opening.requisition_id}/workflow",
+                    )
+                ],
+            )
+        )
+    return findings
+
+
 # Registry of every watcher. The scheduler iterates this, so adding a watcher
 # is one function plus one entry — no scheduler edit.
 WATCHERS: tuple[tuple[str, object], ...] = (
     ("dpdp_deadlines", watch_dpdp_deadlines),
+    ("decision_backlog", watch_decision_backlog),
     ("stalled_applicants", watch_stalled_applicants),
+    ("openings_without_workflow", watch_openings_without_workflow),
     ("funnel_health", watch_funnel_health),
     ("exam_quality", watch_exam_quality),
 )

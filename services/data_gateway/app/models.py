@@ -31,6 +31,7 @@ from sqlalchemy import (
     ARRAY,
     NUMERIC,
     TIMESTAMP,
+    BigInteger,
     Boolean,
     CheckConstraint,
     ForeignKey,
@@ -41,6 +42,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -215,6 +217,37 @@ class Applicant(Base):
     ats_concerns: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
     ats_recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
     ats_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Stored but not yet read. Set when a resume is ingested without scoring
+    # (bulk upload, public application) and cleared by the reconciler once it
+    # has scored the row and pulled the real name and email out of the PDF.
+    # While it is true, the reconciler MAY overwrite full_name/email. Nothing
+    # else writes full_name today; a future name-edit endpoint must clear this
+    # flag, or it would silently revert what a person typed.
+    pending_enrichment: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Where full_name came from, and what the CV said regardless.
+    #
+    # 'candidate' and 'hr' mean a person typed it and it is authoritative.
+    # 'filename' means it is a placeholder derived from an upload, which the
+    # scorer may replace. NULL is a row from before this column and is treated
+    # as 'filename' — every such row came in through bulk upload.
+    #
+    # parsed_full_name is kept even when it is not used: it is what makes "we
+    # read this from your CV, is it right?" possible, and it lets HR see that
+    # the two disagree rather than only ever seeing one of them.
+    full_name_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parsed_full_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Details the multi-step application collects. On the applicant rather than
+    # the enrolment because they describe the person: applying to a second role
+    # at the same company should not mean retyping where you work.
+    phone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    years_experience: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    current_company: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    linkedin_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    github_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     status: Mapped[str] = mapped_column(Text, default="new", nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
@@ -1134,4 +1167,375 @@ class AuthToken(Base):
     consumed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class JobRequisition(Base):
+    """A company-scoped, stateful job opening (Group B).
+
+    The entity the platform did not have. ``jobs`` is a global table built for
+    the candidate's self-serve practice interview — it has no ``company_id`` and
+    no lifecycle — so nothing could own a hiring process. This does.
+
+    Uniqueness is enforced on a *normalised* title (case-folded, whitespace
+    collapsed) by a partial unique index, so "Python Developer", "python
+    developer" and "Python  Developer" are one opening. Normalisation is case
+    and spacing only; see ``app.requisitions.normalise_title``.
+    """
+
+    __tablename__ = "job_requisitions"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_job_requisitions_id_company"),
+        CheckConstraint("status IN ('open','paused','closed')", name="ck_job_requisitions_status"),
+        CheckConstraint(
+            "target_hires IS NULL OR target_hires > 0", name="ck_job_requisitions_target_hires"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    level: Mapped[str] = mapped_column(Text, default="mid", nullable=False)
+    jd_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, default="open", nullable=False)
+    target_hires: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    closes_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # Minted by the Group B backfill rather than created deliberately. The
+    # review screen leads with these: their grouping is inferred, not confirmed.
+    from_backfill: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Whether the open web may apply to this opening. Defaults false: the apply
+    # link is addressed by requisition id, and a leaked UUID must not by itself
+    # open a channel nobody chose to open.
+    public_apply_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # --- Posting fields: what a candidate needs in order to choose -----------
+    # All nullable. Openings created before these existed — and everything the
+    # Group B backfill minted from a bare job title — have no honest value, and
+    # a board must be able to say "not specified" rather than guess.
+    department: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    employment_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    experience_min_years: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    experience_max_years: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    salary_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    salary_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    salary_currency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Separate from "a salary is recorded". A band stored for internal planning
+    # must not become public the moment somebody fills the field in.
+    salary_visible: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Ordered lists of short strings, always read whole. Alongside jd_text, not
+    # instead of it: the role engine derives its competency model from the prose,
+    # so dropping it would change how candidates are assessed on every opening
+    # nobody had edited.
+    responsibilities: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    required_skills: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    nice_to_have_skills: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class Enrolment(Base):
+    """One person's application to one opening (Group B).
+
+    This is where a *particular application* lives. The same person may hold
+    several enrolments with different targets and different ATS scores, which is
+    why the ``target_*`` and ``ats_*`` fields are here rather than on the
+    applicant — a CV scores differently against a Python role and a nursing one.
+
+    ``status`` deliberately uses the same vocabulary as ``applicants.status`` so
+    the Group B backfill is an exact copy and no reader has to learn a second
+    set of names. ``held`` is reserved for the Phase 2 workflow runner (D-05)
+    and is unused until then.
+
+    During the transition the legacy ``applicants`` columns remain the source of
+    truth for existing readers; this row is authoritative for new code. Neither
+    is dropped until every reader has moved.
+    """
+
+    __tablename__ = "enrolments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["requisition_id", "company_id"],
+            ["job_requisitions.id", "job_requisitions.company_id"],
+            name="fk_enrolments_requisition", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["applicant_id", "company_id"],
+            ["applicants.id", "applicants.company_id"],
+            name="fk_enrolments_applicant", ondelete="CASCADE",
+        ),
+        UniqueConstraint("id", "company_id", name="uq_enrolments_id_company"),
+        CheckConstraint(
+            "status IN ('new','shortlisted','interviewed','held','hired','rejected')",
+            name="ck_enrolments_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    requisition_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    applicant_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    status: Mapped[str] = mapped_column(Text, default="new", nullable=False)
+    target_job_title: Mapped[str] = mapped_column(Text, nullable=False)
+    target_level: Mapped[str] = mapped_column(Text, default="mid", nullable=False)
+    target_jd_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ats_overall: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    ats_breakdown: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    ats_strengths: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
+    ats_concerns: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
+    ats_recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ats_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which CV produced the score, so it stays reproducible after a re-upload.
+    scored_resume_s3_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scored_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # ── Group C linkage ───────────────────────────────────────────────
+    # Which workflow VERSION this candidate is running. Pinned at enrolment so
+    # a later publish cannot re-grade someone mid-process.
+    workflow_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    current_round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # Held is neutral and non-terminal: progression stopped, candidacy did not
+    # end. Only a person ends a candidacy (D-05).
+    held_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    held_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class StageTransition(Base):
+    """Append-only record of every movement through the pipeline (Group B).
+
+    Time-in-stage, throughput and the delivery-risk projection are all
+    unanswerable from the current schema, which stores only the latest status
+    and an ``updated_at``. This makes them answerable, and it records the one
+    thing an audit actually asks: whether a person or the system moved someone.
+
+    Never updated, never deleted except by cascade with its enrolment.
+    """
+
+    __tablename__ = "stage_transitions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    enrolment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("enrolments.id", ondelete="CASCADE"), nullable=False
+    )
+    from_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_status: Mapped[str] = mapped_column(Text, nullable=False)
+    # NULL actor means the system moved it. ``automated`` states that outright
+    # rather than making every reader infer it from a null.
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    automated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class Workflow(Base):
+    """A versioned hiring process for one requisition (Group C).
+
+    Versioned and immutable once published: editing a live workflow creates
+    version n+1, and candidates already enrolled finish on the version they
+    started. Without that, changing a pass threshold mid-cohort would
+    retrospectively re-grade people who had already sat the round.
+
+    The automation settings live here rather than globally, which is what fixes
+    the present arrangement where the one existing auto-advance hides behind two
+    flags on two screens and ships disabled. Note what is *absent*: there is no
+    setting that ends a candidacy. The two human gates are not configurable
+    because they are not features (D-05).
+    """
+
+    __tablename__ = "workflows"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["requisition_id", "company_id"],
+            ["job_requisitions.id", "job_requisitions.company_id"],
+            name="fk_workflows_requisition", ondelete="CASCADE",
+        ),
+        UniqueConstraint("id", "company_id", name="uq_workflows_id_company"),
+        UniqueConstraint("requisition_id", "version", name="uq_workflows_requisition_version"),
+        CheckConstraint("status IN ('draft','published','archived')", name="ck_workflows_status"),
+        CheckConstraint("version > 0", name="ck_workflows_version"),
+        CheckConstraint(
+            "shortlist_ats_threshold IS NULL"
+            " OR (shortlist_ats_threshold >= 0 AND shortlist_ats_threshold <= 10)",
+            name="ck_workflows_shortlist_threshold",
+        ),
+        CheckConstraint("hold_band >= 0 AND hold_band <= 100", name="ck_workflows_hold_band"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    requisition_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, default="draft", nullable=False)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which role model the criteria were copied from. Not a foreign key —
+    # profiles are derived at runtime, never stored.
+    role_profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    domain_family: Mapped[str | None] = mapped_column(Text, nullable=True)
+    profile_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_score_on_apply: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    auto_assign_first_round: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    auto_advance_rounds: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    shortlist_ats_threshold: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    hold_band: Mapped[int] = mapped_column(SmallInteger, default=10, nullable=False)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class WorkflowRound(Base):
+    """One ordered, typed round within a workflow (Group C).
+
+    ``on_pass_next_round_id`` is explicit rather than derived from ``position``:
+    execution is linear today (D-04), but storing the pointer means branching
+    later is a data change rather than a migration. NULL means this was the last
+    round — the candidate goes to the final human decision, never to an
+    automatic outcome.
+
+    ``exam_round_id`` points mcq and coding rounds at the existing exam
+    machinery, which already has authoring, AI generation, CSV import and
+    graders. Group C reuses that rather than rebuilding it.
+    """
+
+    __tablename__ = "workflow_rounds"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["workflow_id", "company_id"], ["workflows.id", "workflows.company_id"],
+            name="fk_workflow_rounds_workflow", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["on_pass_next_round_id"], ["workflow_rounds.id"],
+            name="fk_workflow_rounds_next", ondelete="SET NULL",
+        ),
+        UniqueConstraint("id", "company_id", name="uq_workflow_rounds_id_company"),
+        CheckConstraint(
+            "kind IN ('mcq','coding','ai_interview','human_review')",
+            name="ck_workflow_rounds_kind",
+        ),
+        CheckConstraint(
+            "pass_threshold IS NULL OR (pass_threshold >= 0 AND pass_threshold <= 100)",
+            name="ck_workflow_rounds_threshold",
+        ),
+        CheckConstraint("position >= 0", name="ck_workflow_rounds_position"),
+        CheckConstraint(
+            "on_pass_next_round_id IS NULL OR on_pass_next_round_id <> id",
+            name="ck_workflow_rounds_no_self_loop",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    workflow_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    # ALWAYS a percentage, 0-100, whatever the round kind. Scores arrive on
+    # their round's own scale and are converted before comparison. NULL for
+    # human_review, where a person decides rather than a number.
+    pass_threshold: Mapped[Any | None] = mapped_column(NUMERIC(5, 2), nullable=True)
+    time_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    deadline_days: Mapped[int] = mapped_column(SmallInteger, default=7, nullable=False)
+    on_pass_next_round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    exam_round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class RoundCriterion(Base):
+    """What one round assesses — a frozen copy from the role profile (Group C).
+
+    Deliberately not a reference. ``RoleProfile`` is derived at runtime and never
+    persisted, so its competencies can change between derivations; a published
+    workflow that merely referenced them would silently start measuring
+    something else, and a candidate who already sat the round would have been
+    graded against a rubric that no longer exists.
+    """
+
+    __tablename__ = "round_criteria"
+    __table_args__ = (
+        UniqueConstraint("round_id", "competency_id", name="uq_round_criteria_round_comp"),
+        CheckConstraint("weight > 0 AND weight <= 1", name="ck_round_criteria_weight"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    round_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("workflow_rounds.id", ondelete="CASCADE"), nullable=False
+    )
+    competency_id: Mapped[str] = mapped_column(Text, nullable=False)
+    competency_name: Mapped[str] = mapped_column(Text, nullable=False)
+    competency_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    weight: Mapped[Any] = mapped_column(NUMERIC(4, 3), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class RoundResult(Base):
+    """What a candidate scored in one round, in two layers (Group C, C8).
+
+    ``criterion_scores`` is the evaluation — variable per round, and what
+    decides progression. ``axes`` is the comparison — the four canonical axes,
+    interview rounds only, kept frozen so composites mean the same thing across
+    roles and cohorts (D-02). Both come from a single model call.
+
+    ``passed`` is a *progression* flag, not an outcome: a candidate below the
+    threshold is held, never rejected (D-05).
+    """
+
+    __tablename__ = "round_results"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["enrolment_id", "company_id"], ["enrolments.id", "enrolments.company_id"],
+            name="fk_round_results_enrolment", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["round_id", "company_id"],
+            ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_round_results_round", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "graded_by IN ('deterministic','ai','human')", name="ck_round_results_graded_by"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    enrolment_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    round_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    attempt_ref: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    score: Mapped[Any | None] = mapped_column(NUMERIC(6, 2), nullable=True)
+    max_score: Mapped[Any | None] = mapped_column(NUMERIC(6, 2), nullable=True)
+    percent: Mapped[Any | None] = mapped_column(NUMERIC(5, 2), nullable=True)
+    passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    criterion_scores: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    axes: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    graded_by: Mapped[str] = mapped_column(Text, nullable=False)
+    grader_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A retake supersedes rather than overwrites: the earlier attempt stays
+    # readable, which an appeal or an audit will ask for.
+    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

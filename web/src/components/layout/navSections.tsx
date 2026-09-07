@@ -23,6 +23,8 @@ import {
   Briefcase,
   Building2,
   ClipboardList,
+  Kanban,
+  FileCheck2,
   FileSearch,
   FileText,
   History,
@@ -63,12 +65,16 @@ export function isCandidateOnly(roles: string[]): boolean {
 const CANDIDATE_NAV: NavItem[] = [
   { to: '/dashboard', labelKey: 'nav.dashboard', icon: <LayoutDashboard className={ICON} aria-hidden="true" /> },
   { to: '/jobs', labelKey: 'nav.jobs', icon: <Briefcase className={ICON} aria-hidden="true" /> },
+  // A literal label, not a key: the other three predate i18n coverage for this
+  // section and adding an untranslated key would render the key itself.
+  { to: '/applications', label: 'My applications', icon: <FileCheck2 className={ICON} aria-hidden="true" /> },
   { to: '/history', labelKey: 'nav.history', icon: <History className={ICON} aria-hidden="true" /> },
   { to: '/resume', labelKey: 'nav.resume', icon: <FileText className={ICON} aria-hidden="true" /> },
 ];
 
 const HR_NAV: NavItem[] = [
   { to: '/hr', label: 'Hiring', icon: <Users className={ICON} aria-hidden="true" /> },
+  { to: '/hr/requisitions', label: 'Openings', icon: <Kanban className={ICON} aria-hidden="true" /> },
   { to: '/hr/applicants', label: 'Applicants', icon: <FileSearch className={ICON} aria-hidden="true" /> },
   { to: '/hr/exams', label: 'Exams', icon: <ClipboardList className={ICON} aria-hidden="true" /> },
   { to: '/hr/interviews', label: 'Interviews', icon: <Video className={ICON} aria-hidden="true" /> },

@@ -16,6 +16,7 @@ import { useConsent } from '@/context/ConsentContext';
 import { getJobs } from '@/api/jobs';
 import { createSession } from '@/api/sessions';
 import JobCard from '@/components/JobCard';
+import OpenRoles from '@/components/OpenRoles';
 import ConsentModal from '@/components/ConsentModal';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { GlassCard, SegTabs } from '@/design/components/primitives';
@@ -285,6 +286,15 @@ export default function JobsList() {
           {t('jobs.pageSubtitle')}
         </p>
       </Reveal>
+
+      {/* ── Real openings ──
+          Above the practice catalogue, because a candidate arriving here is far
+          more likely to be looking for a job than for a rehearsal — and because
+          the section below is mock interviews, which the copy has to keep
+          separate. Renders nothing when nobody is hiring. */}
+      <div className="mt-7">
+        <OpenRoles />
+      </div>
 
       {/* ── Decline banner ───────────────────────────────────────────────────── */}
       {showDeclineBanner && (

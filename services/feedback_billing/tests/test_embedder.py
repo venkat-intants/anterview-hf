@@ -12,13 +12,25 @@ from typing import Any
 
 import pytest
 
-from app.embedder import EmbeddingError, embed_texts, generate_match_reason
+from app.embedder import (
+    _REASON_PROMPT,
+    EmbeddingError,
+    embed_texts,
+    generate_match_reason,
+)
 
 _DIMS = 8
 _SETTINGS = SimpleNamespace(
     gemini_api_base_url="https://example.test/v1beta",
     gemini_model="gemini-flash-lite-latest",
     gemini_api_key="test-key",
+    # Provider-resolved names, read by the call sites now that Groq is
+    # selectable. The gemini_* ones stay so nothing reading them directly
+    # changes behaviour.
+    llm_provider="gemini",
+    llm_api_base_url="https://example.test/v1beta",
+    llm_model="gemini-flash-lite-latest",
+    llm_api_key="test-key",
     embedding_model="gemini-embedding-001",
     embedding_dimensions=_DIMS,
 )
@@ -105,9 +117,95 @@ async def test_embed_texts_http_error_raises(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.asyncio
 async def test_generate_match_reason_trims(monkeypatch: pytest.MonkeyPatch) -> None:
-    payload = {"candidates": [{"content": {"parts": [{"text": "  Strong Kubernetes match.  "}]}}]}
-    _patch(monkeypatch, _FakeResp(200, payload))
+    """The reason now comes back wrapped in a JSON object.
+
+    It moved onto the shared provider dispatcher so it can be served by Groq
+    like the rest of the service, and that caller is JSON-only — so the
+    transport is patched on ``shared.llm._recovery`` rather than on
+    ``app.embedder``, which no longer makes this call itself.
+    """
+    payload = {
+        "candidates": [
+            {"content": {"parts": [{"text": '{"reason": "  Strong Kubernetes match.  "}'}]}}
+        ]
+    }
+    monkeypatch.setattr(
+        "shared.llm._recovery.httpx.AsyncClient",
+        lambda *a, **k: _FakeClient(_FakeResp(200, payload)),
+    )
     reason = await generate_match_reason(
         resume_text="resume", query="container orchestration", settings=_SETTINGS
     )
     assert reason == "Strong Kubernetes match."
+
+
+@pytest.mark.asyncio
+async def test_generate_match_reason_rejects_an_empty_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty string would render as a blank explanation next to a search
+    hit, which reads as "no reason to match" rather than "we could not say"."""
+    monkeypatch.setattr(
+        "shared.llm._recovery.httpx.AsyncClient",
+        lambda *a, **k: _FakeClient(
+            _FakeResp(200, {"candidates": [{"content": {"parts": [{"text": '{"reason": ""}'}]}}]})
+        ),
+    )
+    with pytest.raises(EmbeddingError):
+        await generate_match_reason(resume_text="r", query="q", settings=_SETTINGS)
+
+
+# ---------------------------------------------------------------------------
+# The prompt and the parser have to agree
+# ---------------------------------------------------------------------------
+def _contract_from_prompt() -> dict[str, object]:
+    """The JSON example the prompt shows the model, parsed.
+
+    Deriving the fixture from the prompt is the whole point. The two tests
+    above hand the parser ``{"reason": ...}`` — a key the prompt did not ask
+    for — so they passed for months while production returned 502, because
+    each asserted the reader and *assumed* the writer. Reading the contract out
+    of the prompt is what couples the two halves.
+    """
+    example = _REASON_PROMPT[_REASON_PROMPT.rindex("{") : _REASON_PROMPT.rindex("}") + 1]
+    parsed: dict[str, object] = json.loads(example)
+    return parsed
+
+
+def test_the_prompt_states_a_parseable_contract() -> None:
+    """call_llm_json asks the provider for a JSON object, so a prompt that ends
+    "just the sentence" is asking for one thing over a transport that demands
+    another. The model obeys the transport and picks its own key."""
+    assert _contract_from_prompt()
+
+
+def test_the_prompt_names_the_key_the_code_reads() -> None:
+    """The failure this closes: gpt-oss-120b answered under "match", the reader
+    looked up "reason", and a good explanation surfaced to HR as a 502."""
+    assert set(_contract_from_prompt()) == {"reason"}
+
+
+@pytest.mark.asyncio
+async def test_an_answer_shaped_like_the_prompt_asked_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end over the contract: a model that does exactly what the prompt
+    says must not be rejected. Fixture keys come from the prompt, not from a
+    literal typed here — that is what makes this fail if the two drift."""
+    answer = json.dumps({k: "Ships Python payment APIs." for k in _contract_from_prompt()})
+    monkeypatch.setattr(
+        "shared.llm._recovery.httpx.AsyncClient",
+        lambda *a, **k: _FakeClient(
+            _FakeResp(200, {"candidates": [{"content": {"parts": [{"text": answer}]}}]})
+        ),
+    )
+    reason = await generate_match_reason(
+        resume_text="resume", query="python backend", settings=_SETTINGS
+    )
+    assert reason == "Ships Python payment APIs."
+
+
+def test_the_prompt_does_not_also_ask_for_bare_prose() -> None:
+    """Both instructions at once is how this broke: the model has to pick, and
+    the one it picks is not the one the code reads."""
+    assert "just the sentence" not in _REASON_PROMPT

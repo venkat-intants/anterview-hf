@@ -24,7 +24,7 @@ from shared.intelligence import (
     render_competency_output_spec,
     render_scoring_rubric_block,
 )
-from shared.llm import call_gemini_json
+from shared.llm import call_llm_json
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -254,23 +254,35 @@ def _clamp(value: int, lo: int = 0, hi: int = 10) -> int:
 
 
 def _extract_competency_breakdown(
-    raw: dict[str, Any], profile: RoleProfile
+    raw: dict[str, Any], profile: RoleProfile, *, strict: bool = False
 ) -> dict[str, dict[str, Any]]:
     """Pull the per-competency scores out of the model's response.
 
-    Best-effort by design: this is supplementary evidence for a human reviewer,
-    not a scoring input. Only competencies that are actually in the profile are
-    kept (the model occasionally invents one), and a malformed entry is skipped
-    rather than failing the scorecard.
+    Two modes, because this output now has two very different jobs.
+
+    ``strict=False`` (default) is the historical behaviour: supplementary
+    evidence for a human reader on a whole-role scorecard. A malformed or
+    missing entry is skipped rather than failing the scorecard, because the
+    four canonical axes are what the composite is built from and a missing
+    competency costs the reader some detail, nothing more.
+
+    ``strict=True`` is for a workflow round (Group C, C8), where these scores
+    are the EVALUATION — they decide whether a candidate advances or is held.
+    A missing or unparseable competency there is not a cosmetic gap: it would
+    silently score as absent and could hold someone who passed. So strict mode
+    raises, the caller retries, and nobody is held by a parsing failure.
     """
     breakdown: dict[str, dict[str, Any]] = {}
+    missing: list[str] = []
     for comp in profile.competencies:
         entry = raw.get(comp.id)
         if not isinstance(entry, dict):
+            missing.append(comp.id)
             continue
         try:
             score = _clamp(int(entry.get("score", 0)))
         except (TypeError, ValueError):
+            missing.append(comp.id)
             continue
         breakdown[comp.id] = {
             "name": comp.name,
@@ -278,6 +290,10 @@ def _extract_competency_breakdown(
             "score": score,
             "evidence": str(entry.get("evidence", ""))[:800],
         }
+    if strict and missing:
+        raise ScoringError(
+            "Scorer omitted required competencies: " + ", ".join(sorted(missing))
+        )
     return breakdown
 
 
@@ -406,11 +422,12 @@ async def score_session(
     # here — on the one path where the output is the candidate's scorecard.
     # The shared caller is the exam generator's version, not the average of the
     # three, and header auth (never ?key=) travels with it.
-    parsed: dict[str, Any] = await call_gemini_json(
+    parsed: dict[str, Any] = await call_llm_json(
         rendered,
-        api_base_url=settings.gemini_api_base_url,
-        model=settings.gemini_model,
-        api_key=settings.gemini_api_key,
+        provider=settings.llm_provider,
+        api_base_url=settings.llm_api_base_url,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
         temperature=_TEMPERATURE,
         max_output_tokens=_MAX_OUTPUT_TOKENS,
         timeout=_TIMEOUT_SECONDS,

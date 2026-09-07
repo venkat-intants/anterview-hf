@@ -20,7 +20,7 @@ from shared.intelligence import (
     compute_profile_id,
     render_exam_blueprint,
 )
-from shared.llm import call_gemini_json
+from shared.llm import call_llm_json
 
 from app.config import Settings
 from app.untrusted_input import frame_untrusted, frame_untrusted_inline, scan_untrusted
@@ -30,7 +30,7 @@ log = structlog.get_logger(__name__)
 EXAM_GENERATOR_VERSION: str = "1.0"
 
 # Transport, retry and JSON recovery live in shared.llm.gemini, which was lifted
-# from the copy that used to sit in this module — see _call_gemini_json below.
+# from the copy that used to sit in this module — see _call_llm_json below.
 _TEMPERATURE: float = 0.7  # some variety across generations
 # Longer than the scorers': a coding generation asks for statements, reference
 # solutions and test cases in one response, and routinely takes ~a minute.
@@ -227,7 +227,7 @@ async def generate_exam_questions(
     if blueprint:
         prompt = prompt + "\n\n" + blueprint
 
-    parsed = await _call_gemini_json(
+    parsed = await _call_llm_json(
         prompt, settings, max_output_tokens=min(8192, 2048 + count * 256)
     )
 
@@ -251,7 +251,7 @@ async def generate_exam_questions(
     return questions[:count]
 
 
-async def _call_gemini_json(
+async def _call_llm_json(
     prompt: str, settings: Settings, *, max_output_tokens: int
 ) -> dict[str, Any]:
     """POST *prompt* to Gemini in JSON mode with retry; return the parsed object.
@@ -266,11 +266,12 @@ async def _call_gemini_json(
     mapping: ``shared/`` may not know the shape of any one service's config
     class, so the field names stay here where they belong.
     """
-    return await call_gemini_json(
+    return await call_llm_json(
         prompt,
-        api_base_url=settings.gemini_api_base_url,
-        model=settings.gemini_model,
-        api_key=settings.gemini_api_key,
+        provider=settings.llm_provider,
+        api_base_url=settings.llm_api_base_url,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
         temperature=_TEMPERATURE,
         max_output_tokens=max_output_tokens,
         timeout=_TIMEOUT_SECONDS,
@@ -454,7 +455,7 @@ async def generate_coding_questions(
     if blueprint:
         prompt = prompt + "\n\n" + blueprint
 
-    parsed = await _call_gemini_json(
+    parsed = await _call_llm_json(
         prompt, settings, max_output_tokens=min(32_768, 4096 + count * 2048)
     )
 

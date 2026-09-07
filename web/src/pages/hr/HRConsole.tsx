@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom';
 import { getMe } from '@/api/auth';
 import { getHrAnalytics } from '@/api/hr';
 import { listNotifications, type NotificationItem } from '@/api/notifications';
+import AttentionPanel from '@/components/AttentionPanel';
 import { useAuth } from '@/context/AuthContext';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { GlassCard, StatCard, Pill } from '@/design/components/primitives';
@@ -65,12 +66,41 @@ export default function HRConsole() {
 
   const f = analytics?.funnel;
   const a = analytics?.averages;
+  const openings = analytics?.openings;
+  const velocity = analytics?.velocity;
+
+  /**
+   * Week on week, as a signed count rather than a percentage.
+   *
+   * A percentage from a small base is noise dressed as a signal — going from
+   * two applications to three is "+50%", which reads as a trend and is not
+   * one. "+1 vs last week" cannot be misread that way.
+   */
+  const weekDelta = ((): { text: string; trend: 'up' | 'down' | 'flat' } | null => {
+    if (!velocity) return null;
+    const diff = velocity.applications_last_7d - velocity.applications_prev_7d;
+    if (velocity.applications_last_7d === 0 && velocity.applications_prev_7d === 0) {
+      return null;
+    }
+    return {
+      text: `${diff >= 0 ? '+' : ''}${diff} vs last week`,
+      trend: diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat',
+    };
+  })();
+
   const stats = [
+    {
+      label: 'Open roles',
+      value: num(openings?.open),
+      // Only mentioned when there is one. "0 paused" is not information.
+      delta: openings?.paused ? `${openings.paused} paused` : undefined,
+      trend: 'flat' as const,
+    },
     {
       label: 'Applicants',
       value: num(f?.total_applicants),
-      delta: a?.avg_ats != null ? `avg ATS ${Math.round(a.avg_ats)}` : undefined,
-      trend: tr(f?.total_applicants),
+      delta: weekDelta?.text ?? (a?.avg_ats != null ? `avg ATS ${Math.round(a.avg_ats)}` : undefined),
+      trend: weekDelta?.trend ?? tr(f?.total_applicants),
     },
     { label: 'Shortlisted', value: num(f?.shortlisted), trend: tr(f?.shortlisted) },
     {
@@ -88,7 +118,17 @@ export default function HRConsole() {
           : undefined,
       trend: tr(f?.interview_completed),
     },
-    { label: 'Hired', value: num(f?.hired), trend: tr(f?.hired) },
+    {
+      label: 'Hired',
+      value: num(f?.hired),
+      // The median, and only once somebody has actually been hired. A
+      // time-to-hire with no hires behind it is a number about nothing.
+      delta:
+        velocity?.median_time_to_hire_days != null
+          ? `${Math.round(velocity.median_time_to_hire_days)}d median`
+          : undefined,
+      trend: tr(f?.hired),
+    },
   ];
 
   const name = me?.full_name ?? user?.full_name ?? null;
@@ -154,6 +194,14 @@ export default function HRConsole() {
           </StaggerItem>
         ))}
       </Stagger>
+
+      {/* ── Attention required ──
+          Above the activity feed on purpose. The feed is a record of what
+          happened; this is the short list of what has not, and burying it
+          under the record would defeat the point of surfacing exceptions. */}
+      <Reveal className="mt-5">
+        <AttentionPanel />
+      </Reveal>
 
       {/* ── Body ── */}
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">

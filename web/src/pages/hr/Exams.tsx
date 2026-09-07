@@ -68,29 +68,32 @@ function ExamCard({ e }: { e: ExamSummary }) {
         <div className="mt-4 text-[12.5px] text-[#70757c]">Not published yet</div>
       )}
 
-      {/* Actions */}
+      {/* Actions.
+          Pill IS a <button>, so wrapping one in another <button> was invalid
+          HTML — React warns, and browsers resolve the nesting inconsistently:
+          the inner control can swallow the outer handler, and assistive tech
+          announces two overlapping controls. The handler and the label belong
+          on the Pill itself, which forwards every button prop. */}
       <div className="mt-auto flex gap-2 pt-4">
-        <button
+        <Pill
+          variant="ghost"
           type="button"
-          className="flex-1"
+          className="flex-1 py-2 text-[12.5px]"
           onClick={() => void navigate(`/hr/exams/${e.id}`)}
           aria-label={`Edit exam ${e.title}`}
         >
-          <Pill variant="ghost" className="w-full py-2 text-[12.5px]">
-            <Pencil size={14} aria-hidden="true" /> Edit
-          </Pill>
-        </button>
+          <Pencil size={14} aria-hidden="true" /> Edit
+        </Pill>
         {isPublished && (
-          <button
+          <Pill
+            variant="accent"
             type="button"
-            className="flex-1"
+            className="flex-1 py-2 text-[12.5px]"
             onClick={() => void navigate(`/hr/exams/${e.id}/results`)}
             aria-label={`View results for exam ${e.title}`}
           >
-            <Pill variant="accent" className="w-full py-2 text-[12.5px]">
-              <BarChart3 size={14} aria-hidden="true" /> Results
-            </Pill>
-          </button>
+            <BarChart3 size={14} aria-hidden="true" /> Results
+          </Pill>
         )}
       </div>
     </GlassCard>

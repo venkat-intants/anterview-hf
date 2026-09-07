@@ -63,6 +63,7 @@ from shared.agents.registry import (
 from shared.agents.roster import (
     UnknownConsoleError,
     available_consoles,
+    available_surfaces,
     build_agent,
 )
 from shared.agents.runtime import (
@@ -95,6 +96,7 @@ from shared.agents.watchers import (
     WATCHERS,
     ErasureRequest,
     FunnelRow,
+    OpeningHealth,
     QuestionStat,
     StalledApplicant,
     WatcherInput,
@@ -122,6 +124,7 @@ __all__ = [
     "Contradiction",
     "ErasureRequest",
     "FunnelRow",
+    "OpeningHealth",
     "PanelLLM",
     "PanelVerdict",
     "Proposal",
@@ -143,6 +146,7 @@ __all__ = [
     "WatcherInput",
     "assess_candidate",
     "available_consoles",
+    "available_surfaces",
     "build_agent",
     "build_wire_messages",
     "detect_contradictions",

@@ -71,6 +71,21 @@ function clickSave(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   return user.click(screen.getAllByRole('button', { name: /save changes/i })[0]);
 }
 
+/**
+ * Render, and wait for the SERVER PROFILE to have populated the form.
+ *
+ * The page heading appears before the query resolves, so waiting for it is not
+ * a synchronisation point for anything the profile supplies. Every test below
+ * either asserts on a hydrated value or types into a field that hydration
+ * would otherwise overwrite mid-keystroke, so they all want this instead.
+ */
+async function renderHydrated(): Promise<void> {
+  renderProfile();
+  await waitFor(() =>
+    expect(screen.getByLabelText(/full name/i)).not.toHaveValue(''),
+  );
+}
+
 function renderProfile() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -98,9 +113,9 @@ beforeEach(() => {
 
 describe('Profile — rendering', () => {
   it('hydrates the form from the server profile', async () => {
-    renderProfile();
+    await renderHydrated();
 
-    expect(await screen.findByRole('heading', { name: /your profile/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /your profile/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/full name/i)).toHaveValue('Bhavya Nair');
     expect(screen.getByLabelText(/headline/i)).toHaveValue('Backend engineer');
   });
@@ -109,9 +124,9 @@ describe('Profile — rendering', () => {
     // A recruiter has a job title, not a candidate "headline" — same input,
     // different meaning, and the label is the only thing that says so.
     getMe.mockResolvedValue(HR);
-    renderProfile();
+    await renderHydrated();
 
-    expect(await screen.findByLabelText(/title \/ role/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/title \/ role/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/^headline$/i)).not.toBeInTheDocument();
     // Shown twice: the identity chip and the read-only Company field.
     expect(screen.getAllByText('Acme Skills University').length).toBeGreaterThan(0);
@@ -121,9 +136,7 @@ describe('Profile — rendering', () => {
 describe('Profile — saving', () => {
   it('sends the candidate-only fields for a candidate', async () => {
     const user = userEvent.setup();
-    renderProfile();
-
-    await screen.findByRole('heading', { name: /your profile/i });
+    await renderHydrated();
     await clickSave(user);
 
     await waitFor(() => expect(updateProfile).toHaveBeenCalled());
@@ -145,9 +158,7 @@ describe('Profile — saving', () => {
       user: { user_id: 'u-2', full_name: 'Chetan Iyer', email: 'chetan@acme.edu', roles: ['hr_manager'] },
     });
     const user = userEvent.setup();
-    renderProfile();
-
-    await screen.findByLabelText(/title \/ role/i);
+    await renderHydrated();
     await clickSave(user);
 
     await waitFor(() => expect(updateProfile).toHaveBeenCalled());
@@ -159,9 +170,12 @@ describe('Profile — saving', () => {
 
   it('drops a name that is only whitespace rather than blanking the account', async () => {
     const user = userEvent.setup();
-    renderProfile();
+    await renderHydrated();
 
-    const nameField = await screen.findByLabelText(/full name/i);
+    // Hydration must land BEFORE the field is cleared. Otherwise the query
+    // resolves mid-test and re-populates the name that was just deleted, which
+    // is the race that made this the flaky one.
+    const nameField = screen.getByLabelText(/full name/i);
     await user.clear(nameField);
     await user.type(nameField, '   ');
     await clickSave(user);
@@ -174,9 +188,7 @@ describe('Profile — saving', () => {
   it('surfaces a save failure instead of claiming success', async () => {
     updateProfile.mockRejectedValue(new Error('LinkedIn URL must be http(s)'));
     const user = userEvent.setup();
-    renderProfile();
-
-    await screen.findByRole('heading', { name: /your profile/i });
+    await renderHydrated();
     await clickSave(user);
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('LinkedIn URL must be http(s)'));
@@ -190,9 +202,8 @@ describe('Profile — avatar upload', () => {
     // filter hint, not a constraint — a user can switch the picker to "All
     // files", which is precisely why the JS type check has to exist.
     const user = userEvent.setup({ applyAccept: false });
-    const { container } = renderProfile();
-
-    await screen.findByRole('heading', { name: /your profile/i });
+    await renderHydrated();
+    const container = document.body;
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, new File(['%PDF'], 'cv.pdf', { type: 'application/pdf' }));
 
@@ -204,9 +215,8 @@ describe('Profile — avatar upload', () => {
     // The avatar is stored inline as a data URI in a TEXT column, so an
     // oversized file is a database problem, not just a slow upload.
     const user = userEvent.setup({ applyAccept: false });
-    const { container } = renderProfile();
-
-    await screen.findByRole('heading', { name: /your profile/i });
+    await renderHydrated();
+    const container = document.body;
     const big = new File([new Uint8Array(7 * 1024 * 1024)], 'huge.png', { type: 'image/png' });
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, big);
@@ -217,9 +227,8 @@ describe('Profile — avatar upload', () => {
 
   it('downscales an accepted image to a 256px data URI', async () => {
     const user = userEvent.setup();
-    const { container } = renderProfile();
-
-    await screen.findByRole('heading', { name: /your profile/i });
+    await renderHydrated();
+    const container = document.body;
     const png = new File(['x'], 'me.png', { type: 'image/png' });
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, png);

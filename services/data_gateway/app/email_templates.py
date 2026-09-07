@@ -563,8 +563,14 @@ def _t_decision(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     """Application-decision email to a candidate: shortlisted | hired | rejected.
 
     ctx: name, job_title, decision. Tone is warm for shortlist/hire and respectful
-    for a rejection. No CTA — applicants aren't portal users; next steps (exam /
-    interview links) arrive as their own emails.
+    for a rejection. No CTA: next steps (exam / interview links) arrive as their
+    own emails, and a decision is not something the candidate acts on here.
+
+    This used to read "applicants aren't portal users", which stopped being true
+    when activation gave them an account and an applications page. The absence
+    of a CTA is now a choice about this particular email rather than a fact
+    about applicants — a rejection with a button on it would be worse, not more
+    helpful.
     """
     name = ctx.get("name")
     job = ctx.get("job_title") or "the role"
@@ -647,6 +653,447 @@ def _t_decision(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     return subject, inner, text, subject
 
 
+def _t_exam_reminder(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """Deadline nudge for an assessment link that has not been opened.
+
+    Carries no link: assessment tokens are HMAC-hashed and unrecoverable, so the
+    candidate is pointed back at the invitation they already hold. See the note
+    in ``reminders.py`` for why minting a fresh token here would be worse.
+    """
+    name = ctx.get("name")
+    title = ctx.get("exam_title", "")
+    expires = ctx.get("expires")
+    soon = ctx.get("window") == "1h"
+    ttle = _esc(title)
+    loc = _loc(lang, {
+        "en": {
+            "subject": (
+                (f"Last chance today: {title}" if title else "Your assessment closes today")
+                if soon else
+                (f"Reminder: {title} closes tomorrow" if title
+                 else "Reminder: your assessment closes tomorrow")
+            ),
+            "pre": "Your assessment link is about to expire.",
+            "lead": (
+                f"A quick reminder that your assessment <strong>{ttle}</strong> is still open."
+                if title else "A quick reminder that your assessment is still open."
+            ),
+            "urgency": "It closes within the hour." if soon else "It closes tomorrow.",
+            "expiry": "Closes:",
+            "how": (
+                "Use the link in the invitation email we sent you earlier to begin. "
+                "If you can no longer find it, reply to this message and we will send a new one."
+            ),
+            "outro": "All the best!",
+        },
+        "hi": {
+            "subject": (
+                (f"आज आखिरी मौका: {title}" if title else "आपकी परीक्षा आज बंद हो रही है")
+                if soon else
+                (f"अनुस्मारक: {title} कल बंद हो रही है" if title
+                 else "अनुस्मारक: आपकी परीक्षा कल बंद हो रही है")
+            ),
+            "pre": "आपका परीक्षा लिंक जल्द ही समाप्त हो रहा है।",
+            "lead": (
+                f"यह याद दिलाने के लिए कि आपकी परीक्षा <strong>{ttle}</strong> अभी भी खुली है।"
+                if title else "यह याद दिलाने के लिए कि आपकी परीक्षा अभी भी खुली है।"
+            ),
+            "urgency": "यह एक घंटे के भीतर बंद हो जाएगी।" if soon else "यह कल बंद हो जाएगी।",
+            "expiry": "बंद होने का समय:",
+            "how": (
+                "शुरू करने के लिए पहले भेजे गए निमंत्रण ईमेल का लिंक उपयोग करें। "
+                "यदि वह नहीं मिल रहा है, तो इस संदेश का उत्तर दें और हम नया लिंक भेज देंगे।"
+            ),
+            "outro": "शुभकामनाएँ!",
+        },
+        "te": {
+            "subject": (
+                (f"ఈరోజే చివరి అవకాశం: {title}" if title else "మీ పరీక్ష ఈరోజు ముగుస్తుంది")
+                if soon else
+                (f"గుర్తుచేయడం: {title} రేపు ముగుస్తుంది" if title
+                 else "గుర్తుచేయడం: మీ పరీక్ష రేపు ముగుస్తుంది")
+            ),
+            "pre": "మీ పరీక్ష లింక్ త్వరలో ముగియనుంది.",
+            "lead": (
+                f"మీ పరీక్ష <strong>{ttle}</strong> ఇంకా అందుబాటులో ఉందని గుర్తుచేస్తున్నాము."
+                if title else "మీ పరీక్ష ఇంకా అందుబాటులో ఉందని గుర్తుచేస్తున్నాము."
+            ),
+            "urgency": "ఇది ఒక గంటలోపు ముగుస్తుంది." if soon else "ఇది రేపు ముగుస్తుంది.",
+            "expiry": "ముగింపు:",
+            "how": (
+                "ప్రారంభించడానికి మేము గతంలో పంపిన ఆహ్వాన ఇమెయిల్‌లోని లింక్‌ను ఉపయోగించండి. "
+                "అది దొరకకపోతే, ఈ సందేశానికి ప్రత్యుత్తరం ఇవ్వండి, మేము కొత్తది పంపుతాము."
+            ),
+            "outro": "శుభాకాంక్షలు!",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"] + " " + _esc(loc["urgency"]))
+    if expires:
+        inner += _p(
+            f'<span style="color:{_MUTED};font-size:14px;">'
+            f'<strong>{loc["expiry"]}</strong> {_esc(expires)}</span>'
+        )
+    inner += _p(_esc(loc["how"])) + _p(loc["outro"])
+    text = "\n".join([
+        _greeting(lang, name), "",
+        html_lib.unescape(loc["lead"].replace("<strong>", "").replace("</strong>", "")),
+        loc["urgency"],
+        (f"{loc['expiry']} {expires}" if expires else ""), "",
+        loc["how"], "", loc["outro"],
+    ])
+    return loc["subject"], inner, text, loc["pre"]
+
+
+def _t_interview_reminder(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """Nudge before a scheduled interview, or before its link lapses."""
+    name = ctx.get("name")
+    job = ctx.get("job_title", "")
+    when = ctx.get("when")
+    expires = ctx.get("expires")
+    soon = ctx.get("window") == "1h"
+    jobe = _esc(job)
+    loc = _loc(lang, {
+        "en": {
+            "subject": (
+                (f"Your interview for {job} is within the hour" if job
+                 else "Your interview is within the hour")
+                if soon else
+                (f"Reminder: your interview for {job} is tomorrow" if job
+                 else "Reminder: your interview is tomorrow")
+            ),
+            "pre": "Your AI interview is coming up.",
+            "lead": (
+                f"This is a reminder about your interview for <strong>{jobe}</strong>."
+                if job else "This is a reminder about your upcoming interview."
+            ),
+            "when": "Scheduled for:",
+            "expiry": "Link valid until:",
+            "prep": (
+                "Find a quiet room with a stable internet connection and allow about "
+                "fifteen minutes. You will be asked to grant camera and microphone "
+                "access when the interview begins."
+            ),
+            "how": "Use the link in your invitation email to join.",
+            "outro": "Good luck!",
+        },
+        "hi": {
+            "subject": (
+                (f"{job} के लिए आपका साक्षात्कार एक घंटे में है" if job
+                 else "आपका साक्षात्कार एक घंटे में है")
+                if soon else
+                (f"अनुस्मारक: {job} के लिए आपका साक्षात्कार कल है" if job
+                 else "अनुस्मारक: आपका साक्षात्कार कल है")
+            ),
+            "pre": "आपका AI साक्षात्कार आने वाला है।",
+            "lead": (
+                f"यह <strong>{jobe}</strong> के लिए आपके साक्षात्कार का अनुस्मारक है।"
+                if job else "यह आपके आगामी साक्षात्कार का अनुस्मारक है।"
+            ),
+            "when": "निर्धारित समय:",
+            "expiry": "लिंक मान्य है:",
+            "prep": (
+                "स्थिर इंटरनेट कनेक्शन के साथ एक शांत कमरा चुनें और लगभग पंद्रह मिनट का "
+                "समय रखें। साक्षात्कार शुरू होने पर आपको कैमरा और माइक्रोफ़ोन की अनुमति देनी होगी।"
+            ),
+            "how": "शामिल होने के लिए अपने निमंत्रण ईमेल का लिंक उपयोग करें।",
+            "outro": "शुभकामनाएँ!",
+        },
+        "te": {
+            "subject": (
+                (f"{job} కోసం మీ ఇంటర్వ్యూ ఒక గంటలో ఉంది" if job
+                 else "మీ ఇంటర్వ్యూ ఒక గంటలో ఉంది")
+                if soon else
+                (f"గుర్తుచేయడం: {job} కోసం మీ ఇంటర్వ్యూ రేపు ఉంది" if job
+                 else "గుర్తుచేయడం: మీ ఇంటర్వ్యూ రేపు ఉంది")
+            ),
+            "pre": "మీ AI ఇంటర్వ్యూ రాబోతోంది.",
+            "lead": (
+                f"ఇది <strong>{jobe}</strong> కోసం మీ ఇంటర్వ్యూ గుర్తుచేయడం."
+                if job else "ఇది మీ రాబోయే ఇంటర్వ్యూ గుర్తుచేయడం."
+            ),
+            "when": "షెడ్యూల్:",
+            "expiry": "లింక్ చెల్లుబాటు:",
+            "prep": (
+                "స్థిరమైన ఇంటర్నెట్ కనెక్షన్‌తో నిశ్శబ్ద గదిని ఎంచుకోండి, సుమారు పదిహేను "
+                "నిమిషాలు కేటాయించండి. ఇంటర్వ్యూ ప్రారంభమైనప్పుడు కెమెరా, మైక్రోఫోన్ అనుమతి ఇవ్వాలి."
+            ),
+            "how": "చేరడానికి మీ ఆహ్వాన ఇమెయిల్‌లోని లింక్‌ను ఉపయోగించండి.",
+            "outro": "శుభాకాంక్షలు!",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"])
+    meta = ""
+    if when:
+        meta += f'<strong>{loc["when"]}</strong> {_esc(when)}<br>'
+    if expires:
+        meta += f'<strong>{loc["expiry"]}</strong> {_esc(expires)}'
+    if meta:
+        inner += _p(f'<span style="color:{_MUTED};font-size:14px;">{meta}</span>')
+    inner += _p(_esc(loc["prep"])) + _p(_esc(loc["how"])) + _p(loc["outro"])
+    text = "\n".join([
+        _greeting(lang, name), "",
+        html_lib.unescape(loc["lead"].replace("<strong>", "").replace("</strong>", "")),
+        (f"{loc['when']} {when}" if when else ""),
+        (f"{loc['expiry']} {expires}" if expires else ""), "",
+        loc["prep"], "", loc["how"], "", loc["outro"],
+    ])
+    return loc["subject"], inner, text, loc["pre"]
+
+
+def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """A link lapsed unused — the expiry notice and the no-show follow-up.
+
+    These are one template because they are one event seen from two sides: a
+    window that closed without being opened. The copy is deliberately neutral
+    about consequence. Missing a window is NOT a rejection — under D-05 only a
+    person ends a candidacy — so this must not imply one, and must not promise
+    reinstatement either.
+    """
+    name = ctx.get("name")
+    what = ctx.get("what", "")
+    kind = ctx.get("kind", "exam")
+    expired = ctx.get("expired")
+    whate = _esc(what)
+    loc = _loc(lang, {
+        "en": {
+            "subject": (
+                "Your interview window has closed" if kind == "interview"
+                else "Your assessment window has closed"
+            ),
+            "pre": "The window for your assessment has closed.",
+            "lead": (
+                f"The window for <strong>{whate}</strong> closed without it being started."
+                if what else "Your scheduled window closed without being started."
+            ),
+            "closed": "Closed:",
+            "next": (
+                "No action is needed from you right now. The hiring team has been notified "
+                "and will be in touch if they would like to arrange another slot."
+            ),
+            "outro": "Thank you for your interest.",
+        },
+        "hi": {
+            "subject": (
+                "आपके साक्षात्कार की अवधि समाप्त हो गई" if kind == "interview"
+                else "आपकी परीक्षा की अवधि समाप्त हो गई"
+            ),
+            "pre": "आपकी परीक्षा की अवधि समाप्त हो गई है।",
+            "lead": (
+                f"<strong>{whate}</strong> की अवधि बिना शुरू हुए समाप्त हो गई।"
+                if what else "आपकी निर्धारित अवधि बिना शुरू हुए समाप्त हो गई।"
+            ),
+            "closed": "समाप्त:",
+            "next": (
+                "अभी आपकी ओर से किसी कार्रवाई की आवश्यकता नहीं है। भर्ती टीम को सूचित कर "
+                "दिया गया है और यदि वे कोई और समय देना चाहेंगे तो वे संपर्क करेंगे।"
+            ),
+            "outro": "आपकी रुचि के लिए धन्यवाद।",
+        },
+        "te": {
+            "subject": (
+                "మీ ఇంటర్వ్యూ వ్యవధి ముగిసింది" if kind == "interview"
+                else "మీ పరీక్ష వ్యవధి ముగిసింది"
+            ),
+            "pre": "మీ పరీక్ష వ్యవధి ముగిసింది.",
+            "lead": (
+                f"<strong>{whate}</strong> వ్యవధి ప్రారంభించకుండానే ముగిసింది."
+                if what else "మీ నిర్ణీత వ్యవధి ప్రారంభించకుండానే ముగిసింది."
+            ),
+            "closed": "ముగిసినది:",
+            "next": (
+                "ప్రస్తుతం మీ నుండి ఎటువంటి చర్య అవసరం లేదు. నియామక బృందానికి తెలియజేయబడింది, "
+                "వారు మరో సమయం ఇవ్వాలనుకుంటే మిమ్మల్ని సంప్రదిస్తారు."
+            ),
+            "outro": "మీ ఆసక్తికి ధన్యవాదాలు.",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"])
+    if expired:
+        inner += _p(
+            f'<span style="color:{_MUTED};font-size:14px;">'
+            f'<strong>{loc["closed"]}</strong> {_esc(expired)}</span>'
+        )
+    inner += _p(_esc(loc["next"])) + _p(loc["outro"])
+    text = "\n".join([
+        _greeting(lang, name), "",
+        html_lib.unescape(loc["lead"].replace("<strong>", "").replace("</strong>", "")),
+        (f"{loc['closed']} {expired}" if expired else ""), "",
+        loc["next"], "", loc["outro"],
+    ])
+    return loc["subject"], inner, text, loc["pre"]
+
+
+def _t_results_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """The scorecard is available.
+
+    Carries no score. A composite number stripped of its rubric, its evidence
+    and its improvement notes is the worst possible framing of an assessment
+    result, and an inbox is not where someone should first read one.
+    """
+    name = ctx.get("name")
+    job = ctx.get("job_title", "")
+    url = ctx.get("cta_url")
+    jobe = _esc(job)
+    loc = _loc(lang, {
+        "en": {
+            "subject": (
+                f"Your interview results for {job} are ready" if job
+                else "Your interview results are ready"
+            ),
+            "pre": "Your scorecard is now available.",
+            "lead": (
+                f"Your scorecard for <strong>{jobe}</strong> is ready to view."
+                if job else "Your interview scorecard is ready to view."
+            ),
+            "detail": (
+                "It covers how you came across on communication, technical knowledge, "
+                "problem solving and confidence, along with specific suggestions for "
+                "what to work on next."
+            ),
+            "cta": "View your scorecard",
+            "fallback": "Or paste this link into your browser:",
+            "nolink": "Sign in to the platform to view it.",
+            "outro": "Thank you for taking the time.",
+        },
+        "hi": {
+            "subject": (
+                f"{job} के लिए आपके साक्षात्कार परिणाम तैयार हैं" if job
+                else "आपके साक्षात्कार परिणाम तैयार हैं"
+            ),
+            "pre": "आपका स्कोरकार्ड अब उपलब्ध है।",
+            "lead": (
+                f"<strong>{jobe}</strong> के लिए आपका स्कोरकार्ड देखने के लिए तैयार है।"
+                if job else "आपका साक्षात्कार स्कोरकार्ड देखने के लिए तैयार है।"
+            ),
+            "detail": (
+                "इसमें संचार, तकनीकी ज्ञान, समस्या-समाधान और आत्मविश्वास पर आपका प्रदर्शन "
+                "शामिल है, साथ ही आगे किन बातों पर काम करना है इसके सुझाव भी।"
+            ),
+            "cta": "अपना स्कोरकार्ड देखें",
+            "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
+            "nolink": "इसे देखने के लिए प्लेटफ़ॉर्म पर साइन इन करें।",
+            "outro": "समय देने के लिए धन्यवाद।",
+        },
+        "te": {
+            "subject": (
+                f"{job} కోసం మీ ఇంటర్వ్యూ ఫలితాలు సిద్ధంగా ఉన్నాయి" if job
+                else "మీ ఇంటర్వ్యూ ఫలితాలు సిద్ధంగా ఉన్నాయి"
+            ),
+            "pre": "మీ స్కోర్‌కార్డ్ ఇప్పుడు అందుబాటులో ఉంది.",
+            "lead": (
+                f"<strong>{jobe}</strong> కోసం మీ స్కోర్‌కార్డ్ చూడటానికి సిద్ధంగా ఉంది."
+                if job else "మీ ఇంటర్వ్యూ స్కోర్‌కార్డ్ చూడటానికి సిద్ధంగా ఉంది."
+            ),
+            "detail": (
+                "ఇందులో కమ్యూనికేషన్, సాంకేతిక పరిజ్ఞానం, సమస్య పరిష్కారం మరియు ఆత్మవిశ్వాసంపై "
+                "మీ ప్రదర్శన, అలాగే తదుపరి దేనిపై దృష్టి పెట్టాలో సూచనలు ఉన్నాయి."
+            ),
+            "cta": "మీ స్కోర్‌కార్డ్ చూడండి",
+            "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
+            "nolink": "దీన్ని చూడటానికి ప్లాట్‌ఫారమ్‌లో సైన్ ఇన్ చేయండి.",
+            "outro": "సమయం కేటాయించినందుకు ధన్యవాదాలు.",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + _p(_esc(loc["detail"]))
+    if url:
+        inner += _button(url, loc["cta"]) + _fallback_link(loc["fallback"], url)
+    else:
+        inner += _p(_esc(loc["nolink"]))
+    inner += _p(loc["outro"])
+    text = "\n".join([
+        _greeting(lang, name), "",
+        html_lib.unescape(loc["lead"].replace("<strong>", "").replace("</strong>", "")), "",
+        loc["detail"], "", (url or loc["nolink"]), "", loc["outro"],
+    ])
+    return loc["subject"], inner, text, loc["pre"]
+
+
+def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """Application confirmation, with a link to activate the account.
+
+    ctx: name, job_title, company, set_url (optional), applications_url.
+
+    Candidate-facing, so EN/HI/TE like the other three — the staff-only
+    templates are English by design, this is not one of them.
+
+    Two shapes, one email. With ``set_url`` the applicant has no account yet
+    and the CTA sets a password; without it they already have one and the CTA
+    goes to their applications. The alternative was two templates that would
+    drift apart, when the only real difference is which door the button opens.
+    """
+    name = ctx.get("name")
+    job = ctx.get("job_title") or "the role"
+    company = ctx.get("company")
+    set_url = ctx.get("set_url")
+    apps_url = ctx.get("applications_url") or settings.app_base_url
+    jobe = _esc(job)
+    at_company = f" at <strong>{_esc(company)}</strong>" if company else ""
+
+    copy = {
+        "en": {
+            "subject": f"We have your application for {job}",
+            "lead": f"Thanks — your application for {jobe}{at_company} is in.",
+            "activate": (
+                "Set a password to track it. You will be able to see which stage "
+                "you are at and what happens next, in one place."
+            ),
+            "cta_set": "Set my password",
+            "signed_in": "You can follow its progress from your applications page.",
+            "cta_view": "View my applications",
+            "outro": "We will email you when there is news.",
+            "expiry": "This link can be used once and expires in 7 days.",
+        },
+        "hi": {
+            "subject": f"{job} के लिए आपका आवेदन मिल गया",
+            "lead": f"धन्यवाद — {jobe}{at_company} के लिए आपका आवेदन मिल गया है।",
+            "activate": (
+                "इसे ट्रैक करने के लिए पासवर्ड सेट करें। आप एक ही जगह देख सकेंगे कि "
+                "आप किस चरण में हैं और आगे क्या होगा।"
+            ),
+            "cta_set": "पासवर्ड सेट करें",
+            "signed_in": "आप अपने आवेदन पृष्ठ से इसकी प्रगति देख सकते हैं।",
+            "cta_view": "मेरे आवेदन देखें",
+            "outro": "कोई अपडेट होने पर हम आपको ईमेल करेंगे।",
+            "expiry": "यह लिंक एक बार उपयोग हो सकता है और 7 दिनों में समाप्त हो जाएगा।",
+        },
+        "te": {
+            "subject": f"{job} కోసం మీ దరఖాస్తు అందింది",
+            "lead": f"ధన్యవాదాలు — {jobe}{at_company} కోసం మీ దరఖాస్తు అందింది.",
+            "activate": (
+                "దీన్ని ట్రాక్ చేయడానికి పాస్‌వర్డ్ సెట్ చేయండి. మీరు ఏ దశలో ఉన్నారో, "
+                "తర్వాత ఏమి జరుగుతుందో ఒకే చోట చూడవచ్చు."
+            ),
+            "cta_set": "పాస్‌వర్డ్ సెట్ చేయండి",
+            "signed_in": "మీ దరఖాస్తుల పేజీ నుండి పురోగతిని చూడవచ్చు.",
+            "cta_view": "నా దరఖాస్తులు చూడండి",
+            "outro": "సమాచారం ఉన్నప్పుడు మేము ఇమెయిల్ చేస్తాము.",
+            "expiry": "ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, 7 రోజుల్లో ముగుస్తుంది.",
+        },
+    }
+    c = copy.get(lang, copy["en"])
+
+    inner = _p(_greeting(lang, name)) + _p(c["lead"])
+    if set_url:
+        inner += _p(c["activate"])
+        inner += _button(set_url, c["cta_set"])
+        inner += _fallback_link("Or paste this link into your browser:", set_url)
+        inner += _p(
+            f'<span style="color:{_MUTED};font-size:13px;">{_esc(c["expiry"])}</span>'
+        )
+    else:
+        inner += _p(c["signed_in"])
+        inner += _button(apps_url, c["cta_view"])
+    inner += _p(c["outro"])
+
+    text_parts = [_greeting(lang, name), "", c["lead"]]
+    if set_url:
+        text_parts += ["", c["activate"], set_url, "", c["expiry"]]
+    else:
+        text_parts += ["", c["signed_in"], apps_url]
+    text_parts += ["", c["outro"]]
+    return c["subject"], inner, "\n".join(text_parts), c["lead"]
+
+
 def _t_generic(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     """Catch-all for ad-hoc platform notifications (approvals, updates, alerts).
 
@@ -680,7 +1127,15 @@ _BUILDERS = {
     "exam_link": _t_exam_link,
     "interview_invite": _t_interview_invite,
     "hr_credentials": _t_hr_credentials,
+    "application_received": _t_application_received,
     "decision": _t_decision,
+    # A2/A3 — deadline nudges and the results notification. 'link_expired'
+    # covers both the expiry notice and the no-show follow-up: an unopened
+    # link that lapses is one event described from two sides.
+    "exam_reminder": _t_exam_reminder,
+    "interview_reminder": _t_interview_reminder,
+    "link_expired": _t_link_expired,
+    "results_ready": _t_results_ready,
     "generic": _t_generic,
 }
 

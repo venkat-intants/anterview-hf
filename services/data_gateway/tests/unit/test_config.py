@@ -160,3 +160,57 @@ def test_cors_checks_every_origin_not_just_the_first() -> None:
     """
     with pytest.raises(ValidationError):
         _settings(cors_allowed_origins="http://localhost:5173, *, https://app.intants.com")
+
+
+# ---------------------------------------------------------------------------
+# Candidate links must open an origin the API will talk to
+# ---------------------------------------------------------------------------
+#
+# These three settings build the links HR sends a candidate — account
+# activation, the exam paper, the interview invite. They are deliberately
+# separate from CORS_ALLOWED_ORIGINS (see app_base_url's note: the magic-link
+# bases may point at a different host one day), and that separation is exactly
+# how they drifted: CORS was moved to :5174 when the dev server moved, these
+# were left on the :5173 code default. CORS being right made the console work
+# in a browser while every emailed link opened a dead port.
+#
+# Nothing anywhere reports that. The mint returns 201, the email sends, the
+# audit row is written — the failure lands entirely on the candidate, who sees
+# a browser error and has no way to tell anyone. So it is asserted here.
+
+_LINK_BASES = ("app_base_url", "exam_link_base_url", "interview_link_base_url")
+
+
+def _origin(url: str) -> str:
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+@pytest.mark.parametrize("field", _LINK_BASES)
+def test_a_candidate_link_opens_an_origin_cors_allows(field: str) -> None:
+    """The candidate's browser loads {base}/exam and that page calls this API.
+    A base whose origin is not in CORS is broken by construction — the page
+    renders and every request from it is refused."""
+    s = _settings(
+        cors_allowed_origins="http://localhost:5174,https://app.intants.com",
+        **{field: "http://localhost:5174/"},
+    )
+    allowed = {_origin(o.strip()) for o in s.cors_allowed_origins.split(",")}
+    assert _origin(getattr(s, field)) in allowed
+
+
+@pytest.mark.parametrize("field", _LINK_BASES)
+def test_the_drift_this_closes_is_detectable(field: str) -> None:
+    """The real 2026-09 configuration, asserted as broken.
+
+    Without this the suite is happy with the exact combination that was
+    shipping: CORS on 5174, links on 5173.
+    """
+    s = _settings(
+        cors_allowed_origins="http://localhost:5174,http://127.0.0.1:5174",
+        **{field: "http://localhost:5173"},
+    )
+    allowed = {_origin(o.strip()) for o in s.cors_allowed_origins.split(",")}
+    assert _origin(getattr(s, field)) not in allowed

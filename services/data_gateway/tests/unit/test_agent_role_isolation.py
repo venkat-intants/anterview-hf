@@ -13,16 +13,51 @@ reads the handler source and insists that anything company-scoped filters on
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from shared.agents import ToolContext
 
 from app.agents import tools as tools_module
+from app.agents import workflow_tools as workflow_tools_module
 from app.agents.tools import registry
 from app.routers.agent import _agent_context
+
+# Tool modules whose handlers this file source-scans. Listed rather than
+# discovered, so a new module of tools has to be added here consciously — the
+# scan is the only thing standing between a mislabelled data_class and an
+# unscoped query, and a scan that silently skipped a module would pass.
+_TOOL_MODULES = (tools_module, workflow_tools_module)
+
+
+def _effective_source(handler: object) -> str:
+    """A handler's source, plus the source of the module helpers it calls.
+
+    The original version scanned the handler alone, which worked while every
+    handler queried inline. ``workflow_tools`` factors its reads into
+    ``_requisition`` / ``_current_workflow``, so a handler-only scan sees no
+    query at all and would exempt the very tools most worth checking.
+
+    Deliberately one level deep and name-based. It is a lint, not a call graph:
+    the job is to make an unscoped query hard to add without noticing, and a
+    real analysis here would be more code than the thing it guards.
+    """
+    module = inspect.getmodule(handler)
+    source = inspect.getsource(handler)  # type: ignore[arg-type]
+    if module is None:
+        return source
+    for name, member in vars(module).items():
+        if not name.startswith("_") or not inspect.isfunction(member):
+            continue
+        if inspect.getmodule(member) is not module or member is handler:
+            continue
+        if f"{name}(" in source:
+            source += "\n" + inspect.getsource(member)
+    return source
 
 # What each console is expected to hold. Written out in full rather than
 # derived from the registry: a test that recomputes the thing it is checking
@@ -125,7 +160,7 @@ def test_every_tenant_scoped_query_filters_on_the_context_company() -> None:
     for spec, handler in registry._tools.values():
         if spec.data_class == "platform_aggregate":
             continue
-        source = inspect.getsource(handler)
+        source = _effective_source(handler)
         if "_db(ctx)" not in source and "db.execute" not in source:
             continue
         assert "ctx.company_id" in source, (
@@ -145,8 +180,8 @@ def test_a_handler_that_reads_no_rows_needs_no_company() -> None:
     db_free = {
         spec.name
         for spec, handler in registry._tools.values()
-        if "_db(ctx)" not in inspect.getsource(handler)
-        and "db.execute" not in inspect.getsource(handler)
+        if "_db(ctx)" not in _effective_source(handler)
+        and "db.execute" not in _effective_source(handler)
     }
     assert db_free == {"get_role_model"}
 
@@ -258,3 +293,71 @@ async def test_the_panel_is_closed_to_the_super_admin_console() -> None:
         )
 
     assert exc.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Surfaces — the workflow builder's toolset (D6)
+# ---------------------------------------------------------------------------
+
+# The builder screen's own tools, written out for the same reason EXPECTED is:
+# a test that derives this from the registry would pass whatever the registry
+# said.
+BUILDER_ONLY: set[str] = {
+    "get_opening_under_design",
+    "get_current_workflow",
+    "list_available_exams",
+    "draft_hiring_workflow",
+    "draft_workflow_round",
+    "draft_round_criteria",
+    "draft_workflow_settings",
+}
+
+
+def test_the_builder_surface_adds_exactly_its_own_tools() -> None:
+    """A surface narrows a prompt; it must never widen a console."""
+    console = {s.name for s in registry.specs_for("hr_manager")}
+    builder = {s.name for s in registry.specs_for("hr_manager", "workflow_builder")}
+    assert builder - console == BUILDER_ONLY
+    # Nothing is taken away: the workflow copilot can still look up a role
+    # model or read the funnel, which is why the general tools carry no surface.
+    assert not console - builder
+
+
+def test_workflow_tools_are_absent_from_the_general_console() -> None:
+    """They are unusable there — the opening under design is injected per
+    request and does not exist outside the builder — so describing them to the
+    general copilot would only invite a call that can only fail."""
+    assert not {s.name for s in registry.specs_for("hr_manager")} & BUILDER_ONLY
+
+
+def test_no_other_role_reaches_the_builder_surface() -> None:
+    """Surface is presentation; ``allowed_roles`` is the boundary. Asking for
+    the builder surface as a super admin must therefore yield nothing new, not
+    an HR toolset."""
+    for role in ("super_admin", "platform_owner", "admin"):
+        assert not {s.name for s in registry.specs_for(role, "workflow_builder")} & BUILDER_ONLY
+
+
+def test_a_surface_tool_is_still_refused_by_role_at_invocation() -> None:
+    """The check that actually matters. ``specs_for`` decides what a model is
+    TOLD about; ``invoke`` decides what it may run, and it does not consult the
+    surface at all — so naming a tool the caller never saw is still a denial."""
+    ctx = ToolContext(actor_id="u", role="super_admin", company_id="c")
+    result = asyncio.run(registry.invoke("draft_hiring_workflow", {}, ctx, call_id="1"))
+    assert result.ok is False
+    assert "access" in (result.content or "")
+
+
+def test_no_workflow_tool_can_express_a_rejection() -> None:
+    """D-05, checked against the tool schemas rather than the prompt.
+
+    A model cannot propose auto-rejection if there is no parameter that says
+    so. The settings tool is the one with any reach here, and its allow-list is
+    the four automation booleans plus two numeric bands.
+    """
+    banned = {"auto_reject", "auto_reject_below", "reject_below", "reject", "decision"}
+    for spec, _ in registry._tools.values():
+        if spec.name not in BUILDER_ONLY:
+            continue
+        props = set(spec.parameters.get("properties", {}))
+        assert not (props & banned), f"{spec.name} exposes a rejection parameter"

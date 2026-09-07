@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from shared.llm.gemini import MAX_ATTEMPTS
+from shared.llm import MAX_ATTEMPTS
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -78,6 +78,12 @@ def _make_settings() -> Settings:
         database_url="postgresql+asyncpg://test:test@localhost:5432/test",
         redis_url="redis://localhost:6379/0",
         gemini_api_key="test-key",
+        # Pinned, not inherited. Settings() reads the developer's own .env for
+        # anything not passed here, so a machine configured for Groq with no key
+        # made these tests fail on a code path they are not testing. A unit test
+        # must not depend on the local environment.
+        llm_provider="gemini",
+        groq_api_key="",
         gemini_model="gemini-2.5-flash",
         gemini_api_base_url="https://generativelanguage.googleapis.com/v1beta",
         jwt_secret="test-secret-that-is-at-least-32-chars-long!!",
@@ -113,7 +119,7 @@ async def test_score_session_returns_scorecard_id() -> None:
 
     mock_response = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
 
-    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -157,7 +163,7 @@ async def test_score_session_sends_api_key_via_header_not_url() -> None:
 
     mock_response = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
 
-    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -201,7 +207,7 @@ async def test_score_session_tolerates_trailing_commas() -> None:
     }
     mock_response.text = ""
 
-    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -238,7 +244,7 @@ async def test_score_session_includes_jd_in_prompt() -> None:
 
     jd = "Must know Spring Boot and Kubernetes."
 
-    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -297,7 +303,7 @@ async def test_score_session_clamps_out_of_range_scores() -> None:
 
     mock_db.execute = _capture_execute  # type: ignore[method-assign]
 
-    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -349,8 +355,8 @@ async def test_score_session_raises_on_gemini_error() -> None:
     # 500 is a RETRY status, so this test walks the whole backoff ladder; the
     # sleep is stubbed or the suite pays 1+2+4 real seconds for it.
     with (
-        patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls,
-        patch("shared.llm.gemini.asyncio.sleep", new=AsyncMock()),
+        patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls,
+        patch("shared.llm._recovery.asyncio.sleep", new=AsyncMock()),
     ):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -445,8 +451,8 @@ async def test_score_session_retries_on_503_then_succeeds() -> None:
     resp_200 = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
 
     with (
-        patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls,
-        patch("shared.llm.gemini.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls,
+        patch("shared.llm._recovery.asyncio.sleep", new=AsyncMock()) as mock_sleep,
     ):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -480,8 +486,8 @@ async def test_score_session_gives_up_after_max_503() -> None:
     resp_503 = _make_httpx_response(status_code=503, text_body="high demand")
 
     with (
-        patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls,
-        patch("shared.llm.gemini.asyncio.sleep", new=AsyncMock()),
+        patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls,
+        patch("shared.llm._recovery.asyncio.sleep", new=AsyncMock()),
     ):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -513,8 +519,8 @@ async def test_score_session_does_not_retry_on_403() -> None:
     resp_403 = _make_httpx_response(status_code=403, text_body="permission denied")
 
     with (
-        patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls,
-        patch("shared.llm.gemini.asyncio.sleep", new=AsyncMock()),
+        patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls,
+        patch("shared.llm._recovery.asyncio.sleep", new=AsyncMock()),
     ):
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -565,7 +571,7 @@ async def test_score_session_stores_axis_feedback_nested_in_rationale() -> None:
     }
     mock_response = _make_httpx_response(json_body=body)
 
-    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -602,7 +608,7 @@ async def test_score_session_missing_axis_feedback_does_not_fail() -> None:
     mock_db = _make_db_session()
     mock_response = _make_httpx_response(json_body=_GOOD_GEMINI_RESPONSE)
 
-    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -662,7 +668,7 @@ def _raw_response(raw_text: str, finish_reason: str = "STOP") -> MagicMock:
 
 async def _score_with(response: MagicMock, mock_db: AsyncMock) -> tuple[str, Any, Any]:
     """Run score_session against a single mocked Gemini response."""
-    with patch("shared.llm.gemini.httpx.AsyncClient") as mock_client_cls:
+    with patch("shared.llm._recovery.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)

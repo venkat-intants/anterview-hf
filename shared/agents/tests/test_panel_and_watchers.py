@@ -20,13 +20,17 @@ from shared.agents.panel import (
 )
 from shared.agents.schema import Citation, SignalAssessment, WatcherFinding
 from shared.agents.watchers import (
+    DECISION_WAIT_DAYS,
     ErasureRequest,
     FunnelRow,
+    OpeningHealth,
     QuestionStat,
     StalledApplicant,
     WatcherInput,
     digest,
     run_watchers,
+    watch_decision_backlog,
+    watch_openings_without_workflow,
 )
 
 
@@ -390,3 +394,173 @@ def test_digest_lists_findings_worst_first() -> None:
     )
     text = digest(run_watchers(data))
     assert text.index("DPDP") < text.index("stalled")
+
+
+# ---------------------------------------------------------------------------
+# Per-opening watchers — E6
+# ---------------------------------------------------------------------------
+
+
+def _opening(**kw: object) -> OpeningHealth:
+    base = {
+        "requisition_id": "req-1",
+        "title": "Backend Engineer",
+        "awaiting_decision": 0,
+        "longest_wait_days": 0.0,
+        "held": 0,
+        "live_enrolments": 0,
+        "has_published_workflow": True,
+        "accepting_public_applications": False,
+    }
+    base.update(kw)
+    return OpeningHealth(**base)  # type: ignore[arg-type]
+
+
+def test_a_decision_queue_nobody_opens_raises_a_finding() -> None:
+    """The rule this guards: D-05 reserves every outcome for a human, which is
+    only a protection while a human is actually looking. An unread queue turns
+    "a person decides" into "nobody decides" — worse for the candidate than a
+    rejection, because they are not turned down, they are left."""
+    data = WatcherInput(
+        company_id="c",
+        openings=[_opening(awaiting_decision=3, longest_wait_days=5.0, held=1)],
+    )
+    findings = watch_decision_backlog(data)
+    assert len(findings) == 1
+    assert findings[0].watcher == "decision_backlog"
+    assert "Backend Engineer" in findings[0].title
+    # Names the screen, not just the problem.
+    assert findings[0].link == "/hr/requisitions/req-1/decisions"
+
+
+def test_a_queue_being_worked_is_not_a_backlog() -> None:
+    data = WatcherInput(
+        company_id="c",
+        openings=[_opening(awaiting_decision=4, longest_wait_days=DECISION_WAIT_DAYS - 1)],
+    )
+    assert watch_decision_backlog(data) == []
+
+
+def test_an_empty_queue_raises_nothing() -> None:
+    data = WatcherInput(
+        company_id="c", openings=[_opening(awaiting_decision=0, longest_wait_days=99.0)]
+    )
+    assert watch_decision_backlog(data) == []
+
+
+def test_a_fortnight_of_silence_is_critical_not_a_warning() -> None:
+    """By two weeks the candidate has concluded they were rejected, so the
+    decision is being made by default — which is exactly what D-05 forbids."""
+    short = WatcherInput(
+        company_id="c", openings=[_opening(awaiting_decision=1, longest_wait_days=4.0)]
+    )
+    long = WatcherInput(
+        company_id="c", openings=[_opening(awaiting_decision=1, longest_wait_days=15.0)]
+    )
+    assert watch_decision_backlog(short)[0].severity == "warning"
+    assert watch_decision_backlog(long)[0].severity == "critical"
+
+
+def test_the_backlog_alert_mentions_holds_only_when_there_are_some() -> None:
+    """A hold is not a rejection, and someone skimming a notification should
+    not be able to read it as one."""
+    with_held = watch_decision_backlog(
+        WatcherInput(
+            company_id="c",
+            openings=[_opening(awaiting_decision=2, longest_wait_days=5.0, held=2)],
+        )
+    )[0]
+    without = watch_decision_backlog(
+        WatcherInput(
+            company_id="c",
+            openings=[_opening(awaiting_decision=2, longest_wait_days=5.0, held=0)],
+        )
+    )[0]
+    assert "below a round threshold" in with_held.body
+    assert "below a round threshold" not in without.body
+
+
+def test_the_backlog_dedupe_key_tracks_the_queue_size() -> None:
+    """Re-fires when the backlog grows, stays quiet while it merely sits — the
+    difference between a useful alert and one people learn to ignore."""
+    same = _opening(awaiting_decision=3, longest_wait_days=5.0)
+    grown = _opening(awaiting_decision=7, longest_wait_days=5.0)
+    a = watch_decision_backlog(WatcherInput(company_id="c", openings=[same]))[0]
+    b = watch_decision_backlog(WatcherInput(company_id="c", openings=[same]))[0]
+    c = watch_decision_backlog(WatcherInput(company_id="c", openings=[grown]))[0]
+    assert a.dedupe_key == b.dedupe_key
+    assert a.dedupe_key != c.dedupe_key
+
+
+def test_each_opening_gets_its_own_finding() -> None:
+    """"You have decisions waiting" across six roles tells a manager nothing
+    about where to start."""
+    data = WatcherInput(
+        company_id="c",
+        openings=[
+            _opening(requisition_id="r1", title="Backend", awaiting_decision=2,
+                     longest_wait_days=5.0),
+            _opening(requisition_id="r2", title="Data", awaiting_decision=9,
+                     longest_wait_days=8.0),
+        ],
+    )
+    findings = watch_decision_backlog(data)
+    assert {f.citations[0].id for f in findings} == {"r1", "r2"}
+
+
+def test_candidates_with_no_workflow_to_walk_are_flagged() -> None:
+    """The failure mode: an opening published to the apply form before its
+    workflow was. Applications pile up and nothing moves any of them, which
+    from the outside is indistinguishable from being ignored."""
+    data = WatcherInput(
+        company_id="c",
+        openings=[_opening(live_enrolments=12, has_published_workflow=False)],
+    )
+    findings = watch_openings_without_workflow(data)
+    assert len(findings) == 1
+    assert findings[0].link == "/hr/requisitions/req-1/workflow"
+
+
+def test_an_empty_opening_with_no_workflow_is_fine() -> None:
+    """A role nobody has applied to yet does not need a process built for it."""
+    data = WatcherInput(
+        company_id="c",
+        openings=[_opening(live_enrolments=0, has_published_workflow=False)],
+    )
+    assert watch_openings_without_workflow(data) == []
+
+
+def test_a_published_workflow_silences_it() -> None:
+    data = WatcherInput(
+        company_id="c",
+        openings=[_opening(live_enrolments=30, has_published_workflow=True)],
+    )
+    assert watch_openings_without_workflow(data) == []
+
+
+def test_a_public_opening_with_no_workflow_says_more_are_coming() -> None:
+    data = WatcherInput(
+        company_id="c",
+        openings=[
+            _opening(
+                live_enrolments=4,
+                has_published_workflow=False,
+                accepting_public_applications=True,
+            )
+        ],
+    )
+    assert "more are arriving" in watch_openings_without_workflow(data)[0].body
+
+
+def test_the_new_watchers_are_wired_into_the_sweep() -> None:
+    """Registered, not just defined — a watcher missing from WATCHERS is a
+    function nothing ever calls."""
+    data = WatcherInput(
+        company_id="c",
+        openings=[
+            _opening(awaiting_decision=5, longest_wait_days=9.0, live_enrolments=5,
+                     has_published_workflow=False)
+        ],
+    )
+    fired = {f.watcher for f in run_watchers(data)}
+    assert {"decision_backlog", "openings_without_workflow"} <= fired

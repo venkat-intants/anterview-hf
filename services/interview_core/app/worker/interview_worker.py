@@ -392,6 +392,10 @@ class SessionContext:
     # Empty on every normal session; carried here so the job can persist it for
     # the reviewing HR manager instead of leaving it in a log line nobody reads.
     injection_markers: list[str] = field(default_factory=list)
+    # The session's own id, so the role model can be read back from the workflow
+    # round this interview belongs to (Group C, C8) instead of being re-derived.
+    # Empty for a practice interview, which has no workflow.
+    session_id: str = ""
 
 
 def _extract_required_skills(competencies: Any) -> list[str]:
@@ -493,6 +497,7 @@ async def _lookup_session(room_name: str) -> SessionContext:
             ).scalar_one_or_none()
             if sess is None:
                 return SessionContext()
+            session_id = str(sess.id)
             lang = (sess.language or "en").lower()
             language = lang if lang in _LANG_VENDOR else "en"
             presenter_id: str | None = sess.presenter_id  # catalog avatar id or None
@@ -520,6 +525,7 @@ async def _lookup_session(room_name: str) -> SessionContext:
                     presenter_id=presenter_id,
                     resume_text=resume_text,
                     injection_markers=markers,
+                    session_id=session_id,
                 )
             # Job.level is 'entry' | 'mid' | 'senior' — maps directly to ScoreRequest.
             level = job.level if job.level in ("entry", "mid", "senior") else "entry"
@@ -535,6 +541,7 @@ async def _lookup_session(room_name: str) -> SessionContext:
                 department=(job.department or ""),
                 interview_type=(job.interview_type or "screening"),
                 injection_markers=markers,
+                session_id=session_id,
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -578,6 +585,27 @@ async def _derive_role_profile(ctx: SessionContext) -> RoleProfile:
     Gemini's JSON mode is the better fit, and keeping it off the turn-loop
     provider means a Groq incident cannot also cost us the role model.
     """
+    # Group C / C8: when this session belongs to a workflow round, the rubric
+    # was frozen at publication and must be read back, not re-derived. Deriving
+    # here would interview the candidate against refined anchors and a different
+    # weighting than the workflow promised — the same competency names measuring
+    # a different standard. Falls through to derivation for practice interviews
+    # and for any round without a usable stored rubric.
+    if ctx.session_id:
+        from app.database import get_session_factory  # noqa: PLC0415
+        from app.worker.frozen_rubric import load_frozen_rubric  # noqa: PLC0415
+
+        frozen = await load_frozen_rubric(
+            get_session_factory(), ctx.session_id, job_title=ctx.job_title
+        )
+        if frozen is not None:
+            logger.info(
+                "interview-worker.role_profile source=frozen job_title=%r "
+                "competencies=%d profile_id=%s",
+                ctx.job_title, len(frozen.competencies), frozen.profile_id,
+            )
+            return frozen
+
     llm_caller = None
     if settings.gemini_api_key:
         from app.llm.base import LLMMessage

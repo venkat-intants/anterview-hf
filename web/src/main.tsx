@@ -45,7 +45,13 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      refetchOnWindowFocus: false,
+      // A5: refetch when the operator comes back to the tab. This was off, which
+      // combined with no polling anywhere in the HR console meant a manager
+      // watching a cohort sit an exam was looking at a frozen page until they
+      // pressed browser refresh. `staleTime` keeps that from turning every tab
+      // switch into a burst of requests.
+      refetchOnWindowFocus: true,
+      staleTime: 15_000,
     },
   },
 });

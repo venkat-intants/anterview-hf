@@ -10,7 +10,10 @@ object") rather than as unit assertions on the parser, because that is the
 property that was missing, and asserting it once here is what stops it from
 being present in one caller and absent in another again.
 
-No network: ``httpx.AsyncClient`` is replaced inside the module under test, so
+Covers the whole of ``shared/llm`` — the Gemini caller it was written for, the
+Groq sibling, and the recovery ladder both share. No network:
+``httpx.AsyncClient`` is replaced inside ``shared.llm._recovery`` (which owns
+the transport for every provider), so
 these run offline with no key.
 """
 
@@ -159,14 +162,18 @@ class _FakeAsyncio:
 
 def _patch(monkeypatch: pytest.MonkeyPatch, *script: Any) -> _Recorder:
     recorder = _Recorder(script)
-    monkeypatch.setattr("shared.llm.gemini.httpx", _FakeHttpx(recorder))
-    monkeypatch.setattr("shared.llm.gemini.asyncio", _FakeAsyncio())
+    # Patched on ``_recovery``, not on ``gemini``: the retry loop and the
+    # socket moved there when Groq became a second provider, and both providers
+    # now share them. Patching the module that no longer owns the transport is
+    # how a test starts silently making real network calls.
+    monkeypatch.setattr("shared.llm._recovery.httpx", _FakeHttpx(recorder))
+    monkeypatch.setattr("shared.llm._recovery.asyncio", _FakeAsyncio())
     return recorder
 
 
 def _slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     fake = _FakeAsyncio()
-    monkeypatch.setattr("shared.llm.gemini.asyncio", fake)
+    monkeypatch.setattr("shared.llm._recovery.asyncio", fake)
     return fake.slept
 
 
@@ -649,14 +656,9 @@ async def test_no_other_exception_type_escapes(monkeypatch: pytest.MonkeyPatch) 
         await _call()
 
 
-def test_module_stays_importable_from_every_service_image() -> None:
-    """shared/ is COPY'd into all four images, so a module-level import of
-    anything the other images lack breaks them at container start. json_repair
-    is exactly that dependency — it is in two of the four requirements files —
-    which is why it must stay a guarded, function-local import. Hoisting it
-    would look harmless and pass every test but this one."""
-    source = pathlib.Path(__file__).parent.parent / "llm" / "gemini.py"
-    tree = ast.parse(source.read_text(encoding="utf-8"))
+def _import_roots(path: pathlib.Path) -> tuple[set[str], set[str]]:
+    """(module-level roots, roots anywhere) for one source file."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
 
     def roots(nodes: list[ast.stmt] | list[ast.AST]) -> set[str]:
         found: set[str] = set()
@@ -667,10 +669,41 @@ def test_module_stays_importable_from_every_service_image() -> None:
                 found.add(node.module.split(".")[0])
         return found
 
-    module_level = roots(tree.body)
-    everywhere = roots(list(ast.walk(tree)))
+    return roots(tree.body), roots(list(ast.walk(tree)))
 
-    allowed = {"__future__", "asyncio", "json", "re", "typing", "httpx", "structlog"}
+
+@pytest.mark.parametrize("module", ["gemini.py", "groq.py", "_recovery.py", "__init__.py"])
+def test_every_llm_module_stays_importable_from_every_service_image(module: str) -> None:
+    """shared/ is COPY'd into all four images, so a module-level import of
+    anything the other images lack breaks them at container start.
+
+    Parametrised over the whole package rather than one file: when Groq arrived,
+    the transport and the guarded json_repair import moved to ``_recovery.py``,
+    and a check that still looked only at ``gemini.py`` would have gone on
+    passing while enforcing the rule on none of the code that matters.
+
+    ``shared`` is allowed at module level — importing a sibling inside this same
+    COPY'd package cannot fail in an image that has the package. Third-party
+    names are what this rule is about."""
+    source = pathlib.Path(__file__).parent.parent / "llm" / module
+    module_level, _ = _import_roots(source)
+
+    allowed = {
+        "__future__", "asyncio", "json", "re", "typing", "httpx", "structlog", "shared",
+    }
     assert module_level <= allowed, f"disallowed top-level imports: {sorted(module_level - allowed)}"
+
+
+def test_json_repair_stays_a_guarded_function_local_import() -> None:
+    """json_repair is in two of the four requirements files, which is why it
+    must never be hoisted to module level. Hoisting it would look harmless and
+    pass every test but this one.
+
+    Asserted against ``_recovery.py`` because that is where the repair ladder
+    now lives — and asserted as *present somewhere*, so this cannot quietly
+    pass by the import having been deleted along with the fallback."""
+    source = pathlib.Path(__file__).parent.parent / "llm" / "_recovery.py"
+    module_level, everywhere = _import_roots(source)
+
     assert "json_repair" not in module_level
     assert "json_repair" in everywhere

@@ -42,6 +42,7 @@ from shared.s3 import s3_client
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import local_storage
 from app.config import settings
 from app.database import get_db_session
 from app.dependencies import get_current_user
@@ -192,7 +193,21 @@ async def _presign_url(s3_key: str) -> str | None:
 
 
 async def _upload_to_s3(raw: bytes, s3_key: str) -> None:
-    """Upload resume bytes to S3/R2."""
+    """Store resume bytes — S3/R2, or local disk in development.
+
+    The name is now slightly wrong and kept anyway: it is the seam every
+    resume path calls and every resume test patches, and renaming it would
+    touch more call sites than the behaviour change is worth. What it means is
+    "put this where resumes go".
+    """
+    if local_storage.enabled(
+        app_env=settings.app_env,
+        directory=settings.storage_local_dir,
+        has_s3_credentials=bool(settings.s3_access_key_id),
+    ):
+        await local_storage.put(settings.storage_local_dir, s3_key, raw)
+        return
+
     from app.s3_upload import upload_file  # local import — avoids circular if any
 
     await upload_file(
@@ -211,8 +226,16 @@ async def _delete_from_s3(s3_key: str) -> None:
     Logs and swallows all exceptions — the caller must re-raise the original
     error regardless of whether the S3 cleanup succeeded.
     """
+    if local_storage.enabled(
+        app_env=settings.app_env,
+        directory=settings.storage_local_dir,
+        has_s3_credentials=bool(settings.s3_access_key_id),
+    ):
+        await local_storage.delete(settings.storage_local_dir, s3_key)
+        return
+
     if not settings.s3_access_key_id:
-        return  # No S3 configured (dev without MinIO) — nothing to clean up.
+        return  # No storage configured at all — nothing to clean up.
 
     # shared.s3 (finding SVC-1) — the local import that used to be here existed
     # to keep aioboto3 off this module's import path; shared.s3 is already

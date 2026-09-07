@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pathlib
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.security import (
@@ -9,10 +11,32 @@ from shared.security import (
     validate_database_ssl,
 )
 
+# app/config.py -> app -> <service> -> services -> repo root
+_SERVICE_DIR = pathlib.Path(__file__).resolve().parents[1]
+_REPO_ROOT = _SERVICE_DIR.parents[1]
+
 
 class Settings(BaseSettings):
+    # ONE .env for the whole backend, at the repo root, plus an optional
+    # per-service file that overrides it. Later files win (verified against
+    # pydantic-settings, not assumed), so `services/<name>/.env` can still
+    # differ where a service genuinely needs to — but the shared credentials
+    # live in exactly one place instead of being copy-pasted four ways and
+    # drifting.
+    #
+    # ABSOLUTE, not ".env". A relative path resolves against the CURRENT
+    # WORKING DIRECTORY, so the old value silently loaded nothing whenever a
+    # service was started from the repo root rather than its own folder — the
+    # service then booted on defaults and failed later, somewhere unrelated.
+    #
+    # What must NOT go in the shared file: PORT and SERVICE_NAME. Both differ
+    # per service (8001-8004), and a shared PORT would have all four fighting
+    # over one socket.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+        env_file=(_REPO_ROOT / ".env", _SERVICE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
     )
 
     service_name: str = "admin_ops"

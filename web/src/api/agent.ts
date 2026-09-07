@@ -50,7 +50,12 @@ export interface Proposal {
     | 'job_description'
     | 'shortlist'
     | 'pipeline_decision'
-    | 'note';
+    | 'note'
+    // Workflow authoring (D6). None of these reaches a candidate: committing
+    // one edits a DRAFT, which the user must still publish separately.
+    | 'workflow'
+    | 'workflow_round'
+    | 'workflow_settings';
   title: string;
   summary: string;
   commit: CommitSpec;
@@ -74,6 +79,8 @@ export interface AgentStatus {
   enabled: boolean;
   model_configured: boolean;
   console: string;
+  /** Specialised screens this account may open a copilot on, e.g. 'workflow_builder'. */
+  surfaces: string[];
   capabilities: string[];
   note: string;
 }
@@ -88,13 +95,32 @@ export function getAgentStatus(): Promise<AgentStatus> {
   return apiGet<AgentStatus>('/agent/status');
 }
 
-/** Ask this console's copilot. `history` is replayed for continuity. */
-export function askAgent(message: string, history: HistoryTurn[] = []): Promise<AgentChatResponse> {
+/**
+ * Ask a copilot.
+ *
+ * `surface` selects a specialised assistant for one screen — currently
+ * 'workflow_builder'. It changes the system prompt and narrows the toolset;
+ * it does NOT widen what the caller may read, which stays gated on their real
+ * role server-side.
+ *
+ * `surfaceContext` says what that screen is looking at (the opening being
+ * designed). The server validates it against the caller's company and hands it
+ * to the tools directly, so the subject of the conversation is never something
+ * the model chose — asking it to design a workflow for another company's
+ * opening is not refused so much as unexpressible.
+ */
+export function askAgent(
+  message: string,
+  history: HistoryTurn[] = [],
+  opts: { surface?: string; surfaceContext?: Record<string, string> } = {},
+): Promise<AgentChatResponse> {
   // The server caps history at 12 turns; trimming here too keeps the request
   // small and makes the cap visible on this side rather than a silent surprise.
   return apiPost<AgentChatResponse>('/agent/chat', {
     message,
     history: history.slice(-12),
+    ...(opts.surface ? { surface: opts.surface } : {}),
+    ...(opts.surfaceContext ? { surface_context: opts.surfaceContext } : {}),
   });
 }
 

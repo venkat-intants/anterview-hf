@@ -348,3 +348,64 @@ async def test_catchup_survives_one_broken_job() -> None:
         [("a", timedelta(days=1), _bad), ("b", timedelta(days=1), _good)],
     )
     assert seen == ["good"]
+
+
+# ===========================================================================
+# A4/E5 — one "upload complete" notification per bulk batch
+# ===========================================================================
+def _applicant(batch: uuid.UUID | None, uploader: uuid.UUID | None) -> MagicMock:
+    a = MagicMock()
+    a.upload_batch_id = batch
+    a.created_by_user_id = uploader
+    return a
+
+
+@pytest.mark.asyncio
+async def test_batch_notification_fires_only_when_the_last_row_lands() -> None:
+    """Zero rows still pending means this row finished the batch."""
+    from app.reconciliation import _notify_batch_done
+
+    db = _db()
+    # First scalar: rows still pending. Second: total in the batch, for the copy.
+    db.scalar = AsyncMock(side_effect=[0, 25])
+
+    fired = await _notify_batch_done(db, _applicant(uuid.uuid4(), uuid.uuid4()))
+
+    assert fired is True
+    db.add.assert_called_once()
+    assert db.add.call_args[0][0].kind == "bulk_upload"
+
+
+@pytest.mark.asyncio
+async def test_no_notification_while_rows_are_still_being_read() -> None:
+    """The 24 rows before the last one must stay silent.
+
+    This is the whole reason the batch id exists: without it every scored row
+    looks equally like "the upload finished".
+    """
+    from app.reconciliation import _notify_batch_done
+
+    db = _db()
+    db.scalar = AsyncMock(return_value=7)
+
+    assert await _notify_batch_done(db, _applicant(uuid.uuid4(), uuid.uuid4())) is False
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rows_outside_a_batch_never_notify() -> None:
+    """A single upload or a public application has no batch to complete."""
+    from app.reconciliation import _notify_batch_done
+
+    db = _db()
+    assert await _notify_batch_done(db, _applicant(None, uuid.uuid4())) is False
+    db.scalar.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_no_uploader_means_nobody_to_tell() -> None:
+    from app.reconciliation import _notify_batch_done
+
+    db = _db()
+    assert await _notify_batch_done(db, _applicant(uuid.uuid4(), None)) is False
+    db.scalar.assert_not_awaited()

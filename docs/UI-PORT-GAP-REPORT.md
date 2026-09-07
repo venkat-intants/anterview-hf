@@ -209,7 +209,12 @@ _Each row: live feature → in design? → handling. Each page ends with a must-
 - ◑ expandable detail: real `ats_summary`/`ats_breakdown`/strengths/concerns (design uses **fabricated** competencies) — replace with real
 - ✅ score tone thresholds + rec badge; ✅ skeleton/empty/stagger (add — design lacks)
 - ➕ search + SegTabs (stage) + detail drawer — adopt as presentation; reconcile `stage` vs live `status` enum
-**Must-preserve:** bulk upload (25-cap/PDF/de-dupe/FormData), progress+failure list, shortlist/reject/rescore mutations+invalidation+toasts, real ats_breakdown/strengths/concerns, listApplicants, loading/empty, aria-labels.
+**Must-preserve:** bulk upload (PDF/de-dupe/FormData), progress+failure list, shortlist/reject/rescore mutations+invalidation+toasts, real ats_breakdown/strengths/concerns, listApplicants, loading/empty, aria-labels.
+
+> The "25-cap" this line used to name is gone (E5, 2026-09-07). It existed
+> because scoring ran inside the request at ~10s a file; the reconciler does
+> that now, so the cap is a request-size bound instead — 500 files or 250 MB,
+> whichever comes first, and a batch past either is a 413 rather than a 400.
 
 ### Exams
 **Direction:** `adopt-design+graft-data` — **Risk:** Med.

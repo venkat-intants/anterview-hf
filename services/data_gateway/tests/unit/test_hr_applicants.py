@@ -76,7 +76,11 @@ def test_name_from_filename_humanizes() -> None:
 
 @pytest.mark.asyncio
 async def test_bulk_upload_rejects_oversized_batch() -> None:
-    """More than the per-batch cap -> 400 before any file is touched."""
+    """Past the per-batch file cap -> 413 before any file is touched.
+
+    413 rather than 400 since E5: what is left of this cap is a statement about
+    request size, not about the request being malformed.
+    """
     from app.routers.hr_applicants import _MAX_BULK_FILES, bulk_upload_applicants
 
     db = AsyncMock()
@@ -88,7 +92,20 @@ async def test_bulk_upload_rejects_oversized_batch() -> None:
             ctx=(uuid.uuid4(), uuid.uuid4()),
             db=db,
         )
-    assert exc.value.status_code == 400
+    assert exc.value.status_code == 413
+
+
+def test_bulk_cap_is_a_cohort_not_a_page() -> None:
+    """E5's point: a real intake must not meet this limit.
+
+    The old value was 25, which existed because scoring ran inside the request
+    at ~10s a file. That reason is gone — the reconciler does the scoring — so
+    a graduate intake of a couple of hundred CVs has to go through in one go.
+    """
+    from app.routers.hr_applicants import _MAX_BULK_FILES, _MAX_BULK_TOTAL_BYTES
+
+    assert _MAX_BULK_FILES >= 200
+    assert _MAX_BULK_TOTAL_BYTES >= 100 * 1024 * 1024
 
 
 @pytest.mark.asyncio

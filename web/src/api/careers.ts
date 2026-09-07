@@ -67,6 +67,17 @@ export interface BoardQuery {
   location?: string;
   /** "I have this much experience" — matches roles asking for no more. */
   max_experience_years?: number;
+  /**
+   * "Pays at least this much." Roles that do not publish a salary are still
+   * returned — absence is not a mismatch, and excluding them would empty most
+   * boards.
+   */
+  min_salary?: number;
+  /**
+   * Ordering. `relevance` needs a search term to mean anything and the server
+   * falls back to `newest` without one.
+   */
+  sort?: 'newest' | 'relevance';
   page?: number;
 }
 

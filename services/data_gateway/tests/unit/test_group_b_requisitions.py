@@ -9,6 +9,7 @@ covered by ``tests/integration/smoke_group_b_requisitions.py``.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -269,3 +270,90 @@ def test_held_is_reserved_for_phase_two() -> None:
     # D-05: being held is explicitly NOT an ending.
     assert "held" not in TERMINAL_STATUSES
     assert set(TERMINAL_STATUSES) == {"hired", "rejected"}
+
+
+# ===========================================================================
+# E3 — delivery risk. Pure arithmetic, so tested as arithmetic.
+# ===========================================================================
+_T0 = datetime(2026, 9, 1, tzinfo=UTC)
+
+
+def _risk(**kw: object) -> str | None:
+    from app.requisitions import delivery_risk
+
+    base: dict[str, object] = {
+        "target_hires": 10,
+        "hired": 0,
+        "created_at": _T0,
+        "closes_at": _T0 + timedelta(days=100),
+        "now": _T0 + timedelta(days=50),
+    }
+    base.update(kw)
+    return delivery_risk(**base)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("closes_at", "target", "why"),
+    [
+        (None, 10, "no closing date — nothing to be late for"),
+        (_T0 + timedelta(days=100), None, "no target — no definition of enough"),
+        (_T0 + timedelta(days=100), 0, "a zero target is not a target"),
+    ],
+)
+def test_no_signal_when_the_question_cannot_be_asked(
+    closes_at: object, target: object, why: str
+) -> None:
+    assert _risk(closes_at=closes_at, target_hires=target) is None, why
+
+
+def test_no_signal_before_a_rate_exists() -> None:
+    """Three days of data projects confident nonsense; say nothing instead."""
+    assert _risk(now=_T0 + timedelta(days=3)) is None
+
+
+def test_meeting_the_target_is_on_track_whatever_the_dates_say() -> None:
+    """Even past the closing date — the job is done."""
+    assert (
+        _risk(hired=10, now=_T0 + timedelta(days=200), closes_at=_T0 + timedelta(days=100))
+        == "on_track"
+    )
+
+
+def test_closed_window_with_the_target_unmet_is_off_track() -> None:
+    """An observation, not a forecast — no projection is involved."""
+    assert _risk(hired=3, now=_T0 + timedelta(days=120)) == "off_track"
+
+
+def test_on_track_when_the_observed_rate_reaches_the_target() -> None:
+    # 5 hires in 50 days = 0.1/day; 50 days left projects 5 more -> exactly 10.
+    assert _risk(hired=5) == "on_track"
+
+
+def test_at_risk_when_the_rate_lands_short_but_not_hopelessly() -> None:
+    # 4 in 50 days projects to 8 of 10 — short, above the 0.6 floor.
+    assert _risk(hired=4) == "at_risk"
+
+
+def test_off_track_when_the_rate_is_nowhere_near() -> None:
+    # 1 in 50 days projects to 2 of 10.
+    assert _risk(hired=1) == "off_track"
+
+
+def test_zero_hires_halfway_through_is_off_track() -> None:
+    """The case an HR manager most needs surfaced."""
+    assert _risk(hired=0) == "off_track"
+
+
+def test_risk_never_depends_on_a_candidate() -> None:
+    """E3 describes an opening's throughput, never a person (D-05).
+
+    Guarded by signature: there is no parameter through which a candidate's
+    identity or score could reach this, so no future edit can make the board's
+    risk badge a statement about anybody.
+    """
+    import inspect
+
+    from app.requisitions import delivery_risk
+
+    params = set(inspect.signature(delivery_risk).parameters)
+    assert params == {"target_hires", "hired", "created_at", "closes_at", "now"}

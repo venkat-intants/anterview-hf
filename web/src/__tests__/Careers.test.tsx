@@ -137,9 +137,16 @@ describe('Careers board', () => {
   it('shows no salary block at all when there is none to show', async () => {
     // Null covers both a withheld band and an unrecorded one, so there is
     // deliberately no "salary not specified" copy to tell them apart.
-    const { container } = renderBoard();
-    await screen.findByText('Platform Engineer');
-    expect(container.textContent).not.toMatch(/salary/i);
+    //
+    // Scoped to the CARD rather than the whole page: the board's own filter
+    // chrome legitimately says "salary" ("Any salary"), and asserting over the
+    // container would make this test fail for a reason that has nothing to do
+    // with what a candidate is told about this role.
+    renderBoard();
+    const title = await screen.findByText('Platform Engineer');
+    const card = title.closest('a');
+    expect(card).not.toBeNull();
+    expect(card?.textContent).not.toMatch(/salary/i);
   });
 
   it('offers only the filters this company actually has', async () => {
@@ -148,6 +155,28 @@ describe('Careers board', () => {
     expect(screen.getByLabelText('Department')).toBeInTheDocument();
     expect(screen.getByLabelText('Location')).toBeInTheDocument();
     expect(screen.getByLabelText('Employment type')).toBeInTheDocument();
+  });
+
+  it('always offers the salary filter, unlike the facet dropdowns', async () => {
+    // Not a facet: the rungs are fixed, so there is nothing to be empty of and
+    // no reason to hide it on a board whose openings predate the salary fields.
+    renderBoard();
+    await screen.findByText('Platform Engineer');
+    expect(screen.getByLabelText('Minimum salary')).toBeInTheDocument();
+  });
+
+  it('offers relevance sorting only once there is a search term to rank by', async () => {
+    // Without a query it would have nothing to rank and would quietly behave
+    // as newest while claiming otherwise.
+    renderBoard();
+    await screen.findByText('Platform Engineer');
+    expect(screen.queryByLabelText('Sort by')).not.toBeInTheDocument();
+  });
+
+  it('shows the sort control when the URL carries a query', async () => {
+    renderBoard('/careers/acme-test?q=engineer');
+    await screen.findByText('Platform Engineer');
+    expect(screen.getByLabelText('Sort by')).toBeInTheDocument();
   });
 
   it('hides a dropdown entirely when there is nothing to put in it', async () => {

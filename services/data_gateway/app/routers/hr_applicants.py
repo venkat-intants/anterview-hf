@@ -24,7 +24,7 @@ from typing import Annotated, Any
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, BeforeValidator, EmailStr
+from pydantic import BaseModel, BeforeValidator, EmailStr, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -57,10 +57,22 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/hr", tags=["hr-applicants"])
 
 _MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB
-# Per batch. The cap is now about request size rather than time: since Group E
-# the scoring happens in the background, so a batch costs one PDF extraction and
-# one upload per file instead of a ten-second model call.
-_MAX_BULK_FILES = 25
+# Per batch. E5 asks for "the present batch limit" to go, and the 25 that stood
+# here was the old time-based one: scoring ran inside the request at roughly ten
+# seconds a file, so 25 was already four minutes on one connection. That reason
+# died when Group E moved scoring to the reconciler — a file now costs one PDF
+# extraction and one upload.
+#
+# What is left is a REQUEST-SIZE bound, so it is expressed as one: a byte budget
+# for the batch, plus a file count high enough that a real cohort never meets it
+# and low enough that a runaway client cannot open ten thousand file handles.
+# An HR manager uploading a graduate intake of 200 CVs is the case E5 exists
+# for, and it now succeeds.
+_MAX_BULK_FILES = 500
+# 250 MB. Above this the multipart body itself is the problem — the proxy in
+# front of the service will drop it long before we finish reading, and a limit
+# that produces a readable error beats one that produces a truncated upload.
+_MAX_BULK_TOTAL_BYTES = 250 * 1024 * 1024
 _VALID_STATUSES = {"new", "shortlisted", "rejected", "interviewed", "hired"}
 # Status transitions that warrant a decision email to the candidate.
 _DECISION_EMAIL_STATUSES = {"shortlisted", "rejected", "hired"}
@@ -346,6 +358,7 @@ async def _ingest_resume(
     level: str,
     jd_text: str | None,
     score_now: bool = True,
+    upload_batch_id: uuid.UUID | None = None,
 ) -> Applicant:
     """Extract → store → (optionally score) → persist ONE resume.
 
@@ -424,6 +437,9 @@ async def _ingest_resume(
         # synchronous upload whose scorer was down. Both leave a placeholder
         # name, and both want the reconciler to come back for it.
         pending_enrichment=score is None,
+        # Set here rather than by the caller: this helper commits, so a field
+        # assigned after it returns would not be part of that transaction.
+        upload_batch_id=upload_batch_id,
         created_at=now,
         updated_at=now,
     )
@@ -578,16 +594,22 @@ async def bulk_upload_applicants(
         raise HTTPException(status_code=400, detail="No files were uploaded.")
     if len(files) > _MAX_BULK_FILES:
         raise HTTPException(
-            status_code=400,
+            status_code=413,
             detail=f"Up to {_MAX_BULK_FILES} resumes per batch — you sent {len(files)}.",
         )
 
     job_title = target_job_title.strip() or "General Role"
     level = target_level.strip() or "mid"
 
+    # One id for the whole batch, so the reconciler can tell when the last row
+    # of THIS upload has finished being read and emit a single notification
+    # (A4) rather than one per applicant.
+    batch_id = uuid.uuid4()
+
     created: list[ApplicantOut] = []
     failed: list[dict[str, str]] = []
     embed_ids: list[uuid.UUID] = []
+    batch_bytes = 0
     for f in files:
         fname = f.filename or "resume.pdf"
         # Browsers usually send application/pdf; some send octet-stream — allow both
@@ -606,6 +628,13 @@ async def bulk_upload_applicants(
         if len(raw) > _MAX_RESUME_BYTES:
             failed.append({"filename": fname, "error": "over 5 MB"})
             continue
+        batch_bytes += len(raw)
+        if batch_bytes > _MAX_BULK_TOTAL_BYTES:
+            # Reported per file rather than raised, so the files already stored
+            # stay stored. Aborting here would discard work that succeeded and
+            # give the operator nothing to retry from.
+            failed.append({"filename": fname, "error": "batch size limit reached"})
+            continue
         try:
             applicant = await _ingest_resume(
                 db=db,
@@ -617,6 +646,7 @@ async def bulk_upload_applicants(
                 level=level,
                 jd_text=target_jd_text,
                 score_now=False,
+                upload_batch_id=batch_id,
             )
             created.append(_to_out(applicant))
             embed_ids.append(applicant.id)
@@ -906,6 +936,141 @@ async def reindex_applicants(ctx: HrCtxDep, db: DbSessionDep) -> ReindexResult:
 async def get_applicant(applicant_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep) -> ApplicantOut:
     _hr_uid, company_id = ctx
     return _to_out(await _get_owned(db, company_id, applicant_id))
+
+
+class CriterionScore(BaseModel):
+    """One competency's score inside a round, with the evidence for it."""
+
+    competency_id: str
+    name: str
+    score: float | None = None
+    evidence: str | None = None
+
+
+class RoundResultOut(BaseModel):
+    """One round a candidate has sat, in both layers (C8).
+
+    ``criteria`` is the evaluation that decided progression; ``axes`` is the
+    frozen four-axis comparison. Interview rounds carry both, deterministic
+    rounds only the first.
+    """
+
+    round_id: str
+    round_title: str
+    position: int
+    kind: str
+    percent: float | None = None
+    passed: bool | None = None
+    graded_by: str
+    evidence: str | None = None
+    criteria: list[CriterionScore] = Field(default_factory=list)
+    axes: dict[str, float] = Field(default_factory=dict)
+    created_at: datetime
+
+
+def _criteria_list(raw: Any) -> list[CriterionScore]:
+    """Normalise ``round_results.criterion_scores`` into a stable list.
+
+    The column is JSONB written by the scorer, so its shape is a contract with
+    another service rather than something the database enforces. Two shapes are
+    accepted because both have been written: a list of objects, and a mapping
+    of competency id to score. Anything else yields an empty list rather than a
+    500 — a malformed score must not make a candidate unopenable.
+    """
+    if isinstance(raw, list):
+        out: list[CriterionScore] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            cid = str(item.get("competency_id") or item.get("id") or "").strip()
+            if not cid:
+                continue
+            score = item.get("score")
+            out.append(
+                CriterionScore(
+                    competency_id=cid,
+                    name=str(item.get("name") or item.get("competency_name") or cid),
+                    score=float(score) if isinstance(score, int | float) else None,
+                    evidence=(str(item["evidence"])[:800] if item.get("evidence") else None),
+                )
+            )
+        return out
+    if isinstance(raw, dict):
+        return [
+            CriterionScore(
+                competency_id=str(k),
+                name=str(k),
+                score=float(v) if isinstance(v, int | float) else None,
+            )
+            for k, v in raw.items()
+        ]
+    return []
+
+
+@router.get(
+    "/applicants/{applicant_id}/round-results",
+    response_model=list[RoundResultOut],
+    summary="Per-round scores for one candidate, criterion by criterion",
+)
+async def list_applicant_round_results(
+    applicant_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> list[RoundResultOut]:
+    """Why a candidate scored what they scored.
+
+    The scores existed already — C8 has been writing per-criterion results with
+    evidence since the workflow engine shipped — but nothing read them back, so
+    the console showed a composite and no way to ask what produced it. That is
+    the gap the UI/UX specification's §7 describes: a score presented as an
+    unexplained truth.
+
+    Superseded attempts are excluded. A retake supersedes rather than
+    overwrites, and showing both without saying which counted would make the
+    drawer harder to read than the composite it explains.
+
+    Tenant-scoped through the applicant, which ``_get_owned`` has already
+    checked — the join then constrains on the same company_id rather than
+    trusting the enrolment chain.
+    """
+    _hr_uid, company_id = ctx
+    await _get_owned(db, company_id, applicant_id)
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT rr.round_id, rr.percent, rr.passed, rr.graded_by,"
+                "       rr.evidence, rr.criterion_scores, rr.axes, rr.created_at,"
+                "       wr.title AS round_title, wr.position, wr.kind"
+                "  FROM round_results rr"
+                "  JOIN enrolments e ON e.id = rr.enrolment_id"
+                "  JOIN workflow_rounds wr ON wr.id = rr.round_id"
+                " WHERE e.applicant_id = :a AND rr.company_id = :c"
+                "   AND rr.superseded_at IS NULL AND e.deleted_at IS NULL"
+                " ORDER BY wr.position, rr.created_at"
+            ),
+            {"a": applicant_id, "c": company_id},
+        )
+    ).mappings().all()
+
+    return [
+        RoundResultOut(
+            round_id=str(r["round_id"]),
+            round_title=r["round_title"],
+            position=int(r["position"]),
+            kind=r["kind"],
+            percent=float(r["percent"]) if r["percent"] is not None else None,
+            passed=r["passed"],
+            graded_by=r["graded_by"],
+            evidence=r["evidence"],
+            criteria=_criteria_list(r["criterion_scores"]),
+            axes={
+                k: float(v)
+                for k, v in (r["axes"] or {}).items()
+                if isinstance(v, int | float)
+            },
+            created_at=r["created_at"],
+        )
+        for r in rows
+    ]
 
 
 @router.patch("/applicants/{applicant_id}", response_model=ApplicantOut)

@@ -32,12 +32,45 @@ import { toast } from '../lib/toast';
  */
 export class ApiError extends Error {
   status: number;
+  /**
+   * The response body's `detail`, verbatim, when the server sent a structured
+   * one rather than a string.
+   *
+   * FastAPI's `HTTPException(detail=...)` accepts any JSON value, and a few
+   * endpoints use an object to say more than prose can — see the AC-12 close
+   * guard in hr_requisitions, which returns the number of unresolved
+   * candidates so the console can prompt with a count rather than a sentence.
+   * Before this existed, an object detail was assigned straight to `message`
+   * and rendered as "[object Object]".
+   */
+  detail?: unknown;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, detail?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.detail = detail;
   }
+}
+
+/**
+ * Turn a response body's `detail` into (message, detail).
+ *
+ * A string detail is the message and carries no structure. An object detail is
+ * kept whole for callers that know its shape, and its `message` field — if it
+ * has one — becomes the human-readable text so a generic error toast still
+ * reads correctly.
+ */
+function splitDetail(
+  detail: unknown,
+  fallback: string,
+): { message: string; detail?: unknown } {
+  if (typeof detail === 'string' && detail) return { message: detail };
+  if (detail && typeof detail === 'object') {
+    const msg = (detail as { message?: unknown }).message;
+    return { message: typeof msg === 'string' && msg ? msg : fallback, detail };
+  }
+  return { message: fallback };
 }
 
 /**
@@ -205,12 +238,10 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
 
       if (!retryResponse.ok) {
         const errorBody = (await retryResponse.json().catch(() => ({}))) as {
-          detail?: string;
+          detail?: unknown;
         };
-        throw new ApiError(
-          errorBody.detail ?? `HTTP ${retryResponse.status}`,
-          retryResponse.status,
-        );
+        const d = splitDetail(errorBody.detail, `HTTP ${retryResponse.status}`);
+        throw new ApiError(d.message, retryResponse.status, d.detail);
       }
 
       return parseJsonOrEmpty<T>(retryResponse);
@@ -227,9 +258,10 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
 
   if (!response.ok) {
     const errorBody = (await response.json().catch(() => ({}))) as {
-      detail?: string;
+      detail?: unknown;
     };
-    throw new ApiError(errorBody.detail ?? `HTTP ${response.status}`, response.status);
+    const d = splitDetail(errorBody.detail, `HTTP ${response.status}`);
+    throw new ApiError(d.message, response.status, d.detail);
   }
 
   return parseJsonOrEmpty<T>(response);
@@ -551,10 +583,12 @@ export async function uploadWithProgress<T>(
     }
   }
 
-  let detail = `HTTP ${result.status}`;
+  let split: { message: string; detail?: unknown } = {
+    message: `HTTP ${result.status}`,
+  };
   try {
-    const body = JSON.parse(result.responseText) as { detail?: string };
-    if (body.detail) detail = body.detail;
+    const body = JSON.parse(result.responseText) as { detail?: unknown };
+    split = splitDetail(body.detail, `HTTP ${result.status}`);
   } catch {
     // leave default
   }
@@ -567,7 +601,7 @@ export async function uploadWithProgress<T>(
   // Deliberately only THIS throw. The network, timeout and session-expired paths
   // above stay plain Errors: no HTTP response was received in those cases, so
   // there is no status to carry and "retry" really is the right reading.
-  throw new ApiError(detail, result.status);
+  throw new ApiError(split.message, result.status, split.detail);
 }
 
 /** Raw clientFetch for callers that need full control over the URL. */

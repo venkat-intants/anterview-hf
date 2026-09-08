@@ -1,17 +1,22 @@
 ---
-title: Intants AI Interview
+title: AntHire AI Interview
 emoji: 🎙️
 colorFrom: indigo
 colorTo: purple
 sdk: docker
 app_port: 7860
 pinned: false
-short_description: Voice-first AI interview platform (demo deployment)
+short_description: AntHire — voice-first AI interview platform (demo deployment)
 ---
 
-# Intants AI Voice Interview Platform — Hugging Face Space
+# AntHire — Voice-First AI Interview Platform (Hugging Face Space)
 
-This repo is the **Hugging Face Spaces deployment** of the Intants platform: the
+**AntHire** is the product name for the Intants AI voice interview platform. The
+rename currently applies to this README only — the source tree, `CLAUDE.md`,
+`docs/`, the service names and the deployed Space still read *Intants* /
+*Anterview*.
+
+This repo is the **Hugging Face Spaces deployment** of that platform: the
 React frontend, all four FastAPI services, and the LiveKit interview worker run
 inside **one free-tier Docker Space** (2 vCPU / 16 GB RAM). State lives in
 external free-tier services (Neon Postgres, Upstash Redis, Cloudflare R2,
@@ -91,6 +96,122 @@ every push.
 
 Everything else is the unmodified platform source. Project documentation:
 [README-project.md](README-project.md).
+
+## AntHire Phase 2.5 — change checklist
+
+Everything below landed **after** the Phase 2 sign-off. Each shipped item names
+the PR that carried it so the claim can be checked against the diff; each open
+item names where it is tracked. Nothing here is a plan — ticked means merged to
+`main`, unticked means open.
+
+### Shipped
+
+**Candidate ↔ HR bridge** (PR #13)
+- [x] Public per-company careers board — `GET /careers/{slug}` (unauthenticated)
+- [x] Signed-in cross-tenant feed — `GET /users/me/open-roles`; a candidate no
+      longer needs somebody to send them a link
+- [x] Account activation from a guest application + a candidate applications
+      page. **No score or threshold is ever returned to the person it describes.**
+- [x] HR side: pipeline board, attention panel, decision queue, requisition
+      dashboard, screening-question authoring
+
+**Live provider wiring — four integrations that failed silently** (PRs #13, #14)
+- [x] Every emailed candidate link opened a dead port: `APP_BASE_URL` /
+      `EXAM_LINK_BASE_URL` / `INTERVIEW_LINK_BASE_URL` did not follow the dev
+      server to `:5174` when CORS did. Now asserted — a link base must open an
+      origin CORS allows.
+- [x] Sarvam retired `bulbul:v2`, so the interviewer could not speak; the config
+      default lagged `sarvam_tts.py`, and the default is what wins at runtime.
+- [x] Google retired `gemini-2.5-flash` (HTTP 404 for new users) across all three
+      services → `gemini-flash-lite-latest`, deliberately a floating alias since a
+      hard pin is what expired. Fixed again in the deploy targets that override a
+      pydantic default: `space/entrypoint.sh`, `render.yaml`, both `.env.example`.
+- [x] `why-match` returned 502 on every call — the prompt asked for a bare
+      sentence while `call_llm_json` demanded an object. Tests now derive their
+      fixture from the prompt, so the two halves cannot drift apart again.
+- [x] JDoodle credentials wired, so coding rounds execute; `admin_ops` pins
+      `tzdata` (it is the service that calls `ZoneInfo`)
+
+**DPDP erasure coverage** (PR #13)
+- [x] 11 tables were in neither `ERASED_TABLES` nor `EXCLUDED_TABLES`; all now
+      declared with reasons
+- [x] `application_answers` is deleted — candidate-authored prose keeps
+      identifying them after `applicants` is anonymised
+- [x] `enrolments.scored_resume_s3_key` collected, so excluding that row no
+      longer orphans a resume in the bucket
+- [x] `.local-cvs/` gitignored — it holds real candidate CVs
+
+**Phase 2 / UI-UX specification gaps** (PR #15)
+- [x] **AC-12** — closing a requisition while people are mid-process now refuses
+      with 409 carrying the count and the decision-queue path;
+      `acknowledge_unresolved` closes anyway and the audit entry records
+      `closed_with_unresolved`. The console renders the refusal as a prompt, not
+      an error toast — a 409 here is a question.
+- [x] **§7 / §6.5** — `GET /hr/applicants/{id}/round-results` (superseded retakes
+      excluded) plus a drawer rendering per-criterion scores and their evidence
+      *separately* from the frozen axes. `passed` renders as "advanced / held for
+      your decision", never pass/fail.
+- [x] **E5** — the 25-file bulk cap existed because of in-request scoring that
+      Group E already moved to the reconciler. Now a request-size bound: 500
+      files or 250 MB, 413 rather than 400. A 200-CV graduate intake goes through.
+- [x] **A4** — `applicants.upload_batch_id` (partial index, pending rows only)
+      gives the reconciler a handle, and it emits one notification when a batch's
+      last row finishes. Not a batches table: a batch has no state beyond its rows.
+- [x] **E3** — `delivery_risk()` projects the observed hire rate to the closing
+      date. Arithmetic, not a model. Returns `None` — rendered as nothing, never
+      as "fine" — when the question cannot honestly be asked. Only `at_risk` and
+      `off_track` are badged.
+- [x] Job board `min_salary` filter (roles that publish no salary are kept —
+      absence is not a mismatch) and `sort`, offered only alongside a query
+- [x] `ApiError` carries the response body's structured `detail`; an object
+      detail used to render as `[object Object]`
+
+**CI and test safety** (PRs #14, #16)
+- [x] The integration suite was writing into the live Neon database the Space
+      uses — 571 test rows against 23 real ones, deleted by hand 2026-09-07.
+      Collection now aborts unless `DATABASE_URL` is a loopback host;
+      `ALLOW_REMOTE_TEST_DB=1` overrides, and shows up in shell history.
+- [x] `pypdf` → 6.17.0 (CVE-2026-84309 / -84310 / -84311); the
+      `postcss-selector-parser` advisory (GHSA-w9m9-85wc-3x92) cleared inside the
+      6.x line, `package.json` untouched
+- [x] mypy: `.rowcount` cast to `CursorResult`, `Seniority` literal cast in
+      `workflow_tools.py`; 11 new bandit B608 re-read against the source (every
+      caller-supplied value is a bound parameter) and baselined
+- [x] Green CI restored on `main` — `sync-to-space` runs on `workflow_run` and is
+      skipped while CI is red, so `main` and the deployed Space had drifted
+
+Suites at the close of Phase 2.5: 954 `data_gateway` + 555 `interview_core` +
+202 `feedback_billing` + 153 `admin_ops` + 773 frontend, with mypy, ruff and
+eslint clean and the bandit baseline matching 22/22.
+
+### Remaining — open going into Phase 3
+
+Accepted risks (owner and firing trigger in [`docs/ACCEPTED-RISKS.md`](docs/ACCEPTED-RISKS.md)):
+- [ ] **AR-1** — the demo tier is not India-resident. Fires on a
+      residency-asserting bid, or on Bedrock Mumbai approval.
+- [ ] **AR-2** — one symmetric HS256 secret signs and verifies for every service
+- [ ] **AR-3** — candidate-authored code executes on JDoodle, a third party
+- [ ] **AR-4** — no production avatar gate, and the Tier-2 avatar is not built.
+      `AVATAR_PROVIDER=custom` is not a recognised value: the worker logs
+      `unknown avatar_provider=…; falling back to simli` — a WARNING, not a
+      startup refusal, so a deploy that sets it still runs on a US-hosted avatar.
+
+Platform work:
+- [ ] Bhashini ULCA speech — approval pending; env-swappable via `SPEECH_*_PROVIDER`
+- [ ] mypy strict per service. The root `mypy.ini` CI uses is deliberately
+      non-strict and its header explains why; the per-service
+      `[tool.mypy] strict = true` blocks are never loaded.
+- [ ] Tier-2 AWS Mumbai migration — Bedrock, RDS, ElastiCache, S3 (SSE-KMS), SES,
+      EKS, Helm + ArgoCD (roadmap Sprints 8–9)
+- [ ] Custom avatar — Three.js + Ready Player Me + Rhubarb-Lipsync, replacing the
+      hosted vendor (Sprint 10). Hard gate before any government bid.
+- [ ] DPDP consent-ledger hardening, penetration test, 20-lakh-user capacity
+      proof (Sprint 11)
+- [ ] The **AntHire** name is applied to this README only. `CLAUDE.md`, `HLD.md`,
+      `LLD.md` and the rest of `docs/` still say *Intants* / *Anterview*, as do
+      the service names and the deployed Space.
+
+---
 
 ## Limits to expect on the free tier
 

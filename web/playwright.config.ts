@@ -1,4 +1,4 @@
-// Playwright configuration for Intants web E2E smoke tests.
+// Playwright configuration for AntHire web E2E smoke tests.
 // Targets the locally running Vite dev server (http://localhost:5174).
 // Run: npm run e2e
 // Prerequisites: data_gateway on :8002, interview_core on :8001, Vite on :5174, Postgres.

@@ -207,7 +207,7 @@ export default function AdminJobJd() {
                   id="job-select"
                   aria-label="Select job posting"
                   className={cn(
-                    'w-full rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)]',
+                    'w-full rounded-[12px] border border-white/[0.1] bg-secondary',
                     'text-[14px] text-white placeholder:text-[#5a5f66]',
                     'focus:border-[var(--accent)] focus:ring-0',
                   )}

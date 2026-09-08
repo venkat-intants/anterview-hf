@@ -66,7 +66,7 @@ const fadeUp: Variants = {
 // ── Inline skeleton (avoids @/components/ui/skeleton — shadcn forbidden on this page) ──
 
 function SkeletonBlock({ className }: { className?: string }) {
-  return <div className={cn('animate-pulse rounded-[24px] bg-white/[0.06]', className)} />;
+  return <div className={cn('animate-pulse rounded-[24px] bg-[var(--ui-inset)]', className)} />;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -104,11 +104,11 @@ function EmptyState({ onUploadSuccess }: { onUploadSuccess: () => void }) {
       className="flex flex-col items-center justify-center gap-4 py-16 text-center"
     >
       <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.1)] ring-1 ring-[rgba(var(--accent-rgb),0.2)]">
-        <FileText className="h-7 w-7 text-[#60a5fa]" aria-hidden="true" />
+        <FileText className="h-7 w-7 text-[var(--ui-info)]" aria-hidden="true" />
       </div>
       <div>
-        <p className="text-[15px] font-semibold text-white">{t('resume.noResumeTitle')}</p>
-        <p className="mt-1 text-[13px] text-[#888b91]">{t('resume.noResumeDesc')}</p>
+        <p className="text-[15px] font-semibold text-foreground">{t('resume.noResumeTitle')}</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">{t('resume.noResumeDesc')}</p>
       </div>
       <div className="w-full max-w-sm px-4">
         <FileUploadZone
@@ -183,7 +183,7 @@ function ResumeVersionRow({
         'flex flex-col gap-3 rounded-[20px] border p-4 transition-colors sm:flex-row sm:items-center',
         item.is_current
           ? 'border-[rgba(var(--accent-rgb),0.25)] bg-[linear-gradient(160deg,rgba(0,27,51,0.6),rgba(3,7,25,0.6))]'
-          : 'border-white/[0.08] bg-[#0f0f10] hover:bg-white/[0.02]',
+          : 'border-border bg-card hover:bg-[var(--ui-inset-soft)]',
       )}
       data-testid={`resume-version-${item.resume_id}`}
     >
@@ -194,17 +194,17 @@ function ResumeVersionRow({
             'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]',
             item.is_current
               ? 'bg-[rgba(39,201,63,0.14)]'
-              : 'bg-white/[0.06]',
+              : 'bg-[var(--ui-inset)]',
           )}
         >
           {item.is_current ? (
             <FileCheck2
-              className="h-5 w-5 text-[#27c93f]"
+              className="h-5 w-5 text-[var(--ui-ok)]"
               aria-hidden="true"
             />
           ) : (
             <FileText
-              className="h-5 w-5 text-[#888b91]"
+              className="h-5 w-5 text-muted-foreground"
               aria-hidden="true"
             />
           )}
@@ -212,7 +212,7 @@ function ResumeVersionRow({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p
-              className="truncate text-[13.5px] font-medium text-white"
+              className="truncate text-[13.5px] font-medium text-foreground"
               title={item.filename}
             >
               {item.filename}
@@ -223,7 +223,7 @@ function ResumeVersionRow({
               </StatusTag>
             )}
           </div>
-          <p className="mt-0.5 text-[12px] text-[#888b91]">
+          <p className="mt-0.5 text-[12px] text-muted-foreground">
             {t('resume.uploaded')} {formatDate(item.uploaded_at)} ·{' '}
             {formatBytes(item.text_length)} {t('resume.extracted')}
           </p>
@@ -237,7 +237,7 @@ function ResumeVersionRow({
             href={item.download_url}
             download={item.filename}
             aria-label={`Download ${item.filename}`}
-            className="inline-flex items-center gap-1.5 rounded-[9999px] border border-white/10 bg-white/[0.06] px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-[var(--ui-inset)] px-3.5 py-1.5 text-[12.5px] font-semibold text-foreground transition-colors hover:bg-[var(--ui-inset-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
             {t('resume.download')}
@@ -370,11 +370,11 @@ export default function Resume() {
         <Reveal>
           <h1
             id="resume-heading"
-            className="text-[28px] font-semibold tracking-[-1px] text-white"
+            className="text-[28px] font-semibold tracking-[-1px] text-foreground"
           >
             {t('resume.pageTitle')}
           </h1>
-          <p className="mt-1 text-[14px] text-[#888b91]">{t('resume.pageDesc')}</p>
+          <p className="mt-1 text-[14px] text-muted-foreground">{t('resume.pageDesc')}</p>
         </Reveal>
       </motion.div>
 
@@ -398,16 +398,16 @@ export default function Resume() {
                 <GlassCard className="p-5">
                   <div className="flex items-center gap-3">
                     <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] bg-[rgba(39,201,63,0.14)]">
-                      <FileCheck2 size={22} className="text-[#27c93f]" aria-hidden="true" />
+                      <FileCheck2 size={22} className="text-[var(--ui-ok)]" aria-hidden="true" />
                     </span>
                     <div className="min-w-0">
                       <p
-                        className="truncate text-[14px] font-medium text-white"
+                        className="truncate text-[14px] font-medium text-foreground"
                         title={currentResume.filename}
                       >
                         {currentResume.filename}
                       </p>
-                      <p className="text-[12px] text-[#888b91]">
+                      <p className="text-[12px] text-muted-foreground">
                         {formatBytes(currentResume.text_length)} ·{' '}
                         {t('resume.uploaded')} {formatDate(currentResume.uploaded_at)}
                       </p>
@@ -420,7 +420,7 @@ export default function Resume() {
                         href={currentResume.download_url}
                         download={currentResume.filename}
                         aria-label={`Download ${currentResume.filename}`}
-                        className="inline-flex flex-1 items-center justify-center gap-2 rounded-[9999px] border border-white/10 bg-white/[0.06] px-5 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-white/[0.1]"
+                        className="inline-flex flex-1 items-center justify-center gap-2 rounded-[9999px] border border-border bg-[var(--ui-inset)] px-5 py-2.5 text-[14px] font-semibold text-foreground transition-colors hover:bg-[var(--ui-inset-strong)]"
                       >
                         <Download size={15} aria-hidden="true" />
                         {t('resume.download')}
@@ -443,7 +443,7 @@ export default function Resume() {
               {currentError && (
                 <div
                   role="alert"
-                  className="flex items-center gap-2 rounded-[16px] border border-[rgba(230,113,79,0.3)] bg-[rgba(230,113,79,0.1)] px-4 py-3 text-[13px] text-[#e6714f]"
+                  className="flex items-center gap-2 rounded-[16px] border border-[rgba(230,113,79,0.3)] bg-[rgba(230,113,79,0.1)] px-4 py-3 text-[13px] text-[var(--ui-danger)]"
                 >
                   <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
                   {t('resume.currentLoadError')}
@@ -453,12 +453,12 @@ export default function Resume() {
               {/* Upload new version */}
               <GlassCard className="p-5">
                 <div className="mb-3 flex items-center gap-2">
-                  <Upload className="h-4 w-4 text-[#60a5fa]" aria-hidden="true" />
-                  <h2 className="text-[15px] font-semibold text-white">
+                  <Upload className="h-4 w-4 text-[var(--ui-info)]" aria-hidden="true" />
+                  <h2 className="text-[15px] font-semibold text-foreground">
                     {t('resume.uploadTitle')}
                   </h2>
                 </div>
-                <p className="mb-4 text-[12.5px] text-[#888b91]">{t('resume.uploadDesc')}</p>
+                <p className="mb-4 text-[12.5px] text-muted-foreground">{t('resume.uploadDesc')}</p>
                 <FileUploadZone
                   label="Resume"
                   accept="application/pdf"
@@ -473,7 +473,7 @@ export default function Resume() {
           <div className="lg:col-span-3">
             <Reveal dir="right">
               <GlassCard className="p-5">
-                <h2 className="mb-4 text-[15px] font-semibold text-white">
+                <h2 className="mb-4 text-[15px] font-semibold text-foreground">
                   {t('resume.versionHistory', { count: resumeList.length })}
                 </h2>
                 <div

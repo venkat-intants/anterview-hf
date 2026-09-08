@@ -1,5 +1,5 @@
-/* Anterview global styles — import ONCE in main.tsx:
-     import './anterview-pages/src/styles/anterview.css';
+/* AntHire global styles — import ONCE in main.tsx:
+     import './design/styles/anthire.css';
    Provides fonts + motion keyframes as a fallback for environments where the
    Tailwind token merge hasn't been applied yet, plus a reduced-motion guard. */
 

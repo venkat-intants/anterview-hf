@@ -66,16 +66,16 @@ export function AppShell({ role, active, userName = 'Sneha Reddy', children }: A
   const initials = userName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
   return (
-    <div className="av-scroll relative min-h-screen bg-black font-sans text-white">
+    <div className="av-scroll relative min-h-screen bg-black font-sans text-foreground">
       <AuroraField subtle />
 
-      <header className="sticky top-0 z-30 flex items-center gap-4 border-b border-white/[0.06] bg-black/60 px-6 py-3 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 flex items-center gap-4 border-b border-border bg-black/60 px-6 py-3 backdrop-blur-xl">
         <Link to="/" className="flex items-center gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded-lg">
           <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]">
-            <span className="h-2.5 w-2.5 rounded-full bg-white" />
+            <span className="h-2.5 w-2.5 rounded-full bg-primary" />
           </span>
-          <span className="hidden text-[15px] font-semibold tracking-[-0.4px] sm:inline">Anterview</span>
-          <span className="ml-1 hidden rounded-pill bg-white/[0.06] px-2 py-0.5 text-[10px] uppercase tracking-[1px] text-[#70757c] sm:inline">
+          <span className="hidden text-[15px] font-semibold tracking-[-0.4px] sm:inline">AntHire</span>
+          <span className="ml-1 hidden rounded-pill bg-[var(--ui-inset)] px-2 py-0.5 text-[10px] uppercase tracking-[1px] text-[var(--ui-faint)] sm:inline">
             {ROLE_LABEL[role]}
           </span>
         </Link>
@@ -91,7 +91,7 @@ export function AppShell({ role, active, userName = 'Sneha Reddy', children }: A
                 aria-current={on ? 'page' : undefined}
                 className={cn(
                   'flex items-center gap-2 rounded-[10px] px-3 py-2 text-[13.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-                  on ? 'bg-[rgba(var(--accent-rgb),0.14)] text-white' : 'text-[#888b91] hover:text-white',
+                  on ? 'bg-[rgba(var(--accent-rgb),0.14)] text-foreground' : 'text-muted-foreground hover:text-foreground',
                 )}
               >
                 <Icon size={16} aria-hidden="true" />
@@ -109,21 +109,21 @@ export function AppShell({ role, active, userName = 'Sneha Reddy', children }: A
               aria-haspopup="menu"
               aria-expanded={langOpen}
               aria-label="Change language"
-              className="flex items-center gap-1.5 rounded-[10px] border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-[13px] text-[#b8babf] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="flex items-center gap-1.5 rounded-[10px] border border-border bg-[var(--ui-inset)] px-3 py-2 text-[13px] text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               <Globe size={15} aria-hidden="true" />
               {LANGS[lang]}
               <ChevronDown size={13} aria-hidden="true" />
             </button>
             {langOpen ? (
-              <div role="menu" className="absolute right-0 top-[calc(100%+8px)] z-40 w-32 overflow-hidden rounded-[12px] border border-white/[0.1] bg-[#0f0f10] p-1 shadow-2xl">
+              <div role="menu" className="absolute right-0 top-[calc(100%+8px)] z-40 w-32 overflow-hidden rounded-[12px] border border-border bg-card p-1 shadow-2xl">
                 {LANGS.map((l, i) => (
                   <button
                     key={l}
                     role="menuitemradio"
                     aria-checked={i === lang}
                     onClick={() => { setLang(i); setLangOpen(false); }}
-                    className={cn('flex w-full items-center rounded-[8px] px-3 py-2 text-left text-[13px]', i === lang ? 'bg-white/[0.06] text-white' : 'text-[#b8babf] hover:bg-white/[0.04]')}
+                    className={cn('flex w-full items-center rounded-[8px] px-3 py-2 text-left text-[13px]', i === lang ? 'bg-[var(--ui-inset)] text-foreground' : 'text-[var(--ui-soft)] hover:bg-[var(--ui-inset)]')}
                   >
                     {l}
                   </button>
@@ -132,7 +132,7 @@ export function AppShell({ role, active, userName = 'Sneha Reddy', children }: A
             ) : null}
           </div>
 
-          <button aria-label="Notifications" className="relative rounded-[10px] border border-white/[0.1] bg-white/[0.04] p-2 text-[#b8babf] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
+          <button aria-label="Notifications" className="relative rounded-[10px] border border-border bg-[var(--ui-inset)] p-2 text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
             <Bell size={16} aria-hidden="true" />
             <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
           </button>
@@ -143,18 +143,18 @@ export function AppShell({ role, active, userName = 'Sneha Reddy', children }: A
               onClick={() => { setMenuOpen((v) => !v); setLangOpen(false); }}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
-              className="flex items-center gap-2 rounded-pill border border-white/[0.1] bg-white/[0.04] py-1 pl-1 pr-2.5 hover:border-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="flex items-center gap-2 rounded-pill border border-border bg-[var(--ui-inset)] py-1 pl-1 pr-2.5 hover:border-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               <Avatar initials={initials} size={28} />
               <span className="hidden text-[13px] font-medium md:inline">{userName}</span>
               <ChevronDown size={13} aria-hidden="true" />
             </button>
             {menuOpen ? (
-              <div role="menu" className="absolute right-0 top-[calc(100%+8px)] z-40 w-44 overflow-hidden rounded-[12px] border border-white/[0.1] bg-[#0f0f10] p-1 shadow-2xl">
-                <Link to="/change-password" role="menuitem" className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#b8babf] hover:bg-white/[0.04] hover:text-white">
+              <div role="menu" className="absolute right-0 top-[calc(100%+8px)] z-40 w-44 overflow-hidden rounded-[12px] border border-border bg-card p-1 shadow-2xl">
+                <Link to="/change-password" role="menuitem" className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground">
                   <Settings size={15} aria-hidden="true" /> Account
                 </Link>
-                <Link to="/login" role="menuitem" className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#e6714f] hover:bg-white/[0.04]">
+                <Link to="/login" role="menuitem" className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[var(--ui-danger)] hover:bg-[var(--ui-inset)]">
                   <LogOut size={15} aria-hidden="true" /> Sign out
                 </Link>
               </div>

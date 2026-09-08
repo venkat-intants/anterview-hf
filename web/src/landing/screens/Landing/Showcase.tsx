@@ -145,7 +145,7 @@ export function AudienceTabs() {
           <div>
             <h3 className="mb-3 text-[30px] font-semibold tracking-heading text-[var(--lp-on-deep)]">{a.title}</h3>
             <p className="mb-6 text-base leading-normal text-[var(--lp-on-deep-muted)]">{a.sub}</p>
-            <a href={`mailto:support@intants.com?subject=${encodeURIComponent('Anterview — ' + a.label)}`} className="inline-flex items-center gap-2 rounded-[9px] px-5.5 py-3 text-sm font-semibold transition-transform hover:-translate-y-0.5" style={{ background: 'var(--lp-btn)', color: 'var(--lp-btn-text)' }}>{a.cta} →</a>
+            <a href={`mailto:support@intants.com?subject=${encodeURIComponent('AntHire — ' + a.label)}`} className="inline-flex items-center gap-2 rounded-[9px] px-5.5 py-3 text-sm font-semibold transition-transform hover:-translate-y-0.5" style={{ background: 'var(--lp-btn)', color: 'var(--lp-btn-text)' }}>{a.cta} →</a>
           </div>
           <div className="flex flex-col gap-3">
             {a.points.map((pt) => (

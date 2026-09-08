@@ -70,7 +70,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="Intants Feedback & Billing",
+    title="AntHire Feedback & Billing",
     description="End-of-session scoring, scorecard PDFs, billing pipeline",
     version="0.1.0",
     lifespan=lifespan,

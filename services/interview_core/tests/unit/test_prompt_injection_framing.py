@@ -1,6 +1,6 @@
 """IC-1 — untrusted text in the interview graph must never reach the LLM bare.
 
-Three inputs here were written by someone outside Intants: the resume, the job
+Three inputs here were written by someone outside AntHire: the resume, the job
 description, and whatever the candidate just said. Before this, all three were
 interpolated straight into the prompt with nothing but a length cap around them
 (OWASP LLM01). The shipped worker already framed its resume block; the graph did

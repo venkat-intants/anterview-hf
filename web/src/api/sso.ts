@@ -45,7 +45,7 @@ export function googleLoginUrl(
 
 /**
  * Exchange the `code` + `state` Google appended to the callback URL for an
- * Intants JWT. Throws Error(detail) on any non-2xx response.
+ * AntHire JWT. Throws Error(detail) on any non-2xx response.
  */
 export async function completeGoogleLogin(code: string, state: string): Promise<SsoTokenResponse> {
   const params = new URLSearchParams({ code, state });

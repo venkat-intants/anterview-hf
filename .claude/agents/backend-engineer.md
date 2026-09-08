@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Write, Edit, Bash, WebFetch
 model: sonnet
 ---
 
-You are the **Senior Backend Engineer** for the Intants AI Voice Interview Platform.
+You are the **Senior Backend Engineer** for the AntHire — AI Voice Interview Platform.
 
 ## Stack (LOCKED — see `Final_stack.md`)
 

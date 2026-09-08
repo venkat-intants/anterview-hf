@@ -39,7 +39,7 @@ const EMPLOYMENT_LABELS: Record<string, string> = {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#0a0a0b] px-4 py-10">
+    <div className="min-h-screen bg-card px-4 py-10">
       <div className="mx-auto w-full max-w-[860px]">{children}</div>
     </div>
   );
@@ -86,15 +86,15 @@ function Card({ job }: { job: JobCard }) {
   return (
     <Link
       to={`/apply/${job.requisition_id}`}
-      className="block rounded-[16px] border border-white/[0.08] bg-[#0f0f10] p-5 transition-colors hover:border-white/[0.16] focus:outline-none focus-visible:border-[var(--accent)]"
+      className="block rounded-[16px] border border-border bg-card p-5 transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-[17px] font-semibold text-white">{job.title}</h2>
-          {meta ? <p className="mt-1 text-[13.5px] text-[#b8babf]">{meta}</p> : null}
+          <h2 className="text-[17px] font-semibold text-foreground">{job.title}</h2>
+          {meta ? <p className="mt-1 text-[13.5px] text-[var(--ui-soft)]">{meta}</p> : null}
         </div>
         {salary ? (
-          <span className="shrink-0 rounded-[10px] border border-white/[0.1] bg-white/[0.04] px-2.5 py-1 text-[12.5px] font-medium text-white">
+          <span className="shrink-0 rounded-[10px] border border-border bg-[var(--ui-inset)] px-2.5 py-1 text-[12.5px] font-medium text-foreground">
             {salary}
           </span>
         ) : null}
@@ -105,7 +105,7 @@ function Card({ job }: { job: JobCard }) {
           {job.skills.map((skill) => (
             <span
               key={skill}
-              className="rounded-full border border-white/[0.1] bg-white/[0.04] px-2.5 py-0.5 text-[12px] text-[#d5d7da]"
+              className="rounded-full border border-border bg-[var(--ui-inset)] px-2.5 py-0.5 text-[12px] text-[var(--ui-soft)]"
             >
               {skill}
             </span>
@@ -113,7 +113,7 @@ function Card({ job }: { job: JobCard }) {
         </div>
       ) : null}
 
-      <p className="mt-3 text-[12.5px] text-[#70757c]">
+      <p className="mt-3 text-[12.5px] text-[var(--ui-faint)]">
         {job.level} level
         {experience ? ` · ${experience}` : ''} · {postedLine(job.posted_at)}
       </p>
@@ -122,7 +122,7 @@ function Card({ job }: { job: JobCard }) {
 }
 
 const SELECT_CLASS =
-  'rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13px] text-white focus:border-[var(--accent)] focus:outline-none';
+  'rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none';
 
 /**
  * Salary rungs for the filter, in rupees.
@@ -189,12 +189,12 @@ export default function Careers() {
     const missing = board.error instanceof ApiError && board.error.status === 404;
     return (
       <Shell>
-        <div className="rounded-[20px] border border-white/[0.08] bg-[#0f0f10] p-8 text-center">
-          <Briefcase className="mx-auto h-8 w-8 text-[#5a5f66]" aria-hidden="true" />
-          <h1 className="mt-4 text-[20px] font-semibold text-white">
+        <div className="rounded-[20px] border border-border bg-card p-8 text-center">
+          <Briefcase className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
+          <h1 className="mt-4 text-[20px] font-semibold text-foreground">
             {missing ? 'No careers page here' : 'Could not load these roles'}
           </h1>
-          <p className="mx-auto mt-2 max-w-[48ch] text-[13.5px] leading-relaxed text-[#888b91]">
+          <p className="mx-auto mt-2 max-w-[48ch] text-[13.5px] leading-relaxed text-muted-foreground">
             {missing
               ? 'Check the address with whoever shared it — this company does not have a careers page at this link.'
               : 'Something went wrong on our side. Refresh the page to try again.'}
@@ -217,10 +217,10 @@ export default function Careers() {
   return (
     <Shell>
       <header className="mb-6">
-        <div className="text-[12.5px] uppercase tracking-[1.2px] text-[#70757c]">
+        <div className="text-[12.5px] uppercase tracking-[1.2px] text-[var(--ui-faint)]">
           {data?.company_name ?? ' '}
         </div>
-        <h1 className="mt-1 text-[30px] font-semibold tracking-[-0.9px] text-white">
+        <h1 className="mt-1 text-[30px] font-semibold tracking-[-0.9px] text-foreground">
           Open roles
         </h1>
       </header>
@@ -229,7 +229,7 @@ export default function Careers() {
         <label className="relative block">
           <span className="sr-only">Search roles</span>
           <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5a5f66]"
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ui-faint)]"
             aria-hidden="true"
           />
           <input
@@ -240,7 +240,7 @@ export default function Careers() {
               if (e.key === 'Enter') setFilter('q', e.currentTarget.value.trim());
             }}
             onBlur={(e) => setFilter('q', e.currentTarget.value.trim())}
-            className="w-full rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] py-2.5 pl-9 pr-3 text-[14px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none"
+            className="w-full rounded-[12px] border border-border bg-secondary py-2.5 pl-9 pr-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
           />
         </label>
 
@@ -334,7 +334,7 @@ export default function Careers() {
             <button
               type="button"
               onClick={() => setParams(new URLSearchParams(), { replace: true })}
-              className="inline-flex items-center gap-1 rounded-[10px] border border-white/[0.1] px-2.5 py-2 text-[12.5px] text-[#b8babf] hover:text-white focus:outline-none focus-visible:border-[var(--accent)]"
+              className="inline-flex items-center gap-1 rounded-[10px] border border-border px-2.5 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground focus:outline-none focus-visible:border-[var(--accent)]"
             >
               <X size={13} aria-hidden="true" />
               Clear filters
@@ -343,7 +343,7 @@ export default function Careers() {
         </div>
       </div>
 
-      <p className="mb-3 text-[13px] text-[#888b91]" aria-live="polite">
+      <p className="mb-3 text-[13px] text-muted-foreground" aria-live="polite">
         {board.isLoading
           ? 'Loading roles…'
           : `${data?.total ?? 0} open ${data?.total === 1 ? 'position' : 'positions'}`}
@@ -352,18 +352,18 @@ export default function Careers() {
       <div className="flex flex-col gap-3">
         {board.isLoading ? (
           <>
-            <div className="h-[118px] animate-pulse rounded-[16px] border border-white/[0.08] bg-[#0f0f10]" />
-            <div className="h-[118px] animate-pulse rounded-[16px] border border-white/[0.08] bg-[#0f0f10]" />
+            <div className="h-[118px] animate-pulse rounded-[16px] border border-border bg-card" />
+            <div className="h-[118px] animate-pulse rounded-[16px] border border-border bg-card" />
           </>
         ) : null}
 
         {!board.isLoading && data && data.items.length === 0 ? (
-          <div className="rounded-[16px] border border-white/[0.08] bg-[#0f0f10] p-8 text-center">
-            <MapPin className="mx-auto h-7 w-7 text-[#5a5f66]" aria-hidden="true" />
-            <h2 className="mt-3 text-[16px] font-semibold text-white">
+          <div className="rounded-[16px] border border-border bg-card p-8 text-center">
+            <MapPin className="mx-auto h-7 w-7 text-[var(--ui-faint)]" aria-hidden="true" />
+            <h2 className="mt-3 text-[16px] font-semibold text-foreground">
               {activeCount > 0 ? 'No roles match those filters' : 'No open roles right now'}
             </h2>
-            <p className="mx-auto mt-2 max-w-[44ch] text-[13.5px] leading-relaxed text-[#888b91]">
+            <p className="mx-auto mt-2 max-w-[44ch] text-[13.5px] leading-relaxed text-muted-foreground">
               {activeCount > 0
                 ? 'Try widening your search — clearing a filter usually brings more back.'
                 : `${data.company_name} is not advertising anything at the moment. Check back later.`}
@@ -383,13 +383,13 @@ export default function Careers() {
             disabled={data.page <= 1}
             onClick={() => goToPage(data.page - 1)}
             className={cn(
-              'rounded-[10px] border border-white/[0.1] px-3 py-2 text-[13px] text-[#b8babf]',
-              data.page <= 1 ? 'opacity-40' : 'hover:text-white',
+              'rounded-[10px] border border-border px-3 py-2 text-[13px] text-[var(--ui-soft)]',
+              data.page <= 1 ? 'opacity-40' : 'hover:text-foreground',
             )}
           >
             Previous
           </button>
-          <span className="text-[12.5px] text-[#70757c]">
+          <span className="text-[12.5px] text-[var(--ui-faint)]">
             Page {data.page} of {Math.ceil(data.total / data.per_page)}
           </span>
           <button
@@ -397,10 +397,10 @@ export default function Careers() {
             disabled={data.page >= Math.ceil(data.total / data.per_page)}
             onClick={() => goToPage(data.page + 1)}
             className={cn(
-              'rounded-[10px] border border-white/[0.1] px-3 py-2 text-[13px] text-[#b8babf]',
+              'rounded-[10px] border border-border px-3 py-2 text-[13px] text-[var(--ui-soft)]',
               data.page >= Math.ceil(data.total / data.per_page)
                 ? 'opacity-40'
-                : 'hover:text-white',
+                : 'hover:text-foreground',
             )}
           >
             Next

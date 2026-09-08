@@ -1,6 +1,6 @@
 // Landing — public marketing page.
 //
-// Renders the Anterview landing design (src/landing/*): an aurora-lit,
+// Renders the AntHire landing design (src/landing/*): an aurora-lit,
 // voice-first hero with full section-by-section marketing content. The design
 // is self-contained — its root sets `data-landing-theme` (light | dark, the
 // visitor's choice, defaulting to light) and every colour resolves against the

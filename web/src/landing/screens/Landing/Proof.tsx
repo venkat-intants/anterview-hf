@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { animate, useInView, useMotionValue } from 'framer-motion'
 import { Reveal } from '../../components/Reveal'
 import { ScoreRing } from '../../components/primitives'
-import { COMPETENCIES, METRICS, TESTIMONIALS, COMPLIANCE, FAQS } from '../../data/landing'
+import { COMPETENCIES, METRICS, COMPLIANCE, FAQS } from '../../data/landing'
 
 export function ScorecardPreview() {
   return (
@@ -85,40 +85,6 @@ export function Metrics() {
   )
 }
 
-export function Testimonials() {
-  const [i, setI] = useState(0)
-  const t = TESTIMONIALS[i]
-  return (
-    <section className="relative z-10 mx-auto max-w-[880px] px-6 py-20 text-center">
-      <div className="mb-7 text-xs uppercase tracking-[1.5px] text-electric">From the field</div>
-      <p className="mx-auto mb-7 max-w-[680px] text-[26px] font-medium leading-snug tracking-[-0.8px] text-[var(--lp-text)]">“{t.q}”</p>
-      <div className="flex items-center justify-center gap-3">
-        {/* Real author portrait (copyright-free Pexels), gradient ring + initials fallback */}
-        <div className="relative h-12 w-12 flex-none rounded-full p-[2px]" style={{ background: t.g }}>
-          <span className="absolute inset-[2px] flex items-center justify-center rounded-full text-[14px] font-semibold text-white">
-            {t.i}
-          </span>
-          <img
-            src={t.photo}
-            alt={t.n}
-            loading="lazy"
-            className="relative h-full w-full rounded-full object-cover"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = 'none'
-            }}
-          />
-        </div>
-        <div className="text-left"><div className="text-sm font-semibold">{t.n}</div><div className="text-[12.5px] text-[var(--lp-text-muted)]">{t.r}</div></div>
-      </div>
-      <div className="mt-8 flex justify-center gap-2">
-        {TESTIMONIALS.map((_, k) => (
-          <button key={k} onClick={() => setI(k)} className="h-2 rounded-pill transition-all" style={{ width: k === i ? 24 : 8, background: k === i ? 'var(--lp-accent)' : 'var(--lp-line-strong)' }} />
-        ))}
-      </div>
-    </section>
-  )
-}
-
 export function Compliance() {
   return (
     <section className="relative z-10 mx-auto max-w-[1100px] px-6 py-15">
@@ -174,7 +140,7 @@ export function FinalCTA() {
           <p className="mx-auto mb-9 max-w-[440px] text-[18px] text-white/[0.82]">No card, no setup. Talk to Aanya in under 30 seconds.</p>
           <div className="flex flex-wrap justify-center gap-3">
             <Link to="/register" className="rounded-[9px] bg-white px-7.5 py-3.5 text-base font-semibold text-black shadow-[0_12px_40px_rgba(0,0,0,0.3)] transition-transform hover:-translate-y-0.5">Start a mock interview</Link>
-            <a href="mailto:support@intants.com?subject=Anterview%20demo%20request" className="rounded-[9px] border border-white/25 bg-white/[0.12] px-7.5 py-3.5 text-base font-medium text-white backdrop-blur transition-colors hover:bg-white/20">Book a demo</a>
+            <a href="mailto:support@intants.com?subject=AntHire%20demo%20request" className="rounded-[9px] border border-white/25 bg-white/[0.12] px-7.5 py-3.5 text-base font-medium text-white backdrop-blur transition-colors hover:bg-white/20">Book a demo</a>
           </div>
         </div>
       </div>

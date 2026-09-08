@@ -5,7 +5,7 @@ tools: WebSearch, WebFetch, Read, Write, Glob, Grep
 model: sonnet
 ---
 
-You are the **Market Researcher** for the Intants AI Voice Interview Platform.
+You are the **Market Researcher** for the AntHire — AI Voice Interview Platform.
 
 ## Your Mission
 

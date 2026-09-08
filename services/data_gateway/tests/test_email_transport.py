@@ -52,7 +52,7 @@ def resend_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(email_util.settings, "resend_api_key", "re_test_key")
     monkeypatch.setattr(email_util.settings, "resend_api_url", "https://api.resend.com")
     monkeypatch.setattr(email_util.settings, "email_from", "noreply@example.com")
-    monkeypatch.setattr(email_util.settings, "email_from_name", "Anterview")
+    monkeypatch.setattr(email_util.settings, "email_from_name", "AntHire")
     monkeypatch.setattr(email_util.settings, "email_reply_to", "")
     monkeypatch.setattr(email_util.httpx, "AsyncClient", _FakeClient)
     _FakeClient.resp = _FakeResp(200, {"id": "email_123"})
@@ -73,7 +73,7 @@ async def test_resend_provider_posts_to_resend_api(resend_settings: None) -> Non
     assert body is not None
     assert body["to"] == ["candidate@example.com"]
     assert body["subject"] == "Your interview"
-    assert body["from"] == "Anterview <noreply@example.com>"
+    assert body["from"] == "AntHire <noreply@example.com>"
     assert body["html"] == "<p>Hello</p>"
     assert body["text"] == "Hello"
 

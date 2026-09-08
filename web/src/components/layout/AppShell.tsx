@@ -40,6 +40,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/s
 import { cn } from '@/lib/utils';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
 import ThemeToggle from '@/components/ThemeToggle';
+import ModeSwitch from '@/components/ModeSwitch';
 import {
   homePathFor,
   isCandidateOnly,
@@ -122,8 +123,8 @@ function SideNavLink({
           'flex items-center gap-3 rounded-[10px] py-2 text-[13.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
           collapsed ? 'justify-center px-0' : 'px-3',
           isActive
-            ? 'bg-[rgba(var(--accent-rgb),0.14)] text-white'
-            : 'text-[#888b91] hover:bg-white/[0.04] hover:text-white',
+            ? 'bg-[rgba(var(--accent-rgb),0.14)] text-foreground'
+            : 'text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground',
         )
       }
     >
@@ -141,9 +142,9 @@ function NavSectionLabel({
   collapsed?: boolean;
 }) {
   // Collapsed: a thin divider keeps the visual grouping without the text label.
-  if (collapsed) return <div className="mx-3 my-2 h-px bg-white/[0.06]" aria-hidden="true" />;
+  if (collapsed) return <div className="mx-3 my-2 h-px bg-[var(--ui-inset)]" aria-hidden="true" />;
   return (
-    <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[#5a5f66]">
+    <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[var(--ui-faint)]">
       {children}
     </p>
   );
@@ -180,7 +181,7 @@ function SidebarUser({
   const candidateOnly = isCandidateOnly(roles);
 
   return (
-    <div className="relative border-t border-white/[0.06] p-3">
+    <div className="relative border-t border-border p-3">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -189,20 +190,20 @@ function SidebarUser({
         aria-label={collapsed ? displayName : t('nav.userMenu')}
         title={collapsed ? displayName : undefined}
         className={cn(
-          'flex w-full items-center rounded-[12px] py-2 text-left hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+          'flex w-full items-center rounded-[12px] py-2 text-left hover:bg-[var(--ui-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
           collapsed ? 'justify-center px-0' : 'gap-2.5 px-2',
         )}
       >
-        <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent),#a887dc)] text-[13px] font-semibold text-white">
+        <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent),#a887dc)] text-[13px] font-semibold text-foreground">
           {getInitials(displayName)}
         </span>
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold text-white">{displayName}</span>
-              <span className="block truncate text-[11px] text-[#70757c]">{roleLabel}</span>
+              <span className="block truncate text-[13px] font-semibold text-foreground">{displayName}</span>
+              <span className="block truncate text-[11px] text-[var(--ui-faint)]">{roleLabel}</span>
             </span>
-            <ChevronDown size={14} aria-hidden="true" className="flex-none text-[#70757c]" />
+            <ChevronDown size={14} aria-hidden="true" className="flex-none text-[var(--ui-faint)]" />
           </>
         )}
       </button>
@@ -213,7 +214,7 @@ function SidebarUser({
           <div
             role="menu"
             className={cn(
-              'absolute bottom-[calc(100%-4px)] z-40 overflow-hidden rounded-[12px] border border-white/[0.1] bg-[#0f0f10] p-1 shadow-2xl',
+              'absolute bottom-[calc(100%-4px)] z-40 overflow-hidden rounded-[12px] border border-border bg-card p-1 shadow-2xl',
               collapsed ? 'left-2 w-56' : 'left-3 right-3',
             )}
           >
@@ -221,7 +222,7 @@ function SidebarUser({
               to="/profile"
               role="menuitem"
               onClick={() => { setOpen(false); onNavigate?.(); }}
-              className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#b8babf] hover:bg-white/[0.06] hover:text-white"
+              className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground"
             >
               <User size={15} aria-hidden="true" /> Profile
             </Link>
@@ -236,7 +237,7 @@ function SidebarUser({
                   to="/resume"
                   role="menuitem"
                   onClick={() => { setOpen(false); onNavigate?.(); }}
-                  className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#b8babf] hover:bg-white/[0.06] hover:text-white"
+                  className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground"
                 >
                   <FileText size={15} aria-hidden="true" /> {t('nav.resume')}
                 </Link>
@@ -244,19 +245,19 @@ function SidebarUser({
                   to="/history"
                   role="menuitem"
                   onClick={() => { setOpen(false); onNavigate?.(); }}
-                  className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#b8babf] hover:bg-white/[0.06] hover:text-white"
+                  className="flex items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground"
                 >
                   <History size={15} aria-hidden="true" /> {t('nav.history')}
                 </Link>
               </>
             )}
-            <div className="my-1 h-px bg-white/[0.06]" role="separator" />
+            <div className="my-1 h-px bg-[var(--ui-inset)]" role="separator" />
             <button
               type="button"
               role="menuitem"
               onClick={() => { setOpen(false); logoutMutation.mutate(); }}
               disabled={logoutMutation.isPending}
-              className="flex w-full items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[#e6714f] hover:bg-white/[0.04] disabled:opacity-50"
+              className="flex w-full items-center gap-2.5 rounded-[8px] px-3 py-2 text-[13px] text-[var(--ui-danger)] hover:bg-[var(--ui-inset)] disabled:opacity-50"
             >
               <LogOut size={15} aria-hidden="true" /> {logoutMutation.isPending ? '…' : t('nav.logout')}
             </button>
@@ -299,14 +300,14 @@ function SidebarContent({
           to={homePathFor(roles)}
           onClick={onNavigate}
           className="flex items-center gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          aria-label="Anterview"
+          aria-label="AntHire"
         >
           <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[linear-gradient(135deg,#112d72,#a887dc)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]">
-            <span className="h-2.5 w-2.5 rounded-full bg-white" aria-hidden="true" />
+            <span className="h-2.5 w-2.5 rounded-full bg-primary" aria-hidden="true" />
           </span>
           {!collapsed && (
             <span className="flex flex-col leading-tight">
-              <span className="text-[15px] font-semibold tracking-[-0.4px] text-white">Anterview</span>
+              <span className="text-[15px] font-semibold tracking-[-0.4px] text-foreground">AntHire</span>
               {!candidateOnly && (
                 <span
                   className="text-[10px] font-semibold uppercase tracking-[1.2px]"
@@ -329,9 +330,9 @@ function SidebarContent({
               // Distinctive glass control: rounded square, inner highlight, and an
               // accent-tinted glow ring on hover (Signal-Blue design language).
               'group hidden h-8 w-8 flex-none items-center justify-center rounded-[10px]',
-              'border border-white/10 bg-white/[0.05] text-[#b8babf]',
+              'border border-border bg-[var(--ui-inset)] text-[var(--ui-soft)]',
               'shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-all duration-200',
-              'hover:border-[rgba(var(--accent-rgb),0.55)] hover:bg-[rgba(var(--accent-rgb),0.16)] hover:text-white',
+              'hover:border-[rgba(var(--accent-rgb),0.55)] hover:bg-[rgba(var(--accent-rgb),0.16)] hover:text-foreground',
               'hover:shadow-[0_0_0_3px_rgba(var(--accent-rgb),0.12),0_6px_16px_-4px_rgba(var(--accent-rgb),0.45)]',
               'active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] lg:inline-flex',
               !collapsed && 'ml-auto',
@@ -378,15 +379,15 @@ function SidebarContent({
       {/* Candidate "ready to practice" promo (design) — hidden when collapsed */}
       {candidateOnly && !collapsed && (
         <div className="px-3 pb-2">
-          <div className="rounded-[16px] border border-[rgba(var(--accent-rgb),0.25)] bg-[linear-gradient(160deg,#001b33,#030719)] p-4">
-            <p className="text-[13px] font-semibold text-white">Ready to practice?</p>
-            <p className="mt-1 text-[12px] leading-snug text-[#888b91]">
+          <div className="rounded-[16px] border border-[rgba(var(--accent-rgb),0.25)] bg-[image:var(--ui-grad-feature)] p-4">
+            <p className="text-[13px] font-semibold text-foreground">Ready to practice?</p>
+            <p className="mt-1 text-[12px] leading-snug text-muted-foreground">
               Your next mock interview is one tap away.
             </p>
             <Link
               to="/start"
               onClick={onNavigate}
-              className="mt-3 flex w-full items-center justify-center rounded-[10px] bg-white px-3 py-2 text-[13px] font-semibold text-black transition-colors hover:bg-[#eaeaea] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="mt-3 flex w-full items-center justify-center rounded-[10px] bg-primary px-3 py-2 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               Start interview
             </Link>
@@ -410,13 +411,13 @@ function MobileSidebar() {
         <Button
           variant="ghost"
           size="icon"
-          className="lg:hidden text-[#888b91] hover:text-white"
+          className="lg:hidden text-muted-foreground hover:text-foreground"
           aria-label={t('nav.openMenu')}
         >
           <Menu className="h-5 w-5" />
         </Button>
       </SheetTrigger>
-      <SheetContent side="left" className="w-[256px] border-white/[0.06] bg-[#0b0b0c] p-0 text-white">
+      <SheetContent side="left" className="w-[256px] border-border bg-card p-0 text-foreground">
         <SheetTitle className="sr-only">{t('app.name')}</SheetTitle>
         <SidebarContent onNavigate={() => setOpen(false)} />
       </SheetContent>
@@ -479,11 +480,11 @@ function NotificationsBell() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Notifications"
-        className="relative rounded-[10px] border border-white/[0.1] bg-white/[0.04] p-2 text-[#b8babf] transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        className="relative rounded-[10px] border border-border bg-[var(--ui-inset)] p-2 text-[var(--ui-soft)] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       >
         <Bell size={16} aria-hidden="true" />
         {unread > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold leading-none text-white">
+          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold leading-none text-foreground">
             {unread > 9 ? '9+' : unread}
           </span>
         )}
@@ -494,15 +495,15 @@ function NotificationsBell() {
           <div className="fixed inset-0 z-30" aria-hidden="true" onClick={() => setOpen(false)} />
           <div
             role="menu"
-            className="absolute right-0 top-[calc(100%+8px)] z-40 w-80 overflow-hidden rounded-[12px] border border-white/[0.1] bg-[#0f0f10] shadow-2xl"
+            className="absolute right-0 top-[calc(100%+8px)] z-40 w-80 overflow-hidden rounded-[12px] border border-border bg-card shadow-2xl"
           >
-            <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
-              <span className="text-[13px] font-semibold text-white">Notifications</span>
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <span className="text-[13px] font-semibold text-foreground">Notifications</span>
               {unread > 0 && (
                 <button
                   type="button"
                   onClick={() => readAllMutation.mutate()}
-                  className="rounded text-[11.5px] text-[#60a5fa] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  className="rounded text-[11.5px] text-[var(--ui-info)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 >
                   Mark all read
                 </button>
@@ -510,7 +511,7 @@ function NotificationsBell() {
             </div>
             <div className="max-h-80 overflow-y-auto">
               {items.length === 0 ? (
-                <p className="px-4 py-8 text-center text-[12.5px] text-[#70757c]">
+                <p className="px-4 py-8 text-center text-[12.5px] text-[var(--ui-faint)]">
                   You&apos;re all caught up.
                 </p>
               ) : (
@@ -521,7 +522,7 @@ function NotificationsBell() {
                     role="menuitem"
                     onClick={() => openItem(n)}
                     className={cn(
-                      'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.04] focus-visible:bg-white/[0.04] focus-visible:outline-none',
+                      'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--ui-inset)] focus-visible:bg-[var(--ui-inset)] focus-visible:outline-none',
                       !n.read && 'bg-[rgba(var(--accent-rgb),0.05)]',
                     )}
                   >
@@ -533,13 +534,13 @@ function NotificationsBell() {
                       aria-hidden="true"
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-medium text-white">{n.title}</span>
+                      <span className="block text-[13px] font-medium text-foreground">{n.title}</span>
                       {n.body && (
-                        <span className="mt-0.5 block text-[12px] leading-snug text-[#888b91]">
+                        <span className="mt-0.5 block text-[12px] leading-snug text-muted-foreground">
                           {n.body}
                         </span>
                       )}
-                      <span className="mt-1 block text-[10.5px] text-[#5a5f66]">
+                      <span className="mt-1 block text-[10.5px] text-[var(--ui-faint)]">
                         {relTime(n.created_at)}
                       </span>
                     </span>
@@ -563,7 +564,7 @@ function TopBar() {
   const [q, setQ] = useState('');
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-black/50 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
       <MobileSidebar />
 
       {/* Search — navigates to Jobs on submit (closest live target).
@@ -576,7 +577,7 @@ function TopBar() {
           e.preventDefault();
           void navigate('/jobs');
         }}
-        className="hidden w-[300px] items-center gap-2 rounded-[10px] border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-[#70757c] focus-within:border-[var(--accent)] md:flex"
+        className="hidden w-[300px] items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset)] px-3 py-2 text-[var(--ui-faint)] focus-within:border-[var(--accent)] md:flex"
       >
         <Search size={15} aria-hidden="true" />
         <input
@@ -585,19 +586,23 @@ function TopBar() {
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search roles, history…"
           aria-label="Search"
-          className="w-full bg-transparent text-[13px] text-white placeholder:text-[#5a5f66] focus:outline-none"
+          className="w-full bg-transparent text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
         />
       </form>
       )}
 
       <div className="ml-auto flex items-center gap-2">
+        {/* Light/dark is offered only to candidates: the staff consoles have no
+            light design yet, so ThemeModeGate pins them dark and a control
+            there would visibly do nothing. */}
+        {candidateOnly && <ModeSwitch />}
         <ThemeToggle />
         <LanguageSwitcher />
         <NotificationsBell />
         {candidateOnly && (
           <Link
             to="/start"
-            className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3.5 py-2 text-[13px] font-semibold text-black transition-colors hover:bg-[#eaeaea] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-3.5 py-2 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <Plus size={15} aria-hidden="true" /> New interview
           </Link>
@@ -636,12 +641,12 @@ export default function AppShell({ children }: AppShellProps) {
   };
 
   return (
-    <div className="relative min-h-screen bg-black text-white">
+    <div className="relative min-h-screen bg-background text-foreground">
       <AuroraBackground />
 
       {/* Desktop fixed sidebar (collapsible to an icon rail) */}
       <aside
-        className="fixed inset-y-0 left-0 z-40 hidden border-r border-white/[0.06] bg-black/40 backdrop-blur-xl transition-[width] duration-200 lg:block"
+        className="fixed inset-y-0 left-0 z-40 hidden border-r border-border bg-background/60 backdrop-blur-xl transition-[width] duration-200 lg:block"
         style={{ width: collapsed ? SIDEBAR_COLLAPSED_W : SIDEBAR_W }}
         aria-label="Sidebar"
       >

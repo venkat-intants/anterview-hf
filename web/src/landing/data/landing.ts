@@ -22,21 +22,23 @@ export const NAV_LINKS = [
   { href: '#languages', label: 'Languages' },
 ]
 
-export const LOGOS = [
-  { n: 'NSDC', c: '#0088ff' }, { n: 'APSSDC', c: '#a887dc' }, { n: 'IIT Hyderabad', c: '#16c253' },
-  { n: 'VNR VJIET', c: '#dd55e7' }, { n: 'NIT Warangal', c: '#ffb764' }, { n: 'Skill India', c: '#0fb7fa' },
-  { n: 'Naipunyam', c: '#e6714f' }, { n: 'CVR College', c: '#60a5fa' },
-]
+// Third-party logos and named-institution testimonials were removed on
+// 2026-09-08. Both put other organisations' names on our page as endorsements
+// we cannot substantiate — NSDC, APSSDC, IIT Hyderabad and the rest are not
+// customers, and the quotes were written copy attributed to named people at
+// named colleges. Nothing replaces them: an honest page with no logo wall is
+// better than a logo wall we would have to defend in a bid.
+
 
 export const STEPS: { no: string; icon: LucideIcon; title: string; desc: string; bg: string }[] = [
-  { no: 'STEP 01', icon: Target, title: 'Pick a role', desc: 'Choose a job role and level. Anterview loads the right questions and rubric.', bg: 'rgba(0,136,255,0.16)' },
+  { no: 'STEP 01', icon: Target, title: 'Pick a role', desc: 'Choose a job role and level. AntHire loads the right questions and rubric.', bg: 'rgba(0,136,255,0.16)' },
   { no: 'STEP 02', icon: Mic, title: 'Talk to the avatar', desc: 'Have a real, voice-first conversation. It listens and asks smart follow-ups.', bg: 'rgba(168,135,220,0.18)' },
   { no: 'STEP 03', icon: BarChart3, title: 'Get a scorecard', desc: 'Receive a competency breakdown with strengths, gaps and transcript highlights.', bg: 'rgba(22,194,83,0.16)' },
   { no: 'STEP 04', icon: Rocket, title: 'Share & improve', desc: 'Download the PDF, share with recruiters, retake to climb your score.', bg: 'rgba(221,85,231,0.16)' },
 ]
 
 export type Feature = { cols: number; rows: number; bg: string; icon: LucideIcon; big: string; title: string; desc: string }
-// Surfaces are landing-theme tokens (see landing/styles/anterview.css) so the
+// Surfaces are landing-theme tokens (see landing/styles/anthire.css) so the
 // bento reads on the light grey page as well as the dark one.
 export const FEATURES: Feature[] = [
   { cols: 3, rows: 2, bg: 'var(--lp-grad-deep)', icon: Globe, big: '22', title: 'Indian languages', desc: 'Interview in the language candidates actually think in — voice-first, end to end.' },
@@ -89,19 +91,16 @@ export const COMPETENCIES = [
   { name: 'Confidence', score: '8.6 / 10', pct: 86 },
 ]
 
+// Capability, not track record: the platform is built to these numbers, it has
+// not yet run them. "20 lakh+ sessions run" was a claim about a demo tier that
+// has run none, and the sort of line a procurement reviewer checks.
 export const METRICS = [
-  { value: '20 lakh+', label: 'interview sessions run' },
-  { value: '1.8s', label: 'avg. response latency' },
-  { value: '22', label: 'Indian languages' },
-  { value: '₹12', label: 'cost per session' },
+  { value: '20 lakh', label: 'candidates per cycle, by design' },
+  { value: '<2s', label: 'target response latency' },
+  { value: '22', label: 'Indian languages planned' },
+  { value: '₹12', label: 'target cost per session' },
 ]
 
-// Author portraits are copyright-free Pexels photos (free license, hotlinkable).
-export const TESTIMONIALS = [
-  { q: 'Anterview let us screen 40,000 applicants in two weeks — in Hindi and Telugu. The scorecards were fairer than our old panels.', n: 'Dr. Rajesh Tiwari', r: 'Dean of Placements · VNR VJIET', i: 'RT', g: 'linear-gradient(135deg,#0088ff,#a887dc)', photo: 'https://images.pexels.com/photos/3777943/pexels-photo-3777943.jpeg?auto=compress&cs=tinysrgb&w=160' },
-  { q: 'We cut time-to-first-round from 14 days to under 48 hours. Candidates love that they get real feedback, not silence.', n: 'Sneha Reddy', r: 'Head of TA · a fintech unicorn', i: 'SR', g: 'linear-gradient(135deg,#16c253,#0088ff)', photo: 'https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=160' },
-  { q: 'For our state skilling mission, interviewing in the mother tongue changed everything. Completion rates doubled.', n: 'K. Venkatesh', r: 'Programme Director · State Skill Council', i: 'KV', g: 'linear-gradient(135deg,#a887dc,#dd55e7)', photo: 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=160' },
-]
 
 export const COMPLIANCE: { icon: LucideIcon; title: string; desc: string }[] = [
   { icon: Scale, title: 'DPDP Act 2023', desc: 'Consent-led data processing aligned to India’s data protection law.' },
@@ -111,7 +110,7 @@ export const COMPLIANCE: { icon: LucideIcon; title: string; desc: string }[] = [
 ]
 
 export const FAQS = [
-  ['Is Anterview really conversational, or just recorded questions?', 'Fully conversational. The avatar listens to your answer, asks relevant follow-ups, and adapts difficulty in real time — averaging under 2 seconds to respond.'],
+  ['Is AntHire really conversational, or just recorded questions?', 'Fully conversational. The avatar listens to your answer, asks relevant follow-ups, and adapts difficulty in real time — averaging under 2 seconds to respond.'],
   ['Which languages can I interview in today?', 'English, Hindi and Telugu are live right now. The remaining 19 Eighth-Schedule languages are rolling out through 2026, voice-first.'],
   ['How is my data handled?', 'All processing happens within India. We run on a consent-led model with a full consent ledger and self-serve right-to-erasure, aligned to the DPDP Act 2023.'],
   ['What does the scorecard actually measure?', 'A role-specific competency rubric — communication, problem solving, role knowledge and more — with strengths, gaps, and transcript highlights, exportable as PDF.'],

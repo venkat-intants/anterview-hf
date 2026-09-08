@@ -97,7 +97,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="Intants Interview Core",
+    title="AntHire Interview Core",
     description="Voice interview WebSocket + LangGraph orchestrator + voice pipeline",
     version="0.1.0",
     lifespan=lifespan,

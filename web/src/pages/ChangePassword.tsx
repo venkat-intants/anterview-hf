@@ -75,7 +75,7 @@ export default function ChangePassword() {
   const strength = strengthOf(pw);
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center bg-black px-4 py-12 font-sans text-white">
+    <main className="relative flex min-h-screen items-center justify-center bg-background px-4 py-12 font-sans text-foreground">
       <AuroraField />
       <motion.div
         initial={{ opacity: 0, y: 16 }}
@@ -83,15 +83,15 @@ export default function ChangePassword() {
         transition={{ duration: 0.4 }}
         className="relative z-10 w-full max-w-md"
       >
-        <div className="rounded-[24px] border border-white/[0.08] bg-[#0f0f10] p-8">
+        <div className="rounded-[24px] border border-border bg-card p-8">
           <div className="mb-6 flex flex-col items-center text-center">
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
               <ShieldCheck className="h-6 w-6" aria-hidden="true" />
             </span>
-            <h1 className="mt-5 text-[20px] font-semibold tracking-[-0.4px] text-white">
+            <h1 className="mt-5 text-[20px] font-semibold tracking-[-0.4px] text-foreground">
               {t('changePassword.title')}
             </h1>
-            <p className="mt-2 text-[13.5px] text-[#888b91]">{t('changePassword.desc')}</p>
+            <p className="mt-2 text-[13.5px] text-muted-foreground">{t('changePassword.desc')}</p>
           </div>
 
           <form onSubmit={onSubmit} noValidate className="space-y-4" aria-label="Change password form">
@@ -137,7 +137,7 @@ export default function ChangePassword() {
             />
 
             {error && (
-              <p role="alert" className="text-[13px] text-[#e6714f]">
+              <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
                 {error}
               </p>
             )}

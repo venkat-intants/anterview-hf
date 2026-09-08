@@ -80,32 +80,32 @@ function StepRow({
           ? 'border-[rgba(39,201,63,0.22)] bg-[rgba(39,201,63,0.04)]'
           : state === 'active'
             ? 'border-[rgba(var(--accent-rgb),0.22)] bg-[rgba(var(--accent-rgb),0.04)]'
-            : 'border-white/[0.06] bg-white/[0.01]',
+            : 'border-border bg-[var(--ui-inset-soft)]',
       )}
     >
       <span
         className={cn(
           'flex-none',
           state === 'done'
-            ? 'text-[#27c93f]'
+            ? 'text-[var(--ui-ok)]'
             : state === 'active'
-              ? 'text-[#60a5fa]'
-              : 'text-[#5a5f66]',
+              ? 'text-[var(--ui-info)]'
+              : 'text-[var(--ui-faint)]',
         )}
         aria-hidden="true"
       >
         {state === 'done' ? (
           <CheckCircle2 size={17} />
         ) : state === 'active' ? (
-          <span className="block h-[15px] w-[15px] animate-spin rounded-full border-2 border-white/15 border-t-[#60a5fa]" />
+          <span className="block h-[15px] w-[15px] animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[#60a5fa]" />
         ) : (
-          <span className="block h-[15px] w-[15px] rounded-full border border-white/15" />
+          <span className="block h-[15px] w-[15px] rounded-full border border-[var(--ui-line-strong)]" />
         )}
       </span>
       <span
         className={cn(
           'text-[13.5px]',
-          state === 'pending' ? 'text-[#70757c]' : 'text-white',
+          state === 'pending' ? 'text-[var(--ui-faint)]' : 'text-foreground',
         )}
       >
         {label}
@@ -208,9 +208,9 @@ export default function InterviewComplete() {
             transition={springSoft}
           >
             {endedEarly ? (
-              <XCircle size={38} className="text-[#ffb764]" aria-hidden="true" />
+              <XCircle size={38} className="text-[var(--ui-warn)]" aria-hidden="true" />
             ) : (
-              <CheckCircle2 size={38} className="text-[#60a5fa]" aria-hidden="true" />
+              <CheckCircle2 size={38} className="text-[var(--ui-info)]" aria-hidden="true" />
             )}
           </motion.span>
         </div>
@@ -222,13 +222,13 @@ export default function InterviewComplete() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, ease: [0.2, 0.7, 0.2, 1], delay: 0.08 }}
         >
-          <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-white">
+          <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
             {endedEarly ? t('interviewComplete.titleEarly') : t('interviewComplete.title')}
           </h1>
-          <p className="mt-2 text-[14px] leading-relaxed text-[#888b91]">{message}</p>
+          <p className="mt-2 text-[14px] leading-relaxed text-muted-foreground">{message}</p>
 
           {sessionId && (
-            <p className="mt-1.5 font-mono text-[11.5px] text-[#5a5f66] break-all">
+            <p className="mt-1.5 font-mono text-[11.5px] text-[var(--ui-faint)] break-all">
               {t('interviewComplete.sessionLabel', { id: sessionId })}
             </p>
           )}
@@ -253,7 +253,7 @@ export default function InterviewComplete() {
                 <StatusTag tone="amber" dot>
                   {t('interviewComplete.earlyExitTitle')}
                 </StatusTag>
-                <p className="mt-1 text-[13px] text-[#888b91]">
+                <p className="mt-1 text-[13px] text-muted-foreground">
                   {t('interviewComplete.earlyExitDesc')}
                 </p>
               </div>
@@ -270,11 +270,11 @@ export default function InterviewComplete() {
                     className="mb-4 flex items-center justify-between"
                     aria-live="polite"
                   >
-                    <span className="text-[13px] font-medium text-[#60a5fa]">
+                    <span className="text-[13px] font-medium text-[var(--ui-info)]">
                       {t('interviewComplete.preparingScorecard')}
                     </span>
                     <span
-                      className="h-4 w-4 animate-spin rounded-full border-2 border-white/15 border-t-[#60a5fa]"
+                      className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[#60a5fa]"
                       aria-hidden="true"
                     />
                   </div>
@@ -299,7 +299,7 @@ export default function InterviewComplete() {
                     })}
                   </motion.div>
 
-                  <p className="mt-4 text-center text-[12px] text-[#5a5f66]">
+                  <p className="mt-4 text-center text-[12px] text-[var(--ui-faint)]">
                     {t('interviewComplete.scorecardDesc')}
                   </p>
                 </GlassCard>
@@ -313,14 +313,14 @@ export default function InterviewComplete() {
                   >
                     <Clock
                       size={30}
-                      className="text-[#5a5f66]"
+                      className="text-[var(--ui-faint)]"
                       aria-hidden="true"
                     />
                     <div>
-                      <p className="text-[14px] font-medium text-white">
+                      <p className="text-[14px] font-medium text-foreground">
                         {t('interviewComplete.scorecardTimeout')}
                       </p>
-                      <p className="mt-1 text-[13px] text-[#888b91]">
+                      <p className="mt-1 text-[13px] text-muted-foreground">
                         {t('interviewComplete.scorecardTimeoutDesc')}
                       </p>
                     </div>
@@ -328,9 +328,9 @@ export default function InterviewComplete() {
                       type="button"
                       onClick={handleCheckAgain}
                       className={cn(
-                        'inline-flex items-center gap-1.5 rounded-[9999px] border border-white/15 px-4 py-2 text-[13px] font-medium text-white',
-                        'bg-white/[0.06] transition-colors hover:bg-white/[0.1]',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black',
+                        'inline-flex items-center gap-1.5 rounded-[9999px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-foreground',
+                        'bg-[var(--ui-inset)] transition-colors hover:bg-[var(--ui-inset-strong)]',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                       )}
                     >
                       <RefreshCw size={14} aria-hidden="true" />
@@ -346,10 +346,10 @@ export default function InterviewComplete() {
           <Link
             to="/dashboard"
             className={cn(
-              'flex w-full items-center justify-center gap-2 rounded-[12px] border border-white/[0.08]',
-              'bg-white px-5 py-3 text-[14px] font-semibold text-black',
-              'transition-colors hover:bg-[#eaeaea]',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black',
+              'flex w-full items-center justify-center gap-2 rounded-[12px] border border-border',
+              'bg-primary px-5 py-3 text-[14px] font-semibold text-primary-foreground',
+              'transition-colors hover:bg-primary/90',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             )}
           >
             <LayoutDashboard size={16} aria-hidden="true" />
@@ -360,10 +360,10 @@ export default function InterviewComplete() {
             <Link
               to="/history"
               className={cn(
-                'flex items-center justify-center gap-1.5 rounded-[12px] border border-white/[0.1]',
-                'bg-white/[0.04] px-4 py-2.5 text-[13.5px] font-medium text-[#b8babf]',
-                'transition-colors hover:bg-white/[0.08] hover:text-white',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black',
+                'flex items-center justify-center gap-1.5 rounded-[12px] border border-border',
+                'bg-[var(--ui-inset)] px-4 py-2.5 text-[13.5px] font-medium text-[var(--ui-soft)]',
+                'transition-colors hover:bg-[var(--ui-inset-strong)] hover:text-foreground',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               )}
             >
               <History size={15} aria-hidden="true" />
@@ -373,10 +373,10 @@ export default function InterviewComplete() {
             <Link
               to="/start"
               className={cn(
-                'flex items-center justify-center gap-1.5 rounded-[12px] border border-white/[0.1]',
-                'bg-white/[0.04] px-4 py-2.5 text-[13.5px] font-medium text-[#b8babf]',
-                'transition-colors hover:bg-white/[0.08] hover:text-white',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black',
+                'flex items-center justify-center gap-1.5 rounded-[12px] border border-border',
+                'bg-[var(--ui-inset)] px-4 py-2.5 text-[13.5px] font-medium text-[var(--ui-soft)]',
+                'transition-colors hover:bg-[var(--ui-inset-strong)] hover:text-foreground',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               )}
             >
               <ArrowRight size={15} aria-hidden="true" />
@@ -394,7 +394,7 @@ export default function InterviewComplete() {
               <span
                 className={cn(
                   'inline-flex items-center gap-2 rounded-[9999px] px-6 py-3 text-[14px] font-semibold',
-                  'bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa] border border-[rgba(var(--accent-rgb),0.35)]',
+                  'bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)] border border-[rgba(var(--accent-rgb),0.35)]',
                   'animate-pulse',
                 )}
                 aria-live="polite"

@@ -18,7 +18,7 @@ export function Footer() {
               <span className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[9px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]" style={{ background: 'linear-gradient(135deg,#112d72,#a887dc)' }}>
                 <span className="h-[9px] w-[9px] rounded-full bg-white shadow-[0_0_10px_#fff]" />
               </span>
-              <span className="text-[17px] font-semibold tracking-[-0.5px]">Anterview</span>
+              <span className="text-[17px] font-semibold tracking-[-0.5px]">AntHire</span>
             </div>
             <p className="mb-4 max-w-[260px] text-[13.5px] leading-relaxed text-[var(--lp-text-muted)]">Voice-first AI interviews for every candidate in Bharat. Fair, fast, in your language.</p>
             <div className="flex gap-2.5">

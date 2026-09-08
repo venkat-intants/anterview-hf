@@ -58,7 +58,7 @@ const LEVEL_TAB_KEYS = [
 function Sk({ className }: { className?: string }) {
   return (
     <div
-      className={cn('animate-pulse rounded-md bg-white/[0.06]', className)}
+      className={cn('animate-pulse rounded-md bg-[var(--ui-inset)]', className)}
       aria-hidden="true"
     />
   );
@@ -69,7 +69,7 @@ function Sk({ className }: { className?: string }) {
 function JobCardSkeleton() {
   return (
     <div
-      className="rounded-[24px] border border-white/[0.08] bg-[#0f0f10] p-5 flex flex-col gap-4"
+      className="rounded-[24px] border border-border bg-card p-5 flex flex-col gap-4"
       aria-hidden="true"
     >
       <div className="flex items-start gap-3">
@@ -89,7 +89,7 @@ function JobCardSkeleton() {
         <Sk className="h-3 w-24 rounded" />
         <Sk className="h-3 w-16 rounded" />
       </div>
-      <div className="flex items-center gap-2.5 border-t border-white/[0.06] pt-4">
+      <div className="flex items-center gap-2.5 border-t border-border pt-4">
         <Sk className="h-10 flex-1 rounded-full" />
         <Sk className="h-10 w-20 rounded-full" />
       </div>
@@ -255,14 +255,14 @@ export default function JobsList() {
           role="alert"
           className="rounded-[24px] border border-[rgba(230,113,79,0.3)] bg-[rgba(230,113,79,0.07)] p-6 flex flex-col sm:flex-row items-start sm:items-center gap-4"
         >
-          <AlertTriangle className="h-5 w-5 text-[#e6714f] shrink-0" aria-hidden="true" />
-          <p className="text-[14px] text-[#e6714f] flex-1">
+          <AlertTriangle className="h-5 w-5 text-[var(--ui-danger)] shrink-0" aria-hidden="true" />
+          <p className="text-[14px] text-[var(--ui-danger)] flex-1">
             {error instanceof Error ? error.message : t('jobs.loadError')}
           </p>
           <button
             type="button"
             onClick={() => void refetch()}
-            className="inline-flex items-center gap-1.5 rounded-[9999px] border border-[rgba(230,113,79,0.35)] bg-[rgba(230,113,79,0.1)] px-4 py-2 text-[13px] font-medium text-[#e6714f] hover:bg-[rgba(230,113,79,0.18)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6714f]"
+            className="inline-flex items-center gap-1.5 rounded-[9999px] border border-[rgba(230,113,79,0.35)] bg-[rgba(230,113,79,0.1)] px-4 py-2 text-[13px] font-medium text-[var(--ui-danger)] hover:bg-[rgba(230,113,79,0.18)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6714f]"
           >
             <RefreshCw size={14} aria-hidden="true" />
             {t('jobs.retry')}
@@ -282,7 +282,7 @@ export default function JobsList() {
         <h1 className="text-[28px] font-semibold tracking-[-1px]">
           {t('jobs.pageTitle')}
         </h1>
-        <p className="mt-1 text-[14px] text-[#888b91]">
+        <p className="mt-1 text-[14px] text-muted-foreground">
           {t('jobs.pageSubtitle')}
         </p>
       </Reveal>
@@ -302,12 +302,12 @@ export default function JobsList() {
           role="alert"
           className="mt-4 rounded-[16px] border border-[rgba(255,183,100,0.3)] bg-[rgba(255,183,100,0.08)] px-4 py-3 flex items-start justify-between gap-4"
         >
-          <p className="text-[14px] text-[#ffb764]">{t('jobs.declineBanner')}</p>
+          <p className="text-[14px] text-[var(--ui-warn)]">{t('jobs.declineBanner')}</p>
           <button
             type="button"
             onClick={() => setShowDeclineBanner(false)}
             aria-label={t('jobs.dismiss')}
-            className="shrink-0 rounded text-[#ffb764]/80 hover:text-[#ffb764] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ffb764]/50"
+            className="shrink-0 rounded text-[var(--ui-warn)]/80 hover:text-[var(--ui-warn)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ffb764]/50"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -320,7 +320,7 @@ export default function JobsList() {
           role="alert"
           className="mt-4 rounded-[16px] border border-[rgba(230,113,79,0.3)] bg-[rgba(230,113,79,0.07)] px-4 py-3"
         >
-          <p className="text-[14px] text-[#e6714f]">
+          <p className="text-[14px] text-[var(--ui-danger)]">
             {startInterviewMutation.error instanceof Error
               ? startInterviewMutation.error.message
               : t('jobs.startError')}
@@ -338,14 +338,14 @@ export default function JobsList() {
       <div className="mt-6 flex flex-wrap items-center gap-3">
 
         {/* Design search box — additive; client-filters by title */}
-        <div className="flex w-[260px] items-center gap-2 rounded-[9999px] border border-white/[0.08] bg-[rgba(28,29,31,0.7)] px-3.5 py-2.5">
-          <Search size={15} className="text-[#70757c] shrink-0" aria-hidden="true" />
+        <div className="flex w-[260px] items-center gap-2 rounded-[9999px] border border-border bg-secondary px-3.5 py-2.5">
+          <Search size={15} className="text-[var(--ui-faint)] shrink-0" aria-hidden="true" />
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={t('jobs.searchPlaceholder')}
             aria-label={t('jobs.searchPlaceholder')}
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-white placeholder:text-[#5a5f66] focus:outline-none"
+            className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
           />
         </div>
 
@@ -359,7 +359,7 @@ export default function JobsList() {
         {/* Interview language label + native select — test-id accessible */}
         <label
           htmlFor="interview-language"
-          className="text-[12.5px] font-medium text-[#888b91] shrink-0"
+          className="text-[12.5px] font-medium text-muted-foreground shrink-0"
         >
           {t('jobs.interviewLanguage')}
         </label>
@@ -368,9 +368,9 @@ export default function JobsList() {
           value={selectedLanguage}
           onChange={(e) => setSelectedLanguage(e.target.value as Language)}
           className={cn(
-            'h-10 rounded-[9px] border border-white/[0.08] bg-[rgba(28,29,31,0.7)]',
-            'px-3 py-2 text-[13px] text-white',
-            'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black',
+            'h-10 rounded-[9px] border border-border bg-secondary',
+            'px-3 py-2 text-[13px] text-foreground',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             'disabled:cursor-not-allowed disabled:opacity-50',
           )}
         >
@@ -391,9 +391,9 @@ export default function JobsList() {
           value={levelFilter}
           onChange={(e) => setLevelFilter(e.target.value as LevelFilter)}
           className={cn(
-            'h-10 rounded-[9px] border border-white/[0.08] bg-[rgba(28,29,31,0.7)]',
-            'px-3 py-2 text-[13px] text-white',
-            'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black',
+            'h-10 rounded-[9px] border border-border bg-secondary',
+            'px-3 py-2 text-[13px] text-foreground',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             'disabled:cursor-not-allowed disabled:opacity-50',
           )}
         >
@@ -405,10 +405,10 @@ export default function JobsList() {
         </select>
 
         {/* Count */}
-        <p className="ml-auto text-[12.5px] text-[#70757c] whitespace-nowrap">
+        <p className="ml-auto text-[12.5px] text-[var(--ui-faint)] whitespace-nowrap">
           {t('jobs.positionsCount', { count: jobs.length })}
           {(levelFilter || searchQuery) && (
-            <span className="ml-1 text-[11.5px] text-[#5a5f66]">
+            <span className="ml-1 text-[11.5px] text-[var(--ui-faint)]">
               {t('jobs.filteredFrom', { count: allJobs.length })}
             </span>
           )}
@@ -419,13 +419,13 @@ export default function JobsList() {
       {jobs.length === 0 && allJobs.length === 0 && (
         <GlassCard className="mt-5 flex flex-col items-center justify-center py-20 px-6 text-center gap-4">
           <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.1)] border border-[rgba(var(--accent-rgb),0.2)]">
-            <Briefcase className="h-7 w-7 text-[#60a5fa]" aria-hidden="true" />
+            <Briefcase className="h-7 w-7 text-[var(--ui-info)]" aria-hidden="true" />
           </div>
           <div>
-            <p className="text-[16px] font-semibold text-white">
+            <p className="text-[16px] font-semibold text-foreground">
               {t('jobs.noPositionsTitle')}
             </p>
-            <p className="mt-1 text-[14px] text-[#888b91]">
+            <p className="mt-1 text-[14px] text-muted-foreground">
               {t('jobs.noPositionsEmpty')}
             </p>
           </div>
@@ -436,13 +436,13 @@ export default function JobsList() {
       {jobs.length === 0 && allJobs.length > 0 && (
         <GlassCard className="mt-5 flex flex-col items-center justify-center py-20 px-6 text-center gap-4">
           <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.1)] border border-[rgba(var(--accent-rgb),0.2)]">
-            <Briefcase className="h-7 w-7 text-[#60a5fa]" aria-hidden="true" />
+            <Briefcase className="h-7 w-7 text-[var(--ui-info)]" aria-hidden="true" />
           </div>
           <div>
-            <p className="text-[16px] font-semibold text-white">
+            <p className="text-[16px] font-semibold text-foreground">
               {t('jobs.noPositionsTitle')}
             </p>
-            <p className="mt-1 text-[14px] text-[#888b91]">
+            <p className="mt-1 text-[14px] text-muted-foreground">
               {t('jobs.noPositionsFiltered')}
             </p>
           </div>
@@ -452,7 +452,7 @@ export default function JobsList() {
               setLevelFilter('');
               setSearchQuery('');
             }}
-            className="inline-flex items-center gap-1.5 rounded-[9999px] border border-white/10 bg-transparent px-4 py-2 text-[13px] font-medium text-white hover:bg-white/[0.06] hover:border-white/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-transparent px-4 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset)] hover:border-[var(--ui-line-strong)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             {t('jobs.clearFilter')}
           </button>

@@ -27,7 +27,7 @@ export function ConfirmDeleteButton({
   if (armed) {
     return (
       <span className="flex items-center gap-1.5" role="group" aria-label="Confirm deletion">
-        <span className="text-[11px] text-[#888b91]">Sure?</span>
+        <span className="text-[11px] text-muted-foreground">Sure?</span>
         <button
           type="button"
           onClick={(e) => {
@@ -46,7 +46,7 @@ export function ConfirmDeleteButton({
             e.stopPropagation();
             setArmed(false);
           }}
-          className="rounded-[7px] bg-white/[0.06] px-2 py-1 text-[11px] font-medium text-[#b8babf] transition-colors hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="rounded-[7px] bg-[var(--ui-inset)] px-2 py-1 text-[11px] font-medium text-[var(--ui-soft)] transition-colors hover:bg-[var(--ui-inset-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           Cancel
         </button>
@@ -79,7 +79,7 @@ export function ConfirmDeleteButton({
       }}
       title={title}
       aria-label={title}
-      className="rounded-[7px] p-1.5 text-[#70757c] transition-colors hover:bg-[#e6714f]/15 hover:text-[#ff8a66] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6714f]"
+      className="rounded-[7px] p-1.5 text-[var(--ui-faint)] transition-colors hover:bg-[#e6714f]/15 hover:text-[#ff8a66] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6714f]"
     >
       <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
     </button>

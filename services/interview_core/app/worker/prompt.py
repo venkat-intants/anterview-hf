@@ -52,7 +52,7 @@ def _interviewer_instructions(
     company_name (optional): the hiring company (jobs.company_name). When set,
     the interviewer speaks on behalf of that company ("why do you want to join
     <company>?"); when empty the interviewer stays company-neutral — it must
-    NOT present itself as hiring for Intants (the platform is not the employer).
+    NOT present itself as hiring for AntHire (the platform is not the employer).
 
     role_profile (optional): the derived role model (shared.intelligence). When
     present it replaces the fixed "Q2-Q6 technical, Q7-Q9 behavioural" structure

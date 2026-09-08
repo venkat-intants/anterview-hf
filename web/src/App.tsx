@@ -10,6 +10,7 @@ import SuperAdminRoute from './components/SuperAdminRoute';
 import HRRoute from './components/HRRoute';
 import InterviewSessionRoute from './components/InterviewSessionRoute';
 import ErrorBoundary from './components/ErrorBoundary';
+import ThemeModeGate from './components/ThemeModeGate';
 import AppShell from './components/layout/AppShell';
 import { useAuth } from './context/AuthContext';
 
@@ -110,6 +111,9 @@ function ShellLayout() {
 export default function App() {
   return (
     <ErrorBoundary>
+      {/* Owns html[data-mode]: the visitor's light/dark choice on the surfaces
+          built for it, forced dark on the ones that are not. */}
+      <ThemeModeGate />
       <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Public routes — no shell */}

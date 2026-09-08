@@ -1,7 +1,7 @@
 // Google OAuth callback landing page — S5-003b / B-035
 //
 // Google redirects the browser here (configured as the OAuth redirect_uri) with
-// ?code & ?state. We exchange them for an Intants JWT, load the profile, store
+// ?code & ?state. We exchange them for an AntHire JWT, load the profile, store
 // auth, and continue into the app. The exchange is guarded by a ref because the
 // state token is single-use (Redis get-then-delete) and React StrictMode
 // double-invokes effects in development — a second call would burn the token.
@@ -26,7 +26,7 @@ import type { AuthUser } from '@/types/auth';
 function BrandMark() {
   return (
     <span className="inline-flex h-12 w-12 items-center justify-center rounded-[11px] bg-[linear-gradient(135deg,#112d72,#a887dc)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]">
-      <span className="h-3.5 w-3.5 rounded-full bg-white" />
+      <span className="h-3.5 w-3.5 rounded-full bg-primary" />
     </span>
   );
 }
@@ -86,7 +86,7 @@ export default function GoogleCallback() {
   }, [params, navigate, setAuth, t]);
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center bg-black px-4 py-12 font-sans text-white">
+    <main className="relative flex min-h-screen items-center justify-center bg-background px-4 py-12 font-sans text-foreground">
       <AuroraField />
       {error ? (
         /* ── Error state ────────────────────────────────────────────────────── */
@@ -107,17 +107,17 @@ export default function GoogleCallback() {
 
           <div
             role="alert"
-            className="rounded-[24px] border border-[rgba(230,113,79,0.2)] bg-[#0f0f10] p-8 text-center"
+            className="rounded-[24px] border border-[rgba(230,113,79,0.2)] bg-card p-8 text-center"
           >
             <div className="mb-4 flex justify-center">
               <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(230,113,79,0.16)]">
-                <AlertCircle className="h-6 w-6 text-[#e6714f]" aria-hidden="true" />
+                <AlertCircle className="h-6 w-6 text-[var(--ui-danger)]" aria-hidden="true" />
               </span>
             </div>
-            <h1 className="mb-2 text-[20px] font-semibold tracking-[-0.4px] text-white">
+            <h1 className="mb-2 text-[20px] font-semibold tracking-[-0.4px] text-foreground">
               {t('googleCallback.failedTitle')}
             </h1>
-            <p className="mb-6 text-[13.5px] text-[#888b91]">{error}</p>
+            <p className="mb-6 text-[13.5px] text-muted-foreground">{error}</p>
             <div className="flex flex-col justify-center gap-3 sm:flex-row">
               <Link to="/login">
                 <Pill className="w-full sm:w-auto">{t('googleCallback.backToSignIn')}</Pill>
@@ -146,8 +146,8 @@ export default function GoogleCallback() {
               aria-label={t('googleCallback.completing')}
             />
           </div>
-          <p className="text-[14px] font-medium text-white">{t('googleCallback.completing')}</p>
-          <p className="mt-1 text-[12px] text-[#888b91]">{t('googleCallback.momentSub')}</p>
+          <p className="text-[14px] font-medium text-foreground">{t('googleCallback.completing')}</p>
+          <p className="mt-1 text-[12px] text-muted-foreground">{t('googleCallback.momentSub')}</p>
         </motion.div>
       )}
     </main>

@@ -1,4 +1,4 @@
-# Intants AI Voice Interview Platform — Project Context
+# AntHire — AI Voice Interview Platform (Project Context)
 
 > This file is auto-loaded into every Claude Code session for this project.
 > All sub-agents inherit this context. Keep it tight and current.

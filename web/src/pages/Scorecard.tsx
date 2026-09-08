@@ -50,7 +50,7 @@ import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 // ── Inline skeleton (avoids @/components/ui/skeleton — shadcn forbidden on this page) ──
 
 function Skeleton({ className }: { className?: string }) {
-  return <div className={cn('animate-pulse bg-white/[0.06]', className)} />;
+  return <div className={cn('animate-pulse bg-[var(--ui-inset)]', className)} />;
 }
 
 // ── Animation ─────────────────────────────────────────────────────────────────
@@ -109,25 +109,25 @@ function scoreHexColor(score: number): string {
 function ErrorState() {
   const { t } = useTranslation();
   return (
-    <main className="min-h-screen bg-[#09090b] flex items-center justify-center px-4">
+    <main className="min-h-screen bg-card flex items-center justify-center px-4">
       <div
         role="alert"
-        className="rounded-[24px] border border-white/[0.08] bg-[#0f0f10] p-8 max-w-md w-full text-center space-y-5"
+        className="rounded-[24px] border border-border bg-card p-8 max-w-md w-full text-center space-y-5"
       >
         <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(230,113,79,0.16)] mx-auto">
-          <AlertTriangle className="h-6 w-6 text-[#e6714f]" aria-hidden="true" />
+          <AlertTriangle className="h-6 w-6 text-[var(--ui-danger)]" aria-hidden="true" />
         </div>
         <div>
-          <p className="text-[16px] font-semibold text-white">
+          <p className="text-[16px] font-semibold text-foreground">
             {t('scorecard.notAvailableTitle')}
           </p>
-          <p className="mt-1.5 text-[13.5px] text-[#888b91]">
+          <p className="mt-1.5 text-[13.5px] text-muted-foreground">
             {t('scorecard.notAvailableDesc')}
           </p>
         </div>
         <Link
           to="/history"
-          className="inline-flex items-center gap-2 rounded-pill border border-white/10 bg-white/[0.06] px-5 py-2.5 text-[14px] font-semibold text-white hover:bg-white/[0.1] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="inline-flex items-center gap-2 rounded-pill border border-border bg-[var(--ui-inset)] px-5 py-2.5 text-[14px] font-semibold text-foreground hover:bg-[var(--ui-inset-strong)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {t('scorecard.backToHistory')}
         </Link>
@@ -165,15 +165,15 @@ function ScoreBarRow({
         aria-controls={panelId}
         className={cn(
           'w-full flex items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left',
-          'transition-colors hover:bg-white/[0.05]',
+          'transition-colors hover:bg-[var(--ui-inset)]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
         )}
       >
-        <span className="flex items-center gap-1.5 text-[13.5px] font-medium text-[#b8babf]">
+        <span className="flex items-center gap-1.5 text-[13.5px] font-medium text-[var(--ui-soft)]">
           {label}
           <ChevronDown
             className={cn(
-              'h-3.5 w-3.5 text-[#5a5f66] transition-transform duration-200',
+              'h-3.5 w-3.5 text-[var(--ui-faint)] transition-transform duration-200',
               open && 'rotate-180',
             )}
             aria-hidden="true"
@@ -188,7 +188,7 @@ function ScoreBarRow({
       </button>
 
       {/* Score-coloured progress bar — the colour IS the verdict (red→green) */}
-      <div className="h-2 overflow-hidden rounded-full bg-white/[0.07]" aria-label={`${label}: ${score} out of 10`}>
+      <div className="h-2 overflow-hidden rounded-full bg-[var(--ui-inset-strong)]" aria-label={`${label}: ${score} out of 10`}>
         <div
           className="h-full rounded-full transition-all duration-700"
           style={{
@@ -202,30 +202,30 @@ function ScoreBarRow({
       {open && (
         <div
           id={panelId}
-          className="mt-1 space-y-3 rounded-[14px] border border-white/[0.08] bg-[rgba(var(--accent-rgb),0.06)] px-4 py-3"
+          className="mt-1 space-y-3 rounded-[14px] border border-border bg-[rgba(var(--accent-rgb),0.06)] px-4 py-3"
         >
           <div>
-            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#60a5fa]">
+            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ui-info)]">
               <Info className="h-3.5 w-3.5" aria-hidden="true" />
               {t('scorecard.whyThisScore')}
             </p>
-            <p className="text-[13px] leading-relaxed text-[#888b91]">
+            <p className="text-[13px] leading-relaxed text-muted-foreground">
               {hasRationale ? rationale : t('scorecard.rationaleUnavailable')}
             </p>
           </div>
 
           {feedback && feedback.went_wrong.length > 0 && (
             <div>
-              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#e6714f]">
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ui-danger)]">
                 <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
                 {/* "What went wrong" — design-only label */}
                 What went wrong
               </p>
               <ul className="space-y-1.5" aria-label={`${label}: what went wrong`}>
                 {feedback.went_wrong.map((point, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-[13px] leading-relaxed text-[#b8babf]">
+                  <li key={idx} className="flex items-start gap-2 text-[13px] leading-relaxed text-[var(--ui-soft)]">
                     <span
-                      className="mt-[7px] h-1.5 w-1.5 flex-none rounded-full bg-[#e6714f]"
+                      className="mt-[7px] h-1.5 w-1.5 flex-none rounded-full bg-[var(--ui-danger)]"
                       aria-hidden="true"
                     />
                     {point}
@@ -237,16 +237,16 @@ function ScoreBarRow({
 
           {feedback && feedback.how_to_improve.length > 0 && (
             <div>
-              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#27c93f]">
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ui-ok)]">
                 <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
                 {/* "How to improve" — design-only label */}
                 How to improve
               </p>
               <ul className="space-y-1.5" aria-label={`${label}: how to improve`}>
                 {feedback.how_to_improve.map((point, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-[13px] leading-relaxed text-[#b8babf]">
+                  <li key={idx} className="flex items-start gap-2 text-[13px] leading-relaxed text-[var(--ui-soft)]">
                     <CheckCircle2
-                      className="mt-0.5 h-3.5 w-3.5 flex-none text-[#27c93f]"
+                      className="mt-0.5 h-3.5 w-3.5 flex-none text-[var(--ui-ok)]"
                       aria-hidden="true"
                     />
                     {point}
@@ -314,8 +314,8 @@ function DimensionRadar({ scores }: { scores: ScoreBreakdown }) {
 
 function StrengthItem({ text }: { text: string }) {
   return (
-    <li className="flex items-start gap-2.5 text-[13.5px] text-[#b8babf]">
-      <CheckCircle2 className="h-4 w-4 text-[#27c93f] flex-none mt-0.5" aria-hidden="true" />
+    <li className="flex items-start gap-2.5 text-[13.5px] text-[var(--ui-soft)]">
+      <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)] flex-none mt-0.5" aria-hidden="true" />
       <span className="leading-relaxed">{text}</span>
     </li>
   );
@@ -324,10 +324,10 @@ function StrengthItem({ text }: { text: string }) {
 function ImprovementCard({ item }: { item: ImprovementItem }) {
   return (
     <li className="flex items-start gap-2.5 text-[13.5px]">
-      <TrendingUp className="h-4 w-4 text-[#ffb764] flex-none mt-0.5" aria-hidden="true" />
+      <TrendingUp className="h-4 w-4 text-[var(--ui-warn)] flex-none mt-0.5" aria-hidden="true" />
       <p className="leading-relaxed">
-        <span className="font-semibold text-white">{item.area}:</span>{' '}
-        <span className="text-[#b8babf]">{item.suggestion}</span>
+        <span className="font-semibold text-foreground">{item.area}:</span>{' '}
+        <span className="text-[var(--ui-soft)]">{item.suggestion}</span>
       </p>
     </li>
   );
@@ -384,12 +384,12 @@ function IntegrityPanel({ report }: { report: IntegrityReport }) {
 
   return (
     <GlassCard className="p-5">
-      <h3 className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-white">
-        <ShieldCheck className="h-4 w-4 text-[#27c93f]" aria-hidden="true" />
+      <h3 className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+        <ShieldCheck className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
         {/* "Interview integrity" — design-only label, matches admin console wording */}
         Interview integrity
       </h3>
-      <p className="mb-4 text-[12px] text-[#888b91]">
+      <p className="mb-4 text-[12px] text-muted-foreground">
         AI-assisted flagging for human review — not an automated decision.
       </p>
 
@@ -401,23 +401,23 @@ function IntegrityPanel({ report }: { report: IntegrityReport }) {
         >
           {score}
         </span>
-        <span className="text-[13px] text-[#888b91]">/ 100 integrity</span>
+        <span className="text-[13px] text-muted-foreground">/ 100 integrity</span>
       </div>
 
       {types.length === 0 ? (
-        <p className="text-[13px] text-[#27c93f]">No integrity flags were raised. ✓</p>
+        <p className="text-[13px] text-[var(--ui-ok)]">No integrity flags were raised. ✓</p>
       ) : (
         <div className="flex flex-col gap-2.5" aria-label="Integrity flags">
           {types.map((t) => (
             <div
               key={t}
-              className="flex items-center gap-3 rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3"
+              className="flex items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3"
             >
-              <AlertTriangle className="h-[15px] w-[15px] flex-none text-[#ffb764]" aria-hidden="true" />
-              <span className="flex-1 text-[12.5px] text-[#b8babf]">
+              <AlertTriangle className="h-[15px] w-[15px] flex-none text-[var(--ui-warn)]" aria-hidden="true" />
+              <span className="flex-1 text-[12.5px] text-[var(--ui-soft)]">
                 {INTEGRITY_LABELS[t] ?? t}
               </span>
-              <span className="font-mono text-[11px] text-[#70757c] tabular-nums">
+              <span className="font-mono text-[11px] text-[var(--ui-faint)] tabular-nums">
                 {byType[t]}×{flaggedSeconds[t] ? ` · ${flaggedSeconds[t]}s` : ''}
               </span>
             </div>
@@ -427,7 +427,7 @@ function IntegrityPanel({ report }: { report: IntegrityReport }) {
 
       {timeline.length > 0 && (
         <div className="pt-4">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.5px] text-[#888b91]">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">
             Event timeline
           </p>
           <ul
@@ -437,16 +437,16 @@ function IntegrityPanel({ report }: { report: IntegrityReport }) {
             {timeline.map((ev, idx) => (
               <li
                 key={idx}
-                className="flex items-center justify-between gap-2 rounded-[10px] bg-white/[0.02] px-2.5 py-1.5 text-[11.5px]"
+                className="flex items-center justify-between gap-2 rounded-[10px] bg-[var(--ui-inset-soft)] px-2.5 py-1.5 text-[11.5px]"
               >
-                <span className="flex items-center gap-2 text-[#b8babf]">
-                  <span className="font-mono text-[#70757c] tabular-nums">
+                <span className="flex items-center gap-2 text-[var(--ui-soft)]">
+                  <span className="font-mono text-[var(--ui-faint)] tabular-nums">
                     {fmtOffset(ev.started_at, report.session_started_at)}
                   </span>
                   {INTEGRITY_LABELS[ev.event_type] ?? ev.event_type}
                 </span>
                 {ev.duration_seconds != null && (
-                  <span className="font-mono text-[#70757c] tabular-nums">
+                  <span className="font-mono text-[var(--ui-faint)] tabular-nums">
                     {ev.duration_seconds}s
                   </span>
                 )}
@@ -463,7 +463,7 @@ function IntegrityPanel({ report }: { report: IntegrityReport }) {
 
 function ScorecardSkeleton() {
   return (
-    <main className="min-h-screen bg-[#09090b] py-10 px-4">
+    <main className="min-h-screen bg-card py-10 px-4">
       {/* Screen-reader status — preserves existing test contract */}
       <span
         role="status"
@@ -472,13 +472,13 @@ function ScorecardSkeleton() {
         className="sr-only"
       />
       <div className="max-w-[1180px] mx-auto space-y-5">
-        <Skeleton className="h-10 w-64 rounded-full bg-white/[0.06]" />
+        <Skeleton className="h-10 w-64 rounded-full bg-[var(--ui-inset)]" />
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-          <Skeleton className="h-64 rounded-[24px] bg-white/[0.06]" />
-          <Skeleton className="h-64 rounded-[24px] bg-white/[0.06] lg:col-span-2" />
+          <Skeleton className="h-64 rounded-[24px] bg-[var(--ui-inset)]" />
+          <Skeleton className="h-64 rounded-[24px] bg-[var(--ui-inset)] lg:col-span-2" />
         </div>
-        <Skeleton className="h-48 rounded-[24px] bg-white/[0.06]" />
-        <Skeleton className="h-36 rounded-[24px] bg-white/[0.06]" />
+        <Skeleton className="h-48 rounded-[24px] bg-[var(--ui-inset)]" />
+        <Skeleton className="h-36 rounded-[24px] bg-[var(--ui-inset)]" />
       </div>
     </main>
   );
@@ -534,7 +534,7 @@ export default function Scorecard() {
   const tone = scoreTone(data.composite_score);
 
   return (
-    <main className="min-h-screen bg-[#09090b] py-8 px-4">
+    <main className="min-h-screen bg-card py-8 px-4">
       <div className="mx-auto max-w-[1180px] px-2 lg:px-4">
 
         {/* ── Page header ─────────────────────────────────────────────── */}
@@ -548,15 +548,15 @@ export default function Scorecard() {
           <nav className="flex items-center gap-3 mb-5" aria-label="Breadcrumb">
             <Link
               to="/history"
-              className="inline-flex items-center gap-1.5 rounded-pill border border-white/[0.08] bg-white/[0.04] px-3.5 py-1.5 text-[13px] text-[#888b91] hover:bg-white/[0.08] hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="inline-flex items-center gap-1.5 rounded-pill border border-border bg-[var(--ui-inset)] px-3.5 py-1.5 text-[13px] text-muted-foreground hover:bg-[var(--ui-inset-strong)] hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
               {t('nav.history')}
             </Link>
-            <span className="h-4 w-px bg-white/10" aria-hidden="true" />
+            <span className="h-4 w-px bg-[var(--ui-inset-strong)]" aria-hidden="true" />
             <Link
               to="/dashboard"
-              className="inline-flex items-center gap-1.5 rounded-pill border border-white/[0.08] bg-white/[0.04] px-3.5 py-1.5 text-[13px] text-[#888b91] hover:bg-white/[0.08] hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="inline-flex items-center gap-1.5 rounded-pill border border-border bg-[var(--ui-inset)] px-3.5 py-1.5 text-[13px] text-muted-foreground hover:bg-[var(--ui-inset-strong)] hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               <LayoutDashboard className="h-3.5 w-3.5" aria-hidden="true" />
               {t('nav.dashboard')}
@@ -566,11 +566,11 @@ export default function Scorecard() {
           {/* Role + badge breadcrumb line */}
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2 text-[13px] text-[#888b91]">
+              <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
                 <History className="h-3.5 w-3.5" aria-hidden="true" />
                 {t('scorecard.badge')}
               </div>
-              <h1 className="mt-1 text-[26px] font-semibold tracking-[-0.5px] text-white">
+              <h1 className="mt-1 text-[26px] font-semibold tracking-[-0.5px] text-foreground">
                 {t('scorecard.title')}
               </h1>
             </div>
@@ -581,7 +581,7 @@ export default function Scorecard() {
                 href={data.report_pdf_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-pill bg-white px-5 py-2.5 text-[14px] font-semibold text-black hover:bg-[#eaeaea] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                className="inline-flex items-center gap-2 rounded-pill bg-primary px-5 py-2.5 text-[14px] font-semibold text-primary-foreground hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
                 <Download className="h-4 w-4" aria-hidden="true" />
                 {t('scorecard.downloadPdf')}
@@ -611,7 +611,7 @@ export default function Scorecard() {
                 <StatusTag tone={tone} dot>
                   {verdict}
                 </StatusTag>
-                <p className="text-[12px] text-[#9fb6d6]">
+                <p className="text-[12px] text-[var(--ui-soft)]">
                   {t('scorecard.overallScore')}
                 </p>
               </div>
@@ -621,10 +621,10 @@ export default function Scorecard() {
           {/* Radar chart — recharts over live data.scores (4 real dimensions) */}
           <Reveal className="lg:col-span-2">
             <GlassCard className="h-full p-5">
-              <h3 className="mb-2 text-[15px] font-semibold text-white">
+              <h3 className="mb-2 text-[15px] font-semibold text-foreground">
                 {t('scorecard.scoreBreakdown')}
               </h3>
-              <p className="mb-3 text-[12.5px] text-[#888b91]">{t('scorecard.tapForDetail')}</p>
+              <p className="mb-3 text-[12.5px] text-muted-foreground">{t('scorecard.tapForDetail')}</p>
               <DimensionRadar scores={data.scores} />
             </GlassCard>
           </Reveal>
@@ -633,7 +633,7 @@ export default function Scorecard() {
         {/* ── Competency bars with collapsible rationale accordions ──────── */}
         <Reveal className="mt-5">
           <GlassCard className="p-5">
-            <h3 className="mb-4 text-[15px] font-semibold text-white">
+            <h3 className="mb-4 text-[15px] font-semibold text-foreground">
               {/* "Competency breakdown" — design-only label, no existing t() key */}
               Competency breakdown
             </h3>
@@ -659,8 +659,8 @@ export default function Scorecard() {
             {data.strengths.length > 0 && (
               <Reveal dir="left">
                 <GlassCard className="h-full p-5">
-                  <h3 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-white">
-                    <CheckCircle2 className="h-4 w-4 text-[#27c93f]" aria-hidden="true" />
+                  <h3 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+                    <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
                     {t('scorecard.keyStrengths')}
                   </h3>
                   <ul className="flex flex-col gap-2.5" aria-label="Key strengths list">
@@ -676,8 +676,8 @@ export default function Scorecard() {
             {data.improvements.length > 0 && (
               <Reveal dir="right">
                 <GlassCard className="h-full p-5">
-                  <h3 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-white">
-                    <TrendingUp className="h-4 w-4 text-[#ffb764]" aria-hidden="true" />
+                  <h3 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+                    <TrendingUp className="h-4 w-4 text-[var(--ui-warn)]" aria-hidden="true" />
                     {t('scorecard.areasForImprovement')}
                   </h3>
                   <ul className="flex flex-col gap-3" aria-label="Areas for improvement list">
@@ -695,10 +695,10 @@ export default function Scorecard() {
         {data.summary && (
           <Reveal className="mt-5">
             <GlassCard className="p-5">
-              <h3 className="mb-3 text-[15px] font-semibold text-white">
+              <h3 className="mb-3 text-[15px] font-semibold text-foreground">
                 {t('scorecard.summary')}
               </h3>
-              <p className="text-[13.5px] leading-relaxed text-[#b8babf]">
+              <p className="text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
                 {data.summary}
               </p>
             </GlassCard>
@@ -714,18 +714,18 @@ export default function Scorecard() {
 
         {/* ── CTA footer ────────────────────────────────────────────────── */}
         <Reveal className="mt-6">
-          <div className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-white/[0.08] bg-[#0f0f10] p-5">
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-border bg-card p-5">
             <div>
               {/* "Want to improve your score?" — design-only label, no existing t() key */}
-              <div className="text-[15px] font-semibold text-white">Want to improve your score?</div>
+              <div className="text-[15px] font-semibold text-foreground">Want to improve your score?</div>
               {/* "Retake or try a different role." — design-only label */}
-              <p className="text-[13px] text-[#888b91]">Retake the interview or try a different role.</p>
+              <p className="text-[13px] text-muted-foreground">Retake the interview or try a different role.</p>
             </div>
             <div className="flex items-center gap-2.5">
               {/* "Browse roles" anchor styled as a ghost Pill — Link wrapping a button is invalid HTML */}
               <Link
                 to="/jobs"
-                className="inline-flex items-center justify-center gap-2 rounded-[9999px] px-5 py-2.5 text-[13px] font-semibold bg-white/[0.06] text-white border border-white/10 hover:bg-white/[0.1] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                className="inline-flex items-center justify-center gap-2 rounded-[9999px] px-5 py-2.5 text-[13px] font-semibold bg-[var(--ui-inset)] text-foreground border border-border hover:bg-[var(--ui-inset-strong)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
                 Browse roles
               </Link>
@@ -734,7 +734,7 @@ export default function Scorecard() {
                   href={data.report_pdf_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-2 rounded-[9999px] px-5 py-2.5 text-[13px] font-semibold bg-white text-black hover:bg-[#eaeaea] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  className="inline-flex items-center justify-center gap-2 rounded-[9999px] px-5 py-2.5 text-[13px] font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 >
                   <Download className="h-3.5 w-3.5" aria-hidden="true" />
                   {t('scorecard.downloadPdf')}

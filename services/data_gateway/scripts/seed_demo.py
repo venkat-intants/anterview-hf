@@ -555,7 +555,7 @@ async def main() -> None:  # noqa: C901, PLR0915 — a flat seed script reads be
 
         # ---- Notifications (bell) ----
         notifs = [
-            (cand_id, "welcome", "Welcome to Anterview 👋", "Pick a role and start your first mock interview.", "/jobs", 39, True),
+            (cand_id, "welcome", "Welcome to AntHire 👋", "Pick a role and start your first mock interview.", "/jobs", 39, True),
             (cand_id, "interview_completed", "Your scorecard is ready", "Data Analyst mock — composite 8.3/10.", "/scorecards", 9, False),
             (cand_id, "interview_completed", "Your scorecard is ready", "DevOps mock — composite 5.8/10.", "/scorecards", 2, False),
             (hr_id, "applicant_scored", "New applicant scored", "Vivek Iyer scored 91/100 for Backend Engineer.", "/hr/applicants", 6, False),

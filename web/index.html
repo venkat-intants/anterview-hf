@@ -1,26 +1,36 @@
 <!doctype html>
-<html lang="en" class="dark" style="background-color: #000000;">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Anterview — AI-powered voice interview platform" />
+    <meta name="description" content="AntHire — AI-powered voice interview platform" />
     <meta name="theme-color" content="#000000" />
-    <meta name="color-scheme" content="dark" />
-    <!-- Single forced aurora-dark theme: `dark` is hardcoded on <html> above so
-         every `dark:` variant and the .dark token scope always apply. -->
+    <!-- Two axes, both applied before React mounts so neither flashes:
+         `data-mode`  = light | dark, the two designs  (lib/useThemeMode.ts)
+         `data-theme` = the signal accent within a mode (components/ThemeToggle)
+         `.dark` mirrors data-mode because shadcn's `dark:` variants key off the
+         class while the palettes key off the attribute — they must agree. -->
     <script>
-      try {
-        document.documentElement.classList.add('dark');
-        // Pre-paint theme: read the saved signal-accent theme and apply it to
-        // <html data-theme> before React mounts, so there is no colour flash.
-        var t = localStorage.getItem('intants:theme');
-        document.documentElement.setAttribute(
-          'data-theme',
-          t === 'purple' || t === 'black' || t === 'blue' ? t : 'blue'
-        );
-      } catch (e) {
-        document.documentElement.setAttribute('data-theme', 'blue');
-      }
+      (function () {
+        var root = document.documentElement;
+        var mode = 'light';
+        var accent = 'blue';
+        try {
+          if (localStorage.getItem('anthire:mode') === 'dark') mode = 'dark';
+          var t = localStorage.getItem('intants:theme');
+          if (t === 'purple' || t === 'black' || t === 'blue') accent = t;
+        } catch (e) {
+          /* storage blocked — defaults stand */
+        }
+        // A dark-only route (staff console, live interview) is corrected by
+        // ThemeModeGate on mount; starting from the stored preference is right
+        // for the overwhelmingly common case and avoids a flash on it.
+        root.setAttribute('data-mode', mode);
+        root.classList.toggle('dark', mode === 'dark');
+        root.style.colorScheme = mode;
+        root.style.backgroundColor = mode === 'dark' ? '#000000' : '#f4f5f8';
+        root.setAttribute('data-theme', accent);
+      })();
     </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -31,7 +41,7 @@
       href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,500&family=Geist:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <title>Anterview</title>
+    <title>AntHire</title>
   </head>
   <body style="background-color: #000000;">
     <div id="root"></div>

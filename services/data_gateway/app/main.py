@@ -296,7 +296,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="Intants Data Gateway",
+    title="AntHire Data Gateway",
     description="Auth (pluggable), user management, Naipunyam SSO bridge",
     version="0.1.0",
     lifespan=lifespan,

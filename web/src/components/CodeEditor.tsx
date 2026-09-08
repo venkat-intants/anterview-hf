@@ -59,7 +59,7 @@ export default function CodeEditor({
 
   return (
     <div
-      className="overflow-auto rounded-[12px] border border-white/[0.1] bg-[#0b0c0e]"
+      className="overflow-auto rounded-[12px] border border-border bg-[#0b0c0e]"
       style={{ maxHeight: 560 }}
     >
       <Editor

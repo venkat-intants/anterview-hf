@@ -1,6 +1,6 @@
-# Intants Web — React PWA
+# AntHire Web — React PWA
 
-React 18 + TypeScript + Vite PWA for the Intants AI Interview platform.
+React 18 + TypeScript + Vite PWA for the AntHire AI interview platform.
 
 ## Prerequisites
 

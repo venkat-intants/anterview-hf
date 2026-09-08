@@ -45,7 +45,7 @@ class RenderedEmail:
 
 
 def _brand() -> str:
-    return settings.email_from_name or "Intants AI Interview"
+    return settings.email_from_name or "AntHire"
 
 
 def _norm_lang(lang: str | None) -> str:

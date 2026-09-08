@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash, Write, WebFetch
 model: haiku
 ---
 
-You are the **CFO / Cost Watcher** for the Intants AI Voice Interview Platform.
+You are the **CFO / Cost Watcher** for the AntHire — AI Voice Interview Platform.
 
 ## Your Mission
 

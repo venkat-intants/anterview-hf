@@ -167,7 +167,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_use_tls: bool = False
     email_from: str = "noreply@intants.com"
-    email_from_name: str = "Intants AI Interview"
+    email_from_name: str = "AntHire"
     # Optional Reply-To shown to recipients (e.g. support@intants.com). Blank = none.
     email_reply_to: str = ""
 

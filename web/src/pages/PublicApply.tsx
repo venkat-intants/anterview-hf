@@ -68,7 +68,7 @@ function errText(e: unknown, fallback: string): string {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#0a0a0b] px-4 py-10">
+    <div className="min-h-screen bg-card px-4 py-10">
       <div className="mx-auto w-full max-w-[680px]">{children}</div>
     </div>
   );
@@ -76,7 +76,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function Panel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn('rounded-[20px] border border-white/[0.08] bg-[#0f0f10] p-6', className)}>
+    <div className={cn('rounded-[20px] border border-border bg-card p-6', className)}>
       {children}
     </div>
   );
@@ -86,11 +86,11 @@ function Unavailable() {
   return (
     <Shell>
       <Panel className="text-center">
-        <Briefcase className="mx-auto h-8 w-8 text-[#5a5f66]" aria-hidden="true" />
-        <h1 className="mt-4 text-[20px] font-semibold text-white">
+        <Briefcase className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
+        <h1 className="mt-4 text-[20px] font-semibold text-foreground">
           This opening is not accepting applications
         </h1>
-        <p className="mx-auto mt-2 max-w-[48ch] text-[13.5px] leading-relaxed text-[#888b91]">
+        <p className="mx-auto mt-2 max-w-[48ch] text-[13.5px] leading-relaxed text-muted-foreground">
           The role may have been filled or closed. If you were sent this link recently,
           check with whoever shared it — they will have the current one.
         </p>
@@ -103,17 +103,17 @@ function Submitted({ result, title }: { result: ApplicationResult; title: string
   return (
     <Shell>
       <Panel className="text-center">
-        <CheckCircle2 className="mx-auto h-9 w-9 text-[#27c93f]" aria-hidden="true" />
-        <h1 className="mt-4 text-[20px] font-semibold text-white">
+        <CheckCircle2 className="mx-auto h-9 w-9 text-[var(--ui-ok)]" aria-hidden="true" />
+        <h1 className="mt-4 text-[20px] font-semibold text-foreground">
           {result.already_applied ? 'You have already applied' : 'Application received'}
         </h1>
-        <p className="mx-auto mt-2 max-w-[50ch] text-[13.5px] leading-relaxed text-[#d5d7da]">
+        <p className="mx-auto mt-2 max-w-[50ch] text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
           {result.message}
         </p>
-        <p className="mx-auto mt-4 max-w-[50ch] text-[12.5px] leading-relaxed text-[#888b91]">
+        <p className="mx-auto mt-4 max-w-[50ch] text-[12.5px] leading-relaxed text-muted-foreground">
           {/* Said plainly because the alternative — silence — is what makes
               candidates assume they were rejected. */}
-          Your CV is with the hiring team for <span className="text-white">{title}</span>.
+          Your CV is with the hiring team for <span className="text-foreground">{title}</span>.
           If they move you forward you will get an email with the next step; nothing is
           decided automatically.
         </p>
@@ -125,11 +125,11 @@ function Submitted({ result, title }: { result: ApplicationResult; title: string
 /* ── Seeding panel (development builds only) ─────────────────────────────── */
 
 const SEED_TONE: Record<SeedRow['status'], string> = {
-  waiting: 'text-[#70757c]',
+  waiting: 'text-[var(--ui-faint)]',
   sending: 'text-[var(--accent)]',
-  done: 'text-[#27c93f]',
-  duplicate: 'text-[#ffb764]',
-  failed: 'text-[#e6714f]',
+  done: 'text-[var(--ui-ok)]',
+  duplicate: 'text-[var(--ui-warn)]',
+  failed: 'text-[var(--ui-danger)]',
 };
 
 const SEED_LABEL: Record<SeedRow['status'], string> = {
@@ -154,21 +154,21 @@ function SeedPanel({
   const done = rows.filter((r) => r.status === 'done' || r.status === 'duplicate').length;
 
   return (
-    <Panel className="mt-5 border-[#ffb764]/30">
+    <Panel className="mt-5 border-[var(--ui-warn)]/30">
       <div className="flex flex-wrap items-center gap-2">
-        <AlertTriangle className="h-4 w-4 shrink-0 text-[#ffb764]" aria-hidden="true" />
-        <h2 className="text-[15px] font-semibold text-white">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
+        <h2 className="text-[15px] font-semibold text-foreground">
           Seed {rows.length} test application{rows.length === 1 ? '' : 's'}
         </h2>
-        <span className="ml-auto text-[11.5px] text-[#70757c]">
+        <span className="ml-auto text-[11.5px] text-[var(--ui-faint)]">
           {done}/{rows.length}
         </span>
       </div>
 
-      <p className="mt-2 text-[12.5px] leading-relaxed text-[#888b91]">
+      <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
         Development build only — this panel is not in a production bundle. Each CV is sent
         as its own application with a name guessed from the filename and a
-        {' '}<code className="text-[#b8babf]">@seed.example.com</code> address, so nothing here can
+        {' '}<code className="text-[var(--ui-soft)]">@seed.example.com</code> address, so nothing here can
         email a real person. Sent one at a time: the endpoint allows six a minute and this
         waits rather than failing when it hits that.
       </p>
@@ -179,7 +179,7 @@ function SeedPanel({
             key={`${row.file.name}-${i}`}
             className="flex items-center gap-2 text-[12px]"
           >
-            <span className="min-w-0 flex-1 truncate text-[#d5d7da]">{row.file.name}</span>
+            <span className="min-w-0 flex-1 truncate text-[var(--ui-soft)]">{row.file.name}</span>
             <span className={cn('shrink-0', SEED_TONE[row.status])}>
               {row.detail ?? SEED_LABEL[row.status]}
             </span>
@@ -192,7 +192,7 @@ function SeedPanel({
           type="button"
           onClick={onRun}
           disabled={running}
-          className="inline-flex items-center gap-1.5 rounded-[12px] bg-white px-4 py-2 text-[13px] font-medium text-black hover:opacity-90 disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
         >
           {running ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
           {running ? 'Seeding…' : `Send ${rows.length} applications`}
@@ -201,7 +201,7 @@ function SeedPanel({
           type="button"
           onClick={onClear}
           disabled={running}
-          className="rounded-[12px] border border-white/[0.12] px-4 py-2 text-[13px] text-[#d5d7da] hover:text-white disabled:opacity-40"
+          className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
         >
           Clear
         </button>
@@ -280,8 +280,8 @@ function BulletPanel({ heading, items }: { heading: string; items?: string[] }) 
   if (!items || items.length === 0) return null;
   return (
     <Panel className="mb-5">
-      <h2 className="mb-2 text-[14px] font-medium text-white">{heading}</h2>
-      <ul className="flex list-disc flex-col gap-1.5 pl-5 text-[13.5px] leading-relaxed text-[#d5d7da]">
+      <h2 className="mb-2 text-[14px] font-medium text-foreground">{heading}</h2>
+      <ul className="flex list-disc flex-col gap-1.5 pl-5 text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
         {items.map((item) => (
           <li key={item}>{item}</li>
         ))}
@@ -294,12 +294,12 @@ function SkillTags({ heading, skills }: { heading: string; skills?: string[] }) 
   if (!skills || skills.length === 0) return null;
   return (
     <div>
-      <h3 className="mb-2 text-[12.5px] font-medium text-[#b8babf]">{heading}</h3>
+      <h3 className="mb-2 text-[12.5px] font-medium text-[var(--ui-soft)]">{heading}</h3>
       <div className="flex flex-wrap gap-1.5">
         {skills.map((skill) => (
           <span
             key={skill}
-            className="rounded-full border border-white/[0.1] bg-white/[0.04] px-2.5 py-1 text-[12px] text-[#d5d7da]"
+            className="rounded-full border border-border bg-[var(--ui-inset)] px-2.5 py-1 text-[12px] text-[var(--ui-soft)]"
           >
             {skill}
           </span>
@@ -328,32 +328,32 @@ function QuestionField({
 }) {
   const id = `q-${question.id}`;
   const inputClass =
-    'w-full rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3.5 py-2.5 text-[14px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none';
+    'w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
 
   const label = (
-    <span className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]">
+    <span className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
       {question.prompt}
       {question.required ? (
-        <span className="ml-1 text-[#e6714f]" aria-hidden="true">
+        <span className="ml-1 text-[var(--ui-danger)]" aria-hidden="true">
           *
         </span>
       ) : (
-        <span className="ml-1 font-normal text-[#5a5f66]">(optional)</span>
+        <span className="ml-1 font-normal text-[var(--ui-faint)]">(optional)</span>
       )}
     </span>
   );
 
   const help = question.help_text ? (
-    <p className="mt-1 text-[11.5px] text-[#70757c]">{question.help_text}</p>
+    <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">{question.help_text}</p>
   ) : null;
 
   if (question.kind === 'yes_no') {
     return (
       <fieldset>
-        <legend className="mb-1.5 text-[12.5px] font-medium text-[#b8babf]">
+        <legend className="mb-1.5 text-[12.5px] font-medium text-[var(--ui-soft)]">
           {question.prompt}
           {question.required ? null : (
-            <span className="ml-1 font-normal text-[#5a5f66]">(optional)</span>
+            <span className="ml-1 font-normal text-[var(--ui-faint)]">(optional)</span>
           )}
         </legend>
         <div className="flex gap-2">
@@ -366,8 +366,8 @@ function QuestionField({
               className={cn(
                 'cursor-pointer rounded-[10px] border px-4 py-2 text-[13.5px]',
                 value === opt.v
-                  ? 'border-[var(--accent)] text-white'
-                  : 'border-white/[0.1] text-[#b8babf]',
+                  ? 'border-[var(--accent)] text-foreground'
+                  : 'border-border text-[var(--ui-soft)]',
               )}
             >
               <input
@@ -412,10 +412,10 @@ function QuestionField({
     const chosen = Array.isArray(value) ? value : [];
     return (
       <fieldset>
-        <legend className="mb-1.5 text-[12.5px] font-medium text-[#b8babf]">
+        <legend className="mb-1.5 text-[12.5px] font-medium text-[var(--ui-soft)]">
           {question.prompt}
           {question.required ? null : (
-            <span className="ml-1 font-normal text-[#5a5f66]">(optional)</span>
+            <span className="ml-1 font-normal text-[var(--ui-faint)]">(optional)</span>
           )}
         </legend>
         <div className="flex flex-wrap gap-2">
@@ -425,8 +425,8 @@ function QuestionField({
               className={cn(
                 'cursor-pointer rounded-[10px] border px-3 py-1.5 text-[13px]',
                 chosen.includes(o)
-                  ? 'border-[var(--accent)] text-white'
-                  : 'border-white/[0.1] text-[#b8babf]',
+                  ? 'border-[var(--accent)] text-foreground'
+                  : 'border-border text-[var(--ui-soft)]',
               )}
             >
               <input
@@ -515,9 +515,9 @@ function Stepper({ current, steps }: { current: number; steps: string[] }) {
           <span
             className={cn(
               'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-medium',
-              i < current && 'border-white/20 bg-white/10 text-white',
-              i === current && 'border-[var(--accent)] text-white',
-              i > current && 'border-white/[0.08] text-[#5a5f66]',
+              i < current && 'border-[var(--ui-line-strong)] bg-[var(--ui-inset-strong)] text-foreground',
+              i === current && 'border-[var(--accent)] text-foreground',
+              i > current && 'border-border text-[var(--ui-faint)]',
             )}
             aria-current={i === current ? 'step' : undefined}
           >
@@ -526,13 +526,13 @@ function Stepper({ current, steps }: { current: number; steps: string[] }) {
           <span
             className={cn(
               'hidden text-[12px] sm:inline',
-              i === current ? 'text-white' : 'text-[#70757c]',
+              i === current ? 'text-foreground' : 'text-[var(--ui-faint)]',
             )}
           >
             {label}
           </span>
           {i < steps.length - 1 ? (
-            <span className="h-px flex-1 bg-white/[0.08]" aria-hidden="true" />
+            <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
           ) : null}
         </li>
       ))}
@@ -543,12 +543,12 @@ function Stepper({ current, steps }: { current: number; steps: string[] }) {
 /** One line of the review step. Missing answers say so rather than sitting blank. */
 function ReviewRow({ label, value }: { label: string; value: string | null }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.06] py-2 last:border-b-0">
-      <span className="text-[12.5px] text-[#888b91]">{label}</span>
+    <div className="flex items-baseline justify-between gap-4 border-b border-border py-2 last:border-b-0">
+      <span className="text-[12.5px] text-muted-foreground">{label}</span>
       <span
         className={cn(
           'text-right text-[13px]',
-          value ? 'text-white' : 'italic text-[#5a5f66]',
+          value ? 'text-foreground' : 'italic text-[var(--ui-faint)]',
         )}
       >
         {value || 'Not provided'}
@@ -700,7 +700,7 @@ export default function PublicApply(): JSX.Element {
   if (posting.isLoading) {
     return (
       <Shell>
-        <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-[#888b91]">
+        <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Loading…
         </div>
@@ -745,21 +745,21 @@ export default function PublicApply(): JSX.Element {
           ? requiredAnswered
           : true;
   const field =
-    'w-full rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3.5 py-2.5 text-[14px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none';
+    'w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
 
   return (
     <Shell>
       <header className="mb-5">
-        <div className="text-[12.5px] uppercase tracking-[1.2px] text-[#70757c]">
+        <div className="text-[12.5px] uppercase tracking-[1.2px] text-[var(--ui-faint)]">
           {job.company_name}
         </div>
-        <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.8px] text-white">
+        <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.8px] text-foreground">
           {job.title}
         </h1>
         {metaLine(job) ? (
-          <div className="mt-1.5 text-[13.5px] text-[#d5d7da]">{metaLine(job)}</div>
+          <div className="mt-1.5 text-[13.5px] text-[var(--ui-soft)]">{metaLine(job)}</div>
         ) : null}
-        <div className="mt-1 text-[13px] text-[#888b91]">
+        <div className="mt-1 text-[13px] text-muted-foreground">
           {job.level} level
           {experienceLine(job) ? ` · ${experienceLine(job)}` : ''}
           {job.closes_at
@@ -767,7 +767,7 @@ export default function PublicApply(): JSX.Element {
             : ''}
         </div>
         {salaryLine(job) ? (
-          <div className="mt-2 inline-block rounded-[10px] border border-white/[0.1] bg-white/[0.04] px-3 py-1.5 text-[13.5px] font-medium text-white">
+          <div className="mt-2 inline-block rounded-[10px] border border-border bg-[var(--ui-inset)] px-3 py-1.5 text-[13.5px] font-medium text-foreground">
             {salaryLine(job)}
           </div>
         ) : null}
@@ -775,8 +775,8 @@ export default function PublicApply(): JSX.Element {
 
       {job.jd_text ? (
         <Panel className="mb-5">
-          <h2 className="mb-2 text-[14px] font-medium text-white">About the role</h2>
-          <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-[#d5d7da]">
+          <h2 className="mb-2 text-[14px] font-medium text-foreground">About the role</h2>
+          <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
             {job.jd_text}
           </p>
         </Panel>
@@ -794,7 +794,7 @@ export default function PublicApply(): JSX.Element {
       ) : null}
 
       <Panel>
-        <h2 className="text-[16px] font-semibold text-white">Apply</h2>
+        <h2 className="text-[16px] font-semibold text-foreground">Apply</h2>
 
         <div className="mt-4">
           <Stepper current={step} steps={steps} />
@@ -817,7 +817,7 @@ export default function PublicApply(): JSX.Element {
           {step === 0 ? (
             <>
           <div>
-            <label htmlFor="name" className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]">
+            <label htmlFor="name" className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
               Your name
             </label>
             <input
@@ -830,7 +830,7 @@ export default function PublicApply(): JSX.Element {
           </div>
 
           <div>
-            <label htmlFor="email" className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]">
+            <label htmlFor="email" className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
               Email
             </label>
             <input
@@ -841,7 +841,7 @@ export default function PublicApply(): JSX.Element {
               autoComplete="email"
               className={field}
             />
-            <p className="mt-1 text-[11.5px] text-[#70757c]">
+            <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
               This is how the hiring team will reach you.
             </p>
           </div>
@@ -849,9 +849,9 @@ export default function PublicApply(): JSX.Element {
               <div>
                 <label
                   htmlFor="phone"
-                  className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]"
+                  className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                 >
-                  Phone <span className="font-normal text-[#5a5f66]">(optional)</span>
+                  Phone <span className="font-normal text-[var(--ui-faint)]">(optional)</span>
                 </label>
                 <input
                   id="phone"
@@ -867,7 +867,7 @@ export default function PublicApply(): JSX.Element {
 
           {step === 1 ? (
             <>
-              <p className="text-[12.5px] leading-relaxed text-[#888b91]">
+              <p className="text-[12.5px] leading-relaxed text-muted-foreground">
                 All optional. It helps the hiring team place you quickly, but skip
                 anything you would rather not answer.
               </p>
@@ -875,7 +875,7 @@ export default function PublicApply(): JSX.Element {
                 <div>
                   <label
                     htmlFor="years"
-                    className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]"
+                    className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                   >
                     Years of experience
                   </label>
@@ -892,7 +892,7 @@ export default function PublicApply(): JSX.Element {
                 <div>
                   <label
                     htmlFor="company"
-                    className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]"
+                    className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                   >
                     Current company
                   </label>
@@ -908,7 +908,7 @@ export default function PublicApply(): JSX.Element {
               <div>
                 <label
                   htmlFor="title"
-                  className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]"
+                  className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                 >
                   Current role
                 </label>
@@ -924,7 +924,7 @@ export default function PublicApply(): JSX.Element {
                 <div>
                   <label
                     htmlFor="linkedin"
-                    className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]"
+                    className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                   >
                     LinkedIn
                   </label>
@@ -940,7 +940,7 @@ export default function PublicApply(): JSX.Element {
                 <div>
                   <label
                     htmlFor="github"
-                    className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]"
+                    className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                   >
                     GitHub
                   </label>
@@ -958,7 +958,7 @@ export default function PublicApply(): JSX.Element {
           ) : null}
 
           {step === 2 ? <>          <div>
-            <label htmlFor="cv" className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]">
+            <label htmlFor="cv" className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
               Your CV (PDF)
             </label>
             <label
@@ -980,15 +980,15 @@ export default function PublicApply(): JSX.Element {
                 'flex cursor-pointer items-center gap-3 rounded-[12px] border border-dashed px-3.5 py-4 transition-colors',
                 dragging
                   ? 'border-[var(--accent)] bg-[var(--accent)]/[0.06]'
-                  : 'border-white/15 hover:border-[var(--accent)]/50',
+                  : 'border-[var(--ui-line-strong)] hover:border-[var(--accent)]/50',
               )}
             >
               {resume ? (
-                <FileText className="h-5 w-5 shrink-0 text-[#27c93f]" aria-hidden="true" />
+                <FileText className="h-5 w-5 shrink-0 text-[var(--ui-ok)]" aria-hidden="true" />
               ) : (
-                <Upload className="h-5 w-5 shrink-0 text-[#70757c]" aria-hidden="true" />
+                <Upload className="h-5 w-5 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
               )}
-              <span className="min-w-0 flex-1 truncate text-[13px] text-[#d5d7da]">
+              <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--ui-soft)]">
                 {resume
                   ? resume.name
                   : dragging
@@ -1004,11 +1004,11 @@ export default function PublicApply(): JSX.Element {
               onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
             />
             {fileError ? (
-              <p className="mt-1.5 text-[12px] text-[#e6714f]" role="alert">
+              <p className="mt-1.5 text-[12px] text-[var(--ui-danger)]" role="alert">
                 {fileError}
               </p>
             ) : (
-              <p className="mt-1 text-[11.5px] text-[#70757c]">
+              <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
                 A text-based PDF, not a scan — a scanned image cannot be read.
               </p>
             )}
@@ -1031,7 +1031,7 @@ export default function PublicApply(): JSX.Element {
 
           {step === steps.length - 1 ? (
             <>
-              <div className="rounded-[12px] border border-white/[0.08] p-3">
+              <div className="rounded-[12px] border border-border p-3">
                 <ReviewRow label="Name" value={fullName.trim() || null} />
                 <ReviewRow label="Email" value={email.trim() || null} />
                 <ReviewRow label="Phone" value={phone.trim() || null} />
@@ -1063,14 +1063,14 @@ export default function PublicApply(): JSX.Element {
 
           {/* The lawful basis. Unticked by default, and the button below cannot
               be pressed until it is ticked. */}
-          <label className="flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-white/[0.08] p-3">
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-border p-3">
             <input
               type="checkbox"
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
               className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
             />
-            <span className="text-[12.5px] leading-relaxed text-[#d5d7da]">
+            <span className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
               I agree that {job.company_name} may store my name, email and CV to consider
               me for this role, and may contact me about it. I can ask them to delete my
               data at any time.
@@ -1079,11 +1079,11 @@ export default function PublicApply(): JSX.Element {
 
           {submit.isError ? (
             <div
-              className="flex items-start gap-2 rounded-[12px] border border-[#e6714f]/30 bg-[#e6714f]/[0.07] p-3 text-[12.5px] leading-relaxed text-[#d5d7da]"
+              className="flex items-start gap-2 rounded-[12px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger)]/[0.07] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
               role="alert"
             >
               <AlertTriangle
-                className="mt-0.5 h-4 w-4 shrink-0 text-[#e6714f]"
+                className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]"
                 aria-hidden="true"
               />
               {errText(submit.error, 'Something went wrong. Please try again.')}
@@ -1093,7 +1093,7 @@ export default function PublicApply(): JSX.Element {
           <button
             type="submit"
             disabled={!ready || submit.isPending}
-            className="inline-flex items-center justify-center gap-1.5 rounded-[12px] bg-white px-5 py-3 text-[14px] font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+            className="inline-flex items-center justify-center gap-1.5 rounded-[12px] bg-primary px-5 py-3 text-[14px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
           >
             {submit.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1111,7 +1111,7 @@ export default function PublicApply(): JSX.Element {
                 <button
                   type="button"
                   onClick={() => setStep(step - 1)}
-                  className="rounded-[12px] border border-white/[0.1] px-4 py-2.5 text-[13.5px] text-[#b8babf] hover:text-white"
+                  className="rounded-[12px] border border-border px-4 py-2.5 text-[13.5px] text-[var(--ui-soft)] hover:text-foreground"
                 >
                   Back
                 </button>
@@ -1123,7 +1123,7 @@ export default function PublicApply(): JSX.Element {
                   <button
                     type="button"
                     onClick={() => setStep(step + 1)}
-                    className="rounded-[12px] px-3 py-2.5 text-[13.5px] text-[#888b91] hover:text-white"
+                    className="rounded-[12px] px-3 py-2.5 text-[13.5px] text-muted-foreground hover:text-foreground"
                   >
                     Skip
                   </button>
@@ -1131,7 +1131,7 @@ export default function PublicApply(): JSX.Element {
                 <button
                   type="submit"
                   disabled={!canContinue}
-                  className="rounded-[12px] bg-white px-5 py-2.5 text-[14px] font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+                  className="rounded-[12px] bg-primary px-5 py-2.5 text-[14px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
                 >
                   Continue
                 </button>
@@ -1141,7 +1141,7 @@ export default function PublicApply(): JSX.Element {
             <button
               type="button"
               onClick={() => setStep(step - 1)}
-              className="self-start rounded-[12px] border border-white/[0.1] px-4 py-2.5 text-[13.5px] text-[#b8babf] hover:text-white"
+              className="self-start rounded-[12px] border border-border px-4 py-2.5 text-[13.5px] text-[var(--ui-soft)] hover:text-foreground"
             >
               Back
             </button>
@@ -1162,7 +1162,7 @@ export default function PublicApply(): JSX.Element {
             <button
               type="button"
               onClick={() => folderInput.current?.click()}
-              className="text-[12px] text-[#5a5f66] underline-offset-2 hover:text-[#888b91] hover:underline"
+              className="text-[12px] text-[var(--ui-faint)] underline-offset-2 hover:text-muted-foreground hover:underline"
             >
               Dev: drop or choose a folder of CVs to seed test applications
             </button>
@@ -1183,7 +1183,7 @@ export default function PublicApply(): JSX.Element {
         )
       ) : null}
 
-      <p className="mt-4 text-center text-[11.5px] text-[#5a5f66]">
+      <p className="mt-4 text-center text-[11.5px] text-[var(--ui-faint)]">
         Your application is reviewed by people at {job.company_name}. Assessments may be
         scored automatically, but no hiring decision is made without a person.
       </p>

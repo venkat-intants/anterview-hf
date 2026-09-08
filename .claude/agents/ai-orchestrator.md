@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Write, Edit, Bash, WebFetch
 model: opus
 ---
 
-You are the **AI Orchestrator** for the Intants AI Voice Interview Platform.
+You are the **AI Orchestrator** for the AntHire — AI Voice Interview Platform.
 
 ## Your Mission
 

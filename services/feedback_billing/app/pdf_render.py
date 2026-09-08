@@ -112,7 +112,7 @@ def _build_pdf_bytes(
         # written as a PDF string by ReportLab — no markup parser sees it, and
         # escaping would surface a literal "&amp;" in the viewer's title bar.
         title=f"Interview Scorecard — {candidate_name}",
-        author="Intants AI Interview Platform",
+        author="AntHire — AI Interview Platform",
     )
 
     base_styles = getSampleStyleSheet()
@@ -120,7 +120,7 @@ def _build_pdf_bytes(
 
     # ---- Styles -----------------------------------------------------------
     header_style = ParagraphStyle(
-        "IntantsHeader",
+        "AntHireHeader",
         parent=base_styles["Normal"],
         fontSize=22,
         leading=28,
@@ -129,7 +129,7 @@ def _build_pdf_bytes(
         spaceAfter=2,
     )
     subheader_style = ParagraphStyle(
-        "IntantsSubheader",
+        "AntHireSubheader",
         parent=base_styles["Normal"],
         fontSize=11,
         leading=14,
@@ -147,7 +147,7 @@ def _build_pdf_bytes(
         spaceAfter=4,
     )
     body_style = ParagraphStyle(
-        "IntantsBody",
+        "AntHireBody",
         parent=base_styles["Normal"],
         fontSize=10,
         leading=15,
@@ -155,7 +155,7 @@ def _build_pdf_bytes(
         spaceAfter=3,
     )
     bullet_style = ParagraphStyle(
-        "IntantsBullet",
+        "AntHireBullet",
         parent=body_style,
         leftIndent=14,
         bulletIndent=0,
@@ -179,7 +179,7 @@ def _build_pdf_bytes(
         alignment=1,
     )
     footer_style = ParagraphStyle(
-        "IntantsFooter",
+        "AntHireFooter",
         parent=base_styles["Normal"],
         fontSize=8,
         leading=10,
@@ -198,7 +198,7 @@ def _build_pdf_bytes(
     )
 
     # ---- Header block -------------------------------------------------------
-    story.append(Paragraph("Intants AI Interview Platform", header_style))
+    story.append(Paragraph("AntHire — AI Interview Platform", header_style))
     story.append(Paragraph("APSSDC Skilling Initiative", subheader_style))
     story.append(HRFlowable(width="100%", thickness=1.5, color=_INTANTS_BLUE, spaceAfter=8))
 
@@ -320,7 +320,7 @@ def _build_pdf_bytes(
     story.append(HRFlowable(width="100%", thickness=0.5, color=_MUTED))
     story.append(
         Paragraph(
-            f"Powered by Intants AI &nbsp;|&nbsp; Scorecard ID: {scorecard_id}",
+            f"Powered by AntHire &nbsp;|&nbsp; Scorecard ID: {scorecard_id}",
             footer_style,
         )
     )

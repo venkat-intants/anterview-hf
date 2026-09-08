@@ -271,7 +271,7 @@ export default function Onboarding(): JSX.Element {
             </div>
 
             {plan?.ready && plan.competencies.length > 0 && (
-              <div className="space-y-2 rounded-lg bg-white/5 px-4 py-3">
+              <div className="space-y-2 rounded-lg bg-[var(--ui-inset)] px-4 py-3">
                 <p className="text-xs opacity-60">
                   {t('onboarding.readyCompetencies', {
                     count: plan.competencies.length,
@@ -281,7 +281,7 @@ export default function Onboarding(): JSX.Element {
                   {plan.competencies.map((c) => (
                     <span
                       key={c.id}
-                      className="rounded-full bg-white/5 px-2 py-0.5 text-xs opacity-80"
+                      className="rounded-full bg-[var(--ui-inset)] px-2 py-0.5 text-xs opacity-80"
                     >
                       {c.name}
                     </span>
@@ -321,7 +321,7 @@ export default function Onboarding(): JSX.Element {
                 {t('onboarding.skip')}
               </button>
             </div>
-            <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+            <div className="h-1 w-full overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
               <div
                 className="h-full rounded-full transition-all duration-300"
                 style={{ width: `${(step / TOTAL_STEPS) * 100}%`, background: 'var(--accent)' }}
@@ -347,7 +347,7 @@ export default function Onboarding(): JSX.Element {
                 }}
                 placeholder={t('onboarding.namePlaceholder')}
                 maxLength={120}
-                className="w-full rounded-lg bg-white/5 px-4 py-3 text-base outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                className="w-full rounded-lg bg-[var(--ui-inset)] px-4 py-3 text-base outline-none focus:ring-1 focus:ring-[var(--accent)]"
               />
             </div>
           )}
@@ -381,7 +381,7 @@ export default function Onboarding(): JSX.Element {
                         'rounded-lg px-4 py-3 text-left transition',
                         selected
                           ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
-                          : 'bg-white/5 hover:bg-white/10',
+                          : 'bg-[var(--ui-inset)] hover:bg-[var(--ui-inset-strong)]',
                       )}
                     >
                       <div className="flex items-center gap-1.5 text-sm font-medium">
@@ -424,12 +424,12 @@ export default function Onboarding(): JSX.Element {
                 }}
                 placeholder={t('onboarding.rolePlaceholder')}
                 maxLength={200}
-                className="w-full rounded-lg bg-white/5 px-4 py-3 text-base outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                className="w-full rounded-lg bg-[var(--ui-inset)] px-4 py-3 text-base outline-none focus:ring-1 focus:ring-[var(--accent)]"
               />
 
               {/* Live confirmation that we understood the job. */}
               {debouncedRole.length >= 2 && (
-                <div className="rounded-lg bg-white/5 px-4 py-3 text-sm">
+                <div className="rounded-lg bg-[var(--ui-inset)] px-4 py-3 text-sm">
                   {previewing && (
                     <span className="opacity-60">{t('onboarding.roleReading')}</span>
                   )}
@@ -448,7 +448,7 @@ export default function Onboarding(): JSX.Element {
                         {preview.competencies.map((c) => (
                           <span
                             key={c.id}
-                            className="rounded-full bg-white/5 px-2 py-0.5 text-xs opacity-80"
+                            className="rounded-full bg-[var(--ui-inset)] px-2 py-0.5 text-xs opacity-80"
                           >
                             {c.name}
                           </span>
@@ -488,7 +488,7 @@ export default function Onboarding(): JSX.Element {
                           'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm transition',
                           selected
                             ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
-                            : 'bg-white/5 hover:bg-white/10',
+                            : 'bg-[var(--ui-inset)] hover:bg-[var(--ui-inset-strong)]',
                         )}
                       >
                         {selected && (
@@ -536,7 +536,7 @@ export default function Onboarding(): JSX.Element {
                         'flex items-center gap-1.5 rounded-lg px-4 py-3 text-sm transition',
                         selected
                           ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
-                          : 'bg-white/5 hover:bg-white/10',
+                          : 'bg-[var(--ui-inset)] hover:bg-[var(--ui-inset-strong)]',
                       )}
                     >
                       {selected && (
@@ -561,7 +561,7 @@ export default function Onboarding(): JSX.Element {
               type="button"
               onClick={() => setStep((s) => Math.max(1, s - 1))}
               disabled={step === 1 || busy}
-              className="rounded-lg px-3 py-2 text-sm transition hover:bg-white/10 disabled:opacity-30"
+              className="rounded-lg px-3 py-2 text-sm transition hover:bg-[var(--ui-inset-strong)] disabled:opacity-30"
             >
               {t('onboarding.back')}
             </button>

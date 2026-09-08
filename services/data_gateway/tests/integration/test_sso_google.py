@@ -328,7 +328,7 @@ async def test_initiate_returns_503_when_not_configured(client: AsyncClient) -> 
 
 @pytest.mark.asyncio
 async def test_callback_valid_code_returns_jwt(client: AsyncClient) -> None:
-    """Callback with a valid code + state → 200 with a valid Intants JWT."""
+    """Callback with a valid code + state → 200 with a valid AntHire JWT."""
     # Seed Redis with the expected state token, bound to this browser.
     fake_redis = _FakeRedis()
     binding = _seed_state(fake_redis, return_url="https://app.intants.com/dashboard")

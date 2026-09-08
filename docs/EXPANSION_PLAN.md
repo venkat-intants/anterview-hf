@@ -1,4 +1,4 @@
-# Intants — Production Expansion Plan
+# AntHire — Production Expansion Plan
 
 > **Status:** Planning document (v1, 2026-06-17)
 > **Owner:** Intants engineering

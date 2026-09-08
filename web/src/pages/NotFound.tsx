@@ -16,7 +16,7 @@ export default function NotFound() {
 
   return (
     <main
-      className="relative flex min-h-screen flex-col items-center justify-center bg-black px-6 text-center font-sans text-white"
+      className="relative flex min-h-screen flex-col items-center justify-center bg-background px-6 text-center font-sans text-foreground"
       aria-labelledby="not-found-heading"
     >
       <AuroraField />
@@ -27,7 +27,7 @@ export default function NotFound() {
         <h1 id="not-found-heading" className="mt-4 text-[24px] font-semibold tracking-[-0.6px]">
           {t('error.pageNotFoundTitle')}
         </h1>
-        <p className="mt-2 max-w-sm text-[14px] text-[#888b91]">{t('error.pageNotFoundDesc')}</p>
+        <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">{t('error.pageNotFoundDesc')}</p>
         <div className="mt-8 flex items-center gap-3">
           <Link to={homePath}>
             <Pill className="px-5 py-3">

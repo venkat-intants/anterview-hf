@@ -11,6 +11,10 @@ import { cn } from '@/lib/utils';
 import { Pill } from './primitives';
 import { X, type LucideIcon } from './icons';
 
+// PromoBanner is a FIXED dark-gradient card in both modes — the same device as
+// the landing hero and the auth brand panel — so its interior contrast is fixed
+// (white on gradient) and it is deliberately NOT wired to the mode tokens.
+// TrustStrip sits on the page canvas, so it IS.
 export type BannerTone = 'aurora' | 'electric' | 'forest' | 'amber';
 
 const TONE: Record<BannerTone, { bg: string; glow: string; accent: string }> = {
@@ -86,9 +90,9 @@ export function TrustStrip({
       {items.map(({ icon: Icon, label }) => (
         <span
           key={label}
-          className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-[12px] font-medium text-[#b8babf] transition-colors hover:border-white/[0.16] hover:text-white"
+          className="inline-flex items-center gap-1.5 rounded-full border border-border bg-[var(--ui-inset-soft)] px-3 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:border-[var(--ui-line-strong)] hover:text-foreground"
         >
-          <Icon size={13} className="text-[#60a5fa]" aria-hidden="true" />
+          <Icon size={13} className="text-[var(--ui-info)]" aria-hidden="true" />
           {label}
         </span>
       ))}

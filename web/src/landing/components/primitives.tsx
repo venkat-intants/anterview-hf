@@ -68,14 +68,3 @@ export function WaveBars({ count = 9, colors = ['#0088ff', '#60a5fa'], className
   )
 }
 
-/** Auto-scrolling, duplicated marquee row. */
-export function Marquee({ children, className }: PropsWithChildren<{ className?: string }>) {
-  return (
-    <div className={cn('at-marquee-mask relative overflow-hidden', className)}>
-      <div className="flex w-max gap-12 animate-marquee">
-        {children}
-        {children}
-      </div>
-    </div>
-  )
-}

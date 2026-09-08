@@ -68,8 +68,8 @@ interface FormValues {
 // ---------------------------------------------------------------------------
 
 const inputCls =
-  'w-full rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3.5 py-3 ' +
-  'text-[14px] text-white placeholder:text-[#5a5f66] ' +
+  'w-full rounded-[12px] border border-border bg-secondary px-3.5 py-3 ' +
+  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] ' +
   'focus:outline-none focus:border-[var(--accent)] focus:ring-0 ' +
   'transition-colors resize-none';
 
@@ -91,14 +91,14 @@ function SectionHeader({ step, title, description }: SectionHeaderProps) {
       <span
         className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full
           bg-[rgba(var(--accent-rgb),0.15)] border border-[rgba(var(--accent-rgb),0.35)]
-          text-[#60a5fa] text-[11px] font-semibold mt-0.5"
+          text-[var(--ui-info)] text-[11px] font-semibold mt-0.5"
       >
         {step}
       </span>
       <div>
-        <p className="text-[14px] font-semibold text-white">{title}</p>
+        <p className="text-[14px] font-semibold text-foreground">{title}</p>
         {description && (
-          <p className="text-[12px] text-[#888b91] mt-0.5">{description}</p>
+          <p className="text-[12px] text-muted-foreground mt-0.5">{description}</p>
         )}
       </div>
     </div>
@@ -119,12 +119,12 @@ interface FieldWrapProps {
 function FieldWrap({ id, label, error, children }: FieldWrapProps) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-[12.5px] font-medium text-[#b8babf]">
+      <label htmlFor={id} className="text-[12.5px] font-medium text-[var(--ui-soft)]">
         {label}
       </label>
       {children}
       {error && (
-        <p id={`${id}-error`} role="alert" className="text-[11.5px] text-[#e6714f]">
+        <p id={`${id}-error`} role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
           {error}
         </p>
       )}
@@ -160,7 +160,7 @@ function AvatarCard({ avatar, selected, onSelect }: AvatarCardProps) {
         'w-28 cursor-pointer',
         selected
           ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.08)]'
-          : 'border-white/[0.08] hover:border-white/20',
+          : 'border-border hover:border-[var(--ui-line-strong)]',
       )}
     >
       <span className="relative">
@@ -182,7 +182,7 @@ function AvatarCard({ avatar, selected, onSelect }: AvatarCardProps) {
               (e.currentTarget as HTMLVideoElement).style.display = 'none';
             }}
           />
-          <span className="absolute inset-0 flex items-center justify-center text-[15px] font-semibold text-white">
+          <span className="absolute inset-0 flex items-center justify-center text-[15px] font-semibold text-foreground">
             {initials}
           </span>
         </span>
@@ -194,8 +194,8 @@ function AvatarCard({ avatar, selected, onSelect }: AvatarCardProps) {
         )}
       </span>
 
-      <div className="text-[13px] font-medium text-white">{avatar.name}</div>
-      <div className="text-[10.5px] text-[#888b91] capitalize">{avatar.gender}</div>
+      <div className="text-[13px] font-medium text-foreground">{avatar.name}</div>
+      <div className="text-[10.5px] text-muted-foreground capitalize">{avatar.gender}</div>
     </button>
   );
 }
@@ -211,12 +211,12 @@ interface DeviceCheckRowProps {
 
 function DeviceCheckRow({ icon, label }: DeviceCheckRowProps) {
   return (
-    <div className="flex items-center gap-3 py-2 border-b border-white/[0.06] last:border-0">
-      <span className="flex h-7 w-7 flex-none items-center justify-center rounded-[8px] bg-white/[0.05] text-[#888b91]">
+    <div className="flex items-center gap-3 py-2 border-b border-border last:border-0">
+      <span className="flex h-7 w-7 flex-none items-center justify-center rounded-[8px] bg-[var(--ui-inset)] text-muted-foreground">
         {icon}
       </span>
-      <span className="flex-1 text-[13px] text-[#b8babf]">{label}</span>
-      <span className="text-[11.5px] text-[#70757c]">pending</span>
+      <span className="flex-1 text-[13px] text-[var(--ui-soft)]">{label}</span>
+      <span className="text-[11.5px] text-[var(--ui-faint)]">pending</span>
     </div>
   );
 }
@@ -436,14 +436,14 @@ export default function StartInterview() {
         transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
         className="mb-6"
       >
-        <div className="flex items-center gap-2 text-[13px] text-[#888b91] mb-1">
+        <div className="flex items-center gap-2 text-[13px] text-muted-foreground mb-1">
           <Sparkles size={15} className="text-[#a887dc]" aria-hidden="true" />
           <span>Pre-flight</span>
         </div>
-        <h1 className="text-[28px] font-semibold tracking-[-1px] text-white">
+        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
           {t('startInterview.pageTitle')}
         </h1>
-        <p className="mt-1 text-[14px] text-[#888b91]">
+        <p className="mt-1 text-[14px] text-muted-foreground">
           {t('startInterview.pageDesc')}
         </p>
       </motion.div>
@@ -465,22 +465,22 @@ export default function StartInterview() {
                 className="flex items-center gap-2 rounded-[16px] border border-[rgba(39,201,63,0.25)]
                   bg-[rgba(39,201,63,0.06)] px-4 py-2.5 text-[13px]"
               >
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-[#27c93f]" aria-hidden="true" />
-                <span className="font-medium text-white">{t('startInterview.resumeOnFile')}</span>
-                <span className="text-[#888b91]">{t('startInterview.resumeOnFileDesc')}</span>
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--ui-ok)]" aria-hidden="true" />
+                <span className="font-medium text-foreground">{t('startInterview.resumeOnFile')}</span>
+                <span className="text-muted-foreground">{t('startInterview.resumeOnFileDesc')}</span>
               </div>
             ) : (
               <div
                 aria-live="polite"
-                className="flex items-start gap-2 rounded-[16px] border border-white/[0.08]
+                className="flex items-start gap-2 rounded-[16px] border border-border
                   bg-[rgba(255,183,100,0.06)] px-4 py-2.5 text-[13px]"
               >
-                <AlertCircle className="h-4 w-4 shrink-0 text-[#ffb764] mt-0.5" aria-hidden="true" />
-                <span className="text-[#b8babf]">
+                <AlertCircle className="h-4 w-4 shrink-0 text-[var(--ui-warn)] mt-0.5" aria-hidden="true" />
+                <span className="text-[var(--ui-soft)]">
                   {t('startInterview.noResume')}{' '}
                   <Link
                     to="/dashboard"
-                    className="font-medium text-[#60a5fa] underline-offset-2 hover:underline
+                    className="font-medium text-[var(--ui-info)] underline-offset-2 hover:underline
                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
                   >
                     {t('startInterview.noResumeLink')}
@@ -518,7 +518,7 @@ export default function StartInterview() {
                   label={
                     <>
                       {t('startInterview.jobTitleLabel')}{' '}
-                      <span aria-hidden="true" className="text-[#e6714f]">*</span>
+                      <span aria-hidden="true" className="text-[var(--ui-danger)]">*</span>
                     </>
                   }
                   error={titleError}
@@ -545,7 +545,7 @@ export default function StartInterview() {
                   label={
                     <>
                       {t('startInterview.companyLabel')}{' '}
-                      <span className="text-[11px] font-normal text-[#70757c]">
+                      <span className="text-[11px] font-normal text-[var(--ui-faint)]">
                         ({t('startInterview.optional')})
                       </span>
                     </>
@@ -568,7 +568,7 @@ export default function StartInterview() {
                   label={
                     <>
                       {t('startInterview.jdLabel')}{' '}
-                      <span className="text-[11px] font-normal text-[#70757c]">
+                      <span className="text-[11px] font-normal text-[var(--ui-faint)]">
                         ({t('startInterview.optional')})
                       </span>
                     </>
@@ -606,7 +606,7 @@ export default function StartInterview() {
                     {[0, 1, 2].map((i) => (
                       <div
                         key={i}
-                        className="h-36 w-28 rounded-[16px] bg-white/[0.06] animate-pulse"
+                        className="h-36 w-28 rounded-[16px] bg-[var(--ui-inset)] animate-pulse"
                       />
                     ))}
                   </div>
@@ -615,8 +615,8 @@ export default function StartInterview() {
                 {!avatarsLoading && avatarsError && (
                   <div
                     aria-live="polite"
-                    className="rounded-[12px] border border-white/[0.08] bg-[rgba(255,183,100,0.06)]
-                      px-4 py-2.5 text-[13px] text-[#ffb764]"
+                    className="rounded-[12px] border border-border bg-[rgba(255,183,100,0.06)]
+                      px-4 py-2.5 text-[13px] text-[var(--ui-warn)]"
                   >
                     {t('startInterview.avatarLoadError')}
                   </div>
@@ -626,7 +626,7 @@ export default function StartInterview() {
                   <div className="space-y-4">
                     {maleAvatars.length > 0 && (
                       <div>
-                        <p className="text-[11px] font-semibold text-[#70757c] uppercase tracking-[0.08em] mb-2">
+                        <p className="text-[11px] font-semibold text-[var(--ui-faint)] uppercase tracking-[0.08em] mb-2">
                           {t('startInterview.maleGroup')}
                         </p>
                         <div
@@ -648,7 +648,7 @@ export default function StartInterview() {
 
                     {femaleAvatars.length > 0 && (
                       <div>
-                        <p className="text-[11px] font-semibold text-[#70757c] uppercase tracking-[0.08em] mb-2">
+                        <p className="text-[11px] font-semibold text-[var(--ui-faint)] uppercase tracking-[0.08em] mb-2">
                           {t('startInterview.femaleGroup')}
                         </p>
                         <div
@@ -683,7 +683,7 @@ export default function StartInterview() {
 
                 {/* Language */}
                 <div className="space-y-2">
-                  <p className="text-[12.5px] font-medium text-[#b8babf]">
+                  <p className="text-[12.5px] font-medium text-[var(--ui-soft)]">
                     {t('startInterview.interviewLanguageLabel')}
                   </p>
                   <select
@@ -705,14 +705,14 @@ export default function StartInterview() {
                     onChange={(k) => setSelectedLanguage(k as Language)}
                     className="w-full justify-stretch"
                   />
-                  <p className="text-[12px] text-[#70757c]">
+                  <p className="text-[12px] text-[var(--ui-faint)]">
                     You can switch languages mid-interview if you get stuck.
                   </p>
                 </div>
 
                 {/* Experience level */}
                 <div className="space-y-2">
-                  <p className="text-[12.5px] font-medium text-[#b8babf]">
+                  <p className="text-[12.5px] font-medium text-[var(--ui-soft)]">
                     {t('startInterview.experienceLevelLabel')}
                   </p>
                   <select
@@ -744,7 +744,7 @@ export default function StartInterview() {
                     }
                     className="w-full justify-stretch"
                   />
-                  <p className="text-[12px] text-[#70757c]">
+                  <p className="text-[12px] text-[var(--ui-faint)]">
                     {LEVEL_TABS.find((l) => l.key === values.level)?.description}
                   </p>
                 </div>
@@ -757,16 +757,16 @@ export default function StartInterview() {
             <GlassCard feature className="p-5 space-y-4">
               {/* Header */}
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#60a5fa] mb-1">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ui-info)] mb-1">
                   MIC &amp; DEVICE CHECK
                 </p>
-                <p className="text-[12.5px] text-[#888b91]">
+                <p className="text-[12.5px] text-muted-foreground">
                   Make sure your setup is ready before you begin.
                 </p>
               </div>
 
               {/* WaveBars visual */}
-              <div className="flex items-center justify-center rounded-[12px] border border-white/[0.08] bg-[rgba(var(--accent-rgb),0.04)] py-4">
+              <div className="flex items-center justify-center rounded-[12px] border border-border bg-[rgba(var(--accent-rgb),0.04)] py-4">
                 <WaveBars active={false} bars={20} color="var(--accent)" height={32} />
               </div>
 
@@ -805,14 +805,14 @@ export default function StartInterview() {
               </div>
 
               {/* DPDP consent note */}
-              <div className="rounded-[12px] border border-white/[0.07] bg-white/[0.02] px-3.5 py-3">
+              <div className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-3">
                 <div className="flex items-start gap-2">
                   <ShieldCheck
                     size={14}
-                    className="shrink-0 text-[#27c93f] mt-0.5"
+                    className="shrink-0 text-[var(--ui-ok)] mt-0.5"
                     aria-hidden="true"
                   />
-                  <p className="text-[12px] text-[#888b91] leading-relaxed">
+                  <p className="text-[12px] text-muted-foreground leading-relaxed">
                     {t('startInterview.consentNote')}
                   </p>
                 </div>
@@ -828,15 +828,15 @@ export default function StartInterview() {
                     transition={{ duration: 0.2 }}
                     className="overflow-hidden"
                   >
-                    <div className="rounded-[12px] border border-white/[0.08] bg-[rgba(28,29,31,0.6)] px-4 py-3 space-y-1.5 text-[13px]">
+                    <div className="rounded-[12px] border border-border bg-secondary px-4 py-3 space-y-1.5 text-[13px]">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-white">
+                        <span className="font-semibold text-foreground">
                           {values.title.trim()}
                         </span>
                         {values.company_name.trim() && (
                           <>
-                            <span className="text-[#888b91]">{t('startInterview.at')}</span>
-                            <span className="text-[#b8babf]">
+                            <span className="text-muted-foreground">{t('startInterview.at')}</span>
+                            <span className="text-[var(--ui-soft)]">
                               {values.company_name.trim()}
                             </span>
                           </>
@@ -862,7 +862,7 @@ export default function StartInterview() {
                 <div
                   role="alert"
                   className="rounded-[12px] border border-[rgba(230,113,79,0.35)]
-                    bg-[rgba(230,113,79,0.1)] px-4 py-3 text-[13px] text-[#e6714f]"
+                    bg-[rgba(230,113,79,0.1)] px-4 py-3 text-[13px] text-[var(--ui-danger)]"
                 >
                   {apiError}
                 </div>

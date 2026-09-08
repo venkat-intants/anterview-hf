@@ -31,7 +31,7 @@ export function Nav({ theme, onThemeChange }: { theme: LandingTheme; onThemeChan
           <span className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[9px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.2)]" style={{ background: 'linear-gradient(135deg,#112d72,#a887dc)' }}>
             <span className="h-[9px] w-[9px] rounded-full bg-white shadow-[0_0_10px_#fff]" />
           </span>
-          <span className="text-[17px] font-semibold tracking-[-0.5px]">Anterview</span>
+          <span className="text-[17px] font-semibold tracking-[-0.5px]">AntHire</span>
         </a>
         <div className="hidden items-center gap-[26px] text-[13.5px] md:flex">
           {NAV_LINKS.map((l, i) => (

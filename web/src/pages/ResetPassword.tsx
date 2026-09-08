@@ -67,18 +67,18 @@ export default function ResetPassword() {
     return (
       <AuthLayout>
         <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[#e6714f]">
+          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[var(--ui-danger)]">
             <AlertCircle className="h-6 w-6" aria-hidden="true" />
           </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-white">
+          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
             Invalid reset link
           </h1>
-          <p className="mt-2 max-w-sm text-[14px] text-[#888b91]">
+          <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
             This link is missing its token. Please request a new password-reset email.
           </p>
           <Link
             to="/forgot-password"
-            className="mt-6 text-[13px] text-[#60a5fa] hover:underline underline-offset-4"
+            className="mt-6 text-[13px] text-[var(--ui-info)] hover:underline underline-offset-4"
           >
             Request a new link
           </Link>
@@ -92,14 +92,14 @@ export default function ResetPassword() {
   return (
     <AuthLayout>
       <div className="mb-2 flex flex-col items-center text-center">
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
           <KeyRound className="h-6 w-6" aria-hidden="true" />
         </span>
       </div>
-      <h1 className="text-center text-[24px] font-semibold tracking-[-0.6px] text-white">
+      <h1 className="text-center text-[24px] font-semibold tracking-[-0.6px] text-foreground">
         Set a new password
       </h1>
-      <p className="mt-1.5 text-center text-[14px] text-[#888b91]">Choose a strong password you’ll remember.</p>
+      <p className="mt-1.5 text-center text-[14px] text-muted-foreground">Choose a strong password you’ll remember.</p>
 
       <form onSubmit={onSubmit} noValidate aria-label="Reset password form" className="mt-8 flex flex-col gap-4">
         <div className="space-y-2">
@@ -143,7 +143,7 @@ export default function ResetPassword() {
         />
 
         {error && (
-          <p role="alert" className="text-[12.5px] text-[#e6714f]">
+          <p role="alert" className="text-[12.5px] text-[var(--ui-danger)]">
             {error}
           </p>
         )}
@@ -153,10 +153,10 @@ export default function ResetPassword() {
         </Pill>
       </form>
 
-      <p className="mt-6 text-center text-[13px] text-[#888b91]">
+      <p className="mt-6 text-center text-[13px] text-muted-foreground">
         <Link
           to="/login"
-          className="font-medium text-white hover:underline focus:outline-none focus:underline underline-offset-4"
+          className="font-medium text-foreground hover:underline focus:outline-none focus:underline underline-offset-4"
         >
           Back to sign in
         </Link>

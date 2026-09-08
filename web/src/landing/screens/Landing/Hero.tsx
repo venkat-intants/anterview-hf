@@ -33,7 +33,7 @@ export function Hero() {
   return (
     <section id="top" className="relative z-10 mx-auto max-w-[1200px] px-6 pb-16 pt-[150px]">
       <div className="relative overflow-hidden rounded-card shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
-        style={{ background: 'linear-gradient(160deg,#000 0.85%,#112d72 33.4%,#4b52aa 49.68%,#a887dc 70.84%,#e6c4e7 95.8%,#fcdbef 107.19%)' }}>
+        style={{ background: 'var(--lp-grad-hero)' }}>
         <div className="absolute inset-0 mix-blend-screen" style={{ background: 'radial-gradient(80% 60% at 75% 30%, rgba(0,136,255,0.18), transparent 60%)' }} />
         <div className="relative grid grid-cols-1 items-center gap-8 p-10 md:grid-cols-[1.05fr_0.95fr] md:p-16">
           {/* copy */}
@@ -54,7 +54,7 @@ export function Hero() {
               <Link to="/register" className="inline-flex items-center gap-2.5 rounded-[9px] bg-white px-5.5 py-3.5 text-[15px] font-semibold text-black shadow-[0_8px_30px_rgba(0,0,0,0.25)] transition-transform hover:-translate-y-0.5">
                 <span className="h-2 w-2 rounded-full bg-electric shadow-[0_0_10px_#0088ff]" /> Start a mock interview
               </Link>
-              <a href="mailto:support@intants.com?subject=Anterview%20demo%20request" className="inline-flex items-center gap-2 rounded-[9px] border border-white/[0.18] bg-charcoal/55 px-5.5 py-3.5 text-[15px] font-medium text-white backdrop-blur transition-colors hover:bg-charcoal/85">Book a demo</a>
+              <a href="mailto:support@intants.com?subject=Anterview%20demo%20request" className="inline-flex items-center gap-2 rounded-[9px] border border-white/[0.18] bg-white/[0.12] px-5.5 py-3.5 text-[15px] font-medium text-white backdrop-blur transition-colors hover:bg-white/[0.2]">Book a demo</a>
             </div>
             <div className="mt-6.5 flex items-center gap-2.5 text-[12.5px] text-white/60">
               <ShieldCheck size={14} className="text-forest" /> DPDP-compliant · India data residency · Consent-led

@@ -1,10 +1,10 @@
 import { type PropsWithChildren, type CSSProperties } from 'react'
 import { cn } from '../lib/cn'
 
-/** Dark tinted card. */
+/** Tinted card — surface + hairline follow the landing theme. */
 export function GlassCard({ children, className, style }: PropsWithChildren<{ className?: string; style?: CSSProperties }>) {
   return (
-    <div className={cn('rounded-card border border-white/[0.08] bg-obsidian', className)} style={style}>
+    <div className={cn('rounded-card border', className)} style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-surface)', ...style }}>
       {children}
     </div>
   )
@@ -13,7 +13,7 @@ export function GlassCard({ children, className, style }: PropsWithChildren<{ cl
 /** Pill (nav link / chip / badge). */
 export function Pill({ children, className }: PropsWithChildren<{ className?: string }>) {
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-pill border border-white/10 bg-charcoal/70 px-3 py-1 text-xs text-mist', className)}>
+    <span className={cn('inline-flex items-center gap-1.5 rounded-pill border px-3 py-1 text-xs text-[var(--lp-text-muted)]', className)} style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-chip)' }}>
       {children}
     </span>
   )
@@ -23,9 +23,9 @@ export function Pill({ children, className }: PropsWithChildren<{ className?: st
 export function StatCard({ icon, value, label, className }: { icon?: React.ReactNode; value: string; label: string; className?: string }) {
   return (
     <GlassCard className={cn('p-5 transition-transform duration-300 hover:-translate-y-1', className)}>
-      {icon && <div className="mb-3 text-2xl text-white/90">{icon}</div>}
+      {icon && <div className="mb-3 text-2xl text-[var(--lp-text)]">{icon}</div>}
       <div className="text-[28px] font-semibold tracking-[-1px]">{value}</div>
-      <div className="mt-0.5 text-[12.5px] text-ash">{label}</div>
+      <div className="mt-0.5 text-[12.5px] text-[var(--lp-text-muted)]">{label}</div>
     </GlassCard>
   )
 }
@@ -37,7 +37,7 @@ export function ScoreRing({ pct, size = 128, label = 'OVERALL', value }: { pct: 
   return (
     <div className="relative" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={11} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--lp-inset)" strokeWidth={11} />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="url(#sr)" strokeWidth={11} strokeLinecap="round"
           strokeDasharray={circ} strokeDashoffset={circ * (1 - pct / 100)}
           style={{ transition: 'stroke-dashoffset 1.6s cubic-bezier(.2,.7,.2,1)' }} />
@@ -49,8 +49,8 @@ export function ScoreRing({ pct, size = 128, label = 'OVERALL', value }: { pct: 
         </defs>
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <div className="text-[34px] font-semibold tracking-[-1.5px] text-white">{value ?? pct}</div>
-        <div className="text-[10px] tracking-[1px] text-fog">{label}</div>
+        <div className="text-[34px] font-semibold tracking-[-1.5px] text-[var(--lp-text)]">{value ?? pct}</div>
+        <div className="text-[10px] tracking-[1px] text-[var(--lp-text-faint)]">{label}</div>
       </div>
     </div>
   )

@@ -33,16 +33,16 @@ export function AuroraField() {
         style={reduce ? undefined : { y: yA }}
         className="absolute -left-[10%] -top-[20%] h-[60vw] w-[60vw] rounded-full blur-[60px] animate-aurora"
       >
-        <div className="h-full w-full rounded-full" style={{ background: 'radial-gradient(circle at center, rgba(75,82,170,0.55), rgba(17,45,114,0.18) 45%, transparent 70%)' }} />
+        <div className="h-full w-full rounded-full" style={{ background: 'var(--lp-aurora-1)' }} />
       </motion.div>
       <motion.div
         style={reduce ? undefined : { y: yB }}
         className="absolute -right-[15%] top-[10%] h-[55vw] w-[55vw] rounded-full blur-[70px] animate-aurora-2"
       >
-        <div className="h-full w-full rounded-full" style={{ background: 'radial-gradient(circle at center, rgba(168,135,220,0.42), rgba(221,85,231,0.14) 45%, transparent 70%)' }} />
+        <div className="h-full w-full rounded-full" style={{ background: 'var(--lp-aurora-2)' }} />
       </motion.div>
 
-      <div className="absolute inset-0" style={{ background: 'radial-gradient(120% 80% at 50% -10%, rgba(0,136,255,0.10), transparent 55%)' }} />
+      <div className="absolute inset-0" style={{ background: 'var(--lp-aurora-top)' }} />
       <div className="absolute left-0 top-0 h-full w-[36%] animate-beam-sweep blur-[26px]" style={{ background: 'linear-gradient(90deg, transparent, rgba(0,136,255,0.06), transparent)' }} />
       <div className="absolute left-0 top-0 h-full w-[30%] animate-beam-sweep blur-[30px] [animation-delay:7s]" style={{ background: 'linear-gradient(90deg, transparent, rgba(168,135,220,0.06), transparent)' }} />
 
@@ -50,7 +50,7 @@ export function AuroraField() {
         particles.map((p, i) => (
           <span
             key={i}
-            className="absolute rounded-full animate-float-up"
+            className="at-particles absolute rounded-full animate-float-up"
             style={{
               left: p.left,
               top: p.top,

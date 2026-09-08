@@ -10,7 +10,7 @@ const COLS = [
 
 export function Footer() {
   return (
-    <footer className="relative z-10 border-t border-white/[0.07] bg-midnight">
+    <footer className="relative z-10 border-t" style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-surface-alt)' }}>
       <div className="mx-auto max-w-[1200px] px-6 pb-10 pt-14">
         <div className="mb-12 grid grid-cols-1 gap-8 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div>
@@ -20,10 +20,10 @@ export function Footer() {
               </span>
               <span className="text-[17px] font-semibold tracking-[-0.5px]">Anterview</span>
             </div>
-            <p className="mb-4 max-w-[260px] text-[13.5px] leading-relaxed text-fog">Voice-first AI interviews for every candidate in Bharat. Fair, fast, in your language.</p>
+            <p className="mb-4 max-w-[260px] text-[13.5px] leading-relaxed text-[var(--lp-text-muted)]">Voice-first AI interviews for every candidate in Bharat. Fair, fast, in your language.</p>
             <div className="flex gap-2.5">
               {[X, AtSign, Globe].map((Icon, i) => (
-                <a key={i} href="#" className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] border border-white/[0.08] bg-charcoal text-ash transition-colors hover:text-white">
+                <a key={i} href="#" className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] border text-[var(--lp-text-muted)] transition-colors hover:text-[var(--lp-text)]" style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-chip)' }}>
                   <Icon size={16} />
                 </a>
               ))}
@@ -31,16 +31,16 @@ export function Footer() {
           </div>
           {COLS.map((c) => (
             <div key={c.h}>
-              <div className="mb-3.5 text-xs uppercase tracking-[1px] text-slate">{c.h}</div>
+              <div className="mb-3.5 text-xs uppercase tracking-[1px] text-[var(--lp-text-faint)]">{c.h}</div>
               <div className="flex flex-col gap-2.5 text-sm">
-                {c.links.map((l) => <a key={l} href="#" className="text-ash transition-colors hover:text-white">{l}</a>)}
+                {c.links.map((l) => <a key={l} href="#" className="text-[var(--lp-text-muted)] transition-colors hover:text-[var(--lp-text)]">{l}</a>)}
               </div>
             </div>
           ))}
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-6">
-          <span className="text-[13px] text-slate">© 2026 Intants Private Limited</span>
-          <span className="text-[13px] text-ash">Made for Bharat</span>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-6" style={{ borderColor: 'var(--lp-line)' }}>
+          <span className="text-[13px] text-[var(--lp-text-faint)]">© 2026 Intants Private Limited</span>
+          <span className="text-[13px] text-[var(--lp-text-muted)]">Made for Bharat</span>
         </div>
       </div>
     </footer>

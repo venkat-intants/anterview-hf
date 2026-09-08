@@ -1,4 +1,5 @@
 import { AuroraField } from '../../components/AuroraField'
+import { useLandingTheme } from '../../lib/useLandingTheme'
 import { Nav } from './Nav'
 import { Hero } from './Hero'
 import { TrustMarquee, ProblemSolution, HowItWorks, LiveDemo } from './Sections'
@@ -10,12 +11,21 @@ import { Footer } from './Footer'
  * Anterview landing page — full section-by-section, converted to the host
  * stack (React 18 + TS + Tailwind + Radix-ready + framer-motion + lucide).
  * Drop into your router: <Route path="/" element={<LandingPage />} />
+ *
+ * `data-landing-theme` on this root is what every colour below resolves
+ * against (tokens in landing/styles/anterview.css). It is scoped here rather
+ * than on <html> so the signed-in app's single dark theme is untouched.
  */
 export function LandingPage() {
+  const [theme, setTheme] = useLandingTheme()
+
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-midnight font-inter text-white antialiased">
+    <div
+      data-landing-theme={theme}
+      className="relative min-h-screen overflow-x-hidden bg-[var(--lp-canvas)] font-inter text-[var(--lp-text)] antialiased"
+    >
       <AuroraField />
-      <Nav />
+      <Nav theme={theme} onThemeChange={setTheme} />
       <main className="relative">
         <Hero />
         <TrustMarquee />

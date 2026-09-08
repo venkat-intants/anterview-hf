@@ -36,14 +36,16 @@ export const STEPS: { no: string; icon: LucideIcon; title: string; desc: string;
 ]
 
 export type Feature = { cols: number; rows: number; bg: string; icon: LucideIcon; big: string; title: string; desc: string }
+// Surfaces are landing-theme tokens (see landing/styles/anterview.css) so the
+// bento reads on the light grey page as well as the dark one.
 export const FEATURES: Feature[] = [
-  { cols: 3, rows: 2, bg: 'linear-gradient(160deg,#001b33,#030719)', icon: Globe, big: '22', title: 'Indian languages', desc: 'Interview in the language candidates actually think in — voice-first, end to end.' },
-  { cols: 3, rows: 1, bg: '#0f0f10', icon: Zap, big: '<2s', title: 'Real-time latency', desc: 'Conversations that feel human, not laggy.' },
-  { cols: 3, rows: 1, bg: '#0f0f10', icon: Repeat, big: '∞', title: 'Adaptive follow-ups', desc: 'It probes deeper based on your answers.' },
-  { cols: 2, rows: 1, bg: '#0f0f10', icon: Users, big: '6', title: 'Avatars', desc: '3 male, 3 female personas.' },
-  { cols: 2, rows: 1, bg: '#0f0f10', icon: FileText, big: 'PDF', title: 'Scorecards', desc: 'Shareable, structured.' },
-  { cols: 2, rows: 1, bg: '#0f0f10', icon: Shield, big: '24×7', title: 'Proctoring', desc: 'Integrity, monitored.' },
-  { cols: 6, rows: 1, bg: 'linear-gradient(90deg,rgba(0,136,255,0.1),rgba(168,135,220,0.1))', icon: Headphones, big: 'Voice-first', title: 'No typing, no friction', desc: 'Designed for mobile-first Bharat — talk the way you would in a real room.' },
+  { cols: 3, rows: 2, bg: 'var(--lp-grad-deep)', icon: Globe, big: '22', title: 'Indian languages', desc: 'Interview in the language candidates actually think in — voice-first, end to end.' },
+  { cols: 3, rows: 1, bg: 'var(--lp-surface)', icon: Zap, big: '<2s', title: 'Real-time latency', desc: 'Conversations that feel human, not laggy.' },
+  { cols: 3, rows: 1, bg: 'var(--lp-surface)', icon: Repeat, big: '∞', title: 'Adaptive follow-ups', desc: 'It probes deeper based on your answers.' },
+  { cols: 2, rows: 1, bg: 'var(--lp-surface)', icon: Users, big: '6', title: 'Avatars', desc: '3 male, 3 female personas.' },
+  { cols: 2, rows: 1, bg: 'var(--lp-surface)', icon: FileText, big: 'PDF', title: 'Scorecards', desc: 'Shareable, structured.' },
+  { cols: 2, rows: 1, bg: 'var(--lp-surface)', icon: Shield, big: '24×7', title: 'Proctoring', desc: 'Integrity, monitored.' },
+  { cols: 6, rows: 1, bg: 'var(--lp-grad-wash)', icon: Headphones, big: 'Voice-first', title: 'No typing, no friction', desc: 'Designed for mobile-first Bharat — talk the way you would in a real room.' },
 ]
 
 // `video` = the platform's REAL Tavus avatar replica clips (cdn.replica.tavus.io)
@@ -60,8 +62,8 @@ export const AVATARS = [
   { name: 'Benjamin', role: 'Direct · senior', langs: ['EN'], bg: 'linear-gradient(160deg,#030719,#4b52aa)', image: '/avatars/benjamin.jpg' },
 ]
 
-const live = { tag: 'LIVE', tagBg: 'rgba(39,201,63,0.16)', tagC: '#27c93f', bg: 'linear-gradient(160deg,#001b33,#030719)', bd: 'rgba(0,136,255,0.3)' }
-const soon = { tag: '2026', tagBg: 'rgba(255,255,255,0.06)', tagC: '#70757c', bg: '#0f0f10', bd: 'rgba(255,255,255,0.07)' }
+const live = { tag: 'LIVE', tagBg: 'rgba(39,201,63,0.16)', tagC: '#27c93f', bg: 'var(--lp-grad-deep)', bd: 'rgba(0,136,255,0.3)' }
+const soon = { tag: '2026', tagBg: 'var(--lp-chip)', tagC: 'var(--lp-text-faint)', bg: 'var(--lp-surface)', bd: 'var(--lp-line)' }
 export const LANGUAGES = [
   ['English', 'English', true], ['हिन्दी', 'Hindi', true], ['తెలుగు', 'Telugu', true], ['தமிழ்', 'Tamil', false],
   ['বাংলা', 'Bengali', false], ['मराठी', 'Marathi', false], ['ગુજરાતી', 'Gujarati', false], ['ಕನ್ನಡ', 'Kannada', false],

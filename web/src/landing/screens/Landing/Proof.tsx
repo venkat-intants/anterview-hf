@@ -12,22 +12,22 @@ export function ScorecardPreview() {
         <div>
           <div className="mb-3.5 text-xs uppercase tracking-[1.5px] text-electric">The scorecard</div>
           <h2 className="mb-4 text-[40px] font-semibold tracking-[-2px]">This is what every candidate gets.</h2>
-          <p className="text-base leading-normal text-mist">A transparent, competency-level breakdown with strengths, gaps, and transcript highlights — downloadable as a PDF, in seconds.</p>
+          <p className="text-base leading-normal text-[var(--lp-text-muted)]">A transparent, competency-level breakdown with strengths, gaps, and transcript highlights — downloadable as a PDF, in seconds.</p>
         </div>
-        <Reveal kind="right" className="rounded-card border border-white/10 bg-obsidian p-9 shadow-[0_30px_80px_rgba(0,0,0,0.5)]">
+        <Reveal kind="right" className="rounded-card border p-9" style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-surface)', boxShadow: 'var(--lp-shadow-card)' }}>
           <div className="mb-7 flex items-center gap-7">
             <ScoreRing pct={86} value={86} />
             <div>
-              <div className="mb-1 text-[13px] text-ash">Role · Frontend Engineer (L2)</div>
+              <div className="mb-1 text-[13px] text-[var(--lp-text-muted)]">Role · Frontend Engineer (L2)</div>
               <div className="inline-flex items-center gap-1.5 rounded-pill border border-forest/35 bg-forest/15 px-3 py-1.5 text-[13px] font-semibold text-forest">Strong Hire</div>
-              <div className="mt-3 font-mono text-[13px] text-fog">12 questions · 14 min · हिन्दी</div>
+              <div className="mt-3 font-mono text-[13px] text-[var(--lp-text-faint)]">12 questions · 14 min · हिन्दी</div>
             </div>
           </div>
           <div className="flex flex-col gap-3.5">
             {COMPETENCIES.map((c) => (
               <div key={c.name}>
-                <div className="mb-1.5 flex justify-between text-[13px]"><span className="text-pearl">{c.name}</span><span className="font-mono text-ash">{c.score}</span></div>
-                <div className="h-[7px] overflow-hidden rounded-pill bg-white/[0.07]">
+                <div className="mb-1.5 flex justify-between text-[13px]"><span className="text-[var(--lp-text-soft)]">{c.name}</span><span className="font-mono text-[var(--lp-text-muted)]">{c.score}</span></div>
+                <div className="h-[7px] overflow-hidden rounded-pill" style={{ background: 'var(--lp-inset)' }}>
                   <div className="h-full rounded-pill" style={{ width: `${c.pct}%`, background: 'linear-gradient(90deg,#0088ff,#a887dc)' }} />
                 </div>
               </div>
@@ -71,13 +71,13 @@ function AnimatedNumber({ value }: { value: string }) {
 export function Metrics() {
   return (
     <section className="relative z-10 mx-auto max-w-[1200px] px-6 py-10">
-      <div className="grid grid-cols-2 gap-6 rounded-card border border-white/[0.08] px-10 py-12 md:grid-cols-4" style={{ background: 'linear-gradient(90deg,rgba(25,153,232,0.08),rgba(164,91,242,0.08))' }}>
+      <div className="grid grid-cols-2 gap-6 rounded-card border px-10 py-12 md:grid-cols-4" style={{ background: 'var(--lp-grad-wash)', borderColor: 'var(--lp-line)' }}>
         {METRICS.map((m, i) => (
           <Reveal key={i} kind="zoom" amount={0.5} className="text-center">
-            <div className="bg-clip-text text-[46px] font-semibold tracking-[-2px] text-transparent" style={{ backgroundImage: i % 2 ? 'linear-gradient(90deg,#fff,#0088ff)' : 'linear-gradient(90deg,#fff,#a887dc)' }}>
+            <div className="bg-clip-text text-[46px] font-semibold tracking-[-2px] text-transparent" style={{ backgroundImage: i % 2 ? 'linear-gradient(90deg,var(--lp-text),#0088ff)' : 'linear-gradient(90deg,var(--lp-text),#a887dc)' }}>
               <AnimatedNumber value={m.value} />
             </div>
-            <div className="mt-1.5 text-[13px] text-ash">{m.label}</div>
+            <div className="mt-1.5 text-[13px] text-[var(--lp-text-muted)]">{m.label}</div>
           </Reveal>
         ))}
       </div>
@@ -91,7 +91,7 @@ export function Testimonials() {
   return (
     <section className="relative z-10 mx-auto max-w-[880px] px-6 py-20 text-center">
       <div className="mb-7 text-xs uppercase tracking-[1.5px] text-electric">From the field</div>
-      <p className="mx-auto mb-7 max-w-[680px] text-[26px] font-medium leading-snug tracking-[-0.8px] text-white">“{t.q}”</p>
+      <p className="mx-auto mb-7 max-w-[680px] text-[26px] font-medium leading-snug tracking-[-0.8px] text-[var(--lp-text)]">“{t.q}”</p>
       <div className="flex items-center justify-center gap-3">
         {/* Real author portrait (copyright-free Pexels), gradient ring + initials fallback */}
         <div className="relative h-12 w-12 flex-none rounded-full p-[2px]" style={{ background: t.g }}>
@@ -108,11 +108,11 @@ export function Testimonials() {
             }}
           />
         </div>
-        <div className="text-left"><div className="text-sm font-semibold">{t.n}</div><div className="text-[12.5px] text-ash">{t.r}</div></div>
+        <div className="text-left"><div className="text-sm font-semibold">{t.n}</div><div className="text-[12.5px] text-[var(--lp-text-muted)]">{t.r}</div></div>
       </div>
       <div className="mt-8 flex justify-center gap-2">
         {TESTIMONIALS.map((_, k) => (
-          <button key={k} onClick={() => setI(k)} className="h-2 rounded-pill transition-all" style={{ width: k === i ? 24 : 8, background: k === i ? '#0088ff' : 'rgba(255,255,255,0.2)' }} />
+          <button key={k} onClick={() => setI(k)} className="h-2 rounded-pill transition-all" style={{ width: k === i ? 24 : 8, background: k === i ? 'var(--lp-accent)' : 'var(--lp-line-strong)' }} />
         ))}
       </div>
     </section>
@@ -122,17 +122,17 @@ export function Testimonials() {
 export function Compliance() {
   return (
     <section className="relative z-10 mx-auto max-w-[1100px] px-6 py-15">
-      <div className="rounded-card border border-white/[0.08] bg-obsidian p-11">
+      <div className="rounded-card border p-11" style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-surface)' }}>
         <h2 className="mb-2 text-[28px] font-semibold tracking-[-1px]">Compliance you can defend.</h2>
-        <p className="mb-8 max-w-[600px] text-[15px] text-ash">Engineered for government and enterprise procurement from day one.</p>
+        <p className="mb-8 max-w-[600px] text-[15px] text-[var(--lp-text-muted)]">Engineered for government and enterprise procurement from day one.</p>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {COMPLIANCE.map((c) => {
             const Icon = c.icon
             return (
-              <div key={c.title} className="rounded-[16px] border border-electric/[0.18] bg-[#001b33]/40 p-5.5">
+              <div key={c.title} className="rounded-[16px] border border-electric/[0.18] p-5.5" style={{ background: 'var(--lp-grad-deep)' }}>
                 <Icon size={22} className="mb-3 text-electric" />
-                <div className="mb-1.5 text-[15px] font-semibold text-white">{c.title}</div>
-                <div className="text-[13px] leading-snug text-ash">{c.desc}</div>
+                <div className="mb-1.5 text-[15px] font-semibold text-[var(--lp-on-deep)]">{c.title}</div>
+                <div className="text-[13px] leading-snug text-[var(--lp-on-deep-muted)]">{c.desc}</div>
               </div>
             )
           })}
@@ -149,13 +149,13 @@ export function FAQ() {
       <h2 className="mb-10 text-center text-[40px] font-semibold tracking-[-2px]">Questions, answered.</h2>
       <div className="flex flex-col gap-2.5">
         {FAQS.map(([q, a], i) => (
-          <div key={i} className="overflow-hidden rounded-[16px] bg-obsidian transition-colors" style={{ border: `1px solid ${open === i ? 'rgba(0,136,255,0.35)' : 'rgba(255,255,255,0.07)'}` }}>
+          <div key={i} className="overflow-hidden rounded-[16px] transition-colors" style={{ background: 'var(--lp-surface)', border: `1px solid ${open === i ? 'rgba(0,136,255,0.35)' : 'var(--lp-line)'}` }}>
             <button onClick={() => setOpen(open === i ? -1 : i)} className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left">
-              <span className="text-base font-medium text-white">{q}</span>
+              <span className="text-base font-medium text-[var(--lp-text)]">{q}</span>
               <span className="flex-none text-[22px] text-electric transition-transform" style={{ transform: open === i ? 'rotate(45deg)' : 'none' }}>+</span>
             </button>
             <div className="overflow-hidden transition-[max-height] duration-300" style={{ maxHeight: open === i ? 200 : 0 }}>
-              <p className="px-6 pb-5.5 text-[14.5px] leading-relaxed text-ash">{a}</p>
+              <p className="px-6 pb-5.5 text-[14.5px] leading-relaxed text-[var(--lp-text-muted)]">{a}</p>
             </div>
           </div>
         ))}
@@ -167,14 +167,14 @@ export function FAQ() {
 export function FinalCTA() {
   return (
     <section id="cta" className="relative z-10 mx-auto max-w-[1200px] px-6 pb-[90px] pt-15">
-      <div className="relative overflow-hidden rounded-card px-10 py-20 text-center" style={{ background: 'linear-gradient(160deg,#000,#112d72 45%,#4b52aa 65%,#a887dc 88%,#e6c4e7 110%)' }}>
+      <div className="relative overflow-hidden rounded-card px-10 py-20 text-center" style={{ background: 'var(--lp-grad-cta)' }}>
         <div className="absolute inset-0 mix-blend-screen" style={{ background: 'radial-gradient(60% 80% at 50% 0%, rgba(0,136,255,0.25), transparent 60%)' }} />
         <div className="relative">
           <h2 className="mb-4 text-[54px] font-semibold tracking-display text-white">Start your first interview free.</h2>
           <p className="mx-auto mb-9 max-w-[440px] text-[18px] text-white/[0.82]">No card, no setup. Talk to Aanya in under 30 seconds.</p>
           <div className="flex flex-wrap justify-center gap-3">
             <Link to="/register" className="rounded-[9px] bg-white px-7.5 py-3.5 text-base font-semibold text-black shadow-[0_12px_40px_rgba(0,0,0,0.3)] transition-transform hover:-translate-y-0.5">Start a mock interview</Link>
-            <a href="mailto:support@intants.com?subject=Anterview%20demo%20request" className="rounded-[9px] border border-white/25 bg-black/30 px-7.5 py-3.5 text-base font-medium text-white backdrop-blur">Book a demo</a>
+            <a href="mailto:support@intants.com?subject=Anterview%20demo%20request" className="rounded-[9px] border border-white/25 bg-white/[0.12] px-7.5 py-3.5 text-base font-medium text-white backdrop-blur transition-colors hover:bg-white/20">Book a demo</a>
           </div>
         </div>
       </div>

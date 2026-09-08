@@ -162,3 +162,82 @@
     animation: none !important;
   }
 }
+
+/* ── Landing theme tokens (light = default, dark = opt-in) ──────────────────
+   The landing page is the one public surface with its own light/dark choice:
+   the app behind the login is a single dark theme, so these tokens are scoped
+   to `[data-landing-theme]` on the landing root and never leak into it.
+
+   Neither theme uses pure black or pure white as the canvas — the page sits on
+   a soft grey and the cards are the white/near-black, which is what gives the
+   aurora gradient something to sit against. */
+[data-landing-theme] {
+  /* Brand accents are constant across both themes — the gradient is the brand. */
+  --lp-accent: #0088ff;
+  --lp-accent-2: #a887dc;
+}
+
+[data-landing-theme='light'] {
+  --lp-canvas: #f4f5f8; /* grey page ground — never white, never black */
+  --lp-surface: #ffffff; /* cards sit ON the grey */
+  --lp-surface-soft: rgba(255, 255, 255, 0.72);
+  --lp-surface-alt: #eceef3; /* the "old way" / muted panel */
+  --lp-inset: rgba(15, 18, 26, 0.045); /* icon wells, tag pills, track fills */
+  --lp-chip: rgba(15, 18, 26, 0.05);
+  --lp-line: rgba(15, 18, 26, 0.1);
+  --lp-line-strong: rgba(15, 18, 26, 0.16);
+  --lp-text: #16181d;
+  --lp-text-soft: #3b4049;
+  --lp-text-muted: #5b6170;
+  --lp-text-faint: #7b8191;
+  --lp-btn: #16181d; /* primary button inverts per theme … */
+  --lp-btn-text: #ffffff;
+  --lp-shadow-card: 0 18px 46px rgba(15, 18, 26, 0.08);
+  --lp-shadow-nav: 0 8px 32px rgba(15, 18, 26, 0.1);
+  /* The hero/CTA gradient keeps its shape; only the dark terminus lifts, so the
+     panel reads as a coloured card on a grey page rather than a black hole. */
+  --lp-grad-hero: linear-gradient(160deg, #1b2a6b 0.85%, #2f4ea8 33.4%, #5c65c4 49.68%, #a887dc 70.84%, #e6c4e7 95.8%, #fcdbef 107.19%);
+  --lp-grad-cta: linear-gradient(160deg, #1b2a6b, #2f4ea8 45%, #5c65c4 65%, #a887dc 88%, #e6c4e7 110%);
+  --lp-grad-deep: linear-gradient(160deg, #eaf2ff, #f7f9ff);
+  --lp-grad-wash: linear-gradient(90deg, rgba(0, 136, 255, 0.07), rgba(168, 135, 220, 0.07));
+  --lp-on-deep: #16181d; /* text on --lp-grad-deep panels */
+  --lp-on-deep-muted: #5b6170;
+  --lp-aurora-1: radial-gradient(circle at center, rgba(120, 150, 235, 0.32), rgba(150, 175, 240, 0.1) 45%, transparent 70%);
+  --lp-aurora-2: radial-gradient(circle at center, rgba(196, 170, 236, 0.3), rgba(230, 196, 231, 0.1) 45%, transparent 70%);
+  --lp-aurora-top: radial-gradient(120% 80% at 50% -10%, rgba(0, 136, 255, 0.08), transparent 55%);
+  --lp-particle-opacity: 0.45;
+}
+
+[data-landing-theme='dark'] {
+  --lp-canvas: #0e0f13; /* deep grey, deliberately not #000 */
+  --lp-surface: #17181d;
+  --lp-surface-soft: rgba(23, 24, 29, 0.72);
+  --lp-surface-alt: #1b1d22;
+  --lp-inset: rgba(255, 255, 255, 0.05);
+  --lp-chip: rgba(255, 255, 255, 0.06);
+  --lp-line: rgba(255, 255, 255, 0.09);
+  --lp-line-strong: rgba(255, 255, 255, 0.16);
+  --lp-text: #f4f5f7;
+  --lp-text-soft: #d3d6dd;
+  --lp-text-muted: #a6abb6;
+  --lp-text-faint: #7e8493;
+  --lp-btn: #ffffff;
+  --lp-btn-text: #16181d;
+  --lp-shadow-card: 0 30px 80px rgba(0, 0, 0, 0.45);
+  --lp-shadow-nav: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --lp-grad-hero: linear-gradient(160deg, #0e0f13 0.85%, #112d72 33.4%, #4b52aa 49.68%, #a887dc 70.84%, #e6c4e7 95.8%, #fcdbef 107.19%);
+  --lp-grad-cta: linear-gradient(160deg, #0e0f13, #112d72 45%, #4b52aa 65%, #a887dc 88%, #e6c4e7 110%);
+  --lp-grad-deep: linear-gradient(160deg, #001b33, #0a0e1a);
+  --lp-grad-wash: linear-gradient(90deg, rgba(25, 153, 232, 0.08), rgba(164, 91, 242, 0.08));
+  --lp-on-deep: #ffffff;
+  --lp-on-deep-muted: #b8babf;
+  --lp-aurora-1: radial-gradient(circle at center, rgba(75, 82, 170, 0.55), rgba(17, 45, 114, 0.18) 45%, transparent 70%);
+  --lp-aurora-2: radial-gradient(circle at center, rgba(168, 135, 220, 0.42), rgba(221, 85, 231, 0.14) 45%, transparent 70%);
+  --lp-aurora-top: radial-gradient(120% 80% at 50% -10%, rgba(0, 136, 255, 0.1), transparent 55%);
+  --lp-particle-opacity: 1;
+}
+
+/* The marquee mask is an alpha ramp, so it works on either canvas as-is. */
+.at-particles {
+  opacity: var(--lp-particle-opacity);
+}

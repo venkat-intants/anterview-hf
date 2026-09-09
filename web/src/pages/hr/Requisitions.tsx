@@ -81,13 +81,13 @@ function RequisitionRow({ req }: { req: Requisition }) {
         to={`/hr/requisitions/${req.id}`}
         className="flex items-center gap-4 p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       >
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-white/[0.06]">
-          <Briefcase className="h-[18px] w-[18px] text-[#d5d7da]" aria-hidden="true" />
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[var(--ui-inset)]">
+          <Briefcase className="h-[18px] w-[18px] text-[var(--ui-soft)]" aria-hidden="true" />
         </span>
 
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-[15px] font-medium text-white">{req.title}</span>
+            <span className="truncate text-[15px] font-medium text-foreground">{req.title}</span>
             <StatusTag
               tone={
                 req.status === 'open' ? 'forest' : req.status === 'paused' ? 'amber' : 'neutral'
@@ -112,24 +112,24 @@ function RequisitionRow({ req }: { req: Requisition }) {
               <StatusTag tone="ember">will miss target</StatusTag>
             ) : null}
           </span>
-          <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-[#888b91]">
+          <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-muted-foreground">
             <span>{req.level}</span>
             <span>
               {req.total_enrolments} candidate{req.total_enrolments === 1 ? '' : 's'}
             </span>
-            {req.hired > 0 ? <span className="text-[#27c93f]">{req.hired} hired</span> : null}
+            {req.hired > 0 ? <span className="text-[var(--ui-ok)]">{req.hired} hired</span> : null}
             {req.target_hires ? <span>target {req.target_hires}</span> : null}
           </span>
         </span>
 
         {req.awaiting_decision > 0 ? (
-          <span className="flex shrink-0 items-center gap-1.5 rounded-pill border border-[#ffb764]/35 bg-[#ffb764]/[0.08] px-3 py-1.5 text-[12px] font-medium text-[#ffb764]">
+          <span className="flex shrink-0 items-center gap-1.5 rounded-pill border border-[var(--ui-warn)]/35 bg-[var(--ui-warn)]/[0.08] px-3 py-1.5 text-[12px] font-medium text-[var(--ui-warn)]">
             <Users className="h-3.5 w-3.5" aria-hidden="true" />
             {req.awaiting_decision} awaiting you
           </span>
         ) : null}
 
-        <ChevronRight className="h-4 w-4 shrink-0 text-[#5a5f66]" aria-hidden="true" />
+        <ChevronRight className="h-4 w-4 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
       </Link>
     </GlassCard>
   );
@@ -154,14 +154,14 @@ function NewRequisitionForm({ onDone }: { onDone: () => void }) {
   });
 
   const field =
-    'rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3.5 py-2.5 text-[14px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none';
+    'rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
 
   return (
     <GlassCard className="p-5">
-      <h2 className="text-[15px] font-semibold text-white">New opening</h2>
+      <h2 className="text-[15px] font-semibold text-foreground">New opening</h2>
       <div className="mt-3 flex flex-wrap items-end gap-2">
         <div className="min-w-[240px] flex-1">
-          <label htmlFor="new-title" className="mb-1.5 block text-[12px] font-medium text-[#b8babf]">
+          <label htmlFor="new-title" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
             Job title
           </label>
           <input
@@ -173,7 +173,7 @@ function NewRequisitionForm({ onDone }: { onDone: () => void }) {
           />
         </div>
         <div>
-          <label htmlFor="new-level" className="mb-1.5 block text-[12px] font-medium text-[#b8babf]">
+          <label htmlFor="new-level" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
             Level
           </label>
           <select
@@ -193,7 +193,7 @@ function NewRequisitionForm({ onDone }: { onDone: () => void }) {
           type="button"
           onClick={() => mut.mutate()}
           disabled={mut.isPending || title.trim().length < 2}
-          className="inline-flex items-center gap-1.5 rounded-[12px] bg-white px-4 py-2.5 text-[13px] font-medium text-black hover:opacity-90 disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
         >
           {mut.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
           Create
@@ -201,7 +201,7 @@ function NewRequisitionForm({ onDone }: { onDone: () => void }) {
         <button
           type="button"
           onClick={onDone}
-          className="rounded-[12px] border border-white/[0.12] px-4 py-2.5 text-[13px] text-[#d5d7da] hover:text-white"
+          className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2.5 text-[13px] text-[var(--ui-soft)] hover:text-foreground"
         >
           Cancel
         </button>
@@ -236,15 +236,15 @@ export default function Requisitions(): JSX.Element {
       <Reveal>
         <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-white">Openings</h1>
-            <p className="mt-1 text-[13.5px] text-[#888b91]">
+            <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">Openings</h1>
+            <p className="mt-1 text-[13.5px] text-muted-foreground">
               Each opening carries its own hiring workflow and its own funnel.
             </p>
           </div>
           <button
             type="button"
             onClick={() => setCreating((c) => !c)}
-            className="inline-flex items-center gap-1.5 rounded-[12px] bg-white px-4 py-2.5 text-[13px] font-medium text-black hover:opacity-90"
+            className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground hover:opacity-90"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
             New opening
@@ -255,9 +255,9 @@ export default function Requisitions(): JSX.Element {
       {pending > 0 ? (
         <Link
           to="/hr/requisitions/review"
-          className="mb-4 flex items-center gap-2.5 rounded-[14px] border border-[#ffb764]/30 bg-[#ffb764]/[0.07] px-4 py-3 text-[13px] text-[#d5d7da] hover:border-[#ffb764]/55"
+          className="mb-4 flex items-center gap-2.5 rounded-[14px] border border-[var(--ui-warn)]/30 bg-[var(--ui-warn)]/[0.07] px-4 py-3 text-[13px] text-[var(--ui-soft)] hover:border-[var(--ui-warn)]/55"
         >
-          <AlertTriangle className="h-4 w-4 shrink-0 text-[#ffb764]" aria-hidden="true" />
+          <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
           <span className="flex-1">
             {pending} thing{pending === 1 ? '' : 's'} to confirm from your imported data —
             openings that were grouped by job title, and people who may be duplicated.
@@ -277,21 +277,21 @@ export default function Requisitions(): JSX.Element {
       </div>
 
       {list.isLoading ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-[#888b91]">
+        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Loading openings…
         </div>
       ) : list.isError ? (
-        <GlassCard className="p-6 text-[13.5px] text-[#e6714f]">
+        <GlassCard className="p-6 text-[13.5px] text-[var(--ui-danger)]">
           {errText(list.error, 'Could not load openings')}
         </GlassCard>
       ) : rows.length === 0 ? (
         <GlassCard className="p-10 text-center">
-          <Briefcase className="mx-auto h-8 w-8 text-[#5a5f66]" aria-hidden="true" />
-          <div className="mt-3 text-[15px] font-medium text-white">
+          <Briefcase className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
+          <div className="mt-3 text-[15px] font-medium text-foreground">
             {tab === 'open' ? 'No open roles' : `Nothing ${tab}`}
           </div>
-          <p className="mx-auto mt-1.5 max-w-[44ch] text-[13px] text-[#888b91]">
+          <p className="mx-auto mt-1.5 max-w-[44ch] text-[13px] text-muted-foreground">
             Create an opening to give a role its own workflow, funnel and decision queue.
           </p>
         </GlassCard>

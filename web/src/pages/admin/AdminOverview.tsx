@@ -44,13 +44,14 @@ import { formatDuration } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Stagger, StaggerItem, Reveal } from '@/design/components/Reveal';
+import { TOOLTIP_STYLE } from '@/lib/chartTheme';
 
 // ── System-health board labels / dot colors ────────────────────────────────────
 
 const STATUS_DOT: Record<string, string> = {
-  operational: 'bg-[#27c93f]',
-  degraded: 'bg-[#ffb764]',
-  down: 'bg-[#e6714f]',
+  operational: 'bg-[var(--ui-ok)]',
+  degraded: 'bg-[var(--ui-warn)]',
+  down: 'bg-[var(--ui-danger)]',
 };
 
 const SERVICE_LABEL: Record<string, string> = {
@@ -72,13 +73,6 @@ const STATUS_TONE: Record<string, 'forest' | 'amber' | 'ember'> = {
 
 const CHART_GRID = 'rgba(255,255,255,0.08)';
 const CHART_TICKS = { fill: '#9a9aa0', fontSize: 11 } as const;
-const TOOLTIP_STYLE = {
-  background: '#1c1c1e',
-  border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 12,
-  fontSize: 12,
-  color: '#f5f5f7',
-} as const;
 const SERIES_BLUE = '#0088ff';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -147,25 +141,25 @@ function StatTile({ icon, label, value, sub, loading, spark, feature }: StatTile
   return (
     <GlassCard feature={feature} hover className="p-5 h-full">
       <div className="flex items-center justify-between">
-        <span className="text-[12.5px] text-[#888b91]">{label}</span>
-        <span className="text-[#9a9aa0]" aria-hidden="true">
+        <span className="text-[12.5px] text-muted-foreground">{label}</span>
+        <span className="text-muted-foreground" aria-hidden="true">
           {icon}
         </span>
       </div>
 
       {loading ? (
         <div
-          className="mt-3 h-8 w-28 rounded-lg bg-white/[0.06] animate-pulse"
+          className="mt-3 h-8 w-28 rounded-lg bg-[var(--ui-inset)] animate-pulse"
           aria-hidden="true"
         />
       ) : (
-        <div className="mt-2 text-[28px] font-semibold tracking-[-1px] text-white leading-none tabular-nums">
+        <div className="mt-2 text-[28px] font-semibold tracking-[-1px] text-foreground leading-none tabular-nums">
           {value}
         </div>
       )}
 
       {sub && !loading && (
-        <p className="mt-1.5 text-[12px] text-[#888b91]">{sub}</p>
+        <p className="mt-1.5 text-[12px] text-muted-foreground">{sub}</p>
       )}
 
       {spark && !loading && (
@@ -181,11 +175,11 @@ function TileSkeleton() {
   return (
     <GlassCard className="p-5 h-full">
       <div className="flex items-center gap-2.5">
-        <div className="h-4 w-4 rounded bg-white/[0.06] animate-pulse" />
-        <div className="h-3 w-28 rounded bg-white/[0.06] animate-pulse" />
+        <div className="h-4 w-4 rounded bg-[var(--ui-inset)] animate-pulse" />
+        <div className="h-3 w-28 rounded bg-[var(--ui-inset)] animate-pulse" />
       </div>
-      <div className="mt-3 h-8 w-24 rounded-lg bg-white/[0.06] animate-pulse" />
-      <div className="mt-2 h-2.5 w-32 rounded bg-white/[0.06] animate-pulse" />
+      <div className="mt-3 h-8 w-24 rounded-lg bg-[var(--ui-inset)] animate-pulse" />
+      <div className="mt-2 h-2.5 w-32 rounded bg-[var(--ui-inset)] animate-pulse" />
     </GlassCard>
   );
 }
@@ -195,7 +189,7 @@ function TileSkeleton() {
 function ChartSkeleton({ height = 200 }: { height?: number }) {
   return (
     <div
-      className="w-full rounded-xl bg-white/[0.04] animate-pulse"
+      className="w-full rounded-xl bg-[var(--ui-inset)] animate-pulse"
       style={{ height }}
       aria-hidden="true"
     />
@@ -347,10 +341,10 @@ export default function AdminOverview() {
         className="flex flex-col items-center justify-center py-24 gap-4 text-center"
       >
         <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(230,113,79,0.14)]">
-          <AlertCircle className="h-6 w-6 text-[#e6714f]" aria-hidden="true" />
+          <AlertCircle className="h-6 w-6 text-[var(--ui-danger)]" aria-hidden="true" />
         </div>
-        <p className="text-[15px] font-semibold text-white">Failed to load overview</p>
-        <p className="text-[13px] text-[#888b91]">
+        <p className="text-[15px] font-semibold text-foreground">Failed to load overview</p>
+        <p className="text-[13px] text-muted-foreground">
           {overviewErr instanceof Error ? overviewErr.message : 'Unknown error'}
         </p>
       </div>
@@ -374,14 +368,14 @@ export default function AdminOverview() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
       >
-        <div className="flex items-center gap-2 text-[13px] text-[#888b91]">
-          <Activity size={15} className="text-[#60a5fa]" aria-hidden="true" />
+        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <Activity size={15} className="text-[var(--ui-info)]" aria-hidden="true" />
           Live · AntHire Platform
         </div>
-        <h1 className="mt-1 text-[28px] font-semibold tracking-[-1px] text-white">
+        <h1 className="mt-1 text-[28px] font-semibold tracking-[-1px] text-foreground">
           Admin Overview
         </h1>
-        <p className="mt-1 text-[14px] text-[#888b91]">
+        <p className="mt-1 text-[14px] text-muted-foreground">
           Platform health, throughput and performance at a glance.
         </p>
       </motion.div>
@@ -455,7 +449,7 @@ export default function AdminOverview() {
                 value={
                   <span>
                     {overview?.interviews_today ?? 0}
-                    <span className="text-[16px] text-[#888b91] font-normal"> today</span>
+                    <span className="text-[16px] text-muted-foreground font-normal"> today</span>
                   </span>
                 }
                 sub={`${overview?.interviews_last_7d ?? 0} last 7d · ${overview?.interviews_last_30d ?? 0} last 30d`}
@@ -470,7 +464,7 @@ export default function AdminOverview() {
         {/* Daily interview trends */}
         <Reveal dir="left" className="h-full">
           <GlassCard className="p-5 h-full">
-            <h3 className="mb-4 text-[16px] font-semibold text-white">
+            <h3 className="mb-4 text-[16px] font-semibold text-foreground">
               Daily Interview Volume (30 days)
             </h3>
             {trendsLoading ? (
@@ -478,7 +472,7 @@ export default function AdminOverview() {
             ) : trendsData && trendsData.items.length > 0 ? (
               <TrendsChart items={trendsData.items} />
             ) : (
-              <div className="flex items-center justify-center h-[200px] text-[13px] text-[#888b91]">
+              <div className="flex items-center justify-center h-[200px] text-[13px] text-muted-foreground">
                 No trend data available.
               </div>
             )}
@@ -488,7 +482,7 @@ export default function AdminOverview() {
         {/* Score distribution */}
         <Reveal dir="right" className="h-full">
           <GlassCard className="p-5 h-full">
-            <h3 className="mb-4 text-[16px] font-semibold text-white">
+            <h3 className="mb-4 text-[16px] font-semibold text-foreground">
               Score Distribution
             </h3>
             {distLoading ? (
@@ -498,35 +492,35 @@ export default function AdminOverview() {
                 <DistributionChart buckets={distData.buckets} />
 
                 {/* Per-axis averages — real values from getScoreDistribution */}
-                <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1.5 border-t border-white/[0.06] pt-3 text-[12px] text-[#888b91]">
+                <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1.5 border-t border-border pt-3 text-[12px] text-muted-foreground">
                   <span>
                     Communication:{' '}
-                    <strong className="text-white font-semibold">
+                    <strong className="text-foreground font-semibold">
                       {fmtScore(distData.avg_communication)}
                     </strong>
                   </span>
                   <span>
                     Technical:{' '}
-                    <strong className="text-white font-semibold">
+                    <strong className="text-foreground font-semibold">
                       {fmtScore(distData.avg_technical)}
                     </strong>
                   </span>
                   <span>
                     Problem Solving:{' '}
-                    <strong className="text-white font-semibold">
+                    <strong className="text-foreground font-semibold">
                       {fmtScore(distData.avg_problem_solving)}
                     </strong>
                   </span>
                   <span>
                     Confidence:{' '}
-                    <strong className="text-white font-semibold">
+                    <strong className="text-foreground font-semibold">
                       {fmtScore(distData.avg_confidence)}
                     </strong>
                   </span>
                 </div>
               </>
             ) : (
-              <div className="flex items-center justify-center h-[180px] text-[13px] text-[#888b91]">
+              <div className="flex items-center justify-center h-[180px] text-[13px] text-muted-foreground">
                 No distribution data available.
               </div>
             )}
@@ -540,8 +534,8 @@ export default function AdminOverview() {
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           {/* Microservices panel */}
           <GlassCard className="p-5 h-full">
-            <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold text-white">
-              <Server size={17} className="text-[#60a5fa]" aria-hidden="true" />
+            <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold text-foreground">
+              <Server size={17} className="text-[var(--ui-info)]" aria-hidden="true" />
               Microservices
             </h3>
 
@@ -554,7 +548,7 @@ export default function AdminOverview() {
                   .map((s) => (
                     <div
                       key={s.name}
-                      className="flex items-center gap-3 border-b border-white/[0.05] py-3 last:border-0"
+                      className="flex items-center gap-3 border-b border-border py-3 last:border-0"
                     >
                       <span
                         className={cn(
@@ -564,12 +558,12 @@ export default function AdminOverview() {
                         aria-hidden="true"
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="truncate text-[13.5px] font-medium text-white">
+                        <div className="truncate text-[13.5px] font-medium text-foreground">
                           {SERVICE_LABEL[s.name] ?? s.name}
                         </div>
                       </div>
                       {s.latency_ms != null && (
-                        <span className="font-mono text-[12px] text-[#888b91]">
+                        <span className="font-mono text-[12px] text-muted-foreground">
                           {s.latency_ms}ms
                         </span>
                       )}
@@ -580,15 +574,15 @@ export default function AdminOverview() {
                   ))}
               </div>
             ) : (
-              <div className="text-[13px] text-[#888b91]">Status unavailable.</div>
+              <div className="text-[13px] text-muted-foreground">Status unavailable.</div>
             )}
           </GlassCard>
 
           {/* Datastores + overall status panel */}
           <GlassCard className="p-5 h-full">
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="flex items-center gap-2 text-[16px] font-semibold text-white">
-                <Activity size={16} className="text-[#60a5fa]" aria-hidden="true" />
+              <h3 className="flex items-center gap-2 text-[16px] font-semibold text-foreground">
+                <Activity size={16} className="text-[var(--ui-info)]" aria-hidden="true" />
                 System Status
               </h3>
               {health && (
@@ -596,8 +590,8 @@ export default function AdminOverview() {
                   className={cn(
                     'rounded-full px-2.5 py-1 text-[11.5px] font-semibold',
                     health.overall === 'operational'
-                      ? 'bg-[rgba(39,201,63,0.16)] text-[#27c93f]'
-                      : 'bg-[rgba(255,183,100,0.16)] text-[#ffb764]',
+                      ? 'bg-[rgba(39,201,63,0.16)] text-[var(--ui-ok)]'
+                      : 'bg-[rgba(255,183,100,0.16)] text-[var(--ui-warn)]',
                   )}
                 >
                   {health.overall === 'operational' ? 'All systems operational' : 'Degraded'}
@@ -616,16 +610,16 @@ export default function AdminOverview() {
                     .map((s) => (
                       <div
                         key={s.name}
-                        className="rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-4"
+                        className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-[14px] font-semibold text-white">
+                          <span className="text-[14px] font-semibold text-foreground">
                             {SERVICE_LABEL[s.name] ?? s.name}
                           </span>
                           {s.status === 'operational' ? (
-                            <CheckCircle2 size={16} className="text-[#27c93f]" aria-hidden="true" />
+                            <CheckCircle2 size={16} className="text-[var(--ui-ok)]" aria-hidden="true" />
                           ) : (
-                            <AlertCircle size={16} className="text-[#ffb764]" aria-hidden="true" />
+                            <AlertCircle size={16} className="text-[var(--ui-warn)]" aria-hidden="true" />
                           )}
                         </div>
                         <StatusTag
@@ -638,12 +632,12 @@ export default function AdminOverview() {
                       </div>
                     ))}
                 </div>
-                <p className="mt-4 text-[11px] text-[#5a5f66]">
+                <p className="mt-4 text-[11px] text-[var(--ui-faint)]">
                   Checked {new Date(health.checked_at).toLocaleTimeString()}
                 </p>
               </>
             ) : (
-              <div className="text-[13px] text-[#888b91]">Status unavailable.</div>
+              <div className="text-[13px] text-muted-foreground">Status unavailable.</div>
             )}
           </GlassCard>
         </div>

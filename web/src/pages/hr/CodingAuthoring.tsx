@@ -27,8 +27,8 @@ const LANG_LABEL: Record<string, string> = {
 };
 
 const inputCls =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 ' +
-  'text-[14px] text-white placeholder:text-[#5a5f66] focus:outline-none ' +
+  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 ' +
+  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none ' +
   'focus:border-[var(--accent)] transition-colors';
 
 const emptyTest = (): CodingTestCase => ({
@@ -118,11 +118,11 @@ export default function CodingAuthoring({ examId, locked }: Props) {
   return (
     <Reveal delay={0.1}>
       <GlassCard className="mt-5 p-5">
-        <p className="flex items-center gap-2 text-[14px] font-semibold text-white">
-          <Code2 size={16} className="text-[#60a5fa]" aria-hidden="true" />
+        <p className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
+          <Code2 size={16} className="text-[var(--ui-info)]" aria-hidden="true" />
           Coding questions ({questions.length})
         </p>
-        <p className="mt-0.5 text-[12.5px] text-[#888b91]">
+        <p className="mt-0.5 text-[12.5px] text-muted-foreground">
           Each is solved in an editor and graded by running the code against your test cases.
         </p>
 
@@ -134,15 +134,15 @@ export default function CodingAuthoring({ examId, locked }: Props) {
                 const sampleN = q.test_cases.filter((t) => t.is_sample).length;
                 return (
                   <StaggerItem key={q.id}>
-                    <div className="rounded-[16px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-4">
+                    <div className="rounded-[16px] border border-border bg-[rgba(28,29,31,0.5)] p-4">
                       <div className="flex items-start gap-3">
-                        <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-white/[0.06] font-mono text-[12px] text-[#b8babf]">
+                        <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[12px] text-[var(--ui-soft)]">
                           {i + 1}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <p className="whitespace-pre-wrap text-[14px] font-medium leading-snug text-white">
+                          <p className="whitespace-pre-wrap text-[14px] font-medium leading-snug text-foreground">
                             {q.prompt}{' '}
-                            <span className="font-normal text-[#888b91]">({q.points} pt)</span>
+                            <span className="font-normal text-muted-foreground">({q.points} pt)</span>
                           </p>
                           <div className="mt-2 flex flex-wrap items-center gap-1.5">
                             {q.allowed_languages.map((l) => (
@@ -150,7 +150,7 @@ export default function CodingAuthoring({ examId, locked }: Props) {
                                 {LANG_LABEL[l] ?? l}
                               </StatusTag>
                             ))}
-                            <span className="text-[11.5px] text-[#70757c]">
+                            <span className="text-[11.5px] text-[var(--ui-faint)]">
                               {q.test_cases.length} test{q.test_cases.length === 1 ? '' : 's'} ·{' '}
                               {sampleN} sample
                             </span>
@@ -160,7 +160,7 @@ export default function CodingAuthoring({ examId, locked }: Props) {
                           <button
                             type="button"
                             aria-label="Delete question"
-                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-white/[0.1] text-[#888b91] transition-colors hover:border-[rgba(230,113,79,0.4)] hover:text-[#e6714f]"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border text-muted-foreground transition-colors hover:border-[rgba(230,113,79,0.4)] hover:text-[var(--ui-danger)]"
                             onClick={() => delMut.mutate(q.id)}
                           >
                             <Trash2 size={14} aria-hidden="true" />
@@ -176,13 +176,13 @@ export default function CodingAuthoring({ examId, locked }: Props) {
 
           {/* Composer */}
           {locked ? (
-            <div className="flex items-center gap-2 rounded-[16px] border border-white/[0.08] bg-[rgba(28,29,31,0.3)] px-4 py-3 text-[13px] text-[#888b91]">
+            <div className="flex items-center gap-2 rounded-[16px] border border-border bg-[rgba(28,29,31,0.3)] px-4 py-3 text-[13px] text-muted-foreground">
               <Lock size={15} aria-hidden="true" /> Questions are locked once attempts exist.
             </div>
           ) : (
             <form
               onSubmit={submit}
-              className="space-y-3 rounded-[16px] border border-dashed border-white/[0.1] bg-[rgba(28,29,31,0.3)] p-4"
+              className="space-y-3 rounded-[16px] border border-dashed border-border bg-[rgba(28,29,31,0.3)] p-4"
               aria-label="New coding question"
             >
               <textarea
@@ -196,7 +196,7 @@ export default function CodingAuthoring({ examId, locked }: Props) {
 
               {/* Allowed languages */}
               <div>
-                <p className="mb-1.5 text-[12px] uppercase tracking-[0.5px] text-[#70757c]">
+                <p className="mb-1.5 text-[12px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                   Allowed languages
                 </p>
                 <div className="flex flex-wrap gap-1.5">
@@ -210,8 +210,8 @@ export default function CodingAuthoring({ examId, locked }: Props) {
                         className={cn(
                           'rounded-full border px-3 py-1 text-[12px] transition-colors',
                           on
-                            ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]'
-                            : 'border-white/[0.1] text-[#888b91] hover:text-white',
+                            ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
+                            : 'border-border text-muted-foreground hover:text-foreground',
                         )}
                       >
                         {LANG_LABEL[slug]}
@@ -223,13 +223,13 @@ export default function CodingAuthoring({ examId, locked }: Props) {
 
               {/* Starter code */}
               <div>
-                <p className="mb-1.5 text-[12px] uppercase tracking-[0.5px] text-[#70757c]">
+                <p className="mb-1.5 text-[12px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                   Starter code (optional) — highlighted as {LANG_LABEL[editorLang]}
                 </p>
                 <Suspense
                   fallback={
-                    <div className="flex h-32 items-center justify-center rounded-[12px] border border-white/[0.08] bg-[#0b0c0e]">
-                      <Loader2 className="h-5 w-5 animate-spin text-[#60a5fa]" aria-hidden="true" />
+                    <div className="flex h-32 items-center justify-center rounded-[12px] border border-border bg-card">
+                      <Loader2 className="h-5 w-5 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
                     </div>
                   }
                 >
@@ -247,11 +247,11 @@ export default function CodingAuthoring({ examId, locked }: Props) {
               {/* Test cases */}
               <div>
                 <div className="mb-1.5 flex items-center justify-between">
-                  <p className="text-[12px] uppercase tracking-[0.5px] text-[#70757c]">Test cases</p>
+                  <p className="text-[12px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">Test cases</p>
                   <button
                     type="button"
                     onClick={() => setTests((p) => [...p, emptyTest()])}
-                    className="inline-flex items-center gap-1 text-[12px] text-[#60a5fa] hover:underline"
+                    className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
                   >
                     <Plus size={12} aria-hidden="true" /> Add test
                   </button>
@@ -260,7 +260,7 @@ export default function CodingAuthoring({ examId, locked }: Props) {
                   {tests.map((tc, ti) => (
                     <div
                       key={ti}
-                      className="rounded-[12px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-3"
+                      className="rounded-[12px] border border-border bg-[rgba(28,29,31,0.5)] p-3"
                     >
                       <div className="grid gap-2 sm:grid-cols-2">
                         <textarea
@@ -288,7 +288,7 @@ export default function CodingAuthoring({ examId, locked }: Props) {
                           aria-label={`Test ${ti + 1} expected output`}
                         />
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-[12px] text-[#888b91]">
+                      <div className="mt-2 flex flex-wrap items-center gap-3 text-[12px] text-muted-foreground">
                         <label className="flex items-center gap-1.5">
                           <input
                             type="checkbox"
@@ -317,14 +317,14 @@ export default function CodingAuthoring({ examId, locked }: Props) {
                                 ),
                               )
                             }
-                            className="w-14 rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-1.5 py-1 text-white focus:border-[var(--accent)] focus:outline-none"
+                            className="w-14 rounded-[7px] border border-border bg-secondary px-1.5 py-1 text-foreground focus:border-[var(--accent)] focus:outline-none"
                           />
                         </label>
                         {tests.length > 1 && (
                           <button
                             type="button"
                             aria-label="Remove test case"
-                            className="ml-auto text-[#888b91] transition-colors hover:text-[#e6714f]"
+                            className="ml-auto text-muted-foreground transition-colors hover:text-[var(--ui-danger)]"
                             onClick={() => setTests((p) => p.filter((_, j) => j !== ti))}
                           >
                             <Trash2 size={13} aria-hidden="true" />
@@ -334,21 +334,21 @@ export default function CodingAuthoring({ examId, locked }: Props) {
                     </div>
                   ))}
                 </div>
-                <p className="mt-1.5 text-[11.5px] text-[#70757c]">
+                <p className="mt-1.5 text-[11.5px] text-[var(--ui-faint)]">
                   Hidden (non-sample) tests grade the candidate without revealing the answer.
                 </p>
               </div>
 
               {/* Points + submit */}
               <div className="flex flex-wrap items-center gap-2">
-                <label className="ml-auto flex items-center gap-2 text-[12px] text-[#888b91]">
+                <label className="ml-auto flex items-center gap-2 text-[12px] text-muted-foreground">
                   Points
                   <input
                     type="number"
                     min={1}
                     value={points}
                     onChange={(e) => setPoints(e.target.value)}
-                    className="w-20 rounded-[8px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[13px] text-white focus:border-[var(--accent)] focus:outline-none"
+                    className="w-20 rounded-[8px] border border-border bg-secondary px-2 py-1 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
                     aria-label="Points"
                   />
                 </label>

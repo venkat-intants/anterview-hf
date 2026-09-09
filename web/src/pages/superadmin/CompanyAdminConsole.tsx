@@ -77,9 +77,9 @@ export default function CompanyAdminConsole() {
       <Reveal>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-[28px] font-semibold tracking-[-1px] text-white">Super Admin</h1>
-            <p className="mt-1 flex items-center gap-1.5 text-[14px] text-[#888b91]">
-              <Building2 size={14} className="text-[#60a5fa]" aria-hidden="true" />
+            <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Super Admin</h1>
+            <p className="mt-1 flex items-center gap-1.5 text-[14px] text-muted-foreground">
+              <Building2 size={14} className="text-[var(--ui-info)]" aria-hidden="true" />
               HR managers for {companyName}.
             </p>
           </div>
@@ -107,14 +107,14 @@ export default function CompanyAdminConsole() {
         <GlassCard className="p-5 space-y-4">
           <div className="flex items-center gap-2">
             <span
-              className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.12)] text-[#60a5fa]"
+              className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--ui-info)]"
               aria-hidden="true"
             >
               <Users size={17} />
             </span>
             <div>
-              <h3 className="text-[15px] font-semibold text-white">Create an HR manager</h3>
-              <p className="text-[12px] text-[#888b91]">
+              <h3 className="text-[15px] font-semibold text-foreground">Create an HR manager</h3>
+              <p className="text-[12px] text-muted-foreground">
                 They log in, reset the password, then run hiring for {companyName}.
               </p>
             </div>
@@ -132,7 +132,7 @@ export default function CompanyAdminConsole() {
             }}
           >
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="hr-email" className="text-[12px] font-medium text-[#b8babf]">
+              <label htmlFor="hr-email" className="text-[12px] font-medium text-[var(--ui-soft)]">
                 Email
               </label>
               <Input
@@ -145,7 +145,7 @@ export default function CompanyAdminConsole() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="hr-name" className="text-[12px] font-medium text-[#b8babf]">
+              <label htmlFor="hr-name" className="text-[12px] font-medium text-[var(--ui-soft)]">
                 Full name
               </label>
               <Input
@@ -167,8 +167,8 @@ export default function CompanyAdminConsole() {
             </Button>
           </form>
 
-          <p className="flex items-center gap-1.5 text-[12px] text-[#888b91]">
-            <KeyRound className="h-3 w-3 text-[#60a5fa]" aria-hidden="true" />
+          <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+            <KeyRound className="h-3 w-3 text-[var(--ui-info)]" aria-hidden="true" />
             A secure “set your password” link is emailed to them — no password is
             shared here.
           </p>
@@ -178,15 +178,15 @@ export default function CompanyAdminConsole() {
       {/* ── HR list ──────────────────────────────────────────────────────── */}
       <Reveal delay={0.08}>
         <GlassCard className="p-5">
-          <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-white">
-            <Users size={17} className="text-[#60a5fa]" aria-hidden="true" />
+          <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+            <Users size={17} className="text-[var(--ui-info)]" aria-hidden="true" />
             HR managers
           </h3>
 
           {isLoading ? (
-            <Skeleton className="h-16 w-full rounded-[12px] bg-white/[0.05]" />
+            <Skeleton className="h-16 w-full rounded-[12px] bg-[var(--ui-inset)]" />
           ) : !hrs || hrs.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-[#888b91]">
+            <p className="py-6 text-center text-[13px] text-muted-foreground">
               No HR managers yet — add your first one above.
             </p>
           ) : (
@@ -195,7 +195,7 @@ export default function CompanyAdminConsole() {
                 <div
                   key={hr.user_id}
                   role="listitem"
-                  className="flex items-center justify-between rounded-[14px] border border-white/[0.07] bg-white/[0.03] px-3 py-2.5 mb-2 last:mb-0"
+                  className="flex items-center justify-between rounded-[14px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 mb-2 last:mb-0"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <Avatar
@@ -204,10 +204,10 @@ export default function CompanyAdminConsole() {
                       size={30}
                     />
                     <div className="min-w-0">
-                      <p className="text-[13.5px] font-medium text-white truncate">
+                      <p className="text-[13.5px] font-medium text-foreground truncate">
                         {hr.full_name}
                       </p>
-                      <p className="text-[12px] text-[#888b91] truncate">{hr.email}</p>
+                      <p className="text-[12px] text-muted-foreground truncate">{hr.email}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">

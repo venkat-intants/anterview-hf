@@ -75,12 +75,19 @@ function getRoleLabel(roles: string[]): string {
 }
 
 /** Accent color for the role label, matching the design. */
+/**
+ * The colour of the role label under the wordmark. Returns a CSS variable, not
+ * a hex: these were pastels chosen against a black sidebar (#f0a6c8 for the
+ * platform owner), and a pastel on a white sidebar is a label you have to lean
+ * in to read. Each token carries a per-mode value — see --ui-role-* in
+ * index.css — so the label keeps its identity and its contrast in both.
+ */
 function getRoleAccent(roles: string[]): string {
-  if (roles.includes('platform_owner')) return '#f0a6c8';
-  if (roles.includes('super_admin')) return '#c89ce8';
-  if (roles.includes('admin')) return '#60a5fa';
-  if (roles.includes('hr_manager')) return '#27c93f';
-  return '#70757c';
+  if (roles.includes('platform_owner')) return 'var(--ui-role-platform)';
+  if (roles.includes('super_admin')) return 'var(--ui-role-super)';
+  if (roles.includes('admin')) return 'var(--ui-role-admin)';
+  if (roles.includes('hr_manager')) return 'var(--ui-role-hr)';
+  return 'var(--ui-faint)';
 }
 
 /** Derive initials from a display name for the avatar fallback */
@@ -592,10 +599,7 @@ function TopBar() {
       )}
 
       <div className="ml-auto flex items-center gap-2">
-        {/* Light/dark is offered only to candidates: the staff consoles have no
-            light design yet, so ThemeModeGate pins them dark and a control
-            there would visibly do nothing. */}
-        {candidateOnly && <ModeSwitch />}
+        <ModeSwitch />
         <ThemeToggle />
         <LanguageSwitcher />
         <NotificationsBell />

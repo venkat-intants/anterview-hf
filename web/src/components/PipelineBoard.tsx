@@ -97,13 +97,13 @@ function Card({
       type="button"
       onClick={onOpen}
       aria-label={`Open details for ${row.full_name}`}
-      className="w-full rounded-[14px] border border-white/[0.08] bg-[#0f0f10] p-3 text-left transition-colors hover:border-[rgba(var(--accent-rgb),0.3)] focus:outline-none focus-visible:border-[var(--accent)]"
+      className="w-full rounded-[14px] border border-border bg-card p-3 text-left transition-colors hover:border-[rgba(var(--accent-rgb),0.3)] focus:outline-none focus-visible:border-[var(--accent)]"
     >
       <div className="flex items-center gap-2.5">
         <Avatar initials={initialsOf(row.full_name)} size={28} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13.5px] font-medium text-white">{row.full_name}</p>
-          <p className="truncate text-[11.5px] text-[#70757c]">{row.target_job_title}</p>
+          <p className="truncate text-[13.5px] font-medium text-foreground">{row.full_name}</p>
+          <p className="truncate text-[11.5px] text-[var(--ui-faint)]">{row.target_job_title}</p>
         </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -111,8 +111,8 @@ function Card({
           <StatusTag tone={DECIDED_TONE[row.status] ?? 'neutral'}>{row.status}</StatusTag>
         ) : null}
         {score ? (
-          <span className="text-[11.5px] text-[#888b91]">
-            {score.label} <span className="text-[#d5d7da]">{score.value}</span>
+          <span className="text-[11.5px] text-muted-foreground">
+            {score.label} <span className="text-[var(--ui-soft)]">{score.value}</span>
           </span>
         ) : null}
       </div>
@@ -149,20 +149,20 @@ export default function PipelineBoard({
           <section
             key={col.key}
             aria-labelledby={`col-${col.key}`}
-            className="flex w-full min-w-0 flex-col gap-2 rounded-[16px] border border-white/[0.06] bg-white/[0.015] p-2.5"
+            className="flex w-full min-w-0 flex-col gap-2 rounded-[16px] border border-border bg-white/[0.015] p-2.5"
           >
             <h3
               id={`col-${col.key}`}
-              className="flex items-baseline justify-between px-1 text-[12px] font-medium text-[#b8babf]"
+              className="flex items-baseline justify-between px-1 text-[12px] font-medium text-[var(--ui-soft)]"
             >
               {col.label}
-              <span className="text-[11.5px] text-[#70757c]">{col.rows.length}</span>
+              <span className="text-[11.5px] text-[var(--ui-faint)]">{col.rows.length}</span>
             </h3>
 
             {col.rows.length === 0 ? (
               // Named rather than blank: an empty column that says nothing
               // looks like a loading failure.
-              <p className="px-1 py-3 text-[11.5px] text-[#5a5f66]">Nobody here.</p>
+              <p className="px-1 py-3 text-[11.5px] text-[var(--ui-faint)]">Nobody here.</p>
             ) : (
               col.rows.map((row) => (
                 <Card
@@ -177,7 +177,7 @@ export default function PipelineBoard({
         ))}
       </div>
 
-      <p className={cn('mt-3 px-1 text-[11.5px] text-[#5a5f66]')}>
+      <p className={cn('mt-3 px-1 text-[11.5px] text-[var(--ui-faint)]')}>
         Cards open a candidate. Moving somebody happens through their own record, so
         every move is recorded with who made it.
       </p>

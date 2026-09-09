@@ -83,7 +83,7 @@ export default function ExamAttemptDetail() {
       {/* ── Back link ── */}
       <Link
         to={`/hr/exams/${examId}/results`}
-        className="inline-flex items-center gap-1.5 text-[13px] text-[#888b91] hover:text-white"
+        className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft size={15} aria-hidden="true" /> Back to results
       </Link>
@@ -103,7 +103,7 @@ export default function ExamAttemptDetail() {
               <h1 className="text-[28px] font-semibold tracking-[-1px]">
                 {attempt?.applicant_name ?? 'Attempt'}
               </h1>
-              <p className="mt-1 font-mono text-[13px] text-[#888b91]">
+              <p className="mt-1 font-mono text-[13px] text-muted-foreground">
                 {exam?.title ?? 'Exam'}
                 {attempt ? ` · attempt #${attempt.attempt_no}` : ''}
                 {attempt?.submitted_at ? ` · ${formatDate(attempt.submitted_at)}` : ''}
@@ -135,7 +135,7 @@ export default function ExamAttemptDetail() {
       {isLoading && (
         <GlassCard className="mt-6 p-8 text-center">
           <div
-            className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-white/15 border-t-[#60a5fa]"
+            className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[#60a5fa]"
             role="status"
             aria-label="Loading attempt"
           />
@@ -144,8 +144,8 @@ export default function ExamAttemptDetail() {
 
       {!isLoading && isError && (
         <GlassCard className="mt-6 p-8 text-center">
-          <p className="text-[14px] font-medium text-white">Could not load this attempt</p>
-          <p className="mt-1 text-[13px] text-[#888b91]">
+          <p className="text-[14px] font-medium text-foreground">Could not load this attempt</p>
+          <p className="mt-1 text-[13px] text-muted-foreground">
             It may have been removed, or you don&apos;t have access to it.
           </p>
         </GlassCard>
@@ -192,7 +192,7 @@ export default function ExamAttemptDetail() {
           {mcqEntries.length > 0 && (
             <Reveal delay={0.1}>
               <GlassCard className="mt-5 overflow-hidden p-0">
-                <div className="border-b border-white/[0.06] px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                <div className="border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                   Multiple choice · {mcqCorrect}/{mcqEntries.length} correct
                 </div>
                 <Stagger className="flex flex-col">
@@ -200,20 +200,20 @@ export default function ExamAttemptDetail() {
                     const q = qMap.get(qid);
                     return (
                       <StaggerItem key={qid}>
-                        <div className="flex items-start justify-between gap-3 border-b border-white/[0.04] px-6 py-3.5 last:border-0">
+                        <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-3.5 last:border-0">
                           <div className="min-w-0">
-                            <p className="text-[13.5px] text-white">
-                              <span className="text-[#70757c]">Q{i + 1}.</span>{' '}
+                            <p className="text-[13.5px] text-foreground">
+                              <span className="text-[var(--ui-faint)]">Q{i + 1}.</span>{' '}
                               {q?.prompt ?? `Question ${i + 1}`}
                             </p>
                             {q && !correct && (
-                              <p className="mt-1 text-[12.5px] text-[#888b91]">
+                              <p className="mt-1 text-[12.5px] text-muted-foreground">
                                 Correct answer: {q.options[q.correct_index] ?? '—'}
                               </p>
                             )}
                           </div>
                           <div className="flex flex-none items-center gap-3">
-                            <span className="font-mono text-[12px] text-[#70757c]">
+                            <span className="font-mono text-[12px] text-[var(--ui-faint)]">
                               {q ? `${correct ? q.points : 0}/${q.points} pts` : ''}
                             </span>
                             {correct ? (
@@ -239,7 +239,7 @@ export default function ExamAttemptDetail() {
           {codingEntries.length > 0 && (
             <Reveal delay={0.14}>
               <GlassCard className="mt-5 overflow-hidden p-0">
-                <div className="border-b border-white/[0.06] px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                <div className="border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                   Coding · {codingEntries.length} question{codingEntries.length !== 1 ? 's' : ''}
                 </div>
                 <Stagger className="flex flex-col">
@@ -249,12 +249,12 @@ export default function ExamAttemptDetail() {
                     const partial = earned > 0 && earned < r.points;
                     return (
                       <StaggerItem key={qid}>
-                        <div className="flex items-start justify-between gap-3 border-b border-white/[0.04] px-6 py-3.5 last:border-0">
+                        <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-3.5 last:border-0">
                           <div className="min-w-0">
-                            <p className="text-[13.5px] text-white">
-                              <span className="text-[#70757c]">Q{i + 1}.</span> Coding question
+                            <p className="text-[13.5px] text-foreground">
+                              <span className="text-[var(--ui-faint)]">Q{i + 1}.</span> Coding question
                             </p>
-                            <p className="mt-1 text-[12.5px] text-[#888b91]">
+                            <p className="mt-1 text-[12.5px] text-muted-foreground">
                               {r.submitted === false
                                 ? 'Not submitted'
                                 : r.error
@@ -263,7 +263,7 @@ export default function ExamAttemptDetail() {
                             </p>
                           </div>
                           <div className="flex flex-none items-center gap-3">
-                            <span className="font-mono text-[12px] text-[#70757c]">
+                            <span className="font-mono text-[12px] text-[var(--ui-faint)]">
                               {earned}/{r.points} pts
                             </span>
                             {full ? (
@@ -289,7 +289,7 @@ export default function ExamAttemptDetail() {
 
           {totalQuestions === 0 && (
             <GlassCard className="mt-5 p-8 text-center">
-              <p className="text-[13px] text-[#888b91]">
+              <p className="text-[13px] text-muted-foreground">
                 No per-question breakdown is available for this attempt.
               </p>
             </GlassCard>

@@ -51,7 +51,15 @@ import { ACTIVE_POLL_MS, LIVE_POLL_MS } from '../../lib/polling';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const MAX_BULK_FILES = 25;
+// Mirrors the server's bound (services/data_gateway/app/routers/hr_applicants.py:
+// _MAX_BULK_FILES / _MAX_BULK_TOTAL_BYTES). E5 raised the server to 500 files /
+// 250 MB when scoring moved to the reconciler; this constant stayed at 25, so
+// the console silently truncated to 25 and told the user that was the limit —
+// the 200-CV graduate intake E5 exists for still could not be done from the UI.
+// The byte bound is mirrored too: failing here names the problem, where a 413
+// from the proxy does not.
+const MAX_BULK_FILES = 500;
+const MAX_BULK_TOTAL_BYTES = 250 * 1024 * 1024;
 
 const STATUS_FILTERS = [
   { key: 'all', label: 'All' },
@@ -137,8 +145,8 @@ function matchColor(score: number): string {
 // ── Input base class ─────────────────────────────────────────────────────────
 
 const inputCls =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 ' +
-  'text-[14px] text-white placeholder:text-[#5a5f66] focus:outline-none ' +
+  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 ' +
+  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none ' +
   'focus:border-[var(--accent)] transition-colors';
 
 // ── Slide-in drawer ───────────────────────────────────────────────────────────
@@ -211,7 +219,7 @@ function ApplicantDrawer({
       onClick={onClose}
     >
       <motion.div
-        className="relative flex max-h-[90vh] w-full max-w-[1040px] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-[#0a0b0d] shadow-[0_30px_90px_rgba(0,0,0,0.65)]"
+        className="relative flex max-h-[90vh] w-full max-w-[1040px] flex-col overflow-hidden rounded-[24px] border border-border bg-card shadow-[0_30px_90px_rgba(0,0,0,0.65)]"
         initial={{ opacity: 0, scale: 0.96, y: 12 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.97, y: 8 }}
@@ -222,12 +230,12 @@ function ApplicantDrawer({
         aria-label={`${a.full_name} applicant details`}
       >
         {/* Header — pinned */}
-        <div className="flex shrink-0 items-center justify-between border-b border-white/[0.07] px-7 py-5">
-          <span className="text-[12px] uppercase tracking-[1px] text-[#70757c]">Candidate</span>
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-7 py-5">
+          <span className="text-[12px] uppercase tracking-[1px] text-[var(--ui-faint)]">Candidate</span>
           <button
             onClick={onClose}
             aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-[9px] border border-white/10 bg-white/[0.05] text-[#b8babf] hover:text-white transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-[9px] border border-border bg-[var(--ui-inset)] text-[var(--ui-soft)] hover:text-foreground transition-colors"
           >
             <X size={16} aria-hidden="true" />
           </button>
@@ -243,12 +251,12 @@ function ApplicantDrawer({
             <div className="flex items-center gap-4">
               <Avatar initials={initialsOf(a.full_name)} gradient={gradientFor(seed)} size={58} />
               <div className="min-w-0">
-                <div className="text-[20px] font-semibold tracking-[-0.5px] text-white">{a.full_name}</div>
-                <div className="truncate text-[13px] text-[#70757c]">{a.email ?? 'No email on file'}</div>
+                <div className="text-[20px] font-semibold tracking-[-0.5px] text-foreground">{a.full_name}</div>
+                <div className="truncate text-[13px] text-[var(--ui-faint)]">{a.email ?? 'No email on file'}</div>
                 {a.user_id && (
                   <Link
                     to={`/u/${a.user_id}`}
-                    className="mt-1 inline-flex items-center gap-1 text-[12px] font-medium text-[#60a5fa] hover:underline"
+                    className="mt-1 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ui-info)] hover:underline"
                   >
                     View full profile <ArrowRight size={12} aria-hidden="true" />
                   </Link>
@@ -258,8 +266,8 @@ function ApplicantDrawer({
 
             {/* Score + status tiles */}
             <div className="grid grid-cols-2 gap-2.5">
-              <div className="rounded-[12px] border border-white/[0.08] bg-[#0f0f10] p-4">
-                <div className="text-[11px] uppercase tracking-[0.5px] text-[#70757c]">ATS score</div>
+              <div className="rounded-[12px] border border-border bg-card p-4">
+                <div className="text-[11px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">ATS score</div>
                 <div
                   className="mt-1 text-[28px] font-semibold tracking-[-1px]"
                   style={{ color: atsDisplay !== null ? scoreColor(atsDisplay) : '#70757c' }}
@@ -267,8 +275,8 @@ function ApplicantDrawer({
                   {atsDisplay ?? '—'}
                 </div>
               </div>
-              <div className="rounded-[12px] border border-white/[0.08] bg-[#0f0f10] p-4">
-                <div className="text-[11px] uppercase tracking-[0.5px] text-[#70757c]">Status</div>
+              <div className="rounded-[12px] border border-border bg-card p-4">
+                <div className="text-[11px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">Status</div>
                 <div className="mt-2">
                   <StatusTag tone={STATUS_TONE[a.status]} dot>
                     {STATUS_LABEL[a.status]}
@@ -278,10 +286,10 @@ function ApplicantDrawer({
             </div>
 
             {/* Role meta */}
-            <div className="space-y-1.5 text-[12.5px] text-[#70757c]">
+            <div className="space-y-1.5 text-[12.5px] text-[var(--ui-faint)]">
               <p>
                 Role &middot;{' '}
-                <span className="text-[#b8babf]">
+                <span className="text-[var(--ui-soft)]">
                   {a.target_job_title} ({a.target_level})
                 </span>
               </p>
@@ -294,14 +302,14 @@ function ApplicantDrawer({
 
             {/* ATS summary */}
             {a.ats_summary && (
-              <p className="text-[13px] leading-relaxed text-[#888b91]">{a.ats_summary}</p>
+              <p className="text-[13px] leading-relaxed text-muted-foreground">{a.ats_summary}</p>
             )}
 
             {/* Why matched — only during a search */}
             {showMatch && (
               <div className="rounded-[12px] border border-[rgba(var(--accent-rgb),0.25)] bg-[rgba(var(--accent-rgb),0.06)] p-4">
                 <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[#60a5fa]">
+                  <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ui-info)]">
                     <Search size={13} aria-hidden="true" />
                     Why this matched
                   </span>
@@ -314,7 +322,7 @@ function ApplicantDrawer({
                     </span>
                   )}
                 </div>
-                <p className="mt-2 text-[13px] leading-relaxed text-[#b8babf]">
+                <p className="mt-2 text-[13px] leading-relaxed text-[var(--ui-soft)]">
                   {!worthExplaining
                     ? 'Low relevance to this search.'
                     : whyLoading
@@ -330,15 +338,15 @@ function ApplicantDrawer({
             {/* ATS breakdown bars — REAL data, not fabricated competencies */}
             {a.ats_breakdown && Object.keys(a.ats_breakdown).length > 0 && (
               <div>
-                <div className="text-[13px] font-semibold text-white">Score breakdown</div>
+                <div className="text-[13px] font-semibold text-foreground">Score breakdown</div>
                 <div className="mt-3 flex flex-col gap-3">
                   {Object.entries(a.ats_breakdown).map(([k, v]) => (
                     <div key={k}>
                       <div className="mb-1 flex justify-between text-[12.5px]">
-                        <span className="text-[#b8babf]">{BREAKDOWN_LABELS[k] ?? k}</span>
-                        <span className="font-mono text-[#888b91]">{v}</span>
+                        <span className="text-[var(--ui-soft)]">{BREAKDOWN_LABELS[k] ?? k}</span>
+                        <span className="font-mono text-muted-foreground">{v}</span>
                       </div>
-                      <div className="h-1.5 rounded-full bg-white/[0.07]">
+                      <div className="h-1.5 rounded-full bg-[var(--ui-inset-strong)]">
                         <div
                           className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),#a887dc)]"
                           style={{ width: `${Math.max(0, Math.min(100, v))}%` }}
@@ -362,11 +370,11 @@ function ApplicantDrawer({
               <div className="grid gap-4">
                 {a.ats_strengths && a.ats_strengths.length > 0 && (
                   <div>
-                    <p className="text-[12.5px] font-semibold text-[#27c93f]">Strengths</p>
+                    <p className="text-[12.5px] font-semibold text-[var(--ui-ok)]">Strengths</p>
                     <ul className="mt-2 space-y-1">
                       {a.ats_strengths.map((s, i) => (
-                        <li key={i} className="flex items-start gap-1.5 text-[12px] text-[#70757c]">
-                          <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#27c93f]" />
+                        <li key={i} className="flex items-start gap-1.5 text-[12px] text-[var(--ui-faint)]">
+                          <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-ok)]" />
                           {s}
                         </li>
                       ))}
@@ -375,11 +383,11 @@ function ApplicantDrawer({
                 )}
                 {a.ats_concerns && a.ats_concerns.length > 0 && (
                   <div>
-                    <p className="text-[12.5px] font-semibold text-[#e6714f]">Concerns</p>
+                    <p className="text-[12.5px] font-semibold text-[var(--ui-danger)]">Concerns</p>
                     <ul className="mt-2 space-y-1">
                       {a.ats_concerns.map((c, i) => (
-                        <li key={i} className="flex items-start gap-1.5 text-[12px] text-[#70757c]">
-                          <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#e6714f]" />
+                        <li key={i} className="flex items-start gap-1.5 text-[12px] text-[var(--ui-faint)]">
+                          <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-danger)]" />
                           {c}
                         </li>
                       ))}
@@ -393,7 +401,7 @@ function ApplicantDrawer({
         </div>
 
         {/* Actions — grouped on the right of the card */}
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2.5 border-t border-white/[0.07] px-7 py-5">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2.5 border-t border-border px-7 py-5">
           <Pill
             variant="outline"
             onClick={() => onRescore(a.id)}
@@ -451,22 +459,22 @@ function ApplicantRow({
   return (
     <button
       onClick={() => onSelect(a)}
-      className="grid w-full grid-cols-[2fr_1.3fr_1fr_0.8fr_0.8fr_0.5fr] items-center gap-3 border-b border-white/[0.04] px-6 py-3.5 text-left transition-colors last:border-0 hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset"
+      className="grid w-full grid-cols-[2fr_1.3fr_1fr_0.8fr_0.8fr_0.5fr] items-center gap-3 border-b border-border px-6 py-3.5 text-left transition-colors last:border-0 hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset"
       aria-label={`Open details for ${a.full_name}`}
     >
       {/* Candidate */}
       <div className="flex min-w-0 items-center gap-3">
         <Avatar initials={initialsOf(a.full_name)} gradient={gradientFor(seed)} size={36} />
         <div className="min-w-0">
-          <div className="truncate text-[14px] font-medium text-white">{a.full_name}</div>
-          <div className="truncate text-[12px] text-[#70757c]">{a.email ?? 'No email'}</div>
+          <div className="truncate text-[14px] font-medium text-foreground">{a.full_name}</div>
+          <div className="truncate text-[12px] text-[var(--ui-faint)]">{a.email ?? 'No email'}</div>
         </div>
       </div>
 
       {/* Role */}
       <div className="min-w-0">
-        <div className="truncate text-[13.5px] text-[#b8babf]">{a.target_job_title}</div>
-        <div className="text-[11.5px] text-[#70757c]">{a.target_level}</div>
+        <div className="truncate text-[13.5px] text-[var(--ui-soft)]">{a.target_job_title}</div>
+        <div className="text-[11.5px] text-[var(--ui-faint)]">{a.target_level}</div>
       </div>
 
       {/* Status */}
@@ -493,7 +501,7 @@ function ApplicantRow({
       <div>
         {a.match_score != null ? (
           <span
-            className="inline-flex items-center gap-1 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11.5px] font-semibold"
+            className="inline-flex items-center gap-1 rounded-full bg-[var(--ui-inset)] px-2 py-0.5 text-[11.5px] font-semibold"
             style={{ color: matchColor(a.match_score) }}
             title="Relevance to your search"
           >
@@ -501,7 +509,7 @@ function ApplicantRow({
           </span>
         ) : (
           a.status === 'shortlisted' && (
-            <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-[#27c93f]">
+            <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-[var(--ui-ok)]">
               <Star size={12} aria-hidden="true" />
               Shortlisted
             </span>
@@ -511,7 +519,7 @@ function ApplicantRow({
 
       {/* Arrow */}
       <div className="flex justify-end">
-        <ArrowRight size={14} className="text-[#70757c]" aria-hidden="true" />
+        <ArrowRight size={14} className="text-[var(--ui-faint)]" aria-hidden="true" />
       </div>
     </button>
   );
@@ -544,12 +552,12 @@ function UploadSection({
     <GlassCard className="p-6">
       {/* Card header */}
       <div className="mb-5 flex items-center gap-2.5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+        <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
           <Upload size={16} aria-hidden="true" />
         </div>
         <div>
-          <p className="text-[15px] font-semibold text-white">Bulk upload resumes</p>
-          <p className="text-[12.5px] text-[#888b91]">
+          <p className="text-[15px] font-semibold text-foreground">Bulk upload resumes</p>
+          <p className="text-[12.5px] text-muted-foreground">
             Pick the role once, then select up to {MAX_BULK_FILES} PDF resumes — names extracted automatically.
           </p>
         </div>
@@ -578,12 +586,12 @@ function UploadSection({
         </div>
 
         {/* File drop zone */}
-        <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[16px] border-2 border-dashed border-white/[0.12] bg-white/[0.02] px-4 py-8 text-center transition-colors hover:border-[rgba(var(--accent-rgb),0.5)] hover:bg-[rgba(var(--accent-rgb),0.04)]">
-          <FileText size={28} className="text-[#60a5fa]" aria-hidden="true" />
-          <span className="text-[14px] font-medium text-white">
+        <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[16px] border-2 border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-inset-soft)] px-4 py-8 text-center transition-colors hover:border-[rgba(var(--accent-rgb),0.5)] hover:bg-[rgba(var(--accent-rgb),0.04)]">
+          <FileText size={28} className="text-[var(--ui-info)]" aria-hidden="true" />
+          <span className="text-[14px] font-medium text-foreground">
             Click to choose PDF resumes
           </span>
-          <span className="text-[12px] text-[#70757c]">
+          <span className="text-[12px] text-[var(--ui-faint)]">
             Select multiple files &middot; up to {MAX_BULK_FILES} per batch
           </span>
           <input
@@ -601,14 +609,14 @@ function UploadSection({
 
         {/* Selected file list */}
         {files.length > 0 && (
-          <div className="rounded-[14px] border border-white/[0.08] bg-white/[0.03] p-3">
+          <div className="rounded-[14px] border border-border bg-[var(--ui-inset-soft)] p-3">
             <div className="mb-2 flex items-center justify-between px-1">
-              <span className="text-[12px] font-medium text-[#888b91]">
+              <span className="text-[12px] font-medium text-muted-foreground">
                 {files.length} resume{files.length === 1 ? '' : 's'} selected
               </span>
               <button
                 type="button"
-                className="text-[12px] text-[#888b91] hover:text-white transition-colors"
+                className="text-[12px] text-muted-foreground hover:text-foreground transition-colors"
                 onClick={onFilesClear}
               >
                 Clear all
@@ -618,17 +626,17 @@ function UploadSection({
               {files.map((f, i) => (
                 <li
                   key={`${f.name}:${f.size}:${i}`}
-                  className="flex items-center gap-2 rounded-[8px] px-2 py-1 text-[12px] text-[#70757c] hover:bg-white/[0.04]"
+                  className="flex items-center gap-2 rounded-[8px] px-2 py-1 text-[12px] text-[var(--ui-faint)] hover:bg-[var(--ui-inset)]"
                 >
-                  <FileText size={13} className="shrink-0 text-[#5a5f66]" aria-hidden="true" />
+                  <FileText size={13} className="shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                  <span className="shrink-0 text-[#5a5f66]">
+                  <span className="shrink-0 text-[var(--ui-faint)]">
                     {(f.size / 1024).toFixed(0)} KB
                   </span>
                   <button
                     type="button"
                     aria-label={`Remove ${f.name}`}
-                    className="shrink-0 text-[#5a5f66] hover:text-[#e6714f] transition-colors"
+                    className="shrink-0 text-[var(--ui-faint)] hover:text-[var(--ui-danger)] transition-colors"
                     onClick={() => onFileRemove(i)}
                   >
                     <X size={13} aria-hidden="true" />
@@ -651,7 +659,7 @@ function UploadSection({
         {/* Upload progress */}
         {pending && (
           <div className="space-y-1.5">
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.08]">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
               <div
                 className="h-1.5 rounded-full bg-[linear-gradient(90deg,var(--accent),#a887dc)] transition-all"
                 style={{ width: `${Math.min(progress, 100)}%` }}
@@ -661,7 +669,7 @@ function UploadSection({
                 aria-valuemax={100}
               />
             </div>
-            <p className="text-[12px] text-[#70757c]">
+            <p className="text-[12px] text-[var(--ui-faint)]">
               {progress < 100
                 ? `Uploading ${progress}%…`
                 : `Scoring ${files.length || 'the'} resume${files.length === 1 ? '' : 's'} — this can take a moment…`}
@@ -687,11 +695,11 @@ function UploadSection({
       {/* Per-file failure summary */}
       {lastResult && lastResult.failed_count > 0 && (
         <div className="mt-4 rounded-[14px] border border-[rgba(255,183,100,0.25)] bg-[rgba(255,183,100,0.08)] p-3.5">
-          <p className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-[#ffb764]">
+          <p className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--ui-warn)]">
             <AlertTriangle size={14} aria-hidden="true" />
             {lastResult.failed_count} file{lastResult.failed_count === 1 ? '' : 's'} skipped
           </p>
-          <ul className="space-y-0.5 text-[12px] text-[#ffb764]">
+          <ul className="space-y-0.5 text-[12px] text-[var(--ui-warn)]">
             {lastResult.failed.map((f, i) => (
               <li key={i} className="truncate">
                 <span className="font-medium">{f.filename}</span> — {f.error}
@@ -833,7 +841,15 @@ export default function Applicants() {
       if (merged.length > MAX_BULK_FILES) {
         toast.error(`Max ${MAX_BULK_FILES} resumes per batch — extra files ignored.`);
       }
-      return merged.slice(0, MAX_BULK_FILES);
+      const capped = merged.slice(0, MAX_BULK_FILES);
+      const bytes = capped.reduce((total, f) => total + f.size, 0);
+      if (bytes > MAX_BULK_TOTAL_BYTES) {
+        toast.error(
+          `That batch is ${Math.round(bytes / 1024 / 1024)} MB — the limit is ` +
+            `${Math.round(MAX_BULK_TOTAL_BYTES / 1024 / 1024)} MB. Split it into two uploads.`,
+        );
+      }
+      return capped;
     });
   }
 
@@ -867,8 +883,8 @@ export default function Applicants() {
     <div className="mx-auto max-w-[1280px] px-6 py-8 lg:px-8 space-y-8">
       {/* Page header */}
       <Reveal>
-        <h1 className="text-[28px] font-semibold tracking-[-1px] text-white">Resume screening</h1>
-        <p className="mt-1 text-[14px] text-[#888b91]">
+        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Resume screening</h1>
+        <p className="mt-1 text-[14px] text-muted-foreground">
           Drop in many resumes at once — each candidate&apos;s name &amp; email are read straight
           from the resume, AI-scored against the role, then ranked.
         </p>
@@ -897,7 +913,7 @@ export default function Applicants() {
         {/* Backfill banner — existing resumes need embedding before they're searchable */}
         {reindexStatus && reindexStatus.remaining > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[rgba(255,183,100,0.25)] bg-[rgba(255,183,100,0.07)] px-4 py-3">
-            <p className="flex items-center gap-2 text-[12.5px] text-[#ffb764]">
+            <p className="flex items-center gap-2 text-[12.5px] text-[var(--ui-warn)]">
               <AlertTriangle size={14} aria-hidden="true" />
               {reindexStatus.remaining} earlier resume{reindexStatus.remaining === 1 ? '' : 's'}{' '}
               {reindexStatus.remaining === 1 ? "isn't" : "aren't"} searchable yet — index{' '}
@@ -921,24 +937,24 @@ export default function Applicants() {
 
         {/* Controls bar */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex w-[320px] items-center gap-2 rounded-[9999px] border border-white/[0.08] bg-[rgba(28,29,31,0.7)] px-3.5 py-2.5">
-            <Search size={15} className="shrink-0 text-[#70757c]" aria-hidden="true" />
+          <div className="flex w-[320px] items-center gap-2 rounded-[9999px] border border-border bg-secondary px-3.5 py-2.5">
+            <Search size={15} className="shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by skill, role, or meaning…"
               aria-label="Search applicants by skills or meaning"
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-white placeholder:text-[#5a5f66] focus:outline-none"
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
             />
             {searching && isFetching && (
-              <RefreshCw size={13} className="shrink-0 animate-spin text-[#5a5f66]" aria-hidden="true" />
+              <RefreshCw size={13} className="shrink-0 animate-spin text-[var(--ui-faint)]" aria-hidden="true" />
             )}
             {query && (
               <button
                 type="button"
                 onClick={() => setQuery('')}
                 aria-label="Clear search"
-                className="shrink-0 text-[#5a5f66] hover:text-white transition-colors"
+                className="shrink-0 text-[var(--ui-faint)] hover:text-foreground transition-colors"
               >
                 <X size={13} aria-hidden="true" />
               </button>
@@ -947,7 +963,7 @@ export default function Applicants() {
 
           <SegTabs tabs={STATUS_FILTERS} active={filter} onChange={setFilter} />
 
-          <span className="ml-auto text-[12.5px] text-[#70757c]">
+          <span className="ml-auto text-[12.5px] text-[var(--ui-faint)]">
             {isLoading
               ? '…'
               : searching
@@ -960,15 +976,15 @@ export default function Applicants() {
         {isLoading ? (
           <div className="space-y-2" role="status" aria-label="Loading applicants" aria-busy="true">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-16 w-full rounded-[16px] bg-white/[0.05] animate-pulse" />
+              <div key={i} className="h-16 w-full rounded-[16px] bg-[var(--ui-inset)] animate-pulse" />
             ))}
           </div>
         ) : list.length === 0 ? (
           <GlassCard className="py-16 text-center">
-            <p className="text-[15px] font-medium text-white">
+            <p className="text-[15px] font-medium text-foreground">
               {searching || statusParam ? 'No matching candidates' : 'No applicants yet'}
             </p>
-            <p className="mt-1 text-[13px] text-[#70757c]">
+            <p className="mt-1 text-[13px] text-[var(--ui-faint)]">
               {searching
                 ? 'Try a broader phrase or different keywords.'
                 : statusParam
@@ -979,7 +995,7 @@ export default function Applicants() {
         ) : (
           <GlassCard className="overflow-hidden p-0">
             {/* Table header */}
-            <div className="grid grid-cols-[2fr_1.3fr_1fr_0.8fr_0.8fr_0.5fr] gap-3 border-b border-white/[0.06] px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+            <div className="grid grid-cols-[2fr_1.3fr_1fr_0.8fr_0.8fr_0.5fr] gap-3 border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
               <div>Candidate</div>
               <div>Role</div>
               <div>Status</div>

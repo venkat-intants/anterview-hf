@@ -43,8 +43,8 @@ import { initialsOf, gradientFor } from '@/design/data/shared';
 /* ── Field styling ────────────────────────────────────────────────────────── */
 
 const inputCls =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 ' +
-  'text-[14px] text-white placeholder:text-[#5a5f66] focus:outline-none ' +
+  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 ' +
+  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none ' +
   'focus:border-[var(--accent)] transition-colors';
 
 /* ── Status taxonomy → design StatusTag tone ──────────────────────────────── */
@@ -129,19 +129,19 @@ function InviteRow({
   const canReschedule = inv.status === 'invited' || inv.status === 'consumed';
 
   return (
-    <div className="border-b border-white/[0.04] px-6 py-3.5 last:border-0 hover:bg-white/[0.02] transition-colors">
+    <div className="border-b border-border px-6 py-3.5 last:border-0 hover:bg-[var(--ui-inset-soft)] transition-colors">
       <div className="grid grid-cols-[2fr_1.2fr_1.2fr_1fr_0.8fr] items-center gap-3">
         {/* Candidate */}
         <div className="flex min-w-0 items-center gap-3">
           <Avatar initials={initials} gradient={gradient} size={34} />
-          <p className="truncate text-[13.5px] font-medium text-white">{inv.applicant_name}</p>
+          <p className="truncate text-[13.5px] font-medium text-foreground">{inv.applicant_name}</p>
         </div>
 
         {/* Role */}
-        <p className="truncate text-[13px] text-[#b8babf]">{inv.job_title}</p>
+        <p className="truncate text-[13px] text-[var(--ui-soft)]">{inv.job_title}</p>
 
         {/* When */}
-        <div className="flex items-center gap-1.5 text-[13px] text-[#888b91]">
+        <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <Calendar size={13} className="shrink-0" aria-hidden="true" />
           {inv.scheduled_at
             ? new Date(inv.scheduled_at).toLocaleDateString('en-IN', {
@@ -150,7 +150,7 @@ function InviteRow({
                 hour: '2-digit',
                 minute: '2-digit',
               })
-            : <span className="text-[#5a5f66]">—</span>}
+            : <span className="text-[var(--ui-faint)]">—</span>}
         </div>
 
         {/* Status */}
@@ -167,10 +167,10 @@ function InviteRow({
               className="shrink-0 text-center"
               aria-label={`Score: ${inv.composite_score.toFixed(1)} out of 10`}
             >
-              <span className="text-[13px] font-semibold text-[#27c93f]">
+              <span className="text-[13px] font-semibold text-[var(--ui-ok)]">
                 {inv.composite_score.toFixed(1)}
               </span>
-              <span className="text-[10px] text-[#888b91]">/10</span>
+              <span className="text-[10px] text-muted-foreground">/10</span>
             </span>
           )}
           {inv.scorecard_id ? (
@@ -183,7 +183,7 @@ function InviteRow({
               </Pill>
             </Link>
           ) : (
-            <span className="text-[12px] text-[#70757c]">
+            <span className="text-[12px] text-[var(--ui-faint)]">
               {LANG_LABEL[inv.language] ?? inv.language}
             </span>
           )}
@@ -191,7 +191,7 @@ function InviteRow({
             <button
               type="button"
               aria-label={`Reschedule interview for ${inv.applicant_name}`}
-              className="shrink-0 text-[#888b91] hover:text-[#60a5fa] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="shrink-0 text-muted-foreground hover:text-[var(--ui-info)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               disabled={rescheduling}
               onClick={() => setEditingSched((v) => !v)}
             >
@@ -202,7 +202,7 @@ function InviteRow({
             <button
               type="button"
               aria-label={`Revoke interview link for ${inv.applicant_name}`}
-              className="shrink-0 text-[#888b91] hover:text-[#e6714f] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="shrink-0 text-muted-foreground hover:text-[var(--ui-danger)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               disabled={revoking}
               onClick={() => onRevoke(inv.invite_id)}
             >
@@ -219,14 +219,14 @@ function InviteRow({
             type="datetime-local"
             value={schedDraft}
             onChange={(e) => setSchedDraft(e.target.value)}
-            className="rounded-[9px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2.5 py-1.5 text-[13px] text-white focus:outline-none focus:border-[var(--accent)]"
+            className="rounded-[9px] border border-border bg-secondary px-2.5 py-1.5 text-[13px] text-foreground focus:outline-none focus:border-[var(--accent)]"
             aria-label="New scheduled time"
           />
           <button
             type="button"
             aria-label="Confirm reschedule"
             disabled={!schedDraft || rescheduling}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] border border-[rgba(39,201,63,0.4)] text-[#27c93f] hover:bg-[rgba(39,201,63,0.12)] disabled:opacity-40 transition-colors"
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] border border-[rgba(39,201,63,0.4)] text-[var(--ui-ok)] hover:bg-[rgba(39,201,63,0.12)] disabled:opacity-40 transition-colors"
             onClick={() => {
               if (!schedDraft) return;
               onReschedule(inv.invite_id, new Date(schedDraft).toISOString());
@@ -242,7 +242,7 @@ function InviteRow({
           <button
             type="button"
             aria-label="Cancel reschedule"
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-[#888b91] hover:text-white transition-colors"
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-muted-foreground hover:text-foreground transition-colors"
             onClick={() => setEditingSched(false)}
           >
             <X size={13} aria-hidden="true" />
@@ -341,12 +341,12 @@ export default function HRInterviews() {
       {/* Page header */}
       <Reveal>
         <div className="flex items-center gap-4">
-          <span className="relative inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+          <span className="relative inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
             <Video size={22} aria-hidden="true" />
           </span>
           <div>
-            <h1 className="text-[28px] font-semibold tracking-[-1px] text-white">Interviews</h1>
-            <p className="mt-1 text-[14px] text-[#888b91]">
+            <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Interviews</h1>
+            <p className="mt-1 text-[14px] text-muted-foreground">
               Invite shortlisted or exam-passed applicants to a voice interview with the AI avatar.
               Share the private link — they need no account.
             </p>
@@ -358,12 +358,12 @@ export default function HRInterviews() {
       <Reveal delay={0.05}>
         <GlassCard className="mt-6 p-6">
           <div className="mb-4 flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+            <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
               <Send size={15} aria-hidden="true" />
             </div>
             <div>
-              <p className="text-[15px] font-semibold text-white">Invite a candidate</p>
-              <p className="text-[12.5px] text-[#888b91]">
+              <p className="text-[15px] font-semibold text-foreground">Invite a candidate</p>
+              <p className="text-[12.5px] text-muted-foreground">
                 Only shortlisted or exam-passed applicants are eligible.
               </p>
             </div>
@@ -399,7 +399,7 @@ export default function HRInterviews() {
             </div>
 
             <label className="block text-sm">
-              <span className="mb-1 block text-[12px] font-medium uppercase tracking-[0.5px] text-[#70757c]">
+              <span className="mb-1 block text-[12px] font-medium uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                 Schedule (optional — link works any time before expiry)
               </span>
               <input
@@ -431,20 +431,20 @@ export default function HRInterviews() {
                 className="space-y-1.5 rounded-[14px] border border-[rgba(39,201,63,0.3)] bg-[rgba(39,201,63,0.08)] p-3.5"
                 role="alert"
               >
-                <p className="text-[12.5px] font-semibold text-[#27c93f]">
+                <p className="text-[12.5px] font-semibold text-[var(--ui-ok)]">
                   Share this link with the candidate — copy it now (shown once):
                 </p>
                 <div className="flex items-center gap-2">
                   <input
                     readOnly
                     value={mintedLink}
-                    className="min-w-0 flex-1 rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[13px] text-white focus:outline-none"
+                    className="min-w-0 flex-1 rounded-[10px] border border-border bg-secondary px-2 py-1 text-[13px] text-foreground focus:outline-none"
                     aria-label="Magic interview link"
                   />
                   <button
                     type="button"
                     aria-label="Copy interview link"
-                    className="shrink-0 flex h-7 w-7 items-center justify-center rounded-[8px] text-[#27c93f] hover:bg-[rgba(39,201,63,0.15)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    className="shrink-0 flex h-7 w-7 items-center justify-center rounded-[8px] text-[var(--ui-ok)] hover:bg-[rgba(39,201,63,0.15)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                     onClick={() => void copyLink(mintedLink)}
                   >
                     <Copy size={14} aria-hidden="true" />
@@ -460,7 +460,7 @@ export default function HRInterviews() {
       <div className="mt-7 space-y-4">
         <Reveal delay={0.1}>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-[14px] font-semibold text-white">
+            <h2 className="text-[14px] font-semibold text-foreground">
               Interviews ({allInvites.length})
             </h2>
             <SegTabs
@@ -474,30 +474,30 @@ export default function HRInterviews() {
         {isLoading ? (
           <div className="space-y-2">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-16 w-full rounded-[16px] bg-white/[0.05] animate-pulse" />
+              <div key={i} className="h-16 w-full rounded-[16px] bg-[var(--ui-inset)] animate-pulse" />
             ))}
           </div>
         ) : allInvites.length === 0 ? (
           <Reveal delay={0.15}>
-            <div className="flex flex-col items-center gap-3 rounded-[24px] border border-dashed border-white/[0.1] bg-[rgba(15,15,16,0.6)] py-14 text-center">
-              <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/[0.06] text-[#888b91]">
+            <div className="flex flex-col items-center gap-3 rounded-[24px] border border-dashed border-border bg-[rgba(15,15,16,0.6)] py-14 text-center">
+              <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--ui-inset)] text-muted-foreground">
                 <Video size={22} aria-hidden="true" />
               </span>
-              <p className="text-[14px] text-[#888b91]">
+              <p className="text-[14px] text-muted-foreground">
                 No interviews yet — invite an eligible applicant above.
               </p>
             </div>
           </Reveal>
         ) : filteredInvites.length === 0 ? (
           <Reveal delay={0.12}>
-            <p className="py-8 text-center text-[14px] text-[#888b91]">
+            <p className="py-8 text-center text-[14px] text-muted-foreground">
               No interviews match this filter.
             </p>
           </Reveal>
         ) : (
           <>
             {/* Table header */}
-            <div className="hidden grid-cols-[2fr_1.2fr_1.2fr_1fr_0.8fr] gap-3 border-b border-white/[0.06] px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c] sm:grid">
+            <div className="hidden grid-cols-[2fr_1.2fr_1.2fr_1fr_0.8fr] gap-3 border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)] sm:grid">
               <div>Candidate</div>
               <div>Role</div>
               <div>Scheduled</div>

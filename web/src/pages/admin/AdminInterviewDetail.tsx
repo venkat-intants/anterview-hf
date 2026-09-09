@@ -246,15 +246,15 @@ function ScoreBarRow({
         aria-controls={panelId}
         className={cn(
           'w-full flex items-center justify-between gap-2 rounded-[10px] -mx-1 px-2 py-1.5 text-left',
-          'transition-colors hover:bg-white/[0.04]',
+          'transition-colors hover:bg-[var(--ui-inset)]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
         )}
       >
-        <span className="flex items-center gap-1.5 text-[12.5px] text-[#b8babf]">
+        <span className="flex items-center gap-1.5 text-[12.5px] text-[var(--ui-soft)]">
           {label}
           <ChevronDown
             className={cn(
-              'h-3.5 w-3.5 text-[#70757c] transition-transform duration-200',
+              'h-3.5 w-3.5 text-[var(--ui-faint)] transition-transform duration-200',
               open && 'rotate-180',
             )}
             aria-hidden="true"
@@ -269,7 +269,7 @@ function ScoreBarRow({
       </button>
 
       {/* Progress bar */}
-      <div className="h-2 rounded-full bg-white/[0.07]">
+      <div className="h-2 rounded-full bg-[var(--ui-inset-strong)]">
         <div
           className="h-full rounded-full transition-all duration-700"
           style={{
@@ -287,13 +287,13 @@ function ScoreBarRow({
       {open && (
         <div
           id={panelId}
-          className="mt-1 rounded-[14px] border border-white/[0.08] bg-white/[0.03] px-3.5 py-3"
+          className="mt-1 rounded-[14px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-3"
         >
           <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--accent)]">
             <Info className="h-3.5 w-3.5" aria-hidden="true" />
             Why this score
           </p>
-          <p className="text-[13px] leading-relaxed text-[#888b91]">
+          <p className="text-[13px] leading-relaxed text-muted-foreground">
             {hasRationale
               ? rationale
               : 'A detailed rationale is not available for this scorecard (it was scored before per-aspect explanations were added).'}
@@ -309,8 +309,8 @@ function ScoreBarRow({
 function TranscriptPanel({ turns, isLoading }: { turns: TranscriptTurn[]; isLoading: boolean }) {
   return (
     <GlassCard className="p-5">
-      <h3 className="mb-4 text-[15px] font-semibold text-white flex items-center gap-2">
-        <MessageSquare size={16} className="text-[#a887dc]" aria-hidden="true" />
+      <h3 className="mb-4 text-[15px] font-semibold text-foreground flex items-center gap-2">
+        <MessageSquare size={16} className="text-[var(--ui-lavender)]" aria-hidden="true" />
         Transcript
       </h3>
 
@@ -318,13 +318,13 @@ function TranscriptPanel({ turns, isLoading }: { turns: TranscriptTurn[]; isLoad
         <div className="flex flex-col gap-4" aria-label="Loading transcript" aria-busy="true">
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="flex gap-3">
-              <Skeleton className="h-6 w-12 rounded-pill bg-white/[0.07]" />
-              <Skeleton className="h-10 flex-1 rounded-[14px] bg-white/[0.05]" />
+              <Skeleton className="h-6 w-12 rounded-pill bg-[var(--ui-inset-strong)]" />
+              <Skeleton className="h-10 flex-1 rounded-[14px] bg-[var(--ui-inset)]" />
             </div>
           ))}
         </div>
       ) : turns.length === 0 ? (
-        <p className="text-[13px] text-[#888b91]">No transcript recorded for this session.</p>
+        <p className="text-[13px] text-muted-foreground">No transcript recorded for this session.</p>
       ) : (
         <ol className="flex flex-col gap-4" aria-label="Interview transcript">
           {turns.map((turn) => {
@@ -335,19 +335,19 @@ function TranscriptPanel({ turns, isLoading }: { turns: TranscriptTurn[]; isLoad
                   className={cn(
                     'flex-none rounded-pill px-2.5 py-1 text-[11px] font-semibold',
                     isInterviewer
-                      ? 'bg-[rgba(168,135,220,0.18)] text-[#c89ce8]'
-                      : 'bg-[rgba(var(--accent-rgb),0.16)] text-[#60a5fa]',
+                      ? 'bg-[var(--ui-lavender-wash)] text-[var(--ui-lavender)]'
+                      : 'bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]',
                   )}
                 >
                   {isInterviewer ? 'AI' : 'C'}
                 </span>
-                <p className="flex-1 text-[13.5px] leading-[1.55] text-[#cccccc]">
+                <p className="flex-1 text-[13.5px] leading-[1.55] text-[var(--ui-soft)]">
                   {turn.text?.trim() || (
-                    <span className="italic text-[#70757c]">[no text]</span>
+                    <span className="italic text-[var(--ui-faint)]">[no text]</span>
                   )}
                 </p>
                 {turn.created_at && (
-                  <span className="flex-none font-mono text-[11px] text-[#5a5f66]">
+                  <span className="flex-none font-mono text-[11px] text-[var(--ui-faint)]">
                     {fmtClock(turn.created_at)}
                   </span>
                 )}
@@ -378,17 +378,17 @@ function IntegrityPanel({
 
   return (
     <GlassCard className="p-5">
-      <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-white">
-        <ShieldCheck size={16} className="text-[#27c93f]" aria-hidden="true" />
+      <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+        <ShieldCheck size={16} className="text-[var(--ui-ok)]" aria-hidden="true" />
         Proctoring
       </h3>
 
-      <p className="mb-4 text-[12px] text-[#888b91]">
+      <p className="mb-4 text-[12px] text-muted-foreground">
         AI-assisted flagging for human review — not an automated decision.
       </p>
 
       {score === null || score === undefined ? (
-        <p className="text-[13px] text-[#888b91]">
+        <p className="text-[13px] text-muted-foreground">
           Proctoring was not enabled for this session.
         </p>
       ) : (
@@ -400,27 +400,27 @@ function IntegrityPanel({
             >
               {score}
             </span>
-            <span className="text-[13px] text-[#888b91]">/ 100 integrity</span>
+            <span className="text-[13px] text-muted-foreground">/ 100 integrity</span>
           </div>
 
           {types.length === 0 ? (
-            <p className="text-[13px] text-[#27c93f]">No integrity flags were raised. ✓</p>
+            <p className="text-[13px] text-[var(--ui-ok)]">No integrity flags were raised. ✓</p>
           ) : (
             <div className="flex flex-col gap-2.5" aria-label="Integrity flags">
               {types.map((t) => (
                 <div
                   key={t}
-                  className="flex items-center gap-3 rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3"
+                  className="flex items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3"
                 >
                   <AlertTriangle
                     size={15}
-                    className="flex-none text-[#ffb764]"
+                    className="flex-none text-[var(--ui-warn)]"
                     aria-hidden="true"
                   />
-                  <span className="flex-1 text-[12.5px] text-[#b8babf]">
+                  <span className="flex-1 text-[12.5px] text-[var(--ui-soft)]">
                     {INTEGRITY_LABELS[t] ?? t}
                   </span>
-                  <span className="font-mono text-[11px] text-[#70757c] tabular-nums">
+                  <span className="font-mono text-[11px] text-[var(--ui-faint)] tabular-nums">
                     {byType[t]}×{flaggedSeconds[t] ? ` · ${flaggedSeconds[t]}s` : ''}
                   </span>
                 </div>
@@ -430,7 +430,7 @@ function IntegrityPanel({
 
           {timeline.length > 0 && (
             <div className="pt-3">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.5px] text-[#888b91]">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">
                 Event timeline
               </p>
               <ul
@@ -440,16 +440,16 @@ function IntegrityPanel({
                 {timeline.map((ev, idx) => (
                   <li
                     key={idx}
-                    className="flex items-center justify-between gap-2 rounded-[10px] bg-white/[0.02] px-2.5 py-1.5 text-[11.5px]"
+                    className="flex items-center justify-between gap-2 rounded-[10px] bg-[var(--ui-inset-soft)] px-2.5 py-1.5 text-[11.5px]"
                   >
-                    <span className="flex items-center gap-2 text-[#b8babf]">
-                      <span className="font-mono text-[#70757c] tabular-nums">
+                    <span className="flex items-center gap-2 text-[var(--ui-soft)]">
+                      <span className="font-mono text-[var(--ui-faint)] tabular-nums">
                         {fmtClock(ev.started_at)}
                       </span>
                       {INTEGRITY_LABELS[ev.event_type] ?? ev.event_type}
                     </span>
                     {ev.duration_seconds != null && (
-                      <span className="font-mono text-[#70757c] tabular-nums">
+                      <span className="font-mono text-[var(--ui-faint)] tabular-nums">
                         {ev.duration_seconds}s
                       </span>
                     )}
@@ -477,12 +477,12 @@ function MetaItem({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] bg-white/[0.07] text-[#70757c] mt-0.5">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] bg-[var(--ui-inset-strong)] text-[var(--ui-faint)] mt-0.5">
         {icon}
       </div>
       <div className="min-w-0">
-        <p className="text-[11px] font-medium uppercase tracking-[0.5px] text-[#70757c]">{label}</p>
-        <p className="mt-0.5 text-[13px] text-[#b8babf]">{value}</p>
+        <p className="text-[11px] font-medium uppercase tracking-[0.5px] text-[var(--ui-faint)]">{label}</p>
+        <p className="mt-0.5 text-[13px] text-[var(--ui-soft)]">{value}</p>
       </div>
     </div>
   );
@@ -493,10 +493,10 @@ function MetaItem({
 function DetailSkeleton() {
   return (
     <div className="space-y-5">
-      <Skeleton className="h-8 w-48 rounded bg-white/[0.06]" />
-      <Skeleton className="h-40 w-full rounded-[24px] bg-white/[0.04]" />
-      <Skeleton className="h-64 w-full rounded-[24px] bg-white/[0.04]" />
-      <Skeleton className="h-32 w-full rounded-[24px] bg-white/[0.04]" />
+      <Skeleton className="h-8 w-48 rounded bg-[var(--ui-inset)]" />
+      <Skeleton className="h-40 w-full rounded-[24px] bg-[var(--ui-inset)]" />
+      <Skeleton className="h-64 w-full rounded-[24px] bg-[var(--ui-inset)]" />
+      <Skeleton className="h-32 w-full rounded-[24px] bg-[var(--ui-inset)]" />
     </div>
   );
 }
@@ -546,7 +546,7 @@ export default function AdminInterviewDetail() {
     return (
       <motion.div initial="hidden" animate="visible" variants={stagger} className="space-y-6">
         <motion.div variants={fadeUp}>
-          <Skeleton className="h-9 w-48 rounded bg-white/[0.06]" />
+          <Skeleton className="h-9 w-48 rounded bg-[var(--ui-inset)]" />
         </motion.div>
         <motion.div variants={fadeUp}>
           <DetailSkeleton />
@@ -564,10 +564,10 @@ export default function AdminInterviewDetail() {
         className="flex flex-col items-center justify-center py-24 gap-4 text-center"
       >
         <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(230,113,79,0.14)]">
-          <AlertCircle className="h-6 w-6 text-[#e6714f]" aria-hidden="true" />
+          <AlertCircle className="h-6 w-6 text-[var(--ui-danger)]" aria-hidden="true" />
         </div>
-        <p className="text-[15px] font-semibold text-white">Interview not found</p>
-        <p className="text-[13px] text-[#888b91]">
+        <p className="text-[15px] font-semibold text-foreground">Interview not found</p>
+        <p className="text-[13px] text-muted-foreground">
           {error instanceof Error ? error.message : 'The session could not be loaded.'}
         </p>
         <Pill variant="ghost" onClick={() => void navigate('/admin/interviews')}>
@@ -596,7 +596,7 @@ export default function AdminInterviewDetail() {
         <button
           type="button"
           onClick={() => void navigate('/admin/interviews')}
-          className="inline-flex items-center gap-1.5 text-[13px] text-[#888b91] hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+          className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
           aria-label="Back to interview list"
         >
           <ArrowLeft size={15} aria-hidden="true" />
@@ -616,10 +616,10 @@ export default function AdminInterviewDetail() {
             size={52}
           />
           <div>
-            <h1 className="text-[24px] font-semibold tracking-[-0.8px] text-white">
+            <h1 className="text-[24px] font-semibold tracking-[-0.8px] text-foreground">
               {data.candidate_name ?? data.candidate_email}
             </h1>
-            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[13px] text-[#888b91]">
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[13px] text-muted-foreground">
               {data.job_title && <span>{data.job_title}</span>}
               {data.job_title && <span>·</span>}
               <span>{languageLabel(data.language)}</span>
@@ -646,7 +646,7 @@ export default function AdminInterviewDetail() {
       {/* Session metadata grid */}
       <motion.div variants={fadeUp}>
         <GlassCard className="p-6">
-          <h3 className="mb-4 text-[15px] font-semibold text-white">Session Details</h3>
+          <h3 className="mb-4 text-[15px] font-semibold text-foreground">Session Details</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <MetaItem
               icon={<Briefcase className="h-4 w-4" />}
@@ -704,7 +704,7 @@ export default function AdminInterviewDetail() {
                 size={140}
                 label="overall"
               />
-              <p className="text-[12px] text-[#888b91]">
+              <p className="text-[12px] text-muted-foreground">
                 {sc.composite_score != null
                   ? `${fmtScore(sc.composite_score)} / 10`
                   : 'Not scored'}
@@ -714,7 +714,7 @@ export default function AdminInterviewDetail() {
 
             {/* Competency breakdown bars — lg:col-span-2 */}
             <GlassCard className="p-5 lg:col-span-2">
-              <h3 className="mb-4 text-[15px] font-semibold text-white">Competency breakdown</h3>
+              <h3 className="mb-4 text-[15px] font-semibold text-foreground">Competency breakdown</h3>
               <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                 {AXIS_ORDER.map((key) => (
                   <ScoreBarRow
@@ -725,7 +725,7 @@ export default function AdminInterviewDetail() {
                   />
                 ))}
               </div>
-              <p className="mt-3 text-[12px] text-[#888b91]">
+              <p className="mt-3 text-[12px] text-muted-foreground">
                 Click any aspect to see why it received this score.
               </p>
             </GlassCard>
@@ -755,8 +755,8 @@ export default function AdminInterviewDetail() {
           {/* Radar chart */}
           <motion.div variants={fadeUp}>
             <GlassCard className="p-5">
-              <h3 className="mb-1 text-[15px] font-semibold text-white">Score Radar</h3>
-              <p className="mb-3 text-[12px] text-[#888b91]">
+              <h3 className="mb-1 text-[15px] font-semibold text-foreground">Score Radar</h3>
+              <p className="mb-3 text-[12px] text-muted-foreground">
                 Performance across all four competency axes (0–10).
               </p>
               <ScorecardRadar scorecard={sc} />
@@ -767,18 +767,18 @@ export default function AdminInterviewDetail() {
           {sc.strengths && sc.strengths.length > 0 && (
             <motion.div variants={fadeUp}>
               <GlassCard className="p-5">
-                <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-white">
-                  <CheckCircle2 size={16} className="text-[#27c93f]" aria-hidden="true" />
+                <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+                  <CheckCircle2 size={16} className="text-[var(--ui-ok)]" aria-hidden="true" />
                   Key Strengths
                 </h3>
                 <ul className="space-y-2.5" aria-label="Key strengths">
                   {sc.strengths.map((s, idx) => (
                     <li key={idx} className="flex gap-2.5">
                       <CheckCircle2
-                        className="h-4 w-4 text-[#27c93f] shrink-0 mt-0.5"
+                        className="h-4 w-4 text-[var(--ui-ok)] shrink-0 mt-0.5"
                         aria-hidden="true"
                       />
-                      <p className="text-[13.5px] leading-[1.55] text-[#cccccc]">{s}</p>
+                      <p className="text-[13.5px] leading-[1.55] text-[var(--ui-soft)]">{s}</p>
                     </li>
                   ))}
                 </ul>
@@ -790,19 +790,19 @@ export default function AdminInterviewDetail() {
           {sc.improvements && sc.improvements.length > 0 && (
             <motion.div variants={fadeUp}>
               <GlassCard className="p-5">
-                <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-white">
-                  <TrendingUp size={16} className="text-[#ffb764]" aria-hidden="true" />
+                <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+                  <TrendingUp size={16} className="text-[var(--ui-warn)]" aria-hidden="true" />
                   Areas for Improvement
                 </h3>
                 <ul className="space-y-2.5" aria-label="Areas for improvement">
                   {sc.improvements.map((item, idx) => (
                     <li key={idx} className="flex gap-2.5">
                       <TrendingUp
-                        className="h-4 w-4 text-[#ffb764] shrink-0 mt-0.5"
+                        className="h-4 w-4 text-[var(--ui-warn)] shrink-0 mt-0.5"
                         aria-hidden="true"
                       />
-                      <p className="text-[13.5px] leading-[1.55] text-[#cccccc]">
-                        <span className="font-semibold text-white">{item.area}:</span>{' '}
+                      <p className="text-[13.5px] leading-[1.55] text-[var(--ui-soft)]">
+                        <span className="font-semibold text-foreground">{item.area}:</span>{' '}
                         {item.suggestion}
                       </p>
                     </li>
@@ -816,8 +816,8 @@ export default function AdminInterviewDetail() {
           {sc.summary && (
             <motion.div variants={fadeUp}>
               <GlassCard className="p-5">
-                <h3 className="mb-3 text-[15px] font-semibold text-white">Summary</h3>
-                <p className="text-[13.5px] leading-[1.6] text-[#cccccc]">{sc.summary}</p>
+                <h3 className="mb-3 text-[15px] font-semibold text-foreground">Summary</h3>
+                <p className="text-[13.5px] leading-[1.6] text-[var(--ui-soft)]">{sc.summary}</p>
               </GlassCard>
             </motion.div>
           )}
@@ -827,11 +827,11 @@ export default function AdminInterviewDetail() {
         <>
           <motion.div variants={fadeUp}>
             <GlassCard className="flex flex-col items-center justify-center py-14 text-center gap-3">
-              <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.06]">
-                <TrendingUp className="h-6 w-6 text-[#70757c]" aria-hidden="true" />
+              <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ui-inset)]">
+                <TrendingUp className="h-6 w-6 text-[var(--ui-faint)]" aria-hidden="true" />
               </div>
-              <p className="text-[15px] font-semibold text-white">No scorecard yet</p>
-              <p className="text-[13px] text-[#888b91]">
+              <p className="text-[15px] font-semibold text-foreground">No scorecard yet</p>
+              <p className="text-[13px] text-muted-foreground">
                 This session has not been scored. Scoring happens when the session completes.
               </p>
             </GlassCard>

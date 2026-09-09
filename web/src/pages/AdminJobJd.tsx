@@ -100,10 +100,10 @@ export default function AdminJobJd() {
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-[-1px] text-white">
+          <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
             Jobs &amp; JD library
           </h1>
-          <p className="mt-1 text-[14px] text-[#888b91]">
+          <p className="mt-1 text-[14px] text-muted-foreground">
             Define roles and the competencies each interview scores.
           </p>
         </div>
@@ -128,14 +128,14 @@ export default function AdminJobJd() {
           {/* Section heading */}
           <div className="flex items-center gap-3">
             <span
-              className="flex h-10 w-10 flex-none items-center justify-center rounded-[12px] bg-[rgba(var(--accent-rgb),0.12)] text-[#60a5fa]"
+              className="flex h-10 w-10 flex-none items-center justify-center rounded-[12px] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--ui-info)]"
               aria-hidden="true"
             >
               <Briefcase size={20} />
             </span>
             <div>
-              <h2 className="text-[17px] font-semibold text-white">Upload Job Description</h2>
-              <p className="text-[13px] text-[#888b91]">
+              <h2 className="text-[17px] font-semibold text-foreground">Upload Job Description</h2>
+              <p className="text-[13px] text-muted-foreground">
                 PDF only — maximum 10 MB. The document will be parsed and indexed for AI
                 question generation.
               </p>
@@ -143,7 +143,7 @@ export default function AdminJobJd() {
           </div>
 
           <div
-            className="h-px bg-white/[0.06]"
+            className="h-px bg-[var(--ui-inset)]"
             role="separator"
             aria-hidden="true"
           />
@@ -152,7 +152,7 @@ export default function AdminJobJd() {
           <div className="space-y-2">
             <label
               htmlFor="job-select"
-              className="text-[12.5px] font-medium text-[#b8babf]"
+              className="text-[12.5px] font-medium text-[var(--ui-soft)]"
             >
               Job posting
             </label>
@@ -160,7 +160,7 @@ export default function AdminJobJd() {
             {/* Loading state */}
             {jobsLoading && (
               <div
-                className="flex items-center gap-2 text-[13px] text-[#888b91]"
+                className="flex items-center gap-2 text-[13px] text-muted-foreground"
                 aria-live="polite"
               >
                 <div
@@ -169,7 +169,7 @@ export default function AdminJobJd() {
                   aria-label="Loading jobs"
                 />
                 <span>Loading jobs…</span>
-                <Skeleton className="h-10 w-full rounded-[12px] mt-1 bg-white/[0.05]" />
+                <Skeleton className="h-10 w-full rounded-[12px] mt-1 bg-[var(--ui-inset)]" />
               </div>
             )}
 
@@ -180,10 +180,10 @@ export default function AdminJobJd() {
                 className="rounded-[16px] border border-[rgba(230,113,79,0.3)] bg-[rgba(230,113,79,0.08)] p-4 flex items-start gap-3"
               >
                 <AlertCircle
-                  className="h-5 w-5 text-[#e6714f] shrink-0 mt-0.5"
+                  className="h-5 w-5 text-[var(--ui-danger)] shrink-0 mt-0.5"
                   aria-hidden="true"
                 />
-                <p className="text-[13px] text-[#e6714f] flex-1">
+                <p className="text-[13px] text-[var(--ui-danger)] flex-1">
                   {jobsFetchError instanceof Error
                     ? jobsFetchError.message
                     : 'Failed to load jobs.'}
@@ -207,8 +207,8 @@ export default function AdminJobJd() {
                   id="job-select"
                   aria-label="Select job posting"
                   className={cn(
-                    'w-full rounded-[12px] border border-white/[0.1] bg-secondary',
-                    'text-[14px] text-white placeholder:text-[#5a5f66]',
+                    'w-full rounded-[12px] border border-border bg-secondary',
+                    'text-[14px] text-foreground placeholder:text-[var(--ui-faint)]',
                     'focus:border-[var(--accent)] focus:ring-0',
                   )}
                 >
@@ -228,9 +228,9 @@ export default function AdminJobJd() {
           {/* ── Upload zone / placeholder ────────────────────────────────── */}
           {selectedJobId ? (
             <div className="space-y-3">
-              <p className="text-[13px] text-[#888b91]">
+              <p className="text-[13px] text-muted-foreground">
                 JD document for{' '}
-                <span className="font-medium text-white">{selectedJobTitle}</span>
+                <span className="font-medium text-foreground">{selectedJobTitle}</span>
               </p>
               <FileUploadZone
                 key={uploadKey}
@@ -243,15 +243,15 @@ export default function AdminJobJd() {
           ) : (
             <div
               className={cn(
-                'rounded-[16px] border-2 border-dashed border-white/[0.08]',
-                'bg-white/[0.02] p-10 text-center',
+                'rounded-[16px] border-2 border-dashed border-border',
+                'bg-[var(--ui-inset-soft)] p-10 text-center',
               )}
             >
               <Briefcase
-                className="mx-auto h-10 w-10 text-[#5a5f66] mb-3"
+                className="mx-auto h-10 w-10 text-[var(--ui-faint)] mb-3"
                 aria-hidden="true"
               />
-              <p className="text-[13px] text-[#70757c]">
+              <p className="text-[13px] text-[var(--ui-faint)]">
                 Select a job above to enable JD upload
               </p>
             </div>
@@ -271,14 +271,14 @@ export default function AdminJobJd() {
               <GlassCard hover className="p-5">
                 <div className="flex items-start gap-3">
                   <span
-                    className="flex h-11 w-11 flex-none items-center justify-center rounded-[12px] bg-[rgba(var(--accent-rgb),0.12)] text-[#60a5fa]"
+                    className="flex h-11 w-11 flex-none items-center justify-center rounded-[12px] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--ui-info)]"
                     aria-hidden="true"
                   >
                     <Briefcase size={20} aria-hidden="true" />
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-[16px] font-semibold text-white">
+                      <h3 className="text-[16px] font-semibold text-foreground">
                         {j.title} · {j.level}
                       </h3>
                       <StatusTag
@@ -289,7 +289,7 @@ export default function AdminJobJd() {
                         {j.status}
                       </StatusTag>
                     </div>
-                    <div className="mt-1 text-[12px] text-[#70757c]">
+                    <div className="mt-1 text-[12px] text-[var(--ui-faint)]">
                       Updated {j.updated}
                     </div>
                   </div>
@@ -300,7 +300,7 @@ export default function AdminJobJd() {
                   {j.competencies.map((c) => (
                     <span
                       key={c}
-                      className="rounded-pill border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[11.5px] text-[#b8babf]"
+                      className="rounded-pill border border-border bg-[var(--ui-inset-soft)] px-2.5 py-1 text-[11.5px] text-[var(--ui-soft)]"
                     >
                       {c}
                     </span>
@@ -308,7 +308,7 @@ export default function AdminJobJd() {
                 </div>
 
                 {/* Actions — presentation only, no handlers */}
-                <div className="mt-5 flex gap-2 border-t border-white/[0.06] pt-4">
+                <div className="mt-5 flex gap-2 border-t border-border pt-4">
                   <Pill
                     variant="ghost"
                     className="flex-1 py-2 text-[12.5px] opacity-50 cursor-not-allowed"

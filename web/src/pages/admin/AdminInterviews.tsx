@@ -128,8 +128,8 @@ function DarkSelect({ value, onChange, 'aria-label': ariaLabel, className, child
       onChange={(e) => onChange(e.target.value)}
       aria-label={ariaLabel}
       className={cn(
-        'rounded-[9999px] border border-white/[0.08] bg-[rgba(28,29,31,0.7)]',
-        'px-3.5 py-2 text-[13px] text-[#b8babf] focus:outline-none',
+        'rounded-[9999px] border border-border bg-secondary',
+        'px-3.5 py-2 text-[13px] text-[var(--ui-soft)] focus:outline-none',
         'focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
         'appearance-none cursor-pointer',
         className,
@@ -175,8 +175,8 @@ function FilterBar({ filters, onFiltersChange, onExport, exporting }: FilterBarP
   return (
     <div className="flex flex-wrap gap-3 items-end">
       {/* Search — design's dark pill input */}
-      <div className="relative min-w-[180px] flex-1 flex items-center gap-2 rounded-[9999px] border border-white/[0.08] bg-[rgba(28,29,31,0.7)] px-3.5 py-2.5">
-        <Search size={15} className="text-[#70757c] shrink-0" aria-hidden="true" />
+      <div className="relative min-w-[180px] flex-1 flex items-center gap-2 rounded-[9999px] border border-border bg-secondary px-3.5 py-2.5">
+        <Search size={15} className="text-[var(--ui-faint)] shrink-0" aria-hidden="true" />
         <input
           type="search"
           value={localQ}
@@ -184,7 +184,7 @@ function FilterBar({ filters, onFiltersChange, onExport, exporting }: FilterBarP
           placeholder="Search candidate…"
           aria-label="Search by candidate name or email"
           data-testid="filter-search"
-          className="min-w-0 flex-1 bg-transparent text-[13px] text-white placeholder:text-[#5a5f66] focus:outline-none"
+          className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
         />
       </div>
 
@@ -231,8 +231,8 @@ function FilterBar({ filters, onFiltersChange, onExport, exporting }: FilterBarP
         onClick={onExport}
         disabled={exporting}
         className={cn(
-          'inline-flex items-center gap-2 rounded-[9999px] border border-white/[0.12] bg-[rgba(var(--accent-rgb),0.14)] px-4 py-2',
-          'text-[13px] font-semibold text-[#60a5fa] transition-colors',
+          'inline-flex items-center gap-2 rounded-[9999px] border border-[var(--ui-line-strong)] bg-[rgba(var(--accent-rgb),0.14)] px-4 py-2',
+          'text-[13px] font-semibold text-[var(--ui-info)] transition-colors',
           'hover:bg-[rgba(var(--accent-rgb),0.22)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
           'disabled:cursor-not-allowed disabled:opacity-50',
         )}
@@ -255,10 +255,10 @@ function LoadingRows() {
         <div
           key={i}
           aria-hidden="true"
-          className="grid grid-cols-[1.6fr_1.2fr_1.4fr_1.2fr_0.8fr_0.9fr_1fr_0.4fr] items-center gap-3 border-b border-white/[0.04] px-6 py-3.5 last:border-0"
+          className="grid grid-cols-[1.6fr_1.2fr_1.4fr_1.2fr_0.8fr_0.9fr_1fr_0.4fr] items-center gap-3 border-b border-border px-6 py-3.5 last:border-0"
         >
           {Array.from({ length: 8 }).map((__, j) => (
-            <div key={j} className="h-4 rounded bg-white/[0.06] animate-pulse" />
+            <div key={j} className="h-4 rounded bg-[var(--ui-inset)] animate-pulse" />
           ))}
         </div>
       ))}
@@ -272,14 +272,14 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
   return (
     <div data-testid="interviews-empty-state">
       <GlassCard className="flex flex-col items-center justify-center py-20 text-center gap-4">
-        <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-white/[0.06]">
-          <ClipboardList className="h-7 w-7 text-[#70757c]" aria-hidden="true" />
+        <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[var(--ui-inset)]">
+          <ClipboardList className="h-7 w-7 text-[var(--ui-faint)]" aria-hidden="true" />
         </div>
         <div>
-          <p className="text-[15px] font-semibold text-white">
+          <p className="text-[15px] font-semibold text-foreground">
             {hasFilters ? 'No interviews match your filters' : 'No interviews yet'}
           </p>
-          <p className="mt-1.5 text-[13px] text-[#888b91]">
+          <p className="mt-1.5 text-[13px] text-muted-foreground">
             {hasFilters
               ? 'Try adjusting your search or filters.'
               : 'Interview sessions will appear here once candidates start.'}
@@ -303,7 +303,7 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
 
   return (
     <div
-      className="grid grid-cols-[1.6fr_1.2fr_1.4fr_1.2fr_0.8fr_0.9fr_1fr_0.4fr] items-center gap-3 border-b border-white/[0.04] px-6 py-3.5 last:border-0 cursor-pointer transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:bg-white/[0.05]"
+      className="grid grid-cols-[1.6fr_1.2fr_1.4fr_1.2fr_0.8fr_0.9fr_1fr_0.4fr] items-center gap-3 border-b border-border px-6 py-3.5 last:border-0 cursor-pointer transition-colors hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:bg-[var(--ui-inset)]"
       role="row"
       tabIndex={0}
       onClick={() => onClick(item.session_id)}
@@ -324,23 +324,23 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
           size={32}
         />
         <div className="min-w-0">
-          <div className="truncate text-[13.5px] font-medium text-white">
-            {item.candidate_name ?? <span className="text-[#70757c]">—</span>}
+          <div className="truncate text-[13.5px] font-medium text-foreground">
+            {item.candidate_name ?? <span className="text-[var(--ui-faint)]">—</span>}
           </div>
-          <div className="font-mono text-[11px] text-[#70757c] truncate">
+          <div className="font-mono text-[11px] text-[var(--ui-faint)] truncate">
             {item.session_id.slice(0, 8)}…
           </div>
         </div>
       </div>
 
       {/* Email */}
-      <div className="truncate text-[12.5px] text-[#888b91]">
+      <div className="truncate text-[12.5px] text-muted-foreground">
         {item.candidate_email}
       </div>
 
       {/* Role */}
-      <div className="truncate text-[13px] text-[#b8babf]">
-        {item.job_title ?? <span className="text-[#70757c]">—</span>}
+      <div className="truncate text-[13px] text-[var(--ui-soft)]">
+        {item.job_title ?? <span className="text-[var(--ui-faint)]">—</span>}
       </div>
 
       {/* Status — design StatusTag */}
@@ -351,7 +351,7 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
       </div>
 
       {/* Language */}
-      <div className="text-[12.5px] text-[#888b91] whitespace-nowrap">
+      <div className="text-[12.5px] text-muted-foreground whitespace-nowrap">
         {languageLabel(item.language)}
       </div>
 
@@ -369,16 +369,16 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
       </div>
 
       {/* Date */}
-      <div className="text-[12.5px] text-[#888b91] whitespace-nowrap">
+      <div className="text-[12.5px] text-muted-foreground whitespace-nowrap">
         {formatDate(item.created_at)}
       </div>
 
       {/* Duration + arrow */}
       <div className="flex items-center justify-between gap-1">
-        <span className="text-[12.5px] text-[#888b91] whitespace-nowrap">
+        <span className="text-[12.5px] text-muted-foreground whitespace-nowrap">
           {formatDuration(item.duration_seconds)}
         </span>
-        <ArrowRight size={15} className="text-[#70757c] flex-none" aria-hidden="true" />
+        <ArrowRight size={15} className="text-[var(--ui-faint)] flex-none" aria-hidden="true" />
       </div>
     </div>
   );
@@ -400,7 +400,7 @@ function PaginationBar({ page, totalPages, total, perPage, onPrev, onNext }: Pag
   const end = Math.min(page * perPage, total);
   return (
     <div className="flex items-center justify-between pt-2 flex-wrap gap-2" aria-label="Pagination">
-      <span className="text-[12.5px] text-[#888b91] tabular-nums">
+      <span className="text-[12.5px] text-muted-foreground tabular-nums">
         {total > 0 ? `${start}–${end} of ${total.toLocaleString()}` : '0 results'}
       </span>
       <div className="flex items-center gap-2">
@@ -410,9 +410,9 @@ function PaginationBar({ page, totalPages, total, perPage, onPrev, onNext }: Pag
           disabled={page <= 1}
           aria-label="Previous page"
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-[9999px] border border-white/[0.08]',
-            'bg-transparent px-3.5 py-1.5 text-[13px] text-[#b8babf] transition-colors',
-            'hover:text-white hover:bg-white/[0.06]',
+            'inline-flex items-center gap-1.5 rounded-[9999px] border border-border',
+            'bg-transparent px-3.5 py-1.5 text-[13px] text-[var(--ui-soft)] transition-colors',
+            'hover:text-foreground hover:bg-[var(--ui-inset)]',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
             'disabled:cursor-not-allowed disabled:opacity-40',
           )}
@@ -420,7 +420,7 @@ function PaginationBar({ page, totalPages, total, perPage, onPrev, onNext }: Pag
           <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           Previous
         </button>
-        <span className="text-[12.5px] text-[#888b91] tabular-nums px-1">
+        <span className="text-[12.5px] text-muted-foreground tabular-nums px-1">
           {page} / {totalPages}
         </span>
         <button
@@ -429,9 +429,9 @@ function PaginationBar({ page, totalPages, total, perPage, onPrev, onNext }: Pag
           disabled={page >= totalPages}
           aria-label="Next page"
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-[9999px] border border-white/[0.08]',
-            'bg-transparent px-3.5 py-1.5 text-[13px] text-[#b8babf] transition-colors',
-            'hover:text-white hover:bg-white/[0.06]',
+            'inline-flex items-center gap-1.5 rounded-[9999px] border border-border',
+            'bg-transparent px-3.5 py-1.5 text-[13px] text-[var(--ui-soft)] transition-colors',
+            'hover:text-foreground hover:bg-[var(--ui-inset)]',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
             'disabled:cursor-not-allowed disabled:opacity-40',
           )}
@@ -516,8 +516,8 @@ export default function AdminInterviews() {
     <motion.div initial="hidden" animate="visible" variants={stagger} className="space-y-6">
       {/* Page heading */}
       <motion.div variants={fadeUp}>
-        <h1 className="text-[28px] font-semibold tracking-[-1px] text-white">Interviews</h1>
-        <p className="mt-1 text-[14px] text-[#888b91]">
+        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Interviews</h1>
+        <p className="mt-1 text-[14px] text-muted-foreground">
           All candidate interview sessions. Click a row to view full detail.
         </p>
       </motion.div>
@@ -537,9 +537,9 @@ export default function AdminInterviews() {
         {isError && !isLoading ? (
           <div role="alert">
             <GlassCard className="flex flex-col items-center justify-center py-16 gap-3 text-center">
-              <AlertCircle className="h-8 w-8 text-[#e6714f]" aria-hidden="true" />
-              <p className="text-[15px] font-semibold text-white">Failed to load interviews</p>
-              <p className="text-[13px] text-[#888b91]">
+              <AlertCircle className="h-8 w-8 text-[var(--ui-danger)]" aria-hidden="true" />
+              <p className="text-[15px] font-semibold text-foreground">Failed to load interviews</p>
+              <p className="text-[13px] text-muted-foreground">
                 {error instanceof Error ? error.message : 'Unknown error'}
               </p>
             </GlassCard>
@@ -549,16 +549,16 @@ export default function AdminInterviews() {
         ) : (
           <GlassCard className="overflow-hidden p-0">
             {/* Card header row */}
-            <div className="flex items-center justify-between flex-wrap gap-2 border-b border-white/[0.06] px-6 py-4">
+            <div className="flex items-center justify-between flex-wrap gap-2 border-b border-border px-6 py-4">
               <div>
-                <p className="text-[15px] font-semibold text-white">Sessions</p>
-                <p className="text-[12.5px] text-[#888b91] mt-0.5">
+                <p className="text-[15px] font-semibold text-foreground">Sessions</p>
+                <p className="text-[12.5px] text-muted-foreground mt-0.5">
                   {isLoading
                     ? 'Loading…'
                     : `${total.toLocaleString()} interview${total !== 1 ? 's' : ''}`}
                 </p>
               </div>
-              <span className="ml-auto text-[12.5px] text-[#70757c]">
+              <span className="ml-auto text-[12.5px] text-[var(--ui-faint)]">
                 {!isLoading && `${items.length} shown`}
               </span>
             </div>
@@ -566,7 +566,7 @@ export default function AdminInterviews() {
             {/* Column headers */}
             <div
               role="row"
-              className="grid grid-cols-[1.6fr_1.2fr_1.4fr_1.2fr_0.8fr_0.9fr_1fr_0.4fr] gap-3 border-b border-white/[0.06] px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]"
+              className="grid grid-cols-[1.6fr_1.2fr_1.4fr_1.2fr_0.8fr_0.9fr_1fr_0.4fr] gap-3 border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]"
             >
               <div>Candidate</div>
               <div>Email</div>
@@ -595,7 +595,7 @@ export default function AdminInterviews() {
 
             {/* Pagination */}
             {!isLoading && totalPages > 1 && (
-              <div className="border-t border-white/[0.06] px-6 pb-5 pt-3">
+              <div className="border-t border-border px-6 pb-5 pt-3">
                 <PaginationBar
                   page={page}
                   totalPages={totalPages}

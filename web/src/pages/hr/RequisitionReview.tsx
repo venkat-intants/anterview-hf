@@ -114,8 +114,8 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <Briefcase className="h-4 w-4 shrink-0 text-[#70757c]" aria-hidden="true" />
-            <span className="truncate text-[15px] font-semibold text-white">{req.title}</span>
+            <Briefcase className="h-4 w-4 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+            <span className="truncate text-[15px] font-semibold text-foreground">{req.title}</span>
             {folded ? (
               <StatusTag tone="amber" dot>
                 {req.distinct_source_titles} spellings folded
@@ -124,20 +124,20 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
               <StatusTag tone="neutral">1 spelling</StatusTag>
             )}
           </div>
-          <div className="mt-1 text-[12.5px] text-[#888b91]">
+          <div className="mt-1 text-[12.5px] text-muted-foreground">
             {req.enrolments} candidate{req.enrolments === 1 ? '' : 's'} · {req.status}
           </div>
         </div>
       </div>
 
       {folded ? (
-        <div className="mt-4 rounded-[12px] border border-[#ffb764]/25 bg-[#ffb764]/[0.06] p-3">
+        <div className="mt-4 rounded-[12px] border border-[var(--ui-warn)]/25 bg-[var(--ui-warn)]/[0.06] p-3">
           <div className="flex items-start gap-2">
             <AlertTriangle
-              className="mt-0.5 h-4 w-4 shrink-0 text-[#ffb764]"
+              className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]"
               aria-hidden="true"
             />
-            <div className="text-[12.5px] leading-relaxed text-[#d5d7da]">
+            <div className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
               These titles were treated as one opening. If two of them are really
               different jobs, split them apart before building a workflow — a workflow
               is configured per opening, so everyone here would otherwise be assessed
@@ -146,7 +146,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
                 {req.source_titles.map((t) => (
                   <span
                     key={t}
-                    className="rounded-pill border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11.5px] text-[#b8babf]"
+                    className="rounded-pill border border-border bg-[var(--ui-inset)] px-2.5 py-1 text-[11.5px] text-[var(--ui-soft)]"
                   >
                     {t}
                   </span>
@@ -162,7 +162,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
         <div className="min-w-[220px] flex-1">
           <label
             htmlFor={`title-${req.id}`}
-            className="mb-1.5 block text-[12px] font-medium text-[#b8babf]"
+            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
           >
             Opening title
           </label>
@@ -170,14 +170,14 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
             id={`title-${req.id}`}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="w-full rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3.5 py-2.5 text-[14px] text-white focus:border-[var(--accent)] focus:outline-none"
+            className="w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground focus:border-[var(--accent)] focus:outline-none"
           />
         </div>
         <button
           type="button"
           onClick={() => confirmMut.mutate()}
           disabled={confirmMut.isPending || title.trim().length < 2}
-          className="inline-flex items-center gap-1.5 rounded-[12px] bg-white px-4 py-2.5 text-[13px] font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           {confirmMut.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -192,7 +192,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
           <button
             type="button"
             onClick={() => setSplitting((s) => !s)}
-            className="rounded-[12px] border border-white/[0.12] px-4 py-2.5 text-[13px] font-medium text-[#d5d7da] hover:border-white/25 hover:text-white"
+            className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2.5 text-[13px] font-medium text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)] hover:text-foreground"
           >
             {splitting ? 'Cancel split' : 'Split apart'}
           </button>
@@ -201,11 +201,11 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
 
       {/* Split */}
       {splitting ? (
-        <div className="mt-4 rounded-[14px] border border-white/[0.08] bg-black/25 p-4">
-          <div className="text-[13px] font-medium text-white">
+        <div className="mt-4 rounded-[14px] border border-border bg-black/25 p-4">
+          <div className="text-[13px] font-medium text-foreground">
             Move some of these candidates into their own opening
           </div>
-          <p className="mt-1 text-[12px] leading-relaxed text-[#888b91]">
+          <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
             Pick the titles that do not belong here. Those candidates keep every
             assessment they have — only which opening they sit in changes.
           </p>
@@ -214,7 +214,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
             {req.source_titles.map((t) => (
               <label
                 key={t}
-                className="flex cursor-pointer items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-[13px] text-[#d5d7da] hover:bg-white/[0.04]"
+                className="flex cursor-pointer items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-[13px] text-[var(--ui-soft)] hover:bg-[var(--ui-inset)]"
               >
                 <input
                   type="checkbox"
@@ -230,7 +230,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
           <div className="mt-3">
             <label
               htmlFor={`new-title-${req.id}`}
-              className="mb-1.5 block text-[12px] font-medium text-[#b8babf]"
+              className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
             >
               New opening title
             </label>
@@ -239,12 +239,12 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
               placeholder="e.g. Senior Python Developer"
-              className="w-full rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3.5 py-2.5 text-[14px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none"
+              className="w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
             />
           </div>
 
           {wouldEmpty ? (
-            <p className="mt-2 text-[12px] text-[#ffb764]">
+            <p className="mt-2 text-[12px] text-[var(--ui-warn)]">
               That moves every candidate out — rename the opening instead of splitting it.
             </p>
           ) : null}
@@ -253,7 +253,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
             type="button"
             onClick={() => splitMut.mutate()}
             disabled={!canSplit || splitMut.isPending}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-[12px] bg-[var(--accent)] px-4 py-2.5 text-[13px] font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+            className="mt-3 inline-flex items-center gap-1.5 rounded-[12px] bg-[var(--accent)] px-4 py-2.5 text-[13px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
           >
             {splitMut.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -306,8 +306,8 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
     <GlassCard className="p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-[#70757c]" aria-hidden="true" />
-          <span className="text-[15px] font-semibold text-white">{dup.email}</span>
+          <Users className="h-4 w-4 text-[var(--ui-faint)]" aria-hidden="true" />
+          <span className="text-[15px] font-semibold text-foreground">{dup.email}</span>
         </div>
         <div className="flex items-center gap-2">
           <StatusTag tone="lavender">{dup.applicant_ids.length} records</StatusTag>
@@ -319,12 +319,12 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
         </div>
       </div>
 
-      <div className="mt-1 text-[12.5px] text-[#888b91]">
+      <div className="mt-1 text-[12.5px] text-muted-foreground">
         {dup.enrolment_count} enrolment{dup.enrolment_count === 1 ? '' : 's'} across these records
       </div>
 
       <fieldset className="mt-4">
-        <legend className="mb-2 text-[12px] font-medium text-[#b8babf]">
+        <legend className="mb-2 text-[12px] font-medium text-[var(--ui-soft)]">
           Keep which record?
         </legend>
         <div className="flex flex-col gap-1.5">
@@ -334,8 +334,8 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
               className={cn(
                 'flex cursor-pointer items-center gap-2.5 rounded-[10px] border px-3 py-2 text-[13px]',
                 id === survivor
-                  ? 'border-[var(--accent)]/50 bg-[var(--accent)]/[0.08] text-white'
-                  : 'border-white/[0.08] text-[#d5d7da] hover:border-white/20',
+                  ? 'border-[var(--accent)]/50 bg-[var(--accent)]/[0.08] text-foreground'
+                  : 'border-border text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)]',
               )}
             >
               <input
@@ -350,7 +350,7 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
                 className="h-4 w-4 accent-[var(--accent)]"
               />
               <span className="font-medium">{dup.names[i] ?? 'Unnamed'}</span>
-              <span className="ml-auto font-mono text-[11px] text-[#70757c]">
+              <span className="ml-auto font-mono text-[11px] text-[var(--ui-faint)]">
                 {id.slice(0, 8)}
               </span>
             </label>
@@ -359,16 +359,16 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
       </fieldset>
 
       {confirming ? (
-        <div className="mt-4 rounded-[12px] border border-[#e6714f]/30 bg-[#e6714f]/[0.07] p-3">
+        <div className="mt-4 rounded-[12px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger)]/[0.07] p-3">
           <div className="flex items-start gap-2">
             <AlertTriangle
-              className="mt-0.5 h-4 w-4 shrink-0 text-[#e6714f]"
+              className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]"
               aria-hidden="true"
             />
-            <div className="text-[12.5px] leading-relaxed text-[#d5d7da]">
+            <div className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
               This cannot be undone. Exam attempts, assignments and interview invites
               from the other {absorbed.length} record{absorbed.length === 1 ? '' : 's'}{' '}
-              move onto <span className="font-medium text-white">{
+              move onto <span className="font-medium text-foreground">{
                 dup.names[dup.applicant_ids.indexOf(survivor)] ?? 'the kept record'
               }</span>, and those records are then retired.
             </div>
@@ -378,7 +378,7 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
               type="button"
               onClick={() => mergeMut.mutate()}
               disabled={mergeMut.isPending || absorbed.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-[12px] bg-[#e6714f] px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-[12px] bg-[var(--ui-danger)] px-4 py-2 text-[13px] font-medium text-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               {mergeMut.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -388,7 +388,7 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
             <button
               type="button"
               onClick={() => setConfirming(false)}
-              className="rounded-[12px] border border-white/[0.12] px-4 py-2 text-[13px] text-[#d5d7da] hover:text-white"
+              className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-[var(--ui-soft)] hover:text-foreground"
             >
               Cancel
             </button>
@@ -399,7 +399,7 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
           type="button"
           onClick={() => setConfirming(true)}
           disabled={absorbed.length === 0}
-          className="mt-4 rounded-[12px] border border-white/[0.12] px-4 py-2.5 text-[13px] font-medium text-[#d5d7da] hover:border-white/25 hover:text-white disabled:opacity-40"
+          className="mt-4 rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2.5 text-[13px] font-medium text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)] hover:text-foreground disabled:opacity-40"
         >
           Merge into one person…
         </button>
@@ -427,10 +427,10 @@ export default function RequisitionReview(): JSX.Element {
     <div className="mx-auto w-full max-w-[1100px] px-4 py-8">
       <Reveal>
         <header className="mb-6">
-          <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-white">
+          <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
             Review imported openings
           </h1>
-          <p className="mt-1.5 max-w-[70ch] text-[13.5px] leading-relaxed text-[#888b91]">
+          <p className="mt-1.5 max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">
             Your existing applicants were sorted into openings by job title. Confirm what
             that produced before you build workflows on top of it — a workflow belongs to
             one opening, so the grouping decides who gets assessed together.
@@ -439,22 +439,22 @@ export default function RequisitionReview(): JSX.Element {
       </Reveal>
 
       {isLoading ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-[#888b91]">
+        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Loading review…
         </div>
       ) : isError ? (
         <GlassCard className="p-6">
-          <div className="flex items-center gap-2 text-[13.5px] text-[#e6714f]">
+          <div className="flex items-center gap-2 text-[13.5px] text-[var(--ui-danger)]">
             <AlertTriangle className="h-4 w-4" aria-hidden="true" />
             {errText(error, 'Could not load the review')}
           </div>
         </GlassCard>
       ) : reqs.length === 0 && dupes.length === 0 ? (
         <GlassCard className="p-10 text-center">
-          <CheckCircle2 className="mx-auto h-8 w-8 text-[#27c93f]" aria-hidden="true" />
-          <div className="mt-3 text-[15px] font-medium text-white">Nothing left to review</div>
-          <p className="mx-auto mt-1.5 max-w-[46ch] text-[13px] text-[#888b91]">
+          <CheckCircle2 className="mx-auto h-8 w-8 text-[var(--ui-ok)]" aria-hidden="true" />
+          <div className="mt-3 text-[15px] font-medium text-foreground">Nothing left to review</div>
+          <p className="mx-auto mt-1.5 max-w-[46ch] text-[13px] text-muted-foreground">
             Every imported opening has been confirmed and no duplicate applicant records
             were found.
           </p>
@@ -464,7 +464,7 @@ export default function RequisitionReview(): JSX.Element {
           {reqs.length > 0 ? (
             <section>
               <div className="mb-3 flex items-center gap-2">
-                <h2 className="text-[15px] font-semibold text-white">
+                <h2 className="text-[15px] font-semibold text-foreground">
                   Openings to confirm ({reqs.length})
                 </h2>
                 {risky > 0 ? (
@@ -483,10 +483,10 @@ export default function RequisitionReview(): JSX.Element {
 
           {dupes.length > 0 ? (
             <section>
-              <h2 className="mb-1 text-[15px] font-semibold text-white">
+              <h2 className="mb-1 text-[15px] font-semibold text-foreground">
                 People who look like duplicates ({dupes.length})
               </h2>
-              <p className="mb-3 flex items-start gap-1.5 text-[12.5px] text-[#888b91]">
+              <p className="mb-3 flex items-start gap-1.5 text-[12.5px] text-muted-foreground">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 Matched on email only. Nothing was merged automatically, because merging
                 moves someone&rsquo;s assessment history and cannot be reversed.

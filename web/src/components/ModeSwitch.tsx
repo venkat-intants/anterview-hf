@@ -6,9 +6,8 @@ import { useThemeMode, type ThemeMode } from '@/lib/useThemeMode';
  * Light / dark switch for the two AntHire designs.
  *
  * Separate from `ThemeToggle`, which picks the signal accent WITHIN a mode.
- * Rendered only where a light design exists (the auth pages and the candidate
- * shell); on a staff console the mode is forced dark by `ThemeModeGate`, and
- * offering a control that visibly does nothing is worse than not offering one.
+ * Rendered app-wide: every surface but the live interview honours the choice,
+ * and the live interview has no shell to render it in.
  *
  * A two-position segmented control, not a single toggling icon: the current
  * mode is then readable without working out whether the icon means state or

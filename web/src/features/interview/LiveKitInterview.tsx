@@ -174,6 +174,18 @@ export default function LiveKitInterview({ sessionId, cameraConsented = false }:
     status === 'reconnecting';
 
   return (
+    // The one surface in the product that paints its own colours rather than
+    // following the visitor's mode — and it is not an unthemed page, it is a
+    // full-bleed video player. The avatar track below is `absolute inset-0
+    // object-cover`: it IS the viewport. Everything else here floats on top of
+    // it as a translucent overlay, so its contrast is set by the video frame
+    // underneath, which is a person under unknown lighting, not by our palette.
+    // Light-on-scrim is the same requirement subtitles have. A "light mode"
+    // here would mean dark text over an arbitrary video — worse in a way that
+    // is not taste.
+    //
+    // The chrome AROUND the session — device check, consent, error states —
+    // does follow the mode; see pages/Interview.tsx and components/InterviewIntro.
     <div className="fixed inset-0 overflow-hidden bg-black text-white">
 
       {/* ── Avatar video — fills the entire viewport ──────────────────────── */}

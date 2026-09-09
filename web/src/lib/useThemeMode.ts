@@ -12,12 +12,15 @@ import { useCallback, useSyncExternalStore } from 'react';
  * `dark:` variants key off the class while our token palettes key off the
  * attribute, and the two must never disagree.
  *
- * The whole application is now built for both modes — the staff consoles were
- * swept onto these tokens too — so the preference applies everywhere EXCEPT the
- * live interview, which is pinned dark. That screen is a video surface where
- * the candidate's camera and the avatar are the content; a light chrome around
- * them is not a preference, it is a worse product. `ThemeModeGate` enforces
- * that one exclusion.
+ * The preference applies to EVERY route. There is no exclusion list and no
+ * route-aware gate: a page either uses these tokens or it paints itself, and
+ * that is a property of the component, not of the URL.
+ *
+ * One component paints itself — `features/interview/LiveKitInterview`, where
+ * the avatar video fills the viewport and the HUD floats on top of it. Its
+ * contrast is set by the video frame underneath, not by our palette, so it
+ * hardcodes light-on-scrim for the same reason subtitles do. It says so at the
+ * point it does it, which is where a reader will ask.
  *
  * The key is `anthire:mode`; the older `intants:*` keys keep their prefix
  * deliberately (renaming them would drop every visitor's saved language and
@@ -28,26 +31,6 @@ export type ThemeMode = 'light' | 'dark';
 
 export const MODE_KEY = 'anthire:mode';
 export const MODE_CHANGE_EVENT = 'anthire:modechange';
-
-/**
- * Routes pinned to dark whatever the visitor chose. An exclusion list, not an
- * allow-list: it inverted when the consoles were swept, and a list of the two
- * exceptions cannot silently omit a new page the way a list of forty could.
- *
- * `/interview/:id` is the live session. `/interview-invite` and
- * `/interview/:id/complete` are ordinary pages and are NOT pinned — the prefix
- * check below is exact-segment for that reason.
- */
-export const DARK_ONLY_PREFIXES = ['/interview'] as const
-
-/** Does this path follow the visitor's mode? Everything but the live interview. */
-export function isThemedRoute(pathname: string): boolean {
-  const segments = pathname.split('/').filter(Boolean)
-  // /interview/<id> — but not /interview-invite (different first segment) and
-  // not /interview/<id>/complete (three segments, an ordinary page).
-  const isLiveInterview = segments[0] === 'interview' && segments.length === 2
-  return !isLiveInterview
-}
 
 /** The visitor's stored preference. Light is the default — see the README. */
 export function readMode(): ThemeMode {
@@ -85,8 +68,7 @@ function subscribe(cb: () => void): () => void {
   };
 }
 
-/** The stored mode, live. Not necessarily the mode being rendered — a dark-only
- *  route overrides it (see `isThemedRoute`). */
+/** The stored mode, live. Every route renders in it. */
 export function useThemeMode(): [ThemeMode, (next: ThemeMode) => void] {
   const mode = useSyncExternalStore(subscribe, readMode, () => 'light' as ThemeMode);
   const choose = useCallback((next: ThemeMode) => setMode(next), []);

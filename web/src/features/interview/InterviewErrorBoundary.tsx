@@ -37,24 +37,24 @@ export default function InterviewErrorBoundary({ children }: InterviewErrorBound
       <div
         className={cn(
           'fixed inset-0 z-50 flex flex-col items-center justify-center gap-6',
-          'bg-black px-6 text-center text-white',
+          'bg-background px-6 text-center text-foreground',
         )}
         role="alert"
         aria-live="assertive"
       >
-        <AlertCircle className="h-10 w-10 text-[#e6714f]" aria-hidden="true" />
+        <AlertCircle className="h-10 w-10 text-[var(--ui-danger)]" aria-hidden="true" />
 
         <div className="space-y-2">
           <h1 className="text-[20px] font-semibold tracking-[-0.4px]">
             {t('error.errorBoundaryTitle')}
           </h1>
-          <p className="mx-auto max-w-sm text-[14px] leading-relaxed text-white/70">
+          <p className="mx-auto max-w-sm text-[14px] leading-relaxed text-muted-foreground">
             {t('interview.errorFallback')}
           </p>
         </div>
 
         {import.meta.env.DEV && errorMessage && (
-          <p className="max-w-sm break-all rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-left font-mono text-[12px] text-white/60">
+          <p className="max-w-sm break-all rounded-xl border border-border bg-[var(--ui-inset)] px-4 py-2 text-left font-mono text-[12px] text-muted-foreground">
             {errorMessage}
           </p>
         )}

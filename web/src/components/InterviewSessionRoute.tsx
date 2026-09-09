@@ -15,9 +15,16 @@ import { resumeInterview } from '../api/publicInterview';
 
 type Phase = 'checking' | 'ready' | 'unresumable';
 
-function DarkFullScreen({ children }: { children: React.ReactNode }) {
+/**
+ * The "checking your session" / "cannot resume" states. Ordinary pages, so they
+ * follow the visitor's mode — this used to force `.dark` because the whole
+ * interview route was pinned, which meant a candidate in light mode hit one
+ * black screen on the way into a session and another on the way out of a failed
+ * resume.
+ */
+function SessionScreen({ children }: { children: React.ReactNode }) {
   return (
-    <div className="dark dark-root min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <main className="flex min-h-screen items-center justify-center px-6">{children}</main>
     </div>
   );
@@ -60,13 +67,13 @@ export default function InterviewSessionRoute() {
 
   if (isInitializing || phase === 'checking') {
     return (
-      <DarkFullScreen>
+      <SessionScreen>
         <div
           className="h-10 w-10 animate-spin rounded-full border-4 border-[var(--accent)] border-t-transparent"
           role="status"
           aria-label="Resuming your interview"
         />
-      </DarkFullScreen>
+      </SessionScreen>
     );
   }
 
@@ -76,26 +83,26 @@ export default function InterviewSessionRoute() {
 
   // Could not resume — calm re-open-link message (never a login wall).
   return (
-    <DarkFullScreen>
-      <div className="w-full max-w-[440px] rounded-[20px] border border-white/10 bg-white/[0.03] p-8 text-center shadow-[0_24px_80px_rgba(0,0,0,0.5)]">
+    <SessionScreen>
+      <div className="w-full max-w-[440px] rounded-[20px] border border-border bg-card p-8 text-center shadow-[var(--ui-shadow-card)]">
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.14)] text-[22px]">
           🔗
         </div>
-        <h1 className="text-[20px] font-semibold tracking-[-0.4px] text-white">
+        <h1 className="text-[20px] font-semibold tracking-[-0.4px] text-foreground">
           Re-open your interview link
         </h1>
-        <p className="mt-2 text-[14px] leading-relaxed text-[#9aa0a6]">
+        <p className="mt-2 text-[14px] leading-relaxed text-muted-foreground">
           Your session timed out on this device. Open the interview link from your
           email again to pick up where you left off — your invite is still valid
           until it expires. No account or sign-in needed.
         </p>
-        <p className="mt-4 text-[12.5px] text-[#70757c]">
+        <p className="mt-4 text-[12.5px] text-[var(--ui-faint)]">
           Need help?{' '}
-          <a href="mailto:support@intants.com" className="text-[#60a5fa] hover:underline">
+          <a href="mailto:support@intants.com" className="text-[var(--ui-info)] hover:underline">
             support@intants.com
           </a>
         </p>
       </div>
-    </DarkFullScreen>
+    </SessionScreen>
   );
 }

@@ -6,7 +6,7 @@ colorTo: purple
 sdk: docker
 app_port: 7860
 pinned: false
-short_description: AntHire — voice-first AI interview platform (demo deployment)
+short_description: AntHire — voice-first AI interview platform (demo)
 ---
 
 # AntHire — Voice-First AI Interview Platform (Hugging Face Space)

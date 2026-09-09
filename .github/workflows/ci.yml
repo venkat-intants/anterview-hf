@@ -482,7 +482,7 @@ jobs:
     #
     # Cheap on purpose: no service dependencies, no Docker, ~10 seconds. A gate
     # that costs a minute gets deleted the first time someone is in a hurry.
-    name: invariants (coverage floors + alert rules + env parity + SAST)
+    name: invariants (coverage floors + alert rules + env parity + Space metadata + SAST)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -545,6 +545,17 @@ jobs:
         # ops/alerts/README.md; it is not run here because it needs a
         # Prometheus binary and this job must stay dependency-free.
         run: python ops/ci/check_alert_rules.py
+
+      - name: Space front matter is one Hugging Face will accept
+        # The README's front matter IS the Space's configuration, validated by
+        # a pre-receive hook on huggingface.co — not by anything in this file.
+        # On 2026-09-08 `short_description` went one character over its 60-char
+        # limit: CI stayed green, two merges to main reported success, and
+        # sync-to-space then failed at the push with "rejected during YAML
+        # metadata verification" while the live Space kept serving the build
+        # from two merges earlier. Nobody opens a deploy log for a green merge.
+        # The check therefore runs HERE, in the run that gates the merge.
+        run: python ops/ci/check_space_metadata.py
 
       - name: Deploy targets and Settings agree on env names
         # DEP-ROOT / CICD-2. Every Settings sets extra="ignore", so an env var

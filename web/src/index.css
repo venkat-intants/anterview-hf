@@ -78,16 +78,15 @@
 
   /* ── AntHire LIGHT mode ────────────────────────────────────────────────────
    * The second of the two designs. Applied by `html[data-mode='light']`, which
-   * `lib/useThemeMode.ts` sets across the whole application — the staff consoles
-   * were swept onto these tokens too. The one exception is the live interview,
-   * pinned dark in both modes because it is a video surface, not a document.
+   * `lib/useThemeMode.ts` sets on every route. Nothing is pinned: the live
+   * interview's video player paints its own surface in its own markup, which is
+   * a component decision, not a palette hole.
    *
    * Same shape as the dark palette above, same token names — a page written
    * against `bg-card` / `text-foreground` / `border-border` needs no change to
    * work in both. Canvas is grey and cards are white (never the reverse): the
    * page must stay a shade off the card or elevation disappears. */
-  html[data-mode='light'],
-  html[data-mode='light'] .dark:not(.dark-root) {
+  html[data-mode='light'] {
     --background: 228 27% 96%; /* #f4f5f8 — grey canvas */
     --foreground: 223 14% 10%; /* #16181d — ink */
 
@@ -155,6 +154,11 @@
     --ui-role-admin: #60a5fa;
     --ui-role-hr: #27c93f;
 
+    /* Card elevation. The landing page has its own --lp-shadow-card scoped to
+       its root, so app pages referencing that var silently fell back to a
+       dark-mode shadow — a heavy black halo under a white card. */
+    --ui-shadow-card: 0 24px 80px rgba(0, 0, 0, 0.5);
+
     --ui-lavender: #a887dc;
     --ui-lavender-wash: rgba(168, 135, 220, 0.18);
 
@@ -182,6 +186,8 @@
     --ui-role-super: #6d4aa8;
     --ui-role-admin: #1d6fd0;
     --ui-role-hr: #148a35;
+
+    --ui-shadow-card: 0 18px 46px rgba(15, 18, 26, 0.08);
 
     --ui-lavender: #6d4aa8;
     --ui-lavender-wash: rgba(109, 74, 168, 0.1);
@@ -245,11 +251,6 @@
     font-feature-settings: "cv11" 1, "ss01" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-  }
-  /* The live interview keeps a true-black backdrop under its .dark scope, in
-     either mode — video immersion is not a themeable preference. */
-  body:has(.dark-root) {
-    background-color: #000000;
   }
   ::selection {
     background: hsl(var(--ring) / 0.22); /* signal-accent wash (themeable) */

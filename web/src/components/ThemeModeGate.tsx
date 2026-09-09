@@ -1,25 +1,23 @@
 import { useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
-import { applyMode, isThemedRoute, useThemeMode } from '@/lib/useThemeMode';
+import { applyMode, useThemeMode } from '@/lib/useThemeMode';
 
 /**
- * Applies the light/dark mode to <html> for the route currently mounted.
+ * Applies the light/dark mode to <html>.
  *
- * The mode the visitor chose is honoured everywhere except the live interview,
- * which resolves to `dark` REGARDLESS of the preference: that screen is a video
- * surface where the avatar and the candidate's camera are the content, and a
- * light chrome around them is a worse product, not a preference. The stored
- * choice is untouched, so leaving the session restores it.
+ * It used to consult the route, because some pages had no light design and had
+ * to be pinned. They all have one now, so the route is no longer an input:
+ * whether a surface follows the mode is a property of the component, not of the
+ * URL. The one component that paints its own colours — the live interview's
+ * full-bleed video player — does so in its own markup and says why there.
  *
- * Renders nothing — it only owns the attribute.
+ * Renders nothing; it only owns the attribute.
  */
 export default function ThemeModeGate() {
   const [mode] = useThemeMode();
-  const { pathname } = useLocation();
 
   useEffect(() => {
-    applyMode(isThemedRoute(pathname) ? mode : 'dark');
-  }, [mode, pathname]);
+    applyMode(mode);
+  }, [mode]);
 
   return null;
 }

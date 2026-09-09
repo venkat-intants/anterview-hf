@@ -111,8 +111,8 @@ function ShellLayout() {
 export default function App() {
   return (
     <ErrorBoundary>
-      {/* Owns html[data-mode]: the visitor's light/dark choice on the surfaces
-          built for it, forced dark on the ones that are not. */}
+      {/* Owns html[data-mode]: the visitor's light/dark choice, applied to
+          every route. */}
       <ThemeModeGate />
       <Suspense fallback={<PageLoader />}>
         <Routes>
@@ -158,12 +158,16 @@ export default function App() {
 
           {/* Live interview — its own guard: a logged-in user passes through; a
               magic-link guest who RELOADED resumes via the httpOnly cookie (no
-              login). The dark video-immersion theme is scoped via `.dark`. */}
+              login). The route no longer forces `.dark` on the subtree: the
+              device check, the consent step and the error states are ordinary
+              pages and follow the visitor's mode. Only the live room itself
+              paints its own surface, because there the avatar video is the
+              full viewport — see LiveKitInterview. */}
           <Route element={<InterviewSessionRoute />}>
             <Route
               path="/interview/:sessionId"
               element={
-                <div className="dark dark-root min-h-screen bg-background text-foreground">
+                <div className="min-h-screen bg-background text-foreground">
                   <Interview />
                 </div>
               }

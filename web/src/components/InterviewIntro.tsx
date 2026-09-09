@@ -101,7 +101,7 @@ export default function InterviewIntro({ language, onDone }: InterviewIntroProps
         </div>
 
         {/* Video container */}
-        <div className="w-full rounded-3xl overflow-hidden shadow-elevated border border-border bg-black">
+        <div className="w-full rounded-3xl overflow-hidden shadow-elevated border border-border bg-background">
           {/*
            * onError: video 404, decode failure, or codec unsupported — call
            *   onDone so a broken clip never blocks the interview.
@@ -129,7 +129,7 @@ export default function InterviewIntro({ language, onDone }: InterviewIntroProps
             type="checkbox"
             checked={cameraConsent}
             onChange={(e) => setCameraConsent(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-white/30 bg-transparent accent-electric-signal"
+            className="mt-0.5 h-4 w-4 rounded border-[var(--ui-line-strong)] bg-transparent accent-electric-signal"
             data-testid="camera-consent-checkbox"
           />
           <span className="text-body-sm text-mist leading-snug">

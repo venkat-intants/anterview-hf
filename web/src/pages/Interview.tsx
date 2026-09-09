@@ -71,7 +71,7 @@ export default function Interview() {
     return (
       <main
         className={cn(
-          'relative min-h-screen flex flex-col items-center justify-center bg-black px-4 text-white',
+          'relative min-h-screen flex flex-col items-center justify-center bg-background px-4 text-foreground',
           'overflow-hidden',
         )}
       >
@@ -94,13 +94,13 @@ export default function Interview() {
         <div
           className={cn(
             'relative z-10 flex flex-col items-center gap-4 rounded-[24px] border',
-            'border-[rgba(230,113,79,0.2)] bg-[rgba(15,15,16,0.85)] backdrop-blur-md',
-            'px-8 py-10 shadow-[0_0_40px_rgba(0,0,0,0.6)] max-w-sm w-full text-center',
+            'border-[var(--ui-danger)]/25 bg-card/90 backdrop-blur-md',
+            'px-8 py-10 shadow-[var(--ui-shadow-card)] max-w-sm w-full text-center',
           )}
           role="alert"
         >
           <XCircle
-            className="h-10 w-10 text-[#e6714f]"
+            className="h-10 w-10 text-[var(--ui-danger)]"
             aria-hidden="true"
           />
           <StatusTag tone="ember" className="text-[13px]">

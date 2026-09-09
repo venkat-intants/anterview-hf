@@ -23,7 +23,7 @@ export const TOOLTIP_STYLE = {
   borderRadius: 12,
   fontSize: 12,
   color: 'var(--chart-strong)',
-  boxShadow: 'var(--lp-shadow-card, 0 10px 30px rgba(0,0,0,0.18))',
+  boxShadow: 'var(--ui-shadow-card)',
 } as const;
 
 /** Axis labels and gridlines. */

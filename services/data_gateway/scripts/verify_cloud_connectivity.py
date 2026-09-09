@@ -137,7 +137,7 @@ async def check_redis() -> tuple[bool, str]:
 
 async def main() -> int:
     print("=" * 60)
-    print("Intants cloud connectivity check")
+    print("AntHire cloud connectivity check")
     print("=" * 60)
 
     pg_ok, pg_msg = await check_postgres()

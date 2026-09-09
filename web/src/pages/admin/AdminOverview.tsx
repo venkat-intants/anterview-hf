@@ -376,7 +376,7 @@ export default function AdminOverview() {
       >
         <div className="flex items-center gap-2 text-[13px] text-[#888b91]">
           <Activity size={15} className="text-[#60a5fa]" aria-hidden="true" />
-          Live · Intants AI Platform
+          Live · AntHire Platform
         </div>
         <h1 className="mt-1 text-[28px] font-semibold tracking-[-1px] text-white">
           Admin Overview

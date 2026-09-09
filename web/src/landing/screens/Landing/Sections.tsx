@@ -1,22 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Reveal } from '../../components/Reveal'
-import { Marquee } from '../../components/primitives'
-import { LOGOS, STEPS } from '../../data/landing'
-
-export function TrustMarquee() {
-  return (
-    <section className="relative z-10 mx-auto max-w-[1200px] px-6 py-7">
-      <p className="mb-5 text-center text-xs uppercase tracking-[1.5px] text-[var(--lp-text-faint)]">Trusted across India&apos;s campuses, employers &amp; skilling missions</p>
-      <Marquee>
-        {LOGOS.map((lg, i) => (
-          <div key={i} className="flex items-center gap-2.5 whitespace-nowrap text-[18px] font-semibold tracking-[-0.4px] text-[var(--lp-text-soft)] opacity-55 grayscale transition hover:opacity-100 hover:grayscale-0">
-            <span className="inline-block h-[22px] w-[22px] rounded-[6px]" style={{ background: lg.c }} />{lg.n}
-          </div>
-        ))}
-      </Marquee>
-    </section>
-  )
-}
+import { STEPS } from '../../data/landing'
 
 export function ProblemSolution() {
   return (
@@ -33,7 +17,7 @@ export function ProblemSolution() {
         </Reveal>
         <Reveal kind="right" className="rounded-card border border-electric/25 p-10 shadow-[0_0_60px_rgba(0,136,255,0.08)]" >
           <div style={{ background: 'var(--lp-grad-deep)' }} className="-m-10 rounded-card p-10">
-            <div className="mb-4.5 text-xs uppercase tracking-[1.5px] text-electric">The Anterview way</div>
+            <div className="mb-4.5 text-xs uppercase tracking-[1.5px] text-electric">The AntHire way</div>
             <h2 className="mb-4 text-[30px] font-semibold tracking-heading text-[var(--lp-on-deep)]">AI that interviews 20 lakh candidates.</h2>
             <p className="mb-7 text-base leading-normal text-[var(--lp-on-deep-muted)]">A voice-first avatar runs structured interviews 24×7, in 22 languages, and returns a fair scorecard in seconds — at under ₹12 a session.</p>
             <div className="flex gap-7">

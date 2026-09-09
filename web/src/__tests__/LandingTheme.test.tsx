@@ -1,17 +1,17 @@
-// Tests for the landing page's light/dark theme switch.
+// Tests for the landing page's light/dark switch.
 //
-// The landing page is the only surface with a light theme: the signed-in app is
-// forced dark. So the two things worth pinning down are that the switch works,
-// and that it stays scoped to the landing root — a regression that moved the
-// attribute onto <html> would recolour the app behind the login, and nothing
-// else in the suite would notice.
+// The switch writes the SHARED app mode (lib/useThemeMode), so a choice made on
+// the marketing page carries into login and the candidate pages. The landing
+// root still stamps its own `data-landing-theme` for the `--lp-*` tokens, and
+// that attribute must keep mirroring the mode — if the two drifted, the page
+// would announce one theme and paint the other.
 //
 // Covers:
 //   1. Light is the default for a first-time visitor (no stored choice).
-//   2. Clicking Dark switches the landing root, and the choice is persisted.
+//   2. Clicking Dark switches the landing root, and the choice is persisted
+//      under the shared key.
 //   3. A stored 'dark' choice is honoured on the next render.
-//   4. The theme attribute never lands on <html> (the app's own theme is
-//      `html.dark` + `html[data-theme]`, which this must not touch).
+//   4. The landing root's attribute matches the stored mode after a switch.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -20,7 +20,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../lib/i18n';
 import Landing from '../pages/Landing';
-import { LANDING_THEME_KEY } from '../landing/lib/useLandingTheme';
+import { MODE_KEY } from '../lib/useThemeMode';
 
 // Stub auth so Landing renders the marketing page instead of redirecting.
 vi.mock('../context/AuthContext', async () => {
@@ -71,22 +71,25 @@ describe('Landing theme switch', () => {
     await user.click(screen.getByTestId('landing-theme-dark'));
 
     expect(themedRoot()).toHaveAttribute('data-landing-theme', 'dark');
-    expect(localStorage.getItem(LANDING_THEME_KEY)).toBe('dark');
+    expect(localStorage.getItem(MODE_KEY)).toBe('dark');
   });
 
   it('honours a stored dark choice on the next visit', () => {
-    localStorage.setItem(LANDING_THEME_KEY, 'dark');
+    localStorage.setItem(MODE_KEY, 'dark');
     renderLanding();
     expect(themedRoot()).toHaveAttribute('data-landing-theme', 'dark');
     expect(screen.getByTestId('landing-theme-dark')).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('never puts the landing theme on <html> — the app behind the login is unaffected', async () => {
+  it('keeps the landing root in step with the shared mode', async () => {
     const user = userEvent.setup();
     renderLanding();
 
     await user.click(screen.getByTestId('landing-theme-dark'));
+    expect(themedRoot()).toHaveAttribute('data-landing-theme', localStorage.getItem(MODE_KEY));
 
-    expect(document.documentElement).not.toHaveAttribute('data-landing-theme');
+    await user.click(screen.getByTestId('landing-theme-light'));
+    expect(themedRoot()).toHaveAttribute('data-landing-theme', 'light');
+    expect(localStorage.getItem(MODE_KEY)).toBe('light');
   });
 });

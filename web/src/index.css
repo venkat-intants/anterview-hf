@@ -13,7 +13,7 @@
    * Gallery-white canvas, value-only elevation (NO shadows), Ink text,
    * Graphite secondary, and Azure #0071e3 rationed to the primary CTA only.
    * The dark values live under `.dark` and are scoped to the live interview. */
-  /* ── Anterview aurora-dark theme (the SINGLE app theme) ───────────────────
+  /* ── AntHire aurora-dark theme (the SINGLE app theme) ───────────────────
    * Forced dark everywhere (html.dark is always set; :root mirrors it so there
    * is never a light flash). Palette aligned to the landing design:
    *   bg = midnight #000 · cards = obsidian #0f0f10 · surfaces = charcoal
@@ -75,6 +75,110 @@
     --chart-tooltip-bg: #1c1c1e;
   }
 
+
+  /* ── AntHire LIGHT mode ────────────────────────────────────────────────────
+   * The second of the two designs. Applied by `html[data-mode='light']`, which
+   * `lib/useThemeMode.ts` sets — and only on the surfaces that have been built
+   * for it (public, auth and candidate pages; see THEMED_PREFIXES there). The
+   * staff consoles and the live interview stay dark, so the attribute is forced
+   * back to `dark` while those routes are mounted rather than half-theming them.
+   *
+   * Same shape as the dark palette above, same token names — a page written
+   * against `bg-card` / `text-foreground` / `border-border` needs no change to
+   * work in both. Canvas is grey and cards are white (never the reverse): the
+   * page must stay a shade off the card or elevation disappears. */
+  html[data-mode='light'],
+  html[data-mode='light'] .dark:not(.dark-root) {
+    --background: 228 27% 96%; /* #f4f5f8 — grey canvas */
+    --foreground: 223 14% 10%; /* #16181d — ink */
+
+    --card: 0 0% 100%; /* white cards sit ON the grey */
+    --card-foreground: 223 14% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 223 14% 10%;
+
+    --primary: 223 14% 10%; /* the action colour inverts: ink pill, white text */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 225 20% 94%; /* #eceef3 — quiet surface / input fill */
+    --secondary-foreground: 223 14% 10%;
+
+    --muted: 228 22% 95%;
+    --muted-foreground: 221 10% 40%; /* #5b6170 — secondary text */
+
+    --accent: 226 20% 92%; /* hover/active surface */
+    --accent-foreground: 223 14% 10%;
+
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 224 18% 90%;
+    --input: 223 16% 85%;
+    /* --ring stays the signal blue: focus is the same affordance in both modes */
+
+    /* recharts palette — light */
+    --chart-text: #5b6170;
+    --chart-grid: #e2e4ea;
+    --chart-strong: #16181d;
+    --chart-tooltip-bg: #ffffff;
+  }
+
+  /* ── Status colours ────────────────────────────────────────────────────────
+   * The four hexes the candidate pages had hardcoded. They need different
+   * values per mode: #27c93f and #ffb764 are legible on #000 and illegible on
+   * white, so a single value cannot serve both. */
+  :root,
+  .dark {
+    /* Text tiers below --foreground / --muted-foreground, and the translucent
+       insets and hairlines the pages use for elevation. They are rgba rather
+       than solid so a card, a modal and the page can share one value. */
+    --ui-soft: #b8babf;
+    --ui-faint: #70757c;
+    --ui-inset-soft: rgba(255, 255, 255, 0.025);
+    --ui-inset: rgba(255, 255, 255, 0.05);
+    --ui-inset-strong: rgba(255, 255, 255, 0.09);
+    --ui-line-strong: rgba(255, 255, 255, 0.18);
+
+    /* The auth brand panel's gradient. Shares the landing hero's shape; its
+       dark terminus lifts in light mode so the panel is a coloured card on a
+       grey page rather than a black slab beside a white form. */
+    --auth-gradient: linear-gradient(160deg, #000000 0%, #112d72 30%, #4b52aa 50%, #a887dc 72%, #e6c4e7 96%, #fcdbef 107%);
+    /* The "featured" surface — GlassCard feature, the sidebar promo. A tinted
+       panel that carries ink text, so it inverts with the mode (unlike the
+       PromoBanner, which is a fixed dark gradient card in both). */
+    --ui-grad-feature: linear-gradient(160deg, #001b33, #030719);
+
+    --ui-ok: #27c93f;
+    --ui-ok-wash: rgba(39, 201, 63, 0.16);
+    --ui-warn: #ffb764;
+    --ui-warn-wash: rgba(255, 183, 100, 0.16);
+    --ui-danger: #e6714f;
+    --ui-danger-wash: rgba(230, 113, 79, 0.16);
+    --ui-info: #60a5fa;
+    --ui-info-wash: rgba(96, 165, 250, 0.16);
+  }
+  html[data-mode='light'] {
+    --ui-soft: #3b4049;
+    --ui-faint: #7b8191;
+    --ui-inset-soft: rgba(15, 18, 26, 0.025);
+    --ui-inset: rgba(15, 18, 26, 0.045);
+    --ui-inset-strong: rgba(15, 18, 26, 0.075);
+    --ui-line-strong: rgba(15, 18, 26, 0.16);
+
+    --auth-gradient: linear-gradient(160deg, #1b2a6b 0%, #2f4ea8 30%, #5c65c4 50%, #a887dc 72%, #e6c4e7 96%, #fcdbef 107%);
+    --ui-grad-feature: linear-gradient(160deg, #e9f1ff, #f8fafe);
+
+    --ui-ok: #148a35;
+    --ui-ok-wash: rgba(20, 138, 53, 0.1);
+    --ui-warn: #a86213;
+    --ui-warn-wash: rgba(168, 98, 19, 0.1);
+    --ui-danger: #c04527;
+    --ui-danger-wash: rgba(192, 69, 39, 0.1);
+    --ui-info: #1d6fd0;
+    --ui-info-wash: rgba(29, 111, 208, 0.1);
+  }
+
   /* ── Theme palettes (user-selectable via the header toggle) ─────────────────
    * data-theme lives on <html>; a pre-paint script in index.html sets it from
    * localStorage so there is never a colour flash. html[data-theme=...] beats
@@ -113,9 +217,11 @@
   * {
     @apply border-border;
   }
-  html,
-  html.dark {
-    background-color: #000000; /* midnight canvas — single forced dark theme */
+  html {
+    background-color: #000000; /* dark is the default; light overrides below */
+  }
+  html[data-mode='light'] {
+    background-color: #f4f5f8; /* grey canvas — matches --background */
   }
   body {
     @apply bg-background text-foreground;
@@ -123,8 +229,8 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
-  /* The live interview keeps a true-black backdrop under its .dark scope */
-  .dark body,
+  /* The live interview keeps a true-black backdrop under its .dark scope, in
+     either mode — video immersion is not a themeable preference. */
   body:has(.dark-root) {
     background-color: #000000;
   }

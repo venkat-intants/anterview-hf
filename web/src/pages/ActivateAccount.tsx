@@ -121,13 +121,13 @@ export default function ActivateAccount() {
     return (
       <AuthLayout>
         <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
             <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
           </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-white">
+          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
             Checking your link…
           </h1>
-          <p className="mt-2 text-[14px] text-[#888b91]">One moment.</p>
+          <p className="mt-2 text-[14px] text-muted-foreground">One moment.</p>
         </div>
       </AuthLayout>
     );
@@ -137,26 +137,26 @@ export default function ActivateAccount() {
     return (
       <AuthLayout>
         <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[#e6714f]">
+          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[var(--ui-danger)]">
             <AlertCircle className="h-6 w-6" aria-hidden="true" />
           </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-white">
+          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
             This link has expired
           </h1>
-          <p className="mt-2 max-w-sm text-[14px] text-[#888b91]">
+          <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
             {checkError ??
               'This link is missing its token. Open the link from your application confirmation email.'}
           </p>
           {/* Deliberately no "request a new one": nothing on the public side
               can re-issue an applicant's activation link, and offering a button
               that cannot work is worse than saying who can help. */}
-          <p className="mt-4 max-w-sm text-[13px] text-[#888b91]">
+          <p className="mt-4 max-w-sm text-[13px] text-muted-foreground">
             Your application is safe — this only affects signing in. Reply to the
             confirmation email and the hiring team can send a new link.
           </p>
           <Link
             to="/login"
-            className="mt-6 text-[13px] text-[#60a5fa] hover:underline underline-offset-4"
+            className="mt-6 text-[13px] text-[var(--ui-info)] hover:underline underline-offset-4"
           >
             Already have an account? Sign in
           </Link>
@@ -169,13 +169,13 @@ export default function ActivateAccount() {
     return (
       <AuthLayout>
         <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[#27c93f]">
+          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[var(--ui-ok)]">
             <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
           </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-white">
+          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
             {linked === 'existing' ? 'Added to your account' : 'You’re all set'}
           </h1>
-          <p className="mt-2 max-w-sm text-[14px] text-[#888b91]">
+          <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
             {linked === 'existing'
               ? 'This email already had an account, so we added the application to it. Sign in with your existing password.'
               : 'Sign in to see which stage your application is at and what happens next.'}
@@ -196,23 +196,23 @@ export default function ActivateAccount() {
   return (
     <AuthLayout>
       <div className="mb-2 flex flex-col items-center text-center">
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
           <UserPlus className="h-6 w-6" aria-hidden="true" />
         </span>
       </div>
-      <h1 className="text-center text-[24px] font-semibold tracking-[-0.6px] text-white">
+      <h1 className="text-center text-[24px] font-semibold tracking-[-0.6px] text-foreground">
         Track your application
       </h1>
-      <p className="mt-1.5 text-center text-[14px] text-[#888b91]">
+      <p className="mt-1.5 text-center text-[14px] text-muted-foreground">
         {target?.job_title && target?.company_name
           ? `Set a password to follow your ${target.job_title} application at ${target.company_name}.`
           : 'Set a password to follow your application.'}
       </p>
 
       {target?.email && (
-        <p className="mt-4 rounded-[12px] border border-white/8 bg-white/[0.03] px-4 py-3 text-center text-[13px] text-[#c6c8cc]">
+        <p className="mt-4 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-4 py-3 text-center text-[13px] text-[var(--ui-soft)]">
           Your account will use{' '}
-          <span className="font-medium text-white">{target.email}</span>
+          <span className="font-medium text-foreground">{target.email}</span>
         </p>
       )}
 
@@ -266,7 +266,7 @@ export default function ActivateAccount() {
         />
 
         {error && (
-          <p role="alert" className="text-[12.5px] text-[#e6714f]">
+          <p role="alert" className="text-[12.5px] text-[var(--ui-danger)]">
             {error}
           </p>
         )}
@@ -281,10 +281,10 @@ export default function ActivateAccount() {
         </Pill>
       </form>
 
-      <p className="mt-6 text-center text-[13px] text-[#888b91]">
+      <p className="mt-6 text-center text-[13px] text-muted-foreground">
         <Link
           to="/login"
-          className="font-medium text-white hover:underline focus:outline-none focus:underline underline-offset-4"
+          className="font-medium text-foreground hover:underline focus:outline-none focus:underline underline-offset-4"
         >
           Already have an account? Sign in
         </Link>

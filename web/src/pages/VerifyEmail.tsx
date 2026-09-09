@@ -46,30 +46,30 @@ export default function VerifyEmail() {
       <div className="flex flex-col items-center text-center">
         {status === 'verifying' && (
           <>
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
               <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
             </span>
-            <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-white">
+            <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
               Confirming your email…
             </h1>
-            <p className="mt-2 text-[14px] text-[#888b91]">One moment.</p>
+            <p className="mt-2 text-[14px] text-muted-foreground">One moment.</p>
           </>
         )}
 
         {status === 'success' && (
           <>
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[#27c93f]">
+            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[var(--ui-ok)]">
               <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
             </span>
-            <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-white">
+            <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
               Email confirmed
             </h1>
-            <p className="mt-2 max-w-sm text-[14px] text-[#888b91]">
+            <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
               Thanks — your email address is verified. You can sign in and get started.
             </p>
             <Link
               to="/login"
-              className="mt-6 inline-flex items-center justify-center rounded-pill bg-white px-5 py-2.5 text-[14px] font-semibold text-black hover:bg-[#eaeaea]"
+              className="mt-6 inline-flex items-center justify-center rounded-pill bg-primary px-5 py-2.5 text-[14px] font-semibold text-primary-foreground hover:bg-primary/90"
             >
               Continue to sign in
             </Link>
@@ -78,19 +78,19 @@ export default function VerifyEmail() {
 
         {status === 'error' && (
           <>
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[#e6714f]">
+            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[var(--ui-danger)]">
               <AlertCircle className="h-6 w-6" aria-hidden="true" />
             </span>
-            <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-white">
+            <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
               Couldn’t verify your email
             </h1>
-            <p className="mt-2 max-w-sm text-[14px] text-[#888b91]">{message}</p>
-            <p className="mt-4 max-w-sm text-[13px] text-[#70757c]">
+            <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">{message}</p>
+            <p className="mt-4 max-w-sm text-[13px] text-[var(--ui-faint)]">
               You can request a fresh link from your profile after signing in.
             </p>
             <Link
               to="/login"
-              className="mt-6 text-[13px] text-[#60a5fa] hover:underline underline-offset-4"
+              className="mt-6 text-[13px] text-[var(--ui-info)] hover:underline underline-offset-4"
             >
               Back to sign in
             </Link>

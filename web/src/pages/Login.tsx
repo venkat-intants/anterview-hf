@@ -33,7 +33,7 @@ function GoogleBadge() {
   return (
     <span
       aria-hidden="true"
-      className="flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold text-white"
+      className="flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold text-foreground"
       style={{ background: 'conic-gradient(from -45deg,#ea4335,#fbbc05,#34a853,#4285f4,#ea4335)' }}
     >
       G
@@ -46,7 +46,7 @@ function NaipunyamBadge() {
   return (
     <span
       aria-hidden="true"
-      className="flex h-5 w-5 items-center justify-center rounded-[6px] text-[11px] font-bold text-white"
+      className="flex h-5 w-5 items-center justify-center rounded-[6px] text-[11px] font-bold text-foreground"
       style={{ background: 'linear-gradient(135deg,#16c253,var(--accent))' }}
     >
       न
@@ -56,7 +56,7 @@ function NaipunyamBadge() {
 
 // ── Base button classes reused across SSO buttons ─────────────────────────────
 const ssoBase =
-  'flex w-full items-center justify-center gap-2.5 rounded-[12px] px-4 py-3 text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black';
+  'flex w-full items-center justify-center gap-2.5 rounded-[12px] px-4 py-3 text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -122,25 +122,25 @@ export default function Login() {
       <Link
         to="/"
         className="mb-8 flex items-center gap-2.5 lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded-lg"
-        aria-label="Anterview home"
+        aria-label="AntHire home"
       >
         <span
           className="flex h-8 w-8 items-center justify-center rounded-[9px]"
           style={{ background: 'linear-gradient(135deg,#112d72,#a887dc)' }}
         >
-          <span className="h-2.5 w-2.5 rounded-full bg-white" />
+          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
         </span>
-        <span className="text-[15px] font-semibold text-white">Anterview</span>
+        <span className="text-[15px] font-semibold text-foreground">AntHire</span>
       </Link>
 
       {/* Heading */}
-      <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-white">
+      <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
         {t('auth.welcomeBack')}
       </h1>
-      <p className="mt-1.5 text-[14px] text-[#888b91]">{t('auth.signInSubtitle')}</p>
+      <p className="mt-1.5 text-[14px] text-muted-foreground">{t('auth.signInSubtitle')}</p>
 
       {/* DPDP consent — gates the account-creating Google sign-in (DPDP §7). */}
-      <label className="mt-8 flex cursor-pointer items-start gap-2.5 text-[12.5px] text-[#888b91]">
+      <label className="mt-8 flex cursor-pointer items-start gap-2.5 text-[12.5px] text-muted-foreground">
         <input
           type="checkbox"
           checked={agreedToDpdp}
@@ -161,7 +161,7 @@ export default function Login() {
           type="button"
           disabled={!agreedToDpdp}
           aria-disabled={!agreedToDpdp}
-          className={`${ssoBase} bg-white text-black hover:bg-[#eaeaea] disabled:cursor-not-allowed disabled:opacity-50`}
+          className={`${ssoBase} bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50`}
           onClick={() => { window.location.assign(googleLoginUrl('/dashboard', agreedToDpdp, 1)); }}
         >
           <GoogleBadge />
@@ -173,7 +173,7 @@ export default function Login() {
           type="button"
           disabled
           aria-disabled="true"
-          className={`${ssoBase} border border-white/15 bg-white/[0.04] text-white opacity-50 cursor-not-allowed`}
+          className={`${ssoBase} border border-[var(--ui-line-strong)] bg-[var(--ui-inset)] text-foreground opacity-50 cursor-not-allowed`}
         >
           <NaipunyamBadge />
           Sign in with Naipunyam SSO
@@ -181,10 +181,10 @@ export default function Login() {
       </div>
 
       {/* Divider */}
-      <div className="my-6 flex items-center gap-3 text-[12px] text-[#5a5f66]">
-        <span className="h-px flex-1 bg-white/10" aria-hidden="true" />
+      <div className="my-6 flex items-center gap-3 text-[12px] text-[var(--ui-faint)]">
+        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
         {t('auth.orContinueWith')}
-        <span className="h-px flex-1 bg-white/10" aria-hidden="true" />
+        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
       </div>
 
       {/* Email + password form — RHF + Zod + inline FormMessage */}
@@ -204,7 +204,7 @@ export default function Login() {
             {...register('email')}
           />
           {errors.email && (
-            <span role="alert" className="text-[11.5px] text-[#e6714f]">
+            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
               {errors.email.message}
             </span>
           )}
@@ -220,7 +220,7 @@ export default function Login() {
             {...register('password')}
           />
           {errors.password && (
-            <span role="alert" className="text-[11.5px] text-[#e6714f]">
+            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
               {errors.password.message}
             </span>
           )}
@@ -230,7 +230,7 @@ export default function Login() {
         <div className="flex justify-end">
           <Link
             to="/forgot-password"
-            className="text-[12.5px] text-[#60a5fa] hover:underline focus-visible:outline-none focus-visible:underline underline-offset-4"
+            className="text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:underline underline-offset-4"
           >
             {t('auth.forgotPassword')}
           </Link>
@@ -248,11 +248,11 @@ export default function Login() {
       </form>
 
       {/* Footer link */}
-      <p className="mt-6 text-center text-[13px] text-[#888b91]">
+      <p className="mt-6 text-center text-[13px] text-muted-foreground">
         {t('auth.noAccount')}{' '}
         <Link
           to="/register"
-          className="font-medium text-white hover:underline focus:outline-none focus:underline underline-offset-4"
+          className="font-medium text-foreground hover:underline focus:outline-none focus:underline underline-offset-4"
         >
           {t('auth.createOne')}
         </Link>

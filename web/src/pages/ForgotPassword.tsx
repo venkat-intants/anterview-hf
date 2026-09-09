@@ -36,19 +36,19 @@ export default function ForgotPassword() {
     return (
       <AuthLayout>
         <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[#27c93f]">
+          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[var(--ui-ok)]">
             <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
           </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-white">
+          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
             Check your inbox
           </h1>
-          <p className="mt-2 max-w-sm text-[14px] text-[#888b91]">
-            If an account exists for <span className="text-white">{email.trim()}</span>, we’ve sent
+          <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
+            If an account exists for <span className="text-foreground">{email.trim()}</span>, we’ve sent
             a password-reset link. It expires soon — check spam if you don’t see it.
           </p>
           <Link
             to="/login"
-            className="mt-6 inline-flex items-center gap-1.5 text-[13px] text-[#60a5fa] hover:underline underline-offset-4"
+            className="mt-6 inline-flex items-center gap-1.5 text-[13px] text-[var(--ui-info)] hover:underline underline-offset-4"
           >
             <ArrowLeft size={14} aria-hidden="true" /> Back to sign in
           </Link>
@@ -59,8 +59,8 @@ export default function ForgotPassword() {
 
   return (
     <AuthLayout>
-      <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-white">Forgot password?</h1>
-      <p className="mt-1.5 text-[14px] text-[#888b91]">
+      <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">Forgot password?</h1>
+      <p className="mt-1.5 text-[14px] text-muted-foreground">
         Enter your email and we’ll send you a secure link to reset it.
       </p>
 
@@ -77,7 +77,7 @@ export default function ForgotPassword() {
         />
 
         {error && (
-          <p role="alert" className="text-[12.5px] text-[#e6714f]">
+          <p role="alert" className="text-[12.5px] text-[var(--ui-danger)]">
             {error}
           </p>
         )}
@@ -87,11 +87,11 @@ export default function ForgotPassword() {
         </Pill>
       </form>
 
-      <p className="mt-6 text-center text-[13px] text-[#888b91]">
+      <p className="mt-6 text-center text-[13px] text-muted-foreground">
         Remembered it?{' '}
         <Link
           to="/login"
-          className="font-medium text-white hover:underline focus:outline-none focus:underline underline-offset-4"
+          className="font-medium text-foreground hover:underline focus:outline-none focus:underline underline-offset-4"
         >
           Back to sign in
         </Link>

@@ -60,7 +60,7 @@ import type { TagTone } from '@/design/components/primitives';
 function Sk({ className }: { className?: string }) {
   return (
     <div
-      className={cn('animate-pulse rounded-md bg-white/[0.06]', className)}
+      className={cn('animate-pulse rounded-md bg-[var(--ui-inset)]', className)}
       aria-hidden="true"
     />
   );
@@ -94,9 +94,9 @@ const NUDGE_ICON = {
 type NudgeTone = keyof typeof NUDGE_ICON;
 
 const NUDGE_COLOR: Record<NudgeTone, string> = {
-  electric: 'text-[#60a5fa]',
-  amber: 'text-[#ffb764]',
-  forest: 'text-[#27c93f]',
+  electric: 'text-[var(--ui-info)]',
+  amber: 'text-[var(--ui-warn)]',
+  forest: 'text-[var(--ui-ok)]',
 };
 
 // ── Status → StatusTag tone ────────────────────────────────────────────────────
@@ -372,8 +372,8 @@ export default function Dashboard() {
   if (isError) {
     return (
       <div role="alert" className="flex flex-col items-center justify-center py-24 gap-4">
-        <AlertTriangle className="h-10 w-10 text-[#e6714f]" aria-hidden="true" />
-        <p className="text-[14px] text-[#888b91]">
+        <AlertTriangle className="h-10 w-10 text-[var(--ui-danger)]" aria-hidden="true" />
+        <p className="text-[14px] text-muted-foreground">
           {error instanceof Error ? error.message : t('dashboard.failedToLoadProfile')}
         </p>
         <Pill
@@ -395,14 +395,14 @@ export default function Dashboard() {
       {justOnboarded && (
         <Reveal>
           <div className="flex items-center gap-2.5 rounded-[12px] border border-[rgba(39,201,63,0.25)] bg-[rgba(39,201,63,0.06)] px-4 py-3">
-            <CheckCircle2 size={16} className="shrink-0 text-[#27c93f]" aria-hidden="true" />
+            <CheckCircle2 size={16} className="shrink-0 text-[var(--ui-ok)]" aria-hidden="true" />
             <p className="text-[13px]">
               <span className="font-medium">
                 {firstName
                   ? t('dashboard.onboardedTitleNamed', { name: firstName })
                   : t('dashboard.onboardedTitle')}
               </span>{' '}
-              <span className="text-[#9fb6d6]">{t('dashboard.onboardedBody')}</span>
+              <span className="text-[var(--ui-soft)]">{t('dashboard.onboardedBody')}</span>
             </p>
           </div>
         </Reveal>
@@ -451,7 +451,7 @@ export default function Dashboard() {
             className="flex h-full flex-col justify-between gap-6 min-h-[200px]"
           >
             <div>
-              <p className="text-[12px] font-semibold uppercase tracking-[0.1em] text-[#60a5fa] mb-2">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.1em] text-[var(--ui-info)] mb-2">
                 {planReady && plan?.domain_label
                   ? plan.domain_label
                   : t('dashboard.heroEyebrow')}
@@ -464,18 +464,18 @@ export default function Dashboard() {
               ) : (
                 <>
                   <h1
-                    className="font-semibold tracking-[-1px] text-white"
+                    className="font-semibold tracking-[-1px] text-foreground"
                     style={{ fontSize: 'clamp(28px, 4vw, 40px)' }}
                   >
                     {firstName
                       ? t('dashboard.heroGreetingNamed', { name: firstName })
                       : t('dashboard.heroGreeting')}
                   </h1>
-                  <p className="mt-2 text-[14px] text-[#9fb6d6] max-w-[480px]">
+                  <p className="mt-2 text-[14px] text-[var(--ui-soft)] max-w-[480px]">
                     {heroSubtitle}
                   </p>
                   {goalLine && (
-                    <p className="mt-1.5 text-[12.5px] text-[#70757c] max-w-[480px]">
+                    <p className="mt-1.5 text-[12.5px] text-[var(--ui-faint)] max-w-[480px]">
                       {goalLine}
                     </p>
                   )}
@@ -527,13 +527,13 @@ export default function Dashboard() {
                   // No scored interview yet. A ring at 0 is not "no data", it
                   // is a failing grade — say nothing instead of saying zero.
                   <div
-                    className="flex h-[120px] w-[120px] flex-col items-center justify-center rounded-full border border-white/[0.08]"
+                    className="flex h-[120px] w-[120px] flex-col items-center justify-center rounded-full border border-border"
                     aria-label={t('dashboard.readinessDescNoData')}
                   >
-                    <span className="text-[28px] font-semibold tracking-[-1px] text-[#70757c]">
+                    <span className="text-[28px] font-semibold tracking-[-1px] text-[var(--ui-faint)]">
                       —
                     </span>
-                    <span className="text-[10px] uppercase tracking-[1px] text-[#70757c]">
+                    <span className="text-[10px] uppercase tracking-[1px] text-[var(--ui-faint)]">
                       {t('dashboard.avgScoreRingLabel')}
                     </span>
                   </div>
@@ -548,7 +548,7 @@ export default function Dashboard() {
 
               {/* Right of ring */}
               <div className="flex flex-col gap-2 min-w-0">
-                <p className="text-[12.5px] text-[#9fb6d6]">
+                <p className="text-[12.5px] text-[var(--ui-soft)]">
                   {statsLoading
                     ? t('app.loading')
                     : interviewsTaken > 0
@@ -557,13 +557,13 @@ export default function Dashboard() {
                 </p>
                 <Link
                   to="/resume"
-                  className="inline-flex items-center gap-1 text-[12.5px] text-[#60a5fa] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded w-fit"
+                  className="inline-flex items-center gap-1 text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded w-fit"
                 >
                   {t('dashboard.improveResume')} →
                 </Link>
                 <Link
                   to="/history"
-                  className="inline-flex items-center gap-1 text-[12.5px] text-[#60a5fa] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded w-fit"
+                  className="inline-flex items-center gap-1 text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded w-fit"
                 >
                   {t('dashboard.seeBreakdown')}
                   <ArrowRight size={13} aria-hidden="true" />
@@ -638,7 +638,7 @@ export default function Dashboard() {
               </h3>
               <Link
                 to="/history"
-                className="text-[12.5px] text-[#60a5fa] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+                className="text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
               >
                 {t('dashboard.viewAllHistory')} →
               </Link>
@@ -652,14 +652,14 @@ export default function Dashboard() {
               </div>
             ) : recentSessions.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center gap-3">
-                <ListChecks className="h-8 w-8 text-[#888b91]/40" aria-hidden="true" />
-                <p className="text-[13.5px] text-[#888b91]">
+                <ListChecks className="h-8 w-8 text-muted-foreground/40" aria-hidden="true" />
+                <p className="text-[13.5px] text-muted-foreground">
                   {t('dashboard.recentInterviewsEmpty')}
                 </p>
                 <button
                   type="button"
                   onClick={() => void navigate('/start')}
-                  className="inline-flex items-center gap-1.5 text-[12.5px] text-[#60a5fa] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+                  className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
                 >
                   <Mic size={13} aria-hidden="true" />
                   {t('dashboard.startInterview')}
@@ -687,7 +687,7 @@ export default function Dashboard() {
                       {session.scorecard_id ? (
                         <Link
                           to={`/scorecard/${session.scorecard_id}`}
-                          className="flex items-center gap-3 rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3.5 transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                          className="flex items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                         >
                           <Avatar
                             initials={initials}
@@ -702,7 +702,7 @@ export default function Dashboard() {
                               <StatusTag tone={tone} dot className="mt-0.5">
                                 {label}
                               </StatusTag>
-                              <span className="flex items-center gap-1 text-[12px] text-[#888b91]">
+                              <span className="flex items-center gap-1 text-[12px] text-muted-foreground">
                                 <Clock size={11} aria-hidden="true" />
                                 {formatDuration(session.duration_seconds)}
                               </span>
@@ -713,18 +713,18 @@ export default function Dashboard() {
                                 date, and the semantic score palette here used
                                 to paint every scored session the same "good"
                                 accent off a hardcoded 72. */}
-                            <div className="text-[13px] font-semibold text-[#888b91]">
+                            <div className="text-[13px] font-semibold text-muted-foreground">
                               {formatDate(session.created_at)}
                             </div>
                             <ExternalLink
                               size={13}
-                              className="ml-auto mt-0.5 text-[#70757c]"
+                              className="ml-auto mt-0.5 text-[var(--ui-faint)]"
                               aria-hidden="true"
                             />
                           </div>
                         </Link>
                       ) : (
-                        <div className="flex items-center gap-3 rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3.5">
+                        <div className="flex items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
                           <Avatar
                             initials={initials}
                             gradient={gradient}
@@ -738,13 +738,13 @@ export default function Dashboard() {
                               <StatusTag tone={tone} dot className="mt-0.5">
                                 {label}
                               </StatusTag>
-                              <span className="flex items-center gap-1 text-[12px] text-[#888b91]">
+                              <span className="flex items-center gap-1 text-[12px] text-muted-foreground">
                                 <Clock size={11} aria-hidden="true" />
                                 {formatDuration(session.duration_seconds)}
                               </span>
                             </div>
                           </div>
-                          <div className="shrink-0 text-[12px] text-[#888b91]">
+                          <div className="shrink-0 text-[12px] text-muted-foreground">
                             {formatDate(session.created_at)}
                           </div>
                         </div>
@@ -769,7 +769,7 @@ export default function Dashboard() {
 
               {/* Weekly streak strip */}
               <div className="mb-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#70757c] mb-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--ui-faint)] mb-2">
                   {t('dashboard.thisWeekTitle')}
                 </p>
                 <div className="flex items-center gap-1.5" aria-hidden="true">
@@ -779,8 +779,8 @@ export default function Dashboard() {
                         className={cn(
                           'h-7 w-7 rounded-[8px] flex items-center justify-center text-[10px] font-semibold transition-colors',
                           weekDaysHit.has(i)
-                            ? 'bg-[rgba(var(--accent-rgb),0.22)] text-[#60a5fa] border border-[rgba(var(--accent-rgb),0.4)]'
-                            : 'bg-white/[0.04] text-[#70757c] border border-white/[0.06]',
+                            ? 'bg-[rgba(var(--accent-rgb),0.22)] text-[var(--ui-info)] border border-[rgba(var(--accent-rgb),0.4)]'
+                            : 'bg-[var(--ui-inset)] text-[var(--ui-faint)] border border-border',
                         )}
                       >
                         {lbl}
@@ -795,15 +795,15 @@ export default function Dashboard() {
                 {!statsLoading && !hasResume && (() => {
                   const Icon = NUDGE_ICON.amber;
                   return (
-                    <div className="flex items-start gap-3 rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3.5">
-                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-white/[0.05]">
+                    <div className="flex items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
+                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
                         <Icon size={16} className={NUDGE_COLOR.amber} aria-hidden="true" />
                       </span>
                       <div className="min-w-0">
                         <div className="text-[13.5px] font-medium">
                           {t('dashboard.nudgeResumeTitle')}
                         </div>
-                        <div className="text-[12.5px] text-[#888b91]">
+                        <div className="text-[12.5px] text-muted-foreground">
                           {t('dashboard.nudgeResumeBody')}
                         </div>
                       </div>
@@ -817,15 +817,15 @@ export default function Dashboard() {
                     avgScore0to100 !== null && avgScore0to100 >= 70 ? 'forest' : 'electric';
                   const Icon = NUDGE_ICON[tone];
                   return (
-                    <div className="flex items-start gap-3 rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3.5">
-                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-white/[0.05]">
+                    <div className="flex items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
+                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
                         <Icon size={16} className={NUDGE_COLOR[tone]} aria-hidden="true" />
                       </span>
                       <div className="min-w-0">
                         <div className="text-[13.5px] font-medium">
                           {t('dashboard.nudgePracticeTitle')}
                         </div>
-                        <div className="text-[12.5px] text-[#888b91]">
+                        <div className="text-[12.5px] text-muted-foreground">
                           {t('dashboard.nudgePracticeBody')}
                         </div>
                       </div>
@@ -837,15 +837,15 @@ export default function Dashboard() {
                 {!statsLoading && interviewsTaken === 0 && (() => {
                   const Icon = NUDGE_ICON.electric;
                   return (
-                    <div className="flex items-start gap-3 rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3.5">
-                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-white/[0.05]">
+                    <div className="flex items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
+                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
                         <Icon size={16} className={NUDGE_COLOR.electric} aria-hidden="true" />
                       </span>
                       <div className="min-w-0">
                         <div className="text-[13.5px] font-medium">
                           {t('dashboard.nudgeFirstTitle')}
                         </div>
-                        <div className="text-[12.5px] text-[#888b91]">
+                        <div className="text-[12.5px] text-muted-foreground">
                           {t('dashboard.nudgeFirstBody')}
                         </div>
                       </div>
@@ -854,18 +854,18 @@ export default function Dashboard() {
                 })()}
 
                 {/* Jobs CTA — always visible */}
-                <div className="flex items-start gap-3 rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3.5">
-                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-white/[0.05]">
-                    <Briefcase size={16} className="text-[#888b91]" aria-hidden="true" />
+                <div className="flex items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
+                    <Briefcase size={16} className="text-muted-foreground" aria-hidden="true" />
                   </span>
                   <div className="min-w-0">
                     <div className="text-[13.5px] font-medium">
                       {t('dashboard.nudgeJobsTitle')}
                     </div>
-                    <div className="text-[12.5px] text-[#888b91]">
+                    <div className="text-[12.5px] text-muted-foreground">
                       <Link
                         to="/jobs"
-                        className="text-[#60a5fa] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+                        className="text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
                       >
                         {t('dashboard.browseJobs')}
                       </Link>
@@ -884,13 +884,13 @@ export default function Dashboard() {
                   <h3 className="text-[15px] font-semibold">
                     {t('dashboard.resumeCardTitle')}
                   </h3>
-                  <p className="mt-0.5 text-[12.5px] text-[#888b91]">
+                  <p className="mt-0.5 text-[12.5px] text-muted-foreground">
                     {t('dashboard.resumeCardDesc')}
                   </p>
                 </div>
                 <Link
                   to="/resume"
-                  className="inline-flex items-center gap-1 text-[12.5px] text-[#60a5fa] hover:underline shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+                  className="inline-flex items-center gap-1 text-[12.5px] text-[var(--ui-info)] hover:underline shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
                 >
                   {t('nav.resume')}
                   <ChevronRight size={13} aria-hidden="true" />
@@ -904,19 +904,19 @@ export default function Dashboard() {
                     'mb-4 flex items-center gap-2.5 rounded-[12px] border p-3',
                     hasResume
                       ? 'border-[rgba(39,201,63,0.25)] bg-[rgba(39,201,63,0.06)]'
-                      : 'border-white/[0.07] bg-white/[0.02]',
+                      : 'border-border bg-[var(--ui-inset-soft)]',
                   )}
                 >
                   {hasResume ? (
                     <CheckCircle2
                       size={18}
-                      className="shrink-0 text-[#27c93f]"
+                      className="shrink-0 text-[var(--ui-ok)]"
                       aria-hidden="true"
                     />
                   ) : (
                     <FileText
                       size={18}
-                      className="shrink-0 text-[#888b91]"
+                      className="shrink-0 text-muted-foreground"
                       aria-hidden="true"
                     />
                   )}
@@ -927,7 +927,7 @@ export default function Dashboard() {
                         : t('dashboard.noResumeYet')}
                     </div>
                     {hasResume && currentResume?.uploaded_at && (
-                      <div className="text-[11.5px] text-[#888b91]">
+                      <div className="text-[11.5px] text-muted-foreground">
                         {t('dashboard.uploadedOn', {
                           date: formatDate(currentResume.uploaded_at),
                         })}

@@ -13,11 +13,11 @@ import App from './App';
 import './index.css';
 // Animate.css — utility entrance animations (e.g. animate__fadeIn on the hero).
 import 'animate.css';
-// Anterview landing design — fonts + scoped keyframes/animations.
+// AntHire landing design — fonts + scoped keyframes/animations.
 // Imported AFTER index.css so its rules win on any name overlap.
-import './landing/styles/anterview.css';
-// Anterview app-wide design kit — av-* keyframes used by src/design primitives.
-import './design/styles/anterview.css';
+import './landing/styles/anthire.css';
+// AntHire app-wide design kit — av-* keyframes used by src/design primitives.
+import './design/styles/anthire.css';
 
 // Dev-only self-heal: a service worker registered by a previous `npm run build`
 // keeps serving stale precached JS on localhost. In dev, vite-plugin-pwa emits

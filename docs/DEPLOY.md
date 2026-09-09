@@ -1,4 +1,4 @@
-# Intants AI Interview Platform — Stage 2 Demo Deploy Runbook
+# AntHire — AI Interview Platform — Stage 2 Demo Deploy Runbook
 
 **Target:** Railway (5 backend services) + Vercel (frontend)
 **URLs:** free `*.railway.app` / `*.vercel.app` (no custom domain)

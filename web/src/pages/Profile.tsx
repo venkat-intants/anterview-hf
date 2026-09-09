@@ -28,16 +28,16 @@ import {
 // ── Small dark-theme form primitives ────────────────────────────────────────
 
 const INPUT_CLS =
-  'w-full rounded-[10px] border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5 text-[14px] text-white placeholder:text-[#70757c] outline-none transition-colors focus:border-[rgba(var(--accent-rgb),0.5)] focus:bg-white/[0.05]';
+  'w-full rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] outline-none transition-colors focus:border-[rgba(var(--accent-rgb),0.5)] focus:bg-[var(--ui-inset)]';
 
 function Field({
   label, hint, children,
 }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[12px] font-medium text-[#b8babf]">{label}</span>
+      <span className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[11.5px] text-[#70757c]">{hint}</span>}
+      {hint && <span className="mt-1 block text-[11.5px] text-[var(--ui-faint)]">{hint}</span>}
     </label>
   );
 }
@@ -45,16 +45,16 @@ function Field({
 function ReadOnlyField({ label, value, icon: Icon }: { label: string; value: string; icon?: typeof Mail }) {
   return (
     <div>
-      <span className="mb-1.5 block text-[12px] font-medium text-[#b8babf]">{label}</span>
-      <div className="flex items-center gap-2 rounded-[10px] border border-white/[0.06] bg-white/[0.02] px-3.5 py-2.5 text-[14px] text-[#cccccc]">
-        {Icon && <Icon size={14} className="text-[#70757c]" aria-hidden="true" />}
+      <span className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">{label}</span>
+      <div className="flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[14px] text-[var(--ui-soft)]">
+        {Icon && <Icon size={14} className="text-[var(--ui-faint)]" aria-hidden="true" />}
         <span className="truncate">{value || '—'}</span>
       </div>
     </div>
   );
 }
 
-const SECTION_TITLE = 'mb-4 flex items-center gap-2 text-[15px] font-semibold text-white';
+const SECTION_TITLE = 'mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground';
 
 type Form = {
   full_name: string;
@@ -179,7 +179,7 @@ export default function Profile() {
   if (isLoading) {
     return (
       <div className="mx-auto flex max-w-[960px] items-center justify-center px-6 py-24">
-        <Loader2 className="h-6 w-6 animate-spin text-[#60a5fa]" aria-hidden="true" />
+        <Loader2 className="h-6 w-6 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
       </div>
     );
   }
@@ -193,7 +193,7 @@ export default function Profile() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-[26px] font-semibold tracking-[-0.8px]">Your profile</h1>
-          <p className="mt-1 text-[13.5px] text-[#888b91]">
+          <p className="mt-1 text-[13.5px] text-muted-foreground">
             {isCandidate
               ? 'Keep this current — it personalises your AI interviews and is what recruiters see.'
               : isHr
@@ -220,7 +220,7 @@ export default function Profile() {
                 <img
                   src={form.avatar_url}
                   alt="Profile"
-                  className="h-[92px] w-[92px] rounded-full border border-white/15 object-cover"
+                  className="h-[92px] w-[92px] rounded-full border border-[var(--ui-line-strong)] object-cover"
                 />
               ) : (
                 <Avatar initials={initials} gradient={gradient} size={92} />
@@ -229,7 +229,7 @@ export default function Profile() {
                 type="button"
                 onClick={() => fileRef.current?.click()}
                 aria-label="Change photo"
-                className="absolute -bottom-1 -right-1 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-[#0f0f10] text-white transition-colors hover:bg-[#1c1d1f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                className="absolute -bottom-1 -right-1 inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--ui-line-strong)] bg-card text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
                 <Camera size={15} aria-hidden="true" />
               </button>
@@ -246,7 +246,7 @@ export default function Profile() {
               <div className="mb-2 flex items-center gap-2.5">
                 <Badge tone={roleTone}>{roleLabel}</Badge>
                 {isHr && me?.company_name && (
-                  <span className="inline-flex items-center gap-1 text-[12px] text-[#888b91]">
+                  <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
                     <Building2 size={12} aria-hidden="true" /> {me.company_name}
                   </span>
                 )}
@@ -278,7 +278,7 @@ export default function Profile() {
       <Reveal>
         <GlassCard className="p-6">
           <h3 className={SECTION_TITLE}>
-            <Sparkles size={16} className="text-[#60a5fa]" aria-hidden="true" />
+            <Sparkles size={16} className="text-[var(--ui-info)]" aria-hidden="true" />
             {isHr ? 'About you & your team' : 'Summary'}
           </h3>
           <Field
@@ -307,7 +307,7 @@ export default function Profile() {
         <Reveal>
           <GlassCard className="p-6">
             <h3 className={SECTION_TITLE}>
-              <GraduationCap size={16} className="text-[#60a5fa]" aria-hidden="true" />
+              <GraduationCap size={16} className="text-[var(--ui-info)]" aria-hidden="true" />
               Career
             </h3>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -342,13 +342,13 @@ export default function Profile() {
                 />
               </Field>
               <div>
-                <span className="mb-1.5 block text-[12px] font-medium text-[#b8babf]">Resume</span>
+                <span className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">Resume</span>
                 <Link
                   to="/resume"
-                  className="flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5 text-[14px] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)]"
+                  className="flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[14px] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)]"
                 >
-                  <FileText size={15} className="text-[#60a5fa]" aria-hidden="true" />
-                  <span className={me?.has_resume ? 'text-white' : 'text-[#888b91]'}>
+                  <FileText size={15} className="text-[var(--ui-info)]" aria-hidden="true" />
+                  <span className={me?.has_resume ? 'text-foreground' : 'text-muted-foreground'}>
                     {me?.has_resume ? 'Resume on file — manage versions' : 'Upload your resume →'}
                   </span>
                 </Link>
@@ -362,7 +362,7 @@ export default function Profile() {
         <Reveal>
           <GlassCard className="p-6">
             <h3 className={SECTION_TITLE}>
-              <Building2 size={16} className="text-[#27c93f]" aria-hidden="true" />
+              <Building2 size={16} className="text-[var(--ui-ok)]" aria-hidden="true" />
               Company & work details
             </h3>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -385,7 +385,7 @@ export default function Profile() {
       <Reveal>
         <GlassCard className="p-6">
           <h3 className={SECTION_TITLE}>
-            <Link2 size={16} className="text-[#60a5fa]" aria-hidden="true" />
+            <Link2 size={16} className="text-[var(--ui-info)]" aria-hidden="true" />
             Contact &amp; links
           </h3>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -428,7 +428,7 @@ export default function Profile() {
 
       {/* Footer save */}
       <div className="flex items-center justify-end gap-3 pb-2">
-        <span className="inline-flex items-center gap-1.5 text-[12px] text-[#70757c]">
+        <span className="inline-flex items-center gap-1.5 text-[12px] text-[var(--ui-faint)]">
           <ShieldCheck size={13} aria-hidden="true" /> Your details are private and DPDP-compliant.
         </span>
         <Pill type="button" onClick={onSave} disabled={mutation.isPending} className="px-5 py-2.5">

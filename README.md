@@ -6,17 +6,17 @@ colorTo: purple
 sdk: docker
 app_port: 7860
 pinned: false
-short_description: AntHire — voice-first AI interview platform (demo deployment)
+short_description: AntHire — voice-first AI interview platform (demo)
 ---
 
 # AntHire — Voice-First AI Interview Platform (Hugging Face Space)
 
-**AntHire** is the product name for the Intants AI voice interview platform. The
-rename currently applies to this README only — the source tree, `CLAUDE.md`,
-`docs/`, the service names and the deployed Space still read *Intants* /
-*Anterview*.
+**AntHire** is the product. **Intants Private Limited** is the company that
+builds it — so the copyright line, `support@intants.com` and "the Intants core"
+(the platform-owner team) keep that name deliberately; everything that names the
+*product* now reads AntHire.
 
-This repo is the **Hugging Face Spaces deployment** of that platform: the
+This repo is the **Hugging Face Spaces deployment** of the platform: the
 React frontend, all four FastAPI services, and the LiveKit interview worker run
 inside **one free-tier Docker Space** (2 vCPU / 16 GB RAM). State lives in
 external free-tier services (Neon Postgres, Upstash Redis, Cloudflare R2,
@@ -207,9 +207,11 @@ Platform work:
       hosted vendor (Sprint 10). Hard gate before any government bid.
 - [ ] DPDP consent-ledger hardening, penetration test, 20-lakh-user capacity
       proof (Sprint 11)
-- [ ] The **AntHire** name is applied to this README only. `CLAUDE.md`, `HLD.md`,
-      `LLD.md` and the rest of `docs/` still say *Intants* / *Anterview*, as do
-      the service names and the deployed Space.
+- [x] The **AntHire** rename is applied across the product surface — UI copy,
+      email and PDF headers, the four service titles, `CLAUDE.md` and `docs/`.
+      Left on the company name deliberately: `Intants Private Limited`,
+      `support@intants.com`, and the JWT issuer / `intants:` storage keys
+      (renaming those two signs every session out and drops saved preferences).
 
 ---
 

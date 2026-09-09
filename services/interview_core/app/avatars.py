@@ -1,4 +1,4 @@
-"""Avatar catalog for the Intants interview platform.
+"""Avatar catalog for the AntHire interview platform.
 
 NOT ``app.avatar`` (no trailing "s"). The two names differ by one character and
 both import cleanly, so the wrong one typechecks silently under this repo's

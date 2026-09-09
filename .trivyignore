@@ -127,3 +127,37 @@ CVE-2026-56862
 # list a third time. That is now overdue by this file's own rule.
 CVE-2026-56854
 CVE-2026-84304
+#
+# Caddy, continued — added 2026-09-09. A third vendored-library id in the same
+# binary, and the one that finally makes the standing recommendation above
+# wrong, so it is corrected here rather than left to mislead the next author.
+#
+#   * CVE-2026-84445 (HIGH) — google.golang.org/grpc v1.81.0, fixed in 1.82.2 /
+#     1.83.2: an xDS SERVER crashes on a malformed update. Reachability is the
+#     same read as CVE-2026-84304 and was re-checked, not carried over: grepped
+#     both Caddyfiles for grpc / xds / h2c / protocols — no hits, and the one
+#     explicit transport (root Caddyfile:138) is `transport http`. Caddy runs no
+#     gRPC listener at all, let alone an xDS one. Unreachable.
+#
+# THE CORRECTION. Both blocks above say the durable fix is to stop using the
+# upstream image and build Caddy in our own Go builder stage. For the Go
+# TOOLCHAIN ids that is still true — our builder would use a current Go. For the
+# vendored-library ids, including this one, it is NOT: a builder stage compiles
+# Caddy's own go.mod, and
+#
+#     caddy v2.11.4 (what caddy:2-alpine ships)  -> grpc v1.81.0
+#     caddy master   (2026-09-09)                -> grpc v1.82.1
+#     CVE-2026-84445 needs                          grpc >= 1.82.2
+#
+# — verified against proxy.golang.org and the master go.mod on 2026-09-09, not
+# assumed. So building Caddy ourselves would clear the toolchain ids and leave
+# this one exactly where it is. Clearing it needs a `go get
+# google.golang.org/grpc@v1.82.2` override on top of Caddy's module, i.e.
+# maintaining a patched build of somebody else's server — a real decision with
+# a real cost, not a CI fix, and not one to make inside a deploy-unblocking
+# change.
+#
+# What that leaves: the builder stage is still worth doing for the 13 toolchain
+# ids, and this entry is accepted on unreachability rather than on "upstream
+# will get to it". Re-review trigger is unchanged — each sprint.
+CVE-2026-84445

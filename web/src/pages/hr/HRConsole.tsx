@@ -140,7 +140,7 @@ export default function HRConsole() {
         <PromoBanner
           tone="electric"
           badge="Hiring OS"
-          eyebrow="Anterview for Teams"
+          eyebrow="AntHire for Teams"
           title="Screen smarter. Hire fairer. Move faster."
           subtitle="AI-ranked applicants, structured exams and avatar interviews — every candidate measured against the same fair rubric, end to end."
           cta={{ label: 'Review applicants', to: '/hr/applicants' }}

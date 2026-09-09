@@ -25,8 +25,8 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/auth\/sso\//],
       },
       manifest: {
-        name: 'Intants AI Interview',
-        short_name: 'Intants',
+        name: 'AntHire',
+        short_name: 'AntHire',
         description: 'AI-powered voice interview platform',
         theme_color: '#4f46e5',
         background_color: '#ffffff',

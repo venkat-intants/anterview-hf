@@ -187,7 +187,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="Intants Admin & Ops",
+    title="AntHire Admin & Ops",
     description="Admin dashboard APIs, analytics, DPDP erasure",
     version="0.1.0",
     lifespan=lifespan,

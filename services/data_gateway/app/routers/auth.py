@@ -417,7 +417,7 @@ async def register(
             db,
             user_id=uid,
             kind="welcome",
-            title="Welcome to Anterview",
+            title="Welcome to AntHire",
             body="Upload your resume and start a practice interview to get your first scorecard.",
             link="/dashboard",
         )

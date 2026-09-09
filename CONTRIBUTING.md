@@ -1,4 +1,4 @@
-# Contributing to Intants AI Voice Interview Platform
+# Contributing to AntHire — AI Voice Interview Platform
 
 ## Database Migrations
 

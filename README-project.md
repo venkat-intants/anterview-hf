@@ -1,4 +1,4 @@
-# Intants AI Voice Interview Platform
+# AntHire — AI Voice Interview Platform
 
 A voice-first AI interview platform. Candidates log in, pick a job role, and talk to a realistic real-time avatar interviewer in their language (EN/HI/TE Day-1, expanding to 22 Indian languages), and receive a structured scorecard at the end of a ~10-minute session.
 

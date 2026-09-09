@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import { Sparkles, Languages, ShieldCheck } from '@/design/components/icons';
+import ModeSwitch from '@/components/ModeSwitch';
 
 interface Feature {
   icon: typeof Sparkles;
@@ -33,8 +34,7 @@ function BrandPanel() {
     <aside
       className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between lg:p-12 xl:p-14"
       style={{
-        background:
-          'linear-gradient(160deg,#000000 0%,#112d72 30%,#4b52aa 50%,#a887dc 72%,#e6c4e7 96%,#fcdbef 107%)',
+        background: 'var(--auth-gradient)',
       }}
     >
       {/* Ambient glow blob */}
@@ -61,13 +61,13 @@ function BrandPanel() {
         <Link
           to="/"
           className="inline-flex items-center gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-          aria-label="Anterview home"
+          aria-label="AntHire home"
         >
           {/* Dot-in-rounded-square logo mark — matches AuthSplit design */}
           <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-black/30 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.3)] backdrop-blur">
             <span className="h-2.5 w-2.5 rounded-full bg-white" />
           </span>
-          <span className="text-[17px] font-semibold tracking-tight text-white">Anterview</span>
+          <span className="text-[17px] font-semibold tracking-tight text-white">AntHire</span>
         </Link>
       </motion.div>
 
@@ -126,12 +126,17 @@ interface AuthLayoutProps {
 
 export default function AuthLayout({ children }: AuthLayoutProps) {
   return (
-    // Dark canvas matching the design's `bg-black font-sans text-white`
-    <main className="min-h-screen w-full bg-black font-sans text-white lg:grid lg:grid-cols-[1.05fr_1fr] xl:grid-cols-[1.15fr_1fr]">
+    // Canvas follows the mode; the brand panel keeps its own fixed gradient.
+    <main className="min-h-screen w-full bg-background font-sans text-foreground lg:grid lg:grid-cols-[1.05fr_1fr] xl:grid-cols-[1.15fr_1fr]">
       <BrandPanel />
 
-      {/* Form column — dark panel, vertically centered */}
-      <div className="flex min-h-screen items-center justify-center px-6 py-12 lg:min-h-0">
+      {/* Form column — vertically centered, with the mode switch pinned to its
+          corner: a visitor who lands straight on /login (an emailed link, say)
+          needs the choice here, not only on the marketing page. */}
+      <div className="relative flex min-h-screen items-center justify-center px-6 py-12 lg:min-h-0">
+        <div className="absolute right-6 top-6 z-10">
+          <ModeSwitch />
+        </div>
         <div className="w-full max-w-[380px]">{children}</div>
       </div>
     </main>

@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash, Write
 model: sonnet
 ---
 
-You are the **Senior Code Reviewer** for the Intants AI Voice Interview Platform.
+You are the **Senior Code Reviewer** for the AntHire — AI Voice Interview Platform.
 
 ## Your Mission
 

@@ -60,7 +60,7 @@ export default function ThemeToggle() {
         aria-expanded={open}
         aria-label="Theme"
         title="Theme"
-        className="flex items-center gap-1.5 rounded-[10px] border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-[13px] text-[#b8babf] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] transition-colors"
+        className="flex items-center gap-1.5 rounded-[10px] border border-border bg-[var(--ui-inset)] px-3 py-2 text-[13px] text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] transition-colors"
       >
         <Palette size={15} aria-hidden="true" />
         <span
@@ -76,7 +76,7 @@ export default function ThemeToggle() {
           <div className="fixed inset-0 z-30" aria-hidden="true" onClick={() => setOpen(false)} />
           <div
             role="menu"
-            className="absolute right-0 top-[calc(100%+8px)] z-40 w-48 overflow-hidden rounded-[12px] border border-white/[0.1] bg-[#0f0f10] p-1 shadow-2xl"
+            className="absolute right-0 top-[calc(100%+8px)] z-40 w-48 overflow-hidden rounded-[12px] border border-border bg-card p-1 shadow-2xl"
           >
             {THEMES.map(({ id, label, swatch }) => {
               const isActive = theme === id;
@@ -89,7 +89,7 @@ export default function ThemeToggle() {
                   onClick={() => choose(id)}
                   className={cn(
                     'flex w-full items-center gap-2.5 rounded-[8px] px-3 py-2 text-left text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] transition-colors',
-                    isActive ? 'bg-white/[0.06] text-white' : 'text-[#b8babf] hover:bg-white/[0.04] hover:text-white',
+                    isActive ? 'bg-[var(--ui-inset)] text-foreground' : 'text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground',
                   )}
                 >
                   <span

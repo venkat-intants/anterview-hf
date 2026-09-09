@@ -41,7 +41,7 @@ function GoogleBadge() {
   return (
     <span
       aria-hidden="true"
-      className="flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold text-white"
+      className="flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold text-foreground"
       style={{ background: 'conic-gradient(from -45deg,#ea4335,#fbbc05,#34a853,#4285f4,#ea4335)' }}
     >
       G
@@ -54,7 +54,7 @@ function NaipunyamBadge() {
   return (
     <span
       aria-hidden="true"
-      className="flex h-5 w-5 items-center justify-center rounded-[6px] text-[11px] font-bold text-white"
+      className="flex h-5 w-5 items-center justify-center rounded-[6px] text-[11px] font-bold text-foreground"
       style={{ background: 'linear-gradient(135deg,#16c253,var(--accent))' }}
     >
       न
@@ -64,7 +64,7 @@ function NaipunyamBadge() {
 
 // ── Base button classes reused across SSO buttons ─────────────────────────────
 const ssoBase =
-  'flex w-full items-center justify-center gap-2.5 rounded-[12px] px-4 py-3 text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black';
+  'flex w-full items-center justify-center gap-2.5 rounded-[12px] px-4 py-3 text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -136,20 +136,20 @@ export default function Register() {
     return (
       <AuthLayout>
         <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[#27c93f]">
+          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[var(--ui-ok)]">
             <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
           </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-white">
+          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
             Confirm your email
           </h1>
-          <p className="mt-2 max-w-sm text-[14px] text-[#888b91]">
+          <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
             Your account is ready. We sent a confirmation link to{' '}
-            <span className="text-white">{verifyEmailSent}</span>. Click it to verify your
+            <span className="text-foreground">{verifyEmailSent}</span>. Click it to verify your
             email, then sign in.
           </p>
           <Link
             to="/login"
-            className="mt-6 inline-flex items-center justify-center rounded-pill bg-white px-5 py-2.5 text-[14px] font-semibold text-black hover:bg-[#eaeaea]"
+            className="mt-6 inline-flex items-center justify-center rounded-pill bg-primary px-5 py-2.5 text-[14px] font-semibold text-primary-foreground hover:bg-primary/90"
           >
             Go to sign in
           </Link>
@@ -164,25 +164,25 @@ export default function Register() {
       <Link
         to="/"
         className="mb-8 flex items-center gap-2.5 lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded-lg"
-        aria-label="Anterview home"
+        aria-label="AntHire home"
       >
         <span
           className="flex h-8 w-8 items-center justify-center rounded-[9px]"
           style={{ background: 'linear-gradient(135deg,#112d72,#a887dc)' }}
         >
-          <span className="h-2.5 w-2.5 rounded-full bg-white" />
+          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
         </span>
-        <span className="text-[15px] font-semibold text-white">Anterview</span>
+        <span className="text-[15px] font-semibold text-foreground">AntHire</span>
       </Link>
 
       {/* Heading */}
-      <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-white">
+      <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
         {t('auth.createYourAccount')}
       </h1>
-      <p className="mt-1.5 text-[14px] text-[#888b91]">{t('auth.startJourney')}</p>
+      <p className="mt-1.5 text-[14px] text-muted-foreground">{t('auth.startJourney')}</p>
 
       {/* DPDP consent — gates BOTH sign-up methods (Google SSO + the form). */}
-      <label className="mt-8 flex cursor-pointer items-start gap-2.5 text-[12.5px] text-[#888b91]">
+      <label className="mt-8 flex cursor-pointer items-start gap-2.5 text-[12.5px] text-muted-foreground">
         <input
           type="checkbox"
           checked={agreedToDpdp}
@@ -203,7 +203,7 @@ export default function Register() {
           type="button"
           disabled={!agreedToDpdp}
           aria-disabled={!agreedToDpdp}
-          className={`${ssoBase} bg-white text-black hover:bg-[#eaeaea] disabled:cursor-not-allowed disabled:opacity-50`}
+          className={`${ssoBase} bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50`}
           onClick={() => { window.location.assign(googleLoginUrl('/dashboard', agreedToDpdp, 1)); }}
         >
           <GoogleBadge />
@@ -215,7 +215,7 @@ export default function Register() {
           type="button"
           disabled
           aria-disabled="true"
-          className={`${ssoBase} border border-white/15 bg-white/[0.04] text-white opacity-50 cursor-not-allowed`}
+          className={`${ssoBase} border border-[var(--ui-line-strong)] bg-[var(--ui-inset)] text-foreground opacity-50 cursor-not-allowed`}
         >
           <NaipunyamBadge />
           Sign up with Naipunyam SSO
@@ -223,10 +223,10 @@ export default function Register() {
       </div>
 
       {/* Divider */}
-      <div className="my-6 flex items-center gap-3 text-[12px] text-[#5a5f66]">
-        <span className="h-px flex-1 bg-white/10" aria-hidden="true" />
+      <div className="my-6 flex items-center gap-3 text-[12px] text-[var(--ui-faint)]">
+        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
         {t('auth.orContinueWithFull')}
-        <span className="h-px flex-1 bg-white/10" aria-hidden="true" />
+        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
       </div>
 
       {/* Full name + email + password form — RHF + Zod + inline FormMessage */}
@@ -246,7 +246,7 @@ export default function Register() {
             {...register('full_name')}
           />
           {errors.full_name && (
-            <span role="alert" className="text-[11.5px] text-[#e6714f]">
+            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
               {errors.full_name.message}
             </span>
           )}
@@ -262,7 +262,7 @@ export default function Register() {
             {...register('email')}
           />
           {errors.email && (
-            <span role="alert" className="text-[11.5px] text-[#e6714f]">
+            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
               {errors.email.message}
             </span>
           )}
@@ -279,7 +279,7 @@ export default function Register() {
             {...register('password')}
           />
           {errors.password && (
-            <span role="alert" className="text-[11.5px] text-[#e6714f]">
+            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
               {errors.password.message}
             </span>
           )}
@@ -297,11 +297,11 @@ export default function Register() {
       </form>
 
       {/* Footer link */}
-      <p className="mt-6 text-center text-[13px] text-[#888b91]">
+      <p className="mt-6 text-center text-[13px] text-muted-foreground">
         {t('auth.haveAccount')}{' '}
         <Link
           to="/login"
-          className="font-medium text-white hover:underline focus:outline-none focus:underline underline-offset-4"
+          className="font-medium text-foreground hover:underline focus:outline-none focus:underline underline-offset-4"
         >
           {t('auth.signIn2')}
         </Link>

@@ -54,7 +54,7 @@ export function Hero() {
               <Link to="/register" className="inline-flex items-center gap-2.5 rounded-[9px] bg-white px-5.5 py-3.5 text-[15px] font-semibold text-black shadow-[0_8px_30px_rgba(0,0,0,0.25)] transition-transform hover:-translate-y-0.5">
                 <span className="h-2 w-2 rounded-full bg-electric shadow-[0_0_10px_#0088ff]" /> Start a mock interview
               </Link>
-              <a href="mailto:support@intants.com?subject=Anterview%20demo%20request" className="inline-flex items-center gap-2 rounded-[9px] border border-white/[0.18] bg-white/[0.12] px-5.5 py-3.5 text-[15px] font-medium text-white backdrop-blur transition-colors hover:bg-white/[0.2]">Book a demo</a>
+              <a href="mailto:support@intants.com?subject=AntHire%20demo%20request" className="inline-flex items-center gap-2 rounded-[9px] border border-white/[0.18] bg-white/[0.12] px-5.5 py-3.5 text-[15px] font-medium text-white backdrop-blur transition-colors hover:bg-white/[0.2]">Book a demo</a>
             </div>
             <div className="mt-6.5 flex items-center gap-2.5 text-[12.5px] text-white/60">
               <ShieldCheck size={14} className="text-forest" /> DPDP-compliant · India data residency · Consent-led
@@ -63,13 +63,6 @@ export function Hero() {
 
           {/* two-way interview call */}
           <div className="relative flex min-h-[340px] flex-col justify-center gap-3.5">
-            <span className="absolute -left-[3%] -top-[3%] z-[7] animate-float-chip rounded-pill border border-white/20 bg-black/50 px-3.5 py-1.5 text-[13px] font-semibold backdrop-blur-md">नमस्ते</span>
-            <span className="absolute -right-[3%] bottom-[2%] z-[7] animate-float-chip rounded-pill border border-white/20 bg-black/50 px-3.5 py-1.5 text-[13px] font-semibold backdrop-blur-md [animation-delay:1s]">హలో</span>
-
-            <div className="rounded-pill border border-white/10 bg-[#030719]/70 px-3 py-1.5 text-center font-mono text-[11px] text-mist backdrop-blur-md">
-              <span className="text-ember">● REC</span> · Live interview · 1.8s latency
-            </div>
-
             <div className="relative grid grid-cols-2 gap-3">
               {/* AI tile — the platform's real Tavus avatar ("Anna"); the live
                   interview mounts the same Tavus CVI / LiveKit track here in-app.

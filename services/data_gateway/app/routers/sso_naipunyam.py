@@ -328,11 +328,11 @@ async def initiate(
     "/callback",
     status_code=status.HTTP_200_OK,
     response_model=SsoTokenResponse,
-    summary="Handle Naipunyam OAuth2 callback and issue Intants JWT",
+    summary="Handle Naipunyam OAuth2 callback and issue an AntHire JWT",
     description=(
         "Exchanges the authorization code for a Naipunyam token, fetches the "
-        "user profile, upserts the user in the Intants DB, and returns an "
-        "Intants JWT. Returns 404 if AUTH_PROVIDER != naipunyam; 503 on "
+        "user profile, upserts the user in the AntHire DB, and returns an "
+        "AntHire JWT. Returns 404 if AUTH_PROVIDER != naipunyam; 503 on "
         "Naipunyam service errors."
     ),
 )
@@ -343,7 +343,7 @@ async def callback(
     request: Request,
     response: Response,
 ) -> SsoTokenResponse:
-    """Complete the Naipunyam OAuth2 flow and create/update the Intants user.
+    """Complete the Naipunyam OAuth2 flow and create/update the AntHire user.
 
     Steps
     -----
@@ -356,7 +356,7 @@ async def callback(
     5. Fetch the full profile via GET /v1/users/{uid}/profile.
     5a. Reject the sign-in if the email maps to a privileged account.
     6. Upsert the user row (INSERT … ON CONFLICT naipunyam_id DO UPDATE).
-    7. Issue an Intants JWT (same claim shape as LocalAuthProvider).
+    7. Issue an AntHire JWT (same claim shape as LocalAuthProvider).
     8. Mint a tracked refresh token via mint_refresh_session + set cookies.
     9. Return {"access_token": …, "token_type": "bearer", "user_id": …}.
 
@@ -587,7 +587,7 @@ async def callback(
         )
 
         # ------------------------------------------------------------------
-        # Step 7: issue Intants JWT
+        # Step 7: issue AntHire JWT
         # ------------------------------------------------------------------
         access_token = issue_access_token(
             user_id=str(final_user_id),

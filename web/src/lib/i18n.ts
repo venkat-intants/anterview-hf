@@ -3,7 +3,7 @@
 //
 // Day-1 languages: EN (complete), HI (complete), TE (complete).
 // Language choice is persisted to localStorage via the detector below.
-// Proper nouns (Intants, Google Gemini, Groq, Sarvam, LiveKit, DPDP) stay
+// Proper nouns (AntHire, Google Gemini, Groq, Sarvam, LiveKit, DPDP) stay
 // as-is across all locales — they are not translatable brand names.
 //
 // NOTE: HI/TE translations are a first-pass for UI coverage.
@@ -31,7 +31,7 @@ const en = {
   translation: {
     // App-wide
     app: {
-      name: 'Anterview',
+      name: 'AntHire',
       tagline: 'AI-powered voice interviews',
       loading: 'Loading…',
     },
@@ -64,7 +64,7 @@ const en = {
     // Auth
     auth: {
       welcomeBack: 'Welcome back',
-      signInSubtitle: 'Sign in to your Anterview account',
+      signInSubtitle: 'Sign in to your AntHire account',
       signIn: 'Sign in',
       signingIn: 'Signing in…',
       signInWithGoogle: 'Sign in with Google',
@@ -503,7 +503,7 @@ const en = {
     },
     // Interview intro
     interviewIntro: {
-      brand: 'Anterview',
+      brand: 'AntHire',
       meetTitle: 'Meet your interviewer',
       beginLabel: 'Begin interview and play introduction video',
       beginButton: 'Begin interview',
@@ -720,7 +720,7 @@ const en = {
 const hi = {
   translation: {
     app: {
-      name: 'Anterview',
+      name: 'AntHire',
       tagline: 'AI-संचालित वॉयस इंटरव्यू',
       loading: 'लोड हो रहा है…',
     },
@@ -749,7 +749,7 @@ const hi = {
     },
     auth: {
       welcomeBack: 'वापसी पर स्वागत है',
-      signInSubtitle: 'अपने Anterview अकाउंट में साइन इन करें',
+      signInSubtitle: 'अपने AntHire अकाउंट में साइन इन करें',
       signIn: 'साइन इन करें',
       signingIn: 'साइन इन हो रहा है…',
       signInWithGoogle: 'Google से साइन इन करें',
@@ -1150,7 +1150,7 @@ const hi = {
       decline: 'अस्वीकार करें',
     },
     interviewIntro: {
-      brand: 'Anterview',
+      brand: 'AntHire',
       meetTitle: 'अपने इंटरव्यूअर से मिलें',
       beginLabel: 'इंटरव्यू शुरू करें और introduction video चलाएं',
       beginButton: 'इंटरव्यू शुरू करें',
@@ -1353,7 +1353,7 @@ const hi = {
 const te = {
   translation: {
     app: {
-      name: 'Anterview',
+      name: 'AntHire',
       tagline: 'AI-ఆధారిత వాయిస్ ఇంటర్వ్యూలు',
       loading: 'లోడవుతోంది…',
     },
@@ -1382,7 +1382,7 @@ const te = {
     },
     auth: {
       welcomeBack: 'తిరిగి స్వాగతం',
-      signInSubtitle: 'మీ Anterview అకౌంట్‌లో సైన్ ఇన్ చేయండి',
+      signInSubtitle: 'మీ AntHire అకౌంట్‌లో సైన్ ఇన్ చేయండి',
       signIn: 'సైన్ ఇన్ చేయండి',
       signingIn: 'సైన్ ఇన్ అవుతోంది…',
       signInWithGoogle: 'Google తో సైన్ ఇన్ చేయండి',
@@ -1783,7 +1783,7 @@ const te = {
       decline: 'తిరస్కరించండి',
     },
     interviewIntro: {
-      brand: 'Anterview',
+      brand: 'AntHire',
       meetTitle: 'మీ ఇంటర్వ్యూయర్‌ని కలవండి',
       beginLabel: 'ఇంటర్వ్యూ ప్రారంభించి introduction video చూపించండి',
       beginButton: 'ఇంటర్వ్యూ ప్రారంభించండి',

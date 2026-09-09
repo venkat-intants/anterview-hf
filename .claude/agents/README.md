@@ -1,6 +1,6 @@
 # Intants AI Agent Team
 
-This folder defines the **11-agent specialized team** that builds and maintains the Intants AI Voice Interview Platform.
+This folder defines the **11-agent specialized team** that builds and maintains the AntHire — AI Voice Interview Platform.
 
 Each agent is a Markdown file with frontmatter (name, description, tools, model) and a focused system prompt. Claude Code loads these automatically and routes work to the right specialist based on the `description` field.
 

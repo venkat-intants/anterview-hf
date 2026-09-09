@@ -120,7 +120,7 @@ async def mint_refresh_session(
     """Generate a refresh token, persist it in the tracked format, and index it.
 
     This is the **single canonical path** for creating any refresh token in the
-    Intants platform.  Both ``LocalAuthProvider._issue_tokens`` and the SSO
+    AntHire platform.  Both ``LocalAuthProvider._issue_tokens`` and the SSO
     routers (Google, Naipunyam) call this function so the revocation guarantees
     provided by ``logout_all`` apply uniformly to *every* session, regardless
     of how the user signed in.

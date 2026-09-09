@@ -65,15 +65,15 @@ function RoleCard({ role }: { role: OpenRole }) {
     <GlassCard className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-[15.5px] font-semibold text-white">{role.title}</h3>
-          <p className="mt-0.5 flex items-center gap-1.5 text-[12.5px] text-[#b8babf]">
+          <h3 className="text-[15.5px] font-semibold text-foreground">{role.title}</h3>
+          <p className="mt-0.5 flex items-center gap-1.5 text-[12.5px] text-[var(--ui-soft)]">
             <Building2 size={12} aria-hidden="true" />
             {role.company_name}
-            {meta ? <span className="text-[#70757c]">· {meta}</span> : null}
+            {meta ? <span className="text-[var(--ui-faint)]">· {meta}</span> : null}
           </p>
         </div>
         {salary ? (
-          <span className="shrink-0 rounded-[10px] border border-white/[0.1] bg-white/[0.04] px-2.5 py-1 text-[12px] font-medium text-white">
+          <span className="shrink-0 rounded-[10px] border border-border bg-[var(--ui-inset)] px-2.5 py-1 text-[12px] font-medium text-foreground">
             {salary}
           </span>
         ) : null}
@@ -84,7 +84,7 @@ function RoleCard({ role }: { role: OpenRole }) {
           {role.skills.map((s) => (
             <span
               key={s}
-              className="rounded-full border border-white/[0.1] bg-white/[0.04] px-2 py-0.5 text-[11.5px] text-[#d5d7da]"
+              className="rounded-full border border-border bg-[var(--ui-inset)] px-2 py-0.5 text-[11.5px] text-[var(--ui-soft)]"
             >
               {s}
             </span>
@@ -93,7 +93,7 @@ function RoleCard({ role }: { role: OpenRole }) {
       ) : null}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[11.5px] text-[#70757c]">
+        <span className="text-[11.5px] text-[var(--ui-faint)]">
           {role.level} level{experience ? ` · ${experience}` : ''}
         </span>
 
@@ -107,7 +107,7 @@ function RoleCard({ role }: { role: OpenRole }) {
             </StatusTag>
             <Link
               to="/applications"
-              className="text-[12px] text-[#60a5fa] hover:underline underline-offset-4"
+              className="text-[12px] text-[var(--ui-info)] hover:underline underline-offset-4"
             >
               Track it
             </Link>
@@ -115,7 +115,7 @@ function RoleCard({ role }: { role: OpenRole }) {
         ) : (
           <Link
             to={`/apply/${role.requisition_id}`}
-            className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-3.5 py-1.5 text-[12.5px] font-medium text-black transition-opacity hover:opacity-90"
+            className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90"
           >
             View &amp; apply
           </Link>
@@ -143,19 +143,19 @@ export default function OpenRoles() {
   return (
     <section aria-labelledby="open-roles-heading" className="mb-8">
       <div className="mb-3">
-        <h2 id="open-roles-heading" className="text-[18px] font-semibold text-white">
+        <h2 id="open-roles-heading" className="text-[18px] font-semibold text-foreground">
           Open roles
         </h2>
         {/* The load-bearing sentence on this page. Below it are practice
             interviews; these are applications to real companies. */}
-        <p className="mt-0.5 text-[13px] text-[#888b91]">
-          Real jobs at companies hiring on Anterview — applying here reaches their
+        <p className="mt-0.5 text-[13px] text-muted-foreground">
+          Real jobs at companies hiring on AntHire — applying here reaches their
           hiring team.
         </p>
       </div>
 
       {roles.isError ? (
-        <p className="text-[13px] text-[#888b91]">
+        <p className="text-[13px] text-muted-foreground">
           Could not load open roles just now. Refresh to try again.
         </p>
       ) : null}
@@ -172,7 +172,7 @@ export default function OpenRoles() {
       </div>
 
       {items.length > 0 ? (
-        <p className="mt-3 flex items-center gap-1.5 text-[12px] text-[#70757c]">
+        <p className="mt-3 flex items-center gap-1.5 text-[12px] text-[var(--ui-faint)]">
           <ExternalLink size={12} aria-hidden="true" />
           Practice interviews are below — those are for rehearsing, not applying.
         </p>

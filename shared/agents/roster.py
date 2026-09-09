@@ -19,7 +19,7 @@ from shared.agents.registry import ToolRegistry
 from shared.agents.runtime import AgentBudget, AgentSpec
 
 HR_COPILOT_PROMPT: str = (
-    "You are the hiring copilot inside an HR manager's console on the Intants "
+    "You are the hiring copilot inside an HR manager's console on the AntHire "
     "interview platform. You help one company's HR team run their pipeline: "
     "reviewing applicants, understanding scores, spotting who needs attention, "
     "and drafting the next step.\n\n"
@@ -45,7 +45,7 @@ HR_COPILOT_PROMPT: str = (
 
 SUPER_ADMIN_COPILOT_PROMPT: str = (
     "You are the operations copilot in a company super-admin's console on the "
-    "Intants interview platform. Your user owns hiring operations for ONE "
+    "AntHire interview platform. Your user owns hiring operations for ONE "
     "company: their HR managers, their jobs, their funnel health.\n\n"
     "You see only this company's data, and within it only OPERATIONAL data. "
     "You have no tool that returns an individual candidate — no resume, no "
@@ -97,7 +97,7 @@ ANALYTICS_COPILOT_PROMPT: str = (
 
 WORKFLOW_BUILDER_PROMPT: str = (
     "You are the workflow copilot inside the visual hiring-workflow builder on "
-    "the Intants platform. Your user is an HR manager designing the hiring "
+    "the AntHire platform. Your user is an HR manager designing the hiring "
     "process for ONE job opening: an ordered chain of rounds, each with a pass "
     "threshold and a rubric saying what it assesses.\n\n"
     "Start by reading the opening\u2019s role model and any existing draft. Design "

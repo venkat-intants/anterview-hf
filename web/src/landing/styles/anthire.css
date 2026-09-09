@@ -1,4 +1,4 @@
-/* Anterview landing — fonts + keyframes/animations that are scoped to this
+/* AntHire landing — fonts + keyframes/animations that are scoped to this
    design so they never collide with the app-wide keyframes in index.css.
    Import once in main.tsx AFTER your own index.css.
 
@@ -9,12 +9,6 @@
    CSS is self-contained. Keyframes use an `at-` prefix to avoid redefining the
    identically-named `aurora-drift` / `pulse-ring` keyframes in index.css. */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-
-/* horizontal mask for the logo marquee */
-.at-marquee-mask {
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
-}
 
 /* ── Landing keyframes (mirror tailwind.tokens.ts, prefixed to stay scoped) ── */
 @keyframes at-aurora-drift {
@@ -108,14 +102,6 @@
     opacity: 0;
   }
 }
-@keyframes at-marquee {
-  0% {
-    transform: translateX(0);
-  }
-  100% {
-    transform: translateX(-50%);
-  }
-}
 
 /* ── Landing animation utilities (consumed verbatim by src/landing/*) ──────── */
 .animate-aurora {
@@ -142,9 +128,6 @@
 .animate-beam-sweep {
   animation: at-beam-sweep 19s ease-in-out infinite;
 }
-.animate-marquee {
-  animation: at-marquee 38s linear infinite;
-}
 
 /* respect reduced motion: freeze the ambient/looping landing animations */
 @media (prefers-reduced-motion: reduce) {
@@ -157,8 +140,7 @@
   .animate-wave,
   .animate-dot-pulse,
   .animate-float-up,
-  .animate-beam-sweep,
-  .animate-marquee {
+  .animate-beam-sweep {
     animation: none !important;
   }
 }
@@ -237,7 +219,6 @@
   --lp-particle-opacity: 1;
 }
 
-/* The marquee mask is an alpha ramp, so it works on either canvas as-is. */
 .at-particles {
   opacity: var(--lp-particle-opacity);
 }

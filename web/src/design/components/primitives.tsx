@@ -59,8 +59,8 @@ export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
       className={cn(
         'rounded-[24px] border p-6',
         feature
-          ? 'border-[rgba(var(--accent-rgb),0.22)] bg-[linear-gradient(160deg,#001b33,#030719)]'
-          : 'border-white/[0.08] bg-[#0f0f10]',
+          ? 'border-[rgba(var(--accent-rgb),0.22)] bg-[image:var(--ui-grad-feature)]'
+          : 'border-border bg-card',
         hover &&
           'transition-[transform,box-shadow,border-color] duration-300 will-change-transform hover:-translate-y-1 hover:border-[rgba(var(--accent-rgb),0.45)] hover:shadow-[0_16px_48px_-18px_rgba(var(--accent-rgb),0.45)]',
         className,
@@ -85,11 +85,11 @@ interface StatCardProps {
 
 export function StatCard({ label, value, delta, trend = 'flat', feature, className }: StatCardProps): JSX.Element {
   const deltaColor =
-    trend === 'up' ? 'text-[#27c93f]' : trend === 'down' ? 'text-[#e6714f]' : 'text-[#888b91]';
+    trend === 'up' ? 'text-[var(--ui-ok)]' : trend === 'down' ? 'text-[var(--ui-danger)]' : 'text-muted-foreground';
   return (
     <GlassCard feature={feature} className={cn('p-5', className)}>
-      <div className="mb-3 text-[12.5px] text-[#888b91]">{label}</div>
-      <div className="text-[30px] font-semibold tracking-[-1.2px] text-white tabular-nums">
+      <div className="mb-3 text-[12.5px] text-muted-foreground">{label}</div>
+      <div className="text-[30px] font-semibold tracking-[-1.2px] text-foreground tabular-nums">
         <AnimatedNumber value={value} />
       </div>
       {delta ? <div className={cn('mt-1.5 text-[12px]', deltaColor)}>{delta}</div> : null}
@@ -137,8 +137,8 @@ export const ScoreRing = memo(function ScoreRing({
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-[28px] font-semibold tracking-[-1px] text-white">{clamped}</span>
-        <span className="text-[10px] uppercase tracking-[1px] text-[#70757c]">{label}</span>
+        <span className="text-[28px] font-semibold tracking-[-1px] text-foreground">{clamped}</span>
+        <span className="text-[10px] uppercase tracking-[1px] text-[var(--ui-faint)]">{label}</span>
       </div>
     </div>
   );
@@ -185,11 +185,11 @@ interface PillProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const PILL_STYLES: Record<PillVariant, string> = {
-  primary: 'bg-white text-black hover:bg-[#eaeaea]',
-  ghost: 'bg-white/[0.06] text-white border border-white/10 hover:bg-white/[0.1]',
-  outline: 'bg-transparent text-white border border-white/15 hover:border-white/30',
-  accent: 'bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa] border border-[rgba(var(--accent-rgb),0.35)] hover:bg-[rgba(var(--accent-rgb),0.2)]',
-  danger: 'bg-[rgba(230,113,79,0.14)] text-[#e6714f] border border-[rgba(230,113,79,0.35)] hover:bg-[rgba(230,113,79,0.22)]',
+  primary: 'bg-primary text-primary-foreground hover:bg-primary/90',
+  ghost: 'bg-[var(--ui-inset)] text-foreground border border-border hover:bg-[var(--ui-inset-strong)]',
+  outline: 'bg-transparent text-foreground border border-border hover:border-[var(--ui-line-strong)]',
+  accent: 'bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)] border border-[rgba(var(--accent-rgb),0.35)] hover:bg-[rgba(var(--accent-rgb),0.2)]',
+  danger: 'bg-[var(--ui-danger-wash)] text-[var(--ui-danger)] border border-[var(--ui-danger)]/35 hover:brightness-95',
 };
 
 export const Pill = forwardRef<HTMLButtonElement, PillProps>(
@@ -198,7 +198,7 @@ export const Pill = forwardRef<HTMLButtonElement, PillProps>(
       ref={ref}
       className={cn(
         'inline-flex items-center justify-center gap-2 rounded-[9999px] px-5 py-2.5 text-[14px] font-semibold',
-        'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black',
+        'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         'disabled:cursor-not-allowed disabled:opacity-50',
         PILL_STYLES[variant],
         className,
@@ -225,7 +225,7 @@ export function Marquee({ items, className }: MarqueeProps): JSX.Element {
       style={{ maskImage: 'linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)' }}>
       <div className="av-marquee-track flex w-max gap-10">
         {doubled.map((it, i) => (
-          <span key={i} className="whitespace-nowrap text-[14px] text-[#888b91]">{it}</span>
+          <span key={i} className="whitespace-nowrap text-[14px] text-muted-foreground">{it}</span>
         ))}
       </div>
     </div>
@@ -244,7 +244,7 @@ interface AvatarProps {
 export function Avatar({ initials, gradient = 'linear-gradient(135deg,var(--accent),#a887dc)', size = 36, className }: AvatarProps): JSX.Element {
   return (
     <span
-      className={cn('inline-flex flex-none items-center justify-center rounded-full font-semibold text-white', className)}
+      className={cn('inline-flex flex-none items-center justify-center rounded-full font-semibold text-foreground', className)}
       style={{ width: size, height: size, background: gradient, fontSize: size * 0.36 }}
     >
       {initials}
@@ -257,12 +257,12 @@ export function Avatar({ initials, gradient = 'linear-gradient(135deg,var(--acce
 export type TagTone = 'neutral' | 'electric' | 'lavender' | 'amber' | 'forest' | 'ember' | 'pink';
 
 const TAG_TONES: Record<TagTone, string> = {
-  neutral: 'bg-white/[0.08] text-[#b8babf]',
-  electric: 'bg-[rgba(var(--accent-rgb),0.16)] text-[#60a5fa]',
+  neutral: 'bg-[var(--ui-inset-strong)] text-[var(--ui-soft)]',
+  electric: 'bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]',
   lavender: 'bg-[rgba(168,135,220,0.18)] text-[#c89ce8]',
-  amber: 'bg-[rgba(255,183,100,0.16)] text-[#ffb764]',
-  forest: 'bg-[rgba(39,201,63,0.16)] text-[#27c93f]',
-  ember: 'bg-[rgba(230,113,79,0.16)] text-[#e6714f]',
+  amber: 'bg-[rgba(255,183,100,0.16)] text-[var(--ui-warn)]',
+  forest: 'bg-[rgba(39,201,63,0.16)] text-[var(--ui-ok)]',
+  ember: 'bg-[rgba(230,113,79,0.16)] text-[var(--ui-danger)]',
   pink: 'bg-[rgba(221,85,231,0.16)] text-[#dd55e7]',
 };
 
@@ -296,17 +296,17 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(
     const fieldId = id ?? autoId;
     return (
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={fieldId} className="text-[12.5px] font-medium text-[#b8babf]">{label}</label>
-        <div className="flex items-center gap-2.5 rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3.5 py-3 focus-within:border-[var(--accent)]">
-          {icon ? <span className="text-[#70757c]">{icon}</span> : null}
+        <label htmlFor={fieldId} className="text-[12.5px] font-medium text-[var(--ui-soft)]">{label}</label>
+        <div className="flex items-center gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset)] px-3.5 py-3 focus-within:border-[var(--accent)]">
+          {icon ? <span className="text-[var(--ui-faint)]">{icon}</span> : null}
           <input
             ref={ref}
             id={fieldId}
-            className={cn('w-full min-w-0 bg-transparent text-[14px] text-white placeholder:text-[#5a5f66] focus:outline-none', className)}
+            className={cn('w-full min-w-0 bg-transparent text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none', className)}
             {...rest}
           />
         </div>
-        {hint ? <span className="text-[11.5px] text-[#70757c]">{hint}</span> : null}
+        {hint ? <span className="text-[11.5px] text-[var(--ui-faint)]">{hint}</span> : null}
       </div>
     );
   },
@@ -330,11 +330,11 @@ export function ToggleSwitch({ checked, onChange, label }: ToggleSwitchProps): J
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative h-6 w-11 flex-none rounded-pill transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black',
+        'relative h-6 w-11 flex-none rounded-pill transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         checked ? 'bg-[var(--accent)]' : 'bg-white/15',
       )}
     >
-      <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all', checked ? 'left-[22px]' : 'left-0.5')} />
+      <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-primary transition-all', checked ? 'left-[22px]' : 'left-0.5')} />
     </button>
   );
 }
@@ -355,7 +355,7 @@ interface SegTabsProps {
 
 export function SegTabs({ tabs, active, onChange, className }: SegTabsProps): JSX.Element {
   return (
-    <div className={cn('inline-flex items-center gap-1 rounded-pill border border-white/[0.08] bg-[rgba(28,29,31,0.6)] p-1', className)} role="tablist">
+    <div className={cn('inline-flex items-center gap-1 rounded-pill border border-border bg-[var(--ui-inset)] p-1', className)} role="tablist">
       {tabs.map((t) => {
         const on = t.key === active;
         return (
@@ -366,7 +366,7 @@ export function SegTabs({ tabs, active, onChange, className }: SegTabsProps): JS
             onClick={() => onChange(t.key)}
             className={cn(
               'rounded-pill px-3.5 py-1.5 text-[12.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-              on ? 'bg-white text-black' : 'text-[#b8babf] hover:text-white',
+              on ? 'bg-primary text-primary-foreground' : 'text-[var(--ui-soft)] hover:text-foreground',
             )}
           >
             {t.label}

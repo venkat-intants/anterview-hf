@@ -89,11 +89,11 @@ function ApplicationCard({ app }: { app: MyApplication }) {
     <GlassCard className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-[16px] font-semibold text-white">
-            <Briefcase size={15} className="shrink-0 text-[#888b91]" aria-hidden="true" />
+          <h2 className="flex items-center gap-2 text-[16px] font-semibold text-foreground">
+            <Briefcase size={15} className="shrink-0 text-muted-foreground" aria-hidden="true" />
             <span className="truncate">{app.job_title}</span>
           </h2>
-          <p className="mt-1 flex items-center gap-1.5 text-[13px] text-[#888b91]">
+          <p className="mt-1 flex items-center gap-1.5 text-[13px] text-muted-foreground">
             <Building2 size={13} aria-hidden="true" />
             {app.company_name}
             <span aria-hidden="true">·</span>
@@ -106,19 +106,19 @@ function ApplicationCard({ app }: { app: MyApplication }) {
       </div>
 
       {round && (
-        <p className="mt-4 flex items-center gap-2 rounded-[10px] border border-white/8 bg-white/[0.03] px-3 py-2 text-[13px] text-[#c6c8cc]">
-          <Clock size={13} className="shrink-0 text-[#888b91]" aria-hidden="true" />
+        <p className="mt-4 flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[13px] text-[var(--ui-soft)]">
+          <Clock size={13} className="shrink-0 text-muted-foreground" aria-hidden="true" />
           {round}
         </p>
       )}
 
-      <p className="mt-3 text-[13.5px] leading-relaxed text-[#888b91]">{app.next_step}</p>
+      <p className="mt-3 text-[13.5px] leading-relaxed text-muted-foreground">{app.next_step}</p>
 
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="mt-4 inline-flex items-center gap-1 text-[12.5px] text-[#60a5fa] hover:underline focus:outline-none focus-visible:underline underline-offset-4"
+        className="mt-4 inline-flex items-center gap-1 text-[12.5px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline underline-offset-4"
       >
         {open ? (
           <ChevronDown size={13} aria-hidden="true" />
@@ -129,24 +129,24 @@ function ApplicationCard({ app }: { app: MyApplication }) {
       </button>
 
       {open && (
-        <div className="mt-3 border-t border-white/8 pt-3">
-          {isLoading && <p className="text-[13px] text-[#888b91]">Loading…</p>}
+        <div className="mt-3 border-t border-border pt-3">
+          {isLoading && <p className="text-[13px] text-muted-foreground">Loading…</p>}
           {detail && detail.history.length === 0 && (
-            <p className="text-[13px] text-[#888b91]">Nothing has changed yet.</p>
+            <p className="text-[13px] text-muted-foreground">Nothing has changed yet.</p>
           )}
           {detail && detail.history.length > 0 && (
             <ol className="flex flex-col gap-2.5">
               {detail.history.map((e, i) => (
                 <li key={`${e.occurred_at}-${i}`} className="flex items-start gap-2.5">
                   <span
-                    className="mt-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.16)] text-[#60a5fa]"
+                    className="mt-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]"
                     aria-hidden="true"
                   >
                     <Check size={10} />
                   </span>
-                  <span className="text-[13px] text-[#c6c8cc]">
+                  <span className="text-[13px] text-[var(--ui-soft)]">
                     {e.stage}
-                    <span className="text-[#888b91]">
+                    <span className="text-muted-foreground">
                       {' '}
                       · {dateOf(e.occurred_at)}
                       {/* Worth surfacing: it answers "did a person look at
@@ -174,13 +174,13 @@ function ApplicationCard({ app }: { app: MyApplication }) {
 function ErrorState() {
   return (
     <GlassCard className="p-8 text-center">
-      <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[#e6714f]">
+      <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[var(--ui-danger)]">
         <AlertCircle className="h-6 w-6" aria-hidden="true" />
       </span>
-      <h2 className="mt-5 text-[18px] font-semibold text-white">
+      <h2 className="mt-5 text-[18px] font-semibold text-foreground">
         Could not load your applications
       </h2>
-      <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-[#888b91]">
+      <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-muted-foreground">
         Something went wrong on our side, not with your applications. Refresh
         the page to try again.
       </p>
@@ -191,15 +191,15 @@ function ErrorState() {
 function EmptyState() {
   return (
     <GlassCard className="p-8 text-center">
-      <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+      <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
         <Briefcase className="h-6 w-6" aria-hidden="true" />
       </span>
-      <h2 className="mt-5 text-[18px] font-semibold text-white">No applications yet</h2>
-      <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-[#888b91]">
+      <h2 className="mt-5 text-[18px] font-semibold text-foreground">No applications yet</h2>
+      <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-muted-foreground">
         Jobs you apply to will appear here, with the stage you are at and what
         happens next.
       </p>
-      <p className="mx-auto mt-4 max-w-md text-[13px] leading-relaxed text-[#888b91]">
+      <p className="mx-auto mt-4 max-w-md text-[13px] leading-relaxed text-muted-foreground">
         Already applied somewhere? Your application is safe either way — but it
         only shows up here once you have opened the “Set a password” link in the
         confirmation email we sent you. Check that email, including its spam
@@ -236,11 +236,11 @@ export default function Applications() {
       <Reveal>
         <h1
           id="applications-heading"
-          className="text-[28px] font-semibold tracking-[-1px] text-white"
+          className="text-[28px] font-semibold tracking-[-1px] text-foreground"
         >
           My applications
         </h1>
-        <p className="mt-1 text-[14px] text-[#888b91]">
+        <p className="mt-1 text-[14px] text-muted-foreground">
           Where you stand on every role you have applied for.
         </p>
       </Reveal>
@@ -272,7 +272,7 @@ export default function Applications() {
             and they should not compete with the live ones for attention. */}
         {closed.length > 0 && (
           <>
-            <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.1em] text-[#888b91]">
+            <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
               Closed
             </p>
             {closed.map((app) => (

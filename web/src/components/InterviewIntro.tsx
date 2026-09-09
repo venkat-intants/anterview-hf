@@ -97,11 +97,11 @@ export default function InterviewIntro({ language, onDone }: InterviewIntroProps
           <span className="text-caption font-semibold text-electric-signal tracking-wider uppercase">
             {t('interviewIntro.brand')}
           </span>
-          <h1 className="mt-1 text-heading font-semibold text-white">{t('interviewIntro.meetTitle')}</h1>
+          <h1 className="mt-1 text-heading font-semibold text-foreground">{t('interviewIntro.meetTitle')}</h1>
         </div>
 
         {/* Video container */}
-        <div className="w-full rounded-3xl overflow-hidden shadow-elevated border border-white/10 bg-black">
+        <div className="w-full rounded-3xl overflow-hidden shadow-elevated border border-border bg-black">
           {/*
            * onError: video 404, decode failure, or codec unsupported — call
            *   onDone so a broken clip never blocks the interview.
@@ -124,7 +124,7 @@ export default function InterviewIntro({ language, onDone }: InterviewIntroProps
         </div>
 
         {/* Camera consent — Phase A (DPDP video_capture) */}
-        <label className="flex items-start gap-3 w-full max-w-md rounded-xl bg-obsidian/70 backdrop-blur-sm border border-white/10 px-4 py-3 cursor-pointer">
+        <label className="flex items-start gap-3 w-full max-w-md rounded-xl bg-obsidian/70 backdrop-blur-sm border border-border px-4 py-3 cursor-pointer">
           <input
             type="checkbox"
             checked={cameraConsent}
@@ -169,7 +169,7 @@ export default function InterviewIntro({ language, onDone }: InterviewIntroProps
             type="button"
             onClick={() => void handleSkip()}
             aria-label={t('interviewIntro.skipLabel')}
-            className="text-body-sm text-mist hover:text-white underline underline-offset-2 transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-black rounded"
+            className="text-body-sm text-mist hover:text-foreground underline underline-offset-2 transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-black rounded"
             data-testid="skip-button"
           >
             {t('interviewIntro.skipButton')}

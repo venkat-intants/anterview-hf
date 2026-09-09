@@ -1,4 +1,4 @@
-# Deploying Intants to Render
+# Deploying AntHire to Render
 
 > ## ⚠️ DEPRECATED / LEGACY — do not follow this guide for a new deploy.
 >

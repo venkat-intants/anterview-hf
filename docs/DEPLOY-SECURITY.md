@@ -1,6 +1,6 @@
 # DEPLOY-SECURITY — Stage 2 Pre-Deploy Security Runbook
 
-> Scope: Public demo deploy of the Intants AI Interview platform.
+> Scope: Public demo deploy of the AntHire AI interview platform.
 > Frontend on Vercel (`*.vercel.app`), backend on Railway (`*.railway.app`), **no custom domain**.
 > White-hat / defensive only. This is a checklist for the founder to execute in provider dashboards.
 > Author: security-auditor. Date: 2026-06-02.

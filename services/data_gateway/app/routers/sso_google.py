@@ -304,11 +304,11 @@ async def initiate(
     "/callback",
     status_code=status.HTTP_200_OK,
     response_model=SsoTokenResponse,
-    summary="Handle Google OAuth2 callback and issue Intants JWT",
+    summary="Handle Google OAuth2 callback and issue an AntHire JWT",
     description=(
         "Validates the CSRF state token, exchanges the authorization code for "
         "a Google access token, fetches the user's profile from Google, upserts "
-        "the user in the Intants DB, and returns an Intants JWT. "
+        "the user in the AntHire DB, and returns an AntHire JWT. "
         "Returns 404 if AUTH_PROVIDER != google; 400 on invalid/expired state; "
         "502 on Google API errors."
     ),
@@ -321,7 +321,7 @@ async def callback(
     request: Request,
     response: Response,
 ) -> SsoTokenResponse:
-    """Complete the Google OAuth 2.0 flow and create/update the Intants user.
+    """Complete the Google OAuth 2.0 flow and create/update the AntHire user.
 
     Steps
     -----
@@ -330,7 +330,7 @@ async def callback(
     3. Exchange ``code`` for a Google access token via POST to token endpoint.
     4. Fetch user info (sub, email, name) from Google userinfo endpoint.
     5. Upsert user in DB (ON CONFLICT email DO UPDATE).
-    6. Issue Intants JWT (same claim shape as LocalAuthProvider).
+    6. Issue AntHire JWT (same claim shape as LocalAuthProvider).
     7. Return {"access_token": …, "token_type": "bearer", "user_id": …}.
 
     Error handling
@@ -678,7 +678,7 @@ async def callback(
     )
 
     # ------------------------------------------------------------------
-    # Step 6: Issue Intants JWT (candidate-only)
+    # Step 6: Issue AntHire JWT (candidate-only)
     # ------------------------------------------------------------------
     intants_jwt = issue_access_token(
         user_id=str(final_user_id),

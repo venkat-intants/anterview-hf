@@ -38,9 +38,9 @@ function PageWrap({ children }: { children: React.ReactNode }) {
       {/* Logo mark */}
       <div className="absolute left-6 top-6 z-10 flex items-center gap-2.5">
         <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)]">
-          <span className="h-2.5 w-2.5 rounded-full bg-white" />
+          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
         </span>
-        <span className="text-[15px] font-semibold text-foreground">Anterview</span>
+        <span className="text-[15px] font-semibold text-foreground">AntHire</span>
       </div>
       <div className="relative z-10 flex w-full max-w-[520px] flex-col items-center gap-4 text-center">
         {children}
@@ -170,9 +170,9 @@ export default function InterviewInvite() {
         {/* Logo */}
         <div className="mb-6 flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)]">
-            <span className="h-2.5 w-2.5 rounded-full bg-white" />
+            <span className="h-2.5 w-2.5 rounded-full bg-primary" />
           </span>
-          <span className="text-[15px] font-semibold text-foreground">Anterview</span>
+          <span className="text-[15px] font-semibold text-foreground">AntHire</span>
         </div>
 
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
@@ -202,7 +202,7 @@ export default function InterviewInvite() {
             </p>
 
             {/* Avatar / AI interviewer card */}
-            <div className="mt-5 flex items-center gap-3 rounded-[12px] border border-white/[0.08] bg-white/[0.02] p-4">
+            <div className="mt-5 flex items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4">
               <Avatar
                 initials="AI"
                 gradient="linear-gradient(135deg,var(--accent),#a887dc)"
@@ -239,7 +239,7 @@ export default function InterviewInvite() {
                   return (
                     <div
                       key={c.label}
-                      className="flex flex-col items-center gap-2 rounded-[12px] border border-white/[0.08] bg-white/[0.02] p-4 text-center"
+                      className="flex flex-col items-center gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4 text-center"
                     >
                       <Icon size={18} className="text-electric" aria-hidden="true" />
                       <span className="text-[12px] text-mist">{c.label}</span>
@@ -250,7 +250,7 @@ export default function InterviewInvite() {
             </div>
 
             {/* DPDP consent checkbox — gates the Begin button */}
-            <label className="mt-5 flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-white/[0.08] bg-white/[0.02] p-4 text-[12.5px] text-mist">
+            <label className="mt-5 flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4 text-[12.5px] text-mist">
               <input
                 type="checkbox"
                 checked={consent}

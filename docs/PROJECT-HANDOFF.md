@@ -1,4 +1,4 @@
-# Intants AI Interview Platform — Development Report & Work Log
+# AntHire — AI Interview Platform — Development Report & Work Log
 
 **Prepared by:** Jayanth Murala
 **Email:** [jayanth.m@intants.com](mailto:jayanth.m@intants.com)
@@ -10,7 +10,7 @@
 
 ## 1. Summary
 
-This report covers everything I have built on the Intants AI interview platform so far, the
+This report covers everything I have built on the AntHire AI interview platform so far, the
 decisions I took, the problems I ran into, the tools and services I used, and where the project
 stands today. It also includes a day-by-day work log with timings.
 

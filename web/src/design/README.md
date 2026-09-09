@@ -11,11 +11,11 @@ tree, not a proposal:
 | System | What it is | Consumers at HEAD |
 |---|---|---|
 | `src/components/ui/` | shadcn/ui — Radix-backed accessible primitives (Button, Input, Badge, Dialog, Select, Skeleton, Table, Tabs, …) | 19 files |
-| `src/design/` | The "Anterview" app kit — `AppShell`, `GlassCard`, `StatCard`, `SegTabs`, `Pill`, `ToggleSwitch`, `StatusTag`, `ScoreRing`, `Reveal`, `AuroraField` | 46 files |
+| `src/design/` | The "AntHire" app kit — `AppShell`, `GlassCard`, `StatCard`, `SegTabs`, `Pill`, `ToggleSwitch`, `StatusTag`, `ScoreRing`, `Reveal`, `AuroraField` | 46 files |
 | `src/landing/` | A near-copy of the same kit, built for the marketing page | **1 file** — `src/pages/Landing.tsx` |
 
 They had **three byte-identical copies of `cn()`**, `src/main.tsx` globally loads
-**two** `anterview.css` stylesheets (`landing/styles/` then `design/styles/`),
+**two** `anthire.css` stylesheets (`landing/styles/` then `design/styles/`),
 and six primitive names — `GlassCard`, `Pill`, `StatCard`, `ScoreRing`,
 `WaveBars`, `Marquee` — exist in both `design/` and `landing/` with **different
 props** (`landing`'s `StatCard` takes `icon/value/label`; `design`'s takes
@@ -70,7 +70,7 @@ So: **new work uses `@/design` + `@/components/ui`.** That combination is what
 These need a product call on how the marketing page should look, and a
 non-trivial migration, so they stay open under `FE-4`:
 
-- Merging the two `anterview.css` stylesheets that `main.tsx` loads globally.
+- Merging the two `anthire.css` stylesheets that `main.tsx` loads globally.
   They are 164 (landing) and 53 (design) lines and the load order is
   load-bearing — `main.tsx` documents that `design/` must win on name overlap.
 - Collapsing the six diverged primitive pairs into one implementation each.

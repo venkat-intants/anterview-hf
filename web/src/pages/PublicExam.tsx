@@ -64,9 +64,9 @@ function PageWrap({ children }: { children: React.ReactNode }) {
       {/* Logo mark */}
       <div className="absolute left-6 top-6 z-10 flex items-center gap-2.5">
         <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)]">
-          <span className="h-2.5 w-2.5 rounded-full bg-white" />
+          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
         </span>
-        <span className="text-[15px] font-semibold text-foreground">Anterview</span>
+        <span className="text-[15px] font-semibold text-foreground">AntHire</span>
       </div>
       <div className="relative z-10 flex w-full max-w-[520px] flex-col items-center gap-4 text-center">
         {children}
@@ -142,7 +142,7 @@ function SectionStepper({ sections, currentIndex }: SectionStepperProps) {
                 ? 'bg-vivid-mint/20 text-vivid-mint'
                 : i === currentIndex
                   ? 'bg-electric text-midnight'
-                  : 'bg-white/[0.06] text-fog',
+                  : 'bg-[var(--ui-inset)] text-fog',
             )}
             aria-current={i === currentIndex ? 'step' : undefined}
           >
@@ -160,7 +160,7 @@ function SectionStepper({ sections, currentIndex }: SectionStepperProps) {
             <div
               className={cn(
                 'h-px w-6 shrink-0',
-                i < currentIndex ? 'bg-vivid-mint/30' : 'bg-white/[0.08]',
+                i < currentIndex ? 'bg-vivid-mint/30' : 'bg-[var(--ui-inset-strong)]',
               )}
             />
           )}
@@ -476,9 +476,9 @@ export default function PublicExam() {
           {/* Logo */}
           <div className="mb-6 flex items-center gap-2.5">
             <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)]">
-              <span className="h-2.5 w-2.5 rounded-full bg-white" />
+              <span className="h-2.5 w-2.5 rounded-full bg-primary" />
             </span>
-            <span className="text-[15px] font-semibold text-foreground">Anterview</span>
+            <span className="text-[15px] font-semibold text-foreground">AntHire</span>
           </div>
 
           <GlassCard className="p-8">
@@ -512,7 +512,7 @@ export default function PublicExam() {
                 return (
                   <div
                     key={f.label}
-                    className="rounded-[12px] border border-white/[0.08] bg-white/[0.02] p-4"
+                    className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4"
                   >
                     <Icon size={16} className="text-electric" aria-hidden="true" />
                     <div className="mt-2 text-[11px] uppercase tracking-[0.5px] text-fog">
@@ -532,7 +532,7 @@ export default function PublicExam() {
                 {sections.map((s, i) => (
                   <div
                     key={s.id}
-                    className="flex items-center justify-between rounded-[10px] border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-caption"
+                    className="flex items-center justify-between rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-caption"
                   >
                     <span className="text-muted-foreground">
                       {i + 1}. {s.title}
@@ -549,7 +549,7 @@ export default function PublicExam() {
             )}
 
             {/* Proctoring notice */}
-            <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-white/[0.06] bg-white/[0.02] px-3 py-2.5 text-caption text-muted-foreground">
+            <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
               <ShieldCheck
                 size={14}
                 className="mt-0.5 shrink-0 text-vivid-mint"
@@ -559,7 +559,7 @@ export default function PublicExam() {
             </div>
 
             {/* DPDP consent */}
-            <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-white/[0.08] bg-white/[0.02] p-4 text-[12.5px] text-mist">
+            <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4 text-[12.5px] text-mist">
               <input
                 type="checkbox"
                 checked={consent}
@@ -615,7 +615,7 @@ export default function PublicExam() {
       </AnimatePresence>
 
       {/* Sticky bar */}
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/[0.08] bg-obsidian/80 px-4 py-3 backdrop-blur-xl">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-obsidian/80 px-4 py-3 backdrop-blur-xl">
         <div className="min-w-0 flex-1">
           <p className="truncate text-body-sm font-semibold text-foreground">{exam.title}</p>
           {sections.length > 0 && currentSection && (
@@ -649,7 +649,7 @@ export default function PublicExam() {
                 'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium tabular-nums',
                 sectionRemaining <= 30
                   ? 'bg-[rgba(230,113,79,0.15)] text-ember'
-                  : 'bg-white/[0.06] text-muted-foreground',
+                  : 'bg-[var(--ui-inset)] text-muted-foreground',
               )}
               aria-live="polite"
               aria-label={t('publicExam.sectionTimeRemaining', { time: fmt(sectionRemaining) })}
@@ -666,7 +666,7 @@ export default function PublicExam() {
                 'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-body-sm font-medium tabular-nums',
                 remaining <= 30
                   ? 'bg-[rgba(230,113,79,0.15)] text-ember'
-                  : 'bg-white/[0.06] text-foreground',
+                  : 'bg-[var(--ui-inset)] text-foreground',
               )}
               aria-live="polite"
               aria-label={t('publicExam.timeRemaining', { time: fmt(remaining) })}
@@ -738,7 +738,7 @@ export default function PublicExam() {
                                   'flex cursor-pointer items-center gap-3 rounded-[12px] border px-3 py-2.5 text-body-sm transition-colors',
                                   checked
                                     ? 'border-electric/60 bg-electric/10 text-foreground'
-                                    : 'border-white/[0.08] text-muted-foreground hover:border-white/20 hover:bg-white/[0.03]',
+                                    : 'border-border text-muted-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
                                 )}
                               >
                                 <input
@@ -773,7 +773,7 @@ export default function PublicExam() {
         </AnimatePresence>
 
         {/* Navigation + submit footer */}
-        <div className="mt-8 flex items-center justify-between gap-3 border-t border-white/[0.06] pt-6">
+        <div className="mt-8 flex items-center justify-between gap-3 border-t border-border pt-6">
           <div className="text-caption text-muted-foreground">
             {currentSection?.kind === 'mcq' &&
               (answeredCountForSection < sectionQuestions.length

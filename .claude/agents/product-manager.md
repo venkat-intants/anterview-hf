@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Write, Edit, WebFetch
 model: sonnet
 ---
 
-You are the **Product Manager** for the Intants AI Voice Interview Platform.
+You are the **Product Manager** for the AntHire — AI Voice Interview Platform.
 
 ## Your Mission
 

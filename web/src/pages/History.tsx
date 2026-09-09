@@ -41,7 +41,7 @@ const LANGUAGE_LABEL_KEYS: Record<string, string> = {
 function Sk({ className }: { className?: string }) {
   return (
     <div
-      className={cn('animate-pulse rounded-md bg-white/[0.06]', className)}
+      className={cn('animate-pulse rounded-md bg-[var(--ui-inset)]', className)}
       aria-hidden="true"
     />
   );
@@ -83,15 +83,15 @@ function EmptyState() {
     <div data-testid="history-empty-state">
       <GlassCard className="flex flex-col items-center justify-center gap-4 py-20 text-center">
         <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.1)] ring-1 ring-[rgba(var(--accent-rgb),0.2)]">
-          <Clock className="h-7 w-7 text-[#60a5fa]" aria-hidden="true" />
+          <Clock className="h-7 w-7 text-[var(--ui-info)]" aria-hidden="true" />
         </div>
         <div>
-          <p className="text-[15px] font-semibold text-white">{t('history.noInterviewsTitle')}</p>
-          <p className="mt-1 text-[13px] text-[#888b91]">{t('history.noInterviewsDesc')}</p>
+          <p className="text-[15px] font-semibold text-foreground">{t('history.noInterviewsTitle')}</p>
+          <p className="mt-1 text-[13px] text-muted-foreground">{t('history.noInterviewsDesc')}</p>
         </div>
         <Link
           to="/start"
-          className="inline-flex items-center gap-1.5 rounded-[9999px] bg-white px-4 py-2 text-[13px] font-semibold text-black hover:bg-[#eaeaea] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] mt-1"
+          className="inline-flex items-center gap-1.5 rounded-[9999px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] mt-1"
         >
           <Play className="h-4 w-4" aria-hidden="true" />
           {t('history.startFirstInterview')}
@@ -113,7 +113,7 @@ function SessionRow({ session }: { session: SessionListItem }) {
 
   return (
     <div
-      className="grid grid-cols-[2fr_1fr_0.8fr_0.8fr_0.6fr_0.5fr] items-center gap-3 border-b border-white/[0.04] px-5 py-3.5 transition-colors last:border-0 hover:bg-white/[0.03]"
+      className="grid grid-cols-[2fr_1fr_0.8fr_0.8fr_0.6fr_0.5fr] items-center gap-3 border-b border-border px-5 py-3.5 transition-colors last:border-0 hover:bg-[var(--ui-inset-soft)]"
       data-testid={`session-row-${session.session_id}`}
     >
       {/* Role */}
@@ -124,8 +124,8 @@ function SessionRow({ session }: { session: SessionListItem }) {
           size={34}
         />
         <div className="min-w-0">
-          <div className="truncate text-[13.5px] font-medium text-white">{session.job_title}</div>
-          <div className="flex items-center gap-1 text-[11.5px] text-[#70757c]">
+          <div className="truncate text-[13.5px] font-medium text-foreground">{session.job_title}</div>
+          <div className="flex items-center gap-1 text-[11.5px] text-[var(--ui-faint)]">
             <Globe className="h-3 w-3 shrink-0" aria-hidden="true" />
             {langLabel}
           </div>
@@ -133,7 +133,7 @@ function SessionRow({ session }: { session: SessionListItem }) {
       </div>
 
       {/* Date */}
-      <div className="text-[13px] text-[#b8babf] tabular-nums">
+      <div className="text-[13px] text-[var(--ui-soft)] tabular-nums">
         {formatDate(session.created_at)}
       </div>
 
@@ -143,27 +143,27 @@ function SessionRow({ session }: { session: SessionListItem }) {
       </div>
 
       {/* Duration */}
-      <div className="flex items-center gap-1.5 text-[13px] text-[#888b91] tabular-nums">
-        <Clock className="h-3.5 w-3.5 shrink-0 text-[#70757c]" aria-hidden="true" />
+      <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground tabular-nums">
+        <Clock className="h-3.5 w-3.5 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
         {formatDuration(session.duration_seconds)}
       </div>
 
       {/* Score placeholder — session list doesn't carry composite score */}
-      <div className="text-[13px] text-[#70757c]">—</div>
+      <div className="text-[13px] text-[var(--ui-faint)]">—</div>
 
       {/* Scorecard link */}
       <div className="flex items-center justify-end">
         {session.scorecard_id ? (
           <Link
             to={`/scorecard/${session.scorecard_id}`}
-            className="flex items-center gap-1 text-[13px] text-[#60a5fa] transition-colors hover:text-white"
+            className="flex items-center gap-1 text-[13px] text-[var(--ui-info)] transition-colors hover:text-foreground"
             aria-label={`View scorecard for ${session.job_title}`}
           >
             <span className="hidden lg:inline">{t('history.viewScorecard')}</span>
             <ArrowRight size={15} aria-hidden="true" />
           </Link>
         ) : (
-          <span className="text-[12px] text-[#70757c]">—</span>
+          <span className="text-[12px] text-[var(--ui-faint)]">—</span>
         )}
       </div>
     </div>
@@ -194,8 +194,8 @@ function SessionCard({ session }: { session: SessionListItem }) {
               size={34}
             />
             <div className="min-w-0">
-              <p className="truncate text-[14px] font-medium text-white">{session.job_title}</p>
-              <p className="mt-0.5 text-[12px] text-[#888b91] tabular-nums">
+              <p className="truncate text-[14px] font-medium text-foreground">{session.job_title}</p>
+              <p className="mt-0.5 text-[12px] text-muted-foreground tabular-nums">
                 {formatDate(session.created_at)}
               </p>
             </div>
@@ -205,13 +205,13 @@ function SessionCard({ session }: { session: SessionListItem }) {
           </StatusTag>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[#888b91]">
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
           <span className="flex items-center gap-1">
-            <Globe className="h-3 w-3 text-[#70757c]" aria-hidden="true" />
+            <Globe className="h-3 w-3 text-[var(--ui-faint)]" aria-hidden="true" />
             {langLabel}
           </span>
           <span className="flex items-center gap-1 tabular-nums">
-            <Clock className="h-3 w-3 text-[#70757c]" aria-hidden="true" />
+            <Clock className="h-3 w-3 text-[var(--ui-faint)]" aria-hidden="true" />
             {formatDuration(session.duration_seconds)}
           </span>
         </div>
@@ -220,7 +220,7 @@ function SessionCard({ session }: { session: SessionListItem }) {
           <div className="mt-3">
             <Link
               to={`/scorecard/${session.scorecard_id}`}
-              className="inline-flex items-center gap-1.5 rounded-[9999px] border border-white/[0.1] bg-white/[0.04] px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-white/[0.08] hover:border-white/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-[var(--ui-inset)] px-3 py-1.5 text-[12.5px] font-medium text-foreground hover:bg-[var(--ui-inset-strong)] hover:border-[var(--ui-line-strong)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {t('history.viewScorecard')}
               <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
@@ -253,8 +253,8 @@ function PaginationBar({
         onClick={onPrev}
         disabled={page <= 1}
         className={cn(
-          'inline-flex items-center gap-1.5 rounded-[9999px] border border-white/[0.1] bg-transparent px-3.5 py-2 text-[13px] font-medium text-white transition-colors',
-          'hover:bg-white/[0.06] hover:border-white/20',
+          'inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-transparent px-3.5 py-2 text-[13px] font-medium text-foreground transition-colors',
+          'hover:bg-[var(--ui-inset)] hover:border-[var(--ui-line-strong)]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
           'disabled:cursor-not-allowed disabled:opacity-40',
         )}
@@ -263,7 +263,7 @@ function PaginationBar({
         <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         {t('history.prevPage')}
       </button>
-      <span className="text-[13px] text-[#888b91] tabular-nums">
+      <span className="text-[13px] text-muted-foreground tabular-nums">
         {t('history.pageOf', { page, total: totalPages })}
       </span>
       <button
@@ -271,8 +271,8 @@ function PaginationBar({
         onClick={onNext}
         disabled={page >= totalPages}
         className={cn(
-          'inline-flex items-center gap-1.5 rounded-[9999px] border border-white/[0.1] bg-transparent px-3.5 py-2 text-[13px] font-medium text-white transition-colors',
-          'hover:bg-white/[0.06] hover:border-white/20',
+          'inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-transparent px-3.5 py-2 text-[13px] font-medium text-foreground transition-colors',
+          'hover:bg-[var(--ui-inset)] hover:border-[var(--ui-line-strong)]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
           'disabled:cursor-not-allowed disabled:opacity-40',
         )}
@@ -324,11 +324,11 @@ export default function History() {
       <Reveal>
         <h1
           id="history-heading"
-          className="text-[28px] font-semibold tracking-[-1px] text-white"
+          className="text-[28px] font-semibold tracking-[-1px] text-foreground"
         >
           {t('history.pageTitle')}
         </h1>
-        <p className="mt-1 text-[14px] text-[#888b91]">{t('history.pageDesc')}</p>
+        <p className="mt-1 text-[14px] text-muted-foreground">{t('history.pageDesc')}</p>
       </Reveal>
 
       {/* Content */}
@@ -346,10 +346,10 @@ export default function History() {
                 className="flex h-full flex-col items-center justify-center gap-3 text-center"
               >
                 <ScoreRing score={avgRingScore} size={120} label="avg" />
-                <div className="text-[13px] text-[#9fb6d6]">
+                <div className="text-[13px] text-[var(--ui-soft)]">
                   {t('history.sessionsTotal', { count: total })}
                 </div>
-                <div className="mt-1 text-[12px] text-[#70757c]">
+                <div className="mt-1 text-[12px] text-[var(--ui-faint)]">
                   {t('history.sessionsTitle')}
                 </div>
               </GlassCard>
@@ -362,7 +362,7 @@ export default function History() {
                 <div className="hidden md:block">
                   <GlassCard className="overflow-hidden p-0">
                     {/* Table header */}
-                    <div className="grid grid-cols-[2fr_1fr_0.8fr_0.8fr_0.6fr_0.5fr] gap-3 border-b border-white/[0.06] px-5 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                    <div className="grid grid-cols-[2fr_1fr_0.8fr_0.8fr_0.6fr_0.5fr] gap-3 border-b border-border px-5 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                       <div>{t('history.columnRole')}</div>
                       <div>{t('history.columnDate')}</div>
                       <div>{t('history.columnStatus')}</div>

@@ -117,7 +117,7 @@ export default function ExamResults() {
       {/* ── Back link ── */}
       <Link
         to={`/hr/exams/${examId}`}
-        className="inline-flex items-center gap-1.5 text-[13px] text-[#888b91] hover:text-white"
+        className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft size={15} aria-hidden="true" /> Back to exams
       </Link>
@@ -129,7 +129,7 @@ export default function ExamResults() {
             <h1 className="text-[28px] font-semibold tracking-[-1px]">
               {exam?.title ?? 'Exam'} · Results
             </h1>
-            <p className="mt-1 font-mono text-[13.5px] text-[#888b91]">
+            <p className="mt-1 font-mono text-[13.5px] text-muted-foreground">
               exam #{examId} · {list.length} attempt{list.length !== 1 ? 's' : ''} ·{' '}
               {passedCount} passed · pass ≥ {exam?.pass_threshold ?? '—'}%
             </p>
@@ -188,7 +188,7 @@ export default function ExamResults() {
       <Reveal delay={0.1}>
         <GlassCard className="mt-5 overflow-hidden p-0">
           {/* Table header */}
-          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_0.8fr] gap-3 border-b border-white/[0.06] px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_0.8fr] gap-3 border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
             <div>Candidate</div>
             <div>Score</div>
             <div>Submitted</div>
@@ -202,7 +202,7 @@ export default function ExamResults() {
               {[0, 1, 2].map((i) => (
                 <div
                   key={i}
-                  className="h-[56px] animate-pulse border-b border-white/[0.04] bg-white/[0.02] last:border-0"
+                  className="h-[56px] animate-pulse border-b border-border bg-[var(--ui-inset-soft)] last:border-0"
                 />
               ))}
             </div>
@@ -211,7 +211,7 @@ export default function ExamResults() {
           {/* Empty state */}
           {!isLoading && list.length === 0 && (
             <div className="py-12 text-center">
-              <p className="text-[13px] text-[#888b91]">
+              <p className="text-[13px] text-muted-foreground">
                 No attempts yet — assign the exam and share the links.
               </p>
             </div>
@@ -238,7 +238,7 @@ function AttemptRow({ a, examId }: { a: AttemptResult; examId: string }) {
   const inProgress = a.status === 'in_progress' || a.submitted_at === null;
 
   return (
-    <div className="grid grid-cols-[2fr_1fr_1fr_1fr_0.8fr] items-center gap-3 border-b border-white/[0.04] px-6 py-3.5 last:border-0">
+    <div className="grid grid-cols-[2fr_1fr_1fr_1fr_0.8fr] items-center gap-3 border-b border-border px-6 py-3.5 last:border-0">
       {/* Candidate */}
       <div className="flex items-center gap-3">
         <Avatar
@@ -258,7 +258,7 @@ function AttemptRow({ a, examId }: { a: AttemptResult; examId: string }) {
       </div>
 
       {/* Submitted */}
-      <div className="font-mono text-[13px] text-[#888b91]">
+      <div className="font-mono text-[13px] text-muted-foreground">
         {a.submitted_at ? formatDuration(a.submitted_at) : '—'}
       </div>
 

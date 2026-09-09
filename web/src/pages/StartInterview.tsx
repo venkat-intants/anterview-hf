@@ -437,7 +437,7 @@ export default function StartInterview() {
         className="mb-6"
       >
         <div className="flex items-center gap-2 text-[13px] text-muted-foreground mb-1">
-          <Sparkles size={15} className="text-[#a887dc]" aria-hidden="true" />
+          <Sparkles size={15} className="text-[var(--ui-lavender)]" aria-hidden="true" />
           <span>Pre-flight</span>
         </div>
         <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">

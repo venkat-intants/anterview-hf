@@ -162,16 +162,16 @@ function CompanyAdminPanel({
       {/* Panel header */}
       <div className="flex items-start gap-2">
         <span
-          className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.12)] text-[#60a5fa]"
+          className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--ui-info)]"
           aria-hidden="true"
         >
           <ShieldCheck size={17} />
         </span>
         <div className="flex-1 min-w-0">
-          <h3 className="text-[15px] font-semibold text-white">
+          <h3 className="text-[15px] font-semibold text-foreground">
             Super admin — {company.name}
           </h3>
-          <p className="text-[12px] text-[#888b91]">
+          <p className="text-[12px] text-muted-foreground">
             One super admin per company. They log in, reset the password, then create HR managers.
           </p>
         </div>
@@ -184,11 +184,11 @@ function CompanyAdminPanel({
       </div>
 
       {isLoading ? (
-        <Skeleton className="h-16 w-full rounded-[12px] bg-white/[0.05]" />
+        <Skeleton className="h-16 w-full rounded-[12px] bg-[var(--ui-inset)]" />
       ) : hasAdmin ? (
         /* Existing super admin — read-only card */
         <div
-          className="flex items-center justify-between rounded-[14px] border border-white/[0.07] bg-white/[0.03] px-3 py-2.5"
+          className="flex items-center justify-between rounded-[14px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5"
           role="status"
         >
           <div className="flex items-center gap-2.5 min-w-0">
@@ -198,8 +198,8 @@ function CompanyAdminPanel({
               size={30}
             />
             <div className="min-w-0">
-              <p className="text-[13.5px] font-medium text-white truncate">{admin.full_name}</p>
-              <p className="text-[12px] text-[#888b91] truncate">{admin.email}</p>
+              <p className="text-[13.5px] font-medium text-foreground truncate">{admin.full_name}</p>
+              <p className="text-[12px] text-muted-foreground truncate">{admin.email}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -235,7 +235,7 @@ function CompanyAdminPanel({
             }}
           >
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="sa-email" className="text-[12px] font-medium text-[#b8babf]">
+              <label htmlFor="sa-email" className="text-[12px] font-medium text-[var(--ui-soft)]">
                 Email
               </label>
               <Input
@@ -248,7 +248,7 @@ function CompanyAdminPanel({
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="sa-name" className="text-[12px] font-medium text-[#b8babf]">
+              <label htmlFor="sa-name" className="text-[12px] font-medium text-[var(--ui-soft)]">
                 Full name
               </label>
               <Input
@@ -271,8 +271,8 @@ function CompanyAdminPanel({
           </form>
 
           {/* Credential-delivery hint */}
-          <p className="flex items-center gap-1.5 text-[12px] text-[#888b91]">
-            <KeyRound className="h-3 w-3 text-[#60a5fa]" aria-hidden="true" />
+          <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+            <KeyRound className="h-3 w-3 text-[var(--ui-info)]" aria-hidden="true" />
             A secure “set your password” link is emailed to them — no password is
             shared here.
           </p>
@@ -281,9 +281,9 @@ function CompanyAdminPanel({
 
       {/* Read-only HR managers (the super admin creates these for the company) */}
       {hrs && hrs.length > 0 && (
-        <div className="border-t border-white/[0.06] pt-4">
-          <p className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-[#b8babf]">
-            <Users className="h-3.5 w-3.5 text-[#888b91]" aria-hidden="true" />
+        <div className="border-t border-border pt-4">
+          <p className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-[var(--ui-soft)]">
+            <Users className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
             HR managers ({hrs.length})
           </p>
           <div role="list" aria-label={`HR managers for ${company.name}`}>
@@ -291,7 +291,7 @@ function CompanyAdminPanel({
               <div
                 key={hr.user_id}
                 role="listitem"
-                className="flex items-center justify-between rounded-[12px] border border-white/[0.06] bg-white/[0.02] px-3 py-2 mb-1.5 last:mb-0"
+                className="flex items-center justify-between rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 mb-1.5 last:mb-0"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <Avatar
@@ -299,8 +299,8 @@ function CompanyAdminPanel({
                     gradient={gradientFor(hr.user_id.charCodeAt(0))}
                     size={26}
                   />
-                  <span className="text-[12.5px] text-white truncate">{hr.full_name}</span>
-                  <span className="text-[11.5px] text-[#70757c] truncate">{hr.email}</span>
+                  <span className="text-[12.5px] text-foreground truncate">{hr.full_name}</span>
+                  <span className="text-[11.5px] text-[var(--ui-faint)] truncate">{hr.email}</span>
                 </div>
                 {hr.must_change_password ? (
                   <Badge variant="outline" className="text-[10px] shrink-0">
@@ -347,21 +347,21 @@ function FeatureFlagsTab(): JSX.Element {
     <div className="mt-5 space-y-4" aria-live="polite">
       <div className="flex items-center gap-2">
         <span
-          className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.12)] text-[#60a5fa]"
+          className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--ui-info)]"
           aria-hidden="true"
         >
           <ToggleLeft size={17} />
         </span>
         <div>
-          <h2 className="text-[15px] font-semibold text-white">Feature flags</h2>
-          <p className="text-[12px] text-[#888b91]">Toggle platform features globally.</p>
+          <h2 className="text-[15px] font-semibold text-foreground">Feature flags</h2>
+          <p className="text-[12px] text-muted-foreground">Toggle platform features globally.</p>
         </div>
       </div>
 
       {isLoading && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-20 w-full rounded-[24px] bg-white/[0.05]" />
+            <Skeleton key={i} className="h-20 w-full rounded-[24px] bg-[var(--ui-inset)]" />
           ))}
         </div>
       )}
@@ -369,14 +369,14 @@ function FeatureFlagsTab(): JSX.Element {
       {!isLoading && isError && (
         <GlassCard className="p-6">
           <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[#ffb764]" aria-hidden="true" />
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
             <div>
-              <p className="text-[14px] font-semibold text-white">
+              <p className="text-[14px] font-semibold text-foreground">
                 Feature flags unavailable — run the latest migration.
               </p>
-              <p className="mt-1 text-[12.5px] text-[#888b91]">
+              <p className="mt-1 text-[12.5px] text-muted-foreground">
                 The{' '}
-                <code className="rounded bg-white/[0.06] px-1 py-0.5 font-mono text-[11px] text-white">
+                <code className="rounded bg-[var(--ui-inset)] px-1 py-0.5 font-mono text-[11px] text-foreground">
                   feature_flags
                 </code>{' '}
                 table does not exist yet. Apply the pending schema migration and reload.
@@ -388,7 +388,7 @@ function FeatureFlagsTab(): JSX.Element {
 
       {!isLoading && !isError && flags && flags.length === 0 && (
         <GlassCard className="p-8 text-center">
-          <p className="text-[13px] text-[#888b91]">No feature flags defined yet.</p>
+          <p className="text-[13px] text-muted-foreground">No feature flags defined yet.</p>
         </GlassCard>
       )}
 
@@ -397,17 +397,17 @@ function FeatureFlagsTab(): JSX.Element {
           {flags.map((flag) => (
             <GlassCard key={flag.key} className="flex items-center gap-4 p-5">
               <span
-                className="flex h-11 w-11 flex-none items-center justify-center rounded-[12px] bg-white/[0.05] text-[#60a5fa]"
+                className="flex h-11 w-11 flex-none items-center justify-center rounded-[12px] bg-[var(--ui-inset)] text-[var(--ui-info)]"
                 aria-hidden="true"
               >
                 <Building2 size={20} />
               </span>
               <div className="flex-1 min-w-0">
-                <p className="text-[14.5px] font-semibold text-white truncate">{flag.label}</p>
+                <p className="text-[14.5px] font-semibold text-foreground truncate">{flag.label}</p>
                 {flag.description && (
-                  <p className="text-[12.5px] text-[#888b91] truncate">{flag.description}</p>
+                  <p className="text-[12.5px] text-muted-foreground truncate">{flag.description}</p>
                 )}
-                <p className="mt-0.5 font-mono text-[11px] text-[#5a5f66]">{flag.key}</p>
+                <p className="mt-0.5 font-mono text-[11px] text-[var(--ui-faint)]">{flag.key}</p>
               </div>
               <ToggleSwitch
                 checked={flag.enabled}
@@ -474,23 +474,23 @@ function AuditLogTab(): JSX.Element {
 
   return (
     <GlassCard className="mt-5 p-5">
-      <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold text-white">
-        <ShieldCheck size={17} className="text-[#27c93f]" aria-hidden="true" />
+      <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold text-foreground">
+        <ShieldCheck size={17} className="text-[var(--ui-ok)]" aria-hidden="true" />
         DPDP audit log
       </h3>
 
       {isLoading && (
         <div className="space-y-2">
           {[0, 1, 2, 3, 4].map((i) => (
-            <Skeleton key={i} className="h-12 w-full rounded-[10px] bg-white/[0.05]" />
+            <Skeleton key={i} className="h-12 w-full rounded-[10px] bg-[var(--ui-inset)]" />
           ))}
         </div>
       )}
 
       {!isLoading && (!events || events.length === 0) && (
         <div className="py-8 text-center">
-          <ClipboardList className="mx-auto mb-3 h-8 w-8 text-[#5a5f66]" aria-hidden="true" />
-          <p className="text-[13px] text-[#888b91]">No audit events yet.</p>
+          <ClipboardList className="mx-auto mb-3 h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
+          <p className="text-[13px] text-muted-foreground">No audit events yet.</p>
         </div>
       )}
 
@@ -500,21 +500,21 @@ function AuditLogTab(): JSX.Element {
             <div
               key={idx}
               role="listitem"
-              className="flex items-center gap-3 border-b border-white/[0.05] py-3 last:border-0"
+              className="flex items-center gap-3 border-b border-border py-3 last:border-0"
             >
-              <span className="font-mono text-[11.5px] text-[#5a5f66] shrink-0">
+              <span className="font-mono text-[11.5px] text-[var(--ui-faint)] shrink-0">
                 {relativeTs(ev.ts)}
               </span>
               <StatusTag tone={toneForKind(ev.kind)} dot>
                 {labelForKind(ev.kind)}
               </StatusTag>
               <div className="flex-1 text-[13px] min-w-0">
-                <span className="text-white">{ev.summary}</span>{' '}
-                <span className="text-[#70757c]">· {ev.actor}</span>
+                <span className="text-foreground">{ev.summary}</span>{' '}
+                <span className="text-[var(--ui-faint)]">· {ev.actor}</span>
               </div>
               <time
                 dateTime={ev.ts}
-                className="shrink-0 font-mono text-[11.5px] text-[#888b91] tabular-nums"
+                className="shrink-0 font-mono text-[11.5px] text-muted-foreground tabular-nums"
                 title={new Date(ev.ts).toLocaleString('en-IN')}
               >
                 {new Date(ev.ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
@@ -595,10 +595,10 @@ export default function PlatformOwnerConsole() {
       <Reveal>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-[28px] font-semibold tracking-[-1px] text-white">
+            <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
               Platform Owner
             </h1>
-            <p className="mt-1 text-[14px] text-[#888b91]">
+            <p className="mt-1 text-[14px] text-muted-foreground">
               Tenants, company super admins and platform governance.
             </p>
           </div>
@@ -658,7 +658,7 @@ export default function PlatformOwnerConsole() {
                 createMut.mutate();
               }}
             >
-              <Building2 className="h-4 w-4 text-[#60a5fa] shrink-0" aria-hidden="true" />
+              <Building2 className="h-4 w-4 text-[var(--ui-info)] shrink-0" aria-hidden="true" />
               <Input
                 id="new-company-input"
                 value={newCompany}
@@ -681,17 +681,17 @@ export default function PlatformOwnerConsole() {
 
           {/* Companies table */}
           {isLoading ? (
-            <Skeleton className="h-48 w-full rounded-[24px] bg-white/[0.04]" />
+            <Skeleton className="h-48 w-full rounded-[24px] bg-[var(--ui-inset)]" />
           ) : !companies || companies.length === 0 ? (
             <GlassCard className="p-8 text-center">
-              <p className="text-[13px] text-[#888b91]">
+              <p className="text-[13px] text-muted-foreground">
                 No companies yet — create your first one above.
               </p>
             </GlassCard>
           ) : (
             <GlassCard className="overflow-hidden p-0">
               {/* Table header */}
-              <div className="grid grid-cols-[1.8fr_1.6fr_0.9fr_1fr_1.1fr_0.9fr] gap-3 border-b border-white/[0.06] px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+              <div className="grid grid-cols-[1.8fr_1.6fr_0.9fr_1fr_1.1fr_0.9fr] gap-3 border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                 <div>Tenant</div>
                 <div>Super admin</div>
                 <div>HR managers</div>
@@ -709,10 +709,10 @@ export default function PlatformOwnerConsole() {
                   onClick={() => setSelectedId(c.id === selectedId ? null : c.id)}
                   className={cn(
                     'grid grid-cols-[1.8fr_1.6fr_0.9fr_1fr_1.1fr_0.9fr] items-center gap-3 w-full text-left',
-                    'border-b border-white/[0.04] px-6 py-3.5 last:border-0 transition-colors',
+                    'border-b border-border px-6 py-3.5 last:border-0 transition-colors',
                     c.id === selectedId
                       ? 'bg-[rgba(var(--accent-rgb),0.06)]'
-                      : 'hover:bg-white/[0.02]',
+                      : 'hover:bg-[var(--ui-inset-soft)]',
                   )}
                   aria-pressed={c.id === selectedId}
                   aria-label={`Select ${c.name}`}
@@ -724,29 +724,29 @@ export default function PlatformOwnerConsole() {
                       size={34}
                     />
                     <div className="min-w-0">
-                      <p className="text-[13.5px] font-medium text-white truncate">{c.name}</p>
+                      <p className="text-[13.5px] font-medium text-foreground truncate">{c.name}</p>
                     </div>
                   </div>
                   {/* Super admin (email or "needs one") */}
                   <div className="min-w-0">
                     {c.has_admin ? (
-                      <span className="flex items-center gap-1.5 text-[12.5px] text-[#b8babf] truncate">
-                        <ShieldCheck className="h-3 w-3 shrink-0 text-[#27c93f]" aria-hidden="true" />
+                      <span className="flex items-center gap-1.5 text-[12.5px] text-[var(--ui-soft)] truncate">
+                        <ShieldCheck className="h-3 w-3 shrink-0 text-[var(--ui-ok)]" aria-hidden="true" />
                         <span className="truncate">{c.admin_email}</span>
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1.5 text-[12.5px] text-[#ffb764]">
+                      <span className="flex items-center gap-1.5 text-[12.5px] text-[var(--ui-warn)]">
                         <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
                         Needs a super admin
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5 text-[13.5px] text-[#b8babf]">
-                    <Users className="h-3 w-3 text-[#888b91]" aria-hidden="true" />
+                  <div className="flex items-center gap-1.5 text-[13.5px] text-[var(--ui-soft)]">
+                    <Users className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
                     {c.hr_count}
                   </div>
-                  <div className="font-mono text-[12.5px] text-[#888b91] truncate">{c.slug}</div>
-                  <div className="font-mono text-[12.5px] text-[#888b91]">
+                  <div className="font-mono text-[12.5px] text-muted-foreground truncate">{c.slug}</div>
+                  <div className="font-mono text-[12.5px] text-muted-foreground">
                     {new Date(c.created_at).toLocaleDateString('en-IN', {
                       day: 'numeric',
                       month: 'short',
@@ -776,8 +776,8 @@ export default function PlatformOwnerConsole() {
           ) : companies && companies.length > 0 ? (
             <GlassCard className="p-5">
               <div className="py-6 text-center space-y-2">
-                <ShieldCheck className="mx-auto h-7 w-7 text-[#5a5f66]" aria-hidden="true" />
-                <p className="text-[13px] text-[#888b91]">
+                <ShieldCheck className="mx-auto h-7 w-7 text-[var(--ui-faint)]" aria-hidden="true" />
+                <p className="text-[13px] text-muted-foreground">
                   Click a row above to manage its super admin.
                 </p>
               </div>

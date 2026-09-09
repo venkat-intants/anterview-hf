@@ -12,10 +12,12 @@ import { useCallback, useSyncExternalStore } from 'react';
  * `dark:` variants key off the class while our token palettes key off the
  * attribute, and the two must never disagree.
  *
- * Only the surfaces listed in THEMED_PREFIXES have been built for light. The
- * staff consoles are still dark-only, so `ThemeModeGate` forces `dark` while
- * one of those is mounted rather than shipping a half-lit console — see
- * `applyMode`'s caller in App.tsx.
+ * The whole application is now built for both modes — the staff consoles were
+ * swept onto these tokens too — so the preference applies everywhere EXCEPT the
+ * live interview, which is pinned dark. That screen is a video surface where
+ * the candidate's camera and the avatar are the content; a light chrome around
+ * them is not a preference, it is a worse product. `ThemeModeGate` enforces
+ * that one exclusion.
  *
  * The key is `anthire:mode`; the older `intants:*` keys keep their prefix
  * deliberately (renaming them would drop every visitor's saved language and
@@ -27,36 +29,24 @@ export type ThemeMode = 'light' | 'dark';
 export const MODE_KEY = 'anthire:mode';
 export const MODE_CHANGE_EVENT = 'anthire:modechange';
 
-/** Route prefixes that have a light design. Everything else stays dark. */
-export const THEMED_PREFIXES = [
-  '/',
-  '/login',
-  '/register',
-  '/forgot-password',
-  '/reset-password',
-  '/verify-email',
-  '/change-password',
-  '/auth/google/callback',
-  '/activate',
-  '/careers',
-  '/apply',
-  '/exam',
-  '/interview-invite',
-  '/onboarding',
-  '/dashboard',
-  '/jobs',
-  '/start',
-  '/history',
-  '/resume',
-  '/applications',
-  '/profile',
-  '/scorecard',
-] as const;
+/**
+ * Routes pinned to dark whatever the visitor chose. An exclusion list, not an
+ * allow-list: it inverted when the consoles were swept, and a list of the two
+ * exceptions cannot silently omit a new page the way a list of forty could.
+ *
+ * `/interview/:id` is the live session. `/interview-invite` and
+ * `/interview/:id/complete` are ordinary pages and are NOT pinned — the prefix
+ * check below is exact-segment for that reason.
+ */
+export const DARK_ONLY_PREFIXES = ['/interview'] as const
 
-/** Does this path have a light design? `/interview/:id` (live) deliberately does not. */
+/** Does this path follow the visitor's mode? Everything but the live interview. */
 export function isThemedRoute(pathname: string): boolean {
-  if (pathname === '/') return true;
-  return THEMED_PREFIXES.some((p) => p !== '/' && (pathname === p || pathname.startsWith(`${p}/`)));
+  const segments = pathname.split('/').filter(Boolean)
+  // /interview/<id> — but not /interview-invite (different first segment) and
+  // not /interview/<id>/complete (three segments, an ordinary page).
+  const isLiveInterview = segments[0] === 'interview' && segments.length === 2
+  return !isLiveInterview
 }
 
 /** The visitor's stored preference. Light is the default — see the README. */

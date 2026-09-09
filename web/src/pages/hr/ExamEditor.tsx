@@ -86,8 +86,8 @@ const CodingAuthoringSection = lazy(() => import('./CodingAuthoringSection'));
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
 const inputCls =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 ' +
-  'text-[14px] text-white placeholder:text-[#5a5f66] focus:outline-none ' +
+  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 ' +
+  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none ' +
   'focus:border-[var(--accent)] transition-colors';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
@@ -233,15 +233,15 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
         <Stagger className="flex flex-col gap-2">
           {questions.map((q, i) => (
             <StaggerItem key={q.id}>
-              <div className="rounded-[14px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-3.5">
+              <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3.5">
                 <div className="flex items-start gap-3">
-                  <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-white/[0.06] font-mono text-[11px] text-[#b8babf]">
+                  <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[11px] text-[var(--ui-soft)]">
                     {i + 1}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-medium leading-snug text-white">
+                    <p className="text-[13px] font-medium leading-snug text-foreground">
                       {q.prompt}{' '}
-                      <span className="font-normal text-[#888b91]">({q.points} pt)</span>
+                      <span className="font-normal text-muted-foreground">({q.points} pt)</span>
                     </p>
                     <ul className="mt-2 space-y-0.5 pl-0">
                       {q.options.map((opt, oi) => (
@@ -250,8 +250,8 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                           className={cn(
                             'flex items-center gap-1.5 text-[12px]',
                             oi === q.correct_index
-                              ? 'font-medium text-[#27c93f]'
-                              : 'text-[#888b91]',
+                              ? 'font-medium text-[var(--ui-ok)]'
+                              : 'text-muted-foreground',
                           )}
                         >
                           {oi === q.correct_index ? (
@@ -268,7 +268,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                     <button
                       type="button"
                       aria-label="Delete question"
-                      className="shrink-0 flex h-7 w-7 items-center justify-center rounded-[8px] border border-white/[0.1] text-[#888b91] hover:border-[rgba(230,113,79,0.4)] hover:text-[#e6714f] transition-colors"
+                      className="shrink-0 flex h-7 w-7 items-center justify-center rounded-[8px] border border-border text-muted-foreground hover:border-[rgba(230,113,79,0.4)] hover:text-[var(--ui-danger)] transition-colors"
                       onClick={() => delMut.mutate(q.id)}
                     >
                       <Trash2 size={13} aria-hidden="true" />
@@ -283,12 +283,12 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
 
       {/* Composer — three ways to add questions; hidden when locked */}
       {!locked && (
-        <div className="rounded-[14px] border border-dashed border-white/[0.1] bg-[rgba(28,29,31,0.3)] p-3.5">
+        <div className="rounded-[14px] border border-dashed border-border bg-[rgba(28,29,31,0.3)] p-3.5">
           {/* Tab bar */}
           <div
             role="tablist"
             aria-label="How to add questions"
-            className="mb-3 flex gap-1 rounded-[10px] border border-white/[0.08] bg-[rgba(20,21,23,0.6)] p-1"
+            className="mb-3 flex gap-1 rounded-[10px] border border-border bg-[rgba(20,21,23,0.6)] p-1"
           >
             {[
               { key: 'manual', label: 'Manual', icon: Pencil },
@@ -307,8 +307,8 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                   className={cn(
                     'flex flex-1 items-center justify-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[12px] font-medium transition-colors',
                     active
-                      ? 'bg-[rgba(var(--accent-rgb),0.16)] text-[#60a5fa]'
-                      : 'text-[#888b91] hover:text-white',
+                      ? 'bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]'
+                      : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
                   <Icon size={13} aria-hidden="true" />
@@ -353,7 +353,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                       <button
                         type="button"
                         aria-label="Remove option"
-                        className="shrink-0 flex h-7 w-7 items-center justify-center rounded-[8px] border border-white/[0.1] text-[#888b91] hover:text-[#e6714f] transition-colors"
+                        className="shrink-0 flex h-7 w-7 items-center justify-center rounded-[8px] border border-border text-muted-foreground hover:text-[var(--ui-danger)] transition-colors"
                         onClick={() => {
                           setOptions((prev) => prev.filter((_, j) => j !== oi));
                           setCorrectIdx((c) => (c >= oi && c > 0 ? c - 1 : c));
@@ -369,20 +369,20 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                 {options.length < 6 && (
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1 rounded-[8px] border border-white/[0.1] px-2.5 py-1 text-[12px] text-[#888b91] hover:text-white transition-colors"
+                    className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2.5 py-1 text-[12px] text-muted-foreground hover:text-foreground transition-colors"
                     onClick={() => setOptions((prev) => [...prev, ''])}
                   >
                     <Plus size={12} aria-hidden="true" /> Add option
                   </button>
                 )}
-                <label className="ml-auto flex items-center gap-1.5 text-[12px] text-[#888b91]">
+                <label className="ml-auto flex items-center gap-1.5 text-[12px] text-muted-foreground">
                   Points
                   <input
                     type="number"
                     min={1}
                     value={points}
                     onChange={(e) => setPoints(e.target.value)}
-                    className="w-14 rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[12px] text-white focus:outline-none focus:border-[var(--accent)]"
+                    className="w-14 rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:outline-none focus:border-[var(--accent)]"
                     aria-label="Points"
                   />
                 </label>
@@ -423,7 +423,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                   aria-label="AI topic"
                 />
                 <div className="flex flex-wrap items-end gap-2">
-                  <label className="flex flex-col gap-1 text-[11.5px] text-[#888b91]">
+                  <label className="flex flex-col gap-1 text-[11.5px] text-muted-foreground">
                     Questions
                     <input
                       type="number"
@@ -431,15 +431,15 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                       max={30}
                       value={aiCount}
                       onChange={(e) => setAiCount(e.target.value)}
-                      className="w-16 rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[12px] text-white focus:outline-none focus:border-[var(--accent)]"
+                      className="w-16 rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:outline-none focus:border-[var(--accent)]"
                     />
                   </label>
-                  <label className="flex flex-col gap-1 text-[11.5px] text-[#888b91]">
+                  <label className="flex flex-col gap-1 text-[11.5px] text-muted-foreground">
                     Difficulty
                     <select
                       value={aiDifficulty}
                       onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
-                      className="rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[12px] text-white focus:outline-none focus:border-[var(--accent)]"
+                      className="rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:outline-none focus:border-[var(--accent)]"
                     >
                       <option value="easy">Easy</option>
                       <option value="medium">Medium</option>
@@ -447,12 +447,12 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                       <option value="mixed">Mixed</option>
                     </select>
                   </label>
-                  <label className="flex flex-col gap-1 text-[11.5px] text-[#888b91]">
+                  <label className="flex flex-col gap-1 text-[11.5px] text-muted-foreground">
                     Language
                     <select
                       value={aiLanguage}
                       onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
-                      className="rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[12px] text-white focus:outline-none focus:border-[var(--accent)]"
+                      className="rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:outline-none focus:border-[var(--accent)]"
                     >
                       <option value="en">English</option>
                       <option value="hi">हिन्दी</option>
@@ -479,13 +479,13 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
               {aiPreview.length > 0 && (
                 <div className="space-y-2 rounded-[12px] border border-[rgba(var(--accent-rgb),0.25)] bg-[rgba(var(--accent-rgb),0.05)] p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-[12px] font-semibold text-[#60a5fa]">
+                    <p className="text-[12px] font-semibold text-[var(--ui-info)]">
                       {aiPreview.length} draft question{aiPreview.length !== 1 ? 's' : ''}
                     </p>
                     <button
                       type="button"
                       onClick={() => setAiPreview([])}
-                      className="text-[12px] text-[#888b91] hover:text-white transition-colors"
+                      className="text-[12px] text-muted-foreground hover:text-foreground transition-colors"
                     >
                       Discard
                     </button>
@@ -494,16 +494,16 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                     {aiPreview.map((q, qi) => (
                       <li
                         key={qi}
-                        className="rounded-[9px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-2.5"
+                        className="rounded-[9px] border border-border bg-[rgba(28,29,31,0.5)] p-2.5"
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <p className="text-[12px] font-medium text-white">
+                          <p className="text-[12px] font-medium text-foreground">
                             {qi + 1}. {q.prompt}
                           </p>
                           <button
                             type="button"
                             aria-label="Remove draft"
-                            className="shrink-0 text-[#888b91] hover:text-[#e6714f] transition-colors"
+                            className="shrink-0 text-muted-foreground hover:text-[var(--ui-danger)] transition-colors"
                             onClick={() => setAiPreview((prev) => prev.filter((_, j) => j !== qi))}
                           >
                             <X size={12} aria-hidden="true" />
@@ -516,8 +516,8 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                               className={cn(
                                 'flex items-center gap-1 text-[11.5px]',
                                 oi === q.correct_index
-                                  ? 'font-medium text-[#27c93f]'
-                                  : 'text-[#888b91]',
+                                  ? 'font-medium text-[var(--ui-ok)]'
+                                  : 'text-muted-foreground',
                               )}
                             >
                               {oi === q.correct_index ? (
@@ -554,16 +554,16 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
           {/* Excel */}
           {composerTab === 'excel' && (
             <div className="space-y-2.5">
-              <p className="text-[12px] text-[#888b91]">
-                Upload <span className="text-white">.xlsx</span> or{' '}
-                <span className="text-white">.csv</span>: Question · Option A–D · Correct
+              <p className="text-[12px] text-muted-foreground">
+                Upload <span className="text-foreground">.xlsx</span> or{' '}
+                <span className="text-foreground">.csv</span>: Question · Option A–D · Correct
                 (A/B/C/D) · Points.
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => void handleDownloadTemplate()}
-                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-white/[0.12] px-3 py-1.5 text-[12px] text-[#b8babf] hover:text-white hover:border-white/[0.25] transition-colors"
+                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] text-[var(--ui-soft)] hover:text-foreground hover:border-white/[0.25] transition-colors"
                 >
                   <Download size={13} aria-hidden="true" /> Template
                 </button>
@@ -598,18 +598,18 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                 </Pill>
               </div>
               {importResult && (
-                <div className="rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.5)] p-2.5 space-y-1.5">
-                  <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#27c93f]">
+                <div className="rounded-[12px] border border-border bg-[rgba(28,29,31,0.5)] p-2.5 space-y-1.5">
+                  <p className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--ui-ok)]">
                     <FileText size={13} aria-hidden="true" />
                     {importResult.added} question{importResult.added !== 1 ? 's' : ''} imported
                   </p>
                   {importResult.errors.length > 0 && (
                     <div>
-                      <p className="flex items-center gap-1 text-[11.5px] text-[#ffb764]">
+                      <p className="flex items-center gap-1 text-[11.5px] text-[var(--ui-warn)]">
                         <AlertTriangle size={12} aria-hidden="true" />
                         {importResult.errors.length} row{importResult.errors.length !== 1 ? 's' : ''} skipped
                       </p>
-                      <ul className="mt-1 max-h-24 space-y-0.5 overflow-y-auto pl-4 text-[11px] text-[#888b91]">
+                      <ul className="mt-1 max-h-24 space-y-0.5 overflow-y-auto pl-4 text-[11px] text-muted-foreground">
                         {importResult.errors.map((er, ei) => (
                           <li key={ei} className="list-disc">
                             Row {er.row}: {er.message}
@@ -626,7 +626,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
       )}
 
       {locked && (
-        <div className="flex items-center gap-2 rounded-[12px] border border-white/[0.08] bg-[rgba(28,29,31,0.3)] px-3 py-2 text-[12px] text-[#888b91]">
+        <div className="flex items-center gap-2 rounded-[12px] border border-border bg-[rgba(28,29,31,0.3)] px-3 py-2 text-[12px] text-muted-foreground">
           <Lock size={13} aria-hidden="true" /> Questions are locked — attempts exist.
         </div>
       )}
@@ -663,7 +663,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
   const kindLabel = section.kind === 'coding' ? 'Coding' : 'MCQ';
 
   return (
-    <div className="rounded-[16px] border border-white/[0.07] bg-[rgba(20,21,23,0.5)]">
+    <div className="rounded-[16px] border border-border bg-[rgba(20,21,23,0.5)]">
       {/* Section header */}
       <div className="flex items-center gap-2 px-4 py-2.5">
         <button
@@ -671,7 +671,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
           aria-label={`${expanded ? 'Collapse' : 'Expand'} section ${section.title}`}
-          className="flex items-center gap-1.5 text-[#888b91] hover:text-white transition-colors"
+          className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
         >
           {expanded ? (
             <ChevronDown size={15} aria-hidden="true" />
@@ -681,9 +681,9 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
         </button>
 
         {section.kind === 'coding' ? (
-          <Code2 size={14} className="shrink-0 text-[#60a5fa]" aria-hidden="true" />
+          <Code2 size={14} className="shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
         ) : (
-          <ListChecks size={14} className="shrink-0 text-[#60a5fa]" aria-hidden="true" />
+          <ListChecks size={14} className="shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
         )}
 
         {editing ? (
@@ -698,7 +698,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
               autoFocus
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
-              className="flex-1 rounded-[8px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[13px] text-white focus:outline-none focus:border-[var(--accent)]"
+              className="flex-1 rounded-[8px] border border-border bg-secondary px-2 py-1 text-[13px] text-foreground focus:outline-none focus:border-[var(--accent)]"
               aria-label="Section title"
             />
             <Pill
@@ -711,7 +711,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
             </Pill>
             <button
               type="button"
-              className="text-[#888b91] hover:text-white transition-colors"
+              className="text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => { setEditing(false); setTitleDraft(section.title); }}
             >
               <X size={14} aria-hidden="true" />
@@ -719,10 +719,10 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
           </form>
         ) : (
           <>
-            <span className="flex-1 text-[13px] font-medium text-white">{section.title}</span>
+            <span className="flex-1 text-[13px] font-medium text-foreground">{section.title}</span>
             <StatusTag tone="neutral" className="text-[10.5px]">{kindLabel}</StatusTag>
             {section.time_limit_seconds && (
-              <span className="flex items-center gap-1 text-[11.5px] text-[#70757c]">
+              <span className="flex items-center gap-1 text-[11.5px] text-[var(--ui-faint)]">
                 <Clock size={11} aria-hidden="true" />
                 {Math.round(section.time_limit_seconds / 60)} min
               </span>
@@ -730,7 +730,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
             <button
               type="button"
               aria-label={`Rename section ${section.title}`}
-              className="flex h-6 w-6 items-center justify-center rounded-[6px] text-[#888b91] hover:text-white transition-colors"
+              className="flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => setEditing(true)}
             >
               <Pencil size={13} aria-hidden="true" />
@@ -738,7 +738,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
             <button
               type="button"
               aria-label={`Delete section ${section.title}`}
-              className="flex h-6 w-6 items-center justify-center rounded-[6px] text-[#888b91] hover:text-[#e6714f] transition-colors"
+              className="flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground hover:text-[var(--ui-danger)] transition-colors"
               disabled={deleting}
               onClick={() => onDelete(section.id)}
             >
@@ -754,7 +754,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
           {section.kind === 'coding' ? (
             <Suspense
               fallback={
-                <div className="flex h-16 items-center justify-center text-[13px] text-[#888b91]">
+                <div className="flex h-16 items-center justify-center text-[13px] text-muted-foreground">
                   <Loader2 size={16} className="animate-spin mr-2" aria-hidden="true" /> Loading editor…
                 </div>
               }
@@ -850,7 +850,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
 
   if (!isPublished) {
     return (
-      <p className="mt-3 text-[12.5px] text-[#888b91]">
+      <p className="mt-3 text-[12.5px] text-muted-foreground">
         Publish this round first, then assign it to applicants.
       </p>
     );
@@ -860,18 +860,18 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
     <div className="mt-3 space-y-3">
       {/* Applicant list */}
       <div
-        className="max-h-36 space-y-0.5 overflow-y-auto rounded-[14px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-2"
+        className="max-h-36 space-y-0.5 overflow-y-auto rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-2"
         aria-label="Select applicants to assign"
       >
         {(applicants ?? []).length === 0 ? (
-          <p className="px-2 py-2 text-[12px] text-[#888b91]">
+          <p className="px-2 py-2 text-[12px] text-muted-foreground">
             No applicants yet — add them under Applicants.
           </p>
         ) : (
           (applicants ?? []).map((a) => (
             <label
               key={a.id}
-              className="flex cursor-pointer items-center gap-2 rounded-[9px] px-2 py-1.5 text-[12.5px] text-white hover:bg-white/[0.04] transition-colors"
+              className="flex cursor-pointer items-center gap-2 rounded-[9px] px-2 py-1.5 text-[12.5px] text-foreground hover:bg-[var(--ui-inset)] transition-colors"
             >
               <input
                 type="checkbox"
@@ -887,7 +887,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
 
       {/* Schedule (optional) */}
       <label className="block text-sm">
-        <span className="mb-1 block text-[11.5px] font-medium uppercase tracking-[0.5px] text-[#70757c]">
+        <span className="mb-1 block text-[11.5px] font-medium uppercase tracking-[0.5px] text-[var(--ui-faint)]">
           Schedule (optional)
         </span>
         <input
@@ -921,24 +921,24 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
           aria-label="Generated magic links"
           className="space-y-1.5 rounded-[14px] border border-[rgba(39,201,63,0.3)] bg-[rgba(39,201,63,0.08)] p-3"
         >
-          <p className="text-[12px] font-semibold text-[#27c93f]">
+          <p className="text-[12px] font-semibold text-[var(--ui-ok)]">
             Share these links — shown once only:
           </p>
           {minted.map((m) => (
             <div key={m.assignment_id} className="flex items-center gap-2 text-[12px]">
-              <span className="w-28 shrink-0 truncate font-medium text-white">
+              <span className="w-28 shrink-0 truncate font-medium text-foreground">
                 {m.applicant_name}
               </span>
               <input
                 readOnly
                 value={m.magic_link}
-                className="min-w-0 flex-1 rounded-[9px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[#888b91] focus:outline-none"
+                className="min-w-0 flex-1 rounded-[9px] border border-border bg-secondary px-2 py-1 text-muted-foreground focus:outline-none"
                 aria-label={`Magic link for ${m.applicant_name}`}
               />
               <button
                 type="button"
                 aria-label={`Copy link for ${m.applicant_name}`}
-                className="shrink-0 flex h-6 w-6 items-center justify-center rounded-[7px] text-[#27c93f] hover:bg-[rgba(39,201,63,0.15)] transition-colors"
+                className="shrink-0 flex h-6 w-6 items-center justify-center rounded-[7px] text-[var(--ui-ok)] hover:bg-[rgba(39,201,63,0.15)] transition-colors"
                 onClick={() => void copyLink(m.magic_link)}
               >
                 <Copy size={13} aria-hidden="true" />
@@ -951,17 +951,17 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
       {/* Existing assignments for this round */}
       {roundAssignments.length > 0 && (
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.5px] text-[#70757c]">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
             Assigned
           </p>
           {roundAssignments.map((a) => (
             <div
               key={a.assignment_id}
-              className="flex items-center gap-2 rounded-[11px] border border-white/[0.08] bg-[rgba(28,29,31,0.4)] px-3 py-1.5 text-[12.5px] text-white"
+              className="flex items-center gap-2 rounded-[11px] border border-border bg-[rgba(28,29,31,0.4)] px-3 py-1.5 text-[12.5px] text-foreground"
             >
               <span className="min-w-0 flex-1 truncate">{a.applicant_name}</span>
               {a.scheduled_at && (
-                <span className="flex items-center gap-1 text-[11px] text-[#70757c]">
+                <span className="flex items-center gap-1 text-[11px] text-[var(--ui-faint)]">
                   <Clock size={10} aria-hidden="true" />
                   {new Date(a.scheduled_at).toLocaleDateString('en-IN', {
                     day: 'numeric',
@@ -978,7 +978,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
                 <button
                   type="button"
                   aria-label={`Revoke link for ${a.applicant_name}`}
-                  className="shrink-0 flex h-6 w-6 items-center justify-center rounded-[7px] text-[#888b91] hover:text-[#e6714f] transition-colors"
+                  className="shrink-0 flex h-6 w-6 items-center justify-center rounded-[7px] text-muted-foreground hover:text-[var(--ui-danger)] transition-colors"
                   onClick={() => revokeMut.mutate(a.assignment_id)}
                 >
                   <Ban size={13} aria-hidden="true" />
@@ -1085,14 +1085,14 @@ function RoundPanel({
   return (
     <GlassCard className="p-0 overflow-hidden">
       {/* Round header */}
-      <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-white/[0.06]">
+      <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-border">
         {/* Drag handle / reorder */}
         <div className="flex flex-col gap-0.5 shrink-0">
           <button
             type="button"
             aria-label={`Move round ${round.title} up`}
             disabled={round.position <= 1}
-            className="flex h-5 w-5 items-center justify-center text-[#888b91] hover:text-white disabled:opacity-30 transition-colors"
+            className="flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
             onClick={() => onMoveUp(round.id)}
           >
             <GripVertical size={14} aria-hidden="true" />
@@ -1101,7 +1101,7 @@ function RoundPanel({
             type="button"
             aria-label={`Move round ${round.title} down`}
             disabled={round.position >= totalRounds}
-            className="flex h-5 w-5 items-center justify-center text-[#888b91] hover:text-white disabled:opacity-30 transition-colors"
+            className="flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
             onClick={() => onMoveDown(round.id)}
           >
             <GripVertical size={14} className="rotate-180" aria-hidden="true" />
@@ -1113,7 +1113,7 @@ function RoundPanel({
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
           aria-label={`${expanded ? 'Collapse' : 'Expand'} round ${round.title}`}
-          className="text-[#888b91] hover:text-white transition-colors"
+          className="text-muted-foreground hover:text-foreground transition-colors"
         >
           {expanded ? (
             <ChevronDown size={16} aria-hidden="true" />
@@ -1122,7 +1122,7 @@ function RoundPanel({
           )}
         </button>
 
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.14)] font-mono text-[12px] font-semibold text-[#60a5fa]">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.14)] font-mono text-[12px] font-semibold text-[var(--ui-info)]">
           {round.round_number}
         </span>
 
@@ -1138,7 +1138,7 @@ function RoundPanel({
               autoFocus
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
-              className="flex-1 rounded-[9px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2.5 py-1.5 text-[14px] text-white focus:outline-none focus:border-[var(--accent)]"
+              className="flex-1 rounded-[9px] border border-border bg-secondary px-2.5 py-1.5 text-[14px] text-foreground focus:outline-none focus:border-[var(--accent)]"
               aria-label="Round title"
             />
             <Pill
@@ -1155,7 +1155,7 @@ function RoundPanel({
             </Pill>
             <button
               type="button"
-              className="text-[#888b91] hover:text-white transition-colors"
+              className="text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => { setEditingTitle(false); setTitleDraft(round.title); }}
             >
               <X size={15} aria-hidden="true" />
@@ -1163,12 +1163,12 @@ function RoundPanel({
           </form>
         ) : (
           <>
-            <span className="flex-1 text-[15px] font-semibold text-white">{round.title}</span>
+            <span className="flex-1 text-[15px] font-semibold text-foreground">{round.title}</span>
             <StatusTag tone={statusToneKey}>{statusLabel}</StatusTag>
             <button
               type="button"
               aria-label={`Rename round ${round.title}`}
-              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-[#888b91] hover:text-white transition-colors"
+              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => setEditingTitle(true)}
             >
               <Pencil size={14} aria-hidden="true" />
@@ -1189,7 +1189,7 @@ function RoundPanel({
               type="button"
               aria-label={`Delete round ${round.title}`}
               disabled={deleting || totalRounds <= 1}
-              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-[#888b91] hover:text-[#e6714f] disabled:opacity-30 transition-colors"
+              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-muted-foreground hover:text-[var(--ui-danger)] disabled:opacity-30 transition-colors"
               onClick={() => onDelete(round.id)}
             >
               <Trash2 size={14} aria-hidden="true" />
@@ -1202,7 +1202,7 @@ function RoundPanel({
         <div className="px-5 py-4 space-y-4">
           {/* Settings row */}
           <div className="flex flex-wrap items-end gap-4">
-            <label className="flex flex-col gap-1 text-[12px] text-[#888b91]">
+            <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
               <span className="uppercase tracking-[0.5px]">Pass threshold %</span>
               <input
                 type="number"
@@ -1216,17 +1216,17 @@ function RoundPanel({
                     thresholdMut.mutate(v);
                   }
                 }}
-                className="w-24 rounded-[9px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2.5 py-1.5 text-[13px] text-white focus:outline-none focus:border-[var(--accent)]"
+                className="w-24 rounded-[9px] border border-border bg-secondary px-2.5 py-1.5 text-[13px] text-foreground focus:outline-none focus:border-[var(--accent)]"
                 aria-label="Pass threshold"
               />
             </label>
             {round.time_limit_seconds !== null && (
-              <span className="flex items-center gap-1 text-[12.5px] text-[#888b91]">
+              <span className="flex items-center gap-1 text-[12.5px] text-muted-foreground">
                 <Clock size={13} aria-hidden="true" />
                 {Math.round(round.time_limit_seconds / 60)} min limit
               </span>
             )}
-            <label className="flex items-center gap-2 text-[12.5px] text-[#b8babf]">
+            <label className="flex items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
               <input
                 type="checkbox"
                 className="h-3.5 w-3.5 accent-[var(--accent)]"
@@ -1240,12 +1240,12 @@ function RoundPanel({
           {/* Sections */}
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#70757c]">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                 Sections ({round.sections.length})
               </p>
               <button
                 type="button"
-                className="inline-flex items-center gap-1 text-[12px] text-[#60a5fa] hover:underline"
+                className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
                 onClick={() => setAddingSection((v) => !v)}
                 aria-expanded={addingSection}
               >
@@ -1256,7 +1256,7 @@ function RoundPanel({
             {/* Add-section form */}
             {addingSection && (
               <form
-                className="mb-3 flex flex-wrap items-end gap-2 rounded-[14px] border border-dashed border-white/[0.1] bg-[rgba(28,29,31,0.3)] p-3"
+                className="mb-3 flex flex-wrap items-end gap-2 rounded-[14px] border border-dashed border-border bg-[rgba(28,29,31,0.3)] p-3"
                 onSubmit={(e) => {
                   e.preventDefault();
                   addSectionMut.mutate();
@@ -1272,8 +1272,8 @@ function RoundPanel({
                       className={cn(
                         'rounded-[9px] border px-3 py-1.5 text-[12px] font-medium transition-colors',
                         sectionKind === k
-                          ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]'
-                          : 'border-white/[0.1] text-[#888b91] hover:text-white',
+                          ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
+                          : 'border-border text-muted-foreground hover:text-foreground',
                       )}
                       aria-pressed={sectionKind === k}
                     >
@@ -1294,7 +1294,7 @@ function RoundPanel({
                   placeholder="Min limit"
                   value={sectionTimeMin}
                   onChange={(e) => setSectionTimeMin(e.target.value)}
-                  className="w-24 rounded-[9px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2.5 py-2 text-[13px] text-white placeholder:text-[#5a5f66] focus:outline-none focus:border-[var(--accent)]"
+                  className="w-24 rounded-[9px] border border-border bg-secondary px-2.5 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none focus:border-[var(--accent)]"
                   aria-label="Section time limit in minutes"
                 />
                 <Pill
@@ -1313,7 +1313,7 @@ function RoundPanel({
                 </Pill>
                 <button
                   type="button"
-                  className="text-[#888b91] hover:text-white transition-colors"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
                   onClick={() => setAddingSection(false)}
                 >
                   <X size={15} aria-hidden="true" />
@@ -1323,7 +1323,7 @@ function RoundPanel({
 
             {/* Section list */}
             {round.sections.length === 0 ? (
-              <p className="text-[12.5px] text-[#888b91]">
+              <p className="text-[12.5px] text-muted-foreground">
                 No sections yet — add one above.
               </p>
             ) : (
@@ -1348,7 +1348,7 @@ function RoundPanel({
               type="button"
               onClick={() => setShowAssign((v) => !v)}
               aria-expanded={showAssign}
-              className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[#60a5fa] hover:underline"
+              className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--ui-info)] hover:underline"
             >
               <Send size={13} aria-hidden="true" />
               {showAssign ? 'Hide' : 'Show'} Assign &amp; share
@@ -1450,10 +1450,10 @@ export default function ExamEditor() {
   if (isLoading || !exam || !structure) {
     return (
       <div className="mx-auto max-w-[960px] px-6 py-8 lg:px-8 space-y-4">
-        <div className="h-5 w-28 rounded-xl bg-white/[0.07] animate-pulse" />
-        <div className="h-10 w-64 rounded-xl bg-white/[0.07] animate-pulse" />
-        <div className="h-40 w-full rounded-[24px] bg-white/[0.05] animate-pulse" />
-        <div className="h-48 w-full rounded-[24px] bg-white/[0.05] animate-pulse" />
+        <div className="h-5 w-28 rounded-xl bg-[var(--ui-inset-strong)] animate-pulse" />
+        <div className="h-10 w-64 rounded-xl bg-[var(--ui-inset-strong)] animate-pulse" />
+        <div className="h-40 w-full rounded-[24px] bg-[var(--ui-inset)] animate-pulse" />
+        <div className="h-48 w-full rounded-[24px] bg-[var(--ui-inset)] animate-pulse" />
       </div>
     );
   }
@@ -1466,7 +1466,7 @@ export default function ExamEditor() {
       <Reveal>
         <Link
           to="/hr/exams"
-          className="inline-flex items-center gap-1.5 text-[13px] text-[#888b91] hover:text-white transition-colors"
+          className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft size={15} aria-hidden="true" /> Back to exams
         </Link>
@@ -1474,11 +1474,11 @@ export default function ExamEditor() {
         {/* Header */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+            <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
               <ClipboardList size={20} aria-hidden="true" />
             </span>
             <div>
-              <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-white">
+              <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
                 {exam.title}
               </h1>
             </div>
@@ -1493,10 +1493,10 @@ export default function ExamEditor() {
         </div>
 
         {/* Meta */}
-        <div className="mt-4 flex items-center flex-wrap gap-4 text-[13px] text-[#888b91]">
+        <div className="mt-4 flex items-center flex-wrap gap-4 text-[13px] text-muted-foreground">
           <span>{rounds.length} round{rounds.length !== 1 ? 's' : ''}</span>
           {exam.auto_advance_on_pass && (
-            <span className="flex items-center gap-1 text-[#60a5fa]">
+            <span className="flex items-center gap-1 text-[var(--ui-info)]">
               Auto-advance on pass
             </span>
           )}
@@ -1507,11 +1507,11 @@ export default function ExamEditor() {
       <div className="mt-6 space-y-4">
         {rounds.length === 0 ? (
           <Reveal delay={0.04}>
-            <div className="flex flex-col items-center gap-3 rounded-[24px] border border-dashed border-white/[0.1] bg-[rgba(15,15,16,0.6)] py-12 text-center">
-              <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/[0.06] text-[#888b91]">
+            <div className="flex flex-col items-center gap-3 rounded-[24px] border border-dashed border-border bg-[rgba(15,15,16,0.6)] py-12 text-center">
+              <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--ui-inset)] text-muted-foreground">
                 <Sparkles size={22} aria-hidden="true" />
               </span>
-              <p className="text-[14px] text-[#888b91]">
+              <p className="text-[14px] text-muted-foreground">
                 No rounds yet — add the first round below.
               </p>
             </div>
@@ -1555,7 +1555,7 @@ export default function ExamEditor() {
                   aria-label="Round title"
                 />
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <label className="flex flex-col gap-1 text-[12px] text-[#888b91]">
+                  <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
                     <span className="uppercase tracking-[0.5px]">Pass threshold %</span>
                     <input
                       type="number"
@@ -1567,7 +1567,7 @@ export default function ExamEditor() {
                       aria-label="Pass threshold"
                     />
                   </label>
-                  <label className="flex flex-col gap-1 text-[12px] text-[#888b91]">
+                  <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
                     <span className="uppercase tracking-[0.5px]">Time limit (min)</span>
                     <input
                       type="number"
@@ -1580,7 +1580,7 @@ export default function ExamEditor() {
                     />
                   </label>
                   <div className="flex items-end pb-1">
-                    <label className="flex items-center gap-2 text-[12.5px] text-[#b8babf]">
+                    <label className="flex items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
                       <input
                         type="checkbox"
                         checked={roundAdvances}
@@ -1624,7 +1624,7 @@ export default function ExamEditor() {
             className={cn(
               'flex w-full items-center justify-center gap-2 rounded-[20px]',
               'border-[1.5px] border-dashed border-[rgba(var(--accent-rgb),0.35)]',
-              'bg-[rgba(var(--accent-rgb),0.04)] py-4 text-[13.5px] font-medium text-[#60a5fa]',
+              'bg-[rgba(var(--accent-rgb),0.04)] py-4 text-[13.5px] font-medium text-[var(--ui-info)]',
               'transition-colors hover:bg-[rgba(var(--accent-rgb),0.08)]',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
             )}

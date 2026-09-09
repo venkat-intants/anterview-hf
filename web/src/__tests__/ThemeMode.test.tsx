@@ -1,17 +1,20 @@
 // Tests for the app-wide light/dark mode.
 //
-// The load-bearing rule is the gate: the staff consoles and the live interview
-// have no light design, so the visitor's preference must NOT reach them. If
-// that broke, an HR manager who had once picked light on the marketing page
-// would get a console painted in tokens its markup was never written for —
-// white text on white cards — and no other test would catch it.
+// The gate now works the other way round. The consoles were swept onto the
+// mode tokens, so the preference reaches the WHOLE app and the exclusion list
+// is one route: the live interview, pinned dark because it is a video surface.
+//
+// The load-bearing case is the boundary around that one route. `/interview/:id`
+// is pinned; `/interview-invite` and `/interview/:id/complete` are ordinary
+// pages that must NOT be. A prefix match would catch all three, which is why
+// the check is exact-segment and why that is what these tests pin down.
 //
 // Covers:
-//   1. A themed route (candidate/auth/public) honours the stored mode.
-//   2. A dark-only route (HR console, live interview) is forced dark.
-//   3. Leaving the dark-only route restores the preference — it was overridden
-//      for the render, not overwritten in storage.
-//   4. `.dark` and `data-mode` never disagree (shadcn's `dark:` variants key
+//   1. Any ordinary route honours the stored mode — candidate AND staff.
+//   2. The live interview is forced dark whatever the visitor chose.
+//   3. Its neighbours by name are not caught by that rule.
+//   4. The override does not overwrite the stored preference.
+//   5. `.dark` and `data-mode` never disagree (shadcn's `dark:` variants key
 //      off the class, the palettes off the attribute).
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -42,25 +45,40 @@ describe('theme mode gate', () => {
     document.documentElement.classList.remove('dark');
   });
 
-  it('honours the stored mode on a themed route', () => {
+  it('honours the stored mode on an ordinary route', () => {
     localStorage.setItem(MODE_KEY, 'dark');
     renderAt('/dashboard');
     expect(mode()).toBe('dark');
   });
 
-  it('defaults to light on a themed route with no stored choice', () => {
+  it('defaults to light with no stored choice', () => {
     renderAt('/jobs');
     expect(mode()).toBe('light');
   });
 
-  it.each(['/hr', '/admin/overview', '/platform', '/superadmin', '/interview/abc123'])(
-    'forces dark on %s, which has no light design',
+  it.each(['/hr', '/hr/applicants', '/admin/overview', '/platform', '/superadmin'])(
+    'lets the staff console at %s follow the preference too',
     (path) => {
       localStorage.setItem(MODE_KEY, 'light');
       renderAt(path);
-      expect(mode()).toBe('dark');
-      // The preference itself is untouched — it applies again on the way back.
-      expect(localStorage.getItem(MODE_KEY)).toBe('light');
+      expect(mode()).toBe('light');
+    },
+  );
+
+  it('pins the live interview dark whatever the visitor chose', () => {
+    localStorage.setItem(MODE_KEY, 'light');
+    renderAt('/interview/abc123');
+    expect(mode()).toBe('dark');
+    // Overridden for the render, not overwritten — leaving restores the choice.
+    expect(localStorage.getItem(MODE_KEY)).toBe('light');
+  });
+
+  it.each(['/interview-invite', '/interview/abc123/complete'])(
+    'does not pin %s, which only looks like the live interview',
+    (path) => {
+      localStorage.setItem(MODE_KEY, 'light');
+      renderAt(path);
+      expect(mode()).toBe('light');
     },
   );
 
@@ -75,15 +93,14 @@ describe('theme mode gate', () => {
     expect(mode()).toBe('light');
   });
 
-  it('classifies routes: candidate and public in, staff and live interview out', () => {
-    expect(isThemedRoute('/')).toBe(true);
-    expect(isThemedRoute('/login')).toBe(true);
-    expect(isThemedRoute('/scorecard/abc')).toBe(true);
-    expect(isThemedRoute('/careers/acme')).toBe(true);
-    expect(isThemedRoute('/hr/applicants')).toBe(false);
-    expect(isThemedRoute('/admin/interviews')).toBe(false);
-    // /interview/:id is the live session; /interview-invite is the public page.
+  it('classifies routes: everything in but the live interview itself', () => {
+    for (const path of [
+      '/', '/login', '/scorecard/abc', '/careers/acme',
+      '/hr/applicants', '/admin/interviews', '/platform',
+      '/interview-invite', '/interview/abc/complete',
+    ]) {
+      expect(isThemedRoute(path)).toBe(true);
+    }
     expect(isThemedRoute('/interview/abc')).toBe(false);
-    expect(isThemedRoute('/interview-invite')).toBe(true);
   });
 });

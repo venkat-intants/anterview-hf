@@ -37,18 +37,12 @@ import { languageLabel } from '@/lib/formatters';
 import { toast } from '@/lib/toast';
 import { GlassCard } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
+import { TOOLTIP_STYLE } from '@/lib/chartTheme';
 
 // ── Dark chart theme tokens ────────────────────────────────────────────────────
 
 const CHART_GRID = 'rgba(255,255,255,0.08)';
 const CHART_TICKS = { fill: '#9a9aa0', fontSize: 11 } as const;
-const TOOLTIP_STYLE = {
-  background: '#1c1c1e',
-  border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 12,
-  fontSize: 12,
-  color: '#f5f5f7',
-} as const;
 
 // Deterministic categorical palette — Signal-Blue leads, cool secondaries follow.
 const PALETTE = [
@@ -73,7 +67,7 @@ function fmtScore(v: number | null): string {
 function ChartSkeleton({ height = 220 }: { height?: number }) {
   return (
     <div
-      className="w-full rounded-xl bg-white/[0.04] animate-pulse"
+      className="w-full rounded-xl bg-[var(--ui-inset)] animate-pulse"
       style={{ height }}
       aria-hidden="true"
     />
@@ -88,8 +82,8 @@ function ChartEmpty({ height = 220 }: { height?: number }) {
       className="flex flex-col items-center justify-center gap-3 text-center"
       style={{ height }}
     >
-      <BarChart3 className="h-8 w-8 text-[#888b91]/40" aria-hidden="true" />
-      <p className="text-[13px] text-[#888b91]">No data available yet.</p>
+      <BarChart3 className="h-8 w-8 text-muted-foreground/40" aria-hidden="true" />
+      <p className="text-[13px] text-muted-foreground">No data available yet.</p>
     </div>
   );
 }
@@ -256,11 +250,11 @@ function ByLanguagePie({
               style={{ background: PALETTE[i % PALETTE.length] }}
               aria-hidden="true"
             />
-            <span className="font-medium text-white">{languageLabel(d.language)}</span>
-            <span className="ml-auto text-[#70757c] tabular-nums">
+            <span className="font-medium text-foreground">{languageLabel(d.language)}</span>
+            <span className="ml-auto text-[var(--ui-faint)] tabular-nums">
               {d.interview_count} interviews
             </span>
-            <span className="text-[#888b91] tabular-nums">
+            <span className="text-muted-foreground tabular-nums">
               avg {fmtScore(d.avg_composite)}
             </span>
           </div>
@@ -316,22 +310,22 @@ function DistributionSection({
       </div>
 
       {/* Per-axis averages */}
-      <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 border-t border-white/[0.06] pt-3 text-[12px] text-[#888b91]">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 border-t border-border pt-3 text-[12px] text-muted-foreground">
         <span>
           Communication:{' '}
-          <strong className="text-white font-semibold">{fmtScore(avgCommunication)}</strong>
+          <strong className="text-foreground font-semibold">{fmtScore(avgCommunication)}</strong>
         </span>
         <span>
           Technical:{' '}
-          <strong className="text-white font-semibold">{fmtScore(avgTechnical)}</strong>
+          <strong className="text-foreground font-semibold">{fmtScore(avgTechnical)}</strong>
         </span>
         <span>
           Problem Solving:{' '}
-          <strong className="text-white font-semibold">{fmtScore(avgProblemSolving)}</strong>
+          <strong className="text-foreground font-semibold">{fmtScore(avgProblemSolving)}</strong>
         </span>
         <span>
           Confidence:{' '}
-          <strong className="text-white font-semibold">{fmtScore(avgConfidence)}</strong>
+          <strong className="text-foreground font-semibold">{fmtScore(avgConfidence)}</strong>
         </span>
       </div>
     </div>
@@ -385,12 +379,12 @@ export default function AdminAnalytics() {
 
       {/* Page heading — design layout */}
       <div>
-        <div className="flex items-center gap-2 text-[13px] text-[#888b91]">
-          <Activity size={15} className="text-[#60a5fa]" aria-hidden="true" />
+        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <Activity size={15} className="text-[var(--ui-info)]" aria-hidden="true" />
           Usage, throughput and spend across the platform
         </div>
-        <h1 className="mt-1 text-[28px] font-semibold tracking-[-1px] text-white">Analytics</h1>
-        <p className="mt-1 text-[14px] text-[#888b91]">
+        <h1 className="mt-1 text-[28px] font-semibold tracking-[-1px] text-foreground">Analytics</h1>
+        <p className="mt-1 text-[14px] text-muted-foreground">
           Aggregated performance data broken down by role, language, and score distribution.
         </p>
       </div>
@@ -400,7 +394,7 @@ export default function AdminAnalytics() {
         {/* Interview count by role */}
         <Reveal dir="left">
           <GlassCard className="p-5">
-            <h3 className="mb-4 text-[16px] font-semibold text-white">Interviews by Role</h3>
+            <h3 className="mb-4 text-[16px] font-semibold text-foreground">Interviews by Role</h3>
             {roleLoading ? (
               <ChartSkeleton height={240} />
             ) : !roleData || roleData.length === 0 ? (
@@ -414,7 +408,7 @@ export default function AdminAnalytics() {
         {/* Avg axis scores by role — unique live feature, preserved */}
         <Reveal dir="right">
           <GlassCard className="p-5">
-            <h3 className="mb-4 text-[16px] font-semibold text-white">
+            <h3 className="mb-4 text-[16px] font-semibold text-foreground">
               Avg Axis Scores by Role
             </h3>
             {roleLoading ? (
@@ -433,7 +427,7 @@ export default function AdminAnalytics() {
         {/* By language — design gives this the right-panel slot */}
         <Reveal dir="right">
           <GlassCard className="h-full p-5">
-            <h3 className="mb-3 text-[16px] font-semibold text-white">Language Mix</h3>
+            <h3 className="mb-3 text-[16px] font-semibold text-foreground">Language Mix</h3>
             {langLoading ? (
               <ChartSkeleton height={180} />
             ) : !langData || langData.length === 0 ? (
@@ -447,7 +441,7 @@ export default function AdminAnalytics() {
         {/* Score distribution + axis averages — design's 2-col span section */}
         <Reveal dir="left" className="lg:col-span-2">
           <GlassCard className="p-5">
-            <h3 className="mb-4 text-[16px] font-semibold text-white">Score Distribution</h3>
+            <h3 className="mb-4 text-[16px] font-semibold text-foreground">Score Distribution</h3>
             {distLoading ? (
               <ChartSkeleton height={220} />
             ) : !distData ? (

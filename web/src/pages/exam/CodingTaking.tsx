@@ -233,7 +233,7 @@ export default function CodingTaking(props: Props) {
             <p className="whitespace-pre-wrap text-body font-medium text-foreground">
               {i + 1}. {q.prompt}
             </p>
-            <span className="shrink-0 rounded-full bg-white/[0.06] px-2.5 py-1 text-caption text-muted-foreground">
+            <span className="shrink-0 rounded-full bg-[var(--ui-inset)] px-2.5 py-1 text-caption text-muted-foreground">
               {q.points} pts
             </span>
           </div>
@@ -244,7 +244,7 @@ export default function CodingTaking(props: Props) {
               {q.sample_tests.map((s, si) => (
                 <div
                   key={si}
-                  className="rounded-[10px] border border-white/[0.08] bg-white/[0.02] p-3 text-caption"
+                  className="rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3 text-caption"
                 >
                   <div className="text-fog">{t('publicExam.codingInputLabel')}</div>
                   <pre className="mt-0.5 whitespace-pre-wrap font-mono text-[12px] text-mist">
@@ -267,7 +267,7 @@ export default function CodingTaking(props: Props) {
             <select
               value={lang[q.id]}
               onChange={(e) => setLang((p) => ({ ...p, [q.id]: e.target.value }))}
-              className="rounded-[8px] border border-white/[0.1] bg-[rgba(28,29,31,0.7)] px-2.5 py-1.5 text-body-sm text-foreground focus:border-electric focus:outline-none"
+              className="rounded-[8px] border border-border bg-secondary px-2.5 py-1.5 text-body-sm text-foreground focus:border-electric focus:outline-none"
             >
               {q.allowed_languages.map((l) => (
                 <option key={l} value={l}>
@@ -280,7 +280,7 @@ export default function CodingTaking(props: Props) {
           {/* Editor */}
           <Suspense
             fallback={
-              <div className="flex h-40 items-center justify-center rounded-[12px] border border-white/[0.08] bg-[#0b0c0e]">
+              <div className="flex h-40 items-center justify-center rounded-[12px] border border-border bg-card">
                 <Loader2 className="h-5 w-5 animate-spin text-electric" aria-hidden="true" />
               </div>
             }
@@ -319,7 +319,7 @@ export default function CodingTaking(props: Props) {
             <button
               type="button"
               onClick={() => setShowCustom((p) => ({ ...p, [q.id]: !isCustomOpen }))}
-              className="ml-auto flex items-center gap-1.5 rounded-full border border-white/[0.1] px-3 py-1.5 text-caption text-muted-foreground transition-colors hover:border-white/20 hover:text-foreground"
+              className="ml-auto flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-caption text-muted-foreground transition-colors hover:border-[var(--ui-line-strong)] hover:text-foreground"
               aria-expanded={isCustomOpen}
             >
               <Terminal size={12} aria-hidden="true" />
@@ -374,7 +374,7 @@ export default function CodingTaking(props: Props) {
 
           {/* Custom input panel */}
           {isCustomOpen && (
-            <div className="space-y-2 rounded-[12px] border border-white/[0.08] bg-white/[0.02] p-4">
+            <div className="space-y-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4">
               <label className="text-caption text-muted-foreground">
                 {t('publicExam.customInputLabel')}
               </label>
@@ -383,7 +383,7 @@ export default function CodingTaking(props: Props) {
                 onChange={(e) => setCustomInput((p) => ({ ...p, [q.id]: e.target.value }))}
                 rows={4}
                 placeholder={t('publicExam.customInputPlaceholder')}
-                className="w-full resize-y rounded-[8px] border border-white/[0.1] bg-[#0b0c0e] px-3 py-2.5 font-mono text-[12px] text-foreground placeholder:text-fog focus:border-electric focus:outline-none"
+                className="w-full resize-y rounded-[8px] border border-border bg-card px-3 py-2.5 font-mono text-[12px] text-foreground placeholder:text-fog focus:border-electric focus:outline-none"
                 aria-label={t('publicExam.customInputLabel')}
               />
               <div className="flex items-center gap-3">
@@ -464,7 +464,7 @@ export default function CodingTaking(props: Props) {
   return (
     <div className="min-h-screen bg-midnight font-sans">
       {/* Sticky bar */}
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/[0.08] bg-obsidian/80 px-4 py-3 backdrop-blur-xl">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-obsidian/80 px-4 py-3 backdrop-blur-xl">
         <div className="min-w-0">
           <p className="truncate text-body-sm font-semibold text-foreground">{exam.title}</p>
           <p className="text-caption text-muted-foreground">
@@ -477,7 +477,7 @@ export default function CodingTaking(props: Props) {
               'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-body-sm font-medium tabular-nums',
               remaining <= 30
                 ? 'bg-[rgba(230,113,79,0.15)] text-ember'
-                : 'bg-white/[0.06] text-foreground',
+                : 'bg-[var(--ui-inset)] text-foreground',
             )}
             aria-live="polite"
             aria-label={t('publicExam.timeRemaining', { time: fmt(remaining) })}

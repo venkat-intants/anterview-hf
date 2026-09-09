@@ -62,7 +62,7 @@ export default function ProfileView() {
   if (isLoading) {
     return (
       <div className="mx-auto flex max-w-[900px] items-center justify-center px-6 py-24">
-        <Loader2 className="h-6 w-6 animate-spin text-[#60a5fa]" aria-hidden="true" />
+        <Loader2 className="h-6 w-6 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
       </div>
     );
   }
@@ -75,13 +75,13 @@ export default function ProfileView() {
         <button
           type="button"
           onClick={() => void navigate(-1)}
-          className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-[#888b91] hover:text-white"
+          className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft size={15} aria-hidden="true" /> Back
         </button>
         <GlassCard className="flex flex-col items-center gap-3 py-16 text-center">
-          <AlertCircle className="h-9 w-9 text-[#e6714f]" aria-hidden="true" />
-          <p className="text-[14px] text-[#b8babf]">
+          <AlertCircle className="h-9 w-9 text-[var(--ui-danger)]" aria-hidden="true" />
+          <p className="text-[14px] text-[var(--ui-soft)]">
             {forbidden ? "You don't have access to this profile." : 'Profile not found.'}
           </p>
         </GlassCard>
@@ -109,7 +109,7 @@ export default function ProfileView() {
       <button
         type="button"
         onClick={() => void navigate(-1)}
-        className="inline-flex items-center gap-1.5 text-[13px] text-[#888b91] transition-colors hover:text-white"
+        className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft size={15} aria-hidden="true" /> Back
       </button>
@@ -122,7 +122,7 @@ export default function ProfileView() {
               <img
                 src={p.avatar_url}
                 alt={name}
-                className="h-[92px] w-[92px] shrink-0 rounded-full border border-white/15 object-cover"
+                className="h-[92px] w-[92px] shrink-0 rounded-full border border-[var(--ui-line-strong)] object-cover"
               />
             ) : (
               <Avatar initials={initials} gradient={gradient} size={92} />
@@ -135,7 +135,7 @@ export default function ProfileView() {
                   <Badge tone="electric">{STATUS_LABEL[p.employment_status]}</Badge>
                 )}
               </div>
-              {p.headline && <p className="text-[14.5px] text-[#cccccc]">{p.headline}</p>}
+              {p.headline && <p className="text-[14.5px] text-[var(--ui-soft)]">{p.headline}</p>}
               {(p.location || p.phone || p.official_email || p.company_name) && (
                 <TrustStrip className="mt-3" items={links} />
               )}
@@ -149,7 +149,7 @@ export default function ProfileView() {
         <Reveal>
           <GlassCard className="p-6">
             <h3 className="mb-3 text-[15px] font-semibold">Summary</h3>
-            <p className="whitespace-pre-line text-[14px] leading-relaxed text-[#b8babf]">{p.bio}</p>
+            <p className="whitespace-pre-line text-[14px] leading-relaxed text-[var(--ui-soft)]">{p.bio}</p>
           </GlassCard>
         </Reveal>
       )}
@@ -159,26 +159,26 @@ export default function ProfileView() {
         <Reveal>
           <GlassCard className="p-6">
             <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold">
-              <GraduationCap size={16} className="text-[#60a5fa]" aria-hidden="true" /> Career
+              <GraduationCap size={16} className="text-[var(--ui-info)]" aria-hidden="true" /> Career
             </h3>
             {desired.length > 0 && (
               <div className="mb-4">
-                <span className="mb-2 block text-[12px] font-medium text-[#b8babf]">Desired roles</span>
+                <span className="mb-2 block text-[12px] font-medium text-[var(--ui-soft)]">Desired roles</span>
                 <div className="flex flex-wrap gap-1.5">
                   {desired.map((r) => (
                     <span
                       key={r}
-                      className="inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-[12px] text-[#cccccc]"
+                      className="inline-flex items-center gap-1 rounded-full border border-border bg-[var(--ui-inset)] px-2.5 py-1 text-[12px] text-[var(--ui-soft)]"
                     >
-                      <Briefcase size={11} className="text-[#60a5fa]" aria-hidden="true" /> {r}
+                      <Briefcase size={11} className="text-[var(--ui-info)]" aria-hidden="true" /> {r}
                     </span>
                   ))}
                 </div>
               </div>
             )}
             <div className="flex items-center gap-2 text-[13.5px]">
-              <FileText size={15} className={p.has_resume ? 'text-[#27c93f]' : 'text-[#70757c]'} aria-hidden="true" />
-              <span className={p.has_resume ? 'text-white' : 'text-[#888b91]'}>
+              <FileText size={15} className={p.has_resume ? 'text-[var(--ui-ok)]' : 'text-[var(--ui-faint)]'} aria-hidden="true" />
+              <span className={p.has_resume ? 'text-foreground' : 'text-muted-foreground'}>
                 {p.has_resume ? 'Resume on file' : 'No resume uploaded'}
               </span>
             </div>
@@ -191,7 +191,7 @@ export default function ProfileView() {
         <Reveal>
           <GlassCard className="p-6">
             <h3 className="mb-3 flex items-center gap-2 text-[15px] font-semibold">
-              <Link2 size={16} className="text-[#60a5fa]" aria-hidden="true" /> Links
+              <Link2 size={16} className="text-[var(--ui-info)]" aria-hidden="true" /> Links
             </h3>
             <div className="flex flex-wrap gap-2.5">
               {safeExternalUrl(p.linkedin_url) && (
@@ -199,7 +199,7 @@ export default function ProfileView() {
                   href={safeExternalUrl(p.linkedin_url) as string}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-[13px] text-[#cccccc] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] hover:text-white"
+                  className="inline-flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-2 text-[13px] text-[var(--ui-soft)] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] hover:text-foreground"
                 >
                   <Globe size={14} aria-hidden="true" /> LinkedIn
                 </a>
@@ -209,7 +209,7 @@ export default function ProfileView() {
                   href={safeExternalUrl(p.github_url) as string}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-[13px] text-[#cccccc] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] hover:text-white"
+                  className="inline-flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-2 text-[13px] text-[var(--ui-soft)] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] hover:text-foreground"
                 >
                   <Globe size={14} aria-hidden="true" /> GitHub
                 </a>

@@ -169,7 +169,7 @@ export default function HRConsole() {
                   ? `Welcome, ${name}`
                   : 'HR Console'}
             </h1>
-            <p className="mt-1 text-[14px] text-[#888b91]">
+            <p className="mt-1 text-[14px] text-muted-foreground">
               Your hiring at a glance
             </p>
           </div>
@@ -240,7 +240,7 @@ export default function HRConsole() {
 
           <Reveal dir="right">
             <GlassCard className="p-5">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-[#888b91]">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Getting started
               </p>
               <p className="mt-2 text-[13px] text-white/80">
@@ -284,7 +284,7 @@ function ActivityFeed({ items }: { items: NotificationItem[] }) {
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
-        <p className="text-[13px] text-[#888b91]">No recent activity yet.</p>
+        <p className="text-[13px] text-muted-foreground">No recent activity yet.</p>
       </div>
     );
   }
@@ -296,7 +296,7 @@ function ActivityFeed({ items }: { items: NotificationItem[] }) {
         return (
           <div
             key={n.id}
-            className="flex items-center gap-3.5 border-b border-white/[0.05] py-3.5 last:border-0"
+            className="flex items-center gap-3.5 border-b border-border py-3.5 last:border-0"
           >
             <span
               className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px]"
@@ -313,7 +313,7 @@ function ActivityFeed({ items }: { items: NotificationItem[] }) {
                 <span className="font-semibold">{n.title}</span>
                 {n.body ? <span className="text-white/70"> — {n.body}</span> : null}
               </div>
-              <div className="text-[11.5px] text-[#70757c]">{timeAgo(n.created_at)}</div>
+              <div className="text-[11.5px] text-[var(--ui-faint)]">{timeAgo(n.created_at)}</div>
             </div>
           </div>
         );

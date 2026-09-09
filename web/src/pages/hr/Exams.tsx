@@ -50,22 +50,22 @@ function ExamCard({ e }: { e: ExamSummary }) {
         <StatusTag tone={tone} dot={isPublished}>
           {label}
         </StatusTag>
-        <span className="font-mono text-[12px] text-[#70757c]">{e.question_count} Qs</span>
+        <span className="font-mono text-[12px] text-[var(--ui-faint)]">{e.question_count} Qs</span>
       </div>
 
       {/* Title */}
       <h3 className="text-[16px] font-semibold line-clamp-2">{e.title}</h3>
 
       {/* Meta */}
-      <div className="mt-1 text-[12.5px] text-[#70757c]">pass ≥ {e.pass_threshold}%</div>
+      <div className="mt-1 text-[12.5px] text-[var(--ui-faint)]">pass ≥ {e.pass_threshold}%</div>
 
       {/* Attempts / not-published */}
       {isPublished ? (
-        <div className="mt-4 flex items-center gap-4 text-[12.5px] text-[#888b91]">
+        <div className="mt-4 flex items-center gap-4 text-[12.5px] text-muted-foreground">
           <span>{e.attempt_count} attempts</span>
         </div>
       ) : (
-        <div className="mt-4 text-[12.5px] text-[#70757c]">Not published yet</div>
+        <div className="mt-4 text-[12.5px] text-[var(--ui-faint)]">Not published yet</div>
       )}
 
       {/* Actions.
@@ -162,7 +162,7 @@ export default function Exams() {
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-[28px] font-semibold tracking-[-1px]">Exams</h1>
-          <p className="mt-1 text-[14px] text-[#888b91]">
+          <p className="mt-1 text-[14px] text-muted-foreground">
             Build and publish AI interview exams.
           </p>
         </div>
@@ -184,8 +184,8 @@ export default function Exams() {
                     className={
                       'flex-1 rounded-[10px] border px-3 py-2 text-[13px] font-medium transition-colors ' +
                       (kind === k
-                        ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]'
-                        : 'border-white/[0.1] text-[#888b91] hover:text-white')
+                        ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
+                        : 'border-border text-muted-foreground hover:text-foreground')
                     }
                     aria-pressed={kind === k}
                   >
@@ -227,7 +227,7 @@ export default function Exams() {
                       onChange={setAllowRetake}
                       label="Allow retake"
                     />
-                    <span className="text-[13px] text-[#b8babf]">Allow retake</span>
+                    <span className="text-[13px] text-[var(--ui-soft)]">Allow retake</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <ToggleSwitch
@@ -235,7 +235,7 @@ export default function Exams() {
                       onChange={setAutoAdvance}
                       label="Auto-advance on pass"
                     />
-                    <span className="text-[13px] text-[#b8babf]">Auto-advance on pass</span>
+                    <span className="text-[13px] text-[var(--ui-soft)]">Auto-advance on pass</span>
                   </div>
                 </div>
               </div>
@@ -278,9 +278,9 @@ export default function Exams() {
           className={cn(
             'flex min-h-[212px] flex-col items-center justify-center gap-2.5',
             'rounded-[24px] border-[1.5px] border-dashed border-[rgba(var(--accent-rgb),0.4)]',
-            'bg-[rgba(var(--accent-rgb),0.06)] text-[#60a5fa]',
+            'bg-[rgba(var(--accent-rgb),0.06)] text-[var(--ui-info)]',
             'transition-colors hover:bg-[rgba(var(--accent-rgb),0.1)]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           )}
           aria-label="Create new exam"
         >
@@ -295,7 +295,7 @@ export default function Exams() {
           [0, 1, 2].map((i) => (
             <div
               key={i}
-              className="h-[212px] w-full animate-pulse rounded-[24px] bg-white/[0.04]"
+              className="h-[212px] w-full animate-pulse rounded-[24px] bg-[var(--ui-inset)]"
             />
           ))}
 
@@ -304,14 +304,14 @@ export default function Exams() {
           <div
             className={cn(
               'flex flex-col items-center justify-center gap-3 rounded-[24px]',
-              'border border-dashed border-white/[0.08] bg-white/[0.02] p-8 text-center',
+              'border border-dashed border-border bg-[var(--ui-inset-soft)] p-8 text-center',
               'sm:col-span-1 lg:col-span-2',
             )}
           >
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/[0.06] text-[#888b91]">
+            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--ui-inset)] text-muted-foreground">
               <Sparkles size={24} aria-hidden="true" />
             </span>
-            <p className="text-[13px] text-[#888b91]">
+            <p className="text-[13px] text-muted-foreground">
               No exams yet. Create one, add questions, then publish to start receiving
               attempts.
             </p>

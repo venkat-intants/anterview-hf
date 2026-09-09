@@ -78,10 +78,9 @@
 
   /* ── AntHire LIGHT mode ────────────────────────────────────────────────────
    * The second of the two designs. Applied by `html[data-mode='light']`, which
-   * `lib/useThemeMode.ts` sets — and only on the surfaces that have been built
-   * for it (public, auth and candidate pages; see THEMED_PREFIXES there). The
-   * staff consoles and the live interview stay dark, so the attribute is forced
-   * back to `dark` while those routes are mounted rather than half-theming them.
+   * `lib/useThemeMode.ts` sets across the whole application — the staff consoles
+   * were swept onto these tokens too. The one exception is the live interview,
+   * pinned dark in both modes because it is a video surface, not a document.
    *
    * Same shape as the dark palette above, same token names — a page written
    * against `bg-card` / `text-foreground` / `border-border` needs no change to
@@ -149,6 +148,16 @@
        PromoBanner, which is a fixed dark gradient card in both). */
     --ui-grad-feature: linear-gradient(160deg, #001b33, #030719);
 
+    /* Role labels in the sidebar. One hue per tier so the tier is readable at a
+       glance; the light values are darkened to hold contrast on a white ground. */
+    --ui-role-platform: #f0a6c8;
+    --ui-role-super: #c89ce8;
+    --ui-role-admin: #60a5fa;
+    --ui-role-hr: #27c93f;
+
+    --ui-lavender: #a887dc;
+    --ui-lavender-wash: rgba(168, 135, 220, 0.18);
+
     --ui-ok: #27c93f;
     --ui-ok-wash: rgba(39, 201, 63, 0.16);
     --ui-warn: #ffb764;
@@ -168,6 +177,14 @@
 
     --auth-gradient: linear-gradient(160deg, #1b2a6b 0%, #2f4ea8 30%, #5c65c4 50%, #a887dc 72%, #e6c4e7 96%, #fcdbef 107%);
     --ui-grad-feature: linear-gradient(160deg, #e9f1ff, #f8fafe);
+
+    --ui-role-platform: #b02a66;
+    --ui-role-super: #6d4aa8;
+    --ui-role-admin: #1d6fd0;
+    --ui-role-hr: #148a35;
+
+    --ui-lavender: #6d4aa8;
+    --ui-lavender-wash: rgba(109, 74, 168, 0.1);
 
     --ui-ok: #148a35;
     --ui-ok-wash: rgba(20, 138, 53, 0.1);

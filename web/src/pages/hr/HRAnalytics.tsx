@@ -27,15 +27,9 @@ import {
 import { getHrAnalytics, type HrAnalytics } from '@/api/pipeline';
 import { Reveal } from '@/design/components/Reveal';
 import { GlassCard } from '@/design/components/primitives';
+import { TOOLTIP_STYLE } from '@/lib/chartTheme';
 
 // ── Tooltip style (design spec) ───────────────────────────────────────────────
-const TOOLTIP_STYLE = {
-  background: '#0f0f10',
-  border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 12,
-  color: '#fff',
-  fontSize: 12,
-} as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -75,7 +69,7 @@ function FunnelBars({ f }: { f: HrAnalytics['funnel'] }) {
   if (!rows.some((r) => r.value > 0)) {
     return (
       <div className="flex h-[140px] items-center justify-center">
-        <p className="text-[13px] text-[#888b91]">No pipeline data yet.</p>
+        <p className="text-[13px] text-muted-foreground">No pipeline data yet.</p>
       </div>
     );
   }
@@ -86,8 +80,8 @@ function FunnelBars({ f }: { f: HrAnalytics['funnel'] }) {
         const pct = Math.round((row.value / max) * 100);
         return (
           <div key={row.label} className="flex items-center gap-3.5">
-            <div className="w-[84px] text-[13px] text-[#b8babf]">{row.label}</div>
-            <div className="h-7 flex-1 overflow-hidden rounded-[8px] bg-white/[0.05]">
+            <div className="w-[84px] text-[13px] text-[var(--ui-soft)]">{row.label}</div>
+            <div className="h-7 flex-1 overflow-hidden rounded-[8px] bg-[var(--ui-inset)]">
               {pct > 0 && (
                 <div
                   className="flex h-full items-center rounded-[8px] bg-[linear-gradient(90deg,var(--accent),#a887dc)] pl-3 text-[12px] font-semibold"
@@ -130,7 +124,7 @@ export default function HRAnalytics() {
             {isLoading ? (
               <div className="space-y-2.5">
                 {[0, 1, 2, 3, 4].map((i) => (
-                  <div key={i} className="h-7 animate-pulse rounded-[8px] bg-white/[0.05]" />
+                  <div key={i} className="h-7 animate-pulse rounded-[8px] bg-[var(--ui-inset)]" />
                 ))}
               </div>
             ) : f ? (
@@ -138,20 +132,20 @@ export default function HRAnalytics() {
             ) : null}
             {/* Conversion rates subtitle when data is available */}
             {f && avg && (
-              <div className="mt-4 flex flex-wrap gap-4 text-[12px] text-[#70757c]">
+              <div className="mt-4 flex flex-wrap gap-4 text-[12px] text-[var(--ui-faint)]">
                 <span>
                   Shortlist rate:{' '}
-                  <span className="text-[#b8babf]">
+                  <span className="text-[var(--ui-soft)]">
                     {rate(f.shortlisted, f.total_applicants)}
                   </span>
                 </span>
                 <span>
                   Pass rate:{' '}
-                  <span className="text-[#b8babf]">{rate(f.exam_passed, f.exam_taken)}</span>
+                  <span className="text-[var(--ui-soft)]">{rate(f.exam_passed, f.exam_taken)}</span>
                 </span>
                 <span>
                   Hire rate:{' '}
-                  <span className="text-[#b8babf]">
+                  <span className="text-[var(--ui-soft)]">
                     {rate(f.hired, f.interview_completed)}
                   </span>
                 </span>
@@ -194,14 +188,14 @@ export default function HRAnalytics() {
                         style={{ background: s.color }}
                       />
                       {s.label}
-                      <span className="ml-auto text-[#70757c]">{s.value}%</span>
+                      <span className="ml-auto text-[var(--ui-faint)]">{s.value}%</span>
                     </div>
                   ))}
                 </div>
               </>
             ) : (
               <div className="flex h-[180px] items-center justify-center">
-                <p className="text-[13px] text-[#888b91]">No language data yet.</p>
+                <p className="text-[13px] text-muted-foreground">No language data yet.</p>
               </div>
             )}
           </GlassCard>
@@ -244,7 +238,7 @@ export default function HRAnalytics() {
               </div>
             ) : (
               <div className="flex h-[220px] items-center justify-center">
-                <p className="text-[13px] text-[#888b91]">No score data yet.</p>
+                <p className="text-[13px] text-muted-foreground">No score data yet.</p>
               </div>
             )}
           </GlassCard>
@@ -291,7 +285,7 @@ export default function HRAnalytics() {
               </div>
             ) : (
               <div className="flex h-[220px] items-center justify-center">
-                <p className="text-[13px] text-[#888b91]">No trend data yet.</p>
+                <p className="text-[13px] text-muted-foreground">No trend data yet.</p>
               </div>
             )}
           </GlassCard>
@@ -301,17 +295,17 @@ export default function HRAnalytics() {
       {/* Averages summary row (only when data loaded) */}
       {avg && (
         <Reveal>
-          <div className="flex flex-wrap gap-6 rounded-[16px] border border-white/[0.06] bg-white/[0.02] px-5 py-4 text-[13px] text-[#888b91]">
+          <div className="flex flex-wrap gap-6 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] px-5 py-4 text-[13px] text-muted-foreground">
             {avg.avg_ats !== null && (
               <span>
                 Avg ATS score:{' '}
-                <span className="font-semibold text-white">{Math.round(avg.avg_ats)}</span>
+                <span className="font-semibold text-foreground">{Math.round(avg.avg_ats)}</span>
               </span>
             )}
             {avg.avg_exam_percent !== null && (
               <span>
                 Avg exam score:{' '}
-                <span className="font-semibold text-white">
+                <span className="font-semibold text-foreground">
                   {Math.round(avg.avg_exam_percent)}%
                 </span>
               </span>
@@ -319,7 +313,7 @@ export default function HRAnalytics() {
             {avg.avg_interview_composite !== null && (
               <span>
                 Avg interview score:{' '}
-                <span className="font-semibold text-white">
+                <span className="font-semibold text-foreground">
                   {avg.avg_interview_composite.toFixed(1)}/10
                 </span>
               </span>
@@ -336,7 +330,7 @@ export function HRAnalyticsPage() {
   return (
     <div className="mx-auto max-w-[1280px] px-6 py-8 lg:px-8">
       <h1 className="text-[28px] font-semibold tracking-[-1px]">Analytics</h1>
-      <p className="mt-1 text-[14px] text-[#888b91]">
+      <p className="mt-1 text-[14px] text-muted-foreground">
         Funnel, scores and language insights.
       </p>
       <div className="mt-6">

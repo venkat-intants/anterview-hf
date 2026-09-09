@@ -34,9 +34,9 @@ const SEVERITY: Record<
   AttentionSeverity,
   { label: string; tint: string; icon: typeof AlertTriangle }
 > = {
-  critical: { label: 'Critical', tint: 'text-[#e6714f]', icon: AlertTriangle },
-  warning: { label: 'Needs attention', tint: 'text-[#ffb764]', icon: AlertTriangle },
-  info: { label: 'For information', tint: 'text-[#60a5fa]', icon: Info },
+  critical: { label: 'Critical', tint: 'text-[var(--ui-danger)]', icon: AlertTriangle },
+  warning: { label: 'Needs attention', tint: 'text-[var(--ui-warn)]', icon: AlertTriangle },
+  info: { label: 'For information', tint: 'text-[var(--ui-info)]', icon: Info },
 };
 
 function Finding({ item }: { item: AttentionItem }) {
@@ -48,14 +48,14 @@ function Finding({ item }: { item: AttentionItem }) {
       <div className="flex items-start gap-2.5">
         <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', tone.tint)} aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-medium text-white">
+          <p className="text-[14px] font-medium text-foreground">
             <span className="sr-only">{tone.label}: </span>
             {item.title}
           </p>
-          <p className="mt-0.5 text-[13px] leading-relaxed text-[#888b91]">{item.body}</p>
+          <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">{item.body}</p>
         </div>
         {item.link ? (
-          <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[#5a5f66]" aria-hidden="true" />
+          <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
         ) : null}
       </div>
 
@@ -67,13 +67,13 @@ function Finding({ item }: { item: AttentionItem }) {
           {item.citations.slice(0, 4).map((c) => (
             <span
               key={`${c.kind}-${c.id}`}
-              className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-[11.5px] text-[#b8babf]"
+              className="rounded-full border border-border bg-[var(--ui-inset-soft)] px-2 py-0.5 text-[11.5px] text-[var(--ui-soft)]"
             >
               {c.label}
             </span>
           ))}
           {item.citations.length > 4 ? (
-            <span className="px-1 py-0.5 text-[11.5px] text-[#70757c]">
+            <span className="px-1 py-0.5 text-[11.5px] text-[var(--ui-faint)]">
               +{item.citations.length - 4} more
             </span>
           ) : null}
@@ -83,7 +83,7 @@ function Finding({ item }: { item: AttentionItem }) {
   );
 
   const shell =
-    'block rounded-[12px] border border-white/[0.07] bg-white/[0.02] p-3.5 text-left';
+    'block rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 text-left';
 
   // A finding with nowhere to go is rendered as text rather than a dead link.
   return item.link ? (
@@ -91,7 +91,7 @@ function Finding({ item }: { item: AttentionItem }) {
       to={item.link}
       className={cn(
         shell,
-        'transition-colors hover:border-white/[0.16] focus:outline-none focus-visible:border-[var(--accent)]',
+        'transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]',
       )}
     >
       {inner}
@@ -117,9 +117,9 @@ export default function AttentionPanel({ className }: { className?: string }) {
   return (
     <GlassCard className={cn('p-5', className)}>
       <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-[15px] font-semibold text-white">Attention required</h2>
+        <h2 className="text-[15px] font-semibold text-foreground">Attention required</h2>
         {attention.data && attention.data.total > 0 ? (
-          <span className="text-[12px] text-[#888b91]">
+          <span className="text-[12px] text-muted-foreground">
             {attention.data.total} {attention.data.total === 1 ? 'item' : 'items'}
           </span>
         ) : null}
@@ -127,22 +127,22 @@ export default function AttentionPanel({ className }: { className?: string }) {
 
       {attention.isLoading ? (
         <div className="flex flex-col gap-2">
-          <div className="h-[58px] animate-pulse rounded-[12px] bg-white/[0.03]" />
-          <div className="h-[58px] animate-pulse rounded-[12px] bg-white/[0.03]" />
+          <div className="h-[58px] animate-pulse rounded-[12px] bg-[var(--ui-inset-soft)]" />
+          <div className="h-[58px] animate-pulse rounded-[12px] bg-[var(--ui-inset-soft)]" />
         </div>
       ) : null}
 
       {/* A failure must not read as "nothing needs attention" — that is the one
           wrong answer this panel can give, because it is also the good news. */}
       {attention.isError ? (
-        <p className="text-[13px] text-[#888b91]">
+        <p className="text-[13px] text-muted-foreground">
           Could not check for issues just now. Refresh to try again.
         </p>
       ) : null}
 
       {!attention.isLoading && !attention.isError && items.length === 0 ? (
-        <p className="flex items-center gap-2 text-[13px] text-[#888b91]">
-          <CheckCircle2 className="h-4 w-4 text-[#27c93f]" aria-hidden="true" />
+        <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
           Nothing needs your attention right now.
         </p>
       ) : null}

@@ -33,8 +33,8 @@ const LANG_LABEL: Record<string, string> = {
 };
 
 const inputCls =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 ' +
-  'text-[14px] text-white placeholder:text-[#5a5f66] focus:outline-none ' +
+  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 ' +
+  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none ' +
   'focus:border-[var(--accent)] transition-colors';
 
 const emptyTest = (): CodingTestCase => ({
@@ -181,15 +181,15 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
             const sampleN = q.test_cases.filter((t) => t.is_sample).length;
             return (
               <StaggerItem key={q.id}>
-                <div className="rounded-[14px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-3.5">
+                <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3.5">
                   <div className="flex items-start gap-3">
-                    <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-white/[0.06] font-mono text-[11px] text-[#b8babf]">
+                    <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[11px] text-[var(--ui-soft)]">
                       {i + 1}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="whitespace-pre-wrap text-[13px] font-medium leading-snug text-white">
+                      <p className="whitespace-pre-wrap text-[13px] font-medium leading-snug text-foreground">
                         {q.prompt}{' '}
-                        <span className="font-normal text-[#888b91]">({q.points} pt)</span>
+                        <span className="font-normal text-muted-foreground">({q.points} pt)</span>
                       </p>
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         {q.allowed_languages.map((l) => (
@@ -197,7 +197,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                             {LANG_LABEL[l] ?? l}
                           </StatusTag>
                         ))}
-                        <span className="text-[11px] text-[#70757c]">
+                        <span className="text-[11px] text-[var(--ui-faint)]">
                           {q.test_cases.length} test{q.test_cases.length === 1 ? '' : 's'} ·{' '}
                           {sampleN} sample
                         </span>
@@ -207,7 +207,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                       <button
                         type="button"
                         aria-label="Delete question"
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-white/[0.1] text-[#888b91] transition-colors hover:border-[rgba(230,113,79,0.4)] hover:text-[#e6714f]"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-border text-muted-foreground transition-colors hover:border-[rgba(230,113,79,0.4)] hover:text-[var(--ui-danger)]"
                         onClick={() => delMut.mutate(q.id)}
                       >
                         <Trash2 size={13} aria-hidden="true" />
@@ -223,16 +223,16 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
       {/* Composer */}
       {locked ? (
-        <div className="flex items-center gap-2 rounded-[14px] border border-white/[0.08] bg-[rgba(28,29,31,0.3)] px-3.5 py-2.5 text-[12.5px] text-[#888b91]">
+        <div className="flex items-center gap-2 rounded-[14px] border border-border bg-[rgba(28,29,31,0.3)] px-3.5 py-2.5 text-[12.5px] text-muted-foreground">
           <Lock size={14} aria-hidden="true" /> Questions are locked once attempts exist.
         </div>
       ) : (
-        <div className="rounded-[14px] border border-dashed border-white/[0.1] bg-[rgba(28,29,31,0.3)] p-3.5">
+        <div className="rounded-[14px] border border-dashed border-border bg-[rgba(28,29,31,0.3)] p-3.5">
           {/* Tab bar — mirrors the MCQ composer's Manual | AI switcher */}
           <div
             role="tablist"
             aria-label="How to add coding questions"
-            className="mb-3 flex gap-1 rounded-[10px] border border-white/[0.08] bg-[rgba(20,21,23,0.6)] p-1"
+            className="mb-3 flex gap-1 rounded-[10px] border border-border bg-[rgba(20,21,23,0.6)] p-1"
           >
             {[
               { key: 'manual', label: 'Manual', icon: Pencil },
@@ -250,8 +250,8 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                   className={cn(
                     'flex flex-1 items-center justify-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[12px] font-medium transition-colors',
                     active
-                      ? 'bg-[rgba(var(--accent-rgb),0.16)] text-[#60a5fa]'
-                      : 'text-[#888b91] hover:text-white',
+                      ? 'bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]'
+                      : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
                   <Icon size={13} aria-hidden="true" />
@@ -272,7 +272,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                 aria-label="Topic"
               />
               <div className="flex flex-wrap items-end gap-2.5">
-                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                   Problems
                   <input
                     type="number"
@@ -280,16 +280,16 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                     max={8}
                     value={aiCount}
                     onChange={(e) => setAiCount(e.target.value)}
-                    className="w-16 rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1.5 text-[12.5px] normal-case text-white focus:border-[var(--accent)] focus:outline-none"
+                    className="w-16 rounded-[7px] border border-border bg-secondary px-2 py-1.5 text-[12.5px] normal-case text-foreground focus:border-[var(--accent)] focus:outline-none"
                     aria-label="Number of problems"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                   Difficulty
                   <select
                     value={aiDifficulty}
                     onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
-                    className="rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1.5 text-[12.5px] normal-case text-white focus:border-[var(--accent)] focus:outline-none"
+                    className="rounded-[7px] border border-border bg-secondary px-2 py-1.5 text-[12.5px] normal-case text-foreground focus:border-[var(--accent)] focus:outline-none"
                   >
                     <option value="easy">Easy</option>
                     <option value="medium">Medium</option>
@@ -297,12 +297,12 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                     <option value="mixed">Mixed</option>
                   </select>
                 </label>
-                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                   Statement language
                   <select
                     value={aiLanguage}
                     onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
-                    className="rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1.5 text-[12.5px] normal-case text-white focus:border-[var(--accent)] focus:outline-none"
+                    className="rounded-[7px] border border-border bg-secondary px-2 py-1.5 text-[12.5px] normal-case text-foreground focus:border-[var(--accent)] focus:outline-none"
                   >
                     <option value="en">English</option>
                     <option value="hi">हिन्दी</option>
@@ -328,7 +328,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
               {/* Allowed languages (shared with the manual composer) */}
               <div>
-                <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+                <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                   Candidates may solve in
                 </p>
                 <div className="flex flex-wrap gap-1.5">
@@ -342,8 +342,8 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                         className={cn(
                           'rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors',
                           on
-                            ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]'
-                            : 'border-white/[0.1] text-[#888b91] hover:text-white',
+                            ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
+                            : 'border-border text-muted-foreground hover:text-foreground',
                         )}
                       >
                         {LANG_LABEL[slug]}
@@ -356,7 +356,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
               {/* Drafts preview */}
               {aiPreview.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-[11.5px] text-[#888b91]">
+                  <p className="text-[11.5px] text-muted-foreground">
                     Review the drafts — check the sample cases and remove any problem you
                     don&apos;t want. Each problem ships with hidden test cases used for grading.
                   </p>
@@ -366,17 +366,17 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                     return (
                       <div
                         key={i}
-                        className="rounded-[11px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-2.5"
+                        className="rounded-[11px] border border-border bg-[rgba(28,29,31,0.5)] p-2.5"
                       >
                         <div className="flex items-start gap-2.5">
-                          <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-white/[0.06] font-mono text-[11px] text-[#b8babf]">
+                          <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[11px] text-[var(--ui-soft)]">
                             {i + 1}
                           </span>
                           <div className="min-w-0 flex-1">
-                            <p className="line-clamp-4 whitespace-pre-wrap text-[12.5px] leading-snug text-white">
+                            <p className="line-clamp-4 whitespace-pre-wrap text-[12.5px] leading-snug text-foreground">
                               {q.prompt}
                             </p>
-                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-[#70757c]">
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--ui-faint)]">
                               <StatusTag tone="neutral" className="text-[10.5px]">
                                 {sampleN} sample
                               </StatusTag>
@@ -393,7 +393,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                           <button
                             type="button"
                             aria-label={`Discard draft ${i + 1}`}
-                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] border border-white/[0.1] text-[#888b91] transition-colors hover:border-[rgba(230,113,79,0.4)] hover:text-[#e6714f]"
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] border border-border text-muted-foreground transition-colors hover:border-[rgba(230,113,79,0.4)] hover:text-[var(--ui-danger)]"
                             onClick={() =>
                               setAiPreview((p) => p.filter((_, j) => j !== i))
                             }
@@ -422,7 +422,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                     </Pill>
                     <button
                       type="button"
-                      className="text-[12px] text-[#888b91] hover:text-white"
+                      className="text-[12px] text-muted-foreground hover:text-foreground"
                       onClick={() => setAiPreview([])}
                     >
                       Discard
@@ -451,7 +451,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
           {/* Allowed languages */}
           <div>
-            <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+            <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
               Allowed languages
             </p>
             <div className="flex flex-wrap gap-1.5">
@@ -465,8 +465,8 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                     className={cn(
                       'rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors',
                       on
-                        ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]'
-                        : 'border-white/[0.1] text-[#888b91] hover:text-white',
+                        ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
+                        : 'border-border text-muted-foreground hover:text-foreground',
                     )}
                   >
                     {LANG_LABEL[slug]}
@@ -478,13 +478,13 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
           {/* Starter code */}
           <div>
-            <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">
+            <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
               Starter code (optional) — {LANG_LABEL[editorLang]}
             </p>
             <Suspense
               fallback={
-                <div className="flex h-28 items-center justify-center rounded-[10px] border border-white/[0.08] bg-[#0b0c0e]">
-                  <Loader2 className="h-5 w-5 animate-spin text-[#60a5fa]" aria-hidden="true" />
+                <div className="flex h-28 items-center justify-center rounded-[10px] border border-border bg-card">
+                  <Loader2 className="h-5 w-5 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
                 </div>
               }
             >
@@ -502,11 +502,11 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
           {/* Test cases */}
           <div>
             <div className="mb-1.5 flex items-center justify-between">
-              <p className="text-[11.5px] uppercase tracking-[0.5px] text-[#70757c]">Test cases</p>
+              <p className="text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">Test cases</p>
               <button
                 type="button"
                 onClick={() => setTests((p) => [...p, emptyTest()])}
-                className="inline-flex items-center gap-1 text-[12px] text-[#60a5fa] hover:underline"
+                className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
               >
                 <Plus size={12} aria-hidden="true" /> Add test
               </button>
@@ -515,7 +515,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
               {tests.map((tc, ti) => (
                 <div
                   key={ti}
-                  className="rounded-[11px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-2.5"
+                  className="rounded-[11px] border border-border bg-[rgba(28,29,31,0.5)] p-2.5"
                 >
                   <div className="grid gap-2 sm:grid-cols-2">
                     <textarea
@@ -543,7 +543,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                       aria-label={`Test ${ti + 1} expected output`}
                     />
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[11.5px] text-[#888b91]">
+                  <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[11.5px] text-muted-foreground">
                     <label className="flex items-center gap-1.5">
                       <input
                         type="checkbox"
@@ -572,7 +572,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                             ),
                           )
                         }
-                        className="w-12 rounded-[6px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-1.5 py-0.5 text-white focus:border-[var(--accent)] focus:outline-none"
+                        className="w-12 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-foreground focus:border-[var(--accent)] focus:outline-none"
                         aria-label={`Test ${ti + 1} weight`}
                       />
                     </label>
@@ -580,7 +580,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                       <button
                         type="button"
                         aria-label="Remove test case"
-                        className="ml-auto text-[#888b91] transition-colors hover:text-[#e6714f]"
+                        className="ml-auto text-muted-foreground transition-colors hover:text-[var(--ui-danger)]"
                         onClick={() => setTests((p) => p.filter((_, j) => j !== ti))}
                       >
                         <Trash2 size={12} aria-hidden="true" />
@@ -594,15 +594,15 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
           {/* Points + submit */}
           <div className="flex flex-wrap items-center gap-2">
-            <Code2 size={15} className="text-[#60a5fa]" aria-hidden="true" />
-            <label className="ml-auto flex items-center gap-1.5 text-[12px] text-[#888b91]">
+            <Code2 size={15} className="text-[var(--ui-info)]" aria-hidden="true" />
+            <label className="ml-auto flex items-center gap-1.5 text-[12px] text-muted-foreground">
               Points
               <input
                 type="number"
                 min={1}
                 value={points}
                 onChange={(e) => setPoints(e.target.value)}
-                className="w-16 rounded-[7px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[12px] text-white focus:border-[var(--accent)] focus:outline-none"
+                className="w-16 rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none"
                 aria-label="Points"
               />
             </label>

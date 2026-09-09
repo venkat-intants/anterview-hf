@@ -55,10 +55,10 @@ export interface DrawerCandidate {
 
 /** Colour by band, but never colour ALONE — the number is always present. */
 function scoreTone(pct: number | null): string {
-  if (pct === null) return 'text-[#888b91]';
-  if (pct >= 75) return 'text-[#5ec27a]';
-  if (pct >= 50) return 'text-[#ffb764]';
-  return 'text-[#ff8f8f]';
+  if (pct === null) return 'text-muted-foreground';
+  if (pct >= 75) return 'text-[var(--ui-ok)]';
+  if (pct >= 50) return 'text-[var(--ui-warn)]';
+  return 'text-[var(--ui-danger)]';
 }
 
 /**
@@ -88,8 +88,8 @@ function RoundScores({ applicantId }: { applicantId: string }) {
   if (isLoading) {
     return (
       <div className="mt-5">
-        <h3 className="text-[13px] font-medium text-white">Assessment</h3>
-        <div className="mt-2 h-16 animate-pulse rounded-[10px] bg-white/[0.04]" />
+        <h3 className="text-[13px] font-medium text-foreground">Assessment</h3>
+        <div className="mt-2 h-16 animate-pulse rounded-[10px] bg-[var(--ui-inset)]" />
       </div>
     );
   }
@@ -98,8 +98,8 @@ function RoundScores({ applicantId }: { applicantId: string }) {
   if (isError) {
     return (
       <div className="mt-5">
-        <h3 className="text-[13px] font-medium text-white">Assessment</h3>
-        <p className="mt-1.5 text-[12.5px] text-[#888b91]">
+        <h3 className="text-[13px] font-medium text-foreground">Assessment</h3>
+        <p className="mt-1.5 text-[12.5px] text-muted-foreground">
           Scores could not be loaded. Reopen to retry.
         </p>
       </div>
@@ -109,12 +109,12 @@ function RoundScores({ applicantId }: { applicantId: string }) {
 
   return (
     <div className="mt-5">
-      <h3 className="text-[13px] font-medium text-white">Assessment</h3>
+      <h3 className="text-[13px] font-medium text-foreground">Assessment</h3>
       <ul className="mt-2 flex flex-col gap-3">
         {data.map((r: RoundResult) => (
-          <li key={r.round_id} className="rounded-[10px] border border-white/[0.08] p-3">
+          <li key={r.round_id} className="rounded-[10px] border border-border p-3">
             <div className="flex items-baseline justify-between gap-3">
-              <span className="min-w-0 truncate text-[12.5px] text-white">
+              <span className="min-w-0 truncate text-[12.5px] text-foreground">
                 {r.position + 1}. {r.round_title}
               </span>
               <span className={cn('text-[15px] font-semibold', scoreTone(r.percent))}>
@@ -122,7 +122,7 @@ function RoundScores({ applicantId }: { applicantId: string }) {
               </span>
             </div>
 
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px] text-[#70757c]">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px] text-[var(--ui-faint)]">
               <span>
                 {r.graded_by === 'ai'
                   ? 'AI-graded'
@@ -131,7 +131,7 @@ function RoundScores({ applicantId }: { applicantId: string }) {
                     : 'Auto-graded'}
               </span>
               {r.passed !== null ? (
-                <span className={r.passed ? 'text-[#5ec27a]' : 'text-[#ffb764]'}>
+                <span className={r.passed ? 'text-[var(--ui-ok)]' : 'text-[var(--ui-warn)]'}>
                   · {r.passed ? 'advanced' : 'held for your decision'}
                 </span>
               ) : null}
@@ -142,7 +142,7 @@ function RoundScores({ applicantId }: { applicantId: string }) {
                 {r.criteria.map((c) => (
                   <li key={c.competency_id}>
                     <div className="flex items-baseline justify-between gap-3">
-                      <span className="min-w-0 truncate text-[12px] text-[#d5d7da]">
+                      <span className="min-w-0 truncate text-[12px] text-[var(--ui-soft)]">
                         {c.name}
                       </span>
                       <span className={cn('text-[12px]', scoreTone(c.score))}>
@@ -150,7 +150,7 @@ function RoundScores({ applicantId }: { applicantId: string }) {
                       </span>
                     </div>
                     {c.evidence ? (
-                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-[#70757c]">
+                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
                         {c.evidence}
                       </p>
                     ) : null}
@@ -160,14 +160,14 @@ function RoundScores({ applicantId }: { applicantId: string }) {
             ) : null}
 
             {Object.keys(r.axes).length ? (
-              <div className="mt-2.5 border-t border-white/[0.06] pt-2">
-                <p className="text-[11px] uppercase tracking-wide text-[#5a5f66]">
+              <div className="mt-2.5 border-t border-border pt-2">
+                <p className="text-[11px] uppercase tracking-wide text-[var(--ui-faint)]">
                   Comparable axes
                 </p>
                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
                   {Object.entries(r.axes).map(([axis, v]) => (
-                    <span key={axis} className="text-[11.5px] text-[#888b91]">
-                      {axis} <span className="text-[#d5d7da]">{Math.round(v)}</span>
+                    <span key={axis} className="text-[11.5px] text-muted-foreground">
+                      {axis} <span className="text-[var(--ui-soft)]">{Math.round(v)}</span>
                     </span>
                   ))}
                 </div>
@@ -192,9 +192,9 @@ const STATUS_TONE: Record<string, TagTone> = {
 function Row({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value) return null;
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.06] py-1.5 last:border-b-0">
-      <span className="text-[12px] text-[#888b91]">{label}</span>
-      <span className="text-right text-[13px] text-[#d5d7da]">{value}</span>
+    <div className="flex items-baseline justify-between gap-4 border-b border-border py-1.5 last:border-b-0">
+      <span className="text-[12px] text-muted-foreground">{label}</span>
+      <span className="text-right text-[13px] text-[var(--ui-soft)]">{value}</span>
     </div>
   );
 }
@@ -271,14 +271,14 @@ export default function CandidateDrawer({
         role="dialog"
         aria-modal="true"
         aria-labelledby="drawer-name"
-        className="relative flex h-full w-full max-w-[440px] flex-col overflow-y-auto border-l border-white/[0.08] bg-[#0f0f10] p-6"
+        className="relative flex h-full w-full max-w-[440px] flex-col overflow-y-auto border-l border-border bg-card p-6"
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 id="drawer-name" className="text-[20px] font-semibold text-white">
+            <h2 id="drawer-name" className="text-[20px] font-semibold text-foreground">
               {candidate?.full_name ?? 'Loading…'}
             </h2>
-            <p className="mt-0.5 text-[13px] text-[#888b91]">
+            <p className="mt-0.5 text-[13px] text-muted-foreground">
               {[candidate?.target_job_title, candidate?.email].filter(Boolean).join(' · ')}
             </p>
           </div>
@@ -287,14 +287,14 @@ export default function CandidateDrawer({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-[8px] p-1.5 text-[#888b91] hover:text-white focus:outline-none focus-visible:text-white"
+            className="shrink-0 rounded-[8px] p-1.5 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:text-foreground"
           >
             <X size={16} aria-hidden="true" />
           </button>
         </div>
 
         {detail.isError ? (
-          <p className="mt-4 text-[13px] text-[#888b91]">
+          <p className="mt-4 text-[13px] text-muted-foreground">
             Could not load this candidate. Close and try again.
           </p>
         ) : null}
@@ -308,7 +308,7 @@ export default function CandidateDrawer({
             </StatusTag>
           ) : null}
           {candidate.current_round_title ? (
-            <span className="text-[12px] text-[#888b91]">
+            <span className="text-[12px] text-muted-foreground">
               on {candidate.current_round_title}
             </span>
           ) : null}
@@ -318,11 +318,11 @@ export default function CandidateDrawer({
             warning: neither name is wrong, they simply disagree, and only a
             person can decide which the candidate meant. */}
         {nameDiffers ? (
-          <p className="mt-4 flex items-start gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.02] p-3 text-[12px] leading-relaxed text-[#b8babf]">
-            <Info size={13} className="mt-0.5 shrink-0 text-[#60a5fa]" aria-hidden="true" />
+          <p className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3 text-[12px] leading-relaxed text-[var(--ui-soft)]">
+            <Info size={13} className="mt-0.5 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
             <span>
               Their CV reads{' '}
-              <span className="text-white">{candidate.parsed_full_name}</span>. The name
+              <span className="text-foreground">{candidate.parsed_full_name}</span>. The name
               above is what
               {candidate.full_name_source === 'candidate' ? ' they typed' : ' is on file'}.
             </span>
@@ -332,21 +332,21 @@ export default function CandidateDrawer({
         {candidate.ats_overall != null ? (
           <div className="mt-5">
             <div className="flex items-baseline justify-between">
-              <h3 className="text-[13px] font-medium text-white">Resume match</h3>
-              <span className="text-[20px] font-semibold text-white">
+              <h3 className="text-[13px] font-medium text-foreground">Resume match</h3>
+              <span className="text-[20px] font-semibold text-foreground">
                 {candidate.ats_overall}
-                <span className="text-[13px] text-[#70757c]">/100</span>
+                <span className="text-[13px] text-[var(--ui-faint)]">/100</span>
               </span>
             </div>
             {candidate.ats_summary ? (
-              <p className="mt-1.5 text-[12.5px] leading-relaxed text-[#888b91]">
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
                 {candidate.ats_summary}
               </p>
             ) : null}
             {candidate.ats_strengths?.length ? (
               <ul className="mt-2 flex flex-col gap-1">
                 {candidate.ats_strengths.map((s) => (
-                  <li key={s} className="text-[12.5px] text-[#d5d7da]">
+                  <li key={s} className="text-[12.5px] text-[var(--ui-soft)]">
                     ✓ {s}
                   </li>
                 ))}
@@ -357,11 +357,11 @@ export default function CandidateDrawer({
                 {candidate.ats_concerns.map((c) => (
                   <li
                     key={c}
-                    className="flex items-start gap-1.5 text-[12.5px] text-[#b8babf]"
+                    className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-soft)]"
                   >
                     <AlertTriangle
                       size={12}
-                      className="mt-0.5 shrink-0 text-[#ffb764]"
+                      className="mt-0.5 shrink-0 text-[var(--ui-warn)]"
                       aria-hidden="true"
                     />
                     {c}
@@ -375,7 +375,7 @@ export default function CandidateDrawer({
         <RoundScores applicantId={candidate.applicant_id} />
 
         <div className="mt-5">
-          <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-white">
+          <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">
             <User size={13} aria-hidden="true" />
             Details
           </h3>
@@ -397,14 +397,14 @@ export default function CandidateDrawer({
         {/* Otherwise write-only: candidates fill these in and nobody reads them. */}
         {enrolmentId ? (
           <div className="mt-5">
-            <h3 className="mb-2 text-[13px] font-medium text-white">
+            <h3 className="mb-2 text-[13px] font-medium text-foreground">
               Application answers
             </h3>
             {answers.isLoading ? (
-              <p className="text-[12.5px] text-[#888b91]">Loading…</p>
+              <p className="text-[12.5px] text-muted-foreground">Loading…</p>
             ) : null}
             {!answers.isLoading && (answers.data?.length ?? 0) === 0 ? (
-              <p className="text-[12.5px] text-[#888b91]">
+              <p className="text-[12.5px] text-muted-foreground">
                 This opening did not ask any questions.
               </p>
             ) : null}
@@ -414,7 +414,7 @@ export default function CandidateDrawer({
                   <p
                     className={cn(
                       'text-[12px]',
-                      a.retired ? 'text-[#70757c]' : 'text-[#888b91]',
+                      a.retired ? 'text-[var(--ui-faint)]' : 'text-muted-foreground',
                     )}
                   >
                     {a.prompt}
@@ -425,7 +425,7 @@ export default function CandidateDrawer({
                       <span className="ml-1.5 text-[11px] italic">no longer asked</span>
                     ) : null}
                   </p>
-                  <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-[#d5d7da]">
+                  <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-[var(--ui-soft)]">
                     {answerText(a)}
                   </p>
                 </div>

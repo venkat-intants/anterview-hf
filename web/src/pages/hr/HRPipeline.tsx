@@ -74,10 +74,10 @@ function seedOf(s: string): number {
 /* ── Score helpers ──────────────────────────────────────────────────────────── */
 
 function scoreToneClass(n: number | null): string {
-  if (n === null) return 'text-[#70757c]';
-  if (n >= 70) return 'text-[#27c93f]';
-  if (n >= 45) return 'text-[#ffb764]';
-  return 'text-[#e6714f]';
+  if (n === null) return 'text-[var(--ui-faint)]';
+  if (n >= 70) return 'text-[var(--ui-ok)]';
+  if (n >= 45) return 'text-[var(--ui-warn)]';
+  return 'text-[var(--ui-danger)]';
 }
 
 /* ── Badge helpers ──────────────────────────────────────────────────────────── */
@@ -153,7 +153,7 @@ function StageScore({
   return (
     <div className="w-12 shrink-0 text-center">
       <div className={cn('text-[15px] font-semibold leading-none', tone)}>{value ?? '—'}</div>
-      <div className="text-[10px] text-[#70757c]">{unit}</div>
+      <div className="text-[10px] text-[var(--ui-faint)]">{unit}</div>
     </div>
   );
 }
@@ -190,10 +190,10 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
   return (
     <div
       className={cn(
-        'rounded-[20px] border bg-[#0f0f10] transition-colors',
+        'rounded-[20px] border bg-card transition-colors',
         open
           ? 'border-[rgba(var(--accent-rgb),0.3)]'
-          : 'border-white/[0.08] hover:border-[rgba(var(--accent-rgb),0.2)]',
+          : 'border-border hover:border-[rgba(var(--accent-rgb),0.2)]',
       )}
     >
       {/* Opens the drawer rather than expanding in place: the full record is
@@ -203,7 +203,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
         type="button"
         onClick={onOpen}
         aria-label={`Open details for ${a.full_name}`}
-        className="float-right m-3 rounded-[8px] border border-white/[0.1] px-2.5 py-1 text-[11.5px] text-[#888b91] hover:text-white focus:outline-none focus-visible:border-[var(--accent)]"
+        className="float-right m-3 rounded-[8px] border border-border px-2.5 py-1 text-[11.5px] text-muted-foreground hover:text-foreground focus:outline-none focus-visible:border-[var(--accent)]"
       >
         Details
       </button>
@@ -227,7 +227,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
         {/* Name + badges */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate text-[13.5px] font-medium text-white">{a.full_name}</p>
+            <p className="truncate text-[13.5px] font-medium text-foreground">{a.full_name}</p>
             <StatusTag tone={rec.tone} className="text-[11px]">
               {rec.label}
             </StatusTag>
@@ -242,7 +242,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
               </StatusTag>
             )}
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-[#70757c]">
+          <p className="mt-0.5 truncate text-[11px] text-[var(--ui-faint)]">
             {a.target_job_title} &middot; {a.target_level}
           </p>
         </div>
@@ -257,7 +257,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
           {a.exam_passed === true && (
             <ClipboardCheck
               size={14}
-              className="text-[#27c93f]"
+              className="text-[var(--ui-ok)]"
               aria-label="Exam passed"
             />
           )}
@@ -267,7 +267,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
         <div className="hidden items-center gap-1.5 md:flex">
           <StageScore
             value={a.interview_score !== null ? a.interview_score.toFixed(1) : null}
-            tone={a.interview_score !== null ? 'text-[#27c93f]' : 'text-[#70757c]'}
+            tone={a.interview_score !== null ? 'text-[var(--ui-ok)]' : 'text-[var(--ui-faint)]'}
             unit="/10"
           />
           <StatusTag tone={iv.tone} className="text-[11px]">
@@ -280,7 +280,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
           {canHire && (
             <button
               type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#27c93f] hover:bg-[rgba(39,201,63,0.14)] transition-colors disabled:opacity-40"
+              className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[var(--ui-ok)] hover:bg-[rgba(39,201,63,0.14)] transition-colors disabled:opacity-40"
               disabled={decideMut.isPending}
               onClick={() => decideMut.mutate('hired')}
               aria-label="Hire"
@@ -295,7 +295,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
           {canReject && (
             <button
               type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#e6714f] hover:bg-[rgba(230,113,79,0.14)] transition-colors disabled:opacity-40"
+              className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[var(--ui-danger)] hover:bg-[rgba(230,113,79,0.14)] transition-colors disabled:opacity-40"
               disabled={decideMut.isPending}
               onClick={() => decideMut.mutate('rejected')}
               aria-label="Reject"
@@ -305,7 +305,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
           )}
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#888b91] hover:bg-white/[0.06] transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-[9px] text-muted-foreground hover:bg-[var(--ui-inset)] transition-colors"
             onClick={() => setOpen((v) => !v)}
             aria-label={open ? 'Collapse details' : 'Expand details'}
             aria-expanded={open}
@@ -321,18 +321,18 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
 
       {/* ── Expanded detail panel ── */}
       {open && (
-        <div className="space-y-4 border-t border-white/[0.07] px-4 py-4 text-[13px]">
+        <div className="space-y-4 border-t border-border px-4 py-4 text-[13px]">
           {/* Per-stage score grid */}
           <div className="grid gap-3 sm:grid-cols-3">
             {/* ATS */}
-            <div className="rounded-[14px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-3">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-[#70757c]">
+            <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                 ATS score
               </p>
               <div className="flex items-center gap-2">
                 <span className={cn('text-[18px] font-semibold', scoreToneClass(a.ats_overall))}>
                   {a.ats_overall ?? '—'}
-                  <span className="text-[11px] font-normal text-[#70757c]">/100</span>
+                  <span className="text-[11px] font-normal text-[var(--ui-faint)]">/100</span>
                 </span>
                 <StatusTag tone={rec.tone} className="text-[10px]">
                   {rec.label}
@@ -341,8 +341,8 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
             </div>
 
             {/* Exam */}
-            <div className="rounded-[14px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-3">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-[#70757c]">
+            <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                 Exam
               </p>
               <div className="flex items-center gap-2">
@@ -352,31 +352,31 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                   {a.best_exam_percent !== null ? `${a.best_exam_percent}%` : '—'}
                 </span>
                 {a.total_exam_attempts > 0 && (
-                  <span className="text-[12px] text-[#70757c]">
+                  <span className="text-[12px] text-[var(--ui-faint)]">
                     {a.total_exam_attempts} attempt{a.total_exam_attempts === 1 ? '' : 's'} &middot;{' '}
                     {a.exam_passed ? 'passed' : 'not passed'}
                   </span>
                 )}
                 {a.total_exam_attempts === 0 && (
-                  <span className="text-[12px] text-[#70757c]">no exam</span>
+                  <span className="text-[12px] text-[var(--ui-faint)]">no exam</span>
                 )}
               </div>
             </div>
 
             {/* Interview */}
-            <div className="rounded-[14px] border border-white/[0.08] bg-[rgba(28,29,31,0.5)] p-3">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-[#70757c]">
+            <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                 Interview
               </p>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[18px] font-semibold text-white">
+                <span className="text-[18px] font-semibold text-foreground">
                   {a.interview_score !== null ? (
                     <>
                       {a.interview_score.toFixed(1)}
-                      <span className="text-[11px] font-normal text-[#70757c]">/10</span>
+                      <span className="text-[11px] font-normal text-[var(--ui-faint)]">/10</span>
                     </>
                   ) : (
-                    <span className="text-[#70757c]">—</span>
+                    <span className="text-[var(--ui-faint)]">—</span>
                   )}
                 </span>
                 <StatusTag tone={iv.tone} className="text-[10px]">
@@ -386,7 +386,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                   <Link to={`/scorecard/${a.scorecard_id}`}>
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 rounded-[8px] border border-white/[0.1] bg-transparent px-2 py-1 text-[11px] text-[#888b91] hover:text-white hover:border-white/[0.2] transition-colors"
+                      className="inline-flex items-center gap-1 rounded-[8px] border border-border bg-transparent px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-white/[0.2] transition-colors"
                     >
                       <BarChart3 size={12} aria-hidden="true" /> Scorecard
                     </button>
@@ -398,15 +398,15 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
 
           {/* Rationale + decision buttons (persisted — audit trail) */}
           {(canHire || canReject) && (
-            <div className="rounded-[14px] border border-white/[0.08] bg-[rgba(28,29,31,0.4)] p-3.5">
-              <label className="mb-2 block text-[12px] font-semibold text-white">
+            <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.4)] p-3.5">
+              <label className="mb-2 block text-[12px] font-semibold text-foreground">
                 Hire decision{' '}
-                <span className="font-normal text-[#70757c]">
+                <span className="font-normal text-[var(--ui-faint)]">
                   — rationale is optional but logged for audit
                 </span>
               </label>
               <textarea
-                className="min-h-[44px] w-full resize-y rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[12.5px] text-white placeholder:text-[#5a5f66] focus:outline-none focus:border-[var(--accent)] transition-colors"
+                className="min-h-[44px] w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[12.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none focus:border-[var(--accent)] transition-colors"
                 placeholder="Why this decision? (optional)…"
                 value={rationale}
                 onChange={(e) => setRationale(e.target.value)}
@@ -416,7 +416,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                 {canHire && (
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1.5 rounded-[9999px] bg-white px-4 py-2 text-[13px] font-semibold text-black hover:bg-[#eaeaea] disabled:opacity-50 transition-colors"
+                    className="inline-flex items-center gap-1.5 rounded-[9999px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
                     disabled={decideMut.isPending}
                     onClick={() => decideMut.mutate('hired')}
                     aria-busy={decideMut.isPending && decideMut.variables === 'hired'}
@@ -432,7 +432,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                 {canReject && (
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1.5 rounded-[9999px] bg-[rgba(230,113,79,0.14)] border border-[rgba(230,113,79,0.35)] px-4 py-2 text-[13px] font-semibold text-[#e6714f] hover:bg-[rgba(230,113,79,0.22)] disabled:opacity-50 transition-colors"
+                    className="inline-flex items-center gap-1.5 rounded-[9999px] bg-[rgba(230,113,79,0.14)] border border-[rgba(230,113,79,0.35)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-danger)] hover:bg-[rgba(230,113,79,0.22)] disabled:opacity-50 transition-colors"
                     disabled={decideMut.isPending}
                     onClick={() => decideMut.mutate('rejected')}
                     aria-busy={decideMut.isPending && decideMut.variables === 'rejected'}
@@ -506,14 +506,14 @@ export default function HRPipeline() {
       {/* ── Page header ── */}
       <Reveal>
         <div className="flex items-center gap-3">
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[rgba(var(--accent-rgb),0.14)] text-[#60a5fa]">
+          <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
             <TrendingUp size={20} aria-hidden="true" />
           </span>
           <div>
-            <h1 className="text-[28px] font-semibold tracking-[-1px] text-white">
+            <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
               Hiring pipeline
             </h1>
-            <p className="mt-1 text-[14px] text-[#888b91]">
+            <p className="mt-1 text-[14px] text-muted-foreground">
               Every candidate, end to end — resume &rarr; exam &rarr; interview &rarr; decision.
             </p>
           </div>
@@ -535,7 +535,7 @@ export default function HRPipeline() {
         <div
           role="group"
           aria-label="Pipeline view"
-          className="mt-3 inline-flex rounded-[10px] border border-white/[0.1] p-0.5"
+          className="mt-3 inline-flex rounded-[10px] border border-border p-0.5"
         >
           {(['list', 'board'] as const).map((v) => (
             <button
@@ -545,7 +545,7 @@ export default function HRPipeline() {
               aria-pressed={view === v}
               className={cn(
                 'rounded-[8px] px-3 py-1.5 text-[12.5px] capitalize',
-                view === v ? 'bg-white/[0.1] text-white' : 'text-[#888b91] hover:text-white',
+                view === v ? 'bg-[var(--ui-inset-strong)] text-foreground' : 'text-muted-foreground hover:text-foreground',
               )}
             >
               {v}
@@ -557,7 +557,7 @@ export default function HRPipeline() {
       {/* ── Candidates list ── */}
       <section aria-label="Candidates">
         <Reveal delay={0.08}>
-          <h2 className="mb-4 text-[14px] font-semibold text-white">
+          <h2 className="mb-4 text-[14px] font-semibold text-foreground">
             Candidates{count > 0 ? ` (${count})` : ''}
           </h2>
         </Reveal>
@@ -565,12 +565,12 @@ export default function HRPipeline() {
         {isLoading ? (
           <div className="space-y-3" aria-busy="true" aria-label="Loading candidates">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-[68px] w-full rounded-[20px] bg-white/[0.05] animate-pulse" />
+              <div key={i} className="h-[68px] w-full rounded-[20px] bg-[var(--ui-inset)] animate-pulse" />
             ))}
           </div>
         ) : items.length === 0 ? (
           <GlassCard className="py-14 text-center">
-            <p className="text-[14px] text-[#888b91]">
+            <p className="text-[14px] text-muted-foreground">
               {stage === 'all'
                 ? 'No candidates yet — screen resumes to start the pipeline.'
                 : `No candidates at the "${STAGE_TABS.find((t) => t.value === stage)?.label ?? stage}" stage.`}
@@ -595,19 +595,19 @@ export default function HRPipeline() {
               <div className="mt-5 flex items-center justify-between">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded-[9999px] border border-white/[0.1] bg-transparent px-4 py-2 text-[13px] text-[#888b91] hover:text-white hover:border-white/[0.2] disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-transparent px-4 py-2 text-[13px] text-muted-foreground hover:text-foreground hover:border-white/[0.2] disabled:opacity-40 transition-colors"
                   disabled={offset === 0}
                   onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
                   aria-label="Previous page"
                 >
                   Previous
                 </button>
-                <span className="text-[12px] text-[#70757c]" aria-live="polite">
+                <span className="text-[12px] text-[var(--ui-faint)]" aria-live="polite">
                   {fromRow}–{toRow} of {count}
                 </span>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded-[9999px] border border-white/[0.1] bg-transparent px-4 py-2 text-[13px] text-[#888b91] hover:text-white hover:border-white/[0.2] disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-transparent px-4 py-2 text-[13px] text-muted-foreground hover:text-foreground hover:border-white/[0.2] disabled:opacity-40 transition-colors"
                   disabled={offset + PAGE_SIZE >= count}
                   onClick={() => setOffset(offset + PAGE_SIZE)}
                   aria-label="Next page"

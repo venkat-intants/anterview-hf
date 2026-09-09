@@ -73,11 +73,11 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
   });
 
   return (
-    <GlassCard className={cn('p-5', row.held && 'border-[#ffb764]/25')}>
+    <GlassCard className={cn('p-5', row.held && 'border-[var(--ui-warn)]/25')}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[15px] font-medium text-white">{row.full_name}</span>
+            <span className="text-[15px] font-medium text-foreground">{row.full_name}</span>
             {row.held ? (
               <StatusTag tone="amber" dot>
                 held
@@ -87,9 +87,9 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
             )}
           </div>
           {row.email ? (
-            <div className="mt-0.5 truncate text-[12.5px] text-[#888b91]">{row.email}</div>
+            <div className="mt-0.5 truncate text-[12.5px] text-muted-foreground">{row.email}</div>
           ) : null}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-[#888b91]">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-muted-foreground">
             <span>
               {row.rounds_taken} round{row.rounds_taken === 1 ? '' : 's'} taken
             </span>
@@ -100,20 +100,20 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
       </div>
 
       {row.held_reason ? (
-        <div className="mt-3 flex items-start gap-2 rounded-[12px] border border-[#ffb764]/25 bg-[#ffb764]/[0.06] p-3 text-[12.5px] leading-relaxed text-[#d5d7da]">
-          <Pause className="mt-0.5 h-4 w-4 shrink-0 text-[#ffb764]" aria-hidden="true" />
+        <div className="mt-3 flex items-start gap-2 rounded-[12px] border border-[var(--ui-warn)]/25 bg-[var(--ui-warn)]/[0.06] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
+          <Pause className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
           <span>
             {row.held_reason}
             {/* Said explicitly, because a "held" badge reads as a rejection to
                 most people and it is not one. */}
-            <span className="mt-1 block text-[11.5px] text-[#888b91]">
+            <span className="mt-1 block text-[11.5px] text-muted-foreground">
               Nothing was decided automatically. They are waiting on you.
             </span>
           </span>
         </div>
       ) : null}
 
-      <label htmlFor={`why-${row.enrolment_id}`} className="mt-4 block text-[12px] text-[#b8babf]">
+      <label htmlFor={`why-${row.enrolment_id}`} className="mt-4 block text-[12px] text-[var(--ui-soft)]">
         Why (recorded against your name)
       </label>
       <input
@@ -121,7 +121,7 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
         value={rationale}
         onChange={(e) => setRationale(e.target.value)}
         placeholder="Optional for continuing; worth writing for a hire or reject"
-        className="mt-1.5 w-full rounded-[12px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3.5 py-2.5 text-[13px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none"
+        className="mt-1.5 w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
       />
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -130,7 +130,7 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
             type="button"
             onClick={() => releaseMut.mutate()}
             disabled={releaseMut.isPending}
-            className="inline-flex items-center gap-1.5 rounded-[12px] bg-white px-4 py-2 text-[13px] font-medium text-black hover:opacity-90 disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
           >
             {releaseMut.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -142,8 +142,8 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
         ) : null}
 
         {pending ? (
-          <div className="flex w-full flex-wrap items-center gap-2 rounded-[12px] border border-white/[0.1] bg-black/25 p-3">
-            <span className="flex-1 text-[12.5px] text-[#d5d7da]">
+          <div className="flex w-full flex-wrap items-center gap-2 rounded-[12px] border border-border bg-black/25 p-3">
+            <span className="flex-1 text-[12.5px] text-[var(--ui-soft)]">
               {pending === 'hired' ? 'Mark hired' : 'Reject'} — {row.full_name}. This ends their
               candidacy for this opening and is recorded.
             </span>
@@ -152,8 +152,8 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
               onClick={() => decideMut.mutate(pending)}
               disabled={decideMut.isPending}
               className={cn(
-                'rounded-[10px] px-4 py-2 text-[12.5px] font-medium text-white disabled:opacity-40',
-                pending === 'hired' ? 'bg-[#1f9d43]' : 'bg-[#e6714f]',
+                'rounded-[10px] px-4 py-2 text-[12.5px] font-medium text-foreground disabled:opacity-40',
+                pending === 'hired' ? 'bg-[var(--ui-ok)]' : 'bg-[var(--ui-danger)]',
               )}
             >
               {decideMut.isPending ? 'Saving…' : 'Confirm'}
@@ -161,7 +161,7 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
             <button
               type="button"
               onClick={() => setPending(null)}
-              className="rounded-[10px] border border-white/[0.12] px-4 py-2 text-[12.5px] text-[#d5d7da] hover:text-white"
+              className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground"
             >
               Cancel
             </button>
@@ -171,7 +171,7 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
             <button
               type="button"
               onClick={() => setPending('hired')}
-              className="inline-flex items-center gap-1.5 rounded-[12px] border border-[#27c93f]/35 px-4 py-2 text-[13px] font-medium text-[#27c93f] hover:bg-[#27c93f]/10"
+              className="inline-flex items-center gap-1.5 rounded-[12px] border border-[var(--ui-ok)]/35 px-4 py-2 text-[13px] font-medium text-[var(--ui-ok)] hover:bg-[var(--ui-ok)]/10"
             >
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
               Hire
@@ -179,7 +179,7 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
             <button
               type="button"
               onClick={() => setPending('rejected')}
-              className="inline-flex items-center gap-1.5 rounded-[12px] border border-white/[0.12] px-4 py-2 text-[13px] text-[#888b91] hover:border-[#e6714f]/40 hover:text-[#e6714f]"
+              className="inline-flex items-center gap-1.5 rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-muted-foreground hover:border-[var(--ui-danger)]/40 hover:text-[var(--ui-danger)]"
             >
               <XCircle className="h-4 w-4" aria-hidden="true" />
               Reject
@@ -216,20 +216,20 @@ export default function DecisionQueue(): JSX.Element {
         <header className="mb-6">
           <Link
             to={`/hr/requisitions/${requisitionId}/workflow`}
-            className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-[#888b91] hover:text-white"
+            className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
             Workflow
           </Link>
-          <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-white">
+          <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
             Decisions — {req.data?.title ?? 'this opening'}
           </h1>
-          <p className="mt-1.5 max-w-[70ch] text-[13.5px] leading-relaxed text-[#888b91]">
+          <p className="mt-1.5 max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">
             Everyone the workflow has taken as far as it can. Nothing here was decided
             automatically, and nothing here moves until you move it.
           </p>
           {held > 0 ? (
-            <div className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] text-[#ffb764]">
+            <div className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] text-[var(--ui-warn)]">
               <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
               {held} held below a round threshold
             </div>
@@ -238,19 +238,19 @@ export default function DecisionQueue(): JSX.Element {
       </Reveal>
 
       {queue.isLoading ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-[#888b91]">
+        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Loading queue…
         </div>
       ) : queue.isError ? (
-        <GlassCard className="p-6 text-[13.5px] text-[#e6714f]">
+        <GlassCard className="p-6 text-[13.5px] text-[var(--ui-danger)]">
           {errText(queue.error, 'Could not load the decision queue')}
         </GlassCard>
       ) : rows.length === 0 ? (
         <GlassCard className="p-10 text-center">
-          <Users className="mx-auto h-8 w-8 text-[#5a5f66]" aria-hidden="true" />
-          <div className="mt-3 text-[15px] font-medium text-white">Nobody is waiting</div>
-          <p className="mx-auto mt-1.5 max-w-[46ch] text-[13px] text-[#888b91]">
+          <Users className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
+          <div className="mt-3 text-[15px] font-medium text-foreground">Nobody is waiting</div>
+          <p className="mx-auto mt-1.5 max-w-[46ch] text-[13px] text-muted-foreground">
             Candidates appear here when they finish the workflow or land below a round&rsquo;s
             threshold.
           </p>

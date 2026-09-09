@@ -129,8 +129,8 @@ function SettingsPanel({
         {AUTOMATIONS.map((a) => (
           <div key={a.key} className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
-              <div className="text-[13px] text-white">{a.label}</div>
-              <div className="mt-0.5 text-[11.5px] leading-snug text-[#888b91]">{a.help}</div>
+              <div className="text-[13px] text-foreground">{a.label}</div>
+              <div className="mt-0.5 text-[11.5px] leading-snug text-muted-foreground">{a.help}</div>
             </div>
             <div className={cn(!editable && 'pointer-events-none opacity-50')}>
               <ToggleSwitch
@@ -143,11 +143,11 @@ function SettingsPanel({
         ))}
       </div>
 
-      <div className="border-t border-white/[0.06] pt-4">
-        <label htmlFor="hold-band" className="block text-[13px] text-white">
+      <div className="border-t border-border pt-4">
+        <label htmlFor="hold-band" className="block text-[13px] text-foreground">
           Send to you rather than past you
         </label>
-        <p className="mt-0.5 text-[11.5px] leading-relaxed text-[#888b91]">
+        <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
           A candidate scoring within this many points below a round&rsquo;s threshold is held
           for your decision instead of quietly stalling. Nobody is ever rejected
           automatically — this only decides who lands in front of you.
@@ -164,17 +164,17 @@ function SettingsPanel({
               const v = e.target.value.trim();
               onPatch({ hold_band: v === '' ? null : Number(v) });
             }}
-            className="w-24 rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13px] text-white focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
           />
-          <span className="text-[13px] text-[#888b91]">points</span>
+          <span className="text-[13px] text-muted-foreground">points</span>
         </div>
       </div>
 
-      <div className="border-t border-white/[0.06] pt-4">
-        <label htmlFor="ats-threshold" className="block text-[13px] text-white">
+      <div className="border-t border-border pt-4">
+        <label htmlFor="ats-threshold" className="block text-[13px] text-foreground">
           Auto-shortlist at ATS score
         </label>
-        <p className="mt-0.5 text-[11.5px] leading-relaxed text-[#888b91]">
+        <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
           Applicants at or above this are shortlisted and enter the workflow. Leave empty
           to shortlist everyone by hand.
         </p>
@@ -191,9 +191,9 @@ function SettingsPanel({
               const v = e.target.value.trim();
               onPatch({ shortlist_ats_threshold: v === '' ? null : Number(v) });
             }}
-            className="w-24 rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13px] text-white focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
           />
-          <span className="text-[13px] text-[#888b91]">/ 10</span>
+          <span className="text-[13px] text-muted-foreground">/ 10</span>
         </div>
       </div>
     </div>
@@ -213,8 +213,8 @@ function EmptyState({
 }) {
   return (
     <GlassCard className="p-8">
-      <h2 className="text-[18px] font-semibold text-white">Give this opening a process</h2>
-      <p className="mt-1.5 max-w-[62ch] text-[13.5px] leading-relaxed text-[#888b91]">
+      <h2 className="text-[18px] font-semibold text-foreground">Give this opening a process</h2>
+      <p className="mt-1.5 max-w-[62ch] text-[13.5px] leading-relaxed text-muted-foreground">
         Start from a shape that fits and change anything you like, or build it from
         nothing. Either way it stays a draft until you publish it, and no candidate sees
         it before then.
@@ -227,17 +227,17 @@ function EmptyState({
             type="button"
             disabled={busy}
             onClick={() => onTemplate(t.key)}
-            className="flex flex-col rounded-[16px] border border-white/[0.08] p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-white/[0.03] disabled:opacity-50"
+            className="flex flex-col rounded-[16px] border border-border p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-[var(--ui-inset-soft)] disabled:opacity-50"
           >
-            <span className="text-[14px] font-medium text-white">{t.name}</span>
-            <span className="mt-1 text-[12px] leading-snug text-[#888b91]">
+            <span className="text-[14px] font-medium text-foreground">{t.name}</span>
+            <span className="mt-1 text-[12px] leading-snug text-muted-foreground">
               {t.description}
             </span>
             <span className="mt-3 flex flex-wrap gap-1">
               {t.rounds.map((r, i) => (
                 <span
                   key={`${r.kind}-${i}`}
-                  className="rounded-pill border border-white/10 px-2 py-0.5 text-[10.5px] text-[#b8babf]"
+                  className="rounded-pill border border-border px-2 py-0.5 text-[10.5px] text-[var(--ui-soft)]"
                 >
                   {ROUND_KIND_META[r.kind].label}
                 </span>
@@ -410,7 +410,7 @@ export default function WorkflowBuilder(): JSX.Element {
 
   // ── Render ────────────────────────────────────────────────────────────────
   if (!requisitionId) {
-    return <div className="p-8 text-[13px] text-[#888b91]">No opening selected.</div>;
+    return <div className="p-8 text-[13px] text-muted-foreground">No opening selected.</div>;
   }
 
   return (
@@ -419,17 +419,17 @@ export default function WorkflowBuilder(): JSX.Element {
         <header className="mb-6">
           <Link
             to="/hr/requisitions"
-            className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-[#888b91] hover:text-white"
+            className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
             All openings
           </Link>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <h1 className="truncate text-[24px] font-semibold tracking-[-0.8px] text-white">
+              <h1 className="truncate text-[24px] font-semibold tracking-[-0.8px] text-foreground">
                 {req.data?.title ?? 'Hiring workflow'}
               </h1>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-[#888b91]">
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
                 {workflow ? (
                   <>
                     <StatusTag
@@ -472,7 +472,7 @@ export default function WorkflowBuilder(): JSX.Element {
                       setActiveId(e.target.value);
                       setSelectedRound(null);
                     }}
-                    className="rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[12.5px] text-white focus:border-[var(--accent)] focus:outline-none"
+                    className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[12.5px] text-foreground focus:border-[var(--accent)] focus:outline-none"
                   >
                     {(versions.data ?? []).map((v) => (
                       <option key={v.id} value={v.id}>
@@ -485,7 +485,7 @@ export default function WorkflowBuilder(): JSX.Element {
 
                 <Link
                   to={`/hr/requisitions/${requisitionId}/decisions`}
-                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.12] px-3 py-2 text-[12.5px] text-[#d5d7da] hover:border-white/25 hover:text-white"
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-2 text-[12.5px] text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)] hover:text-foreground"
                 >
                   <Users className="h-3.5 w-3.5" aria-hidden="true" />
                   Decision queue
@@ -497,7 +497,7 @@ export default function WorkflowBuilder(): JSX.Element {
                       type="button"
                       onClick={() => discardMut.mutate()}
                       disabled={discardMut.isPending}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.12] px-3 py-2 text-[12.5px] text-[#888b91] hover:border-[#e6714f]/40 hover:text-[#e6714f] disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-2 text-[12.5px] text-muted-foreground hover:border-[var(--ui-danger)]/40 hover:text-[var(--ui-danger)] disabled:opacity-50"
                     >
                       <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                       Discard
@@ -506,7 +506,7 @@ export default function WorkflowBuilder(): JSX.Element {
                       type="button"
                       onClick={() => setConfirmPublish(true)}
                       disabled={publishMut.isPending || workflow.rounds.length === 0}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-4 py-2 text-[12.5px] font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+                      className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
                     >
                       {publishMut.isPending ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -521,7 +521,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     type="button"
                     onClick={() => cloneMut.mutate()}
                     disabled={cloneMut.isPending}
-                    className="inline-flex items-center gap-1.5 rounded-[10px] bg-white px-4 py-2 text-[12.5px] font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
                   >
                     {cloneMut.isPending ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -543,7 +543,7 @@ export default function WorkflowBuilder(): JSX.Element {
         <GlassCard className="mb-5 border-[var(--accent)]/30 p-4">
           <div className="flex flex-wrap items-center gap-3">
             <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />
-            <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-[#d5d7da]">
+            <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-[var(--ui-soft)]">
               Publishing makes this version live for {req.data?.title ?? 'this opening'}.
               New candidates start here; anyone already inside an older version finishes
               it on the rounds they began with.
@@ -552,14 +552,14 @@ export default function WorkflowBuilder(): JSX.Element {
               <button
                 type="button"
                 onClick={() => publishMut.mutate()}
-                className="rounded-[10px] bg-white px-4 py-2 text-[12.5px] font-medium text-black hover:opacity-90"
+                className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground hover:opacity-90"
               >
                 Publish version {workflow.version}
               </button>
               <button
                 type="button"
                 onClick={() => setConfirmPublish(false)}
-                className="rounded-[10px] border border-white/[0.12] px-4 py-2 text-[12.5px] text-[#d5d7da] hover:text-white"
+                className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground"
               >
                 Not yet
               </button>
@@ -569,7 +569,7 @@ export default function WorkflowBuilder(): JSX.Element {
       ) : null}
 
       {versions.isLoading || (workflowId && wf.isLoading) ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-[#888b91]">
+        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Loading workflow…
         </div>
@@ -612,7 +612,7 @@ export default function WorkflowBuilder(): JSX.Element {
           {/* Canvas */}
           <GlassCard className="p-5">
             {!editable ? (
-              <div className="mb-4 flex items-start gap-2 rounded-[12px] border border-white/[0.08] bg-black/25 p-3 text-[12.5px] leading-relaxed text-[#888b91]">
+              <div className="mb-4 flex items-start gap-2 rounded-[12px] border border-border bg-black/25 p-3 text-[12.5px] leading-relaxed text-muted-foreground">
                 <Eye className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                 {workflow.status === 'published'
                   ? 'This version is live, so it is read-only. Editing creates version ' +
@@ -670,7 +670,7 @@ export default function WorkflowBuilder(): JSX.Element {
             />
 
             {workflow.rounds.length >= MAX_ROUNDS ? (
-              <p className="mt-3 flex items-center gap-1.5 text-[12px] text-[#ffb764]">
+              <p className="mt-3 flex items-center gap-1.5 text-[12px] text-[var(--ui-warn)]">
                 <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
                 {MAX_ROUNDS} rounds is the maximum.
               </p>
@@ -680,7 +680,7 @@ export default function WorkflowBuilder(): JSX.Element {
           {/* Inspector + coverage */}
           <div className="flex flex-col gap-5">
             <GlassCard className="p-5">
-              <div className="mb-4 flex gap-1 rounded-pill border border-white/[0.08] bg-[rgba(28,29,31,0.6)] p-1">
+              <div className="mb-4 flex gap-1 rounded-pill border border-border bg-secondary p-1">
                 {(
                   [
                     ['round', selected ? 'Round' : 'Select a round'],
@@ -695,7 +695,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     role="tab"
                     className={cn(
                       'flex-1 rounded-pill px-3 py-1.5 text-[12.5px] font-medium transition-colors',
-                      tab === key ? 'bg-white text-black' : 'text-[#b8babf] hover:text-white',
+                      tab === key ? 'bg-primary text-primary-foreground' : 'text-[var(--ui-soft)] hover:text-foreground',
                     )}
                   >
                     {label}
@@ -722,7 +722,7 @@ export default function WorkflowBuilder(): JSX.Element {
                   }
                 />
               ) : (
-                <p className="text-[12.5px] leading-relaxed text-[#888b91]">
+                <p className="text-[12.5px] leading-relaxed text-muted-foreground">
                   Pick a round on the left to set what it asks and what score moves a
                   candidate on.
                 </p>

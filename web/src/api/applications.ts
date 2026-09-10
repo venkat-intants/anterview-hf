@@ -10,7 +10,7 @@
 // here is that adding an `ats_overall` to these interfaces would not make one
 // appear, and would be an argument to have on the server.
 
-import { apiGet } from './client';
+import { apiGet, apiPost } from './client';
 
 /** One application, from the candidate's side. */
 export interface MyApplication {
@@ -32,6 +32,17 @@ export interface MyApplication {
   current_round_kind: string | null;
   round_number: number | null;
   total_rounds: number | null;
+  /**
+   * A live interview invitation, when one is waiting. Null the rest of the time,
+   * and null once the interview has been started.
+   *
+   * Deliberately NOT a link. Only the HMAC of an invite token is stored, so a
+   * usable URL cannot be rebuilt server-side — asking for one is a separate
+   * call that rotates the token, rather than something a list hands out on
+   * every render.
+   */
+  interview_invite_id: string | null;
+  interview_scheduled_at: string | null;
 }
 
 export interface StageEvent {
@@ -92,4 +103,24 @@ export interface OpenRole {
 /** Newest first, and nothing else — no ranking, no promotion. */
 export function listOpenRoles(): Promise<OpenRole[]> {
   return apiGet<OpenRole[]>('/users/me/open-roles');
+}
+
+/** A freshly minted link to an interview this candidate was invited to. */
+export interface InterviewLink {
+  interview_url: string;
+  expires_at: string;
+}
+
+/**
+ * Mint a working link to the candidate's own interview.
+ *
+ * The invitation is emailed, but email is not a dependable channel: filtered,
+ * mistyped or caught by a local mail sink, it leaves an interview that exists
+ * and cannot be reached. This is the path that does not need mail.
+ *
+ * Each call ROTATES the token, so any previously issued link — including the
+ * emailed one — stops working. One invitation, one live link.
+ */
+export function mintMyInterviewLink(inviteId: string): Promise<InterviewLink> {
+  return apiPost<InterviewLink>(`/users/me/interviews/${inviteId}/link`, {});
 }

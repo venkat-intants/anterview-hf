@@ -18,25 +18,14 @@
 // second needs to know their application is safe and what to do about it.
 
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import {
-  getMyApplication,
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { getMyApplication,
   listMyApplications,
-  type MyApplication,
-} from '@/api/applications';
+  type MyApplication, mintMyInterviewLink } from '@/api/applications';
 import { toast } from '@/lib/toast';
 import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
-import {
-  AlertCircle,
-  Briefcase,
-  Building2,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  User,
-} from '@/design/components/icons';
+import { AlertCircle, Briefcase, Building2, Check, ChevronDown, ChevronRight, Clock, User, Video } from '@/design/components/icons';
 
 /**
  * Stage → visual tone. Keyed on the candidate-facing label the server sends,
@@ -68,6 +57,73 @@ function roundLine(app: MyApplication): string | null {
       ? `Round ${app.round_number} of ${app.total_rounds} · `
       : '';
   return `${counted}${app.current_round_title}`;
+}
+
+/**
+ * The one thing on this page a candidate can act on.
+ *
+ * The invitation is emailed, and that used to be the ONLY way to reach it —
+ * so a filtered or mistyped address left an interview that existed and could
+ * not be started, while looking healthy from the hiring side. This is the
+ * route that does not depend on mail.
+ *
+ * The link is fetched on click rather than rendered with the card, because
+ * asking for it ROTATES the token: any previously issued link, including the
+ * emailed one, stops working. That is the right trade for a deliberate press
+ * and the wrong one for a page render, which would silently break the email
+ * link of every candidate who merely looked at their applications.
+ */
+function InterviewCallToAction({
+  inviteId,
+  scheduledAt,
+}: {
+  inviteId: string;
+  scheduledAt: string | null;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  const mint = useMutation({
+    mutationFn: () => mintMyInterviewLink(inviteId),
+    onSuccess: (link) => {
+      // Same tab: this is the candidate starting their interview, not opening a
+      // reference. A popup here would also be the kind of thing a blocker eats.
+      window.location.assign(link.interview_url);
+    },
+    onError: (e: unknown) =>
+      setError(e instanceof Error ? e.message : 'Could not open your interview.'),
+  });
+
+  return (
+    <div className="mt-4 rounded-[10px] border border-[rgba(var(--accent-rgb),0.35)] bg-[rgba(var(--accent-rgb),0.06)] p-3.5">
+      <p className="flex items-center gap-2 text-[13.5px] font-medium text-foreground">
+        <Video size={14} className="shrink-0 text-[var(--accent)]" aria-hidden="true" />
+        Your interview is ready
+      </p>
+      {scheduledAt ? (
+        <p className="mt-1 pl-[22px] text-[12.5px] text-muted-foreground">
+          Scheduled for {dateOf(scheduledAt)}
+        </p>
+      ) : (
+        <p className="mt-1 pl-[22px] text-[12.5px] text-muted-foreground">
+          Take it whenever you are ready — it takes about 10 minutes.
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          setError(null);
+          mint.mutate();
+        }}
+        disabled={mint.isPending}
+        className="mt-3 ml-[22px] inline-flex items-center gap-1.5 rounded-[8px] bg-primary px-3.5 py-1.5 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        {mint.isPending ? 'Opening…' : 'Start interview'}
+      </button>
+      {error ? (
+        <p className="mt-2 pl-[22px] text-[12.5px] text-[var(--ui-danger)]">{error}</p>
+      ) : null}
+    </div>
+  );
 }
 
 function ApplicationCard({ app }: { app: MyApplication }) {
@@ -113,6 +169,13 @@ function ApplicationCard({ app }: { app: MyApplication }) {
       )}
 
       <p className="mt-3 text-[13.5px] leading-relaxed text-muted-foreground">{app.next_step}</p>
+
+      {app.interview_invite_id ? (
+        <InterviewCallToAction
+          inviteId={app.interview_invite_id}
+          scheduledAt={app.interview_scheduled_at}
+        />
+      ) : null}
 
       <button
         type="button"

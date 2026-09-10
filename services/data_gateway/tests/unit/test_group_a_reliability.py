@@ -221,7 +221,9 @@ def test_fmt_passes_through_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exam_reminder_dedupe_key_names_the_window_not_the_time() -> None:
+async def test_exam_reminder_dedupe_key_names_the_window_not_the_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A key derived from 'now' would re-send on every sweep."""
     import app.reminders as rem
 
@@ -241,14 +243,14 @@ async def test_exam_reminder_dedupe_key_names_the_window_not_the_time() -> None:
         keys.append(str(kw["dedupe_key"]))
         return object()
 
-    rem.enqueue_email = _enqueue  # type: ignore[assignment]
+    monkeypatch.setattr(rem, "enqueue_email", _enqueue)
     await rem._exam_reminders(db, rem.SweepResult())
 
     assert keys == [f"exam_reminder:{row['id']}:24h", f"exam_reminder:{row['id']}:1h"]
 
 
 @pytest.mark.asyncio
-async def test_a_failing_stage_does_not_sink_the_sweep() -> None:
+async def test_a_failing_stage_does_not_sink_the_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.reminders as rem
 
     db = _db()
@@ -263,14 +265,22 @@ async def test_a_failing_stage_does_not_sink_the_sweep() -> None:
         order.append("results")
         r.results_emails += 1
 
-    rem._exam_reminders = _boom  # type: ignore[assignment]
-    rem._interview_reminders = _ok  # type: ignore[assignment]
-    rem._expiry_notices = _ok  # type: ignore[assignment]
-    rem._results_ready = _ok  # type: ignore[assignment]
+    # Every stage is patched, including _interview_completed. It used to be
+    # left out simply because it did not exist when this was written, so it ran
+    # for real against a mock session — passing by luck rather than by intent,
+    # and quietly making this a test of four stages plus one accident.
+    for stage in (
+        "_interview_reminders",
+        "_expiry_notices",
+        "_results_ready",
+        "_interview_completed",
+    ):
+        monkeypatch.setattr(rem, stage, _ok)
+    monkeypatch.setattr(rem, "_exam_reminders", _boom)
 
     result = await rem.run_once(factory)  # type: ignore[arg-type]
-    assert "exam" in order and order.count("results") == 3
-    assert result.results_emails == 3
+    assert "exam" in order and order.count("results") == 4
+    assert result.results_emails == 4
 
 
 # ===========================================================================
@@ -409,3 +419,100 @@ async def test_no_uploader_means_nobody_to_tell() -> None:
     db = _db()
     assert await _notify_batch_done(db, _applicant(uuid.uuid4(), None)) is False
     db.scalar.assert_not_awaited()
+
+
+# ===========================================================================
+# Telling people the interview is over
+# ===========================================================================
+# Completion had no announcer. The invite's consumed -> completed flip, and the
+# notification with it, lived inside GET /hr/interviews — so HR learned that a
+# candidate had finished only by opening that page, and the invite sat at
+# 'consumed' until someone did. A read path was also, quietly, a writer.
+@pytest.mark.asyncio
+async def test_completion_notifies_hr_without_anyone_opening_a_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.reminders as rem
+
+    row = {
+        "id": uuid.uuid4(), "company_id": uuid.uuid4(),
+        "created_by_user_id": uuid.uuid4(),
+        "full_name": "Priya", "job_title": "Backend Engineer",
+    }
+    db = _db()
+    db.execute.return_value = MagicMock(mappings=MagicMock(return_value=MagicMock(
+        all=MagicMock(return_value=[row]))))
+
+    sent: list[dict] = []
+
+    async def _notify(_db: object, **kw: object) -> None:
+        sent.append(kw)
+
+    monkeypatch.setattr(rem, "create_notification", _notify)
+    result = rem.SweepResult()
+    await rem._interview_completed(db, result)
+
+    assert result.completions == 1
+    assert sent[0]["user_id"] == row["created_by_user_id"]
+    assert sent[0]["kind"] == "interview_completed"
+    assert sent[0]["link"] == "/hr/interviews"
+
+
+def test_completion_is_found_by_the_scorecard_not_by_a_read() -> None:
+    """The predicate is "a scorecard exists and the invite is still consumed" —
+    state, not an event anyone has to observe. A sweep that misses a pass loses
+    nothing, because the next one sees the same row."""
+    from app.reminders import _COMPLETED_SQL
+
+    assert "JOIN scorecards" in _COMPLETED_SQL
+    assert "inv.status = 'consumed'" in _COMPLETED_SQL
+
+
+def test_the_status_flip_is_its_own_idempotency_guard() -> None:
+    """One-way transition on a single row: the row stops matching the moment it
+    is announced, so no dedupe key or extra column is needed to fire once."""
+    import inspect
+
+    from app.reminders import _interview_completed
+
+    src = inspect.getsource(_interview_completed)
+    assert "status = 'completed'" in src
+    assert "AND status = 'consumed'" in src  # the guard on the UPDATE itself
+
+
+def test_the_invite_list_no_longer_writes() -> None:
+    """A GET that mutates is a GET that behaves differently under a page
+    refresh, a prefetch, or a second HR manager looking at the same list."""
+    import inspect
+
+    from app.routers.hr_interviews import list_invites
+
+    src = inspect.getsource(list_invites)
+    assert "db.commit()" not in src
+    assert 'inv.status = "completed"' not in src
+
+
+def test_the_candidate_is_told_in_app_as_well_as_by_email() -> None:
+    """`a.user_id` was selected by the results query and never used, so a
+    candidate whose mail bounced had no way to learn their scorecard existed."""
+    # inspect.getsource on the live attribute — which only works because the
+    # stage stubs in this module are installed through monkeypatch now and are
+    # torn down after each test. They used to be raw assignments that were never
+    # put back, so this read the stub instead of the function.
+    import inspect
+
+    from app.reminders import _results_ready
+
+    src = inspect.getsource(_results_ready)
+    assert "create_notification" in src
+    assert '"/applications"' in src
+
+
+def test_no_interview_completed_email_is_claimed() -> None:
+    """There is no such template and there never has been — git history shows
+    the claim arrived with the initial import. A comment asserting an email
+    fires "exactly once" when none exists is worse than no comment."""
+    from app.email_templates import _BUILDERS
+
+    assert "interview_completed" not in _BUILDERS
+    assert "results_ready" in _BUILDERS  # the one that does exist, for candidates

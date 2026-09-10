@@ -317,10 +317,29 @@ class Settings(BaseSettings):
     reconciliation_interval_seconds: int = Field(default=600, ge=60, le=86_400)
 
     # ── Deadline reminders (A2) ───────────────────────────────────────────
-    # Hourly. The sweep itself decides which candidates are inside a reminder
-    # window; email_events.dedupe_key stops a second send for the same window.
+    # Every 5 minutes — the floor this field allows, down from hourly.
+    #
+    # The sweep stopped being only about reminders when interview completion
+    # moved into it (`reminders._interview_completed`). Reminders are windowed
+    # and tolerate an hour of slack; a completion notification does not, because
+    # it tells HR that somebody is now waiting on a decision.
+    #
+    # What this costs: five stages of indexed SELECTs, each capped at 200 rows,
+    # twelve times more often. What it buys: HR hears within minutes instead of
+    # up to an hour. The alternative — feedback_billing calling data_gateway the
+    # moment a scorecard is written — is a new internal endpoint and a new auth
+    # surface for a latency difference nobody is waiting on in real time, so it
+    # is deliberately not built for Phase 2.
+    #
+    # Note the list itself is never stale: GET /hr/interviews computes an
+    # effective status from the scorecard's existence, so it reads 'completed'
+    # immediately. Only the notification waits for this interval.
+    #
+    # The sweep is idempotent by construction (email_events.dedupe_key for
+    # sends, a one-way status flip for completion), so running it more often
+    # cannot double-send or double-notify.
     reminders_enabled: bool = True
-    reminders_interval_seconds: int = Field(default=3600, ge=300, le=86_400)
+    reminders_interval_seconds: int = Field(default=300, ge=300, le=86_400)
 
     # UTC hour for the daily retention cron.  03:00 UTC = ~08:30 IST (off-peak).
     retention_cron_hour: int = 3

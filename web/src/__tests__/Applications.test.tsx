@@ -25,10 +25,20 @@ import type { MyApplication, MyApplicationDetail } from '../api/applications';
 
 const listMyApplications = vi.fn();
 const getMyApplication = vi.fn();
+const mintMyInterviewLink = vi.fn();
 vi.mock('../api/applications', () => ({
   listMyApplications: (...a: unknown[]) => listMyApplications(...a) as unknown,
   getMyApplication: (...a: unknown[]) => getMyApplication(...a) as unknown,
+  mintMyInterviewLink: (...a: unknown[]) => mintMyInterviewLink(...a) as unknown,
 }));
+
+// Starting an interview navigates the tab. jsdom's location is not writable, so
+// the assign it calls is stubbed and asserted on instead.
+const assign = vi.fn();
+Object.defineProperty(window, 'location', {
+  writable: true,
+  value: { ...window.location, assign },
+});
 
 const toastError = vi.fn();
 vi.mock('../lib/toast', () => ({
@@ -54,6 +64,9 @@ function app(over: Partial<MyApplication> = {}): MyApplication {
     current_round_kind: null,
     round_number: null,
     total_rounds: null,
+    // No waiting invitation is the ordinary case; the invite tests set it.
+    interview_invite_id: null,
+    interview_scheduled_at: null,
     ...over,
   };
 }
@@ -206,5 +219,78 @@ describe('Applications', () => {
     renderPage();
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Network down'));
     expect(toastError).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The interview a candidate was invited to
+// ---------------------------------------------------------------------------
+// The invitation reached the candidate only as an email. Filtered, mistyped or
+// caught by a local mail sink, it left an interview that existed and could not
+// be started — while looking healthy from the hiring side, because the invite
+// really had been minted and queued. This is the route that needs no mail.
+
+describe('Applications — a waiting interview', () => {
+  it('offers to start it', async () => {
+    listMyApplications.mockResolvedValue([app({ interview_invite_id: 'inv-1' })]);
+    renderPage();
+
+    expect(await screen.findByText('Your interview is ready')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Start interview' })).toBeTruthy();
+  });
+
+  it('shows nothing when no invitation is waiting', async () => {
+    // Which is most of an application's life. An always-present block would
+    // train people to ignore the one time it matters.
+    listMyApplications.mockResolvedValue([app()]);
+    renderPage();
+
+    await screen.findByText('Backend Engineer');
+    expect(screen.queryByText('Your interview is ready')).toBeNull();
+  });
+
+  it('does not ask for a link until the candidate presses the button', async () => {
+    // Minting ROTATES the token, so any previously issued link stops working.
+    // Fetching on render would silently break the emailed link of every
+    // candidate who merely looked at this page.
+    listMyApplications.mockResolvedValue([app({ interview_invite_id: 'inv-1' })]);
+    renderPage();
+
+    await screen.findByText('Your interview is ready');
+    expect(mintMyInterviewLink).not.toHaveBeenCalled();
+  });
+
+  it('sends the candidate to the link it is given', async () => {
+    mintMyInterviewLink.mockResolvedValue({
+      interview_url: 'http://localhost:5174/interview-invite#tok',
+      expires_at: '2026-09-11T00:00:00Z',
+    });
+    listMyApplications.mockResolvedValue([app({ interview_invite_id: 'inv-1' })]);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Start interview' }));
+
+    await vi.waitFor(() => expect(mintMyInterviewLink).toHaveBeenCalledWith('inv-1'));
+    await vi.waitFor(() =>
+      expect(assign).toHaveBeenCalledWith('http://localhost:5174/interview-invite#tok'),
+    );
+  });
+
+  it('explains a failure instead of appearing to do nothing', async () => {
+    mintMyInterviewLink.mockRejectedValue(new Error('Invitation has expired.'));
+    listMyApplications.mockResolvedValue([app({ interview_invite_id: 'inv-1' })]);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Start interview' }));
+    expect(await screen.findByText('Invitation has expired.')).toBeTruthy();
+  });
+
+  it('shows the scheduled time when there is one', async () => {
+    listMyApplications.mockResolvedValue([
+      app({ interview_invite_id: 'inv-1', interview_scheduled_at: '2026-09-10T09:00:00Z' }),
+    ]);
+    renderPage();
+
+    expect(await screen.findByText(/Scheduled for/)).toBeTruthy();
   });
 });

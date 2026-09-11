@@ -988,6 +988,201 @@ async def test_catchup_survives_one_broken_job() -> None:
     assert seen == ["good"]
 
 
+def _claim_params(db: AsyncMock) -> dict:
+    return next(c.args[1] for c in db.scalar.call_args_list if "INSERT INTO" in str(c.args[0]))
+
+
+@pytest.mark.asyncio
+async def test_catchup_claims_only_a_window_that_was_really_missed() -> None:
+    """With the scheduler's own early grace, a check every fifteen minutes would
+    claim each night's run shortly before its hour, and the job would creep
+    earlier every day. Catch-up waits until the window is hours past due."""
+    from app.scheduling import _CATCHUP_SLACK, _OVERDUE_GRACE, _claim
+
+    day = timedelta(days=1)
+    cron_db, catch_db = _db(scalar=1), _db(scalar=1)
+    before = datetime.now(tz=UTC)
+    await _claim(cron_db, "j", interval=day)
+    await _claim(catch_db, "j", interval=day, catchup=True)
+
+    cron_due = _claim_params(cron_db)["due_before"]
+    catch_due = _claim_params(catch_db)["due_before"]
+    assert abs(cron_due - (before - day + _OVERDUE_GRACE)) < timedelta(seconds=5)
+    assert abs(catch_due - (before - day - _CATCHUP_SLACK)) < timedelta(seconds=5)
+    assert catch_due < cron_due
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_is_retried_within_the_hour_not_the_next_night() -> None:
+    from app.scheduling import _ERROR_RETRY_AFTER, _claim
+
+    db = _db(scalar=1)
+    before = datetime.now(tz=UTC)
+    await _claim(db, "j", interval=timedelta(days=1))
+
+    sql = next(str(c.args[0]) for c in db.scalar.call_args_list)
+    assert "last_status = 'error'" in sql
+    assert "last_finished_at <= :retry_before" in sql
+    assert timedelta(hours=1) >= _ERROR_RETRY_AFTER
+    assert abs(_claim_params(db)["retry_before"] - (before - _ERROR_RETRY_AFTER)) < timedelta(
+        seconds=5
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_catchup_trigger_reaches_the_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.scheduling as sch
+
+    seen: list[bool] = []
+
+    async def _claim(_db: object, _jid: str, *, interval: timedelta, catchup: bool) -> bool:
+        seen.append(catchup)
+        return False
+
+    monkeypatch.setattr(sch, "_claim", _claim)
+
+    async def _fn() -> None:
+        return None
+
+    await sch.run_overdue_jobs_on_startup(
+        _FakeFactory(_db()), [("j", timedelta(days=1), _fn)]  # type: ignore[arg-type]
+    )
+    await sch.run_scheduled_job(
+        _FakeFactory(_db()), job_id="j", interval=timedelta(days=1), fn=_fn  # type: ignore[arg-type]
+    )
+    assert seen == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_every_run_is_written_to_history() -> None:
+    from app.scheduling import run_scheduled_job
+
+    db = _db(scalar=1)
+
+    async def _fn() -> None:
+        return None
+
+    await run_scheduled_job(
+        _FakeFactory(db), job_id="j", interval=timedelta(days=1), fn=_fn,  # type: ignore[arg-type]
+        trigger="catchup",
+    )
+    logged = [c.args[1] for c in db.execute.call_args_list
+              if "INSERT INTO scheduled_job_run_log" in str(c.args[0])]
+    assert len(logged) == 1
+    assert logged[0]["status"] == "ok" and logged[0]["trigger"] == "catchup"
+
+
+def test_contact_details_are_masked_before_an_error_is_stored() -> None:
+    """A unique-violation quotes the duplicate row. These tables are declared as
+    holding no personal data, so an email or phone number must not land there."""
+    from app.scheduling import _scrub
+
+    raw = ('IntegrityError: Key (email)=(priya.sharma@example.co.in) already exists; '
+           'phone +91 98765 43210')
+    out = _scrub(raw) or ""
+    assert "priya" not in out and "98765" not in out
+    assert "<email>" in out and "<number>" in out
+    assert "IntegrityError" in out  # still useful to the operator
+    assert _scrub(None) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("error", "history_rows"), [(None, 0), ("results: RuntimeError", 1)])
+async def test_a_loop_pass_updates_its_summary_and_logs_only_failures(
+    error: str | None, history_rows: int,
+) -> None:
+    """Every pass refreshes the summary row — a loop that has died shows up as a
+    stale timestamp. History takes only failures, or it fills with "fine"."""
+    from app.scheduling import record_loop_pass
+
+    db = _db()
+    await record_loop_pass(
+        _FakeFactory(db), "reminders_sweep",  # type: ignore[arg-type]
+        started_at=datetime.now(tz=UTC), error=error,
+    )
+    sqls = [str(c.args[0]) for c in db.execute.call_args_list]
+    assert sum("INSERT INTO scheduled_job_runs" in s for s in sqls) == 1
+    assert sum("INSERT INTO scheduled_job_run_log" in s for s in sqls) == history_rows
+    db.commit.assert_awaited()
+
+
+def test_startup_no_longer_waits_for_the_catchup() -> None:
+    """It used to be awaited in lifespan, holding the service unready until the
+    whole retention purge finished — and it only ever ran on a restart."""
+    import inspect
+
+    from app import main
+
+    src = inspect.getsource(main.lifespan)
+    assert "await run_overdue_jobs_on_startup" not in src
+    assert "start_catchup(_factory, _catchup_jobs)" in src
+    assert "await stop_catchup()" in src
+
+
+@pytest.mark.asyncio
+async def test_start_catchup_returns_at_once_and_stops_cleanly() -> None:
+    import app.scheduling as sch
+
+    async def _fn() -> None:
+        return None
+
+    sch.start_catchup(_FakeFactory(_db()), [("j", timedelta(days=1), _fn)])  # type: ignore[arg-type]
+    try:
+        assert sch._catchup_task is not None and not sch._catchup_task.done()
+    finally:
+        await sch.stop_catchup()
+    assert sch._catchup_task is None
+
+
+@pytest.mark.asyncio
+async def test_both_interval_loops_report_their_failed_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stage that fails is swallowed so the rest can run — which used to mean
+    the failure reached nothing but a log line."""
+    import app.reminders as rem
+
+    async def _boom(_db: object, _r: object) -> None:
+        raise RuntimeError("bad sql")
+
+    async def _ok(_db: object, _r: object) -> None:
+        return None
+
+    for stage in ("_exam_reminders", "_interview_reminders", "_results_ready",
+                  "_interview_completed", "_workflow_results"):
+        monkeypatch.setattr(rem, stage, _ok)
+    monkeypatch.setattr(rem, "_expiry_notices", _boom)
+
+    result = await rem.run_once(_FakeFactory(_db()))  # type: ignore[arg-type]
+    assert result.failed_stages == ["expiry: RuntimeError: bad sql"]
+
+
+@pytest.mark.asyncio
+async def test_the_ops_endpoint_flags_a_job_that_went_quiet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dead loop does not report failures; it stops reporting. Overdue is
+    judged from the last finish, against each job's own expected gap."""
+    import app.routers.admin_hr as admin
+
+    now = datetime.now(tz=UTC)
+
+    async def _status(_f: object) -> list[dict]:
+        return [
+            {"job_id": "reminders_sweep", "last_finished_at": (now - timedelta(hours=2)).isoformat()},
+            {"job_id": "reconciliation_loop", "last_finished_at": (now - timedelta(minutes=5)).isoformat()},
+            {"job_id": "retention_purge", "last_finished_at": None},
+            {"job_id": "something_new", "last_finished_at": None},
+        ]
+
+    monkeypatch.setattr(admin, "job_status", _status)
+    monkeypatch.setattr(admin, "get_session_factory", lambda: None)
+    body = await admin.scheduled_jobs(current_user=MagicMock())
+    overdue = {j["job_id"]: j["overdue"] for j in body["jobs"]}
+    assert overdue == {"reminders_sweep": True, "reconciliation_loop": False,
+                       "retention_purge": True, "something_new": False}
+
+
 # ===========================================================================
 # A4/E5 — one "upload complete" notification per bulk batch
 # ===========================================================================

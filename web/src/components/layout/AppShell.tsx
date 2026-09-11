@@ -35,6 +35,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import CopilotLauncher from '@/components/agent/CopilotLauncher';
 import { toast } from '@/lib/toast';
+import { useLiveRefresh } from '@/lib/liveRefresh';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -463,6 +464,10 @@ function NotificationsBell() {
 
   const items = data?.items ?? [];
   const unread = data?.unread_count ?? 0;
+
+  // A notification the bell has not seen before means the backend just changed
+  // something — refresh the views that event affects (see lib/liveRefresh).
+  useLiveRefresh(data?.items);
 
   const readMutation = useMutation({
     mutationFn: (id: string) => markNotificationRead(id),

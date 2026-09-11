@@ -27,7 +27,7 @@ import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 
 import bcrypt
 import structlog
@@ -40,9 +40,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth_tokens import hash_token, mint_token, ttl_hours_for
 from app.config import settings
-from app.database import get_db_session
+from app.database import get_db_session, get_session_factory
 from app.dependencies import get_auth_provider_dep, require_role_password_ok
 from app.mailer import enqueue_email
+from app.scheduling import job_status
 
 log = structlog.get_logger(__name__)
 
@@ -540,6 +541,47 @@ async def platform_stats(current_user: PlatformOwnerDep, db: DbSessionDep) -> Pl
         companies=int(row[0]), super_admins=int(row[1]), hr_managers=int(row[2]),
         candidates=int(row[3]), interviews_total=int(row[4]), interviews_30d=int(row[5]),
     )
+
+
+# ===========================================================================
+# PLATFORM OWNER — background job health (A6)
+# ===========================================================================
+def _expected_gap() -> dict[str, timedelta]:
+    """How long each known job may go without finishing before it is overdue.
+
+    Interval loops get three intervals of slack (one slow pass is not an
+    outage); calendar jobs get their day plus the catch-up slack.
+    """
+    return {
+        "retention_purge": timedelta(days=1, hours=3),
+        "agent_watchers": timedelta(days=1, hours=3),
+        "reminders_sweep": timedelta(seconds=3 * max(300, settings.reminders_interval_seconds)),
+        "reconciliation_loop": timedelta(
+            seconds=3 * max(60, settings.reconciliation_interval_seconds)
+        ),
+    }
+
+
+@router.get("/scheduled-jobs")
+async def scheduled_jobs(current_user: PlatformOwnerDep) -> dict[str, Any]:
+    """Every background job: last run, outcome, recent history, and whether it
+    has gone quiet for longer than it should.
+
+    ``overdue`` is the field to watch. A loop that has died does not report
+    failures — it stops reporting anything — so the only sign is a
+    last_finished_at that keeps getting older.
+    """
+    jobs = await job_status(get_session_factory())
+    now = datetime.now(tz=UTC)
+    gaps = _expected_gap()
+    for job in jobs:
+        gap = gaps.get(str(job["job_id"]))
+        finished = job["last_finished_at"]
+        job["overdue"] = bool(
+            gap is not None
+            and (finished is None or now - datetime.fromisoformat(str(finished)) > gap)
+        )
+    return {"jobs": jobs, "checked_at": now.isoformat()}
 
 
 # ===========================================================================

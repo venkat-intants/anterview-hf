@@ -61,6 +61,7 @@ from app.config import settings
 from app.embedding_client import embed_texts_remote
 from app.models import Applicant
 from app.notifications_util import create_notification
+from app.scheduling import record_loop_pass
 from app.scoring_client import (
     ScoringServiceUnavailableError,
     render_scorecard_pdf_remote,
@@ -69,6 +70,9 @@ from app.scoring_client import (
 )
 
 log = structlog.get_logger(__name__)
+
+# This loop's row in scheduled_job_runs (A6).
+LOOP_JOB_ID = "reconciliation_loop"
 
 # How many rows one pass will attempt per check. Small on purpose: a pass should
 # finish well inside its interval even when every call is slow, so a backlog
@@ -135,6 +139,9 @@ class PassResult:
     failed: int = 0
     gave_up: int = 0
     outstanding: dict[str, int] = field(default_factory=dict)
+    # "pass: ErrorType: message" for each pass that raised. The others still
+    # ran; this is how the failure reaches the job record (A6).
+    failed_passes: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -147,6 +154,7 @@ class PassResult:
             "failed": self.failed,
             "gave_up": self.gave_up,
             "outstanding": self.outstanding,
+            "failed_passes": self.failed_passes,
         }
 
 
@@ -760,6 +768,7 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> PassResult:
                 await pass_(db, result)
             except Exception as exc:  # noqa: BLE001
                 await db.rollback()
+                result.failed_passes.append(f"{name}: {type(exc).__name__}: {exc}"[:300])
                 log.error("reconcile.pass_failed", stage=name,
                           error_type=type(exc).__name__, error=str(exc)[:300])
         result.outstanding = await _outstanding(db)
@@ -781,14 +790,20 @@ async def _loop(factory: async_sessionmaker[AsyncSession]) -> None:
     # migrations and the first requests for the connection pool.
     await asyncio.sleep(min(30, interval))
     while True:
+        started = datetime.now(tz=UTC)
+        error: str | None = None
         try:
-            await run_once(factory)
+            result = await run_once(factory)
+            error = "; ".join(result.failed_passes) or None
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — the loop must outlive any one pass
+            error = f"{type(exc).__name__}: {exc}"
             log.error(
                 "reconcile.pass_failed", exc_type=type(exc).__name__, exc_msg=str(exc)
             )
+        # A6: every pass leaves a record — see scheduling.record_loop_pass.
+        await record_loop_pass(factory, LOOP_JOB_ID, started_at=started, error=error)
         await asyncio.sleep(interval)
 
 

@@ -74,7 +74,7 @@ from app.routers.resume import router as resume_router
 from app.routers.sso_google import router as sso_google_router
 from app.routers.sso_naipunyam import router as sso_naipunyam_router
 from app.s3_upload import StorageNotConfiguredError
-from app.scheduling import run_overdue_jobs_on_startup, run_scheduled_job
+from app.scheduling import run_scheduled_job, start_catchup, stop_catchup
 
 # ---------------------------------------------------------------------------
 # PII redaction processor (defense-in-depth — DPDP §8)
@@ -251,14 +251,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     reminders.start(_factory)
 
     # --- A6: replay anything whose window passed while we were not running ---
-    # After the scheduler is up, so a job that is genuinely due now is claimed
-    # once rather than by both paths.
+    # In the background, every fifteen minutes, starting a minute after boot.
+    # It used to be awaited here, which held the whole service unready until
+    # the retention purge finished, and it ran only on a restart — a process
+    # that was paused and resumed never caught up at all.
     _catchup_jobs: list[tuple[str, timedelta, Any]] = [
         ("retention_purge", timedelta(days=1), _run_retention_job)
     ]
     if settings.watchers_enabled:
         _catchup_jobs.append(("agent_watchers", timedelta(days=1), run_watcher_sweep))
-    await run_overdue_jobs_on_startup(_factory, _catchup_jobs)
+    start_catchup(_factory, _catchup_jobs)
 
     # Determine next-run time for the startup log (may be None if no jobs yet).
     next_run_job = scheduler.get_job("retention_purge")
@@ -287,6 +289,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- shutdown ---
     scheduler.shutdown(wait=False)
+    await stop_catchup()
     await reconciliation.stop()
     await reminders.stop()
     await stop_email_worker()

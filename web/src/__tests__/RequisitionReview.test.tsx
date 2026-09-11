@@ -53,12 +53,28 @@ const getBackfillReview = vi.fn();
 const updateRequisition = vi.fn();
 const mergeApplicants = vi.fn();
 const splitRequisition = vi.fn();
+const confirmRequisition = vi.fn();
+const mergeRequisition = vi.fn();
+const listEnrolments = vi.fn();
+const listRequisitions = vi.fn();
 vi.mock('../api/requisitions', () => ({
   getBackfillReview: (...a: unknown[]) => getBackfillReview(...a) as unknown,
   updateRequisition: (...a: unknown[]) => updateRequisition(...a) as unknown,
   mergeApplicants: (...a: unknown[]) => mergeApplicants(...a) as unknown,
   splitRequisition: (...a: unknown[]) => splitRequisition(...a) as unknown,
+  confirmRequisition: (...a: unknown[]) => confirmRequisition(...a) as unknown,
+  mergeRequisition: (...a: unknown[]) => mergeRequisition(...a) as unknown,
+  listEnrolments: (...a: unknown[]) => listEnrolments(...a) as unknown,
+  listRequisitions: (...a: unknown[]) => listRequisitions(...a) as unknown,
 }));
+
+// Candidates in the folded opening. Every one normalises to the same title in
+// an opening the backfill made — which is why split has to pick candidates.
+const CANDIDATES = [
+  { id: 'en-1', full_name: 'Ravi Kumar', target_job_title: 'Python Developer' },
+  { id: 'en-2', full_name: 'Meena Iyer', target_job_title: 'python developer' },
+  { id: 'en-3', full_name: 'Arjun Das', target_job_title: 'Python  Developer' },
+];
 
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
@@ -106,6 +122,17 @@ beforeEach(() => {
     moved: 4,
     left_behind: 5,
   });
+  confirmRequisition.mockResolvedValue({ id: 'req-clean' });
+  mergeRequisition.mockResolvedValue({
+    into_requisition_id: 'req-clean',
+    title: 'QA Analyst',
+    moved: 9,
+  });
+  listEnrolments.mockResolvedValue(CANDIDATES);
+  listRequisitions.mockResolvedValue([
+    { id: 'req-folded', title: 'Python Developer', status: 'open' },
+    { id: 'req-clean', title: 'QA Analyst', status: 'open' },
+  ]);
 });
 
 describe('RequisitionReview — what the backfill guessed', () => {
@@ -117,37 +144,55 @@ describe('RequisitionReview — what the backfill guessed', () => {
     expect(within(openingCard('req-clean')).getByText(/1 spelling/)).toBeTruthy();
   });
 
-  it('offers a split only where the backfill actually folded something', async () => {
+  it('offers a split on every opening, not only where spellings were folded', async () => {
+    // A single-spelling opening can still hold two jobs; splitting by title
+    // could never separate them, splitting by candidate can.
     renderPage();
     await screen.findByTestId('opening-req-folded');
 
     expect(within(openingCard('req-folded')).getByText('Split apart')).toBeTruthy();
-    expect(within(openingCard('req-clean')).queryByText('Split apart')).toBeNull();
+    expect(within(openingCard('req-clean')).getByText('Split apart')).toBeTruthy();
   });
 
-  it('confirms an opening by writing its title back, which is what clears the flag', async () => {
+  it('confirms an opening with its own action, not by rewriting the title', async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByTestId('opening-req-clean');
 
     await user.click(within(openingCard('req-clean')).getByText('Looks right'));
 
-    await waitFor(() => expect(updateRequisition).toHaveBeenCalledTimes(1));
-    expect(updateRequisition).toHaveBeenCalledWith('req-clean', { title: 'QA Analyst' });
+    await waitFor(() => expect(confirmRequisition).toHaveBeenCalledWith('req-clean'));
+    expect(updateRequisition).not.toHaveBeenCalled();
+  });
+
+  it('still renames when the title was edited', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('opening-req-clean');
+
+    const card = openingCard('req-clean');
+    const input = within(card).getByLabelText('Opening title');
+    await user.clear(input);
+    await user.type(input, 'QA Engineer');
+    await user.click(within(card).getByText('Rename & confirm'));
+
+    await waitFor(() =>
+      expect(updateRequisition).toHaveBeenCalledWith('req-clean', { title: 'QA Engineer' }),
+    );
+    expect(confirmRequisition).not.toHaveBeenCalled();
   });
 });
 
 describe('RequisitionReview — splitting', () => {
-  it('refuses to move every title out, because that is a rename', async () => {
+  it('refuses to move every candidate out, because that is a rename', async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByTestId('opening-req-folded');
 
     const card = openingCard('req-folded');
     await user.click(within(card).getByText('Split apart'));
-
-    for (const t of ['Python Developer', 'Senior Python Developer']) {
-      await user.click(within(card).getByLabelText(t));
+    for (const c of CANDIDATES) {
+      await user.click(await within(card).findByLabelText(c.full_name));
     }
     await user.type(within(card).getByLabelText('New opening title'), 'Anything');
 
@@ -158,25 +203,95 @@ describe('RequisitionReview — splitting', () => {
     expect(splitRequisition).not.toHaveBeenCalled();
   });
 
-  it('sends exactly the titles that were ticked', async () => {
+  it('sends exactly the candidates that were ticked', async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByTestId('opening-req-folded');
 
     const card = openingCard('req-folded');
     await user.click(within(card).getByText('Split apart'));
-    await user.click(within(card).getByLabelText('Senior Python Developer'));
-    await user.type(
-      within(card).getByLabelText('New opening title'),
-      'Senior Python Developer',
-    );
+    // Same normalised title as everyone else — by title, impossible to pick out.
+    await user.click(await within(card).findByLabelText('Meena Iyer'));
+    await user.type(within(card).getByLabelText('New opening title'), 'Data Engineer');
     await user.click(within(card).getByRole('button', { name: /Create opening & move/ }));
 
     await waitFor(() => expect(splitRequisition).toHaveBeenCalledTimes(1));
     expect(splitRequisition).toHaveBeenCalledWith('req-folded', {
-      source_titles: ['Senior Python Developer'],
-      new_title: 'Senior Python Developer',
+      enrolment_ids: ['en-2'],
+      new_title: 'Data Engineer',
     });
+  });
+
+  it('shows the spelling each candidate applied under', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('opening-req-folded');
+
+    const card = openingCard('req-folded');
+    await user.click(within(card).getByText('Split apart'));
+    expect(await within(card).findByText('applied as “python developer”')).toBeTruthy();
+  });
+});
+
+describe('RequisitionReview — merging two openings', () => {
+  it('does not merge on a single click, and names what will happen', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('opening-req-folded');
+
+    const card = openingCard('req-folded');
+    await user.click(within(card).getByText('Merge into another opening…'));
+    const select = await within(card).findByLabelText('Merge into');
+    await waitFor(() => expect(within(select).getByText(/QA Analyst/)).toBeTruthy());
+    await user.selectOptions(select, 'req-clean');
+    await user.click(within(card).getByText('Merge…'));
+
+    expect(mergeRequisition).not.toHaveBeenCalled();
+    expect(within(card).getByText(/retire “Python Developer”/)).toBeTruthy();
+
+    await user.click(within(card).getByText('Yes, merge'));
+    await waitFor(() => expect(mergeRequisition).toHaveBeenCalledWith('req-folded', 'req-clean'));
+  });
+
+  it('never offers an opening as a merge target for itself', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('opening-req-folded');
+
+    const card = openingCard('req-folded');
+    await user.click(within(card).getByText('Merge into another opening…'));
+    const select = await within(card).findByLabelText('Merge into');
+    await waitFor(() => expect(within(select).getByText(/QA Analyst/)).toBeTruthy());
+    expect(within(select).queryByText(/Python Developer/)).toBeNull();
+  });
+
+  it('surfaces a refusal verbatim, because it names what to resolve', async () => {
+    const user = userEvent.setup();
+    mergeRequisition.mockRejectedValue(
+      new Error('1 candidate(s) applied to both openings (Asha Rao)'),
+    );
+    renderPage();
+    await screen.findByTestId('opening-req-folded');
+
+    const card = openingCard('req-folded');
+    await user.click(within(card).getByText('Merge into another opening…'));
+    const select = await within(card).findByLabelText('Merge into');
+    await waitFor(() => expect(within(select).getByText(/QA Analyst/)).toBeTruthy());
+    await user.selectOptions(select, 'req-clean');
+    await user.click(within(card).getByText('Merge…'));
+    await user.click(within(card).getByText('Yes, merge'));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('1 candidate(s) applied to both openings (Asha Rao)'),
+    );
+  });
+});
+
+describe('RequisitionReview — applicants with no opening', () => {
+  it('counts them rather than losing them from view', async () => {
+    getBackfillReview.mockResolvedValue({ ...REVIEW, unfiled_applicants: 2 });
+    renderPage();
+    expect(await screen.findByText(/not filed under any opening/)).toBeTruthy();
   });
 });
 

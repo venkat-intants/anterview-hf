@@ -500,12 +500,21 @@ async def split_requisition(
     *,
     company_id: uuid.UUID,
     requisition_id: uuid.UUID,
-    source_titles: list[str],
+    source_titles: list[str] | None = None,
     new_title: str,
     level: str | None,
     actor_user_id: uuid.UUID,
+    enrolment_ids: list[uuid.UUID] | None = None,
 ) -> dict[str, Any]:
     """Undo one of the backfill's guesses. Caller commits.
+
+    Two ways to say who moves. ``enrolment_ids`` names the candidates — the one
+    that always works. ``source_titles`` picks them by the spelling they applied
+    under, which only helps when an opening folded several spellings together:
+    the backfill groups by normalised title, so in an opening it created every
+    candidate normalises to the same key, and picking "by title" there selects
+    all of them and is refused. That made split useless on exactly the openings
+    the review screen exists for — hence explicit candidates.
 
     The Group B backfill grouped applicants by normalised title, so
     "Python Developer", "python developer" and "Python  Developer" became one
@@ -533,8 +542,8 @@ async def split_requisition(
     does not belong back in the review queue. The source keeps its flag until
     someone confirms it separately.
     """
-    if not source_titles:
-        raise ValueError("no source titles given")
+    if not source_titles and not enrolment_ids:
+        raise ValueError("choose the candidates to move")
     if not normalise_title(new_title):
         raise ValueError("the new opening needs a title")
 
@@ -550,10 +559,10 @@ async def split_requisition(
     if src is None:
         raise ValueError("requisition not found")
 
-    # Match on the normalised form, because that is what the backfill grouped
-    # on — matching the raw string would miss the very spellings that caused
+    # Titles match on the normalised form, because that is what the backfill
+    # grouped on — the raw string would miss the very spellings that caused
     # the fold in the first place.
-    wanted = {normalise_title(t) for t in source_titles}
+    wanted = {normalise_title(t) for t in (source_titles or [])}
     rows = (
         await db.execute(
             text(
@@ -566,7 +575,17 @@ async def split_requisition(
         )
     ).mappings().all()
 
-    moving = [r for r in rows if normalise_title(r["target_job_title"] or "") in wanted]
+    if enrolment_ids:
+        chosen = set(enrolment_ids)
+        moving = [r for r in rows if r["id"] in chosen]
+        if len(moving) != len(chosen):
+            # Usually a stale page: someone was moved or merged meanwhile.
+            raise ValueError(
+                f"{len(chosen) - len(moving)} of those candidates are not in this opening"
+                " — reload the page and choose again"
+            )
+    else:
+        moving = [r for r in rows if normalise_title(r["target_job_title"] or "") in wanted]
     if not moving:
         raise ValueError("none of those titles have candidates in this opening")
     if len(moving) == len(rows):
@@ -626,7 +645,7 @@ async def split_requisition(
         "requisition.split",
         company_id=str(company_id), source=str(requisition_id), created=str(new_id),
         moved=len(moved_ids), actor=str(actor_user_id),
-        source_titles=sorted(wanted),
+        source_titles=sorted(wanted), by_candidate=bool(enrolment_ids),
     )
     return {
         "requisition_id": str(new_id),
@@ -664,6 +683,120 @@ _OFF_TRACK_RATIO = 0.6
 _MIN_DAYS_FOR_A_RATE = 7
 
 DeliveryRisk = str  # 'on_track' | 'at_risk' | 'off_track'
+
+
+async def merge_requisitions(
+    db: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    source_id: uuid.UUID,
+    into_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Fold one opening into another — split's inverse. Caller commits.
+
+    For two openings that are really one job: "Data Analyst" typed one way by
+    one recruiter and another way by another, too different for the
+    case-and-spacing rule to join. Every live candidate in ``source_id`` moves
+    to ``into_id``; the emptied source is closed and retired, which frees its
+    title.
+
+    Refuses rather than guesses:
+
+    * the source has a workflow. Its candidates were — or will be — assessed
+      against that workflow's published rubric; moving them under another
+      opening would silently re-scope what they are being assessed against.
+      That is a decision about their assessment, not about data cleaning.
+    * someone has applied to both. They would hold two applications to one
+      opening, and which one survives is a decision about their candidacy
+      (merge the people first, or decide one of the applications).
+    * the two are the same opening, or either is gone.
+
+    Each moved candidate gets a ledger entry, so "which opening did I apply
+    to?" still has an answer after the fact.
+    """
+    if source_id == into_id:
+        raise ValueError("an opening cannot be merged into itself")
+    rows = (
+        await db.execute(
+            text(
+                "SELECT id, title FROM job_requisitions"
+                " WHERE id IN (:s, :t) AND company_id = :c AND deleted_at IS NULL"
+            ),
+            {"s": source_id, "t": into_id, "c": company_id},
+        )
+    ).all()
+    titles = {r[0]: r[1] for r in rows}
+    if source_id not in titles or into_id not in titles:
+        raise ValueError("opening not found")
+
+    has_workflow = await db.scalar(
+        text("SELECT 1 FROM workflows WHERE requisition_id = :s AND deleted_at IS NULL LIMIT 1"),
+        {"s": source_id},
+    )
+    if has_workflow:
+        raise ValueError(
+            f"'{titles[source_id]}' has its own hiring workflow. Its candidates are assessed "
+            "against it, so merging would change what they are assessed on — merge the other "
+            "way round, or decide on them first"
+        )
+    both = (
+        await db.execute(
+            text(
+                "SELECT a.full_name FROM enrolments s"
+                "  JOIN enrolments t ON t.applicant_id = s.applicant_id"
+                "   AND t.requisition_id = :t AND t.deleted_at IS NULL"
+                "  JOIN applicants a ON a.id = s.applicant_id"
+                " WHERE s.requisition_id = :s AND s.deleted_at IS NULL"
+                " ORDER BY a.full_name"
+            ),
+            {"s": source_id, "t": into_id},
+        )
+    ).all()
+    if both:
+        names = [r[0] for r in both]
+        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+        raise ValueError(
+            f"{len(names)} candidate(s) applied to both openings ({shown}); decide which "
+            "application stands before merging"
+        )
+
+    moving = (
+        await db.execute(
+            text(
+                "SELECT id, status FROM enrolments"
+                " WHERE requisition_id = :s AND company_id = :c AND deleted_at IS NULL"
+            ),
+            {"s": source_id, "c": company_id},
+        )
+    ).all()
+    now = datetime.now(tz=UTC)
+    await db.execute(
+        text(
+            "UPDATE enrolments SET requisition_id = :t, updated_at = :n"
+            " WHERE requisition_id = :s AND company_id = :c AND deleted_at IS NULL"
+        ),
+        {"t": into_id, "s": source_id, "c": company_id, "n": now},
+    )
+    for eid, status_ in moving:
+        await record_ledger_entry(
+            db, enrolment_id=eid, company_id=company_id, status=str(status_),
+            actor_user_id=actor_user_id, automated=False,
+            reason=f"moved to the opening '{titles[into_id]}' (merged from '{titles[source_id]}')",
+        )
+    # Retired, not deleted: its row still anchors anything that names it
+    # (the audit log, a stale public link), and deleted_at frees its title.
+    await db.execute(
+        text(
+            "UPDATE job_requisitions SET status = 'closed', deleted_at = :n, updated_at = :n"
+            " WHERE id = :s AND company_id = :c"
+        ),
+        {"s": source_id, "c": company_id, "n": now},
+    )
+    log.info("requisition.merged", company_id=str(company_id), source=str(source_id),
+             into=str(into_id), moved=len(moving), actor=str(actor_user_id))
+    return {"into_requisition_id": str(into_id), "title": titles[into_id],
+            "moved": len(moving)}
 
 
 def delivery_risk(

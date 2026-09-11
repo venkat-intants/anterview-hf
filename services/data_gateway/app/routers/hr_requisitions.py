@@ -10,6 +10,8 @@
     GET    /hr/requisitions/review              backfill review: merges + backfilled reqs
     POST   /hr/applicants/merge                 fold duplicate applicants together
     POST   /hr/requisitions/{id}/split          take a mis-grouped opening apart
+    POST   /hr/requisitions/{id}/merge          fold this opening into another
+    POST   /hr/requisitions/{id}/confirm        an inferred opening is right
 
 MULTI-TENANT: every query is company-scoped through ``HrCtxDep``, and the
 composite foreign keys make a cross-tenant enrolment impossible at the database
@@ -38,6 +40,7 @@ from app.requisitions import (
     delivery_risk,
     merge_applicants,
     merge_candidates,
+    merge_requisitions,
     normalise_title,
     record_transition,
     split_requisition,
@@ -251,11 +254,29 @@ class MergeIn(BaseModel):
 
 
 class SplitIn(BaseModel):
-    """Which of a folded opening's source titles belong in an opening of their own."""
+    """Which candidates of a mis-grouped opening belong in an opening of their own.
 
-    source_titles: list[str] = Field(min_length=1, max_length=50)
+    ``enrolment_ids`` names them. ``source_titles`` picks them by the spelling
+    they applied under, which only separates anything when several spellings
+    were folded together — see split_requisition. One of the two is required.
+    """
+
+    enrolment_ids: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=500)
+    source_titles: list[str] | None = Field(default=None, min_length=1, max_length=50)
     new_title: str = Field(min_length=2, max_length=200)
     level: str | None = Field(default=None, max_length=40)
+
+    @model_validator(mode="after")
+    def _one_way_to_choose(self) -> SplitIn:
+        if not self.enrolment_ids and not self.source_titles:
+            raise ValueError("choose the candidates to move (enrolment_ids) or source_titles")
+        return self
+
+
+class MergeRequisitionIn(BaseModel):
+    """The opening this one is folded into."""
+
+    into_requisition_id: uuid.UUID
 
 
 # ---------------------------------------------------------------------------
@@ -460,11 +481,13 @@ async def review_backfill(ctx: HrCtxDep, db: DbSessionDep) -> dict[str, Any]:
         await db.execute(
             text(
                 "SELECT r.id, r.title, r.status, r.created_at,"
-                "       count(e.id) FILTER (WHERE e.deleted_at IS NULL) AS enrolments,"
+                "       count(e.id) AS enrolments,"
                 "       count(DISTINCT e.target_job_title) AS distinct_titles,"
                 "       array_agg(DISTINCT e.target_job_title) AS titles"
                 "  FROM job_requisitions r"
-                "  LEFT JOIN enrolments e ON e.requisition_id = r.id"
+                # Live applications only: a merged-away or removed one used to
+                # count towards "how many spellings were folded here".
+                "  LEFT JOIN enrolments e ON e.requisition_id = r.id AND e.deleted_at IS NULL"
                 " WHERE r.company_id = :c AND r.deleted_at IS NULL AND r.from_backfill"
                 " GROUP BY r.id, r.title, r.status, r.created_at"
                 " ORDER BY count(DISTINCT e.target_job_title) DESC, r.title"
@@ -473,7 +496,20 @@ async def review_backfill(ctx: HrCtxDep, db: DbSessionDep) -> dict[str, Any]:
         )
     ).mappings().all()
     dupes = await merge_candidates(db, company_id)
+    # Applicants with no application at all — the backfill skipped anyone whose
+    # target title was blank, silently. They cannot be grouped by title, so
+    # they are counted here rather than lost from view.
+    unfiled = await db.scalar(
+        text(
+            "SELECT count(*) FROM applicants a"
+            " WHERE a.company_id = :c AND a.deleted_at IS NULL"
+            "   AND NOT EXISTS (SELECT 1 FROM enrolments e"
+            "                    WHERE e.applicant_id = a.id AND e.deleted_at IS NULL)"
+        ),
+        {"c": company_id},
+    )
     return {
+        "unfiled_applicants": int(unfiled or 0),
         "backfilled_requisitions": [
             {
                 "id": str(r["id"]),
@@ -974,6 +1010,7 @@ async def split_backfilled_requisition(
             company_id=company_id,
             requisition_id=requisition_id,
             source_titles=body.source_titles,
+            enrolment_ids=body.enrolment_ids,
             new_title=body.new_title,
             level=body.level,
             actor_user_id=hr_uid,
@@ -990,7 +1027,9 @@ async def split_backfilled_requisition(
             resource_type="job_requisition",
             resource_id=uuid.UUID(out["requisition_id"]),
             details={"company_id": str(company_id), "split_from": str(requisition_id),
-                     "source_titles": body.source_titles, "moved": out["moved"]},
+                     "source_titles": body.source_titles,
+                     "enrolment_ids": [str(e) for e in body.enrolment_ids or []],
+                     "moved": out["moved"]},
             ip_address=extract_client_ip(request),
             user_agent=extract_user_agent(request),
             event_ts=datetime.now(tz=UTC),
@@ -1000,6 +1039,85 @@ async def split_backfilled_requisition(
     log.info("hr.requisition.split", source=str(requisition_id),
              created=out["requisition_id"], moved=out["moved"])
     return out
+
+
+@router.post("/requisitions/{requisition_id}/merge")
+async def merge_into_requisition(
+    requisition_id: uuid.UUID,
+    body: MergeRequisitionIn,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> dict[str, Any]:
+    """Fold this opening into another — for two openings that are one job (B3).
+
+    The review screen could merge duplicate PEOPLE and split an opening, but
+    had no way to join two openings that the case-and-spacing rule could not
+    see were the same. Refusals and their reasons: see merge_requisitions.
+    Audited, because it moves people's applications between openings.
+    """
+    hr_uid, company_id = ctx
+    await _owned(db, company_id, requisition_id)
+    try:
+        out = await merge_requisitions(
+            db, company_id=company_id, source_id=requisition_id,
+            into_id=body.into_requisition_id, actor_user_id=hr_uid,
+        )
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.add(
+        AuditLog(
+            actor_id=hr_uid,
+            actor_type="user",
+            action="requisition.merge",
+            resource_type="job_requisition",
+            resource_id=body.into_requisition_id,
+            details={"company_id": str(company_id), "merged_from": str(requisition_id),
+                     "moved": out["moved"]},
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+            event_ts=datetime.now(tz=UTC),
+        )
+    )
+    await db.commit()
+    log.info("hr.requisition.merged", source=str(requisition_id),
+             into=str(body.into_requisition_id), moved=out["moved"])
+    return out
+
+
+@router.post("/requisitions/{requisition_id}/confirm", response_model=RequisitionOut)
+async def confirm_requisition(
+    requisition_id: uuid.UUID, request: Request, ctx: HrCtxDep, db: DbSessionDep
+) -> RequisitionOut:
+    """HR has looked at an inferred opening and it is right (B3).
+
+    Takes it out of the review queue. This used to happen only as a side
+    effect of saving the title unchanged; confirming is a decision about how
+    candidates were grouped, so it is its own action, and audited.
+    """
+    hr_uid, company_id = ctx
+    await _owned(db, company_id, requisition_id)
+    await db.execute(
+        text("UPDATE job_requisitions SET from_backfill = false, updated_at = now()"
+             " WHERE id = :i AND company_id = :c"),
+        {"i": requisition_id, "c": company_id},
+    )
+    db.add(
+        AuditLog(
+            actor_id=hr_uid,
+            actor_type="user",
+            action="requisition.confirm",
+            resource_type="job_requisition",
+            resource_id=requisition_id,
+            details={"company_id": str(company_id)},
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+            event_ts=datetime.now(tz=UTC),
+        )
+    )
+    await db.commit()
+    return await get_requisition(requisition_id, ctx, db)
 
 
 @router.get("/requisitions/{requisition_id}/dashboard")

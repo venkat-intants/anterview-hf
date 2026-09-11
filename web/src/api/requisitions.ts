@@ -306,6 +306,33 @@ export interface MergeCandidate {
 export interface BackfillReview {
   backfilled_requisitions: BackfilledRequisition[];
   merge_candidates: MergeCandidate[];
+  /** Applicants filed under no opening at all (e.g. no job title on record). */
+  unfiled_applicants?: number;
+}
+
+/** An inferred opening is right as it is: take it out of the review queue. */
+export function confirmRequisition(requisitionId: string): Promise<Requisition> {
+  return apiPost<Requisition>(`/hr/requisitions/${requisitionId}/confirm`, {});
+}
+
+export interface MergeRequisitionResult {
+  into_requisition_id: string;
+  title: string;
+  moved: number;
+}
+
+/**
+ * Fold one opening into another that is really the same job. Every candidate
+ * moves; the source is closed and retired. Refused (409, with the reason) when
+ * the source has its own workflow or someone applied to both.
+ */
+export function mergeRequisition(
+  requisitionId: string,
+  intoRequisitionId: string,
+): Promise<MergeRequisitionResult> {
+  return apiPost<MergeRequisitionResult>(`/hr/requisitions/${requisitionId}/merge`, {
+    into_requisition_id: intoRequisitionId,
+  });
 }
 
 export function getBackfillReview(): Promise<BackfillReview> {
@@ -353,7 +380,14 @@ export interface SplitResult {
  */
 export function splitRequisition(
   requisitionId: string,
-  body: { source_titles: string[]; new_title: string; level?: string | null },
+  // enrolment_ids names the candidates to move; source_titles picks them by
+  // the spelling they applied under. One of the two.
+  body: {
+    enrolment_ids?: string[];
+    source_titles?: string[];
+    new_title: string;
+    level?: string | null;
+  },
 ): Promise<SplitResult> {
   return apiPost<SplitResult>(`/hr/requisitions/${requisitionId}/split`, body);
 }

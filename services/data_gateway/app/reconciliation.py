@@ -251,21 +251,24 @@ _DUE_PREDICATE = """
 # way (HR's manual rescore writes the score but does not clear the flag). Stuck
 # rows must not hold the batch open — they used to, and one unreadable PDF out
 # of twenty-five meant the upload was never reported finished at all.
-_STUCK = f"""(
-       a.ats_overall IS NOT NULL
-    OR a.resume_text IS NULL OR length(trim(a.resume_text)) = 0
-    OR EXISTS (SELECT 1 FROM reconciliation_state rs
-                WHERE rs.kind = '{KIND_ATS}' AND rs.ref_id = a.id
-                  AND rs.gave_up_at IS NOT NULL)
-)"""
-
-_BATCH_COUNTS_SQL = f"""
+#
+# `stuck` is computed once per row in a lateral subquery, so the two counts
+# cannot disagree about which rows are stuck — and the query is one literal,
+# because the SAST gate (bandit B608) fails any SQL built by string formatting.
+_BATCH_COUNTS_SQL = """
 SELECT count(*) AS total,
        count(*) FILTER (WHERE a.pending_enrichment AND a.deleted_at IS NULL
-                          AND NOT {_STUCK}) AS outstanding,
+                          AND NOT st.stuck) AS outstanding,
        count(*) FILTER (WHERE a.pending_enrichment AND a.deleted_at IS NULL
-                          AND a.ats_overall IS NULL AND {_STUCK}) AS unreadable
+                          AND a.ats_overall IS NULL AND st.stuck) AS unreadable
   FROM applicants a
+  CROSS JOIN LATERAL (
+       SELECT (   a.ats_overall IS NOT NULL
+               OR a.resume_text IS NULL OR length(trim(a.resume_text)) = 0
+               OR EXISTS (SELECT 1 FROM reconciliation_state rs
+                           WHERE rs.kind = :kind_ats AND rs.ref_id = a.id
+                             AND rs.gave_up_at IS NOT NULL)) AS stuck
+  ) st
  WHERE a.upload_batch_id = :b
 """
 
@@ -296,7 +299,7 @@ async def _notify_batch_done(
     if batch_id is None or uploader_id is None:
         return False
     counts = (
-        await db.execute(text(_BATCH_COUNTS_SQL), {"b": batch_id})
+        await db.execute(text(_BATCH_COUNTS_SQL), {"b": batch_id, "kind_ats": KIND_ATS})
     ).mappings().first()
     if counts is None or counts["outstanding"]:
         return False
@@ -456,16 +459,9 @@ async def _embed_pass(db: AsyncSession, result: PassResult) -> None:
 # their interview and was never assessed — and HR, whose invite now sat at
 # 'consumed' forever, was never told they had finished.
 
-def _not_backing_off(alias: str, kind_param: str) -> str:
-    """The reconciliation_state exclusion, for a row whose id is ``alias``."""
-    return f"""
-       AND NOT EXISTS (
-             SELECT 1 FROM reconciliation_state rs
-              WHERE rs.kind = :{kind_param} AND rs.ref_id = {alias}
-                AND (rs.gave_up_at IS NOT NULL
-                     OR (rs.next_attempt_at IS NOT NULL AND rs.next_attempt_at > :now))
-           )"""
-
+# Both queries below end with the same reconciliation_state exclusion (skip
+# what is backing off or parked). It is written out in each rather than built
+# by a helper: the SAST gate (bandit B608) fails SQL assembled from strings.
 
 # Which finished interviews are owed a scorecard. Every clause is a reason the
 # live worker would, or would not, have scored it:
@@ -502,7 +498,10 @@ SELECT s.id, s.language, j.title AS job_title, j.level, j.description AS jd_text
                 WHERE c.user_id = s.user_id
                   AND c.consent_type = 'interview_voice_recording'
                   AND c.granted AND c.revoked_at IS NULL)
-""" + _not_backing_off("s.id", "kind") + """
+   AND NOT EXISTS (SELECT 1 FROM reconciliation_state rs
+                    WHERE rs.kind = :kind AND rs.ref_id = s.id
+                      AND (rs.gave_up_at IS NOT NULL
+                           OR (rs.next_attempt_at IS NOT NULL AND rs.next_attempt_at > :now)))
  ORDER BY s.completed_at
  LIMIT :lim
 """
@@ -630,7 +629,10 @@ SELECT sc.scorecard_id
   FROM scorecards sc
  WHERE sc.report_pdf_key IS NULL
    AND sc.created_at <= :settled
-""" + _not_backing_off("sc.scorecard_id", "kind") + """
+   AND NOT EXISTS (SELECT 1 FROM reconciliation_state rs
+                    WHERE rs.kind = :kind AND rs.ref_id = sc.scorecard_id
+                      AND (rs.gave_up_at IS NOT NULL
+                           OR (rs.next_attempt_at IS NOT NULL AND rs.next_attempt_at > :now)))
  ORDER BY sc.created_at
  LIMIT :lim
 """

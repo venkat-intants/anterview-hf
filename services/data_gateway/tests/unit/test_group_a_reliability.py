@@ -1267,12 +1267,14 @@ async def test_an_unreadable_resume_does_not_hold_the_batch_open(
 
 def test_stuck_rows_are_excluded_from_outstanding() -> None:
     """The three ways a pending row is never going to be finished by this loop."""
-    from app.reconciliation import _BATCH_COUNTS_SQL, _STUCK
+    from app.reconciliation import _BATCH_COUNTS_SQL
 
-    assert "gave_up_at IS NOT NULL" in _STUCK  # parked after MAX_ATTEMPTS
-    assert "a.ats_overall IS NOT NULL" in _STUCK  # scored by the manual rescore
-    assert "length(trim(a.resume_text)) = 0" in _STUCK  # nothing to score
-    assert f"NOT {_STUCK}" in _BATCH_COUNTS_SQL
+    sql = _BATCH_COUNTS_SQL
+    assert "rs.gave_up_at IS NOT NULL" in sql  # parked after MAX_ATTEMPTS
+    assert "a.ats_overall IS NOT NULL" in sql  # scored by the manual rescore
+    assert "length(trim(a.resume_text)) = 0" in sql  # nothing to score
+    assert "AND NOT st.stuck) AS outstanding" in sql
+    assert "rs.kind = :kind_ats" in sql  # a bound parameter, not interpolated
 
 
 @pytest.mark.asyncio
@@ -1353,9 +1355,9 @@ async def test_completion_notifies_hr_without_anyone_opening_a_page(
         "full_name": "Priya", "job_title": "Backend Engineer",
     }
     db = _db()
-    # One mock serves both the SELECT (mappings) and the UPDATE (rowcount).
+    # One mock serves both the SELECT (mappings) and the UPDATE ... RETURNING (first).
     db.execute.return_value = MagicMock(
-        rowcount=1,
+        first=MagicMock(return_value=(row["id"],)),
         mappings=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row]))),
     )
 
@@ -1386,7 +1388,7 @@ async def test_completion_is_announced_only_by_the_sweep_that_flipped_it(
     }
     db = _db()
     db.execute.return_value = MagicMock(
-        rowcount=0,  # another sweep got there first
+        first=MagicMock(return_value=None),  # another sweep got there first
         mappings=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row]))),
     )
 

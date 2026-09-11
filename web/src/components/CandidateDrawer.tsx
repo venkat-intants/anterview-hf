@@ -24,6 +24,8 @@ import { useQuery } from '@tanstack/react-query';
 import { getApplicant } from '@/api/applicants';
 import { listAnswers, type ApplicationAnswer } from '@/api/questions';
 import { listRoundResults, type RoundResult } from '@/api/applicants';
+import { getEnrolmentHistory } from '@/api/requisitions';
+import { describeMove } from '@/lib/stageHistory';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { AlertTriangle, Info, User, X } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
@@ -253,6 +255,16 @@ export default function CandidateDrawer({
     throwOnError: false,
   });
 
+  // How they got here, and who moved them (B2). Under the ['hr', ...] prefix
+  // so a new notification refreshes it with the rest of the candidate's views.
+  const history = useQuery({
+    queryKey: ['hr', 'enrolment', enrolmentId, 'history'],
+    queryFn: () => getEnrolmentHistory(enrolmentId as string),
+    enabled: Boolean(enrolmentId),
+    retry: false,
+    throwOnError: false,
+  });
+
   if (!applicantId) return null;
 
   const nameDiffers =
@@ -431,6 +443,23 @@ export default function CandidateDrawer({
                 </div>
               ))}
             </div>
+          </div>
+        ) : null}
+
+        {enrolmentId && (history.data?.length ?? 0) > 0 ? (
+          <div className="mt-5">
+            <h3 className="mb-2 text-[13px] font-medium text-foreground">History</h3>
+            <ol className="flex flex-col gap-2 border-l border-border pl-3">
+              {history.data?.map((h, i) => (
+                <li key={`${h.occurred_at}-${i}`} className="text-[12.5px]">
+                  <p className="text-[var(--ui-soft)]">{describeMove(h)}</p>
+                  <p className="text-[11.5px] text-[var(--ui-faint)]">
+                    {new Date(h.occurred_at).toLocaleString()}
+                    {h.reason ? ` — ${h.reason}` : ''}
+                  </p>
+                </li>
+              ))}
+            </ol>
           </div>
         ) : null}
           </>

@@ -755,6 +755,19 @@ async def set_enrolment_status(
         automated=False,
         reason=body.reason,
     )
+    # A person holding someone by hand is still a hold: the decision queue and
+    # time-held read held_at / held_reason, which only the runner used to set.
+    # Moving them out of held by hand clears it, as release_hold does.
+    if previous is not None and body.status == "held":
+        await db.execute(
+            text("UPDATE enrolments SET held_at = now(), held_reason = :r WHERE id = :e"),
+            {"r": body.reason or "held by a reviewer", "e": enrolment_id},
+        )
+    elif previous == "held":
+        await db.execute(
+            text("UPDATE enrolments SET held_at = NULL, held_reason = NULL WHERE id = :e"),
+            {"e": enrolment_id},
+        )
     # The shortlist gate. Recording the status was only ever half of it: this is
     # the moment the workflow is supposed to start, and until now nothing called
     # the runner, so a shortlisted candidate sat at current_round_id = NULL
@@ -801,6 +814,54 @@ async def set_enrolment_status(
         if e.id == str(enrolment_id):
             return e
     raise HTTPException(status_code=404, detail="Enrolment not found.")
+
+
+@router.get("/enrolments/{enrolment_id}/history")
+async def get_enrolment_history(
+    enrolment_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> list[dict[str, Any]]:
+    """Every move this application has made, oldest first (B2).
+
+    The ledger existed but only the candidate could read their own; HR had no
+    way to see how someone got where they are, who moved them, or whether a
+    person or the system did it. Round moves carry the round titles. The actor
+    is named only when it was a person; a system move says so.
+    """
+    _hr_uid, company_id = ctx
+    owned = await db.scalar(
+        text("SELECT 1 FROM enrolments WHERE id = :e AND company_id = :c AND deleted_at IS NULL"),
+        {"e": enrolment_id, "c": company_id},
+    )
+    if not owned:
+        raise HTTPException(status_code=404, detail="Enrolment not found.")
+    rows = (
+        await db.execute(
+            text(
+                "SELECT t.occurred_at, t.from_status, t.to_status, t.automated, t.reason,"
+                "       fr.title AS from_round, tr.title AS to_round, u.full_name AS actor"
+                "  FROM stage_transitions t"
+                "  LEFT JOIN workflow_rounds fr ON fr.id = t.from_round_id"
+                "  LEFT JOIN workflow_rounds tr ON tr.id = t.to_round_id"
+                "  LEFT JOIN users u ON u.id = t.actor_user_id"
+                " WHERE t.enrolment_id = :e AND t.company_id = :c"
+                " ORDER BY t.occurred_at, t.id"
+            ),
+            {"e": enrolment_id, "c": company_id},
+        )
+    ).mappings().all()
+    return [
+        {
+            "occurred_at": r["occurred_at"].isoformat(),
+            "from_status": r["from_status"],
+            "to_status": r["to_status"],
+            "from_round": r["from_round"],
+            "to_round": r["to_round"],
+            "automated": bool(r["automated"]),
+            "actor": None if r["automated"] else r["actor"],
+            "reason": r["reason"],
+        }
+        for r in rows
+    ]
 
 
 @router.get("/enrolments/{enrolment_id}/answers")

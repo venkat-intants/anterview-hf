@@ -262,6 +262,24 @@ export function setEnrolmentStatus(
 // ── Backfill review + duplicate applicants ──────────────────────────────────
 
 /** One requisition the backfill minted by grouping applicants on a normalised title. */
+/** One move in an application's history, from the transition ledger (B2). */
+export interface StageHistoryEntry {
+  occurred_at: string;
+  from_status: string | null;
+  to_status: string;
+  /** Round titles, when the move was between rounds. */
+  from_round: string | null;
+  to_round: string | null;
+  /** True when the system made the move; `actor` is then null. */
+  automated: boolean;
+  actor: string | null;
+  reason: string | null;
+}
+
+export function getEnrolmentHistory(enrolmentId: string): Promise<StageHistoryEntry[]> {
+  return apiGet<StageHistoryEntry[]>(`/hr/enrolments/${enrolmentId}/history`);
+}
+
 export interface BackfilledRequisition {
   id: string;
   title: string;

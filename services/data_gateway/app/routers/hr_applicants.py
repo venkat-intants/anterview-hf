@@ -46,12 +46,18 @@ from app.embedding_client import (
 )
 from app.mailer import enqueue_email
 from app.models import Applicant
-from app.requisitions import record_transition, requisition_for_title
+from app.requisitions import (
+    TERMINAL_STATUSES,
+    ambiguous_decision_detail,
+    live_enrolments,
+    record_transition,
+    requisition_for_title,
+)
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
 from app.scoring_client import ResumeScoreError, score_resume_remote
 from app.utils.ownership import get_owned
 from app.utils.sql_like import LIKE_ESCAPE, like_literal
-from app.workflow_runner import enrol_applicant, on_shortlisted, sole_live_enrolment
+from app.workflow_runner import enrol_applicant, on_shortlisted
 
 log = structlog.get_logger(__name__)
 
@@ -1202,6 +1208,19 @@ async def update_applicant_status(
             status_code=400, detail=f"status must be one of {sorted(_VALID_STATUSES)}"
         )
     a = await _get_owned(db, company_id, applicant_id)
+    # B2: this board is person-shaped and the ledger is application-shaped.
+    # With one live application they are the same thing, so every status change
+    # here is that application's transition and goes through the ledger — it
+    # used to record only a shortlist. With several, a hire or reject cannot be
+    # attributed to an opening without guessing, and a terminal decision is the
+    # last thing to guess (D-05), so it is refused and pointed at the opening.
+    enrolments = await live_enrolments(db, applicant_id=a.id, company_id=company_id)
+    if len(enrolments) > 1 and body.status in TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=409, detail=ambiguous_decision_detail(a.full_name, len(enrolments))
+        )
+    only = enrolments[0] if len(enrolments) == 1 else None
+
     prev_status = a.status
     a.status = body.status
     a.updated_at = datetime.now(tz=UTC)
@@ -1210,46 +1229,40 @@ async def update_applicant_status(
         await email_applicant_decision(
             db, applicant=a, decision=body.status, company_id=company_id
         )
-        # Start the workflow, when this applicant has exactly one application to
-        # start. This board is applicant-shaped and the runner is enrolment-
-        # shaped, so the two only line up when there is no ambiguity: somebody
-        # with three live applications who gets shortlisted here has not been
-        # shortlisted for all three, and sending three exam links because a
-        # recruiter clicked once would be worse than doing nothing.
-        #
-        # The ambiguous case is not lost, it is deferred — the per-opening
-        # action on the requisition dashboard names the application it starts.
-        if body.status == "shortlisted":
-            enrolment_id = await sole_live_enrolment(
-                db, applicant_id=a.id, company_id=company_id
+        # Start the workflow on a shortlist, when there is exactly one
+        # application to start. Somebody with three live applications who gets
+        # shortlisted here has not been shortlisted for all three, and sending
+        # three exam links because a recruiter clicked once would be worse than
+        # doing nothing — the per-opening action on the requisition dashboard
+        # names the application it starts.
+        if body.status == "shortlisted" and only is not None:
+            outcome = await on_shortlisted(db, enrolment_id=only, actor_user_id=_hr_uid)
+            log.info(
+                "hr.applicant.shortlisted",
+                applicant_id=str(a.id),
+                enrolment_id=str(only),
+                action=outcome.action,
+                to_round=outcome.to_round,
+                reason=outcome.reason,
             )
-            if enrolment_id is None:
-                log.info(
-                    "hr.applicant.shortlist.not_started",
-                    applicant_id=str(a.id),
-                    reason="no single live application to start",
-                )
-            else:
-                outcome = await on_shortlisted(
-                    db, enrolment_id=enrolment_id, actor_user_id=_hr_uid
-                )
-                await record_transition(
-                    db,
-                    enrolment_id=enrolment_id,
-                    company_id=company_id,
-                    to_status="shortlisted",
-                    actor_user_id=_hr_uid,
-                    automated=False,
-                    reason="shortlisted from the applicant board",
-                )
-                log.info(
-                    "hr.applicant.shortlisted",
-                    applicant_id=str(a.id),
-                    enrolment_id=str(enrolment_id),
-                    action=outcome.action,
-                    to_round=outcome.to_round,
-                    reason=outcome.reason,
-                )
+        elif body.status == "shortlisted":
+            log.info(
+                "hr.applicant.shortlist.not_started",
+                applicant_id=str(a.id),
+                reason="no single live application to start",
+            )
+    if only is not None:
+        # Every change, not just a shortlist. No-op (and no ledger entry) when
+        # the application is already in that status.
+        await record_transition(
+            db,
+            enrolment_id=only,
+            company_id=company_id,
+            to_status=body.status,
+            actor_user_id=_hr_uid,
+            automated=False,
+            reason=f"{body.status} from the applicant board",
+        )
     await db.commit()
     return _to_out(a)
 

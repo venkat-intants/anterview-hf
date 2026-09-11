@@ -664,7 +664,8 @@ async def post_release_hold(
     if owned is None:
         raise HTTPException(status_code=404, detail="Enrolment not found.")
     out = await release_hold(
-        db, enrolment_id=enrolment_id, actor_user_id=hr_uid, to_status=body.to_status
+        db, enrolment_id=enrolment_id, actor_user_id=hr_uid, to_status=body.to_status,
+        reason=body.reason,
     )
     await db.commit()
     if out.action == "noop":

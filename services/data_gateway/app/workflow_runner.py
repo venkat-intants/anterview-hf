@@ -57,7 +57,7 @@ from app.config import settings
 from app.exam_link import hash_exam_token, mint_exam_token
 from app.mailer import enqueue_email
 from app.notifications_util import create_notification
-from app.requisitions import record_transition
+from app.requisitions import record_round_move, record_transition
 from app.workflows import AI_GRADED_KINDS, EXAM_BACKED_KINDS, load_criteria, published_workflow
 
 log = structlog.get_logger(__name__)
@@ -458,9 +458,18 @@ async def _move_to_round(
     round_: dict[str, Any],
     workflow: dict[str, Any],
 ) -> None:
-    await db.execute(
-        text("UPDATE enrolments SET current_round_id = :r, updated_at = :n WHERE id = :i"),
-        {"r": round_["id"], "n": datetime.now(tz=UTC), "i": enrolment["id"]},
+    # Through the ledger (B2): a round move is a stage change even when the
+    # status does not change, and it used to leave no trace at all. Recorded as
+    # the system's doing — the person's decision (the shortlist, the pass) is
+    # the transition that led here, recorded where it was made.
+    await record_round_move(
+        db,
+        enrolment_id=enrolment["id"],
+        company_id=enrolment["company_id"],
+        to_round_id=round_["id"],
+        actor_user_id=None,
+        automated=True,
+        reason=f"assigned {round_['title']}",
     )
     await _assign_round(db, enrolment=enrolment, round_=round_, workflow=workflow)
 
@@ -769,11 +778,14 @@ async def _advance(
     if nxt_id is None:
         # End of the workflow. NOT an outcome — the candidate is queued for the
         # final human decision, which is the only thing that ends a candidacy.
-        await db.execute(
-            text(
-                "UPDATE enrolments SET current_round_id = NULL, updated_at = :n WHERE id = :i"
-            ),
-            {"n": datetime.now(tz=UTC), "i": enrolment["id"]},
+        await record_round_move(
+            db,
+            enrolment_id=enrolment["id"],
+            company_id=enrolment["company_id"],
+            to_round_id=None,
+            actor_user_id=None,
+            automated=True,
+            reason=f"completed {round_['title']} — the last round",
         )
         await record_transition(
             db,
@@ -817,6 +829,7 @@ async def release_hold(
     enrolment_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     to_status: str = "shortlisted",
+    reason: str | None = None,
 ) -> RunnerOutcome:
     """A person decided a held candidate should continue. Caller commits.
 
@@ -839,7 +852,9 @@ async def release_hold(
         to_status=to_status,
         actor_user_id=actor_user_id,
         automated=False,
-        reason="hold released by a reviewer",
+        # The reviewer's own words when they gave them: this is a person
+        # overriding a threshold, and the ledger is where anyone later asks why.
+        reason=f"hold released by a reviewer: {reason}" if reason else "hold released by a reviewer",
     )
     await db.execute(
         text(

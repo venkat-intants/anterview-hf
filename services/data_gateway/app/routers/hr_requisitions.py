@@ -38,6 +38,7 @@ from app.requisitions import (
     TERMINAL_STATUSES,
     VALID_STATUSES,
     delivery_risk,
+    ensure_applicant_identity_index,
     merge_applicants,
     merge_candidates,
     merge_requisitions,
@@ -977,6 +978,14 @@ async def merge_duplicate_applicants(
         )
     )
     await db.commit()
+    # B4: the migration could not create the one-applicant-per-email rule over
+    # duplicates. This may have been the last one — if so, the rule switches on
+    # now. Best-effort: the merge itself is already committed.
+    try:
+        await ensure_applicant_identity_index(db)
+    except Exception as exc:  # noqa: BLE001
+        await db.rollback()
+        log.warning("hr.applicant.identity_index_failed", error_type=type(exc).__name__)
     return {"survivor_id": str(body.survivor_id), "absorbed": len(body.absorbed_ids),
             "moved": moved}
 

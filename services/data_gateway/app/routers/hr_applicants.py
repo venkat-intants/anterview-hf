@@ -49,6 +49,7 @@ from app.models import Applicant
 from app.requisitions import (
     TERMINAL_STATUSES,
     ambiguous_decision_detail,
+    applicant_by_email,
     live_enrolments,
     record_transition,
     requisition_for_title,
@@ -488,6 +489,16 @@ async def _ingest_resume(
         except ResumeScoreError as exc:
             log.warning("hr.applicant.bulk.score_unavailable", error=str(exc))
 
+    # B4: an address read off the CV that someone on file already has. Not
+    # merged automatically — the extraction is a guess, and folding two people
+    # together on a guess is not the system's call — and not stored as
+    # ``email``, which would be a second applicant for one person (and, once the
+    # unique index is on, a failed save that loses the CV). Kept aside instead,
+    # where the review screen proposes the merge.
+    parsed_email: str | None = None
+    if email is not None and await applicant_by_email(db, company_id=company_id, email=email):
+        email, parsed_email = None, email
+
     now = datetime.now(tz=UTC)
     applicant = Applicant(
         id=applicant_id,
@@ -499,6 +510,7 @@ async def _ingest_resume(
         # correction nobody asked for.
         full_name_source="filename",
         email=email,
+        parsed_email=parsed_email,
         target_job_title=job_title,
         target_level=level,
         target_jd_text=jd_text,
@@ -587,8 +599,32 @@ async def create_applicant(
         title=target_job_title, level=target_level.strip() or "mid", jd_text=target_jd_text,
     )
 
-    applicant_id = uuid.uuid4()
-    s3_key = f"applicants/{company_id}/{applicant_id}.pdf"
+    # B4 / D-06: one person is one applicant per company. Someone HR uploads
+    # whose email is already on file is that person applying again — a new
+    # application (enrolment) on the same applicant, not a second copy of them
+    # with their history split between the rows.
+    existing_id = await applicant_by_email(db, company_id=company_id, email=email)
+    if existing_id is not None:
+        already = await db.scalar(
+            text(
+                "SELECT a.full_name FROM enrolments e JOIN applicants a ON a.id = e.applicant_id"
+                " WHERE e.applicant_id = :a AND e.requisition_id = :r AND e.deleted_at IS NULL"
+            ),
+            {"a": existing_id, "r": opening["id"]},
+        )
+        if already is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{already} is already in this opening — open their record instead.",
+            )
+
+    applicant_id = existing_id or uuid.uuid4()
+    # A returning person's CV gets a key of its own: the old one may be the CV
+    # an earlier application was scored against (enrolments.scored_resume_s3_key).
+    s3_key = (
+        f"applicants/{company_id}/{applicant_id}.pdf" if existing_id is None
+        else f"applicants/{company_id}/{applicant_id}-{uuid.uuid4().hex[:12]}.pdf"
+    )
     try:
         await _upload_to_s3(raw, s3_key)
     except (BotoCoreError, ClientError) as exc:
@@ -598,26 +634,49 @@ async def create_applicant(
         ) from exc
 
     now = datetime.now(tz=UTC)
-    applicant = Applicant(
-        id=applicant_id,
-        company_id=company_id,
-        created_by_user_id=hr_uid,
-        full_name=full_name.strip(),
-        # A recruiter typed this, so the reconciler may not replace it — same
-        # rule as a candidate typing their own name on the public form.
-        full_name_source="hr",
-        # Already stripped and validated by OptionalEmail on the way in.
-        email=email,
-        target_job_title=str(opening["title"]).strip(),
-        target_level=str(opening["level"] or "mid"),
-        target_jd_text=opening["jd_text"] if requisition_id is not None else target_jd_text,
-        resume_text=resume_text,
-        resume_s3_key=s3_key,
-        status="new",
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(applicant)
+    target_jd = opening["jd_text"] if requisition_id is not None else target_jd_text
+    previous_key: str | None = None
+    found = await db.get(Applicant, existing_id) if existing_id is not None else None
+    if found is not None:
+        applicant = found
+        previous_key = applicant.resume_s3_key
+        # The person keeps their name (typed once, by them or by HR); what
+        # changes is the CV on file and the application it is now scored for.
+        applicant.resume_text = resume_text
+        applicant.resume_s3_key = s3_key
+        applicant.target_job_title = str(opening["title"]).strip()
+        applicant.target_level = str(opening["level"] or "mid")
+        applicant.target_jd_text = target_jd
+        # Cleared: the applicant row mirrors the LATEST application, which is
+        # this one, and its score lands below (or from the reconciler).
+        applicant.ats_overall = None
+        applicant.ats_breakdown = None
+        applicant.ats_strengths = None
+        applicant.ats_concerns = None
+        applicant.ats_recommendation = None
+        applicant.ats_summary = None
+        applicant.updated_at = now
+    else:
+        applicant = Applicant(
+            id=applicant_id,
+            company_id=company_id,
+            created_by_user_id=hr_uid,
+            full_name=full_name.strip(),
+            # A recruiter typed this, so the reconciler may not replace it —
+            # same rule as a candidate typing their own name on the public form.
+            full_name_source="hr",
+            # Already stripped and validated by OptionalEmail on the way in.
+            email=email,
+            target_job_title=str(opening["title"]).strip(),
+            target_level=str(opening["level"] or "mid"),
+            target_jd_text=target_jd,
+            resume_text=resume_text,
+            resume_s3_key=s3_key,
+            status="new",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(applicant)
     try:
         enrolment_id = await _file_under(db, applicant=applicant, opening=opening,
                                          hr_uid=hr_uid)
@@ -629,6 +688,16 @@ async def create_applicant(
         raise HTTPException(
             status_code=503, detail="Could not save the applicant. Please try again."
         ) from exc
+
+    # The CV this one replaced is kept only while an application still points at
+    # it as the CV it was scored against; otherwise it is PII nothing refers to.
+    if previous_key and previous_key != s3_key:
+        still_used = await db.scalar(
+            text("SELECT 1 FROM enrolments WHERE scored_resume_s3_key = :k LIMIT 1"),
+            {"k": previous_key},
+        )
+        if still_used is None:
+            await _delete_from_s3(previous_key)
 
     # ATS scoring is best-effort: a scorer outage must NOT lose the applicant.
     # Unscored, the enrolment is picked up by the reconciler.

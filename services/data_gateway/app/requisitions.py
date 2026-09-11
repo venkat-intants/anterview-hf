@@ -341,6 +341,73 @@ async def requisition_for_title(
 
 
 # ---------------------------------------------------------------------------
+# Applicant identity: one person per company (B4 / D-06)
+# ---------------------------------------------------------------------------
+# Identical to IDENTITY_INDEX_DDL in migration d1f3a5b7c9e2 — a test holds them
+# together. Creates the unique index only when no duplicates remain, so it is
+# safe to run at any time, as often as you like.
+IDENTITY_INDEX_DDL = """
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM applicants
+         WHERE deleted_at IS NULL AND email IS NOT NULL AND btrim(email) <> ''
+         GROUP BY company_id, lower(btrim(email))
+        HAVING count(*) > 1
+    ) THEN
+        RAISE NOTICE 'uq_applicants_company_email not created: duplicate applicants exist '
+                     '(merge them on the review screen; the index is created then)';
+    ELSIF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'uq_applicants_company_email') THEN
+        CREATE UNIQUE INDEX uq_applicants_company_email
+            ON applicants (company_id, lower(btrim(email)))
+         WHERE deleted_at IS NULL AND email IS NOT NULL AND btrim(email) <> '';
+    END IF;
+END
+$$;
+"""
+
+
+async def ensure_applicant_identity_index(db: AsyncSession) -> bool:
+    """Create the one-applicant-per-email rule if the data now allows it.
+
+    The migration could not create it over existing duplicates, and must not
+    fail the deploy trying; HR resolves duplicates on the review screen, one
+    merge at a time. This runs after each merge and on the scheduler's
+    catch-up, so the rule switches itself on once the last duplicate is gone.
+    Returns whether the index exists afterwards. Commits.
+    """
+    await db.execute(text(IDENTITY_INDEX_DDL))
+    await db.commit()
+    return bool(await db.scalar(text(
+        "SELECT 1 FROM pg_indexes WHERE indexname = 'uq_applicants_company_email'"
+    )))
+
+
+async def applicant_by_email(
+    db: AsyncSession, *, company_id: uuid.UUID, email: str | None,
+    exclude_id: uuid.UUID | None = None,
+) -> uuid.UUID | None:
+    """The live applicant at this company with this email, if any (D-06 identity).
+
+    Matched the way the unique index matches: case- and space-insensitive,
+    within the company only — identity is never shared across tenants.
+    """
+    if not email or not email.strip():
+        return None
+    found = await db.scalar(
+        text(
+            "SELECT id FROM applicants"
+            " WHERE company_id = :c AND deleted_at IS NULL"
+            "   AND lower(btrim(email)) = lower(btrim(:em))"
+            "   AND (CAST(:x AS uuid) IS NULL OR id <> CAST(:x AS uuid))"
+            " ORDER BY created_at LIMIT 1"
+        ),
+        {"c": company_id, "em": email, "x": exclude_id},
+    )
+    return uuid.UUID(str(found)) if found else None
+
+
+# ---------------------------------------------------------------------------
 # Merge candidates (detection only — see the module docstring)
 # ---------------------------------------------------------------------------
 @dataclass
@@ -363,15 +430,18 @@ class MergeCandidate:
         }
 
 
+# Matched on email — or, for a CV whose address already belonged to someone
+# else (so it could not become `email`), on the address read out of it. That
+# second case is exactly a probable duplicate the reviewer should see.
 _MERGE_SQL = """
 WITH dupes AS (
-    SELECT lower(btrim(email)) AS key,
+    SELECT lower(btrim(COALESCE(NULLIF(btrim(email), ''), parsed_email))) AS key,
            array_agg(id ORDER BY created_at)         AS ids,
            array_agg(full_name ORDER BY created_at)  AS names
       FROM applicants
      WHERE company_id = :c AND deleted_at IS NULL
-       AND email IS NOT NULL AND btrim(email) <> ''
-     GROUP BY lower(btrim(email))
+       AND btrim(COALESCE(NULLIF(btrim(email), ''), parsed_email, '')) <> ''
+     GROUP BY lower(btrim(COALESCE(NULLIF(btrim(email), ''), parsed_email)))
     HAVING count(*) > 1
 )
 SELECT d.key, d.ids, d.names,
@@ -487,6 +557,24 @@ async def merge_applicants(
         text("UPDATE applicants SET deleted_at = :n, updated_at = :n WHERE id = ANY(:ids)"),
         {"n": now, "ids": absorbed_ids},
     )
+    # A survivor that was a bulk-uploaded CV has the address it was matched on
+    # only in parsed_email (B4). With the other row retired, that address is
+    # now this person's own. In a savepoint: should some third, unmerged row
+    # still hold it, the survivor simply keeps it aside rather than failing the
+    # merge on the unique index.
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    "UPDATE applicants"
+                    "   SET email = parsed_email, parsed_email = NULL"
+                    " WHERE id = :s AND parsed_email IS NOT NULL"
+                    "   AND (email IS NULL OR btrim(email) = '')"
+                ),
+                {"s": survivor_id},
+            )
+    except IntegrityError:
+        log.info("applicant.merge.email_still_shared", survivor=str(survivor_id))
     log.info(
         "applicant.merged",
         company_id=str(company_id), survivor=str(survivor_id),

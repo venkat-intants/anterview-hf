@@ -245,6 +245,11 @@ class Applicant(Base):
     # the two disagree rather than only ever seeing one of them.
     full_name_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     parsed_full_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # An address read out of the CV that already belongs to another applicant
+    # in this company (B4). It cannot become `email` — that would be a second
+    # applicant for one person — so it is kept here for the review screen to
+    # propose the merge. Personal data: erasure nulls it.
+    parsed_email: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Details the multi-step application collects. On the applicant rather than
     # the enrolment because they describe the person: applying to a second role

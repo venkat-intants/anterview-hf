@@ -21,6 +21,10 @@ def _db(**kw: object) -> AsyncMock:
     db.execute = AsyncMock()
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
+    nested = MagicMock()
+    nested.__aenter__ = AsyncMock(return_value=None)
+    nested.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(return_value=nested)
     return db
 
 

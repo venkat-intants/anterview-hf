@@ -260,6 +260,19 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     ]
     if settings.watchers_enabled:
         _catchup_jobs.append(("agent_watchers", timedelta(days=1), run_watcher_sweep))
+
+    # B4: the one-applicant-per-email index, created as soon as the data allows
+    # (see requisitions.ensure_applicant_identity_index). Also attempted after
+    # each applicant merge; this is the backstop, and a no-op once it exists.
+    async def _applicant_identity_index() -> None:
+        from app.requisitions import ensure_applicant_identity_index  # noqa: PLC0415
+
+        async with _factory() as db:
+            if not await ensure_applicant_identity_index(db):
+                log.info("applicant.identity_index.waiting_on_duplicates")
+
+    _catchup_jobs.append(("applicant_identity_index", timedelta(hours=6),
+                          _applicant_identity_index))
     start_catchup(_factory, _catchup_jobs)
 
     # Determine next-run time for the startup log (may be None if no jobs yet).

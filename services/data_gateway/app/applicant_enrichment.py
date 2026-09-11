@@ -108,8 +108,16 @@ def _json(value: Any) -> str | None:
 AUTHORED_NAME_SOURCES: frozenset[str] = frozenset({"candidate", "hr"})
 
 
-def apply_extracted_identity(a: Applicant, score: dict[str, Any]) -> bool:
+def apply_extracted_identity(
+    a: Applicant, score: dict[str, Any], *, email_taken: bool = False
+) -> bool:
     """Fill in the name and email the scorer read out of the PDF. No commit.
+
+    ``email_taken`` — the caller found the extracted address already belongs to
+    another live applicant in this company (B4). It then goes to
+    ``parsed_email`` instead: as ``email`` it would make a second applicant for
+    one person (and break the unique index), and dropping it would hide the
+    match the review screen needs to propose a merge.
 
     Only for a row still flagged ``pending_enrichment`` — i.e. one stored
     without being read.
@@ -156,7 +164,10 @@ def apply_extracted_identity(a: Applicant, score: dict[str, Any]) -> bool:
     raw_email = str(score.get("candidate_email") or "").strip()[:320]
     if raw_email and a.email is None:
         email = valid_email_or_none(raw_email)
-        if email is not None:
+        if email is not None and email_taken:
+            a.parsed_email = email
+            changed = True
+        elif email is not None:
             a.email = email
             changed = True
 

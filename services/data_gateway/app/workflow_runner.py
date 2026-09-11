@@ -8,6 +8,11 @@ workflow version to decide what comes next.
     round submitted       ->  record the result, then advance or hold
     interview scored      ->  the same, via the same path
 
+The first two arrive as requests. The third cannot: an interview is scored in
+another service, at the end of a call nobody in this one is watching. So it is
+found instead — record_scored_interviews, run by the reminder sweep every few
+minutes — and then takes exactly the same path as an exam result.
+
 Why the enrolment's version and not the requisition's
 -----------------------------------------------------
 ``enrolments.workflow_id`` pins the version a candidate started on. Reading the
@@ -609,6 +614,128 @@ async def record_result(
                              reason="auto-advance disabled for this workflow")
 
     return await _advance(db, enrolment=enrolment, round_=round_, workflow=workflow)
+
+
+# ---------------------------------------------------------------------------
+# C6/C7 — an interview was scored
+# ---------------------------------------------------------------------------
+# The third event this module's docstring names, and until now the only one
+# with no caller: exams reported their results from the submit handler, but a
+# scored interview reached nobody, so every candidate who cleared an AI
+# interview round simply stayed on it until a person noticed.
+#
+# Found by absence, like the rest of Group A: a workflow-issued invite whose
+# session has a scorecard, whose enrolment is still on an AI round, and whose
+# scorecard has not been recorded as any round's result. The guards, in order:
+#
+# * inv.enrolment_id — only invites the runner issued. HR's hand-made invites
+#   carry none and stay out of the workflow, exactly as hand-assigned exams do.
+# * inv.status = 'completed' — the completion stage has already closed the
+#   invite. That ordering is load-bearing: advancing into a second interview
+#   round mints a new invite, and advance_applicant_to_interview refuses while
+#   the old one still reads 'consumed', which would strand the candidate on the
+#   new round with no link.
+# * the latest runner invite for the enrolment — an older round's interview
+#   cannot be read as this round's result.
+# * the scorecard is no round's attempt_ref yet — the idempotency guard, on top
+#   of _advance's own "only from the current round" check.
+# * not held, hired or rejected — a held candidate moves only when a person
+#   releases them (D-05), and a decided one does not move at all.
+_SCORED_INTERVIEWS_SQL = """
+SELECT e.id AS enrolment_id, e.current_round_id AS round_id, e.target_job_title,
+       sc.scorecard_id, sc.composite_score, sc.scores, sc.rationale, sc.summary
+  FROM interview_invites inv
+  JOIN scorecards      sc ON sc.session_id = inv.session_id
+  JOIN enrolments      e  ON e.id = inv.enrolment_id AND e.deleted_at IS NULL
+  JOIN workflow_rounds wr ON wr.id = e.current_round_id AND wr.deleted_at IS NULL
+ WHERE inv.deleted_at IS NULL
+   AND inv.status = 'completed'
+   AND wr.kind = ANY(CAST(:kinds AS text[]))
+   AND e.status <> 'held'
+   AND e.status NOT IN ('hired','rejected')
+   AND inv.created_at = (SELECT max(i2.created_at) FROM interview_invites i2
+                          WHERE i2.enrolment_id = e.id AND i2.deleted_at IS NULL)
+   AND NOT EXISTS (SELECT 1 FROM round_results rr WHERE rr.attempt_ref = sc.scorecard_id)
+ ORDER BY sc.created_at
+ LIMIT :lim
+"""
+
+
+def _as_obj(val: Any) -> Any:
+    import json  # noqa: PLC0415
+
+    return json.loads(val) if isinstance(val, str) else val
+
+
+async def _criteria_for(
+    db: AsyncSession, *, round_id: uuid.UUID, job_title: str, rationale: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The scorecard's per-criterion scores, if they ARE this round's evaluation.
+
+    Only when they cover every criterion the round was published with. A partial
+    breakdown would be averaged over the criteria that happen to be present, so
+    one the scorer skipped would silently drop out of the decision; and a
+    breakdown against some other rubric (a practice profile, an earlier version)
+    is not this round's evaluation at all. In either case the four-axis
+    composite decides instead — the same number HR sees on the scorecard.
+    """
+    breakdown = rationale.get("_competencies")
+    if not isinstance(breakdown, dict) or not breakdown:
+        return None
+    frozen = await frozen_rubric_for_round(db, round_id=round_id, job_title=job_title)
+    if frozen is None:
+        return None
+    if {c.id for c in frozen.competencies} != set(breakdown):
+        return None
+    return breakdown
+
+
+async def record_scored_interviews(db: AsyncSession, *, limit: int = 50) -> list[RunnerOutcome]:
+    """Record every newly scored workflow interview as its round's result.
+
+    Commits per enrolment, so one bad row cannot roll back the others, and
+    returns what happened to each for the caller to log and count.
+    """
+    rows = (
+        await db.execute(
+            text(_SCORED_INTERVIEWS_SQL),
+            {"kinds": sorted(AI_GRADED_KINDS), "lim": limit},
+        )
+    ).mappings().all()
+
+    outcomes: list[RunnerOutcome] = []
+    for r in rows:
+        try:
+            rationale = _as_obj(r["rationale"]) or {}
+            criteria = await _criteria_for(
+                db, round_id=r["round_id"], job_title=r["target_job_title"], rationale=rationale
+            )
+            outcome = await record_result(
+                db,
+                enrolment_id=r["enrolment_id"],
+                round_id=r["round_id"],
+                # With usable criteria, score stays None so record_result takes
+                # the round's own weighted composite (C8). Otherwise the
+                # scorecard's composite, out of 10.
+                score=None if criteria else (
+                    float(r["composite_score"]) if r["composite_score"] is not None else None
+                ),
+                max_score=INTERVIEW_SCORE_MAX,
+                graded_by="ai",
+                attempt_ref=r["scorecard_id"],
+                criterion_scores=criteria,
+                axes=_as_obj(r["scores"]),
+                evidence=r["summary"],
+            )
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001 — one enrolment must not stop the rest
+            await db.rollback()
+            log.error("runner.interview_result_failed", enrolment_id=str(r["enrolment_id"]),
+                      error_type=type(exc).__name__, error=str(exc)[:300])
+            continue
+        log.info("runner.interview_recorded", **outcome.as_dict())
+        outcomes.append(outcome)
+    return outcomes
 
 
 async def _advance(

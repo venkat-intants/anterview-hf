@@ -10,9 +10,11 @@ must not be duplicated:
   title the database then rejects, or worse, create a second requisition the
   index considers identical.
 
-* :func:`record_transition` — the only way a status changes. Writing the status
-  without writing the ledger entry is how time-in-stage silently becomes wrong,
-  so the two are done together in one function and never separately.
+* :func:`record_transition` — the only way a status changes, and
+  :func:`record_round_move` — the only way the current round changes. Writing
+  either without its ledger entry is how time-in-stage silently becomes wrong,
+  so each is done together with its entry and never separately. The ledger
+  itself is append-only at the database (migration ``c9e1a3b5d7f0``).
 
 * :func:`merge_candidates` — detection only. Under D-06 one person is one
   applicant per company, but merging two existing rows repoints their exam and
@@ -151,6 +153,109 @@ async def record_transition(
         automated=automated, actor=str(actor_user_id) if actor_user_id else None,
     )
     return str(previous)
+
+
+async def live_enrolments(
+    db: AsyncSession, *, applicant_id: uuid.UUID, company_id: uuid.UUID
+) -> list[uuid.UUID]:
+    """Every live application this person holds at this company, any status.
+
+    What the applicant-shaped screens (the pipeline board, the applicant board)
+    use to route a status change to the ledger. One means the change is
+    unambiguous; several means the screen cannot know which opening it is about.
+    """
+    rows = (
+        await db.execute(
+            text(
+                "SELECT id FROM enrolments"
+                " WHERE applicant_id = :a AND company_id = :c AND deleted_at IS NULL"
+                " ORDER BY created_at"
+            ),
+            {"a": applicant_id, "c": company_id},
+        )
+    ).all()
+    return [uuid.UUID(str(r[0])) for r in rows]
+
+
+def ambiguous_decision_detail(full_name: str, count: int) -> str:
+    return (
+        f"{full_name} has applied to {count} openings, so this decision needs to name one. "
+        "Record it from that opening's decision queue."
+    )
+
+
+async def record_ledger_entry(
+    db: AsyncSession,
+    *,
+    enrolment_id: uuid.UUID,
+    company_id: uuid.UUID,
+    status: str,
+    actor_user_id: uuid.UUID | None,
+    automated: bool,
+    reason: str | None,
+    from_round_id: uuid.UUID | None = None,
+    to_round_id: uuid.UUID | None = None,
+) -> None:
+    """A ledger entry for a move that did not change the status. Caller commits.
+
+    Round-to-round advances and moves between openings change where a candidate
+    is without changing what their status says, and the ledger used to have no
+    way to record either — ``record_transition`` writes nothing when the status
+    is unchanged. This is the low-level insert for those; ``from_status`` and
+    ``to_status`` are both the current status.
+    """
+    await db.execute(
+        text(
+            "INSERT INTO stage_transitions (company_id, enrolment_id, from_status, to_status,"
+            " actor_user_id, automated, reason, occurred_at, from_round_id, to_round_id)"
+            " VALUES (:c, :e, :s, :s, :a, :auto, :r, :n, :fr, :tr)"
+        ),
+        {"c": company_id, "e": enrolment_id, "s": status, "a": actor_user_id,
+         "auto": automated, "r": reason, "n": datetime.now(tz=UTC),
+         "fr": from_round_id, "tr": to_round_id},
+    )
+
+
+async def record_round_move(
+    db: AsyncSession,
+    *,
+    enrolment_id: uuid.UUID,
+    company_id: uuid.UUID,
+    to_round_id: uuid.UUID | None,
+    actor_user_id: uuid.UUID | None,
+    automated: bool,
+    reason: str | None = None,
+) -> bool:
+    """Move an enrolment to ``to_round_id`` (None = out of the workflow) and
+    record the move. Caller commits.
+
+    The single writer of ``current_round_id``, the way :func:`record_transition`
+    is the single writer of status: setting the round without the ledger entry
+    is how round-level time-in-stage and funnel history silently go missing.
+    Returns False — and writes nothing — when the enrolment is not found or is
+    already on that round.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT status, current_round_id FROM enrolments"
+                " WHERE id = :e AND company_id = :c AND deleted_at IS NULL FOR UPDATE"
+            ),
+            {"e": enrolment_id, "c": company_id},
+        )
+    ).first()
+    if row is None or row[1] == to_round_id:
+        return False
+    await db.execute(
+        text("UPDATE enrolments SET current_round_id = :r, updated_at = :n WHERE id = :e"),
+        {"r": to_round_id, "n": datetime.now(tz=UTC), "e": enrolment_id},
+    )
+    await record_ledger_entry(
+        db, enrolment_id=enrolment_id, company_id=company_id, status=str(row[0]),
+        actor_user_id=actor_user_id, automated=automated, reason=reason,
+        from_round_id=row[1], to_round_id=to_round_id,
+    )
+    return True
 
 
 async def time_in_stage_days(db: AsyncSession, enrolment_id: uuid.UUID) -> float | None:
@@ -501,6 +606,21 @@ async def split_requisition(
         ),
         {"new": new_id, "ids": moved_ids, "c": company_id, "n": now},
     )
+    # B2: a candidate filed under a different opening is a move worth keeping.
+    # Their status does not change, so it is a ledger entry rather than a
+    # transition — and it is a person's doing.
+    statuses: dict[Any, str] = {
+        r[0]: str(r[1])
+        for r in (await db.execute(
+            text("SELECT id, status FROM enrolments WHERE id = ANY(:ids)"), {"ids": moved_ids}
+        )).all()
+    }
+    for eid in moved_ids:
+        await record_ledger_entry(
+            db, enrolment_id=eid, company_id=company_id, status=str(statuses.get(eid, "new")),
+            actor_user_id=actor_user_id, automated=False,
+            reason=f"moved to the opening '{new_title.strip()}' (split)",
+        )
 
     log.info(
         "requisition.split",

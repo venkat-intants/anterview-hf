@@ -28,6 +28,7 @@ from sqlalchemy import text
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.models import AuditLog
+from app.requisitions import ambiguous_decision_detail, live_enrolments, record_transition
 from app.routers.hr_applicants import (
     ApplicantOut,
     _get_owned,
@@ -534,10 +535,34 @@ async def decide_applicant(
     # 'rejected' is reachable from any non-terminal state AND from 'hired'
     # (an audited reversal — details.reversal=true).
 
+    # B2: a decision is a stage transition, so it goes through the ledger. It
+    # used to write applicants.status alone — no ledger entry, the enrolment
+    # untouched — so the requisition dashboard and decision queue kept showing
+    # a hired or rejected candidate as still waiting. This board is
+    # person-shaped; a decision is about one opening. With one application the
+    # two are the same thing. With several, the board cannot know which opening
+    # is meant, and a terminal decision is D-05's to make deliberately — so it
+    # is refused rather than guessed, and the per-opening queue is where it goes.
+    enrolments = await live_enrolments(db, applicant_id=a.id, company_id=company_id)
+    if len(enrolments) > 1:
+        raise HTTPException(
+            status_code=409, detail=ambiguous_decision_detail(a.full_name, len(enrolments))
+        )
+
     now = datetime.now(tz=UTC)
     prev = a.status
     a.status = body.decision
     a.updated_at = now
+    if enrolments:
+        await record_transition(
+            db,
+            enrolment_id=enrolments[0],
+            company_id=company_id,
+            to_status=body.decision,
+            actor_user_id=hr_uid,
+            automated=False,
+            reason=body.rationale or f"{body.decision} from the pipeline board",
+        )
 
     db.add(
         AuditLog(

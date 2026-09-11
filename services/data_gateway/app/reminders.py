@@ -90,6 +90,9 @@ class SweepResult:
     expiry_notices: int = 0
     results_emails: int = 0
     completions: int = 0
+    # Scored workflow interviews recorded as their round's result (advanced,
+    # held for a person, or queued for the final decision).
+    workflow_results: int = 0
 
     def total(self) -> int:
         return (
@@ -98,6 +101,7 @@ class SweepResult:
             + self.expiry_notices
             + self.completions
             + self.results_emails
+            + self.workflow_results
         )
 
 
@@ -560,6 +564,23 @@ async def _interview_completed(db: AsyncSession, result: SweepResult) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 6. Scored workflow interviews — the round's result
+# ---------------------------------------------------------------------------
+async def _workflow_results(db: AsyncSession, result: SweepResult) -> None:
+    """Hand each newly scored workflow interview to the runner.
+
+    Runs after _interview_completed, and must: the runner acts only on invites
+    that stage has already closed — see workflow_runner._SCORED_INTERVIEWS_SQL
+    for why advancing past an open invite would strand the candidate.
+    """
+    # Local import: workflow_runner reaches the routers (hr_interviews imports
+    # this module), and a module-level import here would close that cycle.
+    from app.workflow_runner import record_scored_interviews  # noqa: PLC0415
+
+    result.workflow_results += len(await record_scored_interviews(db))
+
+
+# ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
 async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
@@ -572,6 +593,8 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
             ("expiry", _expiry_notices),
             ("results", _results_ready),
             ("completed", _interview_completed),
+            # After "completed", never before: see _workflow_results.
+            ("workflow", _workflow_results),
         ):
             try:
                 await fn(db, result)

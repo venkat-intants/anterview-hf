@@ -171,6 +171,170 @@ def test_release_hold_has_no_automated_caller() -> None:
 
 
 # ===========================================================================
+# C6/C7 — a scored interview reaches the runner
+# ===========================================================================
+def test_only_workflow_issued_closed_invites_are_recorded() -> None:
+    from app.workflow_runner import _SCORED_INTERVIEWS_SQL
+
+    sql = _SCORED_INTERVIEWS_SQL
+
+    # Hand-made HR invites carry no enrolment and stay out of the workflow.
+    assert "e.id = inv.enrolment_id" in sql
+    # Only after the completion stage closed it — or advancing into a second
+    # interview round would find the old invite still open and mint nothing.
+    assert "inv.status = 'completed'" in sql
+    # An older round's interview can't be read as this round's result.
+    assert "max(i2.created_at)" in sql
+    # Idempotent: a scorecard is recorded once, for one round.
+    assert "rr.attempt_ref = sc.scorecard_id" in sql
+    # A held candidate moves only when a person releases them (D-05).
+    assert "e.status <> 'held'" in sql
+    # Written in the one form test_outcome_actions_contain_no_terminal_state
+    # permits: excluding decided candidates, never writing a decision.
+    assert "e.status NOT IN ('hired','rejected')" in sql
+
+
+def test_the_workflow_stage_runs_after_the_completion_stage() -> None:
+    import inspect
+
+    from app.reminders import run_once
+
+    src = inspect.getsource(run_once)
+    assert src.index('("completed", _interview_completed)') < src.index(
+        '("workflow", _workflow_results)'
+    )
+
+
+def _scored_row(**over: object) -> dict:
+    row = {
+        "enrolment_id": uuid.uuid4(), "round_id": uuid.uuid4(), "target_job_title": "Nurse",
+        "scorecard_id": uuid.uuid4(), "composite_score": 7.4,
+        "scores": {"communication": 8, "technical": 7, "problem_solving": 7, "confidence": 8},
+        "rationale": {}, "summary": "Safe and structured.",
+    }
+    return {**row, **over}
+
+
+def _rows_db(rows: list[dict]) -> AsyncMock:
+    db = _db()
+    db.execute.return_value = MagicMock(mappings=MagicMock(return_value=MagicMock(
+        all=MagicMock(return_value=rows))))
+    return db
+
+
+@pytest.mark.asyncio
+async def test_a_scored_interview_is_recorded_as_its_rounds_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.workflow_runner as wr
+
+    row = _scored_row()
+    calls: list[dict] = []
+
+    async def _record(_db: object, **kw: object) -> RunnerOutcome:
+        calls.append(kw)
+        return RunnerOutcome(action="advanced", enrolment_id=str(row["enrolment_id"]))
+
+    async def _no_criteria(*_: object, **__: object) -> None:
+        return None
+
+    monkeypatch.setattr(wr, "record_result", _record)
+    monkeypatch.setattr(wr, "_criteria_for", _no_criteria)
+    db = _rows_db([row])
+    out = await wr.record_scored_interviews(db)
+
+    assert [o.action for o in out] == ["advanced"]
+    kw = calls[0]
+    assert kw["enrolment_id"] == row["enrolment_id"] and kw["round_id"] == row["round_id"]
+    assert kw["score"] == 7.4 and kw["max_score"] == wr.INTERVIEW_SCORE_MAX
+    assert kw["graded_by"] == "ai"
+    assert kw["attempt_ref"] == row["scorecard_id"]
+    assert kw["criterion_scores"] is None
+    db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_frozen_rubric_breakdown_decides_instead_of_the_headline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C8: when the scorecard graded this round's own criteria, those decide —
+    score is left None so record_result takes the round's weighted composite."""
+    import app.workflow_runner as wr
+
+    breakdown = {"triage": {"score": 8, "weight": 0.6}, "handover": {"score": 6, "weight": 0.4}}
+    calls: list[dict] = []
+
+    async def _record(_db: object, **kw: object) -> RunnerOutcome:
+        calls.append(kw)
+        return RunnerOutcome(action="held")
+
+    async def _criteria(*_: object, **__: object) -> dict:
+        return breakdown
+
+    monkeypatch.setattr(wr, "record_result", _record)
+    monkeypatch.setattr(wr, "_criteria_for", _criteria)
+    await wr.record_scored_interviews(_rows_db([_scored_row()]))
+
+    assert calls[0]["score"] is None
+    assert calls[0]["criterion_scores"] == breakdown
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("breakdown", "usable"),
+    [
+        ({"triage": {"score": 8, "weight": 0.6}, "handover": {"score": 6, "weight": 0.4}}, True),
+        # One criterion missing: averaging over what is present would quietly
+        # drop it from the decision.
+        ({"triage": {"score": 8, "weight": 0.6}}, False),
+        # Graded against some other rubric entirely.
+        ({"python": {"score": 9, "weight": 1.0}}, False),
+        ({}, False),
+    ],
+)
+async def test_criteria_are_used_only_when_they_cover_the_round_exactly(
+    monkeypatch: pytest.MonkeyPatch, breakdown: dict, usable: bool,
+) -> None:
+    import app.workflow_runner as wr
+
+    frozen = MagicMock(competencies=[MagicMock(id="triage"), MagicMock(id="handover")])
+
+    async def _frozen(*_: object, **__: object) -> object:
+        return frozen
+
+    monkeypatch.setattr(wr, "frozen_rubric_for_round", _frozen)
+    got = await wr._criteria_for(
+        _db(), round_id=uuid.uuid4(), job_title="Nurse", rationale={"_competencies": breakdown}
+    )
+    assert (got == breakdown) if usable else (got is None)
+
+
+@pytest.mark.asyncio
+async def test_one_bad_enrolment_does_not_stop_the_others(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.workflow_runner as wr
+
+    bad, good = _scored_row(), _scored_row()
+
+    async def _record(_db: object, **kw: object) -> RunnerOutcome:
+        if kw["enrolment_id"] == bad["enrolment_id"]:
+            raise RuntimeError("constraint")
+        return RunnerOutcome(action="completed")
+
+    async def _no_criteria(*_: object, **__: object) -> None:
+        return None
+
+    monkeypatch.setattr(wr, "record_result", _record)
+    monkeypatch.setattr(wr, "_criteria_for", _no_criteria)
+    db = _rows_db([bad, good])
+    out = await wr.record_scored_interviews(db)
+
+    assert [o.action for o in out] == ["completed"]
+    db.rollback.assert_awaited()
+
+
+# ===========================================================================
 # Ownership of what the runner issues
 # ===========================================================================
 @pytest.mark.asyncio

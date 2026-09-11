@@ -901,13 +901,14 @@ async def test_a_failing_stage_does_not_sink_the_sweep(monkeypatch: pytest.Monke
         "_expiry_notices",
         "_results_ready",
         "_interview_completed",
+        "_workflow_results",
     ):
         monkeypatch.setattr(rem, stage, _ok)
     monkeypatch.setattr(rem, "_exam_reminders", _boom)
 
     result = await rem.run_once(factory)  # type: ignore[arg-type]
-    assert "exam" in order and order.count("results") == 4
-    assert result.results_emails == 4
+    assert "exam" in order and order.count("results") == 5
+    assert result.results_emails == 5
 
 
 # ===========================================================================

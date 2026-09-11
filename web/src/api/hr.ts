@@ -141,7 +141,10 @@ export function setFeatureFlag(key: string, enabled: boolean): Promise<FeatureFl
 // ── HR hiring analytics (funnel + averages) — powers the HR console stats ─────
 
 export interface HrFunnel {
+  /** People. */
   total_applicants: number;
+  /** Applications (B5) — what every other funnel count is a count of. */
+  total_applications?: number;
   shortlisted: number;
   exam_taken: number;
   exam_passed: number;

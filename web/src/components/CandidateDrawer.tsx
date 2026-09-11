@@ -384,7 +384,10 @@ export default function CandidateDrawer({
           </div>
         ) : null}
 
-        <RoundScores applicantId={candidate.applicant_id} />
+        {/* The prop, not candidate.applicant_id: GET /hr/applicants/{id} returns
+            the id as `id`, so that field was always undefined and the round
+            scores never loaded. */}
+        <RoundScores applicantId={applicantId} />
 
         <div className="mt-5">
           <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">

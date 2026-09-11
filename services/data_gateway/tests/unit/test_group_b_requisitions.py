@@ -130,10 +130,10 @@ async def test_transition_writes_status_and_ledger_together() -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_status_synced_for_a_single_enrolment() -> None:
+async def test_the_mirror_follows_the_latest_application() -> None:
     from app.requisitions import record_transition
 
-    db = _db(scalar=1)  # exactly one live enrolment
+    db = _db(scalar=None)  # no newer live application
     db.execute.return_value = MagicMock(first=MagicMock(return_value=("new", uuid.uuid4())))
     await record_transition(
         db, enrolment_id=uuid.uuid4(), company_id=uuid.uuid4(),
@@ -144,13 +144,13 @@ async def test_legacy_status_synced_for_a_single_enrolment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_status_not_guessed_when_several_enrolments() -> None:
-    """With two applications there is no single honest value for the legacy
-    column, and writing one would show a candidate as hired for a role they
-    never applied to."""
+async def test_an_older_application_leaves_the_mirror_alone() -> None:
+    """The applicant row shows the latest application's status beside its job
+    title. An older application's move writing it would pair a status with a
+    role it is not about."""
     from app.requisitions import record_transition
 
-    db = _db(scalar=3)  # three live enrolments
+    db = _db(scalar=1)  # a newer live application exists
     db.execute.return_value = MagicMock(first=MagicMock(return_value=("new", uuid.uuid4())))
     await record_transition(
         db, enrolment_id=uuid.uuid4(), company_id=uuid.uuid4(),

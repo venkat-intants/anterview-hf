@@ -429,12 +429,9 @@ async def _assign_round(
             applicant=applicant,
             created_by_user_id=workflow.get("created_by_user_id"),
             notify_user_id=workflow.get("created_by_user_id"),
+            # Created linked to this application, and grounded in its role.
+            enrolment_id=enrolment["id"],
         )
-        if invite is not None:
-            await db.execute(
-                text("UPDATE interview_invites SET enrolment_id = :e WHERE id = :i"),
-                {"e": enrolment["id"], "i": invite.id},
-            )
         log.info("runner.assigned.interview", enrolment_id=str(enrolment["id"]),
                  created=invite is not None)
 

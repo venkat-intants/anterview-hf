@@ -22,6 +22,7 @@
 
 import { useMemo } from 'react';
 import type { PipelineRow, PipelineStatus } from '@/api/pipeline';
+import { applicationKey } from '@/lib/applicationKey';
 import { Avatar, StatusTag, type TagTone } from '@/design/components/primitives';
 import { cn } from '@/lib/utils';
 
@@ -33,7 +34,10 @@ import { cn } from '@/lib/utils';
  * attention, and a column of rejections is a wall of bad news nobody scans.
  */
 const COLUMNS: { key: string; label: string; statuses: PipelineStatus[] }[] = [
-  { key: 'new', label: 'Applied', statuses: ['new'] },
+  // 'held': the automatic shortlist could not decide and a person must — still
+  // at the applied stage, and exactly who needs attention. Without a column it
+  // would silently drop off the board.
+  { key: 'new', label: 'Applied', statuses: ['new', 'held'] },
   { key: 'shortlisted', label: 'Shortlisted', statuses: ['shortlisted'] },
   { key: 'interviewed', label: 'Interviewed', statuses: ['interviewed'] },
   { key: 'decided', label: 'Decided', statuses: ['hired', 'rejected'] },
@@ -103,7 +107,9 @@ function Card({
         <Avatar initials={initialsOf(row.full_name)} size={28} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13.5px] font-medium text-foreground">{row.full_name}</p>
-          <p className="truncate text-[11.5px] text-[var(--ui-faint)]">{row.target_job_title}</p>
+          <p className="truncate text-[11.5px] text-[var(--ui-faint)]">
+            {row.opening_title ?? row.target_job_title}
+          </p>
         </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -125,7 +131,7 @@ export default function PipelineBoard({
   onOpen,
 }: {
   rows: PipelineRow[];
-  onOpen: (applicantId: string) => void;
+  onOpen: (row: PipelineRow) => void;
 }) {
   const columns = useMemo(
     () =>
@@ -166,10 +172,10 @@ export default function PipelineBoard({
             ) : (
               col.rows.map((row) => (
                 <Card
-                  key={row.applicant_id}
+                  key={applicationKey(row)}
                   row={row}
                   showOutcome={col.key === 'decided'}
-                  onOpen={() => onOpen(row.applicant_id)}
+                  onOpen={() => onOpen(row)}
                 />
               ))
             )}

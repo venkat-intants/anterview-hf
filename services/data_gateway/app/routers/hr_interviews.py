@@ -19,7 +19,7 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -30,6 +30,7 @@ from app.mailer import enqueue_email
 from app.models import Applicant, InterviewInvite, Job, Scorecard
 from app.notifications_util import create_notification
 from app.reminders import rearm_interview_reminders
+from app.requisitions import ApplicationChoice, choose_application
 from app.routers.hr_applicants import _get_owned
 from app.utils.ownership import get_owned
 
@@ -45,6 +46,9 @@ _LANGS = {"en", "hi", "te"}
 # ---------------------------------------------------------------------------
 class InviteCreateIn(BaseModel):
     applicant_id: uuid.UUID
+    # The application the interview is for (B5). Optional when the person has
+    # exactly one; required, in effect, when they have several.
+    enrolment_id: uuid.UUID | None = None
     job_id: uuid.UUID | None = None
     job_title: str | None = Field(default=None, max_length=300)
     level: str | None = None
@@ -87,6 +91,8 @@ class InviteOut(BaseModel):
 
 class EligibleApplicantOut(BaseModel):
     id: str
+    enrolment_id: str | None = None
+    opening_title: str | None = None
     full_name: str
     target_job_title: str
     target_level: str
@@ -113,17 +119,6 @@ class InterviewOutcome(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-async def _has_passed_exam(db: AsyncSession, company_id: uuid.UUID, applicant_id: uuid.UUID) -> bool:
-    row = await db.scalar(
-        text(
-            "SELECT 1 FROM exam_attempts WHERE applicant_id = :aid AND company_id = :cid "
-            "AND passed IS TRUE AND status = 'submitted' AND deleted_at IS NULL LIMIT 1"
-        ),
-        {"aid": applicant_id, "cid": company_id},
-    )
-    return row is not None
-
-
 async def _get_owned_invite(
     db: AsyncSession, company_id: uuid.UUID, invite_id: uuid.UUID
 ) -> InterviewInvite:
@@ -138,9 +133,14 @@ async def _create_job_from_applicant(
     language: str = "en",
     job_title: str | None = None,
     level: str | None = None,
+    jd_text: str | None = None,
 ) -> Job:
     """Create a tenant-owned Job from the applicant's screening role so the
-    interviewer prompt is grounded. Shared by manual invite + auto-advance."""
+    interviewer prompt is grounded. Shared by manual invite + auto-advance.
+
+    Pass the APPLICATION's title/level/JD when the interview is for one (B5):
+    the applicant row describes only their latest application, and an
+    interview grounded in the wrong job description asks the wrong questions."""
     title = (job_title or applicant.target_job_title or "the role").strip()
     lvl = (level or applicant.target_level or "mid").strip()
     now = datetime.now(tz=UTC)
@@ -153,7 +153,7 @@ async def _create_job_from_applicant(
         nos_codes=[],
         competencies={},
         is_active=True,
-        jd_text=applicant.target_jd_text,
+        jd_text=jd_text if jd_text is not None else applicant.target_jd_text,
         created_by_user_id=created_by_user_id,  # tenant-owned (M4)
         created_at=now,
         updated_at=now,
@@ -164,10 +164,13 @@ async def _create_job_from_applicant(
 
 
 async def _resolve_job(
-    db: AsyncSession, hr_uid: uuid.UUID, company_id: uuid.UUID, applicant: Applicant, body: InviteCreateIn
+    db: AsyncSession, hr_uid: uuid.UUID, company_id: uuid.UUID, applicant: Applicant,
+    body: InviteCreateIn, role: ApplicationChoice | None = None,
 ) -> Job:
     """Pick the interview job: an explicit tenant-owned/global job_id, else create a
-    tenant-owned job from the applicant's screening role so the prompt is grounded."""
+    tenant-owned job from the application's role so the prompt is grounded.
+    What HR typed wins; then the application's own title/level/JD (B5); then
+    the applicant row's."""
     if body.job_id is not None:
         job = await db.scalar(select(Job).where(Job.id == body.job_id, Job.is_active.is_(True)))
         if job is None:
@@ -186,7 +189,9 @@ async def _resolve_job(
 
     return await _create_job_from_applicant(
         db, applicant, created_by_user_id=hr_uid, language=body.language,
-        job_title=body.job_title, level=body.level,
+        job_title=body.job_title or (role.title if role else None),
+        level=body.level or (role.level if role else None),
+        jd_text=role.jd_text if role else None,
     )
 
 
@@ -269,6 +274,7 @@ async def advance_applicant_to_interview(
     language: str = "en",
     scheduled_at: datetime | None = None,
     notify_user_id: uuid.UUID | None = None,
+    enrolment_id: uuid.UUID | None = None,
 ) -> InterviewInvite | None:
     """Auto-advance: mint an interview invite for an exam-passed applicant + email
     the candidate the link. Caller owns the commit. Returns the invite, or None if
@@ -276,27 +282,45 @@ async def advance_applicant_to_interview(
 
     Reuses the exact invite-mint shape as create_invite (lazy provisioning; the
     guest user/session/consent are created on first redeem in interview_take.py).
+
+    ``enrolment_id`` — the application the pass was for (B5). The invite is
+    created linked to it, and the interview is grounded in THAT opening's role
+    rather than the person's latest one; an active invite for a different
+    application no longer blocks this one.
     """
-    # Idempotent: don't create a second invite if one is already active.
-    existing = await db.scalar(
-        select(InterviewInvite).where(
-            InterviewInvite.applicant_id == applicant.id,
-            InterviewInvite.company_id == company_id,
-            InterviewInvite.status.in_(("invited", "consumed")),
-            InterviewInvite.deleted_at.is_(None),
+    role = None
+    if enrolment_id is not None:
+        role = await choose_application(
+            db, applicant_id=applicant.id, company_id=company_id, enrolment_id=enrolment_id
         )
+    # Idempotent: don't create a second invite if one is already active — for
+    # this application (or one recorded against no application at all).
+    active = select(InterviewInvite).where(
+        InterviewInvite.applicant_id == applicant.id,
+        InterviewInvite.company_id == company_id,
+        InterviewInvite.status.in_(("invited", "consumed")),
+        InterviewInvite.deleted_at.is_(None),
     )
+    if enrolment_id is not None:
+        active = active.where(
+            or_(InterviewInvite.enrolment_id == enrolment_id,
+                InterviewInvite.enrolment_id.is_(None))
+        )
+    existing = await db.scalar(active)
     if existing is not None:
-        # One active interview invite per applicant per company — don't double-invite
+        # One active interview invite per application — don't double-invite
         # (e.g. a prior manual invite or another exam pass). Log so it isn't silent.
         log.info(
             "hr.interview.auto_advance_skipped_existing",
             applicant_id=str(applicant.id), company_id=str(company_id),
+            enrolment_id=str(enrolment_id) if enrolment_id else None,
         )
         return None
 
     job = await _create_job_from_applicant(
-        db, applicant, created_by_user_id=created_by_user_id, language=language
+        db, applicant, created_by_user_id=created_by_user_id, language=language,
+        job_title=role.title if role else None, level=role.level if role else None,
+        jd_text=role.jd_text if role else None,
     )
     now = datetime.now(tz=UTC)
     raw_token = mint_interview_token()
@@ -304,6 +328,7 @@ async def advance_applicant_to_interview(
         id=uuid.uuid4(),
         company_id=company_id,
         applicant_id=applicant.id,
+        enrolment_id=enrolment_id,
         job_id=job.id,
         created_by_user_id=created_by_user_id,
         token_hash=hash_interview_token(raw_token, settings.interview_link_secret),
@@ -343,48 +368,66 @@ async def advance_applicant_to_interview(
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+# Per APPLICATION (B5), from the same view as the pipeline board: someone
+# shortlisted for one opening is interview-eligible for that opening, not for
+# every opening they applied to — and an exam passed for one role is not a pass
+# for another.
+_ELIGIBLE_SQL = text(
+    """
+SELECT applicant_id, enrolment_id, opening_title, full_name, target_job_title,
+       target_level, stored_status, ats_overall,
+       COALESCE(exam_passed, false) AS passed_exam, has_active_invite
+  FROM application_progress
+ WHERE company_id = :cid
+   AND stored_status NOT IN ('hired', 'rejected')
+   AND (   (:src = 'shortlisted' AND stored_status = 'shortlisted')
+        OR (:src = 'exam_passed' AND exam_passed IS TRUE)
+        OR (:src = 'any' AND (stored_status = 'shortlisted' OR exam_passed IS TRUE)))
+ ORDER BY ats_overall DESC NULLS LAST, applied_at DESC
+"""
+)
+
+
 @router.get("/interviews/eligible-applicants", response_model=list[EligibleApplicantOut])
 async def eligible_applicants(
     ctx: HrCtxDep,
     db: DbSessionDep,
     source: Annotated[str, Query()] = "any",
 ) -> list[EligibleApplicantOut]:
-    """Applicants ready for an interview: shortlisted and/or passed an exam."""
+    """Applications ready for an interview: shortlisted and/or passed an exam.
+
+    One entry per application, so a person can appear once per opening; each
+    carries the ``enrolment_id`` to send back when creating the invite.
+    """
     _hr_uid, company_id = ctx
     rows = (
-        await db.execute(
-            select(Applicant)
-            .where(Applicant.company_id == company_id, Applicant.deleted_at.is_(None))
-            .order_by(Applicant.ats_overall.desc().nullslast(), Applicant.created_at.desc())
+        await db.execute(_ELIGIBLE_SQL, {"cid": company_id, "src": source})
+    ).mappings().all()
+    return [
+        EligibleApplicantOut(
+            id=str(r["applicant_id"]),
+            enrolment_id=str(r["enrolment_id"]) if r["enrolment_id"] else None,
+            opening_title=r["opening_title"],
+            full_name=r["full_name"], target_job_title=r["target_job_title"],
+            target_level=r["target_level"], status=r["stored_status"],
+            ats_overall=r["ats_overall"], passed_exam=bool(r["passed_exam"]),
+            has_active_invite=bool(r["has_active_invite"]),
         )
-    ).scalars().all()
+        for r in rows
+    ]
 
-    out: list[EligibleApplicantOut] = []
-    for a in rows:
-        passed = await _has_passed_exam(db, company_id, a.id)
-        is_shortlisted = a.status == "shortlisted"
-        if source == "shortlisted" and not is_shortlisted:
-            continue
-        if source == "exam_passed" and not passed:
-            continue
-        if source == "any" and not (is_shortlisted or passed):
-            continue
-        active = await db.scalar(
-            select(InterviewInvite.id).where(
-                InterviewInvite.applicant_id == a.id,
-                InterviewInvite.company_id == company_id,
-                InterviewInvite.status.in_(("invited", "consumed")),
-                InterviewInvite.deleted_at.is_(None),
-            )
-        )
-        out.append(
-            EligibleApplicantOut(
-                id=str(a.id), full_name=a.full_name, target_job_title=a.target_job_title,
-                target_level=a.target_level, status=a.status, ats_overall=a.ats_overall,
-                passed_exam=passed, has_active_invite=active is not None,
-            )
-        )
-    return out
+
+# The gate, for one application (or, for someone filed under no opening, for
+# the person): the same predicate as _ELIGIBLE_SQL, so the list and the create
+# can never disagree about who may be invited.
+_GATE_SQL = text(
+    """
+SELECT 1 FROM application_progress
+ WHERE company_id = :cid AND applicant_id = :a
+   AND enrolment_id IS NOT DISTINCT FROM CAST(:e AS uuid)
+   AND (stored_status = 'shortlisted' OR exam_passed IS TRUE)
+"""
+)
 
 
 @router.post("/interviews", status_code=status.HTTP_201_CREATED, response_model=InviteResult)
@@ -392,8 +435,30 @@ async def create_invite(body: InviteCreateIn, ctx: HrCtxDep, db: DbSessionDep) -
     hr_uid, company_id = ctx
     applicant = await _get_owned(db, company_id, body.applicant_id)
 
-    # Funnel gate: only shortlisted or exam-passed applicants are interview-eligible.
-    if applicant.status != "shortlisted" and not await _has_passed_exam(db, company_id, applicant.id):
+    # B5: an interview is for one application — the one named, or the only one.
+    # With several and none named it cannot be attributed, and an interview
+    # nobody can place against an opening is invisible on every board.
+    try:
+        app_ = await choose_application(
+            db, applicant_id=applicant.id, company_id=company_id,
+            enrolment_id=body.enrolment_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Application not found.") from exc
+    if app_.ambiguous:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{applicant.full_name} has applied to {len(app_.live)} openings, "
+                "so choose which one this interview is for."
+            ),
+        )
+
+    # Funnel gate: only shortlisted or exam-passed applications are interview-eligible.
+    eligible = await db.scalar(
+        _GATE_SQL, {"cid": company_id, "a": applicant.id, "e": app_.enrolment_id}
+    )
+    if eligible is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Applicant must be shortlisted or have passed an exam before an interview.",
@@ -402,7 +467,7 @@ async def create_invite(body: InviteCreateIn, ctx: HrCtxDep, db: DbSessionDep) -
     if body.scheduled_at is not None and body.scheduled_at < datetime.now(tz=UTC):
         raise HTTPException(status_code=422, detail="scheduled_at cannot be in the past.")
 
-    job = await _resolve_job(db, hr_uid, company_id, applicant, body)
+    job = await _resolve_job(db, hr_uid, company_id, applicant, body, role=app_)
 
     # Rotate any active invite for this (applicant, job) so the active partial-unique holds.
     prior = await db.scalar(
@@ -426,6 +491,7 @@ async def create_invite(body: InviteCreateIn, ctx: HrCtxDep, db: DbSessionDep) -
         id=uuid.uuid4(),
         company_id=company_id,
         applicant_id=applicant.id,
+        enrolment_id=app_.enrolment_id,
         job_id=job.id,
         created_by_user_id=hr_uid,
         token_hash=hash_interview_token(raw_token, settings.interview_link_secret),

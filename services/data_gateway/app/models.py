@@ -554,6 +554,10 @@ class ExamAssignment(Base):
     # Optional scheduled start; gates the first /exam/start join-window (mirrors
     # interview_invites.scheduled_at). NULL = redeemable any time before expiry.
     scheduled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # The application this is for (B5). In the table since Group B (FK to
+    # enrolments, ON DELETE SET NULL) but not mapped until B5, so rows created
+    # through the ORM never set it. NULL = recorded against no application.
+    enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="invited", nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
@@ -715,6 +719,10 @@ class InterviewInvite(Base):
     avatar_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # The application this is for (B5). In the table since Group B (FK to
+    # enrolments, ON DELETE SET NULL) but not mapped until B5, so rows created
+    # through the ORM never set it. NULL = recorded against no application.
+    enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="invited", nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

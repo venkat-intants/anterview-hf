@@ -32,7 +32,8 @@ def _analytics_db(*, conversion: dict) -> AsyncMock:
     runs them: funnel, averages, openings, velocity, conversion, recent."""
     zeros = dict.fromkeys(
         (
-            "total_applicants", "shortlisted", "exam_taken", "exam_passed",
+            "total_applicants", "total_applications", "shortlisted", "exam_taken",
+            "exam_passed",
             "interview_invited", "interview_completed", "hired", "rejected",
         ),
         0,

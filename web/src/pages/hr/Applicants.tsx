@@ -34,6 +34,7 @@ import {
   type ApplicantStatus,
   type BulkUploadResult,
 } from '@/api/applicants';
+import { listRequisitions, type Requisition } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -566,12 +567,18 @@ interface UploadSectionProps {
   onLevel: (v: string) => void;
   onJd: (v: string) => void;
   onSubmit: (e: React.FormEvent) => void;
+  /** Open openings to file the batch under; '' = a role typed here. */
+  openings: Requisition[];
+  openingId: string;
+  onOpening: (id: string) => void;
 }
 
 function UploadSection({
   files, jobTitle, level, jd, progress, pending, lastResult,
   onFilesAdd, onFileRemove, onFilesClear, onJobTitle, onLevel, onJd, onSubmit,
+  openings, openingId, onOpening,
 }: UploadSectionProps) {
+  const opening = openings.find((o) => o.id === openingId);
   return (
     <GlassCard className="p-6">
       {/* Card header */}
@@ -588,19 +595,38 @@ function UploadSection({
       </div>
 
       <form onSubmit={onSubmit} className="space-y-4">
-        {/* Role + level */}
+        {/* Opening. Choosing one files every resume under it, scored against
+            its role and job description — rather than trusting that a typed
+            title happens to match an existing opening's. */}
+        <select
+          className={inputCls}
+          value={openingId}
+          onChange={(e) => onOpening(e.target.value)}
+          aria-label="Opening"
+        >
+          <option value="">New role — type it below</option>
+          {openings.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.title} · {o.level}
+            </option>
+          ))}
+        </select>
+
+        {/* Role + level (the opening's own, when one is chosen) */}
         <div className="grid gap-3 sm:grid-cols-2">
           <input
             className={inputCls}
             placeholder="Role (e.g. Blockchain Engineer)"
-            value={jobTitle}
+            value={opening ? opening.title : jobTitle}
             onChange={(e) => onJobTitle(e.target.value)}
+            disabled={Boolean(opening)}
             aria-label="Target role"
           />
           <select
             className={inputCls}
-            value={level}
+            value={opening ? opening.level : level}
             onChange={(e) => onLevel(e.target.value)}
+            disabled={Boolean(opening)}
             aria-label="Experience level"
           >
             <option value="entry">Entry level</option>
@@ -671,7 +697,9 @@ function UploadSection({
           </div>
         )}
 
-        {/* JD textarea */}
+        {/* JD textarea — hidden when an opening is chosen: its own job
+            description is what the batch is scored against. */}
+        {!opening && (
         <textarea
           className={cn(inputCls, 'min-h-[72px] resize-y')}
           placeholder="Job description (optional — applied to the whole batch, improves scoring accuracy)"
@@ -679,6 +707,7 @@ function UploadSection({
           onChange={(e) => onJd(e.target.value)}
           aria-label="Job description"
         />
+        )}
 
         {/* Upload progress */}
         {pending && (
@@ -746,8 +775,16 @@ export default function Applicants() {
   const [jobTitle, setJobTitle] = useState('');
   const [level, setLevel] = useState('mid');
   const [jd, setJd] = useState('');
+  const [openingId, setOpeningId] = useState('');
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState<BulkUploadResult | null>(null);
+  // Open openings for the upload picker (B5).
+  const { data: openingsData } = useQuery({
+    queryKey: ['hr', 'requisitions', 'open'],
+    queryFn: () => listRequisitions({ status: 'open', limit: 200 }),
+    staleTime: 60_000,
+  });
+  const openings = openingsData ?? [];
 
   // List state
   const [filter, setFilter] = useState('all');
@@ -801,9 +838,18 @@ export default function Applicants() {
     mutationFn: () => {
       const fd = new FormData();
       files.forEach((f) => fd.append('files', f));
-      fd.append('target_job_title', jobTitle.trim());
-      fd.append('target_level', level);
-      if (jd.trim()) fd.append('target_jd_text', jd.trim());
+      const opening = openings.find((o) => o.id === openingId);
+      if (opening) {
+        // The server files them under this opening and uses its role; the
+        // title still travels because the endpoint requires it.
+        fd.append('requisition_id', opening.id);
+        fd.append('target_job_title', opening.title);
+        fd.append('target_level', opening.level);
+      } else {
+        fd.append('target_job_title', jobTitle.trim());
+        fd.append('target_level', level);
+        if (jd.trim()) fd.append('target_jd_text', jd.trim());
+      }
       setProgress(0);
       return bulkUploadApplicants(fd, setProgress);
     },
@@ -880,7 +926,8 @@ export default function Applicants() {
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (files.length === 0) return toast.error('Choose one or more PDF resumes.');
-    if (!jobTitle.trim()) return toast.error('The role to screen for is required.');
+    if (!openingId && !jobTitle.trim())
+      return toast.error('Choose an opening, or type the role to screen for.');
     uploadMut.mutate();
   }
 
@@ -930,6 +977,9 @@ export default function Applicants() {
         onLevel={setLevel}
         onJd={setJd}
         onSubmit={onSubmit}
+        openings={openings}
+        openingId={openingId}
+        onOpening={setOpeningId}
       />
 
       {/* List section */}

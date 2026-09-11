@@ -149,14 +149,15 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
         await db.execute(
             text(
                 """
-                SELECT a.id, a.full_name, a.status,
-                       EXTRACT(DAY FROM (NOW() - a.updated_at))::int AS days
-                FROM applicants a
-                WHERE a.company_id = CAST(:cid AS uuid)
-                  AND a.deleted_at IS NULL
+                -- Per APPLICATION (B5): someone rejected for one opening can
+                -- still be stalled in another, and vice versa.
+                SELECT applicant_id AS id, full_name, status,
+                       EXTRACT(DAY FROM (NOW() - updated_at))::int AS days
+                FROM application_progress
+                WHERE company_id = CAST(:cid AS uuid)
                   -- Terminal stages are done, not stalled.
-                  AND a.status NOT IN ('hired', 'rejected')
-                ORDER BY a.updated_at ASC
+                  AND status NOT IN ('hired', 'rejected')
+                ORDER BY updated_at ASC
                 LIMIT :limit
                 """
             ),
@@ -168,19 +169,12 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
         await db.execute(
             text(
                 """
-                SELECT a.target_job_title AS title,
+                SELECT opening_title AS title,
                        COUNT(*) AS applicants,
-                       COUNT(sc.scorecard_id) AS interviewed
-                FROM applicants a
-                LEFT JOIN LATERAL (
-                    SELECT i.session_id FROM interview_invites i
-                    WHERE i.applicant_id = a.id AND i.company_id = a.company_id
-                      AND i.deleted_at IS NULL AND i.session_id IS NOT NULL
-                    ORDER BY i.created_at DESC LIMIT 1
-                ) li ON TRUE
-                LEFT JOIN scorecards sc ON sc.session_id = li.session_id
-                WHERE a.company_id = CAST(:cid AS uuid) AND a.deleted_at IS NULL
-                GROUP BY a.target_job_title
+                       COUNT(scorecard_id) AS interviewed
+                FROM application_progress
+                WHERE company_id = CAST(:cid AS uuid)
+                GROUP BY opening_title
                 LIMIT :limit
                 """
             ),

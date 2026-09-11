@@ -6,8 +6,14 @@ import type { InviteStatus } from './publicInterview';
 
 export type { InviteStatus };
 
+/** One eligible APPLICATION (B5): a person appears once per opening they are
+ *  eligible in, and the invite is for that opening. */
 export interface EligibleApplicant {
+  /** The person. */
   id: string;
+  /** The application — send it back on createInvite. */
+  enrolment_id?: string | null;
+  opening_title?: string | null;
   full_name: string;
   target_job_title: string;
   target_level: string;
@@ -58,6 +64,9 @@ export interface InterviewOutcome {
 
 export interface InviteCreateInput {
   applicant_id: string;
+  /** The application this interview is for. Required by the server when the
+   *  person has applied to several openings. */
+  enrolment_id?: string | null;
   job_title?: string;
   level?: string;
   language?: 'en' | 'hi' | 'te';

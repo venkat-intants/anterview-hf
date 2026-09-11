@@ -7,7 +7,7 @@ covered by a live end-to-end smoke test; here we lock the cheap guards.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -49,6 +49,8 @@ async def test_decision_new_to_hired_blocked() -> None:
 
     db = AsyncMock()
     db.scalar = AsyncMock(return_value=Applicant(id=uuid.uuid4(), status="new"))
+    # No applications: the person-level status is the one the guard reads.
+    db.execute = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
     with pytest.raises(HTTPException) as exc:
         await decide_applicant(
             uuid.uuid4(), DecisionIn(decision="hired"), Mock(), (uuid.uuid4(), uuid.uuid4()), db
@@ -63,6 +65,8 @@ async def test_decision_already_hired_blocked() -> None:
 
     db = AsyncMock()
     db.scalar = AsyncMock(return_value=Applicant(id=uuid.uuid4(), status="hired"))
+    # No applications: the person-level status is the one the guard reads.
+    db.execute = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
     with pytest.raises(HTTPException) as exc:
         await decide_applicant(
             uuid.uuid4(), DecisionIn(decision="hired"), Mock(), (uuid.uuid4(), uuid.uuid4()), db

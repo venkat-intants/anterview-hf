@@ -19,6 +19,8 @@ import type {
 const ELIGIBLE: EligibleApplicant[] = [
   {
     id: 'ap-1',
+    enrolment_id: 'en-1',
+    opening_title: 'Backend Engineer',
     full_name: 'Bhavya Nair',
     target_job_title: 'Backend Engineer',
     target_level: 'mid',
@@ -29,6 +31,8 @@ const ELIGIBLE: EligibleApplicant[] = [
   },
   {
     id: 'ap-2',
+    enrolment_id: 'en-2',
+    opening_title: 'Backend Engineer',
     full_name: 'Chetan Iyer',
     target_job_title: 'Backend Engineer',
     target_level: 'junior',
@@ -166,16 +170,40 @@ describe('HRInterviews — invite form', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await selectApplicant(user, 'ap-1');
+    await selectApplicant(user, 'en-1');
     await user.selectOptions(screen.getByLabelText('Interview language'), 'te');
     await user.click(screen.getByRole('button', { name: /generate interview link/i }));
 
     await waitFor(() =>
       expect(createInvite).toHaveBeenCalledWith({
         applicant_id: 'ap-1',
+        // B5: the interview is for one application, and says which.
+        enrolment_id: 'en-1',
         language: 'te',
         scheduled_at: null,
       }),
+    );
+  });
+
+  it('offers a person once per opening, and invites for the one chosen', async () => {
+    // B5: Bhavya is eligible in two openings. Each is its own entry, and the
+    // invite carries the application picked — not just the person.
+    listEligibleApplicants.mockResolvedValue([
+      ...ELIGIBLE,
+      { ...ELIGIBLE[0], enrolment_id: 'en-9', opening_title: 'Data Engineer' },
+    ]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole('option', { name: /bhavya nair .* for data engineer/i });
+    expect(screen.getAllByRole('option', { name: /bhavya nair/i })).toHaveLength(2);
+    await user.selectOptions(screen.getByLabelText('Applicant'), 'en-9');
+    await user.click(screen.getByRole('button', { name: /generate interview link/i }));
+
+    await waitFor(() =>
+      expect(createInvite).toHaveBeenCalledWith(
+        expect.objectContaining({ applicant_id: 'ap-1', enrolment_id: 'en-9' }),
+      ),
     );
   });
 
@@ -183,7 +211,7 @@ describe('HRInterviews — invite form', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await selectApplicant(user, 'ap-1');
+    await selectApplicant(user, 'en-1');
     await user.click(screen.getByRole('button', { name: /generate interview link/i }));
 
     const field = await screen.findByLabelText('Magic interview link');
@@ -199,7 +227,7 @@ describe('HRInterviews — invite form', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     renderPage();
 
-    await selectApplicant(user, 'ap-1');
+    await selectApplicant(user, 'en-1');
     await user.click(screen.getByRole('button', { name: /generate interview link/i }));
     await user.click(await screen.findByRole('button', { name: /copy interview link/i }));
 
@@ -211,7 +239,7 @@ describe('HRInterviews — invite form', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await selectApplicant(user, 'ap-1');
+    await selectApplicant(user, 'en-1');
     await user.click(screen.getByRole('button', { name: /generate interview link/i }));
 
     await waitFor(() =>

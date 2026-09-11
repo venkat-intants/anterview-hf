@@ -25,7 +25,7 @@ import structlog
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, BeforeValidator, EmailStr, Field
-from sqlalchemy import select, text
+from sqlalchemy import column, exists, or_, select, table, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -50,7 +50,7 @@ from app.requisitions import (
     TERMINAL_STATUSES,
     ambiguous_decision_detail,
     applicant_by_email,
-    live_enrolments,
+    choose_application,
     record_transition,
     requisition_for_title,
 )
@@ -106,12 +106,18 @@ async def email_applicant_decision(
     applicant: Applicant,
     decision: str,
     company_id: uuid.UUID,
+    job_title: str | None = None,
 ) -> None:
     """Stage a branded shortlist/hire/reject email to the candidate (caller commits).
 
     No-op when the applicant has no email on file or the decision isn't one we
     notify on. Best-effort: enqueue never raises on a bad recipient. Shared by the
     applicant status PATCH and the pipeline hire/reject decision endpoint.
+
+    ``job_title`` names the opening decided on. Pass it whenever the decision
+    is about one application: ``applicant.target_job_title`` describes only the
+    person's LATEST application, so a rejection for an older one would
+    otherwise name a job they are still being considered for.
     """
     if not applicant.email or decision not in _DECISION_EMAIL_STATUSES:
         return
@@ -122,7 +128,7 @@ async def email_applicant_decision(
         lang="en",
         ctx={
             "name": applicant.full_name,
-            "job_title": applicant.target_job_title,
+            "job_title": job_title or applicant.target_job_title,
             "decision": decision,
         },
         company_id=company_id,
@@ -229,6 +235,9 @@ class ReindexResult(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: str
+    # The application this change is about (B5). Optional: with one
+    # application it is implied.
+    enrolment_id: uuid.UUID | None = None
 
 
 class BulkUploadResult(BaseModel):
@@ -901,6 +910,17 @@ _MAX_PAGE = 500
 # layer needed the same guard on its own ILIKE filter. Aliased, not copied — a
 # second implementation is exactly how the first ILIKE gap survived review.
 _LIKE_ESCAPE = LIKE_ESCAPE
+
+# The application_progress VIEW (migration e2a4c6b8d0f1), as far as the list
+# filters need it. A lightweight table construct rather than an ORM model: it
+# is read-only, and a mapped class would put it in the schema inventories.
+_PROGRESS = table(
+    "application_progress",
+    column("applicant_id"),
+    column("stored_status"),
+    column("opening_title"),
+    column("target_job_title"),
+)
 _like_literal = like_literal
 
 
@@ -926,11 +946,19 @@ async def _semantic_search(
 
     params: dict[str, Any] = {"company_id": company_id, "q": q, "limit": _SEARCH_LIMIT}
     where = ["a.company_id = :company_id", "a.deleted_at IS NULL"]
+    # B5: by application, the same as the plain list (see list_applicants).
     if status_filter:
-        where.append("a.status = :status")
+        where.append(
+            "EXISTS (SELECT 1 FROM application_progress p"
+            " WHERE p.applicant_id = a.id AND p.stored_status = :status)"
+        )
         params["status"] = status_filter
     if job:
-        where.append(f"a.target_job_title ILIKE :job ESCAPE '{_LIKE_ESCAPE}'")
+        where.append(
+            "EXISTS (SELECT 1 FROM application_progress p WHERE p.applicant_id = a.id"
+            " AND (p.opening_title ILIKE :job ESCAPE '\\'"
+            "      OR p.target_job_title ILIKE :job ESCAPE '\\'))"
+        )
         params["job"] = f"%{_like_literal(job)}%"
 
     lexical = (
@@ -1036,12 +1064,26 @@ async def list_applicants(
         # memory for nothing.
         .options(defer(Applicant.resume_text), defer(Applicant.target_jd_text))
     )
+    # B5: filters match APPLICATIONS. "Shortlisted" lists everyone with a
+    # shortlisted application, not only people whose latest one happens to be;
+    # a job filter finds everyone who applied for it, not only people for whom
+    # it was the last thing they applied to.
     if status_filter:
-        stmt = stmt.where(Applicant.status == status_filter)
-    if job:
         stmt = stmt.where(
-            Applicant.target_job_title.ilike(
-                f"%{_like_literal(job)}%", escape=_LIKE_ESCAPE
+            exists().where(
+                _PROGRESS.c.applicant_id == Applicant.id,
+                _PROGRESS.c.stored_status == status_filter,
+            )
+        )
+    if job:
+        pattern = f"%{_like_literal(job)}%"
+        stmt = stmt.where(
+            exists().where(
+                _PROGRESS.c.applicant_id == Applicant.id,
+                or_(
+                    _PROGRESS.c.opening_title.ilike(pattern, escape=_LIKE_ESCAPE),
+                    _PROGRESS.c.target_job_title.ilike(pattern, escape=_LIKE_ESCAPE),
+                ),
             )
         )
     stmt = (
@@ -1277,26 +1319,34 @@ async def update_applicant_status(
             status_code=400, detail=f"status must be one of {sorted(_VALID_STATUSES)}"
         )
     a = await _get_owned(db, company_id, applicant_id)
-    # B2: this board is person-shaped and the ledger is application-shaped.
-    # With one live application they are the same thing, so every status change
-    # here is that application's transition and goes through the ledger — it
-    # used to record only a shortlist. With several, a hire or reject cannot be
-    # attributed to an opening without guessing, and a terminal decision is the
-    # last thing to guess (D-05), so it is refused and pointed at the opening.
-    enrolments = await live_enrolments(db, applicant_id=a.id, company_id=company_id)
-    if len(enrolments) > 1 and body.status in TERMINAL_STATUSES:
-        raise HTTPException(
-            status_code=409, detail=ambiguous_decision_detail(a.full_name, len(enrolments))
+    # B2/B5: the ledger is application-shaped. The change goes to the
+    # application named in the body, or to the only one there is. With several
+    # and none named, a hire or reject cannot be attributed to an opening
+    # without guessing, and a terminal decision is the last thing to guess
+    # (D-05), so it is refused and pointed at the opening.
+    try:
+        app_ = await choose_application(
+            db, applicant_id=a.id, company_id=company_id, enrolment_id=body.enrolment_id
         )
-    only = enrolments[0] if len(enrolments) == 1 else None
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Application not found.") from exc
+    if app_.ambiguous and body.status in TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=409, detail=ambiguous_decision_detail(a.full_name, len(app_.live))
+        )
+    only = app_.enrolment_id
 
-    prev_status = a.status
-    a.status = body.status
-    a.updated_at = datetime.now(tz=UTC)
+    prev_status = app_.status if only is not None else a.status
+    # The person-level mirror describes their latest application; an older
+    # one's change is recorded on it (the ledger) and leaves the mirror alone.
+    if only is None or app_.is_latest:
+        a.status = body.status
+        a.updated_at = datetime.now(tz=UTC)
     # Email the candidate on a real shortlist/hire/reject transition (not a re-save).
     if body.status != prev_status:
         await email_applicant_decision(
-            db, applicant=a, decision=body.status, company_id=company_id
+            db, applicant=a, decision=body.status, company_id=company_id,
+            job_title=app_.title,
         )
         # Start the workflow on a shortlist, when there is exactly one
         # application to start. Somebody with three live applications who gets

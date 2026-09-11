@@ -28,7 +28,7 @@ from sqlalchemy import text
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.models import AuditLog
-from app.requisitions import ambiguous_decision_detail, live_enrolments, record_transition
+from app.requisitions import ambiguous_decision_detail, choose_application, record_transition
 from app.routers.hr_applicants import (
     ApplicantOut,
     _get_owned,
@@ -43,7 +43,7 @@ router = APIRouter(prefix="/hr", tags=["hr-pipeline"])
 
 _VALID_DECISIONS = {"hired", "rejected"}
 _VALID_STAGES = {"all", "shortlisted", "exam_passed", "interviewed", "decided"}
-_VALID_STATUS_FILTERS = {"new", "shortlisted", "rejected", "interviewed", "hired"}
+_VALID_STATUS_FILTERS = {"new", "shortlisted", "rejected", "interviewed", "hired", "held"}
 _PIPELINE_MAX_LIMIT = 200
 
 
@@ -51,7 +51,19 @@ _PIPELINE_MAX_LIMIT = 200
 # Schemas
 # ---------------------------------------------------------------------------
 class PipelineRow(BaseModel):
+    """One APPLICATION (B5), read from the application_progress view.
+
+    A person with two applications is two rows, each with its own status,
+    score, exam and interview. ``enrolment_id`` is None only for someone filed
+    under no opening; decisions on a row send it back so they land on that
+    application rather than on whichever one the person-level fields last
+    described.
+    """
+
     applicant_id: str
+    enrolment_id: str | None = None
+    requisition_id: str | None = None
+    opening_title: str | None = None
     full_name: str
     target_job_title: str
     target_level: str
@@ -75,7 +87,13 @@ class PipelineResponse(BaseModel):
 
 
 class HrFunnel(BaseModel):
+    """Counts of APPLICATIONS by where they are now (B5), except
+    ``total_applicants``, which is people. Someone shortlisted for one opening
+    and rejected for another is one shortlist and one rejection — it used to be
+    whichever of the two wrote the person's row last."""
+
     total_applicants: int
+    total_applications: int = 0
     shortlisted: int
     exam_taken: int
     exam_passed: int
@@ -175,70 +193,26 @@ class HrAnalytics(BaseModel):
 class DecisionIn(BaseModel):
     decision: str
     rationale: str | None = Field(default=None, max_length=2000)
+    # The application decided on — the board sends the row's enrolment_id.
+    # Optional so an older client still works for someone with one application.
+    enrolment_id: uuid.UUID | None = None
 
 
 # ---------------------------------------------------------------------------
 # Pipeline (paginated, READ-ONLY)
 # ---------------------------------------------------------------------------
-# Single tenant-scoped statement. 'interviewed' is derived (CASE), never written.
-# exam_passed = bool_or across submitted attempts (matches _has_passed_exam);
-# best_exam_percent is an independent MAX. The interview/scorecard is the latest
-# invite WITH a session (identical predicate to analytics, so a score never
-# disagrees between screens). status/stage filters + pagination are in SQL; count
-# is the filtered total via a window COUNT(*) OVER ().
+# One row per application, from the application_progress view (migration
+# e2a4c6b8d0f1), which is the single definition of an application's status,
+# score, exam and interview — the copilot and the watchers read the same view,
+# so they cannot disagree with this board. 'interviewed' is derived there
+# (CASE), never written. status/stage filters + pagination are in SQL; count is
+# the filtered total via a window COUNT(*) OVER ().
 _PIPELINE_SQL = text(
     """
-WITH agg AS (
-  SELECT
-      a.id, a.full_name, a.target_job_title, a.target_level,
-      a.ats_overall, a.ats_recommendation, a.updated_at,
-      ea.best_exam_percent,
-      ep.ever_passed AS exam_passed,
-      COALESCE(ec.total_exam_attempts, 0) AS total_exam_attempts,
-      li.interview_status,
-      sc.composite_score AS interview_score,
-      sc.scorecard_id,
-      CASE
-        WHEN a.status IN ('hired','rejected') THEN a.status
-        WHEN sc.scorecard_id IS NOT NULL AND a.status IN ('new','shortlisted')
-             THEN 'interviewed'
-        ELSE a.status
-      END AS status
-  FROM applicants a
-  LEFT JOIN LATERAL (
-      SELECT t.score_percent AS best_exam_percent
-      FROM exam_attempts t
-      WHERE t.applicant_id = a.id AND t.company_id = a.company_id
-        AND t.status = 'submitted' AND t.deleted_at IS NULL
-      ORDER BY t.score_percent DESC NULLS LAST, t.submitted_at DESC
-      LIMIT 1
-  ) ea ON TRUE
-  LEFT JOIN LATERAL (
-      SELECT bool_or(t.passed) AS ever_passed
-      FROM exam_attempts t
-      WHERE t.applicant_id = a.id AND t.company_id = a.company_id
-        AND t.status = 'submitted' AND t.deleted_at IS NULL
-  ) ep ON TRUE
-  LEFT JOIN LATERAL (
-      SELECT COUNT(*) AS total_exam_attempts
-      FROM exam_attempts t
-      WHERE t.applicant_id = a.id AND t.company_id = a.company_id
-        AND t.status = 'submitted' AND t.deleted_at IS NULL
-  ) ec ON TRUE
-  LEFT JOIN LATERAL (
-      SELECT i.status AS interview_status, i.session_id
-      FROM interview_invites i
-      WHERE i.applicant_id = a.id AND i.company_id = a.company_id
-        AND i.deleted_at IS NULL AND i.session_id IS NOT NULL
-      ORDER BY i.created_at DESC
-      LIMIT 1
-  ) li ON TRUE
-  LEFT JOIN scorecards sc ON sc.session_id = li.session_id
-  WHERE a.company_id = :cid AND a.deleted_at IS NULL
-)
 SELECT *, COUNT(*) OVER () AS total_count
-FROM agg
-WHERE (CAST(:status AS text) IS NULL OR status = CAST(:status AS text))
+FROM application_progress
+WHERE company_id = :cid
+  AND (CAST(:status AS text) IS NULL OR status = CAST(:status AS text))
   AND (
     CAST(:stage AS text) IS NULL
     OR (CAST(:stage AS text) = 'all')
@@ -281,7 +255,10 @@ async def get_pipeline(
     count = int(rows[0]["total_count"]) if rows else 0
     items = [
         PipelineRow(
-            applicant_id=str(r["id"]),
+            applicant_id=str(r["applicant_id"]),
+            enrolment_id=str(r["enrolment_id"]) if r["enrolment_id"] else None,
+            requisition_id=str(r["requisition_id"]) if r["requisition_id"] else None,
+            opening_title=r["opening_title"],
             full_name=r["full_name"],
             target_job_title=r["target_job_title"],
             target_level=r["target_level"],
@@ -304,28 +281,23 @@ async def get_pipeline(
 # ---------------------------------------------------------------------------
 # Analytics (funnel + averages)
 # ---------------------------------------------------------------------------
+# Applications, from the same view as the board — so "Shortlisted 4" here is
+# the four shortlisted cards there. Filed-under-no-opening people count as a
+# person but not as an application (they have not applied to anything).
 _FUNNEL_SQL = text(
     """
 SELECT
-  COUNT(DISTINCT a.id)                                             AS total_applicants,
-  COUNT(DISTINCT a.id) FILTER (WHERE a.status = 'shortlisted')     AS shortlisted,
-  COUNT(DISTINCT a.id) FILTER (WHERE a.status = 'hired')           AS hired,
-  COUNT(DISTINCT a.id) FILTER (WHERE a.status = 'rejected')        AS rejected,
-  COUNT(DISTINCT ea.applicant_id)                                  AS exam_taken,
-  COUNT(DISTINCT ea.applicant_id) FILTER (WHERE ea.passed IS TRUE) AS exam_passed,
-  COUNT(DISTINCT ii.applicant_id) FILTER (
-      WHERE ii.status IN ('invited','consumed','completed'))       AS interview_invited,
-  COUNT(DISTINCT ii.applicant_id) FILTER (WHERE sc.scorecard_id IS NOT NULL)
-                                                                   AS interview_completed
-FROM applicants a
-LEFT JOIN exam_attempts ea
-       ON ea.applicant_id = a.id AND ea.company_id = a.company_id
-      AND ea.status = 'submitted' AND ea.deleted_at IS NULL
-LEFT JOIN interview_invites ii
-       ON ii.applicant_id = a.id AND ii.company_id = a.company_id
-      AND ii.deleted_at IS NULL AND ii.status <> 'revoked'
-LEFT JOIN scorecards sc ON sc.session_id = ii.session_id
-WHERE a.company_id = :cid AND a.deleted_at IS NULL
+  COUNT(DISTINCT applicant_id)                                        AS total_applicants,
+  COUNT(*) FILTER (WHERE enrolment_id IS NOT NULL)                    AS total_applications,
+  COUNT(*) FILTER (WHERE stored_status = 'shortlisted')               AS shortlisted,
+  COUNT(*) FILTER (WHERE stored_status = 'hired')                     AS hired,
+  COUNT(*) FILTER (WHERE stored_status = 'rejected')                  AS rejected,
+  COUNT(*) FILTER (WHERE total_exam_attempts > 0)                     AS exam_taken,
+  COUNT(*) FILTER (WHERE exam_passed IS TRUE)                         AS exam_passed,
+  COUNT(*) FILTER (WHERE ever_invited)                                AS interview_invited,
+  COUNT(*) FILTER (WHERE scorecard_id IS NOT NULL)                    AS interview_completed
+FROM application_progress
+WHERE company_id = :cid
 """
 )
 
@@ -397,38 +369,30 @@ FROM reached r
 """
 )
 
+# "Applications in the last 7 days" counts applications, by when each was made
+# — a returning candidate's second application is new this week even though
+# the person is not.
 _RECENT_SQL = text(
     """
 SELECT
-  COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')  AS last_7d,
-  COUNT(*) FILTER (WHERE created_at >= now() - interval '14 days'
-                     AND created_at <  now() - interval '7 days')  AS prev_7d
-FROM applicants
-WHERE company_id = :cid AND deleted_at IS NULL
+  COUNT(*) FILTER (WHERE applied_at >= now() - interval '7 days')  AS last_7d,
+  COUNT(*) FILTER (WHERE applied_at >= now() - interval '14 days'
+                     AND applied_at <  now() - interval '7 days')  AS prev_7d
+FROM application_progress
+WHERE company_id = :cid AND enrolment_id IS NOT NULL
 """
 )
 
+# Averaged over applications: a CV scores differently against different roles,
+# so a person's "ATS score" is not one number any more.
 _AVERAGES_SQL = text(
     """
 SELECT
-  AVG(a.ats_overall)      AS avg_ats,
-  AVG(best.best_pct)      AS avg_exam_percent,
-  AVG(sc.composite_score) AS avg_interview_composite
-FROM applicants a
-LEFT JOIN LATERAL (
-    SELECT MAX(t.score_percent) AS best_pct
-    FROM exam_attempts t
-    WHERE t.applicant_id = a.id AND t.company_id = a.company_id
-      AND t.status = 'submitted' AND t.deleted_at IS NULL
-) best ON TRUE
-LEFT JOIN LATERAL (
-    SELECT i.session_id FROM interview_invites i
-    WHERE i.applicant_id = a.id AND i.company_id = a.company_id
-      AND i.deleted_at IS NULL AND i.session_id IS NOT NULL
-    ORDER BY i.created_at DESC LIMIT 1
-) li ON TRUE
-LEFT JOIN scorecards sc ON sc.session_id = li.session_id
-WHERE a.company_id = :cid AND a.deleted_at IS NULL
+  AVG(ats_overall)       AS avg_ats,
+  AVG(best_exam_percent) AS avg_exam_percent,
+  AVG(interview_score)   AS avg_interview_composite
+FROM application_progress
+WHERE company_id = :cid
 """
 )
 
@@ -462,6 +426,7 @@ async def get_analytics(ctx: HrCtxDep, db: DbSessionDep) -> HrAnalytics:
     return HrAnalytics(
         funnel=HrFunnel(
             total_applicants=int(f["total_applicants"]),
+            total_applications=int(f["total_applications"] or 0),
             shortlisted=int(f["shortlisted"]),
             exam_taken=int(f["exam_taken"]),
             exam_passed=int(f["exam_passed"]),
@@ -524,10 +489,28 @@ async def decide_applicant(
 
     a = await _get_owned(db, company_id, applicant_id)  # 404 cross-tenant
 
+    # B2/B5: a decision is about ONE application and goes through the ledger.
+    # The board is one row per application and names it. Without a name, one
+    # application is unambiguous; several are refused rather than guessed — a
+    # terminal decision is D-05's to make deliberately.
+    try:
+        app_ = await choose_application(
+            db, applicant_id=a.id, company_id=company_id, enrolment_id=body.enrolment_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Application not found.") from exc
+    if app_.ambiguous:
+        raise HTTPException(
+            status_code=409, detail=ambiguous_decision_detail(a.full_name, len(app_.live))
+        )
+
+    # Guarded on the application's own status — the person's row describes
+    # only their latest application, which may not be this one.
+    current = app_.status if app_.enrolment_id is not None else a.status
     if body.decision == "hired":
-        if a.status == "hired":
+        if current == "hired":
             raise HTTPException(status_code=409, detail="Applicant is already hired.")
-        if a.status not in ("shortlisted", "interviewed"):
+        if current not in ("shortlisted", "interviewed"):
             raise HTTPException(
                 status_code=409,
                 detail="Only shortlisted or interviewed applicants can be hired.",
@@ -535,28 +518,17 @@ async def decide_applicant(
     # 'rejected' is reachable from any non-terminal state AND from 'hired'
     # (an audited reversal — details.reversal=true).
 
-    # B2: a decision is a stage transition, so it goes through the ledger. It
-    # used to write applicants.status alone — no ledger entry, the enrolment
-    # untouched — so the requisition dashboard and decision queue kept showing
-    # a hired or rejected candidate as still waiting. This board is
-    # person-shaped; a decision is about one opening. With one application the
-    # two are the same thing. With several, the board cannot know which opening
-    # is meant, and a terminal decision is D-05's to make deliberately — so it
-    # is refused rather than guessed, and the per-opening queue is where it goes.
-    enrolments = await live_enrolments(db, applicant_id=a.id, company_id=company_id)
-    if len(enrolments) > 1:
-        raise HTTPException(
-            status_code=409, detail=ambiguous_decision_detail(a.full_name, len(enrolments))
-        )
-
     now = datetime.now(tz=UTC)
-    prev = a.status
-    a.status = body.decision
-    a.updated_at = now
-    if enrolments:
+    prev = current
+    # The person-level mirror moves only when this is the application it
+    # mirrors (their latest), or when they have no application at all.
+    if app_.enrolment_id is None or app_.is_latest:
+        a.status = body.decision
+        a.updated_at = now
+    if app_.enrolment_id is not None:
         await record_transition(
             db,
-            enrolment_id=enrolments[0],
+            enrolment_id=app_.enrolment_id,
             company_id=company_id,
             to_status=body.decision,
             actor_user_id=hr_uid,
@@ -573,6 +545,7 @@ async def decide_applicant(
             resource_id=applicant_id,
             details={
                 "company_id": str(company_id),
+                "enrolment_id": str(app_.enrolment_id) if app_.enrolment_id else None,
                 "decision": body.decision,
                 "previous_status": prev,
                 "rationale": body.rationale,
@@ -587,7 +560,8 @@ async def decide_applicant(
     # atomic with the decision + audit row, then delivered by the outbox worker).
     if body.decision != prev:
         await email_applicant_decision(
-            db, applicant=a, decision=body.decision, company_id=company_id
+            db, applicant=a, decision=body.decision, company_id=company_id,
+            job_title=app_.title,
         )
     await db.commit()
     log.info(

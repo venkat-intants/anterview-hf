@@ -62,6 +62,12 @@ vi.mock('../api/applicants', () => ({
   whyMatch: (...a: unknown[]) => whyMatch(...a) as unknown,
 }));
 
+// The upload form's opening picker (B5).
+const listRequisitions = vi.fn();
+vi.mock('../api/requisitions', () => ({
+  listRequisitions: (...a: unknown[]) => listRequisitions(...a) as unknown,
+}));
+
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 vi.mock('../lib/toast', () => ({
@@ -110,6 +116,52 @@ beforeEach(() => {
     Promise.resolve({ ...SCORED, id, status }),
   );
   rescoreApplicant.mockResolvedValue({ ...SCORED, ats_overall: 90 });
+  listRequisitions.mockResolvedValue([
+    { id: 'req-9', title: 'Staff Nurse', level: 'senior', status: 'open' },
+  ]);
+  bulkUploadApplicants.mockResolvedValue({
+    created: [], failed: [], created_count: 1, failed_count: 0,
+  });
+});
+
+describe('Applicants — bulk upload', () => {
+  it('files the batch under the chosen opening, with its role', async () => {
+    // B5: picking an opening files every resume under it, rather than hoping a
+    // typed title matches an existing opening's spelling.
+    const user = userEvent.setup();
+    const { container } = renderPage();
+
+    await screen.findByRole('option', { name: /staff nurse · senior/i });
+    await user.selectOptions(screen.getByLabelText('Opening'), 'req-9');
+    expect(screen.getByLabelText('Target role')).toBeDisabled();
+    expect(screen.queryByLabelText('Job description')).not.toBeInTheDocument();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(['%PDF-1.4'], 'a.pdf', { type: 'application/pdf' }));
+    await user.click(screen.getByRole('button', { name: /upload & score 1 resume/i }));
+
+    await waitFor(() => expect(bulkUploadApplicants).toHaveBeenCalled());
+    const fd = bulkUploadApplicants.mock.calls[0][0] as FormData;
+    expect(fd.get('requisition_id')).toBe('req-9');
+    expect(fd.get('target_job_title')).toBe('Staff Nurse');
+    expect(fd.get('target_level')).toBe('senior');
+  });
+
+  it('still takes a typed role when no opening is chosen', async () => {
+    const user = userEvent.setup();
+    const { container } = renderPage();
+
+    await screen.findByLabelText('Opening');
+    await user.type(screen.getByLabelText('Target role'), 'Welder');
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(['%PDF-1.4'], 'a.pdf', { type: 'application/pdf' }));
+    await user.click(screen.getByRole('button', { name: /upload & score 1 resume/i }));
+
+    await waitFor(() => expect(bulkUploadApplicants).toHaveBeenCalled());
+    const fd = bulkUploadApplicants.mock.calls[0][0] as FormData;
+    expect(fd.get('requisition_id')).toBeNull();
+    expect(fd.get('target_job_title')).toBe('Welder');
+  });
 });
 
 describe('Applicants — list', () => {

@@ -1,12 +1,19 @@
 // pipeline.ts — HR hiring pipeline + analytics API (HR workflow Phase 4).
-// One row per applicant spanning the whole funnel (ATS → exam → interview →
-// decision), plus aggregate funnel metrics. Tenant-scoped server-side by the
+// One row per APPLICATION (B5) spanning the whole funnel (ATS → exam →
+// interview → decision), plus aggregate funnel metrics. A person who applied to
+// two openings is two rows, each with its own status, score, exam and interview. Tenant-scoped server-side by the
 // HR's company. Field names match the data_gateway frozen contract EXACTLY.
 
 import { apiGet, apiPost } from './client';
 
 /** Applicant lifecycle status (Phase 4 adds the terminal decision states). */
-export type PipelineStatus = 'new' | 'shortlisted' | 'rejected' | 'interviewed' | 'hired';
+export type PipelineStatus =
+  | 'new'
+  | 'shortlisted'
+  | 'rejected'
+  | 'interviewed'
+  | 'hired'
+  | 'held';
 
 /** Stage filter for the pipeline list. */
 export type PipelineStage = 'all' | 'shortlisted' | 'exam_passed' | 'interviewed' | 'decided';
@@ -14,9 +21,14 @@ export type PipelineStage = 'all' | 'shortlisted' | 'exam_passed' | 'interviewed
 /** HR hire/reject decision verbs. */
 export type ApplicantDecision = 'hired' | 'rejected';
 
-/** One pipeline row — an applicant flattened across all four stages. */
+/** One pipeline row — one application flattened across all four stages. */
 export interface PipelineRow {
   applicant_id: string;
+  /** The application. Null only for someone filed under no opening. */
+  enrolment_id?: string | null;
+  requisition_id?: string | null;
+  /** The opening's current title (falls back to the role applied for). */
+  opening_title?: string | null;
   full_name: string;
   target_job_title: string;
   target_level: string;
@@ -45,7 +57,10 @@ export interface PipelineResponse {
 /** Company-scoped funnel counts + averages. */
 export interface HrAnalytics {
   funnel: {
+    /** People. */
     total_applicants: number;
+    /** Applications — what every other funnel count is a count of. */
+    total_applications?: number;
     shortlisted: number;
     exam_taken: number;
     exam_passed: number;
@@ -87,14 +102,23 @@ export function getHrAnalytics(): Promise<HrAnalytics> {
 /**
  * Record an HR hire/reject decision (POST, audit-logged server-side).
  * Returns the updated applicant (the page only needs success → it refetches).
+ *
+ * `enrolmentId` names the application decided on. Send it whenever the row has
+ * one: for someone with several applications the server refuses a decision
+ * that does not say which.
  */
 export function setApplicantDecision(
   applicantId: string,
   decision: ApplicantDecision,
   rationale?: string,
+  enrolmentId?: string | null,
 ): Promise<{ id: string; status: PipelineStatus }> {
   return apiPost<{ id: string; status: PipelineStatus }>(
     `/hr/applicants/${applicantId}/decision`,
-    { decision, rationale: rationale?.trim() || null },
+    {
+      decision,
+      rationale: rationale?.trim() || null,
+      ...(enrolmentId ? { enrolment_id: enrolmentId } : {}),
+    },
   );
 }

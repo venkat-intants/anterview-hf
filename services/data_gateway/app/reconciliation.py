@@ -19,6 +19,8 @@ By the *absence* of data, not by a queue:
 
 * ``ats_overall IS NULL`` and there is resume text -> needs scoring
 * ``embedding IS NULL`` and there is resume text  -> needs embedding
+* a completed interview with no scorecard          -> needs scoring (from ``turns``)
+* a scorecard with ``report_pdf_key IS NULL``      -> needs its PDF
 
 This is deliberate. A queue can drift from reality — a lost message means a row
 is never retried and nothing notices. The absence query cannot drift: if the
@@ -59,7 +61,12 @@ from app.config import settings
 from app.embedding_client import embed_texts_remote
 from app.models import Applicant
 from app.notifications_util import create_notification
-from app.scoring_client import score_resume_remote
+from app.scoring_client import (
+    ScoringServiceUnavailableError,
+    render_scorecard_pdf_remote,
+    score_interview_remote,
+    score_resume_remote,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -81,6 +88,32 @@ MAX_ATTEMPTS = 8
 
 KIND_ATS = "applicant_ats"
 KIND_EMBED = "applicant_embedding"
+KIND_SCORECARD = "session_scorecard"
+KIND_PDF = "scorecard_pdf"
+
+# Interviews are re-scored a few at a time: each is a paid LLM call that can
+# take a minute, and a pass must finish inside its ten-minute interval.
+SCORECARD_BATCH = 3
+PDF_BATCH = 10
+# Fewer attempts than a resume: every attempt that reaches Gemini is spend
+# against the per-session budget, and a transcript the scorer rejected four
+# times over a day is a case for a person, not for a ninth try.
+SCORECARD_MAX_ATTEMPTS = 4
+
+# Must equal interview_core's worker/constants.py MIN_ANSWERS_TO_SCORE — the
+# worker's own "was this interview long enough to score" rule. Mirrored rather
+# than imported because the services do not share code; a test pins the two.
+MIN_ANSWERS_TO_SCORE = 2
+
+# Only interviews finished within this window are re-scored. The results email
+# fires when a scorecard appears, and a candidate should not be told about an
+# interview from last quarter because a deploy found it unscored.
+_SCORECARD_LOOKBACK = timedelta(days=7)
+# The live worker's own scoring call can still land for a while after the
+# session is marked completed (the scorer outlives the worker's 15s timeout),
+# so the reconciler leaves recent sessions — and recent PDFs — to it.
+_SCORECARD_GRACE = timedelta(minutes=15)
+_PDF_GRACE = timedelta(minutes=10)
 
 
 @dataclass
@@ -89,6 +122,10 @@ class PassResult:
 
     scored: int = 0
     embedded: int = 0
+    # Interviews whose scorecard was written by this pass, and scorecards whose
+    # PDF was rendered by it.
+    interviews_scored: int = 0
+    pdfs_rendered: int = 0
     # Rows whose real name (and sometimes email) were read out of the PDF and
     # written over the filename-derived placeholder a deferred ingest left.
     named: int = 0
@@ -103,6 +140,8 @@ class PassResult:
         return {
             "scored": self.scored,
             "embedded": self.embedded,
+            "interviews_scored": self.interviews_scored,
+            "pdfs_rendered": self.pdfs_rendered,
             "named": self.named,
             "batches_finished": self.batches_finished,
             "failed": self.failed,
@@ -118,7 +157,12 @@ def _backoff(attempts: int) -> timedelta:
 
 
 async def _record_failure(
-    db: AsyncSession, kind: str, ref_id: uuid.UUID, error: str
+    db: AsyncSession,
+    kind: str,
+    ref_id: uuid.UUID,
+    error: str,
+    *,
+    max_attempts: int = MAX_ATTEMPTS,
 ) -> bool:
     """Note a failed attempt and schedule the retry. Returns True if it gave up.
 
@@ -145,7 +189,7 @@ async def _record_failure(
     ).first()
     attempts = int(row[0]) if row else 1
 
-    if attempts >= MAX_ATTEMPTS:
+    if attempts >= max_attempts:
         await db.execute(
             text(
                 "UPDATE reconciliation_state SET gave_up_at = :now, next_attempt_at = NULL "
@@ -394,6 +438,263 @@ async def _embed_pass(db: AsyncSession, result: PassResult) -> None:
         await db.commit()
 
 
+# ---------------------------------------------------------------------------
+# Interviews without a scorecard, scorecards without a PDF
+# ---------------------------------------------------------------------------
+# The same "found by absence" rule as the applicant passes, one layer later in
+# the funnel. The live worker scores once (one retry, two seconds apart) and the
+# scorer renders the PDF once, fire-and-forget; after that, nothing came back
+# for either. A candidate whose scorecard call hit a Gemini outage finished
+# their interview and was never assessed — and HR, whose invite now sat at
+# 'consumed' forever, was never told they had finished.
+
+def _not_backing_off(alias: str, kind_param: str) -> str:
+    """The reconciliation_state exclusion, for a row whose id is ``alias``."""
+    return f"""
+       AND NOT EXISTS (
+             SELECT 1 FROM reconciliation_state rs
+              WHERE rs.kind = :{kind_param} AND rs.ref_id = {alias}
+                AND (rs.gave_up_at IS NOT NULL
+                     OR (rs.next_attempt_at IS NOT NULL AND rs.next_attempt_at > :now))
+           )"""
+
+
+# Which finished interviews are owed a scorecard. Every clause is a reason the
+# live worker would, or would not, have scored it:
+#
+# * status 'completed' — the worker writes 'completed' only when the candidate
+#   gave enough answers (InterviewState.final_status). 'abandoned' covers both a
+#   short interview and a crash the startup reaper finalised, and neither is
+#   ever scored automatically: a scorecard from a truncated transcript reads as
+#   a complete assessment, and the reaper's docstring is explicit that the
+#   platform must not manufacture one.
+# * enough candidate turns on record — the transcript is what gets scored, so a
+#   session whose turns never persisted cannot be retried and is not selected.
+# * an active interview consent — the same gate that let the interview start.
+#   A candidate who has since withdrawn it is not processed further.
+# * neither the session nor the user is pending erasure.
+_UNSCORED_SQL = """
+SELECT s.id, s.language, j.title AS job_title, j.level, j.description AS jd_text,
+       j.department, j.company_name, j.interview_type,
+       e.current_round_id
+  FROM sessions s
+  JOIN users u ON u.id = s.user_id AND u.deleted_at IS NULL
+  JOIN jobs  j ON j.id = s.job_id
+  LEFT JOIN interview_invites ii ON ii.session_id = s.id AND ii.deleted_at IS NULL
+  LEFT JOIN enrolments e ON e.id = ii.enrolment_id AND e.deleted_at IS NULL
+ WHERE s.status = 'completed'
+   AND s.deleted_at IS NULL
+   AND s.completed_at > :floor
+   AND s.completed_at <= :settled
+   AND NOT EXISTS (SELECT 1 FROM scorecards sc WHERE sc.session_id = s.id)
+   AND (SELECT count(*) FROM turns t
+         WHERE t.session_id = s.id AND t.speaker = 'candidate'
+           AND length(trim(t.text_content)) > 0) >= :min_answers
+   AND EXISTS (SELECT 1 FROM dpdp_consent_ledger c
+                WHERE c.user_id = s.user_id
+                  AND c.consent_type = 'interview_voice_recording'
+                  AND c.granted AND c.revoked_at IS NULL)
+""" + _not_backing_off("s.id", "kind") + """
+ ORDER BY s.completed_at
+ LIMIT :lim
+"""
+
+_TURNS_SQL = """
+SELECT speaker, text_content FROM turns
+ WHERE session_id = :sid AND length(trim(text_content)) > 0
+ ORDER BY turn_number
+"""
+
+
+async def _role_profile_for(db: AsyncSession, row: Any) -> dict[str, Any] | None:
+    """The rubric to score against, as the live worker would have chosen it.
+
+    A workflow round's frozen rubric when the session belongs to one — the same
+    lookup the worker does (invite -> enrolment -> current round), so the retry
+    grades against exactly what the round promised. Otherwise the deterministic
+    taxonomy baseline: the profile the worker itself falls back to when Gemini
+    is unavailable. The live interview may have had an LLM-refined profile that
+    was never stored, so for a practice interview this is the closest faithful
+    rubric that costs nothing extra. Never raises — a missing rubric means the
+    scorer's legacy fixed axes, which is still a scorecard.
+    """
+    from shared.intelligence import derive_role_profile  # noqa: PLC0415
+
+    from app.workflow_runner import frozen_rubric_for_round  # noqa: PLC0415
+
+    try:
+        if row["current_round_id"] is not None:
+            frozen = await frozen_rubric_for_round(
+                db, round_id=row["current_round_id"], job_title=row["job_title"]
+            )
+            if frozen is not None:
+                return frozen.model_dump(mode="json")
+        profile = await derive_role_profile(
+            job_title=row["job_title"],
+            jd_text=row["jd_text"] or "",
+            department=row["department"] or "",
+            company_name=row["company_name"] or "",
+            experience_level=_level(row["level"]),
+            interview_type=row["interview_type"] or "screening",
+            llm=None,
+        )
+        return profile.model_dump(mode="json")
+    except Exception as exc:  # noqa: BLE001 — degrade to the legacy rubric
+        log.warning("reconcile.role_profile_failed", session_id=str(row["id"]),
+                    error_type=type(exc).__name__)
+        return None
+
+
+def _level(level: str | None) -> str:
+    # Same normalisation as the worker's _lookup_session.
+    return level if level in ("entry", "mid", "senior") else "entry"
+
+
+async def _scorecard_pass(db: AsyncSession, result: PassResult) -> None:
+    """Score finished interviews whose scorecard was never written."""
+    now = datetime.now(tz=UTC)
+    rows = (
+        await db.execute(
+            text(_UNSCORED_SQL),
+            {
+                "kind": KIND_SCORECARD, "now": now,
+                "floor": now - _SCORECARD_LOOKBACK, "settled": now - _SCORECARD_GRACE,
+                "min_answers": MIN_ANSWERS_TO_SCORE, "lim": SCORECARD_BATCH,
+            },
+        )
+    ).mappings().all()
+
+    for row in rows:
+        sid = row["id"]
+        turns = [
+            # Back to the worker's vocabulary — the scorer accepts both, but
+            # the retry should send exactly what the live call would have.
+            {"role": "user" if t[0] == "candidate" else "ai", "text": t[1]}
+            for t in (await db.execute(text(_TURNS_SQL), {"sid": sid})).all()
+        ]
+        lang = str(row["language"] or "en").lower()
+        payload: dict[str, Any] = {
+            "session_id": str(sid),
+            "job_title": row["job_title"],
+            "experience_level": _level(row["level"]),
+            "language": lang if lang in ("en", "hi", "te") else "en",
+            "jd_text": row["jd_text"] or "",
+            "turns": turns,
+        }
+        profile = await _role_profile_for(db, row)
+        if profile is not None:
+            payload["role_profile"] = profile
+        # Release the connection before a call that can take minutes.
+        await db.rollback()
+
+        try:
+            outcome = await score_interview_remote(payload)
+        except ScoringServiceUnavailableError as exc:
+            # The scorer is down or refusing every call. Nothing about this
+            # session failed, so nothing is charged to it — the next pass
+            # simply tries again. See ScoringServiceUnavailableError.
+            await db.rollback()
+            log.warning("reconcile.scorer_unavailable", error=str(exc)[:200])
+            return
+        except Exception as exc:  # noqa: BLE001 — one bad session must not stop the pass
+            await db.rollback()
+            result.failed += 1
+            if await _record_failure(
+                db, KIND_SCORECARD, sid, f"{type(exc).__name__}: {exc}",
+                max_attempts=SCORECARD_MAX_ATTEMPTS,
+            ):
+                result.gave_up += 1
+            continue
+
+        await _clear_state(db, KIND_SCORECARD, sid)
+        await db.commit()
+        if outcome == "created":
+            result.interviews_scored += 1
+            # Deliberately nothing else. The reminder sweep finds a new
+            # scorecard by the same absence rule and sends the candidate's
+            # results email and HR's "interview completed" notice — exactly as
+            # it does for a scorecard the live path wrote.
+            log.info("reconcile.interview_scored", session_id=str(sid))
+
+
+_MISSING_PDF_SQL = """
+SELECT sc.scorecard_id
+  FROM scorecards sc
+ WHERE sc.report_pdf_key IS NULL
+   AND sc.created_at <= :settled
+""" + _not_backing_off("sc.scorecard_id", "kind") + """
+ ORDER BY sc.created_at
+ LIMIT :lim
+"""
+
+
+async def _park(db: AsyncSession, kind: str, ref_id: uuid.UUID, reason: str) -> None:
+    """Record work that will never succeed, so it stops being selected.
+
+    Distinct from a failure: nothing is retried and no backoff applies. The row
+    stays visible in the "parked" count, with its reason.
+    """
+    now = datetime.now(tz=UTC)
+    await db.execute(
+        text(
+            """
+            INSERT INTO reconciliation_state
+                   (kind, ref_id, attempts, last_error, last_attempt_at, gave_up_at)
+            VALUES (:kind, :ref, 1, :err, :now, :now)
+            ON CONFLICT (kind, ref_id) DO UPDATE
+               SET last_error = :err, last_attempt_at = :now,
+                   gave_up_at = :now, next_attempt_at = NULL
+            """
+        ),
+        {"kind": kind, "ref": ref_id, "err": reason[:1000], "now": now},
+    )
+    await db.commit()
+
+
+async def _pdf_pass(db: AsyncSession, result: PassResult) -> None:
+    """Render PDFs for scorecards whose fire-and-forget render never landed."""
+    now = datetime.now(tz=UTC)
+    ids = [
+        r[0]
+        for r in (
+            await db.execute(
+                text(_MISSING_PDF_SQL),
+                {"kind": KIND_PDF, "now": now, "settled": now - _PDF_GRACE,
+                 "lim": PDF_BATCH},
+            )
+        ).all()
+    ]
+    await db.rollback()
+
+    for scid in ids:
+        try:
+            body = await render_scorecard_pdf_remote(str(scid))
+        except ScoringServiceUnavailableError as exc:
+            # Includes "storage not configured", which is how every local
+            # environment without S3 answers. Charging each scorecard an
+            # attempt would park them all, and they would stay parked after
+            # storage was configured.
+            await db.rollback()
+            log.info("reconcile.pdf_service_unavailable", error=str(exc)[:200])
+            return
+        except Exception as exc:  # noqa: BLE001 — one bad render must not stop the pass
+            await db.rollback()
+            result.failed += 1
+            if await _record_failure(db, KIND_PDF, scid, f"{type(exc).__name__}: {exc}"):
+                result.gave_up += 1
+            continue
+
+        if body.get("status") == "not_applicable":
+            # No candidate name, or pending erasure: a retry would get the
+            # same answer, so it is parked rather than retried.
+            await _park(db, KIND_PDF, scid, f"not_applicable: {body.get('reason')}")
+            continue
+        await _clear_state(db, KIND_PDF, scid)
+        await db.commit()
+        if body.get("status") == "rendered":
+            result.pdfs_rendered += 1
+
+
 async def _outstanding(db: AsyncSession) -> dict[str, int]:
     """How much work is still queued — the number an operator actually wants."""
     row = (
@@ -414,9 +715,31 @@ async def _outstanding(db: AsyncSession) -> dict[str, int]:
     parked = await db.scalar(
         text("SELECT count(*) FROM reconciliation_state WHERE gave_up_at IS NOT NULL")
     )
+    later = (
+        await db.execute(
+            text(
+                """
+                SELECT
+                  (SELECT count(*) FROM sessions s
+                    WHERE s.status = 'completed' AND s.deleted_at IS NULL
+                      AND s.completed_at > :floor
+                      AND NOT EXISTS (SELECT 1 FROM scorecards sc
+                                       WHERE sc.session_id = s.id)) AS unscored_interviews,
+                  (SELECT count(*) FROM scorecards sc
+                    WHERE sc.report_pdf_key IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM reconciliation_state rs
+                                       WHERE rs.kind = :pdf AND rs.ref_id = sc.scorecard_id
+                                         AND rs.gave_up_at IS NOT NULL)) AS missing_pdfs
+                """
+            ),
+            {"floor": datetime.now(tz=UTC) - _SCORECARD_LOOKBACK, "pdf": KIND_PDF},
+        )
+    ).first()
     return {
         "unscored": int(row[0] or 0) if row else 0,
         "unembedded": int(row[1] or 0) if row else 0,
+        "unscored_interviews": int(later[0] or 0) if later else 0,
+        "missing_pdfs": int(later[1] or 0) if later else 0,
         "parked": int(parked or 0),
     }
 
@@ -425,10 +748,23 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> PassResult:
     """One reconciliation pass. Safe to call concurrently and from tests."""
     result = PassResult()
     async with factory() as db:
-        await _score_pass(db, result)
-        await _embed_pass(db, result)
+        # Each pass is isolated: a failure in one (a bad query, a service
+        # down) must not cost the others their turn.
+        for name, pass_ in (
+            ("score", _score_pass),
+            ("embed", _embed_pass),
+            ("scorecard", _scorecard_pass),
+            ("pdf", _pdf_pass),
+        ):
+            try:
+                await pass_(db, result)
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                log.error("reconcile.pass_failed", stage=name,
+                          error_type=type(exc).__name__, error=str(exc)[:300])
         result.outstanding = await _outstanding(db)
-    if result.scored or result.embedded or result.failed:
+    if (result.scored or result.embedded or result.interviews_scored
+            or result.pdfs_rendered or result.failed):
         log.info("reconcile.pass", **result.as_dict())
     return result
 

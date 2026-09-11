@@ -188,3 +188,52 @@ describe('HRConsole — quick actions', () => {
     expect(hrefsOf(/create exam/i)).toEqual(['/hr/exams']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The activity feed and the Attention panel must not say the same thing
+// ---------------------------------------------------------------------------
+// 9 of 17 real notifications were `system`, and 8 repeated a finding the
+// Attention panel shows directly above. `system` is written by exactly one
+// place (agents/watch_runner.py), so excluding it is precise.
+const WATCHER_FINDING = {
+  id: 'n-sys',
+  kind: 'system',
+  title: "'Backend Engineer' funnel is losing almost everyone",
+  body: '31 applicants, 0 interviewed (0%).',
+  link: '/hr/analytics',
+  read: false,
+  created_at: new Date(Date.now() - 3_600_000).toISOString(),
+};
+
+describe('HRConsole activity feed — events, not conditions', () => {
+  it('does not repeat a watcher finding the Attention panel owns', async () => {
+    listNotifications.mockResolvedValue({
+      unread_count: 2,
+      items: [WATCHER_FINDING, ...NOTIFS.items],
+    });
+    renderConsole();
+
+    expect(await screen.findByText('Bhavya Nair scored 82')).toBeTruthy();
+    expect(
+      screen.queryByText("'Backend Engineer' funnel is losing almost everyone"),
+    ).toBeNull();
+  });
+
+  it('still shows kinds it has never seen', async () => {
+    // Denylist, not allowlist: a new event kind must appear unregistered.
+    listNotifications.mockResolvedValue({
+      unread_count: 1,
+      items: [{ ...WATCHER_FINDING, id: 'n-new', kind: 'some_future_kind', title: 'Something new happened' }],
+    });
+    renderConsole();
+
+    expect(await screen.findByText('Something new happened')).toBeTruthy();
+  });
+
+  it('says nothing is happening when only watcher findings remain', async () => {
+    listNotifications.mockResolvedValue({ unread_count: 1, items: [WATCHER_FINDING] });
+    renderConsole();
+
+    expect(await screen.findByText('No recent activity yet.')).toBeTruthy();
+  });
+});

@@ -68,17 +68,41 @@ const STATUS_FILTERS = [
   { key: 'rejected', label: 'Rejected' },
 ];
 
-const STATUS_TONE: Record<ApplicantStatus, TagTone> = {
+// Keyed by string and covering all SIX statuses the API returns — not the
+// three the exported `ApplicantStatus` union lists. The maps used to be typed to
+// that union and indexed with no fallback, so a held, interviewed or hired
+// applicant rendered an EMPTY badge: no colour, no word. Worst for `held`, the
+// D-05 state — below a round threshold, still in play, awaiting a person —
+// which is exactly the one that must stay visible.
+//
+// `held` is amber, never the terminal red: nobody has decided anything yet.
+const STATUS_TONE: Record<string, TagTone> = {
   new: 'neutral',
   shortlisted: 'forest',
+  held: 'amber',
+  interviewed: 'lavender',
+  hired: 'forest',
   rejected: 'ember',
 };
 
-const STATUS_LABEL: Record<ApplicantStatus, string> = {
+const STATUS_LABEL: Record<string, string> = {
   new: 'New',
   shortlisted: 'Shortlisted',
+  held: 'Held',
+  interviewed: 'Interviewed',
+  hired: 'Hired',
   rejected: 'Rejected',
 };
+
+/** A tone that claims nothing for a status this build has never seen. */
+function statusTone(status: string): TagTone {
+  return STATUS_TONE[status] ?? 'neutral';
+}
+
+/** The raw value rather than a blank: a person can report "foo", not nothing. */
+function statusLabel(status: string): string {
+  return STATUS_LABEL[status] ?? status;
+}
 
 const BREAKDOWN_LABELS: Record<string, string> = {
   skills_match: 'Skills',
@@ -278,8 +302,8 @@ function ApplicantDrawer({
               <div className="rounded-[12px] border border-border bg-card p-4">
                 <div className="text-[11px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">Status</div>
                 <div className="mt-2">
-                  <StatusTag tone={STATUS_TONE[a.status]} dot>
-                    {STATUS_LABEL[a.status]}
+                  <StatusTag tone={statusTone(a.status)} dot>
+                    {statusLabel(a.status)}
                   </StatusTag>
                 </div>
               </div>
@@ -479,8 +503,8 @@ function ApplicantRow({
 
       {/* Status */}
       <div className="flex flex-col gap-1">
-        <StatusTag tone={STATUS_TONE[a.status]} dot>
-          {STATUS_LABEL[a.status]}
+        <StatusTag tone={statusTone(a.status)} dot>
+          {statusLabel(a.status)}
         </StatusTag>
         {a.ats_recommendation && (
           <StatusTag tone={rec.tone} className="text-[10.5px]">

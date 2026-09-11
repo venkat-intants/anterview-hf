@@ -75,7 +75,10 @@ _WINDOWS: tuple[tuple[str, timedelta, timedelta], ...] = (
 # A workflow can switch candidate reminders off ("Remind candidates" in the
 # builder). Rows that did not come through a workflow have no enrolment or no
 # workflow and keep the default, which is on. Both reminder queries and the
-# expiry notice share this, so the switch means the same thing everywhere.
+# expiry notice use exactly this expression, so the switch means the same thing
+# everywhere. It is written out in each query rather than interpolated: the
+# SAST gate (bandit B608) flags any SQL built by string formatting, and a test
+# holds the copies to this one spelling.
 _REMINDERS_ON = "COALESCE(wf.reminders_enabled, true)"
 
 # How far past a deadline the expiry sweep still looks. Generous relative to the
@@ -144,7 +147,7 @@ async def _lang_for_user(db: AsyncSession, user_id: uuid.UUID | None) -> str:
 # ---------------------------------------------------------------------------
 # 1. Exam links about to expire
 # ---------------------------------------------------------------------------
-_EXAM_DUE_SQL = f"""
+_EXAM_DUE_SQL = """
 SELECT asg.id, asg.expires_at, asg.scheduled_at,
        a.id AS applicant_id, a.full_name, a.email, a.user_id,
        e.title AS exam_title, r.title AS round_title, asg.company_id
@@ -158,7 +161,7 @@ SELECT asg.id, asg.expires_at, asg.scheduled_at,
    AND asg.deleted_at IS NULL
    AND asg.consumed_at IS NULL
    AND a.email IS NOT NULL
-   AND {_REMINDERS_ON}
+   AND COALESCE(wf.reminders_enabled, true)
    AND asg.expires_at > :near
    AND asg.expires_at <= :horizon
  ORDER BY asg.expires_at
@@ -201,7 +204,7 @@ async def _exam_reminders(db: AsyncSession, result: SweepResult) -> None:
 # ---------------------------------------------------------------------------
 # 2. Interviews about to start (or whose link is about to lapse)
 # ---------------------------------------------------------------------------
-_INTERVIEW_DUE_SQL = f"""
+_INTERVIEW_DUE_SQL = """
 SELECT inv.id, inv.expires_at, inv.scheduled_at, inv.language, inv.company_id,
        a.full_name, a.email, a.user_id,
        j.title AS job_title
@@ -214,7 +217,7 @@ SELECT inv.id, inv.expires_at, inv.scheduled_at, inv.language, inv.company_id,
    AND inv.deleted_at IS NULL
    AND inv.consumed_at IS NULL
    AND a.email IS NOT NULL
-   AND {_REMINDERS_ON}
+   AND COALESCE(wf.reminders_enabled, true)
    AND COALESCE(inv.scheduled_at, inv.expires_at) > :near
    AND COALESCE(inv.scheduled_at, inv.expires_at) <= :horizon
  ORDER BY COALESCE(inv.scheduled_at, inv.expires_at)
@@ -312,12 +315,12 @@ async def _interview_reminders(db: AsyncSession, result: SweepResult) -> None:
 #
 # `a.email LIKE '%@%'` mirrors enqueue_email's own validity check, so a row the
 # mailer would refuse is not counted as owing an email it can never send.
-_LAPSED_SQL = f"""
+_LAPSED_SQL = """
 SELECT * FROM (
   SELECT 'exam' AS kind, asg.id, asg.expires_at, asg.company_id,
          COALESCE(asg.created_by_user_id, wf.created_by_user_id) AS owner_user_id,
          a.full_name, a.email, a.user_id, COALESCE(r.title, e.title) AS what,
-         (a.email LIKE '%@%' AND {_REMINDERS_ON}) AS mail_candidate
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate
     FROM exam_assignments asg
     JOIN applicants a ON a.id = asg.applicant_id AND a.deleted_at IS NULL
     JOIN exams       e ON e.id = asg.exam_id
@@ -330,7 +333,7 @@ SELECT * FROM (
   SELECT 'interview' AS kind, inv.id, inv.expires_at, inv.company_id,
          COALESCE(inv.created_by_user_id, wf.created_by_user_id) AS owner_user_id,
          a.full_name, a.email, a.user_id, j.title AS what,
-         (a.email LIKE '%@%' AND {_REMINDERS_ON}) AS mail_candidate
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate
     FROM interview_invites inv
     JOIN applicants a ON a.id = inv.applicant_id AND a.deleted_at IS NULL
     LEFT JOIN jobs j ON j.id = inv.job_id
@@ -534,18 +537,20 @@ async def _interview_completed(db: AsyncSession, result: SweepResult) -> None:
     ).mappings().all()
 
     for r in rows:
-        flipped = await db.execute(
-            text(
-                "UPDATE interview_invites SET status = 'completed', updated_at = now() "
-                "WHERE id = :id AND status = 'consumed'"
-            ),
-            {"id": r["id"]},
-        )
+        flipped = (
+            await db.execute(
+                text(
+                    "UPDATE interview_invites SET status = 'completed', updated_at = now() "
+                    "WHERE id = :id AND status = 'consumed' RETURNING id"
+                ),
+                {"id": r["id"]},
+            )
+        ).first()
         # The guard only guards if its answer is read. Two sweeps can both
         # select the row while it is still 'consumed'; the second one's UPDATE
         # then matches nothing, and announcing anyway is a duplicate. The
         # notification's own key backs this up at the database.
-        if flipped.rowcount != 1:
+        if flipped is None:
             continue
         # In-app only. There is no interview_completed email template and never
         # has been — a comment in hr_interviews.py claimed one had been "moved"

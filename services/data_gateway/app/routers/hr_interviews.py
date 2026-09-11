@@ -29,6 +29,7 @@ from app.interview_link import hash_interview_token, mint_interview_token
 from app.mailer import enqueue_email
 from app.models import Applicant, InterviewInvite, Job, Scorecard
 from app.notifications_util import create_notification
+from app.reminders import rearm_interview_reminders
 from app.routers.hr_applicants import _get_owned
 from app.utils.ownership import get_owned
 
@@ -494,6 +495,10 @@ async def reschedule_invite(
         raise HTTPException(
             status_code=409, detail="Only an active invite can be rescheduled."
         )
+    if inv.scheduled_at != body.scheduled_at:
+        # The reminders already sent were for the old slot; the new one needs
+        # its own 24h and 1h nudges.
+        await rearm_interview_reminders(db, inv.id)
     inv.scheduled_at = body.scheduled_at
     inv.updated_at = datetime.now(tz=UTC)
 

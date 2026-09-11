@@ -57,10 +57,16 @@ export default function HRConsole() {
   });
 
   // Recent activity — reuse the notification feed (HR invites, scores, completions).
+  // Its own key, under the bell's prefix. Sharing the bell's exact key while
+  // asking for 8 rows instead of 30 meant whichever fetched last owned the
+  // cache, and the bell could open showing only eight. The prefix keeps the
+  // bell's mark-read invalidation reaching this list, and the interval matches
+  // the bell's so the feed still updates on its own.
   const { data: notifs } = useQuery({
-    queryKey: ['notifications'],
+    queryKey: ['notifications', 'recent', 8],
     queryFn: () => listNotifications(8),
     staleTime: 30_000,
+    refetchInterval: 60_000,
     retry: false,
   });
 

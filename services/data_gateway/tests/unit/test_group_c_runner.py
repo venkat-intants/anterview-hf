@@ -168,3 +168,43 @@ def test_release_hold_has_no_automated_caller() -> None:
     assert "actor_user_id" in sig.parameters
     # Required, not defaulted — there is no way to call it as the system.
     assert sig.parameters["actor_user_id"].default is inspect.Parameter.empty
+
+
+# ===========================================================================
+# Ownership of what the runner issues
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_a_workflow_issued_exam_link_belongs_to_the_workflow_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The interview branch already attributed its invite to the workflow's
+    owner; the exam branch left created_by_user_id NULL, so when one of these
+    links lapsed there was nobody to tell."""
+    import app.workflow_runner as wr
+    from app.workflows import EXAM_BACKED_KINDS
+
+    async def _enqueue(_db: object, **_: object) -> object:
+        return object()
+
+    monkeypatch.setattr(wr, "enqueue_email", _enqueue)
+    owner = uuid.uuid4()
+    db = _db(scalar=uuid.uuid4())  # the exam_id lookup
+
+    await wr._assign_round(
+        db,
+        enrolment={
+            "id": uuid.uuid4(), "company_id": uuid.uuid4(), "applicant_id": uuid.uuid4(),
+            "email": "c@example.com", "full_name": "Chitra",
+        },
+        round_={
+            "id": uuid.uuid4(), "kind": next(iter(EXAM_BACKED_KINDS)),
+            "exam_round_id": uuid.uuid4(), "deadline_days": 7, "title": "Aptitude",
+        },
+        workflow={"created_by_user_id": owner},
+    )
+
+    inserts = [c for c in db.execute.call_args_list
+               if "INSERT INTO exam_assignments" in str(c.args[0])]
+    assert len(inserts) == 1
+    assert "created_by_user_id" in str(inserts[0].args[0])
+    assert inserts[0].args[1]["cb"] == owner

@@ -419,7 +419,7 @@ async def submit_application(
     existing = (
         await db.execute(
             text(
-                "SELECT a.id, a.full_name, e.id AS enrolment_id"
+                "SELECT a.id, a.full_name, a.resume_s3_key, e.id AS enrolment_id"
                 "  FROM applicants a"
                 "  LEFT JOIN enrolments e ON e.applicant_id = a.id"
                 "   AND e.requisition_id = :r AND e.deleted_at IS NULL"
@@ -485,7 +485,16 @@ async def submit_application(
     applicant_id = uuid.UUID(str(existing["id"])) if existing is not None else uuid.uuid4()
     is_new_person = existing is None
 
-    s3_key = f"applicants/{company_id}/{applicant_id}.pdf"
+    # A returning candidate's new CV gets a key of its own. It used to be
+    # written over the old one, and the old one is what their earlier
+    # application was scored against (enrolments.scored_resume_s3_key) — so
+    # that score silently stopped being reproducible (D-06a). The previous
+    # object is removed after the commit if no application points at it.
+    previous_key: str | None = None if is_new_person else existing["resume_s3_key"]
+    s3_key = (
+        f"applicants/{company_id}/{applicant_id}.pdf" if is_new_person
+        else f"applicants/{company_id}/{applicant_id}-{uuid.uuid4().hex[:12]}.pdf"
+    )
     try:
         await _upload_to_s3(raw, s3_key)
     except (BotoCoreError, ClientError, LocalStorageError) as exc:
@@ -635,6 +644,9 @@ async def submit_application(
         # (requisition_id, applicant_id) is the arbiter; the loser reports
         # success, because from the candidate's side their application landed.
         await db.rollback()
+        # The winning submission stored its own CV; this one's object has no
+        # row. (For a new person it never did: the applicant insert rolled back.)
+        await _delete_from_s3(s3_key)
         log.info("public.apply.race_lost", requisition_id=str(requisition_id))
         return ApplicationOut(
             applicant_id=str(applicant_id),
@@ -645,14 +657,33 @@ async def submit_application(
         )
     except Exception as exc:  # noqa: BLE001 — the upload must not outlive the row
         await db.rollback()
-        if is_new_person:
-            # Orphaned object otherwise: a CV in storage belonging to nobody is
-            # PII with no consent record and no erasure path.
-            await _delete_from_s3(s3_key)
+        # Orphaned object otherwise: a CV in storage belonging to nobody is PII
+        # with no consent record and no erasure path. A returning candidate's
+        # upload has its own key now, so it is removed too; their previous CV
+        # is untouched.
+        await _delete_from_s3(s3_key)
         log.exception("public.apply.failed", error_type=type(exc).__name__)
         raise HTTPException(
             status_code=503, detail="We could not save your application. Please try again."
         ) from exc
+
+    # The CV this one replaced, kept only while an application still points at
+    # it as the CV it was scored against. Otherwise it is PII nothing refers to
+    # — no erasure path would ever find it — so it goes. Best-effort, after the
+    # commit: a failed delete leaves an unreferenced object, never a broken
+    # application.
+    if previous_key and previous_key != s3_key:
+        try:
+            still_used = await db.scalar(
+                text("SELECT 1 FROM enrolments WHERE scored_resume_s3_key = :k LIMIT 1"),
+                {"k": previous_key},
+            )
+            await db.rollback()
+            if still_used is None:
+                await _delete_from_s3(previous_key)
+        except Exception:  # noqa: BLE001
+            await db.rollback()
+            log.warning("public.apply.previous_cv_cleanup_failed")
 
     # Confirmation email, with a link to activate the account this application
     # just created. AFTER the commit and in its own transaction, deliberately:

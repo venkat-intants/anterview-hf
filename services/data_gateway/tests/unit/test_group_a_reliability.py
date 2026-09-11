@@ -181,6 +181,19 @@ def test_results_ready_falls_back_when_no_link() -> None:
 # ===========================================================================
 # A1 — reconciliation
 # ===========================================================================
+def _work(*applicant_ids: uuid.UUID, enrolment_ids: list | None = None) -> MagicMock:
+    """What _UNSCORED_WORK_SQL returns: one row per application to score.
+    enrolment_id None is an applicant with no enrolment (the legacy path)."""
+    eids = enrolment_ids or [None] * len(applicant_ids)
+    rows = [
+        {"applicant_id": a, "enrolment_id": e, "job_title": "Dev", "level": "mid",
+         "jd_text": None}
+        for a, e in zip(applicant_ids, eids, strict=True)
+    ]
+    return MagicMock(mappings=MagicMock(return_value=MagicMock(
+        all=MagicMock(return_value=rows))))
+
+
 def test_backoff_grows_and_is_capped() -> None:
     from app.reconciliation import _BACKOFF_CAP_SECONDS, _backoff
 
@@ -225,7 +238,7 @@ async def test_one_bad_applicant_does_not_stop_the_pass(
 
     good, bad = uuid.uuid4(), uuid.uuid4()
     db = _db()
-    db.execute.return_value = MagicMock(all=MagicMock(return_value=[(bad,), (good,)]))
+    db.execute.return_value = _work(bad, good)
 
     applicant = MagicMock(
         id=good, company_id=uuid.uuid4(), resume_text="cv", target_job_title="Dev",
@@ -1494,7 +1507,7 @@ async def test_a_row_given_up_on_can_finish_its_batch(
 
     aid, batch, uploader = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     db = _db()
-    db.execute.return_value = MagicMock(all=MagicMock(return_value=[(aid,)]))
+    db.execute.return_value = _work(aid)
     db.get = AsyncMock(return_value=MagicMock(
         id=aid, resume_text="cv", target_job_title="Dev", target_level="mid",
         target_jd_text=None, created_by_user_id=uploader, upload_batch_id=batch,

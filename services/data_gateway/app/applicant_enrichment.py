@@ -43,6 +43,64 @@ def apply_ats_score(a: Applicant, score: dict[str, Any]) -> None:
     a.updated_at = datetime.now(tz=UTC)
 
 
+async def apply_ats_to_enrolment(
+    db: AsyncSession,
+    *,
+    enrolment_id: uuid.UUID,
+    score: dict[str, Any],
+    resume_key: str | None,
+) -> bool:
+    """Write a scorer response onto the ENROLMENT it was produced for. No commit.
+
+    D-06a: an ATS score belongs to one application — the same CV scores
+    differently against a Python role and a nursing one — so the enrolment is
+    where it lives. ``scored_resume_s3_key`` and ``scored_at`` record exactly
+    which CV produced it, so the score stays reproducible after the person
+    uploads a newer one.
+
+    Returns True when this is the applicant's most recent live enrolment. The
+    caller then mirrors the score onto the applicant row with
+    :func:`apply_ats_score`, because the legacy ``applicants.ats_*`` columns
+    still feed the pipeline, the applicant list and interview eligibility, and
+    they describe the latest application (which is what a returning candidate's
+    ``applicants.target_*`` is overwritten to). An older enrolment's re-score
+    leaves them alone.
+    """
+    now = datetime.now(tz=UTC)
+    row = (
+        await db.execute(
+            text(
+                "UPDATE enrolments SET ats_overall = :o, ats_breakdown = CAST(:b AS jsonb),"
+                " ats_strengths = CAST(:s AS jsonb), ats_concerns = CAST(:c AS jsonb),"
+                " ats_recommendation = :r, ats_summary = :su,"
+                " scored_resume_s3_key = :k, scored_at = :n, updated_at = :n"
+                " WHERE id = :e AND deleted_at IS NULL"
+                " RETURNING applicant_id, created_at"
+            ),
+            {"o": int(score.get("overall", 0)), "b": _json(score.get("breakdown")),
+             "s": _json(score.get("strengths")), "c": _json(score.get("concerns")),
+             "r": score.get("recommendation"), "su": score.get("summary"),
+             "k": resume_key, "n": now, "e": enrolment_id},
+        )
+    ).first()
+    if row is None:
+        return False
+    newer = await db.scalar(
+        text(
+            "SELECT 1 FROM enrolments WHERE applicant_id = :a AND deleted_at IS NULL"
+            " AND id <> :e AND created_at > :t LIMIT 1"
+        ),
+        {"a": row[0], "e": enrolment_id, "t": row[1]},
+    )
+    return newer is None
+
+
+def _json(value: Any) -> str | None:
+    import json  # noqa: PLC0415 — only needed on this write path
+
+    return json.dumps(value) if value is not None else None
+
+
 # Name sources a PERSON is responsible for. The scorer may not overwrite these.
 # NULL is absent on purpose: rows predating ``full_name_source`` all arrived
 # through bulk upload, so treating them as filename placeholders preserves the

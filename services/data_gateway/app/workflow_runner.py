@@ -103,6 +103,8 @@ async def enrol_applicant(
     target_job_title: str,
     target_level: str = "mid",
     target_jd_text: str | None = None,
+    actor_user_id: uuid.UUID | None = None,
+    reason: str = "enrolled on application",
 ) -> RunnerOutcome:
     """Place an applicant into the requisition's published workflow. Caller commits.
 
@@ -112,6 +114,10 @@ async def enrol_applicant(
 
     The candidate does NOT get a round here. The first round is assigned after
     the human shortlist gate, which is the whole point of the gate.
+
+    ``actor_user_id`` is the person who filed the applicant (HR's upload); the
+    ledger entry is then marked manual. None — a candidate applying — is the
+    system's doing.
     """
     existing = await db.scalar(
         text(
@@ -144,9 +150,10 @@ async def enrol_applicant(
         text(
             "INSERT INTO stage_transitions (company_id, enrolment_id, from_status, to_status,"
             " actor_user_id, automated, reason, occurred_at)"
-            " VALUES (:c,:e,NULL,'new',NULL,true,'enrolled on application',:n)"
+            " VALUES (:c,:e,NULL,'new',:a,:auto,:r,:n)"
         ),
-        {"c": company_id, "e": enrolment_id, "n": now},
+        {"c": company_id, "e": enrolment_id, "a": actor_user_id,
+         "auto": actor_user_id is None, "r": reason, "n": now},
     )
     log.info(
         "runner.enrolled",

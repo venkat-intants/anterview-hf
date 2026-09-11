@@ -26,6 +26,7 @@ import {
 } from '@/api/pipeline';
 import { toast } from '@/lib/toast';
 import CandidateDrawer from '@/components/CandidateDrawer';
+import { applicationKey } from '@/lib/applicationKey';
 import PipelineBoard from '@/components/PipelineBoard';
 import { cn } from '@/lib/utils';
 import {
@@ -167,7 +168,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
 
   const decideMut = useMutation({
     mutationFn: (decision: ApplicantDecision) =>
-      setApplicantDecision(a.applicant_id, decision, rationale),
+      setApplicantDecision(a.applicant_id, decision, rationale, a.enrolment_id),
     onSuccess: (_res, decision) => {
       toast.success(decision === 'hired' ? 'Applicant hired' : 'Applicant rejected');
       void qc.invalidateQueries({ queryKey: ['hr', 'pipeline'] });
@@ -243,7 +244,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
             )}
           </div>
           <p className="mt-0.5 truncate text-[11px] text-[var(--ui-faint)]">
-            {a.target_job_title} &middot; {a.target_level}
+            {a.opening_title ?? a.target_job_title} &middot; {a.target_level}
           </p>
         </div>
 
@@ -461,7 +462,9 @@ export default function HRPipeline() {
   const [offset, setOffset] = useState(0);
   // Which candidate's drawer is open. Null is closed — one piece of state
   // rather than a boolean plus an id that can disagree with it.
-  const [drawerId, setDrawerId] = useState<string | null>(null);
+  // The row opened: its application as well as the person, so the drawer can
+  // show that application's answers and history (B5).
+  const [drawer, setDrawer] = useState<Row | null>(null);
 
   // Remembered, because re-picking a view on every visit is the kind of small
   // friction that makes one feel like a toy. Wrapped: a browser with site data
@@ -579,12 +582,12 @@ export default function HRPipeline() {
         ) : (
           <>
             {view === 'board' ? (
-              <PipelineBoard rows={items} onOpen={(id) => setDrawerId(id)} />
+              <PipelineBoard rows={items} onOpen={(row) => setDrawer(row)} />
             ) : (
               <Stagger className="flex flex-col gap-2.5">
                 {items.map((a) => (
-                  <StaggerItem key={a.applicant_id}>
-                    <PipelineCard a={a} onOpen={() => setDrawerId(a.applicant_id)} />
+                  <StaggerItem key={applicationKey(a)}>
+                    <PipelineCard a={a} onOpen={() => setDrawer(a)} />
                   </StaggerItem>
                 ))}
               </Stagger>
@@ -620,7 +623,11 @@ export default function HRPipeline() {
         )}
       </section>
 
-      <CandidateDrawer applicantId={drawerId} onClose={() => setDrawerId(null)} />
+      <CandidateDrawer
+        applicantId={drawer?.applicant_id ?? null}
+        enrolmentId={drawer?.enrolment_id ?? null}
+        onClose={() => setDrawer(null)}
+      />
     </div>
   );
 }

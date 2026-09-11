@@ -68,9 +68,14 @@ describe('PipelineBoard — nothing here moves anybody', () => {
 
   it('opens the candidate instead', async () => {
     const user = userEvent.setup();
-    const { onOpen } = renderBoard([row({ applicant_id: 'ap-1', full_name: 'Asha Rao' })]);
+    const { onOpen } = renderBoard([
+      row({ applicant_id: 'ap-1', enrolment_id: 'en-1', full_name: 'Asha Rao' }),
+    ]);
     await user.click(screen.getByRole('button', { name: /Open details for Asha Rao/ }));
-    expect(onOpen).toHaveBeenCalledWith('ap-1');
+    // The whole row: the drawer needs the application as well as the person.
+    expect(onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ applicant_id: 'ap-1', enrolment_id: 'en-1' }),
+    );
   });
 });
 
@@ -84,6 +89,24 @@ describe('PipelineBoard — the columns', () => {
     expect(within(column('new')).getByText('New Person')).toBeInTheDocument();
     expect(within(column('shortlisted')).getByText('Short Lister')).toBeInTheDocument();
     expect(within(column('interviewed')).getByText('Interviewee')).toBeInTheDocument();
+  });
+
+  it('shows a person once per application, each where that application is', () => {
+    // B5: shortlisted for one opening and new in another is two cards, not one
+    // card with whichever status was written last.
+    renderBoard([
+      row({ applicant_id: 'ap-1', enrolment_id: 'en-1', full_name: 'Priya',
+            opening_title: 'Python Developer', status: 'shortlisted' }),
+      row({ applicant_id: 'ap-1', enrolment_id: 'en-2', full_name: 'Priya',
+            opening_title: 'Staff Nurse', status: 'new' }),
+    ]);
+    expect(within(column('shortlisted')).getByText('Python Developer')).toBeInTheDocument();
+    expect(within(column('new')).getByText('Staff Nurse')).toBeInTheDocument();
+  });
+
+  it('keeps held applications on the board, with those still to review', () => {
+    renderBoard([row({ full_name: 'On Hold', status: 'held' })]);
+    expect(within(column('new')).getByText('On Hold')).toBeInTheDocument();
   });
 
   it('puts hired and rejected together under Decided', () => {

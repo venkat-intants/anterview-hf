@@ -56,10 +56,18 @@ const SCORE_DIST_STATIC: { label: string; value: number }[] = [];
 const HR_TREND_STATIC: { day: string; interviews: number; avg: number }[] = [];
 
 // ── FunnelBars — horizontal bar chart using real funnel data ─────────────────
+/** Applications, which every other funnel count is a count of (B5). People
+ *  would undercount the top of a funnel whose lower bars count applications —
+ *  one person shortlisted for two openings is two shortlists. Older servers
+ *  send only people. */
+function applied(f: HrAnalytics['funnel']): number {
+  return f.total_applications ?? f.total_applicants;
+}
+
 function FunnelBars({ f }: { f: HrAnalytics['funnel'] }) {
-  const max = f.total_applicants || 1;
+  const max = applied(f) || 1;
   const rows = [
-    { label: 'Applied',     value: f.total_applicants },
+    { label: 'Applied',     value: applied(f) },
     { label: 'Shortlisted', value: f.shortlisted },
     { label: 'Exam passed', value: f.exam_passed },
     { label: 'Interviewed', value: f.interview_completed },
@@ -136,7 +144,7 @@ export default function HRAnalytics() {
                 <span>
                   Shortlist rate:{' '}
                   <span className="text-[var(--ui-soft)]">
-                    {rate(f.shortlisted, f.total_applicants)}
+                    {rate(f.shortlisted, applied(f))}
                   </span>
                 </span>
                 <span>

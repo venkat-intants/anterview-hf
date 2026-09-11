@@ -27,6 +27,7 @@ import {
   rescheduleInvite,
   type InterviewInvite,
 } from '@/api/interviewInvites';
+import { applicationKey } from '@/lib/applicationKey';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
@@ -260,7 +261,9 @@ export default function HRInterviews() {
   const qc = useQueryClient();
 
   // Form state
-  const [applicantId, setApplicantId] = useState('');
+  // The chosen APPLICATION (its enrolment id, or the person for someone filed
+  // under no opening) — a person can be eligible in two openings (B5).
+  const [choice, setChoice] = useState('');
   const [language, setLanguage] = useState<'en' | 'hi' | 'te'>('en');
   const [scheduledAt, setScheduledAt] = useState('');
   const [mintedLink, setMintedLink] = useState<string | null>(null);
@@ -287,13 +290,14 @@ export default function HRInterviews() {
   const inviteMut = useMutation({
     mutationFn: () =>
       createInvite({
-        applicant_id: applicantId,
+        applicant_id: chosen?.id ?? '',
+        enrolment_id: chosen?.enrolment_id ?? null,
         language,
         scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null,
       }),
     onSuccess: (res) => {
       setMintedLink(res.magic_link);
-      setApplicantId('');
+      setChoice('');
       setScheduledAt('');
       toast.success('Interview link created');
       void qc.invalidateQueries({ queryKey: ['hr', 'interviews'] });
@@ -332,6 +336,8 @@ export default function HRInterviews() {
   // ── Derived ────────────────────────────────────────────────────────────────
   const allInvites = useMemo(() => invites ?? [], [invites]);
   const elig = eligible ?? [];
+  const keyOf = applicationKey;
+  const chosen = elig.find((a) => keyOf(a) === choice);
 
   const filteredInvites = useMemo(
     () =>
@@ -379,15 +385,16 @@ export default function HRInterviews() {
             <div className="grid gap-3 sm:grid-cols-3">
               <select
                 className={cn(inputCls, 'sm:col-span-2')}
-                value={applicantId}
-                onChange={(e) => setApplicantId(e.target.value)}
+                value={choice}
+                onChange={(e) => setChoice(e.target.value)}
                 aria-label="Applicant"
               >
                 <option value="">Select an eligible applicant…</option>
                 {elig.map((a) => (
-                  <option key={a.id} value={a.id}>
+                  <option key={keyOf(a)} value={keyOf(a)}>
                     {a.full_name} — {a.passed_exam ? 'exam passed' : 'shortlisted'}
                     {a.has_active_invite ? ' (already invited)' : ''}
+                    {a.opening_title ? ` · for ${a.opening_title}` : ''}
                   </option>
                 ))}
               </select>
@@ -420,7 +427,7 @@ export default function HRInterviews() {
             <Pill
               variant="primary"
               className="gap-1.5 px-5 py-2.5"
-              disabled={!applicantId || inviteMut.isPending}
+              disabled={!chosen || inviteMut.isPending}
               onClick={() => inviteMut.mutate()}
             >
               {inviteMut.isPending ? (

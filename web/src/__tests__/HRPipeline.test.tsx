@@ -28,6 +28,7 @@ const ROW_BASE = {
 const SHORTLISTED: PipelineRow = {
   ...ROW_BASE,
   applicant_id: 'ap-1',
+  enrolment_id: 'en-1',
   full_name: 'Bhavya Nair',
   status: 'shortlisted',
   ats_overall: 84,
@@ -200,7 +201,8 @@ describe('HRPipeline — hire / reject', () => {
     await user.click(within(cardFor('Bhavya Nair')).getByRole('button', { name: /^hire$/i }));
 
     await waitFor(() =>
-      expect(setApplicantDecision).toHaveBeenCalledWith('ap-1', 'hired', ''),
+      // With the application the card is about (B5).
+      expect(setApplicantDecision).toHaveBeenCalledWith('ap-1', 'hired', '', 'en-1'),
     );
     expect(toastSuccess).toHaveBeenCalledWith('Applicant hired');
   });
@@ -225,6 +227,7 @@ describe('HRPipeline — hire / reject', () => {
         'ap-1',
         'rejected',
         'Strong system-design answers',
+        'en-1',
       ),
     );
   });

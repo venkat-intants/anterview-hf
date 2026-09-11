@@ -44,6 +44,7 @@ import {
   type RequisitionStatus,
   type RoundProgress,
 } from '@/api/requisitions';
+import OpeningDetails from '@/components/OpeningDetails';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -395,6 +396,10 @@ export default function RequisitionDashboard(): JSX.Element {
                 </StatusTag>
                 <span>{req.level}</span>
                 {req.target_hires ? <span>target {req.target_hires} hires</span> : null}
+                {req.closes_at ? (
+                  <span>closes {new Date(req.closes_at).toLocaleDateString()}</span>
+                ) : null}
+                {req.owner_name ? <span>owner {req.owner_name}</span> : null}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -436,6 +441,8 @@ export default function RequisitionDashboard(): JSX.Element {
           value={median_days_in_stage === null ? '—' : String(median_days_in_stage)}
         />
       </div>
+
+      <OpeningDetails requisition={req} />
 
       {still_being_read > 0 ? (
         <div className="mb-5 flex items-center gap-2 rounded-[14px] border border-border bg-black/25 px-4 py-3 text-[12.5px] text-muted-foreground">

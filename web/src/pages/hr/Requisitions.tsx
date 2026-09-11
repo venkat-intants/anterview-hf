@@ -29,6 +29,8 @@ import { LIVE_POLL_MS } from '@/lib/polling';
 import {
   listRequisitions,
   createRequisition,
+  closingDateToIso,
+  listTeam,
   getBackfillReview,
   type Requisition,
   type RequisitionStatus,
@@ -139,9 +141,22 @@ function NewRequisitionForm({ onDone }: { onDone: () => void }) {
   const qc = useQueryClient();
   const [title, setTitle] = useState('');
   const [level, setLevel] = useState('mid');
+  // B1: who fills it, how many, and by when. All optional; the owner defaults
+  // to whoever creates it.
+  const [owner, setOwner] = useState('');
+  const [target, setTarget] = useState('');
+  const [closes, setCloses] = useState('');
+  const team = useQuery({ queryKey: ['hr', 'team'], queryFn: listTeam, staleTime: 60_000 });
 
   const mut = useMutation({
-    mutationFn: () => createRequisition({ title: title.trim(), level }),
+    mutationFn: () =>
+      createRequisition({
+        title: title.trim(),
+        level,
+        ...(owner ? { owner_user_id: owner } : {}),
+        ...(target ? { target_hires: Number(target) } : {}),
+        ...(closes ? { closes_at: closingDateToIso(closes) } : {}),
+      }),
     onSuccess: (r) => {
       toast.success(`Opened “${r.title}”`);
       void qc.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
@@ -188,6 +203,52 @@ function NewRequisitionForm({ onDone }: { onDone: () => void }) {
               </option>
             ))}
           </select>
+        </div>
+        <div>
+          <label htmlFor="new-owner" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
+            Owner
+          </label>
+          <select
+            id="new-owner"
+            value={owner}
+            onChange={(e) => setOwner(e.target.value)}
+            className={field}
+          >
+            <option value="">Me</option>
+            {(team.data ?? []).map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.full_name || m.email}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="w-[120px]">
+          <label htmlFor="new-target" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
+            Hires wanted
+          </label>
+          <input
+            id="new-target"
+            type="number"
+            min={1}
+            max={10000}
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder="—"
+            className={`w-full ${field}`}
+          />
+        </div>
+        <div>
+          <label htmlFor="new-closes" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
+            Closes on
+          </label>
+          <input
+            id="new-closes"
+            type="date"
+            min={new Date().toISOString().slice(0, 10)}
+            value={closes}
+            onChange={(e) => setCloses(e.target.value)}
+            className={field}
+          />
         </div>
         <button
           type="button"

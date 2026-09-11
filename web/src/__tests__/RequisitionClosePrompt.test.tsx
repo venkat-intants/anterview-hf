@@ -40,6 +40,10 @@ const mocks = vi.hoisted(() => {
     getRequisitionDashboard: vi.fn(),
     setRequisitionStatus: vi.fn(),
     updateRequisition: vi.fn(),
+    // The dashboard's opening-details editor (B1) loads the team for its owner
+    // picker; these tests are about closing, so an empty team is enough.
+    listTeam: vi.fn(() => Promise.resolve([])),
+    closingDateToIso: (d: string) => (d ? `${d}T23:59:59.000Z` : null),
     UnresolvedCandidatesError,
   };
 });

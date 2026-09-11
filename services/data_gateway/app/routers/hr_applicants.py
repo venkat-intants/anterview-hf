@@ -47,7 +47,6 @@ from app.embedding_client import (
 from app.mailer import enqueue_email
 from app.models import Applicant
 from app.requisitions import (
-    TERMINAL_STATUSES,
     ambiguous_decision_detail,
     applicant_by_email,
     choose_application,
@@ -1174,6 +1173,85 @@ async def get_applicant(applicant_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
     return _to_out(await _get_owned(db, company_id, applicant_id))
 
 
+class ApplicationOut(BaseModel):
+    """One of a person's applications, with ITS assessment (B5).
+
+    The applicant row's ats_* describe only their latest application; a CV
+    scores differently against different roles, so a screen about one
+    application reads its score, strengths and concerns from here.
+    """
+
+    enrolment_id: str
+    requisition_id: str | None
+    opening_title: str | None
+    status: str  # derived, as on the pipeline board
+    stored_status: str
+    ats_overall: int | None
+    ats_breakdown: dict[str, int] | None
+    ats_strengths: list[str] | None
+    ats_concerns: list[str] | None
+    ats_recommendation: str | None
+    ats_summary: str | None
+    best_exam_percent: int | None
+    exam_passed: bool | None
+    interview_score: float | None
+    scorecard_id: str | None
+    applied_at: datetime
+    is_latest: bool
+
+
+_APPLICATIONS_SQL = text(
+    """
+SELECT p.enrolment_id, p.requisition_id, p.opening_title, p.status, p.stored_status,
+       e.ats_overall, e.ats_breakdown, e.ats_strengths, e.ats_concerns,
+       e.ats_recommendation, e.ats_summary,
+       p.best_exam_percent, p.exam_passed, p.interview_score, p.scorecard_id, p.applied_at
+  FROM application_progress p
+  JOIN enrolments e ON e.id = p.enrolment_id
+ WHERE p.company_id = :c AND p.applicant_id = :a
+ ORDER BY p.applied_at
+"""
+)
+
+
+@router.get("/applicants/{applicant_id}/applications", response_model=list[ApplicationOut])
+async def list_applications(
+    applicant_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> list[ApplicationOut]:
+    """Every live application this person holds here, oldest first (B5)."""
+    _hr_uid, company_id = ctx
+    await _get_owned(db, company_id, applicant_id)  # 404 cross-tenant
+    rows = (
+        await db.execute(_APPLICATIONS_SQL, {"c": company_id, "a": applicant_id})
+    ).mappings().all()
+    return [
+        ApplicationOut(
+            enrolment_id=str(r["enrolment_id"]),
+            requisition_id=str(r["requisition_id"]) if r["requisition_id"] else None,
+            opening_title=r["opening_title"],
+            status=r["status"],
+            stored_status=r["stored_status"],
+            ats_overall=r["ats_overall"],
+            ats_breakdown=r["ats_breakdown"],
+            ats_strengths=r["ats_strengths"],
+            ats_concerns=r["ats_concerns"],
+            ats_recommendation=r["ats_recommendation"],
+            ats_summary=r["ats_summary"],
+            best_exam_percent=(
+                int(r["best_exam_percent"]) if r["best_exam_percent"] is not None else None
+            ),
+            exam_passed=r["exam_passed"],
+            interview_score=(
+                float(r["interview_score"]) if r["interview_score"] is not None else None
+            ),
+            scorecard_id=str(r["scorecard_id"]) if r["scorecard_id"] else None,
+            applied_at=r["applied_at"],
+            is_latest=i == len(rows) - 1,
+        )
+        for i, r in enumerate(rows)
+    ]
+
+
 class CriterionScore(BaseModel):
     """One competency's score inside a round, with the evidence for it."""
 
@@ -1321,16 +1399,18 @@ async def update_applicant_status(
     a = await _get_owned(db, company_id, applicant_id)
     # B2/B5: the ledger is application-shaped. The change goes to the
     # application named in the body, or to the only one there is. With several
-    # and none named, a hire or reject cannot be attributed to an opening
-    # without guessing, and a terminal decision is the last thing to guess
-    # (D-05), so it is refused and pointed at the opening.
+    # and none named it is refused, whatever the status: a hire or reject is
+    # the last thing to guess (D-05), and a shortlist that lands on no
+    # application moves nothing anyone can see — it used to change only the
+    # person's row and start no workflow. The applicant drawer lists the
+    # applications and names one.
     try:
         app_ = await choose_application(
             db, applicant_id=a.id, company_id=company_id, enrolment_id=body.enrolment_id
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Application not found.") from exc
-    if app_.ambiguous and body.status in TERMINAL_STATUSES:
+    if app_.ambiguous:
         raise HTTPException(
             status_code=409, detail=ambiguous_decision_detail(a.full_name, len(app_.live))
         )
@@ -1348,12 +1428,12 @@ async def update_applicant_status(
             db, applicant=a, decision=body.status, company_id=company_id,
             job_title=app_.title,
         )
-        # Start the workflow on a shortlist, when there is exactly one
-        # application to start. Somebody with three live applications who gets
-        # shortlisted here has not been shortlisted for all three, and sending
-        # three exam links because a recruiter clicked once would be worse than
-        # doing nothing — the per-opening action on the requisition dashboard
-        # names the application it starts.
+        # Start the workflow on a shortlist — for the one application this
+        # change is about (named, or the only one; an ambiguous change was
+        # refused above). Somebody with three live applications who gets
+        # shortlisted for one has not been shortlisted for all three, and
+        # sending three exam links because a recruiter clicked once would be
+        # worse than doing nothing.
         if body.status == "shortlisted" and only is not None:
             outcome = await on_shortlisted(db, enrolment_id=only, actor_user_id=_hr_uid)
             log.info(
@@ -1368,7 +1448,7 @@ async def update_applicant_status(
             log.info(
                 "hr.applicant.shortlist.not_started",
                 applicant_id=str(a.id),
-                reason="no single live application to start",
+                reason="no application to start (filed under no opening)",
             )
     if only is not None:
         # Every change, not just a shortlist. No-op (and no ledger entry) when

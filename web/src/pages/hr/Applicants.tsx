@@ -27,6 +27,7 @@ import {
   bulkUploadApplicants,
   updateApplicantStatus,
   rescoreApplicant,
+  listApplications,
   whyMatch,
   getReindexStatus,
   reindexApplicants,
@@ -179,8 +180,9 @@ const inputCls =
 interface DrawerProps {
   applicant: Applicant | null;
   onClose: () => void;
-  onShortlist: (id: string) => void;
-  onReject: (id: string) => void;
+  /** `enrolmentId` names the application (B5); always sent when known. */
+  onShortlist: (id: string, enrolmentId?: string | null) => void;
+  onReject: (id: string, enrolmentId?: string | null) => void;
   onRescore: (id: string) => void;
   statusPending: boolean;
   rescorePending: boolean;
@@ -201,6 +203,20 @@ function ApplicantDrawer({
   // Lazy "why matched": fetched only when a candidate is open during a search,
   // so the LLM cost is paid per-look — not for every result on every keystroke.
   const showMatch = searchQuery.trim().length > 0;
+
+  // The person's applications (B5). With one, the actions below act on it;
+  // with several, each gets its own actions — the status on this row is only
+  // the latest application's, and a shortlist has to say which opening.
+  const apps = useQuery({
+    queryKey: ['hr', 'applicant', a?.id, 'applications'],
+    queryFn: () => listApplications(a?.id as string),
+    enabled: Boolean(a),
+    retry: false,
+    throwOnError: false,
+  });
+  const applications = apps.data ?? [];
+  const only = applications.length === 1 ? applications[0] : null;
+  const several = applications.length > 1;
   // Skip the LLM call for non-matches (match_score 0) — nothing to explain.
   const worthExplaining = a == null || a.match_score == null || a.match_score > 0;
   const { data: why, isLoading: whyLoading } = useQuery({
@@ -389,6 +405,52 @@ function ApplicantDrawer({
                 component, so opening a drawer costs nothing. */}
             <CandidatePanel applicantId={a.id} applicantName={a.full_name} />
 
+            {/* Several applications: each with where it is and its own actions. */}
+            {several && (
+              <div>
+                <p className="text-[12.5px] font-semibold text-foreground">
+                  Applications ({applications.length})
+                </p>
+                <ul className="mt-2 space-y-2" aria-label="Applications">
+                  {applications.map((app) => (
+                    <li
+                      key={app.enrolment_id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-border px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-[12.5px] font-medium text-foreground">
+                          {app.opening_title ?? 'Untitled opening'}
+                        </p>
+                        <p className="text-[11.5px] text-[var(--ui-faint)]">
+                          {app.status}
+                          {app.ats_overall != null ? ` · resume ${app.ats_overall}/100` : ''}
+                          {app.is_latest ? ' · latest' : ''}
+                        </p>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Pill
+                          variant="ghost"
+                          onClick={() => onShortlist(a.id, app.enrolment_id)}
+                          disabled={statusPending || app.stored_status === 'shortlisted'}
+                          aria-label={`Shortlist for ${app.opening_title ?? 'this opening'}`}
+                        >
+                          Shortlist
+                        </Pill>
+                        <Pill
+                          variant="danger"
+                          onClick={() => onReject(a.id, app.enrolment_id)}
+                          disabled={statusPending || app.stored_status === 'rejected'}
+                          aria-label={`Reject for ${app.opening_title ?? 'this opening'}`}
+                        >
+                          Reject
+                        </Pill>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Strengths + Concerns */}
             {((a.ats_strengths && a.ats_strengths.length > 0) ||
               (a.ats_concerns && a.ats_concerns.length > 0)) && (
@@ -441,26 +503,31 @@ function ApplicantDrawer({
             />
             Re-score
           </Pill>
-          <Pill
-            variant="ghost"
-            onClick={() => onShortlist(a.id)}
-            disabled={statusPending || a.status === 'shortlisted'}
-            aria-label="Shortlist"
-            className="gap-1.5"
-          >
-            <CheckCircle2 size={15} aria-hidden="true" />
-            Shortlist
-          </Pill>
-          <Pill
-            variant="danger"
-            onClick={() => onReject(a.id)}
-            disabled={statusPending || a.status === 'rejected'}
-            aria-label="Reject"
-            className="gap-1.5"
-          >
-            <XCircle size={15} aria-hidden="true" />
-            Reject
-          </Pill>
+          {/* With several applications the actions live on each one above. */}
+          {!several && (
+            <>
+              <Pill
+                variant="ghost"
+                onClick={() => onShortlist(a.id, only?.enrolment_id)}
+                disabled={statusPending || a.status === 'shortlisted'}
+                aria-label="Shortlist"
+                className="gap-1.5"
+              >
+                <CheckCircle2 size={15} aria-hidden="true" />
+                Shortlist
+              </Pill>
+              <Pill
+                variant="danger"
+                onClick={() => onReject(a.id, only?.enrolment_id)}
+                disabled={statusPending || a.status === 'rejected'}
+                aria-label="Reject"
+                className="gap-1.5"
+              >
+                <XCircle size={15} aria-hidden="true" />
+                Reject
+              </Pill>
+            </>
+          )}
         </div>
       </motion.div>
     </motion.div>,
@@ -875,11 +942,19 @@ export default function Applicants() {
   });
 
   const statusMut = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: ApplicantStatus }) =>
-      updateApplicantStatus(id, status),
+    mutationFn: ({
+      id,
+      status,
+      enrolmentId,
+    }: {
+      id: string;
+      status: ApplicantStatus;
+      enrolmentId?: string | null;
+    }) => updateApplicantStatus(id, status, enrolmentId),
     onSuccess: (updated) => {
       setSelected((prev) => (prev?.id === updated.id ? updated : prev));
       void qc.invalidateQueries({ queryKey: ['hr', 'applicants'] });
+      void qc.invalidateQueries({ queryKey: ['hr', 'applicant', updated.id, 'applications'] });
     },
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Update failed'),
   });
@@ -1101,8 +1176,12 @@ export default function Applicants() {
             key={selected.id}
             applicant={selected}
             onClose={() => setSelected(null)}
-            onShortlist={(id) => statusMut.mutate({ id, status: 'shortlisted' })}
-            onReject={(id) => statusMut.mutate({ id, status: 'rejected' })}
+            onShortlist={(id, enrolmentId) =>
+              statusMut.mutate({ id, status: 'shortlisted', enrolmentId })
+            }
+            onReject={(id, enrolmentId) =>
+              statusMut.mutate({ id, status: 'rejected', enrolmentId })
+            }
             onRescore={(id) => rescoreMut.mutate(id)}
             statusPending={statusMut.isPending}
             rescorePending={rescoreMut.isPending}

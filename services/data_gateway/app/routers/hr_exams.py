@@ -28,7 +28,7 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -205,7 +205,12 @@ class ImportQuestionsOut(BaseModel):
 
 
 class AssignIn(BaseModel):
-    applicant_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+    # People to assign. The exam is attributed to an application when that can
+    # be known (see enrolment_for_exam_round).
+    applicant_ids: list[uuid.UUID] = Field(default_factory=list, max_length=200)
+    # Or APPLICATIONS (B5): the exam is for exactly this one. How HR says which
+    # opening an exam is for when a person has applied to several.
+    enrolment_ids: list[uuid.UUID] = Field(default_factory=list, max_length=200)
     ttl_hours: int | None = Field(default=None, ge=1, le=8760)
     # Optional: assign a SPECIFIC round (defaults to the exam's first round when
     # omitted — the back-compat single-round path). Optional scheduled start time.
@@ -251,6 +256,7 @@ class ExamDetailOut(ExamOut):
 class AssignOut(BaseModel):
     assignment_id: str
     applicant_id: str
+    enrolment_id: str | None = None
     applicant_name: str
     magic_link: str  # raw token embedded — returned ONCE, at mint time only
     expires_at: str
@@ -1000,8 +1006,27 @@ async def assign_exam(
     expires_at = now + timedelta(hours=ttl_hours)
     base = settings.exam_link_base_url.rstrip("/")
 
+    if not body.applicant_ids and not body.enrolment_ids:
+        raise HTTPException(status_code=422, detail="Choose at least one candidate.")
+    # (person, application or None). A named application resolves to its person
+    # inside this company only, so a foreign enrolment id is skipped like a
+    # foreign applicant id.
+    targets: list[tuple[uuid.UUID, uuid.UUID | None]] = [(a, None) for a in body.applicant_ids]
+    if body.enrolment_ids:
+        owned = (
+            await db.execute(
+                text(
+                    "SELECT id, applicant_id FROM enrolments"
+                    " WHERE id = ANY(:ids) AND company_id = :c AND deleted_at IS NULL"
+                ),
+                {"ids": list(body.enrolment_ids), "c": company_id},
+            )
+        ).all()
+        by_id = {r[0]: r[1] for r in owned}
+        targets += [(by_id[e], e) for e in body.enrolment_ids if e in by_id]
+
     out: list[AssignOut] = []
-    for applicant_id in body.applicant_ids:
+    for applicant_id, named_enrolment in targets:
         applicant = await db.scalar(
             select(Applicant).where(
                 Applicant.id == applicant_id,
@@ -1038,7 +1063,7 @@ async def assign_exam(
             applicant_id=applicant_id,
             # B5: which application this exam is for, when that can be known
             # without guessing — so its result shows against that opening.
-            enrolment_id=await enrolment_for_exam_round(
+            enrolment_id=named_enrolment or await enrolment_for_exam_round(
                 db, applicant_id=applicant_id, company_id=company_id, exam_round_id=rnd.id
             ),
             created_by_user_id=hr_uid,
@@ -1078,6 +1103,7 @@ async def assign_exam(
             AssignOut(
                 assignment_id=str(asn.id),
                 applicant_id=str(applicant_id),
+                enrolment_id=str(asn.enrolment_id) if asn.enrolment_id else None,
                 applicant_name=applicant.full_name,
                 magic_link=magic_link,
                 expires_at=expires_at.isoformat(),

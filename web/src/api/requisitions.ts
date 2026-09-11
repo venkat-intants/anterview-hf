@@ -93,6 +93,8 @@ export interface Requisition extends PostingFields {
   target_hires: number | null;
   closes_at: string | null;
   owner_user_id: string | null;
+  /** The owner's name, for display. */
+  owner_name?: string | null;
   /** True when the Group B backfill inferred this opening rather than HR creating it. */
   from_backfill: boolean;
   /** Whether the open web may apply. Off until HR turns it on per opening. */
@@ -132,7 +134,27 @@ export interface RequisitionInput extends Partial<PostingFields> {
   jd_text?: string | null;
   target_hires?: number | null;
   closes_at?: string | null;
+  /** Who is responsible for filling it. Must be an active HR user at this
+   *  company; defaults to whoever creates it. Null clears it (update only). */
+  owner_user_id?: string | null;
   public_apply_enabled?: boolean;
+}
+
+/** An HR user at this company — who an opening can be assigned to. */
+export interface TeamMember {
+  id: string;
+  full_name: string | null;
+  email: string;
+}
+
+export function listTeam(): Promise<TeamMember[]> {
+  return apiGet<TeamMember[]>('/hr/team');
+}
+
+/** A date input's `YYYY-MM-DD` as the END of that day, local time, in ISO — an
+ *  opening that "closes on the 30th" is still open during the 30th. */
+export function closingDateToIso(day: string): string | null {
+  return day ? new Date(`${day}T23:59:59`).toISOString() : null;
 }
 
 /**
@@ -172,7 +194,7 @@ export function createRequisition(body: RequisitionInput): Promise<Requisition> 
 
 export function updateRequisition(
   id: string,
-  body: Partial<RequisitionInput> & { owner_user_id?: string },
+  body: Partial<RequisitionInput>,
 ): Promise<Requisition> {
   return apiPatch<Requisition>(`/hr/requisitions/${id}`, body);
 }

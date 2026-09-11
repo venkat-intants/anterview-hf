@@ -39,8 +39,18 @@
     --muted: 240 5% 10%; /* recessed inset */
     --muted-foreground: 225 5% 60%; /* ash #888b91 — secondary text */
 
-    --accent: 240 5% 14%; /* subtle hover/active surface */
-    --accent-foreground: 240 11% 96%;
+    /* Named --surface-accent, NOT --accent. This is shadcn's hover/active
+     * SURFACE, an HSL triple consumed as `hsl(var(...))` by Tailwind's `accent`
+     * colour. The brand SIGNAL further down is a hex, and it used to share the
+     * name --accent in this same block — so the hex won and broke each mode:
+     *   dark  — `bg-accent` compiled to hsl(#0088ff), which is not a colour, so
+     *           ghost/outline button hovers and every dropdown-item hover
+     *           rendered nothing.
+     *   light — the light block re-declared --accent as an HSL triple, so every
+     *           `var(--accent)` brand usage became a bare triple and dropped out.
+     * Renamed on the side with ~10 consumers, not the side with ~226. */
+    --surface-accent: 240 5% 14%; /* subtle hover/active surface */
+    --surface-accent-foreground: 240 11% 96%;
 
     --destructive: 0 72% 55%;
     --destructive-foreground: 0 0% 100%;
@@ -105,8 +115,10 @@
     --muted: 228 22% 95%;
     --muted-foreground: 221 10% 40%; /* #5b6170 — secondary text */
 
-    --accent: 226 20% 92%; /* hover/active surface */
-    --accent-foreground: 223 14% 10%;
+    /* Surface only — see the note in the dark block. Calling this --accent
+     * overrode the brand signal hex on every light-mode page. */
+    --surface-accent: 226 20% 92%; /* hover/active surface */
+    --surface-accent-foreground: 223 14% 10%;
 
     --destructive: 0 72% 45%;
     --destructive-foreground: 0 0% 100%;

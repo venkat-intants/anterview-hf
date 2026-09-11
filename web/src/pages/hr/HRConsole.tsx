@@ -280,7 +280,23 @@ function timeAgo(iso: string): string {
   return 'just now';
 }
 
-function ActivityFeed({ items }: { items: NotificationItem[] }) {
+/**
+ * Kinds the Attention panel owns. Rendering them here repeats that panel.
+ *
+ * The feed is a record of EVENTS; the Attention panel above it lists
+ * CONDITIONS. Measured on real data, 9 of 17 notifications were `system` and 8
+ * of those repeated — word for word — a finding already shown a few hundred
+ * pixels higher. `system` is written by exactly one place
+ * (agents/watch_runner.py, NOTIFICATION_KIND = "system"), so excluding it
+ * removes watcher findings and nothing else.
+ *
+ * A denylist rather than an allowlist: a new event kind should appear here
+ * without anyone remembering to register it.
+ */
+const PANEL_OWNED_KINDS = new Set(['system']);
+
+function ActivityFeed({ items: all }: { items: NotificationItem[] }) {
+  const items = all.filter((n) => !PANEL_OWNED_KINDS.has(n.kind));
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">

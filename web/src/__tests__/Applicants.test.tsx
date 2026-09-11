@@ -306,3 +306,37 @@ describe('Applicants — per-applicant actions', () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Applicant already decided'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Every status the server sends gets a badge
+// ---------------------------------------------------------------------------
+// The status maps were typed to the three names in `ApplicantStatus` and indexed
+// with no fallback, so held, interviewed and hired applicants rendered an EMPTY
+// badge. The server sends six. `held` matters most: it is the D-05 state —
+// below a round threshold, awaiting a person — and the one that must be seen.
+describe('Applicants — status badges', () => {
+  it.each([
+    ['held', 'Held'],
+    ['interviewed', 'Interviewed'],
+    ['hired', 'Hired'],
+  ])('labels a %s applicant rather than leaving the badge blank', async (status, label) => {
+    // Cast: the exported union lists three statuses; the API returns six.
+    listApplicants.mockResolvedValue([
+      { ...SCORED, status: status as Applicant['status'] },
+    ]);
+    renderPage();
+
+    await screen.findByText('Bhavya Nair');
+    expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+  });
+
+  it('shows an unknown status as its raw value, not a blank', async () => {
+    listApplicants.mockResolvedValue([
+      { ...SCORED, status: 'on_the_moon' as Applicant['status'] },
+    ]);
+    renderPage();
+
+    await screen.findByText('Bhavya Nair');
+    expect(screen.getAllByText('on_the_moon').length).toBeGreaterThan(0);
+  });
+});

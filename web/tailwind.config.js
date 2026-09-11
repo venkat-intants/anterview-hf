@@ -54,9 +54,12 @@ export default {
           DEFAULT: 'hsl(var(--muted))',
           foreground: 'hsl(var(--muted-foreground))',
         },
+        // shadcn's hover/active surface. Points at --surface-accent, not
+        // --accent: --accent is the brand signal HEX, and `hsl(<hex>)` is not a
+        // colour, so every `bg-accent` hover silently rendered nothing.
         accent: {
-          DEFAULT: 'hsl(var(--accent))',
-          foreground: 'hsl(var(--accent-foreground))',
+          DEFAULT: 'hsl(var(--surface-accent))',
+          foreground: 'hsl(var(--surface-accent-foreground))',
         },
         destructive: {
           DEFAULT: 'hsl(var(--destructive))',

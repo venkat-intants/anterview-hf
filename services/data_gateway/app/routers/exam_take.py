@@ -916,6 +916,9 @@ async def _grade_and_finalize(
                     applicant=ctx.applicant,
                     created_by_user_id=ctx.exam.created_by_user_id,
                     notify_user_id=ctx.exam.created_by_user_id,
+                    # The application this exam was assigned for (B5), when
+                    # known — the invite is then for that opening's role.
+                    enrolment_id=ctx.assignment.enrolment_id,
                 )
             except Exception as exc:  # noqa: BLE001 - never fail a submit on advance error
                 log.warning(

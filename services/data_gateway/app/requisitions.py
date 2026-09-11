@@ -90,11 +90,10 @@ async def record_transition(
     move must not manufacture a ledger entry, or time-in-stage resets every
     time someone re-saves a form).
 
-    ``sync_applicant`` keeps the legacy ``applicants.status`` column in step
-    while it remains the source of truth for the pipeline SQL, the applicant
-    list, the interview-eligibility gate and the frontend. It exists so this
-    function can be the single writer during the transition; it goes away with
-    those readers.
+    ``sync_applicant`` keeps the person-level ``applicants.status`` mirror in
+    step with their latest application, for the screens that are still
+    person-shaped (the applicant list). The per-application screens read
+    ``application_progress`` instead (B5).
     """
     if to_status not in VALID_STATUSES:
         raise ValueError(f"unknown status {to_status!r}")
@@ -130,18 +129,24 @@ async def record_transition(
     )
 
     if sync_applicant:
-        # Only when this is the applicant's sole live enrolment. With several,
-        # there is no single status the legacy column could honestly hold, so
-        # leaving it is better than picking one arbitrarily and having the
-        # pipeline show a candidate as 'hired' for a role they never applied to.
-        live = await db.scalar(
+        # The applicant row mirrors the person's LATEST application — the same
+        # rule as the score mirror (apply_ats_to_enrolment), so the status and
+        # the target_job_title beside it on the applicant list always describe
+        # the same application. An older application's move is recorded here
+        # and on the ledger and leaves the mirror alone. (Before B5 the rule was
+        # "only with a single application", because the pipeline board read
+        # this column and would have shown a status against the wrong role; the
+        # board now reads application_progress, per application.)
+        newer = await db.scalar(
             text(
-                "SELECT count(*) FROM enrolments "
-                "WHERE applicant_id = :a AND deleted_at IS NULL"
+                "SELECT 1 FROM enrolments n, enrolments e"
+                " WHERE e.id = :e AND n.applicant_id = e.applicant_id"
+                "   AND n.deleted_at IS NULL AND n.id <> e.id AND n.created_at > e.created_at"
+                " LIMIT 1"
             ),
-            {"a": applicant_id},
+            {"e": enrolment_id},
         )
-        if int(live or 0) <= 1:
+        if newer is None:
             await db.execute(
                 text("UPDATE applicants SET status = :s, updated_at = :n WHERE id = :a"),
                 {"s": to_status, "n": now, "a": applicant_id},
@@ -175,6 +180,105 @@ async def live_enrolments(
         )
     ).all()
     return [uuid.UUID(str(r[0])) for r in rows]
+
+
+@dataclass
+class ApplicationChoice:
+    """Which application an action on a person is about (B5).
+
+    ``enrolment_id`` is the one named, or the only one; None when the person
+    has none, or several and none was named — the caller decides whether that
+    is fine (a note) or not (a terminal decision). ``is_latest`` says whether it
+    is the person's newest application, the one the applicant-row mirror
+    (status, ats_*, target_*) describes.
+    """
+
+    enrolment_id: uuid.UUID | None
+    status: str | None
+    title: str | None
+    live: list[uuid.UUID]
+    level: str | None = None
+    jd_text: str | None = None
+
+    @property
+    def is_latest(self) -> bool:
+        return self.enrolment_id is not None and self.enrolment_id == self.live[-1]
+
+    @property
+    def ambiguous(self) -> bool:
+        return self.enrolment_id is None and len(self.live) > 1
+
+
+async def choose_application(
+    db: AsyncSession, *, applicant_id: uuid.UUID, company_id: uuid.UUID,
+    enrolment_id: uuid.UUID | None = None,
+) -> ApplicationChoice:
+    """Resolve the application an action names — or the only one there is.
+
+    Raises LookupError when ``enrolment_id`` is given but is not a live
+    application of this person at this company (the caller's 404): an id from
+    another person or tenant must not be acted on just because it was sent.
+    """
+    live = await live_enrolments(db, applicant_id=applicant_id, company_id=company_id)
+    if enrolment_id is not None and enrolment_id not in live:
+        raise LookupError("not a live application of this applicant")
+    target = enrolment_id if enrolment_id is not None else (live[0] if len(live) == 1 else None)
+    if target is None:
+        return ApplicationChoice(None, None, None, live)
+    row = (
+        await db.execute(
+            text(
+                "SELECT e.status, COALESCE(r.title, e.target_job_title) AS title,"
+                "       COALESCE(e.target_level, r.level) AS level,"
+                "       COALESCE(e.target_jd_text, r.jd_text) AS jd_text"
+                "  FROM enrolments e LEFT JOIN job_requisitions r ON r.id = e.requisition_id"
+                " WHERE e.id = :e"
+            ),
+            {"e": target},
+        )
+    ).mappings().first()
+    if row is None:
+        return ApplicationChoice(target, None, None, live)
+    return ApplicationChoice(
+        target, row["status"], row["title"], live, row["level"], row["jd_text"]
+    )
+
+
+async def enrolment_for_exam_round(
+    db: AsyncSession, *, applicant_id: uuid.UUID, company_id: uuid.UUID,
+    exam_round_id: uuid.UUID,
+) -> uuid.UUID | None:
+    """The application a hand-assigned exam round is for, when it can be known.
+
+    An exam assigned by hand used to carry no application at all, so its result
+    could not be shown against any opening. It is attributed to:
+      1. the person's application in an opening whose workflow uses this exam
+         round — the exam is that opening's round; else
+      2. their only live application.
+    Otherwise None: with several applications and no workflow connecting the
+    exam to one of them, choosing would be a guess.
+    """
+    rows = (
+        await db.execute(
+            text(
+                "SELECT e.id,"
+                "       EXISTS (SELECT 1 FROM workflow_rounds wr"
+                "                 JOIN workflows w ON w.id = wr.workflow_id"
+                "                WHERE wr.exam_round_id = :r AND wr.deleted_at IS NULL"
+                "                  AND w.deleted_at IS NULL"
+                "                  AND w.requisition_id = e.requisition_id) AS uses_round"
+                "  FROM enrolments e"
+                " WHERE e.applicant_id = :a AND e.company_id = :c AND e.deleted_at IS NULL"
+            ),
+            {"a": applicant_id, "c": company_id, "r": exam_round_id},
+        )
+    ).all()
+    matching = [r[0] for r in rows if r[1]]
+    if len(matching) == 1:
+        return uuid.UUID(str(matching[0]))
+    if len(rows) == 1:
+        return uuid.UUID(str(rows[0][0]))
+    return None
 
 
 def ambiguous_decision_detail(full_name: str, count: int) -> str:

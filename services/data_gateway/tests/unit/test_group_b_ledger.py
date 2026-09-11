@@ -16,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from app.requisitions import ApplicationChoice
+
 
 def _db() -> AsyncMock:
     db = AsyncMock()
@@ -90,11 +92,11 @@ async def test_a_pipeline_decision_that_cannot_name_an_opening_is_refused(
     async def _owned(*_: object) -> Applicant:
         return applicant
 
-    async def _two(*_: object, **__: object) -> list[uuid.UUID]:
-        return [uuid.uuid4(), uuid.uuid4()]
+    async def _two(*_: object, **__: object) -> ApplicationChoice:
+        return ApplicationChoice(None, None, None, [uuid.uuid4(), uuid.uuid4()])
 
     monkeypatch.setattr(hrp, "_get_owned", _owned)
-    monkeypatch.setattr(hrp, "live_enrolments", _two)
+    monkeypatch.setattr(hrp, "choose_application", _two)
     with pytest.raises(HTTPException) as exc:
         await hrp.decide_applicant(uuid.uuid4(), hrp.DecisionIn(decision="rejected"), MagicMock(),
                                    (uuid.uuid4(), uuid.uuid4()), _db())
@@ -121,8 +123,8 @@ async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
     async def _owned(*_: object) -> Applicant:
         return applicant
 
-    async def _one(*_: object, **__: object) -> list[uuid.UUID]:
-        return [eid]
+    async def _one(*_: object, **__: object) -> ApplicationChoice:
+        return ApplicationChoice(eid, "interviewed", "Staff Nurse", [eid])
 
     async def _transition(_db: object, **kw: object) -> str:
         moves.append(kw)
@@ -132,7 +134,7 @@ async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
         return None
 
     monkeypatch.setattr(hrp, "_get_owned", _owned)
-    monkeypatch.setattr(hrp, "live_enrolments", _one)
+    monkeypatch.setattr(hrp, "choose_application", _one)
     monkeypatch.setattr(hrp, "record_transition", _transition)
     monkeypatch.setattr(hrp, "email_applicant_decision", _no_email)
     db = _db()
@@ -146,12 +148,42 @@ async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
     assert moves[0]["reason"] == "strong panel"
 
 
+@pytest.mark.asyncio
+async def test_a_named_application_is_guarded_on_its_own_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B5: the person's row mirrors their LATEST application. Hiring someone
+    for an older one they are shortlisted in must not be refused because the
+    newer one is still 'new' — nor allowed because the newer one is shortlisted."""
+    import app.routers.hr_pipeline as hrp
+    from app.models import Applicant
+
+    older, newer = uuid.uuid4(), uuid.uuid4()
+    applicant = Applicant(id=uuid.uuid4(), status="shortlisted", full_name="Asha")
+
+    async def _owned(*_: object) -> Applicant:
+        return applicant
+
+    async def _older_is_new(*_: object, **__: object) -> ApplicationChoice:
+        return ApplicationChoice(older, "new", "Welder", [older, newer])
+
+    monkeypatch.setattr(hrp, "_get_owned", _owned)
+    monkeypatch.setattr(hrp, "choose_application", _older_is_new)
+    with pytest.raises(HTTPException) as exc:
+        await hrp.decide_applicant(
+            uuid.uuid4(), hrp.DecisionIn(decision="hired", enrolment_id=older), MagicMock(),
+            (uuid.uuid4(), uuid.uuid4()), _db(),
+        )
+    assert exc.value.status_code == 409, "an application still 'new' cannot be hired"
+    assert applicant.status == "shortlisted", "the mirror (latest application) is untouched"
+
+
 def test_the_applicant_board_records_every_change_not_just_a_shortlist() -> None:
     from app.routers.hr_applicants import update_applicant_status
 
     src = inspect.getsource(update_applicant_status)
     # Terminal decisions that cannot name an opening are refused.
-    assert "len(enrolments) > 1 and body.status in TERMINAL_STATUSES" in src
+    assert "app_.ambiguous and body.status in TERMINAL_STATUSES" in src
     # And the transition is written for any status, outside the shortlist branch.
     assert "to_status=body.status" in src
     assert 'to_status="shortlisted"' not in src

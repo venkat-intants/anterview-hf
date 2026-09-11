@@ -48,6 +48,7 @@ from app.models import (
     ExamRound,
     ExamSection,
 )
+from app.requisitions import enrolment_for_exam_round
 from app.utils.ownership import get_owned
 
 log = structlog.get_logger(__name__)
@@ -1035,6 +1036,11 @@ async def assign_exam(
             exam_id=exam_id,
             round_id=rnd.id,
             applicant_id=applicant_id,
+            # B5: which application this exam is for, when that can be known
+            # without guessing — so its result shows against that opening.
+            enrolment_id=await enrolment_for_exam_round(
+                db, applicant_id=applicant_id, company_id=company_id, exam_round_id=rnd.id
+            ),
             created_by_user_id=hr_uid,
             token_hash=hash_exam_token(raw_token, settings.exam_link_secret),
             expires_at=expires_at,

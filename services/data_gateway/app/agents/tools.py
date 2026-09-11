@@ -36,7 +36,7 @@ from shared.agents import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.utils.sql_like import LIKE_ESCAPE, like_literal
+from app.utils.sql_like import like_literal
 
 log = structlog.get_logger(__name__)
 
@@ -97,59 +97,27 @@ def _applicant_citation(row: Any) -> Citation:
 # Pipeline reads
 # ---------------------------------------------------------------------------
 
-# Mirrors the aggregate in hr_pipeline.py so the copilot and the console agree
-# on what "interviewed" means. Divergence here would have the agent contradict
-# the screen the user is looking at, which destroys trust faster than a wrong
-# answer would.
-# f-string only so the ESCAPE character comes from the shared constant instead of
-# being retyped here (the SQL below contains no braces, so interpolation is safe).
+# The copilot and the console must agree on what "interviewed" means.
+# Divergence would have the agent contradict the screen the user is looking at,
+# which destroys trust faster than a wrong answer would.
+#
+# Since B5 both read the application_progress VIEW rather than keeping two
+# hand-synchronised copies of the aggregate, so they agree by construction:
+# one row per application, each with its own status, score, exam and interview.
+# A literal (no interpolation): the ESCAPE character is a backslash, which is
+# what LIKE_ESCAPE holds — test_shared_query_utils holds the two together.
 _PIPELINE_SQL = text(
-    f"""
-WITH agg AS (
-  SELECT
-      a.id, a.full_name, a.target_job_title, a.target_level,
-      a.ats_overall, a.ats_recommendation, a.updated_at,
-      ea.best_exam_percent,
-      ep.ever_passed AS exam_passed,
-      sc.composite_score AS interview_score,
-      sc.scorecard_id,
-      EXTRACT(DAY FROM (NOW() - a.updated_at))::int AS days_since_update,
-      CASE
-        WHEN a.status IN ('hired','rejected') THEN a.status
-        WHEN sc.scorecard_id IS NOT NULL AND a.status IN ('new','shortlisted')
-             THEN 'interviewed'
-        ELSE a.status
-      END AS status
-  FROM applicants a
-  LEFT JOIN LATERAL (
-      SELECT t.score_percent AS best_exam_percent
-      FROM exam_attempts t
-      WHERE t.applicant_id = a.id AND t.company_id = a.company_id
-        AND t.status = 'submitted' AND t.deleted_at IS NULL
-      ORDER BY t.score_percent DESC NULLS LAST, t.submitted_at DESC
-      LIMIT 1
-  ) ea ON TRUE
-  LEFT JOIN LATERAL (
-      SELECT bool_or(t.passed) AS ever_passed
-      FROM exam_attempts t
-      WHERE t.applicant_id = a.id AND t.company_id = a.company_id
-        AND t.status = 'submitted' AND t.deleted_at IS NULL
-  ) ep ON TRUE
-  LEFT JOIN LATERAL (
-      SELECT i.session_id
-      FROM interview_invites i
-      WHERE i.applicant_id = a.id AND i.company_id = a.company_id
-        AND i.deleted_at IS NULL AND i.session_id IS NOT NULL
-      ORDER BY i.created_at DESC
-      LIMIT 1
-  ) li ON TRUE
-  LEFT JOIN scorecards sc ON sc.session_id = li.session_id
-  WHERE a.company_id = :cid AND a.deleted_at IS NULL
-)
-SELECT * FROM agg
-WHERE (CAST(:status AS text) IS NULL OR status = CAST(:status AS text))
+    """
+SELECT applicant_id AS id, enrolment_id, full_name, target_job_title, opening_title,
+       target_level, ats_overall, ats_recommendation, updated_at,
+       best_exam_percent, exam_passed, interview_score, scorecard_id, status,
+       EXTRACT(DAY FROM (NOW() - updated_at))::int AS days_since_update
+FROM application_progress
+WHERE company_id = :cid
+  AND (CAST(:status AS text) IS NULL OR status = CAST(:status AS text))
   AND (CAST(:job AS text) IS NULL
-       OR target_job_title ILIKE CAST(:job AS text) ESCAPE '{LIKE_ESCAPE}')
+       OR opening_title ILIKE CAST(:job AS text) ESCAPE '\\'
+       OR target_job_title ILIKE CAST(:job AS text) ESCAPE '\\')
 ORDER BY ats_overall DESC NULLS LAST, updated_at DESC
 LIMIT :limit
 """
@@ -222,8 +190,11 @@ async def _list_applicants(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
             "applicants": [
                 {
                     "id": str(r.id),
+                    # One entry per APPLICATION (B5): the same person appears
+                    # once per opening they applied to, each with its own score.
+                    "application_id": str(r.enrolment_id) if r.enrolment_id else None,
                     "name": r.full_name,
-                    "role_applied_for": r.target_job_title,
+                    "role_applied_for": r.opening_title or r.target_job_title,
                     "level": r.target_level,
                     "status": r.status,
                     "ats_score_0_100": r.ats_overall,
@@ -407,9 +378,10 @@ async def _get_funnel_analytics(args: dict[str, Any], ctx: ToolContext) -> ToolO
         await db.execute(
             text(
                 """
+                -- Applications by stage (B5), the same view as the board.
                 SELECT status, COUNT(*) AS n
-                FROM applicants
-                WHERE company_id = :cid AND deleted_at IS NULL
+                FROM application_progress
+                WHERE company_id = :cid
                 GROUP BY status ORDER BY n DESC
                 """
             ),
@@ -421,20 +393,15 @@ async def _get_funnel_analytics(args: dict[str, Any], ctx: ToolContext) -> ToolO
         await db.execute(
             text(
                 """
-                SELECT a.target_job_title AS role,
+                -- Per opening, counting its applications (B5): someone who
+                -- applied to two roles is counted, and scored, in each.
+                SELECT opening_title AS role,
                        COUNT(*) AS applicants,
-                       COUNT(sc.scorecard_id) AS interviewed,
-                       ROUND(AVG(a.ats_overall)::numeric, 1) AS avg_ats
-                FROM applicants a
-                LEFT JOIN LATERAL (
-                    SELECT i.session_id FROM interview_invites i
-                    WHERE i.applicant_id = a.id AND i.company_id = a.company_id
-                      AND i.deleted_at IS NULL AND i.session_id IS NOT NULL
-                    ORDER BY i.created_at DESC LIMIT 1
-                ) li ON TRUE
-                LEFT JOIN scorecards sc ON sc.session_id = li.session_id
-                WHERE a.company_id = :cid AND a.deleted_at IS NULL
-                GROUP BY a.target_job_title
+                       COUNT(scorecard_id) AS interviewed,
+                       ROUND(AVG(ats_overall)::numeric, 1) AS avg_ats
+                FROM application_progress
+                WHERE company_id = :cid
+                GROUP BY opening_title
                 ORDER BY applicants DESC LIMIT :limit
                 """
             ),

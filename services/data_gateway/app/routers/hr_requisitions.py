@@ -149,12 +149,32 @@ class PostingFields(BaseModel):
         return self
 
 
+def _not_in_the_past(v: datetime | None) -> datetime | None:
+    """A closing date that has already passed is a typo, not a plan (B1).
+
+    It would also make the delivery-risk projection read every new opening as
+    off track on the day it opens. A naive value is read as UTC.
+    """
+    if v is None:
+        return v
+    aware = v if v.tzinfo else v.replace(tzinfo=UTC)
+    if aware < datetime.now(tz=UTC):
+        raise ValueError("the closing date cannot be in the past")
+    return aware
+
+
 class RequisitionIn(PostingFields):
     title: str = Field(min_length=2, max_length=200)
     level: str = Field(default="mid", max_length=40)
     jd_text: str | None = Field(default=None, max_length=40_000)
     target_hires: int | None = Field(default=None, gt=0, le=10_000)
     closes_at: datetime | None = None
+    # Who is responsible for filling it (B1). Defaults to whoever creates it;
+    # must be an active HR user at the same company (checked in the handler —
+    # it needs the database).
+    owner_user_id: uuid.UUID | None = None
+
+    _closes_at_future = field_validator("closes_at")(_not_in_the_past)
 
     @field_validator("title")
     @classmethod
@@ -170,7 +190,10 @@ class RequisitionPatch(PostingFields):
     jd_text: str | None = Field(default=None, max_length=40_000)
     target_hires: int | None = Field(default=None, gt=0, le=10_000)
     closes_at: datetime | None = None
+    # Null clears it. Any other value must be an active HR user at this company.
     owner_user_id: uuid.UUID | None = None
+
+    _closes_at_future = field_validator("closes_at")(_not_in_the_past)
     # Whether the open web may apply. Off until someone turns it on — see the
     # note in public_apply.py on why a requisition id is not a secret.
     public_apply_enabled: bool | None = None
@@ -190,6 +213,8 @@ class RequisitionOut(BaseModel):
     target_hires: int | None = None
     closes_at: str | None = None
     owner_user_id: str | None = None
+    # Display only; owner_user_id is the reference.
+    owner_name: str | None = None
     from_backfill: bool
     public_apply_enabled: bool = False
     created_at: str
@@ -291,6 +316,8 @@ async def _owned(db: DbSessionDep, company_id: uuid.UUID, req_id: uuid.UUID) -> 
             text(
                 "SELECT id, title, level, status, jd_text, target_hires, closes_at,"
                 "       owner_user_id, from_backfill, public_apply_enabled, created_at,"
+                "       (SELECT u.full_name FROM users u WHERE u.id = owner_user_id)"
+                "         AS owner_name,"
                 "       department, location, employment_type,"
                 "       experience_min_years, experience_max_years,"
                 "       salary_min, salary_max, salary_currency, salary_visible,"
@@ -317,6 +344,7 @@ def _to_out(row: dict[str, Any], counts: dict[str, int] | None = None) -> Requis
         target_hires=row.get("target_hires"),
         closes_at=row["closes_at"].isoformat() if row.get("closes_at") else None,
         owner_user_id=str(row["owner_user_id"]) if row.get("owner_user_id") else None,
+        owner_name=row.get("owner_name"),
         from_backfill=bool(row["from_backfill"]),
         public_apply_enabled=bool(row.get("public_apply_enabled")),
         created_at=row["created_at"].isoformat(),
@@ -348,6 +376,42 @@ def _to_out(row: dict[str, Any], counts: dict[str, int] | None = None) -> Requis
             closes_at=row["closes_at"],
         ),
     )
+
+
+# Who may own an opening: an active, live user at THIS company holding the HR
+# role — the same test get_hr_company applies to everyone who can open this
+# router. One literal for the list and the check, so they cannot disagree.
+_TEAM_SQL = text(
+    """
+SELECT u.id, u.full_name, u.email
+  FROM users u
+ WHERE u.company_id = :c AND u.deleted_at IS NULL AND u.is_active
+   AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                WHERE ur.user_id = u.id AND r.name = 'hr_manager')
+   AND (CAST(:u AS uuid) IS NULL OR u.id = CAST(:u AS uuid))
+ ORDER BY u.full_name, u.email
+"""
+)
+
+
+async def _check_owner(db: DbSessionDep, company_id: uuid.UUID, owner_id: uuid.UUID) -> None:
+    """422 unless ``owner_id`` is an active HR user at this company (B1).
+
+    Before this the PATCH wrote any id it was given: an opening could be
+    "owned" by someone at another company, who would then be the actor the
+    reconciler scores public applications as, and the person its notices go to.
+    """
+    ok = (await db.execute(_TEAM_SQL, {"c": company_id, "u": owner_id})).first()
+    if ok is None:
+        raise HTTPException(
+            status_code=422, detail="The owner must be an active HR user at this company."
+        )
+
+
+class TeamMemberOut(BaseModel):
+    id: str
+    full_name: str | None
+    email: str
 
 
 async def _counts(db: DbSessionDep, req_ids: list[uuid.UUID]) -> dict[str, dict[str, int]]:
@@ -392,6 +456,8 @@ async def list_requisitions(
             text(
                 "SELECT id, title, level, status, jd_text, target_hires, closes_at,"
                 "       owner_user_id, from_backfill, public_apply_enabled, created_at,"
+                "       (SELECT u.full_name FROM users u WHERE u.id = owner_user_id)"
+                "         AS owner_name,"
                 "       department, location, employment_type,"
                 "       experience_min_years, experience_max_years,"
                 "       salary_min, salary_max, salary_currency, salary_visible,"
@@ -412,11 +478,25 @@ async def list_requisitions(
     return [_to_out(dict(r), counts.get(str(r["id"]), {})) for r in rows]
 
 
+@router.get("/team", response_model=list[TeamMemberOut])
+async def list_team(ctx: HrCtxDep, db: DbSessionDep) -> list[TeamMemberOut]:
+    """The company's active HR users — who an opening can be assigned to."""
+    _hr_uid, company_id = ctx
+    rows = (await db.execute(_TEAM_SQL, {"c": company_id, "u": None})).mappings().all()
+    return [
+        TeamMemberOut(id=str(r["id"]), full_name=r["full_name"], email=r["email"])
+        for r in rows
+    ]
+
+
 @router.post("/requisitions", status_code=status.HTTP_201_CREATED, response_model=RequisitionOut)
 async def create_requisition(
     body: RequisitionIn, ctx: HrCtxDep, db: DbSessionDep
 ) -> RequisitionOut:
     hr_uid, company_id = ctx
+    if body.owner_user_id is not None and body.owner_user_id != hr_uid:
+        await _check_owner(db, company_id, body.owner_user_id)
+    owner = body.owner_user_id or hr_uid
     now = datetime.now(tz=UTC)
     req_id = uuid.uuid4()
     try:
@@ -429,14 +509,14 @@ async def create_requisition(
                 " experience_min_years, experience_max_years,"
                 " salary_min, salary_max, salary_currency, salary_visible,"
                 " responsibilities, required_skills, nice_to_have_skills)"
-                " VALUES (:i,:c,:t,:l,:jd,:th,:ca,:o,:o,'open',false,:n,:n,"
+                " VALUES (:i,:c,:t,:l,:jd,:th,:ca,:o,:cb,'open',false,:n,:n,"
                 "         :dept,:loc,:etype,:exmin,:exmax,"
                 "         :smin,:smax,:scur,:svis,"
                 "         CAST(:resp AS jsonb), CAST(:req AS jsonb), CAST(:nice AS jsonb))"
             ),
             {"i": req_id, "c": company_id, "t": body.title, "l": body.level,
              "jd": body.jd_text, "th": body.target_hires, "ca": body.closes_at,
-             "o": hr_uid, "n": now,
+             "o": owner, "cb": hr_uid, "n": now,
              "dept": body.department, "loc": body.location,
              "etype": body.employment_type,
              "exmin": body.experience_min_years, "exmax": body.experience_max_years,
@@ -550,6 +630,8 @@ async def update_requisition(
         return await get_requisition(requisition_id, ctx, db)
     if "title" in fields and not normalise_title(fields["title"] or ""):
         raise HTTPException(status_code=422, detail="title cannot be blank")
+    if fields.get("owner_user_id") is not None:
+        await _check_owner(db, company_id, fields["owner_user_id"])
 
     # The three list columns are jsonb. Bound as a plain Python list, asyncpg
     # sends a Postgres ARRAY and the UPDATE fails on a type it cannot cast — so

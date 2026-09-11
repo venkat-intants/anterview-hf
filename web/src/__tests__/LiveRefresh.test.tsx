@@ -37,7 +37,13 @@ describe('queriesToRefresh', () => {
   });
 
   it('covers every event the backend announces to HR', () => {
-    for (const kind of ['exam_submitted', 'interview_completed', 'link_expired', 'bulk_upload']) {
+    for (const kind of [
+      'exam_submitted',
+      'interview_completed',
+      'link_expired',
+      'bulk_upload',
+      'interview_no_show',
+    ]) {
       expect(REFRESH_ON[kind]?.length).toBeGreaterThan(0);
     }
   });

@@ -43,11 +43,18 @@ def _db(*, scalar: object = None) -> AsyncMock:
 # ===========================================================================
 # A3 — lifecycle email templates
 # ===========================================================================
-_NEW_TEMPLATES = ("exam_reminder", "interview_reminder", "link_expired", "results_ready")
+_NEW_TEMPLATES = (
+    "exam_reminder", "interview_reminder", "link_expiring", "interview_no_show",
+    "link_expired", "results_ready",
+)
 
 _CTX = {
     "exam_reminder": {"name": "Priya", "exam_title": "Aptitude", "expires": "03 Sep, 6 PM IST"},
     "interview_reminder": {"name": "Ravi", "job_title": "Python Developer", "when": "02 Sep"},
+    "link_expiring": {"name": "Sita", "what": "Aptitude", "kind": "exam",
+                      "expires": "03 Sep, 6 PM IST"},
+    "interview_no_show": {"name": "Arjun", "job_title": "Staff Nurse",
+                          "when": "03 Sep, 11 AM IST"},
     "link_expired": {"name": "Anita", "what": "Technical Round", "kind": "exam"},
     "results_ready": {"name": "Kiran", "job_title": "Staff Nurse", "cta_url": "https://x/history"},
 }
@@ -107,14 +114,52 @@ def test_exam_reminder_distinguishes_the_two_windows() -> None:
     assert "within the hour" in hour.text.lower()
 
 
-def test_link_expired_never_implies_rejection() -> None:
-    """D-05: missing a window is not a rejection, and this email must not say so."""
+@pytest.mark.parametrize("template", ["link_expired", "interview_no_show", "link_expiring"])
+def test_missing_a_window_never_implies_rejection(template: str) -> None:
+    """D-05: missing a window is not a rejection, and these emails must not say so."""
     from app.email_templates import render
 
     for lang in ("en", "hi", "te"):
-        body = render("link_expired", lang, _CTX["link_expired"]).text.lower()
-        for forbidden in ("reject", "unsuccessful", "no longer being considered"):
+        body = render(template, lang, _CTX[template]).text.lower()
+        for forbidden in ("reject", "unsuccessful", "no longer being considered",
+                          "not selected", "not be proceeding"):
             assert forbidden not in body
+
+
+def test_the_no_show_email_states_facts_without_blame() -> None:
+    """A missed slot has many causes a candidate does not control. The subject
+    says the time passed, not that they missed it; the body offers a way to say
+    what went wrong, and promises nothing HR has not offered."""
+    from app.email_templates import render
+
+    r = render("interview_no_show", "en", _CTX["interview_no_show"])
+    assert "missed" not in r.subject.lower()
+    assert "has passed" in r.subject.lower()
+    assert "reply to this email" in r.text.lower()
+    assert "can arrange a new time with you if they would like to" in r.text.lower()
+    assert "03 Sep, 11 AM IST" in r.text
+
+
+def test_the_expiry_warning_is_not_a_reminder() -> None:
+    """Separate emails, separate jobs: the warning is about the link going dead."""
+    from app.email_templates import render
+
+    warn = render("link_expiring", "en", _CTX["link_expiring"])
+    nudge = render("exam_reminder", "en", {**_CTX["exam_reminder"], "window": "1h"})
+    assert warn.subject != nudge.subject
+    assert "stop working" in warn.text.lower()
+    assert "03 Sep, 6 PM IST" in warn.text
+    iv = render("link_expiring", "en", {"kind": "interview"})
+    assert "interview link" in iv.subject.lower()
+
+
+def test_the_expiry_notice_preview_names_the_right_thing() -> None:
+    """The hidden preview line said "assessment" even for an interview."""
+    from app.email_templates import render
+
+    for lang, word in (("en", "interview"), ("hi", "साक्षात्कार"), ("te", "ఇంటర్వ్యూ")):
+        r = render("link_expired", lang, {"kind": "interview"})
+        assert word in r.html
 
 
 def test_results_ready_carries_no_score() -> None:
@@ -803,19 +848,31 @@ async def test_rescheduling_rearms_both_reminder_windows() -> None:
     """The keys name the invite and the window, so reminders already spent on
     the old slot blocked the new one. Retiring them lets the next sweep remind
     about the time the candidate actually has to turn up."""
-    from app.reminders import interview_reminder_key, rearm_interview_reminders
+    from app.reminders import (
+        interview_reminder_key,
+        no_show_email_key,
+        no_show_notice_key,
+        rearm_interview_reminders,
+    )
 
     inv = uuid.uuid4()
     db = _db()
     await rearm_interview_reminders(db, inv)
 
-    sql, params = db.execute.call_args.args
-    assert "UPDATE email_events" in str(sql)
-    assert ":superseded:" in str(sql)
-    assert set(params.values()) == {
+    (email_sql, email_params), (notice_sql, notice_params) = (
+        c.args for c in db.execute.call_args_list
+    )
+    assert "UPDATE email_events" in str(email_sql)
+    assert ":superseded:" in str(email_sql)
+    # The new slot gets its own reminders — and its own no-show follow-up,
+    # because a rescheduled interview can be missed as well.
+    assert set(email_params.values()) == {
         interview_reminder_key(inv, "24h"),
         interview_reminder_key(inv, "1h"),
+        no_show_email_key(inv),
     }
+    assert "UPDATE notifications" in str(notice_sql)
+    assert notice_params == {"k": no_show_notice_key(inv)}
 
 
 def test_reschedule_rearms_only_when_the_slot_changes() -> None:
@@ -899,6 +956,7 @@ async def test_a_failing_stage_does_not_sink_the_sweep(monkeypatch: pytest.Monke
     for stage in (
         "_interview_reminders",
         "_expiry_notices",
+        "_no_shows",
         "_results_ready",
         "_interview_completed",
         "_workflow_results",
@@ -907,8 +965,157 @@ async def test_a_failing_stage_does_not_sink_the_sweep(monkeypatch: pytest.Monke
     monkeypatch.setattr(rem, "_exam_reminders", _boom)
 
     result = await rem.run_once(factory)  # type: ignore[arg-type]
-    assert "exam" in order and order.count("results") == 5
-    assert result.results_emails == 5
+    assert "exam" in order and order.count("results") == 6
+    assert result.results_emails == 6
+
+
+# ===========================================================================
+# A2/A3 — the expiry warning and the missed-slot follow-up
+# ===========================================================================
+def _reminder_row(**over: object) -> dict:
+    row = {
+        "id": uuid.uuid4(), "expires_at": datetime.now(tz=UTC) + timedelta(minutes=30),
+        "scheduled_at": None, "applicant_id": uuid.uuid4(), "full_name": "Priya",
+        "email": "p@example.com", "user_id": None, "exam_title": "Aptitude",
+        "round_title": None, "company_id": uuid.uuid4(), "language": "hi",
+        "job_title": "Staff Nurse",
+    }
+    return {**row, **over}
+
+
+async def _sent_templates(monkeypatch: pytest.MonkeyPatch, stage: str, row: dict) -> dict:
+    import app.reminders as rem
+
+    db = _db()
+    db.execute.return_value = MagicMock(mappings=MagicMock(return_value=MagicMock(
+        all=MagicMock(return_value=[row]))))
+    sent: dict[str, str] = {}
+
+    async def _enqueue(_db: object, **kw: object) -> object:
+        sent[str(kw["dedupe_key"]).rsplit(":", 1)[1]] = str(kw["template"])
+        return object()
+
+    monkeypatch.setattr(rem, "enqueue_email", _enqueue)
+    await getattr(rem, stage)(db, rem.SweepResult())
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_an_exams_final_hour_is_the_expiry_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An exam's deadline IS its link's expiry: a day out it is a reminder; in
+    the last hour it is the warning that the link is about to go dead."""
+    sent = await _sent_templates(monkeypatch, "_exam_reminders", _reminder_row())
+    assert sent == {"24h": "exam_reminder", "1h": "link_expiring"}
+
+
+@pytest.mark.asyncio
+async def test_an_unscheduled_interviews_final_hour_is_the_expiry_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = await _sent_templates(monkeypatch, "_interview_reminders", _reminder_row())
+    assert sent == {"24h": "interview_reminder", "1h": "link_expiring"}
+
+
+@pytest.mark.asyncio
+async def test_a_scheduled_interviews_final_hour_is_still_a_reminder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An hour before an appointment the news is "it starts soon", not "your
+    link is expiring" — the link outlives the slot by a day or more."""
+    row = _reminder_row(scheduled_at=datetime.now(tz=UTC) + timedelta(minutes=30),
+                        expires_at=datetime.now(tz=UTC) + timedelta(days=2))
+    sent = await _sent_templates(monkeypatch, "_interview_reminders", row)
+    assert sent == {"24h": "interview_reminder", "1h": "interview_reminder"}
+
+
+def test_a_missed_slot_is_found_the_moment_its_join_window_closes() -> None:
+    from app.reminders import _NO_SHOW_SQL
+
+    sql = _NO_SHOW_SQL
+    # The link stops starting the interview then — not when it formally expires.
+    assert "inv.scheduled_at + make_interval(mins => :window) <= :now" in sql
+    # Never started, never used.
+    assert "inv.status = 'invited'" in sql and "inv.consumed_at IS NULL" in sql
+    # Only a slot that was reachable; one booked past the link's expiry lapses
+    # through the expiry notice instead.
+    assert "inv.scheduled_at + make_interval(mins => :window) < inv.expires_at" in sql
+    # Both sides owed independently, and dropped once handled.
+    assert "'no_show:' || missed.id::text" in sql
+    assert "'interview_no_show:' || missed.id::text" in sql
+    assert "COALESCE(wf.reminders_enabled, true)" in sql
+
+
+def test_a_missed_slot_is_not_announced_twice_when_the_link_later_expires() -> None:
+    """Keyed on what was actually sent, not on timing — an invite the no-show
+    stage never covered still gets its expiry notice — and the no-show stage
+    runs first, so a slot and a link closing in one interval are told once."""
+    import inspect
+
+    from app.reminders import _LAPSED_SQL, run_once
+
+    assert "ee.dedupe_key = 'no_show:' || inv.id::text" in _LAPSED_SQL
+    assert "n.dedupe_key = 'interview_no_show:' || inv.id::text" in _LAPSED_SQL
+    src = inspect.getsource(run_once)
+    assert src.index('("no_show", _no_shows)') < src.index('("expiry", _expiry_notices)')
+
+
+@pytest.mark.asyncio
+async def test_a_missed_slot_tells_the_candidate_and_hr(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.reminders as rem
+
+    row = {
+        "id": uuid.uuid4(), "scheduled_at": datetime.now(tz=UTC) - timedelta(minutes=20),
+        "language": "te", "company_id": uuid.uuid4(), "owner_user_id": uuid.uuid4(),
+        "full_name": "Arjun", "email": "arjun@example.com", "job_title": "Staff Nurse",
+        "mail_candidate": True,
+    }
+    db = _db()
+    db.execute.return_value = MagicMock(mappings=MagicMock(return_value=MagicMock(
+        all=MagicMock(return_value=[row]))))
+    emails: list[dict] = []
+
+    async def _enqueue(_db: object, **kw: object) -> object:
+        emails.append(kw)
+        return object()
+
+    monkeypatch.setattr(rem, "enqueue_email", _enqueue)
+    notices = _capture_notifications(monkeypatch, rem)
+    result = rem.SweepResult()
+    await rem._no_shows(db, result)
+
+    assert result.no_shows == 1
+    assert emails[0]["template"] == "interview_no_show"
+    assert emails[0]["lang"] == "te"  # the interview's own language
+    assert emails[0]["dedupe_key"] == f"no_show:{row['id']}"
+    assert notices[0]["kind"] == "interview_no_show"
+    assert notices[0]["user_id"] == row["owner_user_id"]
+    assert notices[0]["link"] == "/hr/interviews"
+    assert notices[0]["dedupe_key"] == f"interview_no_show:{row['id']}"
+    assert "reject" not in notices[0]["title"].lower()
+
+
+@pytest.mark.asyncio
+async def test_a_missed_slot_with_reminders_off_still_tells_hr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.reminders as rem
+
+    row = {
+        "id": uuid.uuid4(), "scheduled_at": datetime.now(tz=UTC), "language": "en",
+        "company_id": uuid.uuid4(), "owner_user_id": uuid.uuid4(), "full_name": "Arjun",
+        "email": "arjun@example.com", "job_title": None, "mail_candidate": False,
+    }
+    db = _db()
+    db.execute.return_value = MagicMock(mappings=MagicMock(return_value=MagicMock(
+        all=MagicMock(return_value=[row]))))
+
+    async def _enqueue(_db: object, **_: object) -> object:
+        raise AssertionError("the candidate must not be emailed with reminders off")
+
+    monkeypatch.setattr(rem, "enqueue_email", _enqueue)
+    notices = _capture_notifications(monkeypatch, rem)
+    await rem._no_shows(db, rem.SweepResult())
+    assert len(notices) == 1
 
 
 # ===========================================================================
@@ -1148,7 +1355,7 @@ async def test_both_interval_loops_report_their_failed_stages(
     async def _ok(_db: object, _r: object) -> None:
         return None
 
-    for stage in ("_exam_reminders", "_interview_reminders", "_results_ready",
+    for stage in ("_exam_reminders", "_interview_reminders", "_no_shows", "_results_ready",
                   "_interview_completed", "_workflow_results"):
         monkeypatch.setattr(rem, stage, _ok)
     monkeypatch.setattr(rem, "_expiry_notices", _boom)

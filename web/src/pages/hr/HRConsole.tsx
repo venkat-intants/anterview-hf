@@ -278,6 +278,7 @@ const KIND_TONE: Record<string, keyof typeof ACTIVITY_BG> = {
   auto_advance: 'forest',
   // Waiting on HR: a lapse to follow up, a review to do.
   link_expired: 'amber',
+  interview_no_show: 'amber',
   review_due: 'amber',
   invite_sent: 'amber',
   decision: 'lavender',

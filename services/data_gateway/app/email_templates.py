@@ -841,13 +841,14 @@ def _t_interview_reminder(lang: str, ctx: dict) -> tuple[str, str, str, str]:
 
 
 def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
-    """A link lapsed unused — the expiry notice and the no-show follow-up.
+    """A link lapsed unused — the expiry notice.
 
-    These are one template because they are one event seen from two sides: a
-    window that closed without being opened. The copy is deliberately neutral
-    about consequence. Missing a window is NOT a rejection — under D-05 only a
-    person ends a candidacy — so this must not imply one, and must not promise
-    reinstatement either.
+    A missed interview SLOT has its own email (``interview_no_show``): that link
+    dies ten minutes after the slot, long before it formally expires. This one
+    covers exam links and unscheduled interview links reaching their deadline.
+    The copy is deliberately neutral about consequence. Missing a window is NOT
+    a rejection — under D-05 only a person ends a candidacy — so this must not
+    imply one, and must not promise reinstatement either.
     """
     name = ctx.get("name")
     what = ctx.get("what", "")
@@ -860,7 +861,10 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                 "Your interview window has closed" if kind == "interview"
                 else "Your assessment window has closed"
             ),
-            "pre": "The window for your assessment has closed.",
+            "pre": (
+                "The window for your interview has closed." if kind == "interview"
+                else "The window for your assessment has closed."
+            ),
             "lead": (
                 f"The window for <strong>{whate}</strong> closed without it being started."
                 if what else "Your scheduled window closed without being started."
@@ -877,7 +881,10 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                 "आपके साक्षात्कार की अवधि समाप्त हो गई" if kind == "interview"
                 else "आपकी परीक्षा की अवधि समाप्त हो गई"
             ),
-            "pre": "आपकी परीक्षा की अवधि समाप्त हो गई है।",
+            "pre": (
+                "आपके साक्षात्कार की अवधि समाप्त हो गई है।" if kind == "interview"
+                else "आपकी परीक्षा की अवधि समाप्त हो गई है।"
+            ),
             "lead": (
                 f"<strong>{whate}</strong> की अवधि बिना शुरू हुए समाप्त हो गई।"
                 if what else "आपकी निर्धारित अवधि बिना शुरू हुए समाप्त हो गई।"
@@ -894,7 +901,10 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                 "మీ ఇంటర్వ్యూ వ్యవధి ముగిసింది" if kind == "interview"
                 else "మీ పరీక్ష వ్యవధి ముగిసింది"
             ),
-            "pre": "మీ పరీక్ష వ్యవధి ముగిసింది.",
+            "pre": (
+                "మీ ఇంటర్వ్యూ వ్యవధి ముగిసింది." if kind == "interview"
+                else "మీ పరీక్ష వ్యవధి ముగిసింది."
+            ),
             "lead": (
                 f"<strong>{whate}</strong> వ్యవధి ప్రారంభించకుండానే ముగిసింది."
                 if what else "మీ నిర్ణీత వ్యవధి ప్రారంభించకుండానే ముగిసింది."
@@ -919,6 +929,203 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
         html_lib.unescape(loc["lead"].replace("<strong>", "").replace("</strong>", "")),
         (f"{loc['closed']} {expired}" if expired else ""), "",
         loc["next"], "", loc["outro"],
+    ])
+    return loc["subject"], inner, text, loc["pre"]
+
+
+def _t_link_expiring(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """The expiry warning: the link itself stops working within the hour.
+
+    Distinct from the reminders. A reminder is about an appointment or a
+    deadline coming up; this is the last notice before the link goes dead —
+    the difference between "your interview is tomorrow" and "this link will
+    not open after 6 PM". Carries no link, for the same reason the reminders
+    carry none (tokens are HMAC-hashed and cannot be re-sent).
+    """
+    name = ctx.get("name")
+    what = ctx.get("what", "")
+    kind = ctx.get("kind", "exam")
+    expires = ctx.get("expires")
+    whate = _esc(what)
+    interview = kind == "interview"
+    loc = _loc(lang, {
+        "en": {
+            "subject": (
+                f"Last chance: your link for {what} expires soon" if what
+                else ("Last chance: your interview link expires soon" if interview
+                      else "Last chance: your assessment link expires soon")
+            ),
+            "pre": "Your link stops working soon.",
+            "lead": (
+                f"Your link for <strong>{whate}</strong> will stop working within the hour."
+                if what else
+                ("Your interview link will stop working within the hour." if interview
+                 else "Your assessment link will stop working within the hour.")
+            ),
+            "expiry": "Expires:",
+            "how": (
+                "If you would still like to take part, use the link in your invitation "
+                "email before then. After it expires, it will no longer open."
+            ),
+            "outro": "All the best!",
+        },
+        "hi": {
+            "subject": (
+                f"आखिरी मौका: {what} का लिंक जल्द समाप्त हो रहा है" if what
+                else ("आखिरी मौका: आपका साक्षात्कार लिंक जल्द समाप्त हो रहा है" if interview
+                      else "आखिरी मौका: आपका परीक्षा लिंक जल्द समाप्त हो रहा है")
+            ),
+            "pre": "आपका लिंक जल्द ही काम करना बंद कर देगा।",
+            "lead": (
+                f"<strong>{whate}</strong> के लिए आपका लिंक एक घंटे के भीतर काम करना बंद कर देगा।"
+                if what else
+                ("आपका साक्षात्कार लिंक एक घंटे के भीतर काम करना बंद कर देगा।" if interview
+                 else "आपका परीक्षा लिंक एक घंटे के भीतर काम करना बंद कर देगा।")
+            ),
+            "expiry": "समाप्ति:",
+            "how": (
+                "यदि आप अभी भी भाग लेना चाहते हैं, तो उससे पहले अपने निमंत्रण ईमेल के लिंक "
+                "का उपयोग करें। समाप्त होने के बाद यह लिंक नहीं खुलेगा।"
+            ),
+            "outro": "शुभकामनाएँ!",
+        },
+        "te": {
+            "subject": (
+                f"చివరి అవకాశం: {what} లింక్ త్వరలో ముగుస్తుంది" if what
+                else ("చివరి అవకాశం: మీ ఇంటర్వ్యూ లింక్ త్వరలో ముగుస్తుంది" if interview
+                      else "చివరి అవకాశం: మీ పరీక్ష లింక్ త్వరలో ముగుస్తుంది")
+            ),
+            "pre": "మీ లింక్ త్వరలో పనిచేయడం ఆగిపోతుంది.",
+            "lead": (
+                f"<strong>{whate}</strong> కోసం మీ లింక్ ఒక గంటలోపు పనిచేయడం ఆగిపోతుంది."
+                if what else
+                ("మీ ఇంటర్వ్యూ లింక్ ఒక గంటలోపు పనిచేయడం ఆగిపోతుంది." if interview
+                 else "మీ పరీక్ష లింక్ ఒక గంటలోపు పనిచేయడం ఆగిపోతుంది.")
+            ),
+            "expiry": "ముగింపు:",
+            "how": (
+                "మీరు ఇంకా పాల్గొనాలనుకుంటే, ఆ లోపు మీ ఆహ్వాన ఇమెయిల్‌లోని లింక్‌ను "
+                "ఉపయోగించండి. గడువు ముగిసిన తర్వాత ఈ లింక్ తెరవబడదు."
+            ),
+            "outro": "శుభాకాంక్షలు!",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"])
+    if expires:
+        inner += _p(
+            f'<span style="color:{_MUTED};font-size:14px;">'
+            f'<strong>{loc["expiry"]}</strong> {_esc(expires)}</span>'
+        )
+    inner += _p(_esc(loc["how"])) + _p(loc["outro"])
+    text = "\n".join([
+        _greeting(lang, name), "",
+        html_lib.unescape(loc["lead"].replace("<strong>", "").replace("</strong>", "")),
+        (f"{loc['expiry']} {expires}" if expires else ""), "",
+        loc["how"], "", loc["outro"],
+    ])
+    return loc["subject"], inner, text, loc["pre"]
+
+
+def _t_interview_no_show(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """The follow-up when a scheduled interview slot passed unstarted.
+
+    The link stops starting the interview ten minutes after the slot (the join
+    window), so this is sent then rather than days later when the link formally
+    expires. Neutral by requirement: a missed slot is not a rejection (D-05),
+    and nothing here may imply one — nor promise a new slot, which is HR's to
+    offer. "Missed" is avoided in the subject for the same reason; the facts
+    are stated without assigning fault.
+    """
+    name = ctx.get("name")
+    job = ctx.get("job_title", "")
+    when = ctx.get("when")
+    jobe = _esc(job)
+    loc = _loc(lang, {
+        "en": {
+            "subject": (
+                f"Your interview time for {job} has passed" if job
+                else "Your interview time has passed"
+            ),
+            "pre": "Your scheduled interview time has passed.",
+            "lead": (
+                f"Your interview for <strong>{jobe}</strong> was scheduled for a time that "
+                "has now passed, and it was not started."
+                if job else
+                "Your scheduled interview time has passed, and the interview was not started."
+            ),
+            "when": "Scheduled for:",
+            "next": (
+                "The link in your invitation can no longer be used to start it. We have let "
+                "the hiring team know, and they can arrange a new time with you if they "
+                "would like to. No action is needed from you right now."
+            ),
+            "help": (
+                "If something went wrong on your side, such as a connection or device "
+                "problem, you can reply to this email to let them know."
+            ),
+            "outro": "Thank you for your interest.",
+        },
+        "hi": {
+            "subject": (
+                f"{job} के लिए आपके साक्षात्कार का समय बीत गया है" if job
+                else "आपके साक्षात्कार का समय बीत गया है"
+            ),
+            "pre": "आपके साक्षात्कार का निर्धारित समय बीत गया है।",
+            "lead": (
+                f"<strong>{jobe}</strong> के लिए आपका साक्षात्कार जिस समय निर्धारित था, वह "
+                "बीत चुका है और साक्षात्कार शुरू नहीं हुआ।"
+                if job else
+                "आपके साक्षात्कार का निर्धारित समय बीत चुका है और साक्षात्कार शुरू नहीं हुआ।"
+            ),
+            "when": "निर्धारित समय:",
+            "next": (
+                "आपके निमंत्रण के लिंक से अब इसे शुरू नहीं किया जा सकता। हमने भर्ती टीम को "
+                "सूचित कर दिया है; यदि वे चाहें तो आपके साथ नया समय तय कर सकते हैं। अभी "
+                "आपकी ओर से किसी कार्रवाई की आवश्यकता नहीं है।"
+            ),
+            "help": (
+                "यदि आपकी ओर से कोई समस्या आई थी, जैसे इंटरनेट या डिवाइस की दिक्कत, तो आप "
+                "इस ईमेल का उत्तर देकर उन्हें बता सकते हैं।"
+            ),
+            "outro": "आपकी रुचि के लिए धन्यवाद।",
+        },
+        "te": {
+            "subject": (
+                f"{job} కోసం మీ ఇంటర్వ్యూ సమయం దాటిపోయింది" if job
+                else "మీ ఇంటర్వ్యూ సమయం దాటిపోయింది"
+            ),
+            "pre": "మీ ఇంటర్వ్యూ నిర్ణీత సమయం దాటిపోయింది.",
+            "lead": (
+                f"<strong>{jobe}</strong> కోసం మీ ఇంటర్వ్యూకు నిర్ణయించిన సమయం దాటిపోయింది, "
+                "ఇంటర్వ్యూ ప్రారంభం కాలేదు."
+                if job else
+                "మీ ఇంటర్వ్యూ నిర్ణీత సమయం దాటిపోయింది, ఇంటర్వ్యూ ప్రారంభం కాలేదు."
+            ),
+            "when": "షెడ్యూల్:",
+            "next": (
+                "మీ ఆహ్వానంలోని లింక్‌తో ఇకపై దీన్ని ప్రారంభించలేరు. నియామక బృందానికి "
+                "తెలియజేశాము; వారు కావాలనుకుంటే మీతో కొత్త సమయం ఏర్పాటు చేయవచ్చు. "
+                "ప్రస్తుతం మీ నుండి ఎటువంటి చర్య అవసరం లేదు."
+            ),
+            "help": (
+                "మీ వైపు ఇంటర్నెట్ లేదా పరికరం సమస్య వంటిది ఏదైనా జరిగి ఉంటే, ఈ ఇమెయిల్‌కు "
+                "ప్రత్యుత్తరం ఇచ్చి వారికి తెలియజేయవచ్చు."
+            ),
+            "outro": "మీ ఆసక్తికి ధన్యవాదాలు.",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"])
+    if when:
+        inner += _p(
+            f'<span style="color:{_MUTED};font-size:14px;">'
+            f'<strong>{loc["when"]}</strong> {_esc(when)}</span>'
+        )
+    inner += _p(_esc(loc["next"])) + _p(_esc(loc["help"])) + _p(loc["outro"])
+    text = "\n".join([
+        _greeting(lang, name), "",
+        html_lib.unescape(loc["lead"].replace("<strong>", "").replace("</strong>", "")),
+        (f"{loc['when']} {when}" if when else ""), "",
+        loc["next"], "", loc["help"], "", loc["outro"],
     ])
     return loc["subject"], inner, text, loc["pre"]
 
@@ -1129,11 +1336,13 @@ _BUILDERS = {
     "hr_credentials": _t_hr_credentials,
     "application_received": _t_application_received,
     "decision": _t_decision,
-    # A2/A3 — deadline nudges and the results notification. 'link_expired'
-    # covers both the expiry notice and the no-show follow-up: an unopened
-    # link that lapses is one event described from two sides.
+    # A2/A3 — the five candidate lifecycle emails, each its own template:
+    # reminder (exam / interview), expiry warning, no-show follow-up, results
+    # ready. 'link_expired' is the notice once a link has actually lapsed.
     "exam_reminder": _t_exam_reminder,
     "interview_reminder": _t_interview_reminder,
+    "link_expiring": _t_link_expiring,
+    "interview_no_show": _t_interview_no_show,
     "link_expired": _t_link_expired,
     "results_ready": _t_results_ready,
     "generic": _t_generic,

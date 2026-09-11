@@ -40,6 +40,7 @@ export const REFRESH_ON: Record<string, QueryKey[]> = {
   exam_submitted: [['hr', 'exam'], ...RESULT_VIEWS],
   auto_advance: [['hr', 'interviews'], ...RESULT_VIEWS],
   link_expired: [['hr', 'interviews'], ['hr', 'exam'], ['hr', 'applicants'], ['hr-attention']],
+  interview_no_show: [['hr', 'interviews'], ['hr', 'applicants'], ['hr-attention']],
   bulk_upload: [['hr', 'applicants'], ['hr', 'analytics'], ['hr', 'requisition-dashboard']],
   review_due: [['hr', 'decision-queue'], ['hr', 'requisition-dashboard'], ['hr-attention']],
   applicant_scored: [['hr', 'applicants'], ['hr', 'pipeline']],

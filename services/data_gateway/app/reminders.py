@@ -95,6 +95,7 @@ class SweepResult:
     exam_reminders: int = 0
     interview_reminders: int = 0
     expiry_notices: int = 0
+    no_shows: int = 0
     results_emails: int = 0
     completions: int = 0
     # Scored workflow interviews recorded as their round's result (advanced,
@@ -109,6 +110,7 @@ class SweepResult:
             self.exam_reminders
             + self.interview_reminders
             + self.expiry_notices
+            + self.no_shows
             + self.completions
             + self.results_emails
             + self.workflow_results
@@ -179,18 +181,25 @@ async def _exam_reminders(db: AsyncSession, result: SweepResult) -> None:
             )
         ).mappings().all()
         for r in rows:
+            title = r["round_title"] or r["exam_title"] or ""
+            # The exam's deadline IS its link's expiry, so the final-hour touch
+            # is the expiry warning — "this link stops working" — rather than a
+            # second reminder. The dedupe key names the touch, not the template,
+            # so switching templates re-sends nothing already delivered.
+            template, ctx = (
+                ("link_expiring", {"name": r["full_name"], "what": title, "kind": "exam",
+                                   "expires": _fmt(r["expires_at"])})
+                if label == "1h" else
+                ("exam_reminder", {"name": r["full_name"], "exam_title": title,
+                                   "expires": _fmt(r["expires_at"]),
+                                   "when": _fmt(r["scheduled_at"]), "window": label})
+            )
             sent = await enqueue_email(
                 db,
                 to=r["email"],
-                template="exam_reminder",
+                template=template,
                 lang=await _lang_for_user(db, r["user_id"]),
-                ctx={
-                    "name": r["full_name"],
-                    "exam_title": r["round_title"] or r["exam_title"] or "",
-                    "expires": _fmt(r["expires_at"]),
-                    "when": _fmt(r["scheduled_at"]),
-                    "window": label,
-                },
+                ctx=ctx,
                 company_id=r["company_id"],
                 related_kind="exam_assignment",
                 related_id=r["id"],
@@ -242,18 +251,39 @@ async def rearm_interview_reminders(db: AsyncSession, invite_id: uuid.UUID) -> N
     format itself is unchanged, which is what keeps this safe to deploy: a
     format that embedded the slot time would have re-sent every reminder
     already delivered for an invite still inside its window. Caller commits.
+
+    The missed-slot follow-up is re-armed the same way, candidate email and HR
+    notification both: a new slot can be missed too, and rescheduling is what
+    revives the link (the join window re-anchors on the new time).
     """
     await db.execute(
         text(
             "UPDATE email_events"
             "   SET dedupe_key = dedupe_key || ':superseded:' || id::text"
-            " WHERE dedupe_key IN (:k24, :k1)"
+            " WHERE dedupe_key IN (:k24, :k1, :ns)"
         ),
         {
             "k24": interview_reminder_key(invite_id, "24h"),
             "k1": interview_reminder_key(invite_id, "1h"),
+            "ns": no_show_email_key(invite_id),
         },
     )
+    await db.execute(
+        text(
+            "UPDATE notifications"
+            "   SET dedupe_key = dedupe_key || ':superseded:' || id::text"
+            " WHERE dedupe_key = :k"
+        ),
+        {"k": no_show_notice_key(invite_id)},
+    )
+
+
+def no_show_email_key(invite_id: uuid.UUID | str) -> str:
+    return f"no_show:{invite_id}"
+
+
+def no_show_notice_key(invite_id: uuid.UUID | str) -> str:
+    return f"interview_no_show:{invite_id}"
 
 
 async def _interview_reminders(db: AsyncSession, result: SweepResult) -> None:
@@ -266,20 +296,26 @@ async def _interview_reminders(db: AsyncSession, result: SweepResult) -> None:
             )
         ).mappings().all()
         for r in rows:
+            # With a slot, the final hour is still a reminder: an appointment is
+            # coming. Without one, the deadline is the link's own expiry, so the
+            # final hour is the expiry warning instead. Same key either way.
+            template, ctx = (
+                ("link_expiring", {"name": r["full_name"], "what": r["job_title"] or "",
+                                   "kind": "interview", "expires": _fmt(r["expires_at"])})
+                if label == "1h" and r["scheduled_at"] is None else
+                ("interview_reminder", {"name": r["full_name"],
+                                        "job_title": r["job_title"] or "",
+                                        "when": _fmt(r["scheduled_at"]),
+                                        "expires": _fmt(r["expires_at"]), "window": label})
+            )
             sent = await enqueue_email(
                 db,
                 to=r["email"],
-                template="interview_reminder",
+                template=template,
                 # The invite records the language the interview will be
                 # conducted in, so the reminder matches the interview itself.
                 lang=str(r["language"] or "en"),
-                ctx={
-                    "name": r["full_name"],
-                    "job_title": r["job_title"] or "",
-                    "when": _fmt(r["scheduled_at"]),
-                    "expires": _fmt(r["expires_at"]),
-                    "window": label,
-                },
+                ctx=ctx,
                 company_id=r["company_id"],
                 related_kind="interview_invite",
                 related_id=r["id"],
@@ -341,6 +377,14 @@ SELECT * FROM (
     LEFT JOIN workflows  wf ON wf.id = en.workflow_id
    WHERE inv.status = 'invited' AND inv.deleted_at IS NULL AND inv.consumed_at IS NULL
      AND inv.expires_at <= :now AND inv.expires_at > :floor
+     -- A missed slot has already been announced by the no-show stage (which
+     -- runs first); the same lapse is not announced a second time days later.
+     -- Keyed on what was actually sent rather than on timing, so an invite the
+     -- no-show stage never covered still gets its expiry notice.
+     AND NOT EXISTS (SELECT 1 FROM email_events ee
+                      WHERE ee.dedupe_key = 'no_show:' || inv.id::text)
+     AND NOT EXISTS (SELECT 1 FROM notifications n
+                      WHERE n.dedupe_key = 'interview_no_show:' || inv.id::text)
 ) lapsed
  WHERE (
          mail_candidate
@@ -411,6 +455,102 @@ async def _expiry_notices(db: AsyncSession, result: SweepResult) -> None:
             ),
             link="/hr/applicants",
             dedupe_key=f"link_expired:{r['kind']}:{r['id']}",
+        )
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# 3b. Missed interview slots — the no-show follow-up
+# ---------------------------------------------------------------------------
+# A scheduled interview can be started only inside its join window (ten
+# minutes from the slot, settings.interview_join_window_minutes). After that the
+# link is dead for a first start, even though the invite reads 'invited' until
+# expires_at, up to two days later. Until now nothing noticed in between: the
+# reminders stopped at the slot, and the candidate heard nothing until a "window
+# closed" email days afterwards; HR heard nothing at all.
+#
+# So this stage acts the moment the window closes. Same two-obligation shape as
+# the expiry notice — candidate email (reminders switch honoured) and owner
+# notification, each with its own key — and the same "drop out once handled"
+# predicate, so a handled row never takes a batch slot again. The status is
+# NOT changed: 'invited' is what lets HR reschedule, and rescheduling re-anchors
+# the window and revives the link.
+#
+# Only slots that were reachable: one booked past the link's own expiry never
+# opened, and lapses through the expiry notice instead.
+_NO_SHOW_SQL = """
+SELECT * FROM (
+  SELECT inv.id, inv.scheduled_at, inv.language, inv.company_id,
+         COALESCE(inv.created_by_user_id, wf.created_by_user_id) AS owner_user_id,
+         a.full_name, a.email, j.title AS job_title,
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate
+    FROM interview_invites inv
+    JOIN applicants a ON a.id = inv.applicant_id AND a.deleted_at IS NULL
+    LEFT JOIN jobs j ON j.id = inv.job_id
+    LEFT JOIN enrolments en ON en.id = inv.enrolment_id
+    LEFT JOIN workflows  wf ON wf.id = en.workflow_id
+   WHERE inv.status = 'invited' AND inv.deleted_at IS NULL AND inv.consumed_at IS NULL
+     AND inv.scheduled_at IS NOT NULL
+     AND inv.scheduled_at + make_interval(mins => :window) <= :now
+     AND inv.scheduled_at + make_interval(mins => :window) < inv.expires_at
+     AND inv.scheduled_at > :floor
+) missed
+ WHERE (
+         mail_candidate
+         AND NOT EXISTS (SELECT 1 FROM email_events ee
+                          WHERE ee.dedupe_key = 'no_show:' || missed.id::text)
+       )
+    OR (
+         owner_user_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM notifications n
+                          WHERE n.dedupe_key = 'interview_no_show:' || missed.id::text)
+       )
+ ORDER BY scheduled_at
+ LIMIT :lim
+"""
+
+
+async def _no_shows(db: AsyncSession, result: SweepResult) -> None:
+    now = datetime.now(tz=UTC)
+    rows = (
+        await db.execute(
+            text(_NO_SHOW_SQL),
+            {"now": now, "floor": now - _EXPIRY_LOOKBACK, "lim": _BATCH,
+             "window": settings.interview_join_window_minutes},
+        )
+    ).mappings().all()
+
+    for r in rows:
+        if r["mail_candidate"]:
+            sent = await enqueue_email(
+                db,
+                to=r["email"],
+                template="interview_no_show",
+                lang=str(r["language"] or "en"),
+                ctx={
+                    "name": r["full_name"],
+                    "job_title": r["job_title"] or "",
+                    "when": _fmt(r["scheduled_at"]),
+                },
+                company_id=r["company_id"],
+                related_kind="interview_no_show",
+                related_id=r["id"],
+                dedupe_key=no_show_email_key(r["id"]),
+            )
+            if sent is not None:
+                result.no_shows += 1
+
+        await create_notification(
+            db,
+            user_id=r["owner_user_id"],
+            kind="interview_no_show",
+            title=f"{r['full_name']} did not start their interview",
+            body=(
+                (f"{r['job_title']} · " if r["job_title"] else "")
+                + f"scheduled for {_fmt(r['scheduled_at'])}. Reschedule to send them a new time."
+            ),
+            link="/hr/interviews",
+            dedupe_key=no_show_notice_key(r["id"]),
         )
     await db.commit()
 
@@ -602,6 +742,11 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
         for name, fn in (
             ("exam", _exam_reminders),
             ("interview", _interview_reminders),
+            # no_show before expiry: when a slot's window and the link both
+            # close inside one interval, the specific news (you missed the
+            # slot) must be staged first, so the expiry notice sees it and
+            # stays quiet.
+            ("no_show", _no_shows),
             ("expiry", _expiry_notices),
             ("results", _results_ready),
             ("completed", _interview_completed),

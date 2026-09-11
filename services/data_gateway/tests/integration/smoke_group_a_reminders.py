@@ -44,8 +44,10 @@ async def seed(f):
     apps = {k: uuid.uuid4() for k in (
         "soon", "verysoon", "lapsed", "done", "interview", "scored",
         "noemail", "wflapsed", "wfquiet", "consumed",
+        "missed", "expiring", "oldmiss", "sameslot",
     )}
-    ids = {"interview_invite": uuid.uuid4(), "consumed_invite": uuid.uuid4()}
+    ids = {"interview_invite": uuid.uuid4(), "consumed_invite": uuid.uuid4(),
+           "missed_invite": uuid.uuid4()}
     async with f() as db:
         await db.execute(text("INSERT INTO companies (id,name,slug,is_active,created_at,updated_at)"
                               " VALUES (:i,'Acme','acme',true,:n,:n)"), {"i": cid, "n": now})
@@ -83,6 +85,8 @@ async def seed(f):
             ("interview", "Esha", "esha@cand.test"), ("scored", "Farah", "farah@cand.test"),
             ("noemail", "Gita", None), ("wflapsed", "Hari", "hari@cand.test"),
             ("wfquiet", "Indu", "indu@cand.test"), ("consumed", "Jaya", "jaya@cand.test"),
+            ("missed", "Kavya", "kavya@cand.test"), ("expiring", "Lakshmi", "lakshmi@cand.test"),
+            ("oldmiss", "Mohan", "mohan@cand.test"), ("sameslot", "Nisha", "nisha@cand.test"),
         ]:
             await db.execute(text(
                 "INSERT INTO applicants (id,company_id,created_by_user_id,full_name,email,"
@@ -124,6 +128,27 @@ async def seed(f):
             {"i": ids["interview_invite"], "c": cid, "a": apps["interview"], "j": jid, "u": uid,
              "th": uuid.uuid4().hex, "x": now + timedelta(days=2),
              "s": now + timedelta(hours=20), "n": now})
+
+        # Interview slots and links for the no-show / expiry-warning checks.
+        for key, inv_id, slot, expires, lang in [
+            # Slot 20 min ago, window (10 min) closed, link valid two more days.
+            ("missed", ids["missed_invite"], now - timedelta(minutes=20),
+             now + timedelta(days=2), "te"),
+            # No slot; the link itself closes in 40 minutes.
+            ("expiring", uuid.uuid4(), None, now + timedelta(minutes=40), "en"),
+            # Missed three days ago, before anything announced no-shows; the link
+            # lapsed an hour ago. Must still get its expiry notice.
+            ("oldmiss", uuid.uuid4(), now - timedelta(days=3), now - timedelta(hours=1), "en"),
+            # Slot window and link both closed within the last interval: told once.
+            ("sameslot", uuid.uuid4(), now - timedelta(minutes=30),
+             now - timedelta(minutes=5), "hi"),
+        ]:
+            await db.execute(text(
+                "INSERT INTO interview_invites (id,company_id,applicant_id,job_id,"
+                " created_by_user_id,token_hash,language,expires_at,scheduled_at,status,"
+                " created_at,updated_at) VALUES (:i,:c,:a,:j,:u,:th,:l,:x,:s,'invited',:n,:n)"),
+                {"i": inv_id, "c": cid, "a": apps[key], "j": jid, "u": uid, "l": lang,
+                 "th": uuid.uuid4().hex, "x": expires, "s": slot, "n": now})
 
         # A completed interview with a scorecard — nobody has told the candidate.
         sid, scid = uuid.uuid4(), uuid.uuid4()
@@ -261,11 +286,28 @@ async def main() -> None:
                 and (template is None or e["template"] == template)]
 
     kinds = [e["template"] for e in ev]
+    tmpl = {e["to_email"]: e["template"] for e in ev}
+    check("an exam's final hour sends the expiry warning, not a second reminder",
+          tmpl.get("bharat@cand.test") == "link_expiring", str(tmpl.get("bharat@cand.test")))
+    check("an unscheduled interview's final hour sends the expiry warning",
+          tmpl.get("lakshmi@cand.test") == "link_expiring", str(tmpl.get("lakshmi@cand.test")))
+    check("a missed slot sends the no-show follow-up as soon as its window closes",
+          [e["template"] for e in to("kavya@cand.test")] == ["interview_no_show"],
+          str(to("kavya@cand.test")))
+    check("the no-show follow-up is in the interview's language (te)",
+          any(e["lang"] == "te" for e in to("kavya@cand.test", "interview_no_show")))
+    check("a slot missed before no-shows existed still gets its expiry notice",
+          [e["template"] for e in to("mohan@cand.test")] == ["link_expired"],
+          str(to("mohan@cand.test")))
+    check("a slot and a link closing together are announced once, as a no-show",
+          [e["template"] for e in to("nisha@cand.test")] == ["interview_no_show"],
+          str(to("nisha@cand.test")))
+
     check("24h exam reminder sent for a deadline 20h out",
           [e["dedupe_key"].rsplit(":", 1)[1] for e in to("asha@cand.test", "exam_reminder")]
           == ["24h"], str(to("asha@cand.test")))
-    check("a deadline 40 min out gets the 1h reminder only — not both at once",
-          [e["dedupe_key"].rsplit(":", 1)[1] for e in to("bharat@cand.test", "exam_reminder")]
+    check("a deadline 40 min out gets the 1h touch only — not both at once",
+          [e["dedupe_key"].rsplit(":", 1)[1] for e in to("bharat@cand.test")]
           == ["1h"], str([e["dedupe_key"] for e in to("bharat@cand.test")]))
     check("candidate who already sat the exam gets nothing", not to("dev@cand.test"))
     check("lapsed link produces an expiry notice", bool(to("chitra@cand.test", "link_expired")))
@@ -295,6 +337,10 @@ async def main() -> None:
     check("every lapse notification carries its dedupe key",
           all(n["dedupe_key"] and n["dedupe_key"].startswith("link_expired:")
               for n in lapsed_hr))
+    no_show_hr = [n for n in hr if n["kind"] == "interview_no_show"]
+    check("HR is told who did not start their interview, once each",
+          sorted(n["title"].split(" did not")[0] for n in no_show_hr) == ["Kavya", "Nisha"],
+          str(no_show_hr))
     done = [n for n in hr if n["kind"] == "interview_completed"]
     check("completion announced to HR once, with its key",
           len(done) == 1 and done[0]["dedupe_key"] == f"interview_completed:{s['consumed_invite']}",
@@ -337,6 +383,21 @@ async def main() -> None:
     check("a rescheduled interview is reminded about its new slot",
           esha.count(live_key) == 1 and any(":superseded:" in k for k in esha), str(esha))
     check("the reminder already sent is kept in the delivery log", len(esha) == 2, str(esha))
+
+    # ── A missed slot, rescheduled, missed again: told again ─────────────
+    async with f() as db:
+        await rem.rearm_interview_reminders(db, s["missed_invite"])
+        await db.execute(text(
+            "UPDATE interview_invites SET scheduled_at = :t WHERE id = :i"),
+            {"t": datetime.now(tz=UTC) - timedelta(minutes=15), "i": s["missed_invite"]})
+        await db.commit()
+    await rem.run_once(f)
+    kavya = [e["dedupe_key"] for e in await emails(f) if e["to_email"] == "kavya@cand.test"]
+    kavya_hr = [n for n in await notifications(f, s["hr"])
+                if n["kind"] == "interview_no_show" and "Kavya" in n["title"]]
+    check("a rescheduled slot that is missed again is followed up again",
+          kavya.count(rem.no_show_email_key(s["missed_invite"])) == 1 and len(kavya) == 2
+          and len(kavya_hr) == 2, f"emails={kavya} hr={len(kavya_hr)}")
 
     await batch_checks(f, s)
 

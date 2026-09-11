@@ -57,11 +57,13 @@ from app.applicant_enrichment import (
     apply_ats_to_enrolment,
     apply_extracted_identity,
     store_embedding,
+    valid_email_or_none,
 )
 from app.config import settings
 from app.embedding_client import embed_texts_remote
 from app.models import Applicant
 from app.notifications_util import create_notification
+from app.requisitions import applicant_by_email
 from app.scheduling import record_loop_pass
 from app.scoring_client import (
     ScoringServiceUnavailableError,
@@ -427,7 +429,18 @@ async def _score_pass(db: AsyncSession, result: PassResult) -> None:
         # derived from the filename and its email is missing. The scorer just
         # read both out of the PDF — this is the only moment they are available,
         # so it is the moment they get written.
-        if apply_extracted_identity(applicant, score):
+        #
+        # B4: one person is one applicant per company. An address that already
+        # belongs to someone else here would make this row a second copy of
+        # them, so it is kept aside (parsed_email) for the review screen to
+        # offer the merge instead.
+        extracted = valid_email_or_none(str(score.get("candidate_email") or "").strip()[:320])
+        taken = bool(
+            extracted and applicant.email is None and applicant.pending_enrichment
+            and await applicant_by_email(db, company_id=applicant.company_id,
+                                         email=extracted, exclude_id=aid)
+        )
+        if apply_extracted_identity(applicant, score, email_taken=taken):
             result.named += 1
         await _clear_state(db, kind, ref)
         await db.commit()

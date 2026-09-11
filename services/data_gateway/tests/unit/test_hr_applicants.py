@@ -405,6 +405,7 @@ async def test_ingest_keeps_a_valid_scorer_extracted_email(
 
     db = AsyncMock()
     db.add = MagicMock()
+    db.scalar = AsyncMock(return_value=None)  # nobody at the company has this address
     applicant = await mod._ingest_resume(
         db=db,
         company_id=uuid.uuid4(),
@@ -417,6 +418,41 @@ async def test_ingest_keeps_a_valid_scorer_extracted_email(
     )
 
     assert applicant.email == "jane@example.com"
+    assert applicant.parsed_email is None
+
+
+@pytest.mark.asyncio
+async def test_ingest_keeps_aside_an_extracted_email_someone_already_has(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B4: as ``email`` it would be a second applicant for one person; the
+    review screen proposes the merge from ``parsed_email`` instead."""
+    from app.routers import hr_applicants as mod
+
+    monkeypatch.setattr(mod, "_extract_pdf_text", AsyncMock(return_value="cv text"))
+    monkeypatch.setattr(mod, "_upload_to_s3", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        mod,
+        "score_resume_remote",
+        AsyncMock(return_value={"overall": 61, "candidate_email": "jane@example.com"}),
+    )
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.scalar = AsyncMock(return_value=uuid.uuid4())  # Jane is already on file
+    applicant = await mod._ingest_resume(
+        db=db,
+        company_id=uuid.uuid4(),
+        hr_uid=uuid.uuid4(),
+        raw=b"%PDF-1.4",
+        fallback_name="cv",
+        job_title="Welder",
+        level="mid",
+        jd_text=None,
+    )
+
+    assert applicant.email is None
+    assert applicant.parsed_email == "jane@example.com"
 
 
 # --- the HTTP boundary -------------------------------------------------------

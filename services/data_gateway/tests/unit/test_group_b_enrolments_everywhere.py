@@ -203,7 +203,7 @@ async def test_the_reconciler_writes_the_enrolment_and_mirrors_only_the_latest(
     monkeypatch.setattr(rec, "score_resume_remote", _score)
     monkeypatch.setattr(rec, "apply_ats_to_enrolment", _to_enrolment)
     monkeypatch.setattr(rec, "apply_ats_score", lambda a, _s: mirrored.append(a))
-    monkeypatch.setattr(rec, "apply_extracted_identity", lambda _a, _s: False)
+    monkeypatch.setattr(rec, "apply_extracted_identity", lambda _a, _s, **_: False)
 
     result = rec.PassResult()
     await rec._score_pass(db, result)

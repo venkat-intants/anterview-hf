@@ -1071,6 +1071,11 @@ class Notification(Base):
     link: Mapped[str | None] = mapped_column(Text, nullable=True)
     read_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    # Names the event, not the moment — "interview_completed:<invite_id>". Unique
+    # where set (partial index), so a retried or concurrent producer cannot
+    # announce the same event twice. NULL for notifications with no event
+    # identity (a welcome, a review request).
+    dedupe_key: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 # ---------------------------------------------------------------------------

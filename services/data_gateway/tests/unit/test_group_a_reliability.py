@@ -172,7 +172,9 @@ async def test_record_failure_parks_the_row_at_the_limit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_one_bad_applicant_does_not_stop_the_pass() -> None:
+async def test_one_bad_applicant_does_not_stop_the_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The whole point of the loop is that it keeps going."""
     import app.reconciliation as rec
 
@@ -183,6 +185,7 @@ async def test_one_bad_applicant_does_not_stop_the_pass() -> None:
     applicant = MagicMock(
         id=good, company_id=uuid.uuid4(), resume_text="cv", target_job_title="Dev",
         target_level="mid", target_jd_text=None, created_by_user_id=uuid.uuid4(),
+        upload_batch_id=None,
     )
     db.get = AsyncMock(return_value=applicant)
 
@@ -194,7 +197,9 @@ async def test_one_bad_applicant_does_not_stop_the_pass() -> None:
             raise RuntimeError("scorer down")
         return {"overall": 7}
 
-    rec.score_resume_remote = _score  # type: ignore[assignment]
+    # Through monkeypatch, not a raw assignment: a raw one is never put back
+    # and leaks the stub into every later test that touches the scorer.
+    monkeypatch.setattr(rec, "score_resume_remote", _score)
     result = rec.PassResult()
     await rec._score_pass(db, result)
 
@@ -247,6 +252,233 @@ async def test_exam_reminder_dedupe_key_names_the_window_not_the_time(
     await rem._exam_reminders(db, rem.SweepResult())
 
     assert keys == [f"exam_reminder:{row['id']}:24h", f"exam_reminder:{row['id']}:1h"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["_exam_reminders", "_interview_reminders"])
+async def test_reminder_windows_are_bands_not_nested_ranges(stage: str) -> None:
+    """A deadline forty minutes out used to match both windows, so the candidate
+    got two emails in the same minute and one of them said "closes tomorrow".
+    The 24h window now stops where the 1h window starts."""
+    import app.reminders as rem
+
+    db = _db()
+    db.execute.return_value = MagicMock(mappings=MagicMock(return_value=MagicMock(
+        all=MagicMock(return_value=[]))))
+    before = datetime.now(tz=UTC)
+    await getattr(rem, stage)(db, rem.SweepResult())
+
+    day, hour = (c.args[1] for c in db.execute.call_args_list)
+    # 24h band: (now+1h, now+24h]; 1h band: (now, now+1h]. Adjacent, not nested.
+    assert day["near"] == hour["horizon"]
+    assert day["horizon"] - day["near"] == timedelta(hours=23)
+    assert hour["horizon"] - hour["near"] == timedelta(hours=1)
+    assert abs(hour["near"] - before) < timedelta(seconds=5)
+
+
+def test_reminder_queries_bound_both_edges_of_the_band() -> None:
+    from app.reminders import _EXAM_DUE_SQL, _INTERVIEW_DUE_SQL
+
+    assert "asg.expires_at > :near" in _EXAM_DUE_SQL
+    assert "COALESCE(inv.scheduled_at, inv.expires_at) > :near" in _INTERVIEW_DUE_SQL
+
+
+def test_the_workflow_reminder_switch_is_honoured() -> None:
+    """"Remind candidates" in the workflow builder was stored and never read.
+    Every candidate-facing reminder query now joins through the enrolment to
+    the workflow and respects it; rows with no workflow keep the default (on)."""
+    from app.reminders import _EXAM_DUE_SQL, _INTERVIEW_DUE_SQL, _LAPSED_SQL, _REMINDERS_ON
+
+    assert _REMINDERS_ON == "COALESCE(wf.reminders_enabled, true)"
+    for sql in (_EXAM_DUE_SQL, _INTERVIEW_DUE_SQL, _LAPSED_SQL):
+        assert _REMINDERS_ON in sql
+        assert "LEFT JOIN workflows" in sql  # LEFT: ad-hoc invites have no workflow
+
+
+def _lapsed(**over: object) -> dict:
+    row = {
+        "kind": "exam", "id": uuid.uuid4(), "expires_at": datetime.now(tz=UTC),
+        "company_id": uuid.uuid4(), "owner_user_id": uuid.uuid4(),
+        "full_name": "Anita", "email": "anita@example.com", "user_id": None,
+        "what": "Technical Round", "mail_candidate": True,
+    }
+    return {**row, **over}
+
+
+def _rows_db(rows: list[dict]) -> AsyncMock:
+    db = _db()
+    db.execute.return_value = MagicMock(mappings=MagicMock(return_value=MagicMock(
+        all=MagicMock(return_value=rows))))
+    return db
+
+
+@pytest.mark.asyncio
+async def test_hr_hears_about_a_lapse_even_when_the_candidate_has_no_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The owner used to be told only if the candidate email was staged, so a
+    candidate with no address lapsed in silence on both sides."""
+    import app.reminders as rem
+
+    row = _lapsed(email=None, mail_candidate=None)
+    emails: list[dict] = []
+
+    async def _enqueue(_db: object, **kw: object) -> object:
+        emails.append(kw)
+        return object()
+
+    monkeypatch.setattr(rem, "enqueue_email", _enqueue)
+    sent = _capture_notifications(monkeypatch, rem)
+    await rem._expiry_notices(_rows_db([row]), rem.SweepResult())
+
+    assert emails == []
+    assert len(sent) == 1
+    assert sent[0]["user_id"] == row["owner_user_id"]
+    assert sent[0]["kind"] == "link_expired"
+    assert sent[0]["dedupe_key"] == f"link_expired:exam:{row['id']}"
+
+
+@pytest.mark.asyncio
+async def test_hr_is_told_even_when_the_candidate_email_was_already_staged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two obligations are independent: an email that dedupes (None) no
+    longer short-circuits the owner's notification. The notification's own key
+    is what stops a repeat."""
+    import app.reminders as rem
+
+    async def _deduped(_db: object, **_: object) -> None:
+        return None
+
+    monkeypatch.setattr(rem, "enqueue_email", _deduped)
+    sent = _capture_notifications(monkeypatch, rem)
+    result = rem.SweepResult()
+    await rem._expiry_notices(_rows_db([_lapsed()]), result)
+
+    assert result.expiry_notices == 0
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_reminders_off_skips_the_candidate_email_but_still_tells_hr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The switch is "Remind candidates" — it silences the candidate side. The
+    owner still needs to know the link lapsed; that is work, not a reminder."""
+    import app.reminders as rem
+
+    emails: list[dict] = []
+
+    async def _enqueue(_db: object, **kw: object) -> object:
+        emails.append(kw)
+        return object()
+
+    monkeypatch.setattr(rem, "enqueue_email", _enqueue)
+    sent = _capture_notifications(monkeypatch, rem)
+    await rem._expiry_notices(_rows_db([_lapsed(mail_candidate=False)]), rem.SweepResult())
+
+    assert emails == []
+    assert len(sent) == 1
+
+
+def test_a_workflow_issued_link_has_an_owner() -> None:
+    """Links a workflow issues carry no creator, so their lapses reached nobody.
+    The owner falls back to the workflow's owner."""
+    from app.reminders import _LAPSED_SQL
+
+    assert "COALESCE(asg.created_by_user_id, wf.created_by_user_id)" in _LAPSED_SQL
+    assert "COALESCE(inv.created_by_user_id, wf.created_by_user_id)" in _LAPSED_SQL
+
+
+def test_a_fully_handled_lapse_drops_out_of_the_batch() -> None:
+    """A row with nothing left to send must not come back every sweep — with no
+    key to find, a candidate with no address used to take a batch slot forever."""
+    from app.reminders import _LAPSED_SQL
+
+    assert "n.dedupe_key = 'link_expired:'" in _LAPSED_SQL
+    assert "ee.dedupe_key = 'expiry_notice:'" in _LAPSED_SQL
+    assert "ORDER BY expires_at" in _LAPSED_SQL
+    # Mirrors enqueue_email's own validity check, or an unsendable address
+    # would count as an email still owed.
+    assert "a.email LIKE '%@%'" in _LAPSED_SQL
+
+
+@pytest.mark.asyncio
+async def test_rescheduling_rearms_both_reminder_windows() -> None:
+    """The keys name the invite and the window, so reminders already spent on
+    the old slot blocked the new one. Retiring them lets the next sweep remind
+    about the time the candidate actually has to turn up."""
+    from app.reminders import interview_reminder_key, rearm_interview_reminders
+
+    inv = uuid.uuid4()
+    db = _db()
+    await rearm_interview_reminders(db, inv)
+
+    sql, params = db.execute.call_args.args
+    assert "UPDATE email_events" in str(sql)
+    assert ":superseded:" in str(sql)
+    assert set(params.values()) == {
+        interview_reminder_key(inv, "24h"),
+        interview_reminder_key(inv, "1h"),
+    }
+
+
+def test_reschedule_rearms_only_when_the_slot_changes() -> None:
+    import inspect
+
+    from app.routers.hr_interviews import reschedule_invite
+
+    src = inspect.getsource(reschedule_invite)
+    assert "if inv.scheduled_at != body.scheduled_at:" in src
+    assert "await rearm_interview_reminders(db, inv.id)" in src
+    # Re-armed before the new time is written, while it can still be compared.
+    assert src.index("rearm_interview_reminders") < src.index(
+        "inv.scheduled_at = body.scheduled_at"
+    )
+
+
+# ===========================================================================
+# Notification dedupe
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_notification_without_a_key_is_staged_as_before() -> None:
+    from app.notifications_util import create_notification
+
+    db = _db()
+    db.add = MagicMock()
+    assert await create_notification(db, user_id=uuid.uuid4(), kind="welcome", title="Hi")
+    db.add.assert_called_once()
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_notification_with_a_key_inserts_on_conflict_do_nothing() -> None:
+    from sqlalchemy.dialects import postgresql
+
+    from app.notifications_util import create_notification
+
+    db = _db()
+    db.execute.return_value = MagicMock(first=MagicMock(return_value=None))  # conflict
+    staged = await create_notification(
+        db, user_id=uuid.uuid4(), kind="bulk_upload", title="Done", dedupe_key="bulk_upload:x"
+    )
+
+    assert staged is False, "a conflicting key must report nothing staged"
+    compiled = str(db.execute.call_args.args[0].compile(dialect=postgresql.dialect()))
+    assert "ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING" in compiled
+
+
+@pytest.mark.asyncio
+async def test_notification_with_no_recipient_is_a_no_op() -> None:
+    from app.notifications_util import create_notification
+
+    db = _db()
+    db.add = MagicMock()
+    assert await create_notification(
+        db, user_id=None, kind="x", title="y", dedupe_key="k"
+    ) is False
+    db.add.assert_not_called()
+    db.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -363,43 +595,133 @@ async def test_catchup_survives_one_broken_job() -> None:
 # ===========================================================================
 # A4/E5 — one "upload complete" notification per bulk batch
 # ===========================================================================
-def _applicant(batch: uuid.UUID | None, uploader: uuid.UUID | None) -> MagicMock:
-    a = MagicMock()
-    a.upload_batch_id = batch
-    a.created_by_user_id = uploader
-    return a
+def _counts(total: int, outstanding: int, unreadable: int = 0) -> MagicMock:
+    """What _BATCH_COUNTS_SQL returns, as the mocked execute() result."""
+    row = {"total": total, "outstanding": outstanding, "unreadable": unreadable}
+    return MagicMock(mappings=MagicMock(return_value=MagicMock(
+        first=MagicMock(return_value=row))))
+
+
+def _capture_notifications(
+    monkeypatch: pytest.MonkeyPatch, module: object
+) -> list[dict]:
+    sent: list[dict] = []
+
+    async def _notify(_db: object, **kw: object) -> bool:
+        sent.append(kw)
+        return True
+
+    monkeypatch.setattr(module, "create_notification", _notify)
+    return sent
 
 
 @pytest.mark.asyncio
-async def test_batch_notification_fires_only_when_the_last_row_lands() -> None:
-    """Zero rows still pending means this row finished the batch."""
-    from app.reconciliation import _notify_batch_done
+async def test_batch_notification_fires_only_when_the_last_row_lands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing outstanding means this row finished the batch."""
+    import app.reconciliation as rec
 
+    sent = _capture_notifications(monkeypatch, rec)
     db = _db()
-    # First scalar: rows still pending. Second: total in the batch, for the copy.
-    db.scalar = AsyncMock(side_effect=[0, 25])
+    db.execute.return_value = _counts(total=25, outstanding=0)
+    batch = uuid.uuid4()
 
-    fired = await _notify_batch_done(db, _applicant(uuid.uuid4(), uuid.uuid4()))
+    fired = await rec._notify_batch_done(db, batch, uuid.uuid4())
 
     assert fired is True
-    db.add.assert_called_once()
-    assert db.add.call_args[0][0].kind == "bulk_upload"
+    assert len(sent) == 1
+    assert sent[0]["kind"] == "bulk_upload"
+    assert sent[0]["dedupe_key"] == f"bulk_upload:{batch}"
+    assert "25 resumes have been read and scored" in sent[0]["body"]
 
 
 @pytest.mark.asyncio
-async def test_no_notification_while_rows_are_still_being_read() -> None:
+async def test_no_notification_while_rows_are_still_being_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The 24 rows before the last one must stay silent.
 
     This is the whole reason the batch id exists: without it every scored row
     looks equally like "the upload finished".
     """
-    from app.reconciliation import _notify_batch_done
+    import app.reconciliation as rec
 
+    sent = _capture_notifications(monkeypatch, rec)
     db = _db()
-    db.scalar = AsyncMock(return_value=7)
+    db.execute.return_value = _counts(total=25, outstanding=7)
 
-    assert await _notify_batch_done(db, _applicant(uuid.uuid4(), uuid.uuid4())) is False
-    db.add.assert_not_called()
+    assert await rec._notify_batch_done(db, uuid.uuid4(), uuid.uuid4()) is False
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_resume_does_not_hold_the_batch_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One parked or empty PDF out of twenty-five used to keep the batch
+    "pending" for good, so the upload was never reported finished. The counts
+    now separate rows the loop will still finish from rows it never will, and
+    the message says how many could not be read rather than claiming all."""
+    import app.reconciliation as rec
+
+    sent = _capture_notifications(monkeypatch, rec)
+    db = _db()
+    db.execute.return_value = _counts(total=25, outstanding=0, unreadable=2)
+
+    assert await rec._notify_batch_done(db, uuid.uuid4(), uuid.uuid4()) is True
+    assert "23 of 25" in sent[0]["body"]
+    assert "2 could not be read" in sent[0]["body"]
+
+
+def test_stuck_rows_are_excluded_from_outstanding() -> None:
+    """The three ways a pending row is never going to be finished by this loop."""
+    from app.reconciliation import _BATCH_COUNTS_SQL, _STUCK
+
+    assert "gave_up_at IS NOT NULL" in _STUCK  # parked after MAX_ATTEMPTS
+    assert "a.ats_overall IS NOT NULL" in _STUCK  # scored by the manual rescore
+    assert "length(trim(a.resume_text)) = 0" in _STUCK  # nothing to score
+    assert f"NOT {_STUCK}" in _BATCH_COUNTS_SQL
+
+
+@pytest.mark.asyncio
+async def test_a_row_given_up_on_can_finish_its_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the last outstanding row is the one that fails for good, nothing else
+    will ever come along to announce the batch — so the give-up must."""
+    import app.reconciliation as rec
+
+    aid, batch, uploader = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    db = _db()
+    db.execute.return_value = MagicMock(all=MagicMock(return_value=[(aid,)]))
+    db.get = AsyncMock(return_value=MagicMock(
+        id=aid, resume_text="cv", target_job_title="Dev", target_level="mid",
+        target_jd_text=None, created_by_user_id=uploader, upload_batch_id=batch,
+    ))
+
+    async def _score(**_: object) -> dict[str, int]:
+        raise RuntimeError("unreadable")
+
+    async def _gave_up(*_: object) -> bool:
+        return True
+
+    announced: list[tuple] = []
+
+    async def _notify_batch(_db: object, b: object, u: object) -> bool:
+        announced.append((b, u))
+        return True
+
+    monkeypatch.setattr(rec, "score_resume_remote", _score)
+    monkeypatch.setattr(rec, "_record_failure", _gave_up)
+    monkeypatch.setattr(rec, "_notify_batch_done", _notify_batch)
+
+    result = rec.PassResult()
+    await rec._score_pass(db, result)
+
+    assert result.gave_up == 1
+    assert announced == [(batch, uploader)]
+    assert result.batches_finished == 1
 
 
 @pytest.mark.asyncio
@@ -408,8 +730,8 @@ async def test_rows_outside_a_batch_never_notify() -> None:
     from app.reconciliation import _notify_batch_done
 
     db = _db()
-    assert await _notify_batch_done(db, _applicant(None, uuid.uuid4())) is False
-    db.scalar.assert_not_awaited()
+    assert await _notify_batch_done(db, None, uuid.uuid4()) is False
+    db.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -417,8 +739,8 @@ async def test_no_uploader_means_nobody_to_tell() -> None:
     from app.reconciliation import _notify_batch_done
 
     db = _db()
-    assert await _notify_batch_done(db, _applicant(uuid.uuid4(), None)) is False
-    db.scalar.assert_not_awaited()
+    assert await _notify_batch_done(db, uuid.uuid4(), None) is False
+    db.execute.assert_not_awaited()
 
 
 # ===========================================================================
@@ -440,15 +762,13 @@ async def test_completion_notifies_hr_without_anyone_opening_a_page(
         "full_name": "Priya", "job_title": "Backend Engineer",
     }
     db = _db()
-    db.execute.return_value = MagicMock(mappings=MagicMock(return_value=MagicMock(
-        all=MagicMock(return_value=[row]))))
+    # One mock serves both the SELECT (mappings) and the UPDATE (rowcount).
+    db.execute.return_value = MagicMock(
+        rowcount=1,
+        mappings=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row]))),
+    )
 
-    sent: list[dict] = []
-
-    async def _notify(_db: object, **kw: object) -> None:
-        sent.append(kw)
-
-    monkeypatch.setattr(rem, "create_notification", _notify)
+    sent = _capture_notifications(monkeypatch, rem)
     result = rem.SweepResult()
     await rem._interview_completed(db, result)
 
@@ -456,6 +776,35 @@ async def test_completion_notifies_hr_without_anyone_opening_a_page(
     assert sent[0]["user_id"] == row["created_by_user_id"]
     assert sent[0]["kind"] == "interview_completed"
     assert sent[0]["link"] == "/hr/interviews"
+    assert sent[0]["dedupe_key"] == f"interview_completed:{row['id']}"
+
+
+@pytest.mark.asyncio
+async def test_completion_is_announced_only_by_the_sweep_that_flipped_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two sweeps can both select an invite while it is still 'consumed'. The
+    second one's guarded UPDATE matches nothing — and announcing anyway was a
+    duplicate in HR's bell."""
+    import app.reminders as rem
+
+    row = {
+        "id": uuid.uuid4(), "company_id": uuid.uuid4(),
+        "created_by_user_id": uuid.uuid4(),
+        "full_name": "Priya", "job_title": "Backend Engineer",
+    }
+    db = _db()
+    db.execute.return_value = MagicMock(
+        rowcount=0,  # another sweep got there first
+        mappings=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row]))),
+    )
+
+    sent = _capture_notifications(monkeypatch, rem)
+    result = rem.SweepResult()
+    await rem._interview_completed(db, result)
+
+    assert sent == []
+    assert result.completions == 0
 
 
 def test_completion_is_found_by_the_scorecard_not_by_a_read() -> None:
@@ -470,7 +819,8 @@ def test_completion_is_found_by_the_scorecard_not_by_a_read() -> None:
 
 def test_the_status_flip_is_its_own_idempotency_guard() -> None:
     """One-way transition on a single row: the row stops matching the moment it
-    is announced, so no dedupe key or extra column is needed to fire once."""
+    is announced. (The notification's dedupe key backs this up when two sweeps
+    race — see test_completion_is_announced_only_by_the_sweep_that_flipped_it.)"""
     import inspect
 
     from app.reminders import _interview_completed

@@ -365,11 +365,16 @@ async def _assign_round(
         await db.execute(
             text(
                 "INSERT INTO exam_assignments (id, company_id, exam_id, round_id, applicant_id,"
-                " enrolment_id, token_hash, expires_at, status, created_at, updated_at)"
-                " VALUES (:i,:c,:e,:r,:a,:en,:th,:x,'invited',:n,:n)"
+                " enrolment_id, created_by_user_id, token_hash, expires_at, status,"
+                " created_at, updated_at)"
+                " VALUES (:i,:c,:e,:r,:a,:en,:cb,:th,:x,'invited',:n,:n)"
             ),
+            # Attributed to the workflow's owner, as the interview branch below
+            # already does. Left NULL, the assignment had no owner, and a lapse
+            # of this link was announced to nobody.
             {"i": asn_id, "c": company_id, "e": exam_id, "r": round_["exam_round_id"],
              "a": enrolment["applicant_id"], "en": enrolment["id"],
+             "cb": workflow.get("created_by_user_id"),
              "th": hash_exam_token(raw, settings.exam_link_secret), "x": expires, "n": now},
         )
         base = settings.exam_link_base_url.rstrip("/")

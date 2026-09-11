@@ -237,3 +237,33 @@ describe('HRConsole activity feed — events, not conditions', () => {
     expect(await screen.findByText('No recent activity yet.')).toBeTruthy();
   });
 });
+
+describe('HRConsole activity feed — does not overwrite the bell', () => {
+  it("leaves the bell's 30-item list in the cache when it fetches its own 8", async () => {
+    // The feed and the bell used to share the exact key ['notifications'] with
+    // different limits, so whichever fetched last owned the cache and the bell
+    // could open showing only the feed's eight.
+    const bell: NotificationList = {
+      unread_count: 0,
+      items: Array.from({ length: 30 }, (_, i) => ({
+        ...NOTIFS.items[0],
+        id: `bell-${i}`,
+        title: `Bell item ${i}`,
+      })),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['notifications'], bell);
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <HRConsole />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Bhavya Nair scored 82')).toBeTruthy();
+    expect(listNotifications).toHaveBeenCalledWith(8);
+    expect(client.getQueryData<NotificationList>(['notifications'])?.items).toHaveLength(30);
+  });
+});

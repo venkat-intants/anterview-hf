@@ -194,51 +194,78 @@ _DUE_PREDICATE = """
 """
 
 
-async def _notify_batch_done(db: AsyncSession, applicant: Applicant) -> bool:
+# A pending row is "stuck" when this loop will never finish it: it has no text
+# to score, it has been parked after MAX_ATTEMPTS, or it was scored some other
+# way (HR's manual rescore writes the score but does not clear the flag). Stuck
+# rows must not hold the batch open — they used to, and one unreadable PDF out
+# of twenty-five meant the upload was never reported finished at all.
+_STUCK = f"""(
+       a.ats_overall IS NOT NULL
+    OR a.resume_text IS NULL OR length(trim(a.resume_text)) = 0
+    OR EXISTS (SELECT 1 FROM reconciliation_state rs
+                WHERE rs.kind = '{KIND_ATS}' AND rs.ref_id = a.id
+                  AND rs.gave_up_at IS NOT NULL)
+)"""
+
+_BATCH_COUNTS_SQL = f"""
+SELECT count(*) AS total,
+       count(*) FILTER (WHERE a.pending_enrichment AND a.deleted_at IS NULL
+                          AND NOT {_STUCK}) AS outstanding,
+       count(*) FILTER (WHERE a.pending_enrichment AND a.deleted_at IS NULL
+                          AND a.ats_overall IS NULL AND {_STUCK}) AS unreadable
+  FROM applicants a
+ WHERE a.upload_batch_id = :b
+"""
+
+
+async def _notify_batch_done(
+    db: AsyncSession, batch_id: uuid.UUID | None, uploader_id: uuid.UUID | None
+) -> bool:
     """Tell the uploader when the LAST row of their bulk upload finishes (A4).
 
-    Called after a row has been scored and committed, so the count below already
-    excludes it. Zero remaining means this row was the last one and the batch is
-    now fully read.
+    Called after a row has been scored and committed, or after one has been
+    given up on, so the counts below already reflect it. Nothing outstanding
+    means this row was the last one the loop is going to finish.
 
     One notification per batch, not per applicant: the whole point of the batch
     id is that twenty-five separate reconciler passes are one event to the
-    person who started them. It is emitted at most once because the condition —
-    "no pending rows left" — can only become true on the transition, and the
-    rows that would re-trigger it have already been cleared.
+    person who started them. The dedupe key makes that hold even when two
+    passes finish a batch's last two rows at the same moment and both count
+    zero outstanding.
+
+    Takes ids rather than the Applicant because the give-up path calls it after
+    a rollback, which expires the loaded row — touching its attributes then
+    would be a lazy load from async code.
 
     Returns True when a notification was staged, purely so the pass can count
     it. Failure here must never fail the enrichment that succeeded: the score is
     written and committed before this runs.
     """
-    batch_id = applicant.upload_batch_id
-    if batch_id is None or applicant.created_by_user_id is None:
+    if batch_id is None or uploader_id is None:
         return False
-    remaining = await db.scalar(
-        text(
-            "SELECT count(*) FROM applicants"
-            " WHERE upload_batch_id = :b AND pending_enrichment AND deleted_at IS NULL"
-        ),
-        {"b": batch_id},
-    )
-    if remaining:
+    counts = (
+        await db.execute(text(_BATCH_COUNTS_SQL), {"b": batch_id})
+    ).mappings().first()
+    if counts is None or counts["outstanding"]:
         return False
-    total = await db.scalar(
-        text("SELECT count(*) FROM applicants WHERE upload_batch_id = :b"),
-        {"b": batch_id},
-    )
-    await create_notification(
+    total, unreadable = int(counts["total"] or 0), int(counts["unreadable"] or 0)
+    body = f"{total} resume{'' if total == 1 else 's'} have been read and scored."
+    if unreadable:
+        body = (
+            f"{total - unreadable} of {total} resumes have been read and scored. "
+            f"{unreadable} could not be read — open them to check the file."
+        )
+    staged = await create_notification(
         db,
-        user_id=applicant.created_by_user_id,
+        user_id=uploader_id,
         kind="bulk_upload",
         title="Bulk upload finished",
-        body=(
-            f"{total} resume{'' if total == 1 else 's'} have been read and scored."
-        ),
+        body=body,
         link="/hr/applicants",
+        dedupe_key=f"bulk_upload:{batch_id}",
     )
     await db.commit()
-    return True
+    return staged
 
 
 async def _score_pass(db: AsyncSession, result: PassResult) -> None:
@@ -264,6 +291,8 @@ async def _score_pass(db: AsyncSession, result: PassResult) -> None:
         applicant = await db.get(Applicant, aid)
         if applicant is None:  # deleted between the select and here
             continue
+        # Read now: the failure path rolls back, which expires `applicant`.
+        batch_id, uploader_id = applicant.upload_batch_id, applicant.created_by_user_id
         try:
             score = await score_resume_remote(
                 resume_text=applicant.resume_text or "",
@@ -277,9 +306,12 @@ async def _score_pass(db: AsyncSession, result: PassResult) -> None:
             )
         except Exception as exc:  # noqa: BLE001 — one bad row must not stop the pass
             await db.rollback()
+            result.failed += 1
             if await _record_failure(db, KIND_ATS, aid, f"{type(exc).__name__}: {exc}"):
                 result.gave_up += 1
-            result.failed += 1
+                # A parked row is finished as far as this loop is concerned, so
+                # it can be the one that completes its batch.
+                await _announce_batch(db, result, aid, batch_id, uploader_id)
             continue
 
         apply_ats_score(applicant, score)
@@ -295,16 +327,26 @@ async def _score_pass(db: AsyncSession, result: PassResult) -> None:
         # After the commit: the batch is only finished once this row's own
         # pending flag is durably cleared, and a notification is never worth
         # rolling back a score for.
-        try:
-            if await _notify_batch_done(db, applicant):
-                result.batches_finished += 1
-        except Exception as exc:  # noqa: BLE001 — notification is not the work
-            await db.rollback()
-            log.warning(
-                "reconcile.batch_notify_failed",
-                applicant_id=str(aid),
-                error_type=type(exc).__name__,
-            )
+        await _announce_batch(db, result, aid, batch_id, uploader_id)
+
+
+async def _announce_batch(
+    db: AsyncSession,
+    result: PassResult,
+    aid: uuid.UUID,
+    batch_id: uuid.UUID | None,
+    uploader_id: uuid.UUID | None,
+) -> None:
+    try:
+        if await _notify_batch_done(db, batch_id, uploader_id):
+            result.batches_finished += 1
+    except Exception as exc:  # noqa: BLE001 — notification is not the work
+        await db.rollback()
+        log.warning(
+            "reconcile.batch_notify_failed",
+            applicant_id=str(aid),
+            error_type=type(exc).__name__,
+        )
 
 
 async def _embed_pass(db: AsyncSession, result: PassResult) -> None:

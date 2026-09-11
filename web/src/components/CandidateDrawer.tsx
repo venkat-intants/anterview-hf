@@ -21,7 +21,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getApplicant } from '@/api/applicants';
+import { getApplicant, listApplications } from '@/api/applicants';
 import { listAnswers, type ApplicationAnswer } from '@/api/questions';
 import { listRoundResults, type RoundResult } from '@/api/applicants';
 import { getEnrolmentHistory } from '@/api/requisitions';
@@ -232,7 +232,31 @@ export default function CandidateDrawer({
     retry: false,
     throwOnError: false,
   });
-  const candidate = detail.data as DrawerCandidate | undefined;
+  // The applicant row's ats_* describe their LATEST application. Opened from
+  // an application (the pipeline), the resume match shown is that
+  // application's own — the same CV scores differently against another role.
+  const apps = useQuery({
+    queryKey: ['hr', 'applicant', applicantId, 'applications'],
+    queryFn: () => listApplications(applicantId as string),
+    enabled: Boolean(applicantId && enrolmentId),
+    retry: false,
+    throwOnError: false,
+  });
+  const app = apps.data?.find((x) => x.enrolment_id === enrolmentId);
+  const person = detail.data as DrawerCandidate | undefined;
+  const candidate: DrawerCandidate | undefined =
+    person && app
+      ? {
+          ...person,
+          target_job_title: app.opening_title ?? person.target_job_title,
+          status: app.status,
+          ats_overall: app.ats_overall,
+          ats_recommendation: app.ats_recommendation,
+          ats_strengths: app.ats_strengths,
+          ats_concerns: app.ats_concerns,
+          ats_summary: app.ats_summary,
+        }
+      : person;
 
   // Escape closes it, and focus lands somewhere inside rather than staying on
   // whatever row opened it — a panel a keyboard user cannot leave is worse than

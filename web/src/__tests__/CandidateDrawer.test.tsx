@@ -21,10 +21,37 @@ import type { ApplicationAnswer } from '../api/questions';
 
 const getApplicant = vi.fn();
 const listRoundResults = vi.fn();
+const listApplications = vi.fn();
 vi.mock('../api/applicants', () => ({
   getApplicant: (...a: unknown[]) => getApplicant(...a) as unknown,
   listRoundResults: (...a: unknown[]) => listRoundResults(...a) as unknown,
+  listApplications: (...a: unknown[]) => listApplications(...a) as unknown,
 }));
+
+describe('CandidateDrawer — opened from one application (B5)', () => {
+  it("shows that application's resume match, not the latest one's", async () => {
+    // The person's row describes their LATEST application (Backend, 78). The
+    // pipeline opened their older one (Data Analyst), which scored 41.
+    getApplicant.mockResolvedValue(applicant());
+    listRoundResults.mockResolvedValue([]);
+    listAnswers.mockResolvedValue([]);
+    listApplications.mockResolvedValue([
+      {
+        enrolment_id: 'en-old', requisition_id: 'r1', opening_title: 'Data Analyst',
+        status: 'new', stored_status: 'new', ats_overall: 41, ats_breakdown: null,
+        ats_strengths: ['SQL'], ats_concerns: ['No dashboards'], ats_recommendation: 'maybe',
+        ats_summary: 'A partial fit for analysis.', best_exam_percent: null, exam_passed: null,
+        interview_score: null, scorecard_id: null, applied_at: '2026-09-01T00:00:00Z',
+        is_latest: false,
+      },
+    ]);
+    renderDrawer({ enrolmentId: 'en-old' });
+
+    expect(await screen.findByText('A partial fit for analysis.')).toBeInTheDocument();
+    expect(screen.getByText(/No dashboards/)).toBeInTheDocument();
+    expect(screen.queryByText('A solid backend match.')).not.toBeInTheDocument();
+  });
+});
 
 const listAnswers = vi.fn();
 vi.mock('../api/questions', () => ({

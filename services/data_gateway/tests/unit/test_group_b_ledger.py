@@ -182,8 +182,9 @@ def test_the_applicant_board_records_every_change_not_just_a_shortlist() -> None
     from app.routers.hr_applicants import update_applicant_status
 
     src = inspect.getsource(update_applicant_status)
-    # Terminal decisions that cannot name an opening are refused.
-    assert "app_.ambiguous and body.status in TERMINAL_STATUSES" in src
+    # A change that cannot name an opening is refused — any status (B5): a
+    # shortlist that lands on no application moves nothing anyone can see.
+    assert "if app_.ambiguous:" in src
     # And the transition is written for any status, outside the shortlist branch.
     assert "to_status=body.status" in src
     assert 'to_status="shortlisted"' not in src

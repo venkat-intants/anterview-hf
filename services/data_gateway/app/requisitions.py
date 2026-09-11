@@ -284,7 +284,8 @@ async def enrolment_for_exam_round(
 def ambiguous_decision_detail(full_name: str, count: int) -> str:
     return (
         f"{full_name} has applied to {count} openings, so this decision needs to name one. "
-        "Record it from that opening's decision queue."
+        "Choose the opening in their applications, or record it from that opening's "
+        "decision queue."
     )
 
 

@@ -141,14 +141,49 @@ export function bulkUploadApplicants(
   );
 }
 
+/**
+ * Set a status. `enrolmentId` names the application it is about (B5) — the
+ * server refuses a change for someone with several applications that does not
+ * say which.
+ */
 export function updateApplicantStatus(
   id: string,
   status: ApplicantStatus,
+  enrolmentId?: string | null,
 ): Promise<Applicant> {
   return clientFetch<Applicant>(`${API_BASE}/hr/applicants/${id}`, {
     method: 'PATCH',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(enrolmentId ? { status, enrolment_id: enrolmentId } : { status }),
   });
+}
+
+/** One of a person's applications, with ITS assessment (B5). The applicant's own
+ *  ats_* fields describe only their latest application. */
+export interface Application {
+  enrolment_id: string;
+  requisition_id: string | null;
+  opening_title: string | null;
+  /** Derived, as on the pipeline board. */
+  status: string;
+  /** What is recorded on the application — what a status change compares with. */
+  stored_status: string;
+  ats_overall: number | null;
+  ats_breakdown: Record<string, number> | null;
+  ats_strengths: string[] | null;
+  ats_concerns: string[] | null;
+  ats_recommendation: string | null;
+  ats_summary: string | null;
+  best_exam_percent: number | null;
+  exam_passed: boolean | null;
+  interview_score: number | null;
+  scorecard_id: string | null;
+  applied_at: string;
+  is_latest: boolean;
+}
+
+/** Every live application this person holds, oldest first. */
+export function listApplications(applicantId: string): Promise<Application[]> {
+  return apiGet<Application[]>(`/hr/applicants/${applicantId}/applications`);
 }
 
 export function rescoreApplicant(id: string): Promise<Applicant> {

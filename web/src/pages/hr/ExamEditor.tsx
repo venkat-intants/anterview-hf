@@ -70,7 +70,8 @@ import {
   type ExamQuestion,
   type QuestionInput,
 } from '@/api/exams';
-import { listApplicants } from '@/api/applicants';
+import { getPipeline, type PipelineRow } from '@/api/pipeline';
+import { applicationKey } from '@/lib/applicationKey';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -788,10 +789,17 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
   const [scheduledAt, setScheduledAt] = useState('');
   const [minted, setMinted] = useState<AssignResult[]>([]);
 
-  const { data: applicants } = useQuery({
-    queryKey: ['hr', 'applicants'],
-    queryFn: () => listApplicants(),
+  // One entry per APPLICATION (B5), so the exam is recorded against the opening
+  // it is for — a person who applied to two openings is two entries, each
+  // labelled with its opening. Someone filed under no opening is one entry.
+  const { data: pipeline } = useQuery({
+    queryKey: ['hr', 'pipeline', 'assignable'],
+    queryFn: () => getPipeline({ limit: 200 }),
   });
+  const applicants: PipelineRow[] = (pipeline?.items ?? []).filter(
+    (r) => r.status !== 'hired' && r.status !== 'rejected',
+  );
+  const chosen = applicants.filter((r) => selected.has(applicationKey(r)));
 
   const { data: assignments } = useQuery({
     queryKey: ['hr', 'exam', examId, 'assignments'],
@@ -802,10 +810,13 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
     mutationFn: () =>
       assignExam(
         examId,
-        [...selected],
+        // People filed under no opening go by person; everyone else by the
+        // application chosen.
+        chosen.filter((r) => !r.enrolment_id).map((r) => r.applicant_id),
         undefined,
         roundId,
         scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
+        chosen.flatMap((r) => (r.enrolment_id ? [r.enrolment_id] : [])),
       ),
     onSuccess: (res) => {
       setMinted(res);
@@ -863,23 +874,28 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
         className="max-h-36 space-y-0.5 overflow-y-auto rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-2"
         aria-label="Select applicants to assign"
       >
-        {(applicants ?? []).length === 0 ? (
+        {applicants.length === 0 ? (
           <p className="px-2 py-2 text-[12px] text-muted-foreground">
             No applicants yet — add them under Applicants.
           </p>
         ) : (
-          (applicants ?? []).map((a) => (
+          applicants.map((a) => (
             <label
-              key={a.id}
+              key={applicationKey(a)}
               className="flex cursor-pointer items-center gap-2 rounded-[9px] px-2 py-1.5 text-[12.5px] text-foreground hover:bg-[var(--ui-inset)] transition-colors"
             >
               <input
                 type="checkbox"
-                checked={selected.has(a.id)}
-                onChange={(e) => toggleApplicant(a.id, e.target.checked)}
+                checked={selected.has(applicationKey(a))}
+                onChange={(e) => toggleApplicant(applicationKey(a), e.target.checked)}
                 className="h-3.5 w-3.5 accent-[var(--accent)]"
               />
-              <span className="truncate">{a.full_name}</span>
+              <span className="truncate">
+                {a.full_name}
+                {a.opening_title ? (
+                  <span className="text-[var(--ui-faint)]"> · {a.opening_title}</span>
+                ) : null}
+              </span>
             </label>
           ))
         )}

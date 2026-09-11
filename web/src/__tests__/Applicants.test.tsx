@@ -52,7 +52,9 @@ const updateApplicantStatus = vi.fn();
 const rescoreApplicant = vi.fn();
 const bulkUploadApplicants = vi.fn();
 const whyMatch = vi.fn();
+const listApplications = vi.fn();
 vi.mock('../api/applicants', () => ({
+  listApplications: (...a: unknown[]) => listApplications(...a) as unknown,
   listApplicants: (...a: unknown[]) => listApplicants(...a) as unknown,
   getReindexStatus: (...a: unknown[]) => getReindexStatus(...a) as unknown,
   reindexApplicants: (...a: unknown[]) => reindexApplicants(...a) as unknown,
@@ -116,6 +118,16 @@ beforeEach(() => {
     Promise.resolve({ ...SCORED, id, status }),
   );
   rescoreApplicant.mockResolvedValue({ ...SCORED, ats_overall: 90 });
+  // One application each unless a test says otherwise (B5).
+  listApplications.mockImplementation((id: string) =>
+    Promise.resolve([
+      { enrolment_id: `en-${id}`, requisition_id: 'r1', opening_title: 'Backend Engineer',
+        status: 'new', stored_status: 'new', ats_overall: 84, ats_breakdown: null,
+        ats_strengths: null, ats_concerns: null, ats_recommendation: null, ats_summary: null,
+        best_exam_percent: null, exam_passed: null, interview_score: null, scorecard_id: null,
+        applied_at: '2026-09-01T00:00:00Z', is_latest: true },
+    ]),
+  );
   listRequisitions.mockResolvedValue([
     { id: 'req-9', title: 'Staff Nurse', level: 'senior', status: 'open' },
   ]);
@@ -315,7 +327,39 @@ describe('Applicants — per-applicant actions', () => {
     );
     await user.click(await screen.findByRole('button', { name: /^shortlist$/i }));
 
-    await waitFor(() => expect(updateApplicantStatus).toHaveBeenCalledWith('ap-1', 'shortlisted'));
+    // With the application it is about (B5).
+    await waitFor(() =>
+      expect(updateApplicantStatus).toHaveBeenCalledWith('ap-1', 'shortlisted', 'en-ap-1'),
+    );
+  });
+
+  it('acts per opening for someone with several applications', async () => {
+    // B5: the row's status is only the latest application's, so with two
+    // applications each gets its own actions and the person-level ones go.
+    listApplications.mockResolvedValue([
+      { enrolment_id: 'en-py', requisition_id: 'r1', opening_title: 'Python Developer',
+        status: 'shortlisted', stored_status: 'shortlisted', ats_overall: 80, ats_breakdown: null,
+        ats_strengths: null, ats_concerns: null, ats_recommendation: null, ats_summary: null,
+        best_exam_percent: null, exam_passed: null, interview_score: null, scorecard_id: null,
+        applied_at: '2026-09-01T00:00:00Z', is_latest: false },
+      { enrolment_id: 'en-nu', requisition_id: 'r2', opening_title: 'Staff Nurse',
+        status: 'new', stored_status: 'new', ats_overall: 40, ats_breakdown: null,
+        ats_strengths: null, ats_concerns: null, ats_recommendation: null, ats_summary: null,
+        best_exam_percent: null, exam_passed: null, interview_score: null, scorecard_id: null,
+        applied_at: '2026-09-02T00:00:00Z', is_latest: true },
+    ]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole('button', { name: /open details for bhavya nair/i }),
+    );
+    await user.click(await screen.findByRole('button', { name: /shortlist for staff nurse/i }));
+    await waitFor(() =>
+      expect(updateApplicantStatus).toHaveBeenCalledWith('ap-1', 'shortlisted', 'en-nu'),
+    );
+    expect(screen.getByRole('button', { name: /shortlist for python developer/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^shortlist$/i })).not.toBeInTheDocument();
   });
 
   it('disables the action a candidate is already in', async () => {

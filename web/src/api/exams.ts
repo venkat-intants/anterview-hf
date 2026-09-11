@@ -506,9 +506,13 @@ export function assignExam(
   ttlHours?: number,
   roundId?: string,
   scheduledAt?: string,
+  /** Applications (B5): the exam is for exactly these. People in
+   *  `applicantIds` are attributed by the server when that can be known. */
+  enrolmentIds: string[] = [],
 ): Promise<AssignResult[]> {
   return apiPost<AssignResult[]>(`/hr/exams/${examId}/assignments`, {
     applicant_ids: applicantIds,
+    ...(enrolmentIds.length > 0 ? { enrolment_ids: enrolmentIds } : {}),
     ttl_hours: ttlHours,
     ...(roundId !== undefined ? { round_id: roundId } : {}),
     ...(scheduledAt !== undefined ? { scheduled_at: scheduledAt } : {}),

@@ -237,6 +237,29 @@ async def main() -> None:
     check("status filter finds her by an application, not only her latest",
           hired == {"Priya"}, str(hired))
     check("job filter finds everyone who applied for it", nurse == {"Priya"}, str(nurse))
+    # ── 5b. The person's applications, each with its own assessment ────────
+    apps = (await ac.get(f"/hr/applicants/{s['priya']}/applications")).json()
+    check("a person's applications are listed, oldest first, each with its own score",
+          [(x["opening_title"], x["ats_overall"], x["is_latest"]) for x in apps]
+          == [("Python Developer", 80, False), ("Staff Nurse", 40, True)], str(apps))
+    r5 = await ac.get(f"/hr/applicants/{uuid.uuid4()}/applications")
+    check("another company's (or no) applicant's applications are not listed",
+          r5.status_code == 404, str(r5.status_code))
+    p0 = await ac.patch(f"/hr/applicants/{s['priya']}", json={"status": "shortlisted"})
+    check("a shortlist that does not say which opening is refused (it used to change only"
+          " the person's row)", p0.status_code == 409, f"{p0.status_code} {p0.text[:120]}")
+
+    # ── 5c. An exam assigned to a named application is recorded against it ──
+    ex = await ac.post(f"/hr/exams/{s['exam']}/assignments",
+                       json={"enrolment_ids": [str(s["priya_nurse"]), str(uuid.uuid4())],
+                             "round_id": str(s["round"])})
+    body = ex.json() if ex.status_code == 201 else []
+    check("an exam assigned to a named application is recorded against that one",
+          ex.status_code == 201 and len(body) == 1
+          and body[0]["enrolment_id"] == str(s["priya_nurse"]), f"{ex.status_code} {body}")
+    ex0 = await ac.post(f"/hr/exams/{s['exam']}/assignments", json={"round_id": str(s["round"])})
+    check("an assignment naming nobody is refused", ex0.status_code == 422, str(ex0.status_code))
+
     await ac.aclose()
     app.dependency_overrides.clear()
 

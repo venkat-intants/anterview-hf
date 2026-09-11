@@ -40,7 +40,9 @@ For each claimed request (one at a time, SKIP LOCKED) it:
      RESTRICT). The rows carry a free-text title/body addressed to the person
      by name, so leaving them is leaving PII behind.
   6. Anonymises applicant rows linked to this user (full_name, email,
-     resume_text, resume_s3_key, embedding → redacted / NULL; user_id NULL).
+     resume_text, resume_s3_key, embedding, phone, years_experience,
+     current_company, current_title, linkedin_url, github_url,
+     parsed_full_name, parsed_email → redacted / NULL; user_id NULL).
      ``embedding`` is a halfvec(3072) derived from resume_text — leaving it
      behind keeps a dense representation of the erased CV and keeps the
      applicant semantically searchable via GET /hr/applicants?q=.
@@ -611,6 +613,19 @@ async def _execute_one_erasure(
             "    resume_s3_key = NULL, "
             "    embedding = NULL, "
             "    user_id = NULL, "
+            # Added by migration d5f7b9c1e3a6 (the multi-step application)
+            # and never erased until now: a candidate's phone, employer and
+            # profile links, and the name read out of their CV, all survived
+            # an erasure. Plus parsed_email (d1f3a5b7c9e2), the address read
+            # out of a CV that matched someone else.
+            "    phone = NULL, "
+            "    years_experience = NULL, "
+            "    current_company = NULL, "
+            "    current_title = NULL, "
+            "    linkedin_url = NULL, "
+            "    github_url = NULL, "
+            "    parsed_full_name = NULL, "
+            "    parsed_email = NULL, "
             "    updated_at = :now "
             "WHERE user_id = :uid"
         ),
@@ -646,6 +661,14 @@ async def _execute_one_erasure(
             "  official_email = NULL, "
             "  resume_text = NULL, "
             "  resume_s3_key = NULL, "
+            # Profile and onboarding fields added after this step was written,
+            # and never erased until now: where the person lives, their
+            # employment situation, and the roles and goals they described.
+            "  location = NULL, "
+            "  employment_status = NULL, "
+            "  desired_roles = NULL, "
+            "  onboarding_goal = NULL, "
+            "  target_role = NULL, "
             "  updated_at = :now "
             "WHERE id = :uid"
         ),

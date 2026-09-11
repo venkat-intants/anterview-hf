@@ -167,6 +167,75 @@ async def time_in_stage_days(db: AsyncSession, enrolment_id: uuid.UUID) -> float
 
 
 # ---------------------------------------------------------------------------
+# Finding the opening for a free-text title
+# ---------------------------------------------------------------------------
+# The same expression as the partial unique index — see normalise_title.
+_FIND_BY_TITLE_SQL = """
+SELECT id, title, level, jd_text FROM job_requisitions
+ WHERE company_id = :c AND deleted_at IS NULL
+   AND lower(btrim(regexp_replace(title, '\\s+', ' ', 'g'))) = :k
+ LIMIT 1
+"""
+
+
+async def requisition_for_title(
+    db: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    title: str,
+    level: str,
+    jd_text: str | None,
+    actor_user_id: uuid.UUID | None,
+) -> dict[str, Any]:
+    """The opening a free-text job title belongs to, creating it if none exists.
+
+    HR's upload forms still take a typed title. Every applicant has to land on
+    an opening (B1/B4), so the title is resolved the way the Group B backfill
+    grouped them — :func:`normalise_title`, never a fuzzy match — to the one
+    live requisition the partial unique index allows per title.
+
+    A requisition minted here is flagged ``from_backfill``: nobody chose to
+    open it, a typed title implied it, and the review screen is where HR
+    confirms that, renames it, or splits it — exactly as for the backfill's own
+    guesses. Returns ``{"id", "title", "level", "jd_text", "created"}``. Caller
+    commits.
+    """
+    key = normalise_title(title)
+    if not key:
+        raise ValueError("a job title is required to file an applicant under an opening")
+    params = {"c": company_id, "k": key}
+    row = (await db.execute(text(_FIND_BY_TITLE_SQL), params)).mappings().first()
+    if row is not None:
+        return {**dict(row), "created": False}
+
+    now = datetime.now(tz=UTC)
+    new_id = uuid.uuid4()
+    try:
+        # A savepoint, so losing a race to a concurrent upload of the same new
+        # title rolls back only this insert, not the caller's transaction.
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    "INSERT INTO job_requisitions (id, company_id, title, level, jd_text,"
+                    " owner_user_id, created_by_user_id, status, from_backfill,"
+                    " created_at, updated_at)"
+                    " VALUES (:i,:c,:t,:l,:jd,:o,:o,'open',true,:n,:n)"
+                ),
+                {"i": new_id, "c": company_id, "t": title.strip()[:300], "l": level or "mid",
+                 "jd": jd_text, "o": actor_user_id, "n": now},
+            )
+    except IntegrityError:
+        row = (await db.execute(text(_FIND_BY_TITLE_SQL), params)).mappings().first()
+        if row is None:
+            raise
+        return {**dict(row), "created": False}
+    log.info("requisition.created_from_title", company_id=str(company_id),
+             requisition_id=str(new_id))
+    return {"id": new_id, "title": title.strip()[:300], "level": level or "mid",
+            "jd_text": jd_text, "created": True}
+
+
+# ---------------------------------------------------------------------------
 # Merge candidates (detection only — see the module docstring)
 # ---------------------------------------------------------------------------
 @dataclass

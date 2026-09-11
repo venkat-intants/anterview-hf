@@ -31,6 +31,7 @@ from sqlalchemy.orm import defer
 
 from app.applicant_enrichment import (
     apply_ats_score,
+    apply_ats_to_enrolment,
     store_embedding,
     valid_email_or_none,
 )
@@ -45,12 +46,12 @@ from app.embedding_client import (
 )
 from app.mailer import enqueue_email
 from app.models import Applicant
-from app.requisitions import record_transition
+from app.requisitions import record_transition, requisition_for_title
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
 from app.scoring_client import ResumeScoreError, score_resume_remote
 from app.utils.ownership import get_owned
 from app.utils.sql_like import LIKE_ESCAPE, like_literal
-from app.workflow_runner import on_shortlisted, sole_live_enrolment
+from app.workflow_runner import enrol_applicant, on_shortlisted, sole_live_enrolment
 
 log = structlog.get_logger(__name__)
 
@@ -232,6 +233,72 @@ class BulkUploadResult(BaseModel):
     # this to say "12 still being scored" instead of presenting filename-derived
     # names and empty scores as if they were the finished answer.
     pending_enrichment: int = 0
+    # The opening every file in the batch was filed under (B1/B4).
+    requisition_id: str | None = None
+
+
+# How an HR upload says which opening it is for (B1/B4). Every applicant is
+# filed under one: an explicitly chosen requisition when the form sends one,
+# otherwise the opening its typed title resolves to (created, and flagged for
+# review, when there is none yet).
+async def _resolve_opening(
+    db: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    hr_uid: uuid.UUID,
+    requisition_id: uuid.UUID | None,
+    title: str,
+    level: str,
+    jd_text: str | None,
+) -> dict[str, Any]:
+    if requisition_id is not None:
+        row = (
+            await db.execute(
+                text(
+                    "SELECT id, title, level, jd_text FROM job_requisitions"
+                    " WHERE id = :i AND company_id = :c AND deleted_at IS NULL"
+                ),
+                {"i": requisition_id, "c": company_id},
+            )
+        ).mappings().first()
+        if row is None:
+            # Uniform with every other cross-tenant miss.
+            raise HTTPException(status_code=404, detail="Opening not found.")
+        return {**dict(row), "created": False}
+    try:
+        return await requisition_for_title(
+            db, company_id=company_id, title=title, level=level, jd_text=jd_text,
+            actor_user_id=hr_uid,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def _file_under(
+    db: AsyncSession,
+    *,
+    applicant: Applicant,
+    opening: dict[str, Any],
+    hr_uid: uuid.UUID,
+) -> uuid.UUID | None:
+    """Create the applicant's enrolment in ``opening``. Caller commits.
+
+    The applicant row must already be flushed: the enrolment's composite FK
+    points at it. Marked as HR's doing in the ledger, not the system's.
+    """
+    await db.flush()
+    outcome = await enrol_applicant(
+        db,
+        company_id=applicant.company_id,
+        applicant_id=applicant.id,
+        requisition_id=uuid.UUID(str(opening["id"])),
+        target_job_title=str(opening["title"]),
+        target_level=str(opening["level"] or "mid"),
+        target_jd_text=opening["jd_text"],
+        actor_user_id=hr_uid,
+        reason="added by HR upload",
+    )
+    return uuid.UUID(outcome.enrolment_id) if outcome.enrolment_id else None
 
 
 def _to_out(a: Applicant) -> ApplicantOut:
@@ -359,6 +426,7 @@ async def _ingest_resume(
     jd_text: str | None,
     score_now: bool = True,
     upload_batch_id: uuid.UUID | None = None,
+    opening: dict[str, Any] | None = None,
 ) -> Applicant:
     """Extract → store → (optionally score) → persist ONE resume.
 
@@ -447,6 +515,14 @@ async def _ingest_resume(
         _apply_score(applicant, score)
     db.add(applicant)
     try:
+        # Filed under its opening in the same transaction, so there is never an
+        # applicant row the requisition dashboard cannot see (B1/B4).
+        if opening is not None:
+            enrolment_id = await _file_under(db, applicant=applicant, opening=opening,
+                                             hr_uid=hr_uid)
+            if score is not None and enrolment_id is not None:
+                await apply_ats_to_enrolment(db, enrolment_id=enrolment_id, score=score,
+                                             resume_key=s3_key)
         await db.commit()
     except Exception as exc:  # noqa: BLE001
         await db.rollback()
@@ -473,8 +549,13 @@ async def create_applicant(
     email: Annotated[OptionalEmail, Form()] = None,
     target_level: Annotated[str, Form()] = "mid",
     target_jd_text: Annotated[str | None, Form()] = None,
+    # The opening to file them under. When absent, the typed title decides
+    # (see _resolve_opening). When present it wins, and the applicant's target
+    # role is the opening's, not whatever was typed alongside it.
+    requisition_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> ApplicantOut:
-    """Upload an applicant's resume, store it, and ATS-score it (best-effort)."""
+    """Upload an applicant's resume, store it, file them under an opening, and
+    ATS-score the application (best-effort)."""
     hr_uid, company_id = ctx
 
     if file.content_type != "application/pdf":
@@ -493,6 +574,12 @@ async def create_applicant(
             status_code=400,
             detail="Could not read the PDF. Please upload a valid, unencrypted PDF.",
         ) from exc
+
+    # After the file checks, so a bad upload can never mint an opening.
+    opening = await _resolve_opening(
+        db, company_id=company_id, hr_uid=hr_uid, requisition_id=requisition_id,
+        title=target_job_title, level=target_level.strip() or "mid", jd_text=target_jd_text,
+    )
 
     applicant_id = uuid.uuid4()
     s3_key = f"applicants/{company_id}/{applicant_id}.pdf"
@@ -515,9 +602,9 @@ async def create_applicant(
         full_name_source="hr",
         # Already stripped and validated by OptionalEmail on the way in.
         email=email,
-        target_job_title=target_job_title.strip(),
-        target_level=target_level.strip() or "mid",
-        target_jd_text=target_jd_text,
+        target_job_title=str(opening["title"]).strip(),
+        target_level=str(opening["level"] or "mid"),
+        target_jd_text=opening["jd_text"] if requisition_id is not None else target_jd_text,
         resume_text=resume_text,
         resume_s3_key=s3_key,
         status="new",
@@ -526,8 +613,11 @@ async def create_applicant(
     )
     db.add(applicant)
     try:
+        enrolment_id = await _file_under(db, applicant=applicant, opening=opening,
+                                         hr_uid=hr_uid)
         await db.commit()
     except Exception as exc:  # noqa: BLE001
+        await db.rollback()
         log.error("hr.applicant.db_write_failed", error_type=type(exc).__name__)
         await _delete_from_s3(s3_key)
         raise HTTPException(
@@ -535,6 +625,7 @@ async def create_applicant(
         ) from exc
 
     # ATS scoring is best-effort: a scorer outage must NOT lose the applicant.
+    # Unscored, the enrolment is picked up by the reconciler.
     try:
         score = await score_resume_remote(
             resume_text=resume_text,
@@ -544,6 +635,9 @@ async def create_applicant(
             acting_user_id=str(hr_uid),
         )
         _apply_score(applicant, score)
+        if enrolment_id is not None:
+            await apply_ats_to_enrolment(db, enrolment_id=enrolment_id, score=score,
+                                         resume_key=s3_key)
         await db.commit()
     except ResumeScoreError as exc:
         log.warning("hr.applicant.score_unavailable", error=str(exc))
@@ -574,6 +668,7 @@ async def bulk_upload_applicants(
     db: DbSessionDep,
     target_level: Annotated[str, Form()] = "mid",
     target_jd_text: Annotated[str | None, Form()] = None,
+    requisition_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> BulkUploadResult:
     """Upload many resumes at once for a SINGLE role.
 
@@ -598,8 +693,18 @@ async def bulk_upload_applicants(
             detail=f"Up to {_MAX_BULK_FILES} resumes per batch — you sent {len(files)}.",
         )
 
-    job_title = target_job_title.strip() or "General Role"
     level = target_level.strip() or "mid"
+    opening = await _resolve_opening(
+        db, company_id=company_id, hr_uid=hr_uid, requisition_id=requisition_id,
+        title=target_job_title.strip() or "General Role", level=level, jd_text=target_jd_text,
+    )
+    job_title = str(opening["title"])
+    if requisition_id is not None:
+        level = str(opening["level"] or level)
+        target_jd_text = opening["jd_text"]
+    # Committed before the loop: each file commits (or rolls back) on its own,
+    # and a rollback after one bad file must not take the opening with it.
+    await db.commit()
 
     # One id for the whole batch, so the reconciler can tell when the last row
     # of THIS upload has finished being read and emit a single notification
@@ -647,6 +752,7 @@ async def bulk_upload_applicants(
                 jd_text=target_jd_text,
                 score_now=False,
                 upload_batch_id=batch_id,
+                opening=opening,
             )
             created.append(_to_out(applicant))
             embed_ids.append(applicant.id)
@@ -669,18 +775,31 @@ async def bulk_upload_applicants(
     # now to return quickly, and the reconciler already finds unembedded rows by
     # the same absence it uses for unscored ones.
 
+    # An opening this upload minted, that ended up with nobody in it, is noise
+    # in HR's review queue. Removed rather than left empty — nothing refers to
+    # it, and it was never a decision anyone made.
+    if opening["created"] and not created:
+        await db.execute(
+            text("DELETE FROM job_requisitions WHERE id = :i AND company_id = :c"
+                 " AND NOT EXISTS (SELECT 1 FROM enrolments WHERE requisition_id = :i)"),
+            {"i": opening["id"], "c": company_id},
+        )
+        await db.commit()
+
     log.info(
         "hr.applicant.bulk.complete",
         company_id=str(company_id),
         created=len(created),
         failed=len(failed),
         deferred=len(embed_ids),
+        requisition_id=str(opening["id"]),
     )
     return BulkUploadResult(
         created=created,
         failed=failed,
         created_count=len(created),
         failed_count=len(failed),
+        requisition_id=str(opening["id"]) if created else None,
         pending_enrichment=len(created),
     )
 
@@ -1137,23 +1256,54 @@ async def update_applicant_status(
 
 @router.post("/applicants/{applicant_id}/rescore", response_model=ApplicantOut)
 async def rescore_applicant(
-    applicant_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+    applicant_id: uuid.UUID,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+    enrolment_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> ApplicantOut:
+    """Re-run ATS scoring for one of this person's applications (D-06a).
+
+    A score belongs to an application, so this scores an ENROLMENT: the one
+    named, or by default the applicant's most recent. It is scored against that
+    enrolment's own target role — a person who applied to two openings is two
+    different scores — and the applicant row is updated only when it is the
+    latest application (see apply_ats_to_enrolment). An applicant with no
+    enrolment at all (a row predating openings) is scored as before.
+    """
     hr_uid, company_id = ctx
     a = await _get_owned(db, company_id, applicant_id)
     if not a.resume_text:
         raise HTTPException(status_code=400, detail="No resume text on file to score.")
+    enr = (
+        await db.execute(
+            text(
+                "SELECT id, target_job_title, target_level, target_jd_text FROM enrolments"
+                " WHERE applicant_id = :a AND company_id = :c AND deleted_at IS NULL"
+                "   AND (CAST(:e AS uuid) IS NULL OR id = CAST(:e AS uuid))"
+                " ORDER BY created_at DESC LIMIT 1"
+            ),
+            {"a": applicant_id, "c": company_id, "e": enrolment_id},
+        )
+    ).mappings().first()
+    if enrolment_id is not None and enr is None:
+        raise HTTPException(status_code=404, detail="Application not found.")
     try:
         score = await score_resume_remote(
             resume_text=a.resume_text,
-            job_title=a.target_job_title,
-            level=a.target_level,
-            jd_text=a.target_jd_text,
+            job_title=enr["target_job_title"] if enr else a.target_job_title,
+            level=enr["target_level"] if enr else a.target_level,
+            jd_text=enr["target_jd_text"] if enr else a.target_jd_text,
             acting_user_id=str(hr_uid),
         )
     except ResumeScoreError as exc:
         raise HTTPException(status_code=502, detail=f"Resume scoring failed: {exc}") from exc
-    _apply_score(a, score)
+    latest = True
+    if enr is not None:
+        latest = await apply_ats_to_enrolment(
+            db, enrolment_id=enr["id"], score=score, resume_key=a.resume_s3_key
+        )
+    if latest:
+        _apply_score(a, score)
     await db.commit()
     # Refresh the search embedding too (also backfills it if it was missing).
     await _embed_applicant(db, a, hr_uid)

@@ -54,6 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.applicant_enrichment import (
     apply_ats_score,
+    apply_ats_to_enrolment,
     apply_extracted_identity,
     store_embedding,
 )
@@ -90,7 +91,8 @@ _BACKOFF_CAP_SECONDS = 6 * 3600
 # outage; it is a bad row that wants a human.
 MAX_ATTEMPTS = 8
 
-KIND_ATS = "applicant_ats"
+KIND_ATS = "applicant_ats"  # an applicant with no enrolment (pre-openings rows)
+KIND_ENROLMENT_ATS = "enrolment_ats"  # one application's score (D-06a)
 KIND_EMBED = "applicant_embedding"
 KIND_SCORECARD = "session_scorecard"
 KIND_PDF = "scorecard_pdf"
@@ -266,8 +268,11 @@ SELECT count(*) AS total,
        SELECT (   a.ats_overall IS NOT NULL
                OR a.resume_text IS NULL OR length(trim(a.resume_text)) = 0
                OR EXISTS (SELECT 1 FROM reconciliation_state rs
-                           WHERE rs.kind = :kind_ats AND rs.ref_id = a.id
-                             AND rs.gave_up_at IS NOT NULL)) AS stuck
+                           WHERE rs.gave_up_at IS NOT NULL
+                             AND ((rs.kind = :kind_ats AND rs.ref_id = a.id)
+                                  OR (rs.kind = :kind_enr AND rs.ref_id IN (
+                                        SELECT e.id FROM enrolments e
+                                         WHERE e.applicant_id = a.id))))) AS stuck
   ) st
  WHERE a.upload_batch_id = :b
 """
@@ -299,7 +304,10 @@ async def _notify_batch_done(
     if batch_id is None or uploader_id is None:
         return False
     counts = (
-        await db.execute(text(_BATCH_COUNTS_SQL), {"b": batch_id, "kind_ats": KIND_ATS})
+        await db.execute(
+            text(_BATCH_COUNTS_SQL),
+            {"b": batch_id, "kind_ats": KIND_ATS, "kind_enr": KIND_ENROLMENT_ATS},
+        )
     ).mappings().first()
     if counts is None or counts["outstanding"]:
         return False
@@ -323,37 +331,74 @@ async def _notify_batch_done(
     return staged
 
 
+# What needs scoring (D-06a). A score belongs to an APPLICATION, so the unit of
+# work is an enrolment with no score, scored against that enrolment's own
+# target role — the same CV is a different score for a different opening, and
+# scoring against the applicant's target (overwritten by their latest
+# application) scored every older application against the wrong job.
+#
+# An applicant with no live enrolment at all — a row that predates openings —
+# is still scored the old way, against its own target, so nothing that used to
+# be picked up is dropped.
+#
+# One literal, not assembled: the SAST gate fails SQL built from strings.
+_UNSCORED_WORK_SQL = """
+SELECT a.id AS applicant_id, e.id AS enrolment_id,
+       CASE WHEN e.id IS NULL THEN a.target_job_title ELSE e.target_job_title END AS job_title,
+       CASE WHEN e.id IS NULL THEN a.target_level     ELSE e.target_level     END AS level,
+       CASE WHEN e.id IS NULL THEN a.target_jd_text   ELSE e.target_jd_text   END AS jd_text
+  FROM applicants a
+  LEFT JOIN enrolments e ON e.applicant_id = a.id AND e.deleted_at IS NULL
+ WHERE a.deleted_at IS NULL
+   AND a.resume_text IS NOT NULL
+   AND length(trim(a.resume_text)) > 0
+   AND (
+         (e.id IS NOT NULL AND e.ats_overall IS NULL
+          AND NOT EXISTS (SELECT 1 FROM reconciliation_state rs
+                           WHERE rs.kind = :kind_enr AND rs.ref_id = e.id
+                             AND (rs.gave_up_at IS NOT NULL
+                                  OR (rs.next_attempt_at IS NOT NULL
+                                      AND rs.next_attempt_at > :now))))
+      OR (e.id IS NULL AND a.ats_overall IS NULL
+          AND NOT EXISTS (SELECT 1 FROM reconciliation_state rs
+                           WHERE rs.kind = :kind_ats AND rs.ref_id = a.id
+                             AND (rs.gave_up_at IS NOT NULL
+                                  OR (rs.next_attempt_at IS NOT NULL
+                                      AND rs.next_attempt_at > :now))))
+       )
+ ORDER BY a.created_at, e.created_at
+ LIMIT :lim
+"""
+
+
 async def _score_pass(db: AsyncSession, result: PassResult) -> None:
-    """Retry ATS scoring for applicants that have none."""
+    """Retry ATS scoring for applications that have none."""
     now = datetime.now(tz=UTC)
-    ids = [
-        r[0]
-        for r in (
-            await db.execute(
-                text(
-                    "SELECT a.id FROM applicants a WHERE a.ats_overall IS NULL"
-                    + _DUE_PREDICATE
-                    + " ORDER BY a.created_at LIMIT :lim"
-                ),
-                {"kind": KIND_ATS, "now": now, "lim": SCORE_BATCH},
-            )
-        ).all()
-    ]
-    if not ids:
+    work = (
+        await db.execute(
+            text(_UNSCORED_WORK_SQL),
+            {"kind_enr": KIND_ENROLMENT_ATS, "kind_ats": KIND_ATS, "now": now,
+             "lim": SCORE_BATCH},
+        )
+    ).mappings().all()
+    if not work:
         return
 
-    for aid in ids:
+    for w in work:
+        aid, eid = w["applicant_id"], w["enrolment_id"]
+        kind, ref = (KIND_ENROLMENT_ATS, eid) if eid is not None else (KIND_ATS, aid)
         applicant = await db.get(Applicant, aid)
         if applicant is None:  # deleted between the select and here
             continue
         # Read now: the failure path rolls back, which expires `applicant`.
         batch_id, uploader_id = applicant.upload_batch_id, applicant.created_by_user_id
+        resume_key = applicant.resume_s3_key
         try:
             score = await score_resume_remote(
                 resume_text=applicant.resume_text or "",
-                job_title=applicant.target_job_title,
-                level=applicant.target_level,
-                jd_text=applicant.target_jd_text,
+                job_title=w["job_title"],
+                level=w["level"],
+                jd_text=w["jd_text"],
                 # Attributed to the account that created the applicant so the
                 # internal-token audit trail names a real actor rather than a
                 # synthetic "system" principal that has no company scope.
@@ -362,21 +407,29 @@ async def _score_pass(db: AsyncSession, result: PassResult) -> None:
         except Exception as exc:  # noqa: BLE001 — one bad row must not stop the pass
             await db.rollback()
             result.failed += 1
-            if await _record_failure(db, KIND_ATS, aid, f"{type(exc).__name__}: {exc}"):
+            if await _record_failure(db, kind, ref, f"{type(exc).__name__}: {exc}"):
                 result.gave_up += 1
                 # A parked row is finished as far as this loop is concerned, so
                 # it can be the one that completes its batch.
                 await _announce_batch(db, result, aid, batch_id, uploader_id)
             continue
 
-        apply_ats_score(applicant, score)
+        # The enrolment gets the score; the applicant row mirrors it only when
+        # this is the person's latest application (see apply_ats_to_enrolment).
+        mirror = True
+        if eid is not None:
+            mirror = await apply_ats_to_enrolment(
+                db, enrolment_id=eid, score=score, resume_key=resume_key
+            )
+        if mirror:
+            apply_ats_score(applicant, score)
         # A deferred ingest stored this row without reading it, so its name is
         # derived from the filename and its email is missing. The scorer just
         # read both out of the PDF — this is the only moment they are available,
         # so it is the moment they get written.
         if apply_extracted_identity(applicant, score):
             result.named += 1
-        await _clear_state(db, KIND_ATS, aid)
+        await _clear_state(db, kind, ref)
         await db.commit()
         result.scored += 1
         # After the commit: the batch is only finished once this row's own
@@ -712,7 +765,17 @@ async def _outstanding(db: AsyncSession) -> dict[str, int]:
             text(
                 """
                 SELECT
-                  count(*) FILTER (WHERE ats_overall IS NULL)  AS unscored,
+                  -- Unscored APPLICATIONS (D-06a): each enrolment without a
+                  -- score, plus applicants that have no enrolment at all.
+                  (SELECT count(*) FROM enrolments e
+                     JOIN applicants x ON x.id = e.applicant_id AND x.deleted_at IS NULL
+                    WHERE e.deleted_at IS NULL AND e.ats_overall IS NULL
+                      AND x.resume_text IS NOT NULL AND length(trim(x.resume_text)) > 0)
+                  + count(*) FILTER (
+                      WHERE ats_overall IS NULL
+                        AND NOT EXISTS (SELECT 1 FROM enrolments e
+                                         WHERE e.applicant_id = applicants.id
+                                           AND e.deleted_at IS NULL)) AS unscored,
                   count(*) FILTER (WHERE embedding   IS NULL)  AS unembedded
                 FROM applicants
                 WHERE deleted_at IS NULL

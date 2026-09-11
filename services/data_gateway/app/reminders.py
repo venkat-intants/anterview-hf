@@ -76,12 +76,14 @@ class SweepResult:
     interview_reminders: int = 0
     expiry_notices: int = 0
     results_emails: int = 0
+    completions: int = 0
 
     def total(self) -> int:
         return (
             self.exam_reminders
             + self.interview_reminders
             + self.expiry_notices
+            + self.completions
             + self.results_emails
         )
 
@@ -357,6 +359,96 @@ async def _results_ready(db: AsyncSession, result: SweepResult) -> None:
         )
         if sent is not None:
             result.results_emails += 1
+
+        # In-app as well as by email, and NOT conditional on the email having
+        # been staged. `a.user_id` was already selected here and never used, so
+        # a candidate whose mail bounced, was filtered, or went to a local sink
+        # had no way to learn their scorecard existed — the same failure the
+        # interview invitation had, at the other end of the journey.
+        #
+        # The dedupe_key above guards the email; this is guarded by running only
+        # for rows the email query found, which are rows nobody has been told
+        # about yet — once staged, the NOT EXISTS excludes the row for good.
+        #
+        # Boundary worth stating: _RESULTS_SQL requires `a.email IS NOT NULL`,
+        # so an applicant with no address on file is still told nothing. That
+        # case has no dedupe key to check against, and firing on every sweep
+        # instead would be worse than silence. It is also close to unreachable —
+        # public applications require an address, and create_notification is a
+        # no-op without a user_id anyway.
+        await create_notification(
+            db,
+            user_id=r["user_id"],
+            kind="results_ready",
+            title="Your interview results are ready",
+            body=(
+                (f"{r['job_title']} · " if r["job_title"] else "")
+                + "Open your applications to read the full scorecard."
+            ),
+            link="/applications",
+        )
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# 5. Interview completed — telling HR without waiting to be asked
+# ---------------------------------------------------------------------------
+# The invite's consumed -> completed transition, and the notification that goes
+# with it, used to happen inside GET /hr/interviews. That made a read path a
+# writer, and meant the event had no announcer: HR learned that a candidate had
+# finished only if HR happened to open that page. Nobody opens the page, nobody
+# is told, and the invite sits at 'consumed' indefinitely.
+#
+# Here it is found the same way everything else in this file is — by absence. A
+# scorecard exists for the invite's session and the invite has not been closed
+# out yet. The status flip IS the idempotency guard: it is a one-way transition
+# on a single row, so the row stops matching the moment it is announced, and no
+# dedupe key or extra column is needed.
+_COMPLETED_SQL = """
+SELECT inv.id, inv.company_id, inv.created_by_user_id, a.full_name, j.title AS job_title
+  FROM interview_invites inv
+  JOIN scorecards sc ON sc.session_id = inv.session_id
+  JOIN applicants a  ON a.id = inv.applicant_id AND a.deleted_at IS NULL
+  LEFT JOIN jobs j   ON j.id = inv.job_id
+ WHERE inv.deleted_at IS NULL
+   AND inv.status = 'consumed'
+ ORDER BY sc.created_at
+ LIMIT :lim
+"""
+
+
+async def _interview_completed(db: AsyncSession, result: SweepResult) -> None:
+    rows = (
+        await db.execute(text(_COMPLETED_SQL), {"lim": _BATCH})
+    ).mappings().all()
+
+    for r in rows:
+        await db.execute(
+            text(
+                "UPDATE interview_invites SET status = 'completed', updated_at = now() "
+                "WHERE id = :id AND status = 'consumed'"
+            ),
+            {"id": r["id"]},
+        )
+        # In-app only. There is no interview_completed email template and never
+        # has been — a comment in hr_interviews.py claimed one had been "moved"
+        # to the redemption path, but git history shows the claim arrived with
+        # the initial import and the template was never written. HR lives in the
+        # console; the candidate is the one who needs mail, and gets it from
+        # _results_ready above.
+        await create_notification(
+            db,
+            user_id=r["created_by_user_id"],
+            kind="interview_completed",
+            title="Interview completed",
+            body=(
+                f"{r['full_name']} finished their interview"
+                + (f" · {r['job_title']}" if r["job_title"] else "")
+                + " — scorecard ready"
+            ),
+            link="/hr/interviews",
+        )
+        result.completions += 1
     await db.commit()
 
 
@@ -372,6 +464,7 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
             ("interview", _interview_reminders),
             ("expiry", _expiry_notices),
             ("results", _results_ready),
+            ("completed", _interview_completed),
         ):
             try:
                 await fn(db, result)

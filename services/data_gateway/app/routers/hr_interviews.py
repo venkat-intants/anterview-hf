@@ -26,7 +26,7 @@ from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.interview_link import hash_interview_token, mint_interview_token
-from app.mailer import enqueue_email, notify
+from app.mailer import enqueue_email
 from app.models import Applicant, InterviewInvite, Job, Scorecard
 from app.notifications_util import create_notification
 from app.routers.hr_applicants import _get_owned
@@ -189,7 +189,7 @@ async def _resolve_job(
     )
 
 
-async def _email_interview_invite(
+async def _tell_candidate_about_invite(
     db: AsyncSession,
     *,
     applicant: Applicant,
@@ -201,14 +201,46 @@ async def _email_interview_invite(
     invite_id: uuid.UUID | None = None,
     rescheduled: bool = False,
 ) -> None:
-    """Stage the branded candidate interview-invite email on ``db`` (caller commits).
+    """Tell the candidate an invite exists — in-app AND by email (caller commits).
 
     Values are escaped inside the template renderer (a candidate name / job title
     can contain markup). ``magic_link=None`` renders the "use your original link"
     copy (reschedule path — the link is not re-minted)."""
+    when = scheduled_at.strftime("%d %b %Y, %H:%M UTC") if scheduled_at else None
+
+    # In-app first, email second — and deliberately in that order.
+    #
+    # The invite used to exist ONLY as an email. A candidate who missed it had
+    # no way to discover the interview: their applications page still read
+    # "Shortlisted · watch your email", their notification list was empty, and
+    # nothing anywhere in their account mentioned an invitation. If the mail was
+    # filtered, mistyped or — as in local development — caught by a mail sink,
+    # the invite was unreachable while looking perfectly healthy to HR.
+    #
+    # Staged on the caller's transaction like the email, so a candidate is never
+    # told about an invite that failed to persist.
+    await create_notification(
+        db,
+        user_id=applicant.user_id,
+        kind="interview_invite",
+        title=(
+            "Your interview has been rescheduled"
+            if rescheduled
+            else "You have an interview invitation"
+        ),
+        body=(
+            f"{job_title or 'A role'}"
+            + (f" · {when}" if when else "")
+            + ". Open your applications to start it."
+        ),
+        link="/applications",
+    )
+
+    # Silent no-op when the applicant has no address on file. That is a real
+    # case (HR can add an applicant without one) and not an error — but it is
+    # exactly why the notification above is not inside this guard.
     if not applicant.email:
         return
-    when = scheduled_at.strftime("%d %b %Y, %H:%M UTC") if scheduled_at else None
     await enqueue_email(
         db,
         to=applicant.email,
@@ -295,7 +327,7 @@ async def advance_applicant_to_interview(
     magic_link = f"{base}/interview-invite#{raw_token}"
     # Stage on the same transaction the caller commits → the candidate email is
     # sent iff the invite persists (atomic), then delivered by the outbox worker.
-    await _email_interview_invite(
+    await _tell_candidate_about_invite(
         db, applicant=applicant, job_title=job.title, magic_link=magic_link,
         scheduled_at=scheduled_at, language=language, company_id=company_id,
         invite_id=invite.id,
@@ -419,7 +451,7 @@ async def create_invite(body: InviteCreateIn, ctx: HrCtxDep, db: DbSessionDep) -
     # Stage the candidate email on this same transaction (atomic with the invite);
     # the outbox worker delivers it. HR still gets the link in the response to copy
     # manually if needed.
-    await _email_interview_invite(
+    await _tell_candidate_about_invite(
         db, applicant=applicant, job_title=job.title, magic_link=magic_link,
         scheduled_at=invite.scheduled_at, language=body.language, company_id=company_id,
         invite_id=invite.id,
@@ -470,7 +502,7 @@ async def reschedule_invite(
     if applicant is not None:
         # magic_link is NOT re-minted on reschedule — the template renders the "use
         # your original link" copy. Staged on this transaction, then worker-delivered.
-        await _email_interview_invite(
+        await _tell_candidate_about_invite(
             db, applicant=applicant, job_title=job_title, magic_link=None,
             scheduled_at=inv.scheduled_at, language=inv.language, company_id=company_id,
             invite_id=inv.id, rescheduled=True,
@@ -514,46 +546,34 @@ async def list_invites(
         stmt = stmt.where(InterviewInvite.applicant_id == applicant_id)
     rows = (await db.execute(stmt)).all()
 
-    # Lazy completion: a scorecard exists -> flip consumed -> completed (frees the slot).
+    # This handler no longer WRITES. It used to flip consumed -> completed here
+    # and announce the interview from inside a GET, which meant HR learned that
+    # somebody had finished only if HR happened to open this page — the event had
+    # no announcer of its own. Both the durable flip and the notification now
+    # belong to the reminders sweep (`reminders._interview_completed`), which is
+    # driven by the scorecard appearing rather than by anyone reading a list.
     #
-    # NOTE (idempotency): the status flip from "consumed" → "completed" happens AT MOST
-    # ONCE per invite — once the status is "completed" the condition
-    # ``inv.status == "consumed"`` is false on subsequent GETs, so no further
-    # notification is enqueued.  The notification (in-app feed only, no email) is
-    # therefore fire-once.
-    #
-    # Email delivery for "interview_completed" has been MOVED OUT of this GET handler
-    # entirely to prevent a per-refresh email storm (each list refresh would re-send
-    # the email to the HR manager).  The email is now sent by the interview_take
-    # completion path (where it fires exactly once when the session completes).  This
-    # GET only flips the status and creates the in-app notification (email=False).
+    # A previous note here claimed the completion EMAIL had been "moved out of
+    # this GET handler" to the interview_take completion path. It had not: there
+    # is no interview_completed template and no such call site, and the claim
+    # arrived with the initial import — so it described a move that never
+    # happened. HR is told in-app; the candidate gets the results_ready email.
     now = datetime.now(tz=UTC)
-    dirty = False
     out: list[InviteOut] = []
     for inv, name, title, scorecard_id, composite in rows:
+        # Effective status for DISPLAY only — nothing is written. A scorecard
+        # existing means the interview is finished, whether or not the sweep has
+        # caught up, so HR sees the truth immediately while the durable
+        # transition stays single-owner.
         if scorecard_id is not None and inv.status == "consumed":
-            inv.status = "completed"
-            inv.updated_at = now
-            dirty = True
-            # In-app notification only — NO email here (see note above).
-            await notify(
-                db,
-                user_id=inv.created_by_user_id,
-                kind="interview_completed",
-                title="Interview completed",
-                body=f"{name} finished their interview — scorecard ready",
-                link="/hr/interviews",
-                email=False,  # email=False: fire-once email is sent at completion, not on list poll
-                company_id=company_id,
-            )
-        # A non-completed invite past its expiry is effectively dead (redeem
-        # already 404s it) — surface it as 'expired' instead of a stale
-        # 'invited'/'consumed' so HR sees real link state.
-        eff_status = (
-            "expired"
-            if inv.status in ("invited", "consumed") and inv.expires_at <= now
-            else inv.status
-        )
+            eff_status = "completed"
+        elif inv.status in ("invited", "consumed") and inv.expires_at <= now:
+            # A non-completed invite past its expiry is effectively dead (redeem
+            # already 404s it) — surface it as 'expired' rather than a stale
+            # 'invited'/'consumed' so HR sees real link state.
+            eff_status = "expired"
+        else:
+            eff_status = inv.status
         out.append(
             InviteOut(
                 invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name,
@@ -564,8 +584,6 @@ async def list_invites(
                 scorecard_id=str(scorecard_id) if scorecard_id else None,
             )
         )
-    if dirty:
-        await db.commit()
     return out
 
 

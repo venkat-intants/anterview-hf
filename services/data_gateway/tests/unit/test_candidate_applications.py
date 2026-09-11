@@ -37,6 +37,10 @@ def _row(**kw: object) -> MagicMock:
         "round_kind": None,
         "round_position": None,
         "total_rounds": None,
+        # No waiting invitation is the common case — an application spends most
+        # of its life here. The tests that care set these explicitly.
+        "invite_id": None,
+        "invite_scheduled_at": None,
     }
     for k, v in {**defaults, **kw}.items():
         setattr(row, k, v)
@@ -421,3 +425,90 @@ def test_the_feed_takes_no_identity_parameter() -> None:
 
     params = set(inspect.signature(list_open_roles).parameters)
     assert not params & {"user_id", "company_id", "slug", "applicant_id"}
+
+
+# ===========================================================================
+# The interview a candidate was invited to
+# ===========================================================================
+# The invitation used to reach the candidate only as an email. When that email
+# was filtered, mistyped, or caught by a local mail sink, the interview was
+# unreachable — while looking healthy from the HR side, because the invite had
+# been minted and queued. These assert the path that does not depend on mail.
+def test_a_waiting_invite_is_visible_on_the_application() -> None:
+    from app.routers.candidate_applications import ApplicationOut
+
+    assert "interview_invite_id" in ApplicationOut.model_fields
+
+
+def test_the_list_never_returns_a_usable_token() -> None:
+    """Only the HMAC of an invite token is stored, so a link cannot be rebuilt
+    here — and must not be, or every render of a list would hand one out."""
+    from app.routers.candidate_applications import ApplicationOut
+
+    for leaky in ("token", "raw_token", "interview_url", "magic_link", "token_hash"):
+        assert leaky not in ApplicationOut.model_fields
+
+
+def test_only_an_unstarted_invite_is_offered() -> None:
+    """A 'consumed' invite means the interview is already under way. Offering to
+    start it again from the applications page would be a second entry point to a
+    session that resumes from the candidate's own link or resume cookie."""
+    from app.routers.candidate_applications import _LIST_SQL
+
+    invite_clause = _LIST_SQL[_LIST_SQL.index("interview_invites") :]
+    assert "i.status = 'invited'" in invite_clause
+    assert "i.expires_at > now()" in invite_clause
+    assert "i.deleted_at IS NULL" in invite_clause
+
+
+def test_a_waiting_invite_replaces_the_watch_your_email_advice() -> None:
+    """The row read "You are through to the assessment stage. Watch your email"
+    to somebody whose interview was already waiting — stale, and a dead end when
+    the mail never arrived."""
+    from app.routers.candidate_applications import _next_step_for
+
+    row = MagicMock()
+    row.invite_id = uuid.uuid4()
+    step = _next_step_for(row, "shortlisted")
+    assert "interview" in step.lower()
+    assert "email" not in step.lower()
+
+
+def test_without_an_invite_the_status_wording_still_applies() -> None:
+    from app.routers.candidate_applications import _NEXT_STEPS, _next_step_for
+
+    row = MagicMock()
+    row.invite_id = None
+    assert _next_step_for(row, "shortlisted") == _NEXT_STEPS["shortlisted"]
+
+
+def test_minting_a_link_authorises_inside_the_update() -> None:
+    """Ownership is a WHERE clause, not a check that a later edit could skip:
+    the UPDATE matches only when the invite hangs off an applicant carrying this
+    user's id, so it cannot rotate somebody else's token."""
+    from app.routers.candidate_applications import _ROTATE_SQL
+
+    assert "a.user_id = :uid" in _ROTATE_SQL
+    assert "i.status = 'invited'" in _ROTATE_SQL
+    assert "i.expires_at > now()" in _ROTATE_SQL
+
+
+def test_minting_a_link_takes_no_identity_parameter() -> None:
+    import inspect
+
+    from app.routers.candidate_applications import mint_my_interview_link
+
+    params = set(inspect.signature(mint_my_interview_link).parameters)
+    assert not params & {"user_id", "company_id", "applicant_id", "email"}
+
+
+def test_the_link_carries_its_token_in_the_fragment() -> None:
+    """A query string would put the token in server logs, proxies and Referer
+    headers. Same shape the emailed link uses."""
+    import inspect
+
+    from app.routers.candidate_applications import mint_my_interview_link
+
+    src = inspect.getsource(mint_my_interview_link)
+    assert "/interview-invite#" in src
+    assert "?token=" not in src

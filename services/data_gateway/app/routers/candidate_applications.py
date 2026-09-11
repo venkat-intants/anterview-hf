@@ -55,8 +55,10 @@ from shared.auth.base import User
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db_session
 from app.dependencies import get_current_user
+from app.interview_link import hash_interview_token, mint_interview_token
 
 log = structlog.get_logger(__name__)
 
@@ -124,6 +126,12 @@ class ApplicationOut(BaseModel):
     current_round_kind: str | None = None
     round_number: int | None = None
     total_rounds: int | None = None
+    # A live interview invitation, if one is waiting. Carries no token: the raw
+    # invite token is never stored (only its HMAC), so a link cannot be rebuilt
+    # here — the candidate asks for a fresh one, which is a separate, audited
+    # act rather than something a list endpoint hands out on every render.
+    interview_invite_id: str | None = None
+    interview_scheduled_at: str | None = None
 
 
 class StageEventOut(BaseModel):
@@ -156,7 +164,30 @@ SELECT e.id,
        wr.kind               AS round_kind,
        wr.position           AS round_position,
        (SELECT count(*) FROM workflow_rounds x
-         WHERE x.workflow_id = e.workflow_id AND x.deleted_at IS NULL) AS total_rounds
+         WHERE x.workflow_id = e.workflow_id AND x.deleted_at IS NULL) AS total_rounds,
+       -- A live interview invitation for this applicant, if there is one.
+       --
+       -- Without this the page was actively misleading: an applicant who had
+       -- been invited still read "Shortlisted · watch your email", because the
+       -- invite does not move the enrolment status. The invitation existed only
+       -- in an email, so a candidate who missed it had no way to learn of it.
+       --
+       -- 'invited' only — deliberately. A 'consumed' invite means the interview
+       -- has already been started, and offering to start it again from here
+       -- would be a second, misleading entry point; that path resumes from the
+       -- candidate's own link or resume cookie.
+       (SELECT i.id FROM interview_invites i
+         WHERE i.applicant_id = a.id
+           AND i.deleted_at IS NULL
+           AND i.status = 'invited'
+           AND i.expires_at > now()
+         ORDER BY i.created_at DESC LIMIT 1) AS invite_id,
+       (SELECT i.scheduled_at FROM interview_invites i
+         WHERE i.applicant_id = a.id
+           AND i.deleted_at IS NULL
+           AND i.status = 'invited'
+           AND i.expires_at > now()
+         ORDER BY i.created_at DESC LIMIT 1) AS invite_scheduled_at
   FROM applicants a
   JOIN enrolments e     ON e.applicant_id = a.id AND e.deleted_at IS NULL
   JOIN companies c      ON c.id = e.company_id AND c.deleted_at IS NULL
@@ -169,6 +200,20 @@ SELECT e.id,
  ORDER BY e.created_at DESC
  LIMIT :lim
 """
+
+
+def _next_step_for(row: Any, status_: str) -> str:
+    """What the candidate should do, with a waiting invitation taking priority.
+
+    A pending invite outranks the status wording because it is the one thing on
+    this page the candidate can act on. Without it the row read "You are through
+    to the assessment stage. Watch your email…" to somebody whose interview was
+    already waiting — advice that was both stale and, if the mail never arrived,
+    a dead end.
+    """
+    if getattr(row, "invite_id", None):
+        return "Your interview is ready. Start it from here."
+    return _NEXT_STEPS.get(status_, "The hiring team is reviewing your application.")
 
 
 def _to_out(row: Any) -> dict[str, Any]:
@@ -185,12 +230,16 @@ def _to_out(row: Any) -> dict[str, Any]:
         "applied_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
         "stage": _STAGE_LABELS.get(status_, "In progress"),
-        "next_step": _NEXT_STEPS.get(status_, "The hiring team is reviewing your application."),
+        "next_step": _next_step_for(row, status_),
         "closed": status_ in _CLOSED,
         "current_round_title": row.round_title,
         "current_round_kind": row.round_kind,
         "round_number": number,
         "total_rounds": row.total_rounds or None,
+        "interview_invite_id": str(row.invite_id) if row.invite_id else None,
+        "interview_scheduled_at": (
+            row.invite_scheduled_at.isoformat() if row.invite_scheduled_at else None
+        ),
     }
 
 
@@ -389,3 +438,89 @@ async def list_open_roles(user: CurrentUserDep, db: DbSessionDep) -> list[OpenRo
             )
         )
     return out
+
+
+# ---------------------------------------------------------------------------
+# Getting into the interview from inside the account
+# ---------------------------------------------------------------------------
+class InterviewLinkOut(BaseModel):
+    """A freshly minted link for an invitation this candidate owns."""
+
+    interview_url: str
+    expires_at: str
+
+
+_ROTATE_SQL = """
+UPDATE interview_invites i
+   SET token_hash = :th, updated_at = now()
+  FROM applicants a
+ WHERE i.id = :invite_id
+   AND i.applicant_id = a.id
+   AND a.user_id = :uid
+   AND a.deleted_at IS NULL
+   AND i.deleted_at IS NULL
+   AND i.status = 'invited'
+   AND i.expires_at > now()
+RETURNING i.expires_at
+"""
+
+
+@router.post(
+    "/interviews/{invite_id}/link",
+    response_model=InterviewLinkOut,
+    summary="Mint a fresh link for an interview this candidate was invited to",
+)
+async def mint_my_interview_link(
+    invite_id: uuid.UUID, user: CurrentUserDep, db: DbSessionDep
+) -> InterviewLinkOut:
+    """Give the signed-in candidate a working link to their own interview.
+
+    WHY THIS EXISTS. The invitation used to reach the candidate only as an
+    email. When that email was filtered, mistyped, or caught by a local mail
+    sink, the interview was unreachable — while looking perfectly healthy from
+    the HR side, because the invite really had been minted and really had been
+    queued for delivery. This is the path that does not depend on mail.
+
+    WHY IT ROTATES THE TOKEN. Only the HMAC of the token is stored, never the
+    token itself, so an existing link cannot be re-read and shown again. That
+    property is worth keeping, so instead of weakening it the invite gets a NEW
+    token and the old link stops working. One invitation, one live link.
+
+    WHY THIS IS NOT A SECOND REDEMPTION PATH. It hands back a link and nothing
+    else. Redemption — the join window, consent, guest provisioning, the
+    reconnect branch, the row lock — stays in `interview_take.redeem_invite`,
+    unchanged and still the only way in. Two code paths into an interview is how
+    they drift apart, and one of them ends up missing a check.
+
+    The UPDATE authorises in its own WHERE clause: it matches only when the
+    invite belongs to an applicant carrying this user's id. A 404 covers "no
+    such invite", "not yours", "already started" and "expired" alike, so it
+    cannot be used to discover which invites exist.
+    """
+    row = (
+        await db.execute(
+            text(_ROTATE_SQL),
+            {
+                "th": hash_interview_token(raw := mint_interview_token(), settings.interview_link_secret),
+                "invite_id": invite_id,
+                "uid": user.user_id,
+            },
+        )
+    ).first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No interview invitation is waiting on this application.",
+        )
+
+    await db.commit()
+    log.info("candidate.interview_link.minted", invite_id=str(invite_id))
+
+    base = settings.interview_link_base_url.rstrip("/")
+    return InterviewLinkOut(
+        # Fragment, not query string: the token never reaches a server log,
+        # a proxy, or a Referer header. Same shape the emailed link uses.
+        interview_url=f"{base}/interview-invite#{raw}",
+        expires_at=row.expires_at.isoformat(),
+    )

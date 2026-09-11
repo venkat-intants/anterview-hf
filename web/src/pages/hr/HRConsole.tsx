@@ -12,6 +12,7 @@ import { getHrAnalytics } from '@/api/hr';
 import { listNotifications, type NotificationItem } from '@/api/notifications';
 import AttentionPanel from '@/components/AttentionPanel';
 import { useAuth } from '@/context/AuthContext';
+import { LIVE_POLL_MS } from '@/lib/polling';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { GlassCard, StatCard, Pill } from '@/design/components/primitives';
 import { PromoBanner, TrustStrip } from '@/design/components/banners';
@@ -49,11 +50,13 @@ export default function HRConsole() {
     staleTime: 60_000,
   });
 
-  // Live hiring funnel — drives the stat strip.
+  // Live hiring funnel — drives the stat strip. The dashboard is the page a
+  // manager leaves open, so it polls like the other live views.
   const { data: analytics } = useQuery({
     queryKey: ['hr', 'analytics'],
     queryFn: getHrAnalytics,
     staleTime: 60_000,
+    refetchInterval: LIVE_POLL_MS,
   });
 
   // Recent activity — reuse the notification feed (HR invites, scores, completions).
@@ -269,6 +272,13 @@ export default function HRConsole() {
 const KIND_TONE: Record<string, keyof typeof ACTIVITY_BG> = {
   applicant_scored: 'electric',
   interview_completed: 'forest',
+  // Results arriving: something to read.
+  exam_submitted: 'electric',
+  bulk_upload: 'electric',
+  auto_advance: 'forest',
+  // Waiting on HR: a lapse to follow up, a review to do.
+  link_expired: 'amber',
+  review_due: 'amber',
   invite_sent: 'amber',
   decision: 'lavender',
   welcome: 'lavender',

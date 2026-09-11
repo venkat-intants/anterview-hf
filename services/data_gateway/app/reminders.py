@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -51,8 +51,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import settings
 from app.mailer import enqueue_email
 from app.notifications_util import create_notification
+from app.scheduling import record_loop_pass
 
 log = structlog.get_logger(__name__)
+
+# This loop's row in scheduled_job_runs (A6).
+LOOP_JOB_ID = "reminders_sweep"
 
 # Reminder windows as non-overlapping bands: (label, nearer edge, farther edge).
 # A deadline is due for a window when it falls in (now + nearer, now + farther].
@@ -93,6 +97,9 @@ class SweepResult:
     # Scored workflow interviews recorded as their round's result (advanced,
     # held for a person, or queued for the final decision).
     workflow_results: int = 0
+    # "stage: ErrorType: message" for each stage that failed this sweep. The
+    # sweep carries on past them; this is how the failure is still recorded.
+    failed_stages: list[str] = field(default_factory=list)
 
     def total(self) -> int:
         return (
@@ -600,6 +607,7 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
                 await fn(db, result)
             except Exception as exc:  # noqa: BLE001 — one stage must not sink the sweep
                 await db.rollback()
+                result.failed_stages.append(f"{name}: {type(exc).__name__}: {exc}"[:300])
                 log.error(
                     "reminders.stage_failed",
                     stage=name,
@@ -618,12 +626,19 @@ async def _loop(factory: async_sessionmaker[AsyncSession]) -> None:
     interval = max(300, settings.reminders_interval_seconds)
     await asyncio.sleep(min(60, interval))
     while True:
+        started = datetime.now(tz=UTC)
+        error: str | None = None
         try:
-            await run_once(factory)
+            result = await run_once(factory)
+            error = "; ".join(result.failed_stages) or None
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
+            error = f"{type(exc).__name__}: {exc}"
             log.error("reminders.sweep_failed", exc_type=type(exc).__name__, exc_msg=str(exc))
+        # A6: every pass leaves a record, so a sweep that has stopped running —
+        # or keeps failing a stage — is visible without reading logs.
+        await record_loop_pass(factory, LOOP_JOB_ID, started_at=started, error=error)
         await asyncio.sleep(interval)
 
 

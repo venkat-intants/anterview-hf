@@ -29,6 +29,7 @@ import {
 } from '@/api/interviewInvites';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { LIVE_POLL_MS } from '@/lib/polling';
 import {
   GlassCard,
   Pill,
@@ -268,13 +269,18 @@ export default function HRInterviews() {
   const [filter, setFilter] = useState<FilterKey>('all');
 
   // ── Queries ──────────────────────────────────────────────────────────────
+  // Both change with no action on this page — a candidate finishes, a link
+  // lapses, an exam pass makes someone eligible — so both poll like every other
+  // live HR list. A new notification also refreshes them (lib/liveRefresh).
   const { data: eligible } = useQuery({
     queryKey: ['hr', 'interviews', 'eligible'],
     queryFn: () => listEligibleApplicants('any'),
+    refetchInterval: LIVE_POLL_MS,
   });
   const { data: invites, isLoading } = useQuery({
     queryKey: ['hr', 'interviews'],
     queryFn: () => listInvites(),
+    refetchInterval: LIVE_POLL_MS,
   });
 
   // ── Mutations ─────────────────────────────────────────────────────────────

@@ -106,7 +106,10 @@ export default function AttentionPanel({ className }: { className?: string }) {
     queryKey: ['hr-attention'],
     queryFn: getAttention,
     // Fresh enough to be trusted, not so fresh that leaving the dashboard open
-    // re-runs the aggregate queries every minute.
+    // re-runs the aggregate queries every minute. Deliberately no polling: the
+    // events that change what needs attention (a submission, a completed
+    // interview, a lapsed link) arrive as notifications, and the bell
+    // invalidates this query when one does — see lib/liveRefresh.
     staleTime: 5 * 60 * 1000,
     retry: false,
     throwOnError: false,

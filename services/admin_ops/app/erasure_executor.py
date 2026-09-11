@@ -302,6 +302,10 @@ EXCLUDED_TABLES: dict[str, str] = {
                             "gives up.",
     "scheduled_job_runs": "one row per named cron job with its last run time "
                           "and status. Operational telemetry; no user column.",
+    "scheduled_job_run_log": "history of scheduled-job runs and failed "
+                             "background passes (job id, trigger, status, "
+                             "error text). Operational telemetry; no user "
+                             "column, pruned after 90 days.",
 }
 
 

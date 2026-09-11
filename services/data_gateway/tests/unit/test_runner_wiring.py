@@ -116,6 +116,46 @@ def test_percent_is_sent_with_an_explicit_max_of_100() -> None:
 
 
 # ===========================================================================
+# A4 — HR hears that an exam was submitted
+# ===========================================================================
+def _submit_notice() -> str:
+    from app.routers.exam_take import _grade_and_finalize
+
+    src = inspect.getsource(_grade_and_finalize)
+    start = src.index('kind="exam_submitted"')
+    end = src.index("\n", src.index("dedupe_key=", start))
+    return src[src.rindex("create_notification(", 0, start) : end]
+
+
+def test_an_exam_submission_notifies_whoever_sent_the_link() -> None:
+    call = _submit_notice()
+    # The assignment's sender first — for a workflow-issued link that is the
+    # workflow owner — falling back to the exam's author for older rows.
+    assert "user_id=ctx.assignment.created_by_user_id or ctx.exam.created_by_user_id" in call
+    assert 'link=f"/hr/exams/{ctx.exam.id}/attempts/{fresh_attempt.id}"' in call
+
+
+def test_the_submission_notice_is_atomic_and_announced_once() -> None:
+    """Staged before the one commit, so it exists exactly when the attempt does;
+    keyed on the attempt, so a retried submit cannot announce it twice."""
+    from app.routers.exam_take import _grade_and_finalize
+
+    src = inspect.getsource(_grade_and_finalize)
+    notice_at = src.index('kind="exam_submitted"')
+    assert notice_at < src.index("await db.commit()", notice_at)
+    assert 'dedupe_key=f"exam_submitted:{fresh_attempt.id}"' in _submit_notice()
+
+
+def test_the_submission_notice_states_a_score_not_a_decision() -> None:
+    """The pass mark is a fact about the score. Whether the candidate proceeds
+    is HR's call (D-05), and the notice must not read as having made it."""
+    call = _submit_notice().lower()
+    assert "pass mark" in call
+    for word in ("reject", "failed", "unsuccessful", "hire"):
+        assert word not in call
+
+
+# ===========================================================================
 # enrolment_awaiting_exam_round — which result belongs to which round
 # ===========================================================================
 @pytest.mark.asyncio

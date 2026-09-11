@@ -53,6 +53,7 @@ from app.models import (
     ExamRound,
     ExamSection,
 )
+from app.notifications_util import create_notification
 from app.rate_limit import rate_limit
 from app.redis_client import get_redis
 from app.routers.hr_interviews import advance_applicant_to_interview
@@ -920,6 +921,27 @@ async def _grade_and_finalize(
                 log.warning(
                     "exam.auto_advance_failed", exam_id=str(ctx.exam.id), error=str(exc)
                 )
+
+        # Tell whoever sent the link (A4). HR otherwise learned an exam was done
+        # only by opening the results page. Staged on this transaction, so it
+        # exists exactly when the attempt does; keyed on the attempt, so a
+        # retried submit cannot announce it twice. The score is stated as a
+        # fact against the pass mark — never as a decision, which is HR's.
+        if fresh_attempt is not None:
+            await create_notification(
+                db,
+                user_id=ctx.assignment.created_by_user_id or ctx.exam.created_by_user_id,
+                kind="exam_submitted",
+                title=f"{ctx.applicant.full_name} submitted "
+                      f"{ctx.exam_round.title or ctx.exam.title}",
+                body=(
+                    f"{percent:.0f}% — "
+                    + ("at or above the pass mark" if passed else "below the pass mark")
+                    + (" (time ran out)" if expired else "")
+                ),
+                link=f"/hr/exams/{ctx.exam.id}/attempts/{fresh_attempt.id}",
+                dedupe_key=f"exam_submitted:{fresh_attempt.id}",
+            )
 
         # Single commit — attempt + assignment + optional invite in one transaction.
         await db.commit()

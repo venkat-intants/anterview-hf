@@ -226,10 +226,12 @@ _FORBIDDEN = HTTPException(
 # presents `sub="data_gateway"` and carries the human in a non-authoritative
 # `act_sub` claim.
 #
-# Only interview_core calls /internal/score; the other five routes
-# (score-resume, generate-exam, generate-coding, embed, why-match) are called
-# by data_gateway. Adding an entry here is a trust decision — the token is
-# signed with the shared jwt_secret, so any listed subject can reach Gemini.
+# interview_core calls /internal/score at the end of every interview. data_gateway
+# calls the other routes (score-resume, generate-exam, generate-coding, embed,
+# why-match, scorecards/{id}/pdf) and also /internal/score, when its reconciler
+# retries an interview whose scorecard was never written. Adding an entry here
+# is a trust decision — the token is signed with the shared jwt_secret, so any
+# listed subject can reach Gemini.
 _ALLOWED_SERVICE_SUBS = frozenset({"interview_core", "data_gateway"})
 
 

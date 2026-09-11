@@ -22,6 +22,7 @@ from app.redis_client import close_redis, init_redis
 from app.routers.score import router as score_router
 from app.routers.scorecard import router as scorecard_router
 from app.routers.scorecard_list import router as scorecard_list_router
+from app.routers.scorecard_pdf import router as scorecard_pdf_router
 
 # ---------------------------------------------------------------------------
 # PII redaction processor (defense-in-depth — DPDP §8)
@@ -108,6 +109,7 @@ install_http_observability(app, service_name=settings.service_name)
 
 app.include_router(health_router)
 app.include_router(score_router, prefix="/internal")
+app.include_router(scorecard_pdf_router, prefix="/internal")
 app.include_router(scorecard_router, prefix="/api")
 app.include_router(scorecard_list_router, prefix="/api")
 

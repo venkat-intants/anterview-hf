@@ -208,6 +208,401 @@ async def test_one_bad_applicant_does_not_stop_the_pass(
 
 
 # ===========================================================================
+# A1 — interviews without a scorecard, scorecards without a PDF
+# ===========================================================================
+def test_min_answers_matches_the_worker() -> None:
+    """The retry must use the worker's own "long enough to score" rule. The two
+    services share no code, so the value is mirrored — and pinned here."""
+    import re
+    from pathlib import Path
+
+    from app.reconciliation import MIN_ANSWERS_TO_SCORE
+
+    worker = (
+        Path(__file__).resolve().parents[4]
+        / "services" / "interview_core" / "app" / "worker" / "constants.py"
+    )
+    if not worker.exists():
+        pytest.skip("interview_core source not present in this checkout")
+    m = re.search(r"^MIN_ANSWERS_TO_SCORE:\s*int\s*=\s*(\d+)", worker.read_text(), re.M)
+    assert m, "MIN_ANSWERS_TO_SCORE not found in interview_core constants"
+    assert int(m.group(1)) == MIN_ANSWERS_TO_SCORE
+
+
+def test_only_interviews_the_worker_would_have_scored_are_retried() -> None:
+    """'abandoned' covers a short interview and a crash the reaper finalised.
+    Neither is scored automatically: a scorecard from a truncated transcript
+    reads as a complete assessment."""
+    from app.reconciliation import _UNSCORED_SQL
+
+    assert "s.status = 'completed'" in _UNSCORED_SQL
+    assert "abandoned" not in _UNSCORED_SQL
+    assert "NOT EXISTS (SELECT 1 FROM scorecards sc WHERE sc.session_id = s.id)" in _UNSCORED_SQL
+    assert ">= :min_answers" in _UNSCORED_SQL
+
+
+def test_retry_respects_consent_and_pending_erasure() -> None:
+    from app.reconciliation import _UNSCORED_SQL
+
+    assert "c.consent_type = 'interview_voice_recording'" in _UNSCORED_SQL
+    assert "c.revoked_at IS NULL" in _UNSCORED_SQL
+    assert "s.deleted_at IS NULL" in _UNSCORED_SQL
+    assert "u.deleted_at IS NULL" in _UNSCORED_SQL
+
+
+def test_retry_leaves_recent_and_old_interviews_alone() -> None:
+    """Recent: the live call may still land. Old: a results email about an
+    interview from last quarter is worse than none."""
+    from app.reconciliation import _SCORECARD_GRACE, _SCORECARD_LOOKBACK, _UNSCORED_SQL
+
+    assert "s.completed_at > :floor" in _UNSCORED_SQL
+    assert "s.completed_at <= :settled" in _UNSCORED_SQL
+    assert timedelta(minutes=10) <= _SCORECARD_GRACE
+    assert timedelta(days=7) >= _SCORECARD_LOOKBACK
+
+
+def _session_row(**over: object) -> dict:
+    row = {
+        "id": uuid.uuid4(), "language": "hi", "job_title": "Staff Nurse", "level": "junior",
+        "jd_text": "Ward care", "department": None, "company_name": None,
+        "interview_type": "screening", "current_round_id": None,
+    }
+    return {**row, **over}
+
+
+def _scorecard_db(rows: list[dict], turns: list[tuple[str, str]]) -> AsyncMock:
+    db = _db()
+    db.execute.side_effect = [
+        MagicMock(mappings=MagicMock(return_value=MagicMock(all=MagicMock(return_value=rows)))),
+        MagicMock(all=MagicMock(return_value=turns)),
+    ] + [MagicMock() for _ in range(10)]
+    return db
+
+
+@pytest.mark.asyncio
+async def test_a_retried_interview_is_sent_exactly_as_the_worker_would_send_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.reconciliation as rec
+
+    row = _session_row()
+    db = _scorecard_db([row], [("interviewer", "Tell me about triage."),
+                               ("candidate", "I assess by urgency.")])
+    sent: list[dict] = []
+
+    async def _score(payload: dict) -> str:
+        sent.append(payload)
+        return "created"
+
+    async def _profile(_db: object, _row: object) -> dict:
+        return {"profile_id": "p1"}
+
+    monkeypatch.setattr(rec, "score_interview_remote", _score)
+    monkeypatch.setattr(rec, "_role_profile_for", _profile)
+    result = rec.PassResult()
+    await rec._scorecard_pass(db, result)
+
+    assert result.interviews_scored == 1
+    p = sent[0]
+    assert p["session_id"] == str(row["id"])
+    assert p["turns"] == [{"role": "ai", "text": "Tell me about triage."},
+                          {"role": "user", "text": "I assess by urgency."}]
+    assert p["language"] == "hi"
+    assert p["experience_level"] == "entry"  # unknown levels normalise like the worker's
+    assert p["role_profile"] == {"profile_id": "p1"}
+
+
+@pytest.mark.asyncio
+async def test_a_session_scored_meanwhile_is_not_counted_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """409 from the scorer is UNIQUE(session_id) — the live call landed first.
+    That is success for the retry, not a failure, and not a new scorecard."""
+    import app.reconciliation as rec
+
+    db = _scorecard_db([_session_row()], [("candidate", "a"), ("candidate", "b")])
+
+    async def _exists(_p: dict) -> str:
+        return "exists"
+
+    async def _profile(_db: object, _row: object) -> None:
+        return None
+
+    monkeypatch.setattr(rec, "score_interview_remote", _exists)
+    monkeypatch.setattr(rec, "_role_profile_for", _profile)
+    result = rec.PassResult()
+    await rec._scorecard_pass(db, result)
+
+    assert result.interviews_scored == 0
+    assert result.failed == 0
+
+
+@pytest.mark.asyncio
+async def test_a_scoring_failure_backs_off_with_the_lower_attempt_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every attempt that reaches Gemini is spend; interviews get fewer tries."""
+    import app.reconciliation as rec
+
+    db = _scorecard_db([_session_row()], [("candidate", "a"), ("candidate", "b")])
+    caps: list[int] = []
+
+    async def _down(_p: dict) -> str:
+        raise RuntimeError("scorer 502")
+
+    async def _fail(_db: object, _k: str, _r: object, _e: str, *, max_attempts: int) -> bool:
+        caps.append(max_attempts)
+        return False
+
+    async def _profile(_db: object, _row: object) -> None:
+        return None
+
+    monkeypatch.setattr(rec, "score_interview_remote", _down)
+    monkeypatch.setattr(rec, "_record_failure", _fail)
+    monkeypatch.setattr(rec, "_role_profile_for", _profile)
+    result = rec.PassResult()
+    await rec._scorecard_pass(db, result)
+
+    assert result.failed == 1
+    assert caps == [rec.SCORECARD_MAX_ATTEMPTS]
+    assert rec.SCORECARD_MAX_ATTEMPTS < rec.MAX_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_a_workflow_interview_is_rescored_against_its_frozen_rubric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry grades against what the round promised, like the live worker."""
+    import app.reconciliation as rec
+    import app.workflow_runner as wr
+
+    round_id = uuid.uuid4()
+    frozen = MagicMock(model_dump=MagicMock(return_value={"profile_id": "frozen"}))
+    seen: list[object] = []
+
+    async def _frozen(_db: object, *, round_id: object, job_title: str) -> object:
+        seen.append(round_id)
+        return frozen
+
+    monkeypatch.setattr(wr, "frozen_rubric_for_round", _frozen)
+    got = await rec._role_profile_for(_db(), _session_row(current_round_id=round_id))
+
+    assert seen == [round_id]
+    assert got == {"profile_id": "frozen"}
+
+
+@pytest.mark.asyncio
+async def test_a_practice_interview_is_rescored_against_the_deterministic_baseline() -> None:
+    """No LLM call to rebuild a rubric: the taxonomy baseline is what the worker
+    itself falls back to when Gemini is unavailable."""
+    from app.reconciliation import _role_profile_for
+
+    got = await _role_profile_for(_db(), _session_row())
+
+    assert got is not None
+    assert got["source"] == "taxonomy"  # no LLM contributed
+    assert got["domain_family"] == "healthcare_nursing"  # role-aware, not generic
+
+
+def _pdf_db(ids: list[uuid.UUID]) -> AsyncMock:
+    db = _db()
+    db.execute.side_effect = [MagicMock(all=MagicMock(return_value=[(i,) for i in ids]))] + [
+        MagicMock() for _ in range(10)
+    ]
+    return db
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_that_can_never_render_is_parked_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No candidate name, or pending erasure: a retry would get the same answer."""
+    import app.reconciliation as rec
+
+    scid = uuid.uuid4()
+    parked: list[tuple] = []
+
+    async def _render(_id: str) -> dict:
+        return {"status": "not_applicable", "reason": "no_candidate_name"}
+
+    async def _park(_db: object, kind: str, ref: object, reason: str) -> None:
+        parked.append((kind, ref, reason))
+
+    monkeypatch.setattr(rec, "render_scorecard_pdf_remote", _render)
+    monkeypatch.setattr(rec, "_park", _park)
+    result = rec.PassResult()
+    await rec._pdf_pass(_pdf_db([scid]), result)
+
+    assert parked == [(rec.KIND_PDF, scid, "not_applicable: no_candidate_name")]
+    assert result.pdfs_rendered == 0 and result.failed == 0
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_render_failure_is_retried_and_the_pass_continues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.reconciliation as rec
+    from app.scoring_client import InterviewScoreError
+
+    bad, good = uuid.uuid4(), uuid.uuid4()
+
+    async def _render(scid: str) -> dict:
+        if scid == str(bad):
+            raise InterviewScoreError("storage down")
+        return {"status": "rendered"}
+
+    failures: list[object] = []
+
+    async def _fail(_db: object, _k: str, ref: object, _e: str, **_: object) -> bool:
+        failures.append(ref)
+        return False
+
+    monkeypatch.setattr(rec, "render_scorecard_pdf_remote", _render)
+    monkeypatch.setattr(rec, "_record_failure", _fail)
+    result = rec.PassResult()
+    await rec._pdf_pass(_pdf_db([bad, good]), result)
+
+    assert failures == [bad]
+    assert result.pdfs_rendered == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["_scorecard_pass", "_pdf_pass"])
+async def test_an_unavailable_service_stops_the_pass_without_charging_anyone(
+    monkeypatch: pytest.MonkeyPatch, stage: str,
+) -> None:
+    """Storage not configured, or feedback_billing down: a condition of the
+    service. Charging each row an attempt would park every interview and every
+    scorecard after an hour-long outage — and they would stay parked."""
+    import app.reconciliation as rec
+    from app.scoring_client import ScoringServiceUnavailableError
+
+    calls: list[str] = []
+
+    async def _down(*_: object) -> object:
+        calls.append("call")
+        raise ScoringServiceUnavailableError("HTTP 503: storage not configured")
+
+    async def _fail(*_: object, **__: object) -> bool:
+        raise AssertionError("no row may be charged for a service-level outage")
+
+    async def _profile(_db: object, _row: object) -> None:
+        return None
+
+    monkeypatch.setattr(rec, "score_interview_remote", _down)
+    monkeypatch.setattr(rec, "render_scorecard_pdf_remote", _down)
+    monkeypatch.setattr(rec, "_record_failure", _fail)
+    monkeypatch.setattr(rec, "_role_profile_for", _profile)
+
+    db = (_scorecard_db([_session_row(), _session_row()],
+                        [("candidate", "a"), ("candidate", "b")])
+          if stage == "_scorecard_pass" else _pdf_db([uuid.uuid4(), uuid.uuid4()]))
+    result = rec.PassResult()
+    await getattr(rec, stage)(db, result)
+
+    assert calls == ["call"], "the pass must stop at the first service-level failure"
+    assert result.failed == 0
+
+
+class _Transport:
+    """Serve one canned response (or raise) for httpx calls inside scoring_client."""
+
+    def __init__(self, status: int | None, body: object = None) -> None:
+        self.status, self.body = status, body
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import httpx
+
+        import app.scoring_client as sc
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            if self.status is None:
+                raise httpx.ConnectError("refused", request=request)
+            return httpx.Response(self.status, json=self.body)
+
+        real = httpx.AsyncClient
+
+        def _client(**kw: object) -> httpx.AsyncClient:
+            return real(transport=httpx.MockTransport(_handler), **kw)
+
+        monkeypatch.setattr(sc.httpx, "AsyncClient", _client)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "expect"),
+    [(201, "created"), (409, "exists"), (None, "unavailable"), (503, "unavailable"),
+     (401, "unavailable"), (502, "item_failed"), (422, "item_failed")],
+)
+async def test_score_interview_remote_classifies_each_answer(
+    monkeypatch: pytest.MonkeyPatch, status: int | None, expect: str,
+) -> None:
+    """502 is Gemini rejecting THIS transcript — charge it. Unreachable, 401/403
+    and 503 would fail for every session alike — don't."""
+    from app.scoring_client import (
+        InterviewScoreError,
+        ScoringServiceUnavailableError,
+        score_interview_remote,
+    )
+
+    _Transport(status, {"detail": "x"}).install(monkeypatch)
+    try:
+        got = await score_interview_remote({"session_id": "s"})
+    except ScoringServiceUnavailableError:
+        got = "unavailable"
+    except InterviewScoreError:
+        got = "item_failed"
+    assert got == expect
+
+
+@pytest.mark.asyncio
+async def test_pdf_storage_not_configured_is_a_service_condition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.scoring_client import ScoringServiceUnavailableError, render_scorecard_pdf_remote
+
+    _Transport(503, {"detail": "Scorecard storage is not configured."}).install(monkeypatch)
+    with pytest.raises(ScoringServiceUnavailableError):
+        await render_scorecard_pdf_remote(str(uuid.uuid4()))
+
+
+def test_pdfs_still_being_rendered_by_the_live_task_are_left_alone() -> None:
+    from app.reconciliation import _MISSING_PDF_SQL, _PDF_GRACE
+
+    assert "sc.report_pdf_key IS NULL" in _MISSING_PDF_SQL
+    assert "sc.created_at <= :settled" in _MISSING_PDF_SQL
+    assert timedelta(minutes=5) <= _PDF_GRACE
+
+
+@pytest.mark.asyncio
+async def test_one_failing_pass_does_not_cost_the_others_their_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.reconciliation as rec
+
+    ran: list[str] = []
+
+    def _stage(name: str, boom: bool = False):  # noqa: ANN202
+        async def _fn(_db: object, _r: object) -> None:
+            ran.append(name)
+            if boom:
+                raise RuntimeError("bad sql")
+        return _fn
+
+    async def _nothing(_db: object) -> dict:
+        return {}
+
+    monkeypatch.setattr(rec, "_score_pass", _stage("score", boom=True))
+    monkeypatch.setattr(rec, "_embed_pass", _stage("embed"))
+    monkeypatch.setattr(rec, "_scorecard_pass", _stage("scorecard", boom=True))
+    monkeypatch.setattr(rec, "_pdf_pass", _stage("pdf"))
+    monkeypatch.setattr(rec, "_outstanding", _nothing)
+
+    await rec.run_once(_FakeFactory(_db()))  # type: ignore[arg-type]
+    assert ran == ["score", "embed", "scorecard", "pdf"]
+
+
+# ===========================================================================
 # A2 — reminder sweep
 # ===========================================================================
 def test_deadline_is_rendered_in_ist() -> None:

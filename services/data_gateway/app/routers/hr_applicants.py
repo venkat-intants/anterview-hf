@@ -58,6 +58,7 @@ from app.scoring_client import ResumeScoreError, score_resume_remote
 from app.utils.ownership import get_owned
 from app.utils.sql_like import LIKE_ESCAPE, like_literal
 from app.workflow_runner import enrol_applicant, on_shortlisted
+from app.workflows import scoring_on_apply_enabled
 
 log = structlog.get_logger(__name__)
 
@@ -709,6 +710,16 @@ async def create_applicant(
 
     # ATS scoring is best-effort: a scorer outage must NOT lose the applicant.
     # Unscored, the enrolment is picked up by the reconciler.
+    #
+    # C9: unless this opening's published workflow turns scoring off, in which
+    # case the reconciler leaves it alone too and the applicant simply arrives
+    # unscored. A setting that says "do not spend AI on this" has to hold on
+    # every path that spends it, or it means nothing.
+    if not await scoring_on_apply_enabled(db, opening["id"]):
+        log.info("hr.applicant.scoring_disabled_for_opening",
+                 requisition_id=str(opening["id"]))
+        await _embed_applicant(db, applicant, hr_uid)
+        return _to_out(applicant)
     try:
         score = await score_resume_remote(
             resume_text=resume_text,

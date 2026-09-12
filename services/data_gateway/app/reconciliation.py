@@ -354,6 +354,11 @@ SELECT a.id AS applicant_id, e.id AS enrolment_id,
  WHERE a.deleted_at IS NULL
    AND a.resume_text IS NOT NULL
    AND length(trim(a.resume_text)) > 0
+   -- C9: an opening whose workflow turns scoring off is not scored here. The
+   -- setting was stored and settable for a release with nothing reading it, so
+   -- switching it off changed nothing and said it had.
+   AND NOT EXISTS (SELECT 1 FROM workflows w
+                    WHERE w.id = e.workflow_id AND NOT w.auto_score_on_apply)
    AND (
          (e.id IS NOT NULL AND e.ats_overall IS NULL
           AND NOT EXISTS (SELECT 1 FROM reconciliation_state rs

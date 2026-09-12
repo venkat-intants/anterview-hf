@@ -275,6 +275,24 @@ async def published_workflow(
     return dict(row) if row else None
 
 
+async def scoring_on_apply_enabled(db: AsyncSession, requisition_id: uuid.UUID) -> bool:
+    """Whether resumes for this opening are ATS-scored as they arrive (C9).
+
+    True unless the opening's PUBLISHED workflow says otherwise: an opening
+    with no workflow yet still gets its applicants scored, which is what makes
+    the applicant list useful before anyone has built a process.
+    """
+    off = await db.scalar(
+        text(
+            "SELECT 1 FROM workflows"
+            " WHERE requisition_id = :r AND status = 'published' AND deleted_at IS NULL"
+            "   AND NOT auto_score_on_apply"
+        ),
+        {"r": requisition_id},
+    )
+    return off is None
+
+
 # ---------------------------------------------------------------------------
 # Writes
 # ---------------------------------------------------------------------------

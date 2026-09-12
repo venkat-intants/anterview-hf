@@ -129,15 +129,32 @@ OPENING_HEALTH_SQL = text(
                SELECT 1 FROM workflows w
                 WHERE w.requisition_id = r.id
                   AND w.status = 'published' AND w.deleted_at IS NULL
-           ) AS has_workflow
+           ) AS has_workflow,
+           wf.thr AS shortlist_threshold,
+           -- Scored at or above the bar, not yet shortlisted, not in a round:
+           -- waiting for a person to confirm. The bar is 0-10; enrolment ATS
+           -- scores are 0-100, hence the x10.
+           COUNT(e.id) FILTER (
+               WHERE e.deleted_at IS NULL AND wf.thr IS NOT NULL
+                 AND e.status = 'new' AND e.current_round_id IS NULL
+                 AND e.ats_overall IS NOT NULL
+                 AND e.ats_overall >= wf.thr * 10
+           ) AS ready_to_shortlist
       FROM job_requisitions r
       LEFT JOIN enrolments e ON e.requisition_id = r.id
+      LEFT JOIN LATERAL (
+          SELECT w.shortlist_ats_threshold AS thr
+            FROM workflows w
+           WHERE w.requisition_id = r.id AND w.status = 'published'
+             AND w.deleted_at IS NULL
+           LIMIT 1
+      ) wf ON TRUE
      WHERE r.company_id = CAST(:cid AS uuid)
        AND r.deleted_at IS NULL
        -- A closed opening is finished, not neglected. Paused still counts:
        -- candidates already inside it are still waiting on somebody.
        AND r.status IN ('open', 'paused')
-     GROUP BY r.id, r.title, r.public_apply_enabled
+     GROUP BY r.id, r.title, r.public_apply_enabled, wf.thr
      LIMIT :limit
     """
 )
@@ -229,6 +246,10 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
                 live_enrolments=int(r.live_enrolments or 0),
                 has_published_workflow=bool(r.has_workflow),
                 accepting_public_applications=bool(r.public_apply_enabled),
+                shortlist_threshold=(
+                    int(r.shortlist_threshold) if r.shortlist_threshold is not None else None
+                ),
+                ready_to_shortlist=int(r.ready_to_shortlist or 0),
             )
             for r in openings
         ],

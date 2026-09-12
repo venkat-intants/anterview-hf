@@ -124,6 +124,12 @@ class OpeningHealth:
     live_enrolments: int
     has_published_workflow: bool
     accepting_public_applications: bool
+    # The workflow's shortlist_ats_threshold (0-10), and how many candidates
+    # sit at or above it still waiting for a person to confirm the shortlist.
+    # The threshold OFFERS a candidate for confirmation; it never advances one
+    # (D-05), so this is a prompt to a human, not an action taken.
+    shortlist_threshold: int | None = None
+    ready_to_shortlist: int = 0
 
 
 @dataclass
@@ -358,6 +364,50 @@ def watch_decision_backlog(data: WatcherInput) -> list[WatcherFinding]:
     return findings
 
 
+def watch_ready_to_shortlist(data: WatcherInput) -> list[WatcherFinding]:
+    """Candidates who clear the opening's ATS bar and are waiting to be confirmed.
+
+    The setting that drives this (``shortlist_ats_threshold``) was stored and
+    editable for a whole release without anything reading it — HR could set a
+    bar and nothing would ever mention it again. It is a pre-selection aid: a
+    score can say who is worth a look, and only a person starts an assessment
+    that costs money and a candidate's evening.
+
+    Informational on purpose. Nobody is stuck — these candidates are simply
+    waiting for a decision that has not been asked for yet.
+    """
+    rows = [o for o in data.openings if o.ready_to_shortlist > 0]
+    if not rows:
+        return []
+    rows.sort(key=lambda o: -o.ready_to_shortlist)
+    return [
+        WatcherFinding(
+            watcher="ready_to_shortlist",
+            severity="info",
+            title=f"{o.ready_to_shortlist} candidate(s) meet the bar for {o.title}",
+            body=(
+                f"They scored at or above the {o.shortlist_threshold}/10 shortlist bar "
+                f"set for {o.title} and are waiting to be shortlisted. Confirming "
+                "starts their first round; the bar only suggests who to look at."
+            ),
+            link=f"/hr/requisitions/{o.requisition_id}",
+            # Re-fires when the count changes, not nightly until someone acts.
+            dedupe_key=f"ready_to_shortlist:{o.requisition_id}:{o.ready_to_shortlist}",
+            citations=[
+                Citation(
+                    # "job" is the vocabulary's word for an opening — the same
+                    # kind the other per-opening watchers cite.
+                    kind="job",
+                    id=o.requisition_id,
+                    label=o.title,
+                    href=f"/hr/requisitions/{o.requisition_id}",
+                )
+            ],
+        )
+        for o in rows
+    ]
+
+
 def watch_openings_without_workflow(data: WatcherInput) -> list[WatcherFinding]:
     """Candidates arriving somewhere with no process to put them through — E6.
 
@@ -409,6 +459,7 @@ WATCHERS: tuple[tuple[str, object], ...] = (
     ("decision_backlog", watch_decision_backlog),
     ("stalled_applicants", watch_stalled_applicants),
     ("openings_without_workflow", watch_openings_without_workflow),
+    ("ready_to_shortlist", watch_ready_to_shortlist),
     ("funnel_health", watch_funnel_health),
     ("exam_quality", watch_exam_quality),
 )

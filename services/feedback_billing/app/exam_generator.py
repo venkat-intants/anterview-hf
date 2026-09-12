@@ -19,6 +19,7 @@ from shared.intelligence import (
     baseline_profile,
     compute_profile_id,
     render_exam_blueprint,
+    render_round_blueprint,
 )
 from shared.llm import call_llm_json
 
@@ -127,6 +128,31 @@ def _normalise_question(raw: Any) -> dict[str, Any] | None:
 _CODING_FAMILIES: frozenset[str] = frozenset({"software_it", "data_analytics"})
 
 
+def _round_blueprint(rubric: dict[str, Any], count: int) -> str:
+    """Render the quota from a workflow round's OWN competencies (C3).
+
+    A round assesses a subset of the role: an aptitude round asks about
+    reasoning, a technical one about the language. Generating both from the
+    whole role model produced two rounds asking the same spread of questions,
+    which is the thing selecting criteria per round was supposed to fix.
+
+    The criteria are the frozen ``round_criteria`` rows — the published rubric,
+    not free text — so a generated exam and the interview that follows it stay
+    in one vocabulary.
+
+    Degrades rather than fails: a round with too few criteria to form a rubric
+    falls back to the role blueprint, exactly as the interview scorer does.
+    """
+    return render_round_blueprint(
+        rubric.get("criteria") or [],
+        # The round's job title reaches the prompt here, so it is neutralised
+        # on the way in — same rule as the role blueprint's.
+        job_title=frame_untrusted_inline(str(rubric.get("job_title") or "")),
+        round_title=str(rubric.get("round_title") or "round"),
+        num_questions=count,
+    )
+
+
 def _role_blueprint(
     job_title: str,
     level: str,
@@ -184,6 +210,7 @@ async def generate_exam_questions(
     settings: Settings,
     job_title: str = "",
     experience_level: str = "mid",
+    round_rubric: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate MCQs for *topic*. Returns a list of validated question dicts.
 
@@ -223,7 +250,10 @@ async def generate_exam_questions(
         .replace("{{COUNT}}", str(count))
     )
 
-    blueprint = _role_blueprint(job_title, experience_level, count)
+    # A workflow round's own criteria win over the whole-role model (C3).
+    blueprint = _round_blueprint(round_rubric, count) if round_rubric else ""
+    if not blueprint:
+        blueprint = _role_blueprint(job_title, experience_level, count)
     if blueprint:
         prompt = prompt + "\n\n" + blueprint
 
@@ -402,6 +432,7 @@ async def generate_coding_questions(
     settings: Settings,
     job_title: str = "",
     experience_level: str = "mid",
+    round_rubric: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate stdin/stdout coding problems for *topic*.
 
@@ -449,9 +480,15 @@ async def generate_coding_questions(
     # Coding problems are far heavier than MCQs (statement + solution + cases);
     # thinking is disabled so the whole budget is output. Gemini 2.5-flash
     # supports up to 65k output tokens.
-    blueprint = _role_blueprint(
-        job_title, experience_level, count, only_families=_CODING_FAMILIES
-    )
+    # The round's own criteria first (C3). The family gate does not apply to
+    # them: HR choosing competencies for a coding round has already decided a
+    # coding test is the right assessment, and second-guessing that would
+    # silently ignore the selection.
+    blueprint = _round_blueprint(round_rubric, count) if round_rubric else ""
+    if not blueprint:
+        blueprint = _role_blueprint(
+            job_title, experience_level, count, only_families=_CODING_FAMILIES
+        )
     if blueprint:
         prompt = prompt + "\n\n" + blueprint
 

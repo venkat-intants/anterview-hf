@@ -506,6 +506,22 @@ async def internal_score_resume(
 # ---------------------------------------------------------------------------
 
 
+class RoundRubricIn(BaseModel):
+    """A workflow round's published criteria, for generation (C3).
+
+    Sent by data_gateway, which reads them from ``round_criteria`` — the frozen
+    rubric the round was published with. There is no free-text path into this:
+    a generated exam and the interview after it must share one vocabulary.
+    """
+
+    criteria: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+    round_title: str = Field(default="round", max_length=200)
+    workflow_id: str = Field(default="", max_length=64)
+    round_id: str = Field(default="", max_length=64)
+    job_title: str = Field(default="", max_length=300)
+    seniority: str = Field(default="mid", max_length=20)
+
+
 class GenerateExamRequest(BaseModel):
     """Request body for POST /generate-exam — generate MCQs for a topic/role."""
 
@@ -520,6 +536,9 @@ class GenerateExamRequest(BaseModel):
     # behaviour, driven by `topic` alone.
     job_title: str = Field(default="", max_length=300)
     experience_level: str = Field(default="mid", description="entry | mid | senior")
+    # A workflow round's own competencies (C3). When present they decide the
+    # spread instead of the whole-role model.
+    round_rubric: RoundRubricIn | None = None
 
 
 class GeneratedQuestion(BaseModel):
@@ -555,6 +574,7 @@ async def internal_generate_exam(
             settings=app_settings,
             job_title=body.job_title,
             experience_level=body.experience_level,
+            round_rubric=body.round_rubric.model_dump() if body.round_rubric else None,
         )
     except ExamGenerationError as exc:
         log.error("score.generate_exam_error", error=exc.message)
@@ -590,6 +610,7 @@ class GenerateCodingRequest(BaseModel):
     # where a coding test is not a sensible assessment.
     job_title: str = Field(default="", max_length=300)
     experience_level: str = Field(default="mid", description="entry | mid | senior")
+    round_rubric: RoundRubricIn | None = None
 
 
 class GeneratedTestCase(BaseModel):

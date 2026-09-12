@@ -416,6 +416,43 @@ def _opening(**kw: object) -> OpeningHealth:
     return OpeningHealth(**base)  # type: ignore[arg-type]
 
 
+def test_candidates_over_the_shortlist_bar_are_offered_not_advanced() -> None:
+    """C9: the ATS bar says who is worth a look. A person still confirms —
+    nothing here starts an assessment (D-05)."""
+    from shared.agents.watchers import watch_ready_to_shortlist
+
+    data = WatcherInput(
+        company_id="c",
+        openings=[_opening(shortlist_threshold=7, ready_to_shortlist=4)],
+    )
+    found = watch_ready_to_shortlist(data)
+    assert len(found) == 1
+    assert "4 candidate(s) meet the bar" in found[0].title
+    assert found[0].severity == "info"
+    assert "7/10" in found[0].body
+    assert found[0].link == "/hr/requisitions/req-1"
+
+
+def test_nothing_is_said_when_no_bar_is_set_or_nobody_clears_it() -> None:
+    from shared.agents.watchers import watch_ready_to_shortlist
+
+    for opening in (_opening(), _opening(shortlist_threshold=7, ready_to_shortlist=0)):
+        assert watch_ready_to_shortlist(WatcherInput(company_id="c", openings=[opening])) == []
+
+
+def test_the_shortlist_prompt_re_fires_only_when_the_count_changes() -> None:
+    from shared.agents.watchers import watch_ready_to_shortlist
+
+    def key(n: int) -> str:
+        data = WatcherInput(
+            company_id="c", openings=[_opening(shortlist_threshold=7, ready_to_shortlist=n)]
+        )
+        return watch_ready_to_shortlist(data)[0].dedupe_key
+
+    assert key(4) == key(4)
+    assert key(4) != key(5)
+
+
 def test_a_decision_queue_nobody_opens_raises_a_finding() -> None:
     """The rule this guards: D-05 reserves every outcome for a human, which is
     only a protection while a human is actually looking. An unread queue turns

@@ -165,6 +165,12 @@ async def main() -> None:
           await load_frozen_rubric(f, uuid.uuid4(), job_title="X") is None)
 
     async with f() as db:
+        # The workflow is archived first: a PUBLISHED one refuses this, which is
+        # the point of migration f3b5d7a9c1e4. Archiving is how a version stops
+        # being live, and it is what makes this "a round whose criteria are
+        # gone" rather than "an edit nobody should be able to make".
+        await db.execute(text("UPDATE workflows SET status = 'archived' WHERE id = :i"),
+                         {"i": wf})
         await db.execute(text("DELETE FROM round_criteria WHERE round_id = :r"), {"r": rnd})
         await db.commit()
     check("a round stripped of its criteria falls back rather than breaking",

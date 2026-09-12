@@ -50,6 +50,7 @@ from app.models import (
 )
 from app.requisitions import enrolment_for_exam_round
 from app.utils.ownership import get_owned
+from app.workflows import round_rubric_for_generation, rubric_for_exam
 
 log = structlog.get_logger(__name__)
 
@@ -162,6 +163,10 @@ class GenerateQuestionsIn(BaseModel):
     # the two rounds stop assessing subtly different jobs.
     job_title: str = Field(default="", max_length=300)
     experience_level: str = Field(default="mid")
+    # The workflow round these questions are for (C3). When set, its published
+    # competencies decide the spread — an aptitude round and a technical round
+    # on the same role stop generating the same questions.
+    workflow_round_id: uuid.UUID | None = None
 
     @field_validator("difficulty")
     @classmethod
@@ -857,6 +862,15 @@ async def generate_questions(
             acting_user_id=str(hr_uid),
             job_title=body.job_title,
             experience_level=body.experience_level,
+            round_rubric=(
+                await round_rubric_for_generation(
+                    db, company_id=company_id, workflow_round_id=body.workflow_round_id
+                )
+                if body.workflow_round_id
+                # Not named: use the round this exam belongs to, when exactly
+                # one does. The authoring screen does not know it; the data does.
+                else await rubric_for_exam(db, company_id=company_id, exam_id=exam_id)
+            ),
         )
     except ExamGenerationError as exc:
         raise HTTPException(

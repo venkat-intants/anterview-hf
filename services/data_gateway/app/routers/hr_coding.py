@@ -29,6 +29,7 @@ from app.execution import SUPPORTED_LANGUAGES
 from app.models import CodingQuestion, Exam
 from app.routers.hr_exams import _default_section, _get_owned_exam, _require_no_attempts
 from app.utils.ownership import get_owned
+from app.workflows import round_rubric_for_generation, rubric_for_exam
 
 log = structlog.get_logger(__name__)
 
@@ -130,6 +131,9 @@ class GenerateCodingQuestionsIn(BaseModel):
     difficulty: str = Field(default="medium", pattern="^(easy|medium|hard|mixed)$")
     language: str = Field(default="en", pattern="^(en|hi|te)$")
     allowed_languages: list[str] = Field(min_length=1, max_length=len(SUPPORTED_LANGUAGES))
+    # The workflow round these problems are for (C3) — its published
+    # competencies decide the spread when set.
+    workflow_round_id: uuid.UUID | None = None
     # Optional role context — same pair, same defaults, as the MCQ flow's
     # GenerateQuestionsIn. When set, the generator spreads problems across the
     # role's competencies using the allocator the interview uses, so the two
@@ -367,6 +371,15 @@ async def generate_coding_questions(
             acting_user_id=str(hr_uid),
             job_title=body.job_title,
             experience_level=body.experience_level,
+            round_rubric=(
+                await round_rubric_for_generation(
+                    db, company_id=company_id, workflow_round_id=body.workflow_round_id
+                )
+                if body.workflow_round_id
+                # Not named: use the round this exam belongs to, when exactly
+                # one does. The authoring screen does not know it; the data does.
+                else await rubric_for_exam(db, company_id=company_id, exam_id=exam_id)
+            ),
         )
     except ExamGenerationError as exc:
         raise HTTPException(

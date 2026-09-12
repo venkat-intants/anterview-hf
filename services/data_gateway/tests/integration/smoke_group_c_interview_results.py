@@ -58,7 +58,7 @@ async def seed(f) -> dict:
         await db.execute(text(
             "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
             " created_by_user_id,published_at,created_at,updated_at)"
-            " VALUES (:i,:c,:r,1,'published',:u,:n,:n,:n)"),
+            " VALUES (:i,:c,:r,1,'draft',:u,:n,:n,:n)"),
             {"i": wf, "c": cid, "r": req, "u": owner, "n": now})
         # Round two first, so round one can point at it.
         for rid, pos, title, nxt in [(r2, 1, "Panel interview", None),
@@ -74,6 +74,12 @@ async def seed(f) -> dict:
                 " competency_kind,weight,created_at) VALUES (:i,:c,:r,:ci,:cn,'technical',:w,:n)"),
                 {"i": uuid.uuid4(), "c": cid, "r": r1, "ci": comp_id, "cn": name, "w": weight,
                  "n": now})
+
+        # Published only once its rounds and criteria exist: a published
+        # workflow is immutable at the database (migration f3b5d7a9c1e4), which
+        # is the same order the API enforces.
+        await db.execute(text("UPDATE workflows SET status = 'published' WHERE id = :i"),
+                         {"i": wf})
 
         people = {}
         for key, name, status, via_workflow, composite, comps in [

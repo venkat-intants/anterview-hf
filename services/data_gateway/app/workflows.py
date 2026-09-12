@@ -275,6 +275,93 @@ async def published_workflow(
     return dict(row) if row else None
 
 
+async def round_rubric_for_generation(
+    db: AsyncSession, *, company_id: uuid.UUID, workflow_round_id: uuid.UUID
+) -> dict[str, Any] | None:
+    """The published criteria of one workflow round, ready for the generator (C3).
+
+    None when the round is not this company's, or carries no criteria — the
+    caller then generates from the role model as before, because a round with
+    nothing selected has expressed no preference.
+
+    Authoring a round's questions and scoring its interview read the same rows,
+    so an exam cannot drift onto competencies the round does not assess.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT wr.id, wr.title, wr.workflow_id, r.title AS job_title"
+                "  FROM workflow_rounds wr"
+                "  JOIN workflows w ON w.id = wr.workflow_id"
+                "  JOIN job_requisitions r ON r.id = w.requisition_id"
+                " WHERE wr.id = :i AND wr.company_id = :c AND wr.deleted_at IS NULL"
+            ),
+            {"i": workflow_round_id, "c": company_id},
+        )
+    ).mappings().first()
+    if row is None:
+        return None
+    criteria = (await load_criteria(db, [workflow_round_id])).get(str(workflow_round_id), [])
+    if not criteria:
+        return None
+    return {
+        "criteria": criteria,
+        "round_title": row["title"],
+        "workflow_id": str(row["workflow_id"]),
+        "round_id": str(row["id"]),
+        "job_title": row["job_title"],
+    }
+
+
+async def rubric_for_exam(
+    db: AsyncSession, *, company_id: uuid.UUID, exam_id: uuid.UUID
+) -> dict[str, Any] | None:
+    """The rubric of the workflow round this exam is used by — when there is
+    exactly one (C3).
+
+    Question authoring happens on the exam, not inside the workflow builder, so
+    the screen doing the generating does not know which round it is for. An
+    exam used by one round is unambiguous and gets that round's competencies;
+    an exam shared by several rounds is not, and guessing would generate a
+    technical round's questions for an aptitude round. Same rule the runner
+    uses to attribute a hand-assigned exam.
+    """
+    rounds = (
+        await db.execute(
+            text(
+                "SELECT wr.id FROM workflow_rounds wr"
+                "  JOIN exam_rounds er ON er.id = wr.exam_round_id"
+                " WHERE er.exam_id = :e AND wr.company_id = :c"
+                "   AND wr.deleted_at IS NULL AND er.deleted_at IS NULL"
+            ),
+            {"e": exam_id, "c": company_id},
+        )
+    ).all()
+    if len(rounds) != 1:
+        return None
+    return await round_rubric_for_generation(
+        db, company_id=company_id, workflow_round_id=uuid.UUID(str(rounds[0][0]))
+    )
+
+
+async def scoring_on_apply_enabled(db: AsyncSession, requisition_id: uuid.UUID) -> bool:
+    """Whether resumes for this opening are ATS-scored as they arrive (C9).
+
+    True unless the opening's PUBLISHED workflow says otherwise: an opening
+    with no workflow yet still gets its applicants scored, which is what makes
+    the applicant list useful before anyone has built a process.
+    """
+    off = await db.scalar(
+        text(
+            "SELECT 1 FROM workflows"
+            " WHERE requisition_id = :r AND status = 'published' AND deleted_at IS NULL"
+            "   AND NOT auto_score_on_apply"
+        ),
+        {"r": requisition_id},
+    )
+    return off is None
+
+
 # ---------------------------------------------------------------------------
 # Writes
 # ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ from app.workflow_runner import (
     record_result,
     release_hold,
 )
-from app.workflows import add_round, create_draft, publish
+from app.workflows import add_round, create_draft, publish, update_settings
 
 URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:55432/intants_smoke"
 PASS, FAIL = [], []
@@ -278,22 +278,60 @@ async def main() -> None:
         check("the superseded attempt is retained for audit", total == 2, f"count={total}")
 
     # ── C9: settings actually gate ───────────────────────────────────────
+    #
+    # In its OWN opening, with its own published workflow. The setting is
+    # versioned with the workflow, and a published workflow cannot be edited
+    # (migration f3b5d7a9c1e4) — which is as much the behaviour under test as
+    # the gate is: flipping a live workflow's automation would change the
+    # process under everyone already running it.
     print("\n--- per-workflow settings ---")
+    rid_slow = uuid.uuid4()
     async with f() as db:
         await db.execute(text(
-            "UPDATE workflows SET auto_advance_rounds = false WHERE id=:i"), {"i": wf})
+            "INSERT INTO job_requisitions (id,company_id,title,created_at,updated_at)"
+            " VALUES (:i,:c,'Python Developer (manual)',:t,:t)"),
+            {"i": rid_slow, "c": cid, "t": now})
         await db.commit()
-        out = await record_result(db, enrolment_id=enrols["Chitra"], round_id=r1,
+        wf_slow = await create_draft(db, company_id=cid, requisition_id=rid_slow,
+                                     created_by=uid, name="No auto-advance")
+        await db.commit()
+        r1_slow = await add_round(db, company_id=cid, workflow_id=wf_slow, title="Aptitude",
+                                  kind="mcq", pass_threshold=60, exam_round_id=er1,
+                                  criteria=[PROFILE[1]])
+        await add_round(db, company_id=cid, workflow_id=wf_slow, title="HR Final",
+                        kind="human_review")
+        await update_settings(db, workflow_id=wf_slow,
+                              fields={"auto_advance_rounds": False})
+        await db.commit()
+        rep_slow = await publish(db, company_id=cid, workflow_id=wf_slow,
+                                 profile_competencies=PROFILE)
+        await db.commit()
+        check("a workflow with auto-advance off publishes", rep_slow.publishable,
+              str(rep_slow.errors))
+
+        aid_slow = uuid.uuid4()
+        await db.execute(text(
+            "INSERT INTO applicants (id,company_id,created_by_user_id,full_name,email,"
+            " target_job_title,target_level,resume_text,ats_overall,status,created_at,updated_at)"
+            " VALUES (:i,:c,:u,'Devi','devi@x.test','Python Developer','mid','cv',7,'new',:t,:t)"),
+            {"i": aid_slow, "c": cid, "u": uid, "t": now})
+        await db.commit()
+        enrolled = await enrol_applicant(
+            db, company_id=cid, applicant_id=aid_slow, requisition_id=rid_slow,
+            target_job_title="Python Developer (manual)")
+        await db.commit()
+        slow_enrolment = uuid.UUID(str(enrolled.enrolment_id))
+        await on_shortlisted(db, enrolment_id=slow_enrolment, actor_user_id=uid)
+        await db.commit()
+
+        out = await record_result(db, enrolment_id=slow_enrolment, round_id=r1_slow,
                                   score=19, max_score=20)
         await db.commit()
         check("auto-advance off stops progression", out.action == "noop"
               and "disabled" in (out.reason or ""), str(out.as_dict()))
         check("...but it is still not a rejection",
               (await db.scalar(text("SELECT status FROM enrolments WHERE id=:i"),
-                               {"i": enrols["Chitra"]})) != "rejected")
-        await db.execute(text(
-            "UPDATE workflows SET auto_advance_rounds = true WHERE id=:i"), {"i": wf})
-        await db.commit()
+                               {"i": slow_enrolment})) != "rejected")
 
     # ── The decision queue ───────────────────────────────────────────────
     print("\n--- the final decision queue ---")

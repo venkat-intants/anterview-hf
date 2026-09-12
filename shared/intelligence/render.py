@@ -22,6 +22,8 @@ Translating them would triple the eval surface without improving the questions.
 
 from __future__ import annotations
 
+from typing import Any
+
 from shared.intelligence.archetypes import CANONICAL_AXES, affinity_for
 from shared.intelligence.schema import RoleProfile, TurnPlan
 
@@ -308,6 +310,60 @@ def render_exam_blueprint(profile: RoleProfile, num_questions: int) -> str:
         "Questions must be about THIS occupation. Never import vocabulary from "
         "another field — no algorithms or code for a trade or clinical role, no "
         "machinery for an office role."
+    )
+    return "\n".join(lines)
+
+
+def render_round_blueprint(
+    criteria: list[dict[str, Any]],
+    *,
+    job_title: str,
+    round_title: str,
+    num_questions: int,
+) -> str:
+    """A question quota for ONE workflow round's competencies (C3).
+
+    ``criteria`` are ``round_criteria`` rows — the frozen rubric a round was
+    published with — so an exam is generated from the same vocabulary the
+    interview is scored against, and a round assessing two things asks about
+    those two things.
+
+    Deliberately not built on ``RoleProfile``: that requires three
+    competencies, and "Aptitude: reasoning and numeracy" is a real round.
+    Returns "" when there is nothing usable, and the caller falls back to the
+    whole-role blueprint.
+    """
+    from shared.intelligence.coverage import allocate_weights  # avoids a cycle
+
+    rows = [
+        c for c in criteria
+        if c.get("competency_id") and float(c.get("weight") or 0) > 0
+    ]
+    if not rows:
+        return ""
+    allocation = allocate_weights(
+        [(str(c["competency_id"]), float(c["weight"])) for c in rows],
+        max(1, num_questions),
+    )
+    lines = [
+        f"## This round — spread the questions across what '{round_title}' assesses",
+        f"Role : {job_title}" if job_title else "",
+        "",
+        "Question quota per competency (respect these counts):",
+    ]
+    for c in rows:
+        count = allocation.get(str(c["competency_id"]), 0)
+        if count <= 0:
+            continue
+        name = str(c.get("competency_name") or c["competency_id"])
+        lines.append(f"  - {name}: {count} question(s)")
+        anchors = c.get("anchors")
+        if isinstance(anchors, dict) and anchors.get("mid"):
+            lines.append(f"      target the level of: {anchors['mid']}")
+    lines.append("")
+    lines.append(
+        "Questions must be about THIS occupation and these competencies only. "
+        "Never import vocabulary from another field."
     )
     return "\n".join(lines)
 

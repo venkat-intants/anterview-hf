@@ -71,6 +71,7 @@ async def generate_exam_questions_remote(
     acting_user_id: str,
     job_title: str = "",
     experience_level: str = "mid",
+    round_rubric: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate MCQs via feedback_billing. Raises ExamGenerationError on failure.
 
@@ -93,6 +94,9 @@ async def generate_exam_questions_remote(
                     # interview. Empty job_title = topic-only, as before.
                     "job_title": job_title,
                     "experience_level": experience_level,
+                    # C3: the round's own criteria, when these questions
+                    # are for a workflow round.
+                    **({"round_rubric": round_rubric} if round_rubric else {}),
                 },
             )
     except httpx.RequestError as exc:
@@ -118,6 +122,7 @@ async def generate_coding_questions_remote(
     acting_user_id: str,
     job_title: str = "",
     experience_level: str = "mid",
+    round_rubric: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate coding problems via feedback_billing. Raises ExamGenerationError.
 
@@ -140,6 +145,9 @@ async def generate_coding_questions_remote(
                     "allowed_languages": allowed_languages,
                     "job_title": job_title,
                     "experience_level": experience_level,
+                    # C3: the round's own criteria, when these questions
+                    # are for a workflow round.
+                    **({"round_rubric": round_rubric} if round_rubric else {}),
                 },
             )
     except httpx.RequestError as exc:

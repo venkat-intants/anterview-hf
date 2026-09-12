@@ -117,6 +117,72 @@ async def test_generates_and_validates_questions(monkeypatch: pytest.MonkeyPatch
     assert len(questions[0]["options"]) == 4
 
 
+def _criterion(cid: str, name: str, weight: float) -> dict:
+    return {"competency_id": cid, "competency_name": name, "weight": weight,
+            "anchors": None, "probes": None}
+
+
+def _rubric(*criteria: dict) -> dict:
+    return {
+        "criteria": list(criteria),
+        "round_title": "Aptitude",
+        "workflow_id": "wf-1",
+        "round_id": "rd-1",
+        "job_title": "Python Developer",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_rounds_own_competencies_drive_the_questions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C3. An aptitude round assesses reasoning, not the whole Python role — so
+    the quota the model is given is the round's, not the role's."""
+    _patch_gemini(monkeypatch, _FakeResp(200, _envelope(json.dumps(
+        {"questions": [_question(i) for i in range(3)]}))))
+
+    await generate_exam_questions(
+        topic="Python", num_questions=3, settings=_SETTINGS_25, job_title="Python Developer",
+        round_rubric=_rubric(
+            # Two competencies: a real round ("Aptitude: reasoning and
+            # numeracy") and below the three a role profile needs, which is
+            # why the quota is built from the criteria directly.
+            _criterion("logical_reasoning", "Logical Reasoning", 0.6),
+            _criterion("quantitative", "Quantitative Ability", 0.4),
+        ),
+    )
+    prompt = json.dumps(_FakeClient.last_body)
+    assert "Logical Reasoning" in prompt
+    assert "Quantitative Ability" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_single_criterion_round_is_still_its_own_quota(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A round may assess one thing. That is a narrow round, not a broken one,
+    so it gets a one-line quota rather than the whole role's spread."""
+    _patch_gemini(monkeypatch, _FakeResp(200, _envelope(json.dumps(
+        {"questions": [_question(0)]}))))
+
+    got = await generate_exam_questions(
+        topic="Python", num_questions=1, settings=_SETTINGS_25, job_title="Python Developer",
+        round_rubric=_rubric(_criterion("only_one", "Only One", 1.0)),
+    )
+    assert len(got) == 1
+    assert "Only One" in json.dumps(_FakeClient.last_body)
+
+
+@pytest.mark.asyncio
+async def test_no_round_rubric_behaves_exactly_as_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_gemini(monkeypatch, _FakeResp(200, _envelope(json.dumps(
+        {"questions": [_question(0)]}))))
+    await generate_exam_questions(topic="JavaScript", num_questions=1, settings=_SETTINGS_25)
+    assert "competenc" not in json.dumps(_FakeClient.last_body).lower()
+
+
 @pytest.mark.asyncio
 async def test_thinking_disabled_on_25_models(monkeypatch: pytest.MonkeyPatch) -> None:
     """2.5 models must get thinkingBudget=0 — hidden reasoning tokens otherwise

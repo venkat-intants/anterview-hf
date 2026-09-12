@@ -51,8 +51,14 @@ def allocate_by_weight(profile: RoleProfile, slots: int) -> dict[str, int]:
     return _allocate_slots(profile, slots)
 
 
-def _allocate_slots(profile: RoleProfile, probe_slots: int) -> dict[str, int]:
-    """Distribute ``probe_slots`` across competencies by weight.
+def allocate_weights(weights: list[tuple[str, float]], slots: int) -> dict[str, int]:
+    """Distribute ``slots`` across (id, weight) pairs. The allocator itself.
+
+    Takes plain pairs rather than a ``RoleProfile`` so a workflow ROUND can use
+    it too: a round assessing two competencies is legitimate and common, and a
+    profile needs at least three. Same maths either way — two allocators would
+    drift, and then a candidate's exam and interview would quietly assess
+    different jobs.
 
     Largest-remainder (Hare quota): floor every share, then hand the leftover
     slots to the largest fractional remainders. This is the allocation that
@@ -60,30 +66,35 @@ def _allocate_slots(profile: RoleProfile, probe_slots: int) -> dict[str, int]:
     which matters because that gap is exactly what ``CoverageReport`` reports
     to HR.
 
-    With fewer slots than competencies some competencies get zero. That is a
-    real property of a 10-question interview against a 7-competency role, and
-    it is surfaced rather than hidden (see ``coverage_report``).
+    With fewer slots than competencies some get zero. That is a real property
+    of a 10-question interview against a 7-competency role, and it is surfaced
+    rather than hidden (see ``coverage_report``).
     """
-    if probe_slots <= 0:
-        return {c.id: 0 for c in profile.competencies}
+    if slots <= 0:
+        return {cid: 0 for cid, _ in weights}
 
-    exact = {c.id: c.weight * probe_slots for c in profile.competencies}
+    exact = {cid: w * slots for cid, w in weights}
     allocation = {cid: int(value) for cid, value in exact.items()}
 
-    remaining = probe_slots - sum(allocation.values())
+    remaining = slots - sum(allocation.values())
     if remaining > 0:
         # Ties broken by descending weight then id, so allocation is stable
         # across runs (a dict-order-dependent tiebreak would make the plan
         # non-reproducible, defeating the point of planning in code).
-        weights = {c.id: c.weight for c in profile.competencies}
+        by_id = dict(weights)
         order = sorted(
             exact,
-            key=lambda cid: (-(exact[cid] - allocation[cid]), -weights[cid], cid),
+            key=lambda cid: (-(exact[cid] - allocation[cid]), -by_id[cid], cid),
         )
         for cid in order[:remaining]:
             allocation[cid] += 1
 
     return allocation
+
+
+def _allocate_slots(profile: RoleProfile, probe_slots: int) -> dict[str, int]:
+    """``allocate_weights`` over a profile's competencies."""
+    return allocate_weights([(c.id, c.weight) for c in profile.competencies], probe_slots)
 
 
 def _spread(allocation: dict[str, int], profile: RoleProfile) -> list[str]:

@@ -35,7 +35,12 @@ import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
 import { getRequisition, setEnrolmentStatus } from '@/api/requisitions';
-import { getDecisionQueue, releaseHold, type DecisionQueueRow } from '@/api/workflows';
+import {
+  getDecisionQueue,
+  recordRoundReview,
+  releaseHold,
+  type DecisionQueueRow,
+} from '@/api/workflows';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -72,6 +77,18 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
     onError: (e) => toast.error(errText(e, 'Could not release this hold')),
   });
 
+  // The verdict on a review round (C4). Passing advances them; not passing
+  // holds them for the final decision — it never rejects.
+  const reviewMut = useMutation({
+    mutationFn: (passed: boolean) =>
+      recordRoundReview(row.enrolment_id, { passed, note: rationale }),
+    onSuccess: (_r, passed) => {
+      toast.success(passed ? `${row.full_name} advances` : `${row.full_name} is held for you`);
+      invalidate();
+    },
+    onError: (e) => toast.error(errText(e, 'That review did not save')),
+  });
+
   return (
     <GlassCard className={cn('p-5', row.held && 'border-[var(--ui-warn)]/25')}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -81,6 +98,10 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
             {row.held ? (
               <StatusTag tone="amber" dot>
                 held
+              </StatusTag>
+            ) : row.awaiting_review ? (
+              <StatusTag tone="amber" dot>
+                {row.review_round_title ?? 'your review'}
               </StatusTag>
             ) : (
               <StatusTag tone="forest">finished the workflow</StatusTag>
@@ -113,6 +134,24 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
         </div>
       ) : null}
 
+      {/* The round's own competencies, as the checklist to review against —
+          rather than leaving the reviewer to remember what this round is for. */}
+      {row.awaiting_review && (row.review_criteria?.length ?? 0) > 0 ? (
+        <div className="mt-3 rounded-[12px] border border-border p-3">
+          <p className="text-[12px] font-medium text-foreground">
+            What {row.review_round_title ?? 'this round'} assesses
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {row.review_criteria?.map((c) => (
+              <li key={c.competency_id} className="text-[12.5px] text-[var(--ui-soft)]">
+                {c.name}
+                <span className="text-[var(--ui-faint)]"> · weight {c.weight.toFixed(2)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <label htmlFor={`why-${row.enrolment_id}`} className="mt-4 block text-[12px] text-[var(--ui-soft)]">
         Why (recorded against your name)
       </label>
@@ -125,6 +164,26 @@ function QueueCard({ row, requisitionId }: { row: DecisionQueueRow; requisitionI
       />
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
+        {row.awaiting_review ? (
+          <>
+            <button
+              type="button"
+              onClick={() => reviewMut.mutate(true)}
+              disabled={reviewMut.isPending}
+              className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+            >
+              Passes this round
+            </button>
+            <button
+              type="button"
+              onClick={() => reviewMut.mutate(false)}
+              disabled={reviewMut.isPending}
+              className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
+            >
+              Hold for a decision
+            </button>
+          </>
+        ) : null}
         {row.held ? (
           <button
             type="button"

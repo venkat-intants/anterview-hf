@@ -869,28 +869,48 @@ async def release_hold(
 async def decision_queue(
     db: AsyncSession, *, company_id: uuid.UUID, requisition_id: uuid.UUID
 ) -> list[dict[str, Any]]:
-    """Everyone awaiting a final decision — advanced AND held, together.
+    """Everyone awaiting a person — advanced, held, AND mid-workflow reviews.
 
     Deliberately one list. Held candidates buried behind a filter would make
     "every candidate reaches a human decision" true on paper and false in
     practice, so they are returned alongside those who completed, with the
     reason they stopped.
+
+    A candidate parked on a ``human_review`` round belongs here for the same
+    reason and was missing: the runner moved them onto the round, notified the
+    workflow's owner, and then they sat with a current round set and no hold —
+    invisible to the only screen built to act on them. They come back with
+    ``awaiting_review`` and the round's own competencies, which are the
+    reviewer's checklist (C3/C4).
     """
     rows = (
         await db.execute(
             text(
                 "SELECT e.id, e.status, e.held_reason, e.held_at, e.ats_overall,"
                 "       a.full_name, a.email,"
+                "       wr.id AS review_round_id, wr.title AS review_round_title,"
+                "       COALESCE(("
+                "           SELECT json_agg(json_build_object("
+                "                      'competency_id', rc.competency_id,"
+                "                      'name', rc.competency_name,"
+                "                      'weight', rc.weight)"
+                "                  ORDER BY rc.weight DESC)"
+                "             FROM round_criteria rc WHERE rc.round_id = wr.id"
+                "       ), '[]'::json) AS review_criteria,"
                 "       (SELECT count(*) FROM round_results rr"
                 "         WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL) AS rounds_taken,"
                 "       (SELECT max(rr.percent) FROM round_results rr"
                 "         WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL) AS best_percent"
                 "  FROM enrolments e"
                 "  JOIN applicants a ON a.id = e.applicant_id AND a.deleted_at IS NULL"
+                "  LEFT JOIN workflow_rounds wr ON wr.id = e.current_round_id"
+                "                              AND wr.kind = 'human_review'"
+                "                              AND wr.deleted_at IS NULL"
                 " WHERE e.company_id = :c AND e.requisition_id = :r"
                 "   AND e.deleted_at IS NULL"
                 "   AND e.status NOT IN ('hired','rejected')"
-                "   AND (e.status = 'held' OR e.current_round_id IS NULL)"
+                "   AND (e.status = 'held' OR e.current_round_id IS NULL"
+                "        OR wr.id IS NOT NULL)"
                 " ORDER BY (e.status = 'held') DESC, e.ats_overall DESC NULLS LAST"
             ),
             {"c": company_id, "r": requisition_id},
@@ -907,6 +927,24 @@ async def decision_queue(
             "ats_overall": r["ats_overall"],
             "rounds_taken": int(r["rounds_taken"] or 0),
             "best_percent": float(r["best_percent"]) if r["best_percent"] is not None else None,
+            # Waiting on a review round rather than on the final decision.
+            #
+            # A HELD candidate keeps their place, so they are still sitting on
+            # the round — but "held" is the stronger statement and carries its
+            # own actions (release, or decide). Saying both would offer a
+            # reviewer two different next steps for one person.
+            "awaiting_review": r["review_round_id"] is not None and r["status"] != "held",
+            "review_round_id": (
+                str(r["review_round_id"])
+                if r["review_round_id"] and r["status"] != "held"
+                else None
+            ),
+            "review_round_title": r["review_round_title"] if r["status"] != "held" else None,
+            "review_criteria": (
+                r["review_criteria"]
+                if r["review_round_id"] and r["status"] != "held"
+                else []
+            ),
         }
         for r in rows
     ]

@@ -41,7 +41,7 @@ from sqlalchemy import text
 
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
-from app.workflow_runner import decision_queue, release_hold
+from app.workflow_runner import decision_queue, record_result, release_hold
 from app.workflows import (
     EXAM_BACKED_KINDS,
     MAX_ROUNDS,
@@ -642,6 +642,77 @@ async def get_decision_queue(
     _hr_uid, company_id = ctx
     await _owned_requisition(db, company_id, requisition_id)
     return await decision_queue(db, company_id=company_id, requisition_id=requisition_id)
+
+
+class RoundReviewIn(BaseModel):
+    """A person's verdict on a human_review round."""
+
+    passed: bool
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/enrolments/{enrolment_id}/round-review")
+async def post_round_review(
+    enrolment_id: uuid.UUID, body: RoundReviewIn, ctx: HrCtxDep, db: DbSessionDep
+) -> dict[str, Any]:
+    """Record a reviewer's verdict on the round a candidate is sitting on (C4).
+
+    The runner has always supported this — ``record_result``'s
+    ``passed_override`` is exactly it — but nothing outside the tests could
+    call it, so a workflow containing a human_review round stalled there: the
+    candidate was moved onto the round, the owner was notified, and there was
+    no way to say "yes, continue".
+
+    Passing advances to the next round (or completes the workflow, which queues
+    the final decision). NOT passing HOLDS — it never rejects, even though a
+    person is deciding, because a rejection is a separate, explicit act on the
+    decision queue that says so in the ledger (D-05).
+    """
+    hr_uid, company_id = ctx
+    row = (
+        await db.execute(
+            text(
+                "SELECT e.current_round_id, wr.kind, wr.title"
+                "  FROM enrolments e"
+                "  LEFT JOIN workflow_rounds wr ON wr.id = e.current_round_id"
+                "                              AND wr.deleted_at IS NULL"
+                " WHERE e.id = :e AND e.company_id = :c AND e.deleted_at IS NULL"
+            ),
+            {"e": enrolment_id, "c": company_id},
+        )
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Application not found.")
+    if row["current_round_id"] is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This candidate is not on a round — record the final decision instead.",
+        )
+    if row["kind"] != "human_review":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{row['title']}' is scored by the system, not reviewed. "
+                "Its result arrives when the candidate completes it."
+            ),
+        )
+
+    outcome = await record_result(
+        db,
+        enrolment_id=enrolment_id,
+        round_id=uuid.UUID(str(row["current_round_id"])),
+        score=None,
+        graded_by="human",
+        grader_user_id=hr_uid,
+        evidence=body.note,
+        passed_override=body.passed,
+    )
+    await db.commit()
+    log.info(
+        "hr.round_review.recorded",
+        enrolment_id=str(enrolment_id), passed=body.passed, action=outcome.action,
+    )
+    return outcome.as_dict()
 
 
 @router.post("/enrolments/{enrolment_id}/release-hold")

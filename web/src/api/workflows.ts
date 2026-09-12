@@ -300,6 +300,12 @@ export function validationFromError(err: unknown): ValidationReport | null {
  * "every candidate reaches a human decision" true on paper and false in
  * practice (D-05).
  */
+export interface ReviewCriterion {
+  competency_id: string;
+  name: string;
+  weight: number;
+}
+
 export interface DecisionQueueRow {
   enrolment_id: string;
   full_name: string;
@@ -310,6 +316,28 @@ export interface DecisionQueueRow {
   ats_overall: number | null;
   rounds_taken: number;
   best_percent: number | null;
+  /** Sitting on a human_review round, waiting for someone to review it. */
+  awaiting_review?: boolean;
+  review_round_id?: string | null;
+  review_round_title?: string | null;
+  /** What that round assesses — the reviewer's checklist. */
+  review_criteria?: ReviewCriterion[];
+}
+
+/**
+ * Record a verdict on the review round a candidate is sitting on.
+ *
+ * Passing advances them to the next round. NOT passing holds them — it is not
+ * a rejection, which is a separate, explicit act (D-05).
+ */
+export function recordRoundReview(
+  enrolmentId: string,
+  body: { passed: boolean; note?: string | null },
+): Promise<{ action: string; enrolment_id?: string; reason?: string; to_round?: string }> {
+  return apiPost(`/hr/enrolments/${enrolmentId}/round-review`, {
+    passed: body.passed,
+    note: body.note?.trim() || null,
+  });
 }
 
 export function getDecisionQueue(requisitionId: string): Promise<DecisionQueueRow[]> {

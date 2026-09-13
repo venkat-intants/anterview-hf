@@ -34,8 +34,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from shared.agents.watchers import WatcherInput, watch_round_stalls
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.agents.watch_runner import gather_round_stalls
 
 HELD_POOL_LIMIT = 25
 ACTIVITY_LIMIT = 25
@@ -474,6 +477,16 @@ async def gather_dashboard(
         low_pass_rounds=low_pass,
     )
 
+    # Stalled rounds, from the rule the nightly watcher sends (E6), so the
+    # dashboard and the notification say the same thing about the same round.
+    stalls = await gather_round_stalls(db, str(company_id), str(requisition_id))
+    attention = attention_items(facts) + [
+        {"key": f"round_stall:{f.dedupe_key}", "severity": f.severity, "title": f.title,
+         "body": f.body, "link": None}
+        for f in watch_round_stalls(WatcherInput(company_id=str(company_id), round_stalls=stalls))
+    ]
+    attention.sort(key=lambda i: _SEVERITY_ORDER.get(i["severity"], 9))
+
     return {
         "progress": {
             "applications": int(p.get("applications") or 0),
@@ -509,7 +522,7 @@ async def gather_dashboard(
             }
             for r in held_rows
         ],
-        "attention": attention_items(facts),
+        "attention": attention,
         "manual_steps": manual_steps(p, str(requisition_id)),
         "activity": [
             {

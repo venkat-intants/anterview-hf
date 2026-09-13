@@ -623,3 +623,88 @@ def test_the_new_watchers_are_wired_into_the_sweep() -> None:
     )
     fired = {f.watcher for f in run_watchers(data)}
     assert {"decision_backlog", "openings_without_workflow"} <= fired
+
+
+# ---------------------------------------------------------------------------
+# Stalled rounds and stalled applicants, per opening — E6
+# ---------------------------------------------------------------------------
+def _stall(**kw: object) -> object:
+    from dataclasses import replace
+
+    from shared.agents.watchers import RoundStall
+
+    base = RoundStall(
+        requisition_id="req-1", requisition_title="Python Developer", round_id="r-1",
+        round_title="Technical Test", threshold_days=5, waiting=8, longest_days=9.0,
+        candidates=[("a-1", "Asha"), ("a-2", "Bala")],
+    )
+    return replace(base, **kw)  # type: ignore[arg-type]
+
+
+def test_a_stalled_round_names_the_opening_and_the_round() -> None:
+    from shared.agents.watchers import watch_round_stalls
+
+    f = watch_round_stalls(WatcherInput(company_id="c", round_stalls=[_stall()]))[0]
+    assert f.title == "Python Developer — Technical Test pipeline has stalled"
+    assert f.body.startswith("8 candidates have been waiting for more than 5 days on Technical Test.")
+    assert "Asha" in f.body and "rejected" in f.body
+    assert f.link == "/hr/requisitions/req-1"
+    assert f.citations[0].kind == "job" and f.citations[0].id == "req-1"
+    assert [c.label for c in f.citations[1:]] == ["Asha", "Bala"]
+
+
+def test_a_wide_or_long_stall_is_critical() -> None:
+    from shared.agents.watchers import watch_round_stalls
+
+    def sev(**kw: object) -> str:
+        return watch_round_stalls(WatcherInput(company_id="c", round_stalls=[_stall(**kw)]))[0].severity
+
+    assert sev() == "warning"
+    assert sev(waiting=12) == "critical"
+    assert sev(waiting=2, longest_days=11.0) == "critical"
+
+
+def test_stall_alerts_are_per_round_and_banded() -> None:
+    from shared.agents.watchers import watch_round_stalls
+
+    def key(**kw: object) -> str:
+        return watch_round_stalls(WatcherInput(company_id="c", round_stalls=[_stall(**kw)]))[0].dedupe_key
+
+    assert key(waiting=6) == key(waiting=9)
+    assert key(waiting=9) != key(waiting=10)
+    assert key(round_id="r-1") != key(round_id="r-2")
+    assert key(requisition_id="req-1") != key(requisition_id="req-2")
+
+
+def test_round_stalls_are_registered_with_the_sweep() -> None:
+    findings = run_watchers(WatcherInput(company_id="c", round_stalls=[_stall()]))
+    assert [f.watcher for f in findings] == ["round_stalls"]
+
+
+def test_stalled_applicants_are_reported_per_opening() -> None:
+    data = WatcherInput(
+        company_id="c",
+        stalled=[
+            StalledApplicant("a-1", "Asha", "new", 12, "req-1", "Python Developer"),
+            StalledApplicant("a-2", "Bala", "new", 15, "req-1", "Python Developer"),
+            StalledApplicant("a-3", "Chandra", "shortlisted", 11, "req-2", "Designer"),
+        ],
+    )
+    findings = [f for f in run_watchers(data) if f.watcher == "stalled_applicants"]
+    titles = sorted(f.title for f in findings)
+    assert titles == ["1 applicant(s) stalled over 10 days — Designer",
+                      "2 applicant(s) stalled over 10 days — Python Developer"]
+    py = next(f for f in findings if "Python" in f.title)
+    assert py.link == "/hr/requisitions/req-1"
+    assert py.citations[0].kind == "job" and py.citations[0].id == "req-1"
+    assert "for Python Developer" in py.body
+    assert py.dedupe_key.startswith("stalled:req-1:")
+
+
+def test_a_lossy_funnel_links_to_its_opening() -> None:
+    data = WatcherInput(
+        company_id="c", funnels=[FunnelRow("req-9", "Welder", applicants=40, interviewed=1)]
+    )
+    f = next(x for x in run_watchers(data) if x.watcher == "funnel_health")
+    assert f.link == "/hr/requisitions/req-9"
+    assert f.citations[0].href == "/hr/requisitions/req-9"

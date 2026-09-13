@@ -44,10 +44,12 @@ task. That scoping comes free here: ``gather_company_input`` does not populate
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 import structlog
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 from shared.agents import run_watchers
 
@@ -55,6 +57,7 @@ from app.agents.watch_runner import gather_company_input
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.rate_limit import rate_limit
+from app.routers.hr_requisitions import _owned
 
 log = structlog.get_logger(__name__)
 
@@ -102,7 +105,13 @@ class AttentionOut(BaseModel):
     # left open on a polling interval cannot turn into a load generator.
     dependencies=[rate_limit("hr_attention", 30)],
 )
-async def get_attention(ctx: HrCtxDep, db: DbSessionDep) -> AttentionOut:
+async def get_attention(
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+    # One opening's findings only (E6) — those that cite it. The company still
+    # comes from the session; an id from another company is a 404.
+    requisition_id: Annotated[uuid.UUID | None, Query()] = None,
+) -> AttentionOut:
     """Run the watcher rules against this company's current data.
 
     ``run_watchers`` never raises: a rule that throws is skipped with a log
@@ -111,8 +120,19 @@ async def get_attention(ctx: HrCtxDep, db: DbSessionDep) -> AttentionOut:
     here rather than re-implemented.
     """
     _hr_uid, company_id = ctx
+    if requisition_id is not None:
+        # 404 for an opening that is not this company's, before gathering
+        # anything. The requisitions router's check, so this module still reads
+        # no table itself (see test_the_panel_never_reads_delivered_notifications).
+        await _owned(db, company_id, requisition_id)
     data = await gather_company_input(db, str(company_id))
     findings = run_watchers(data)
+    if requisition_id is not None:
+        wanted = str(requisition_id)
+        findings = [
+            f for f in findings
+            if any(c.kind == "job" and c.id == wanted for c in f.citations)
+        ]
 
     log.info(
         "hr.attention.read",

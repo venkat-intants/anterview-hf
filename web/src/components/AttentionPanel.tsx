@@ -104,7 +104,9 @@ function Finding({ item }: { item: AttentionItem }) {
 export default function AttentionPanel({ className }: { className?: string }) {
   const attention = useQuery({
     queryKey: ['hr-attention'],
-    queryFn: getAttention,
+    // Wrapped: passed bare, the query context would land in getAttention's
+    // optional opening filter.
+    queryFn: () => getAttention(),
     // Fresh enough to be trusted, not so fresh that leaving the dashboard open
     // re-runs the aggregate queries every minute. Deliberately no polling: the
     // events that change what needs attention (a submission, a completed

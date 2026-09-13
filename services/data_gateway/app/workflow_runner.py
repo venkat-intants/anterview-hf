@@ -894,6 +894,30 @@ async def decision_queue(
         await db.execute(
             text(
                 "SELECT e.id, e.status, e.held_reason, e.held_at, e.ats_overall,"
+                "       e.applicant_id, e.ats_recommendation, e.ats_summary,"
+                "       e.ats_strengths, e.ats_concerns,"
+                "       w.version AS workflow_version,"
+                "       cur.title AS current_round_title,"
+                "       cur.position AS current_round_position,"
+                "       (SELECT count(*) FROM workflow_rounds x"
+                "         WHERE x.workflow_id = e.workflow_id AND x.deleted_at IS NULL"
+                "       ) AS total_rounds,"
+                "       EXTRACT(EPOCH FROM (NOW() - enrolment_state_since(e.id, e.created_at)))"
+                "         / 86400.0 AS waiting_days,"
+                "       (SELECT avg(rr.percent) FROM round_results rr"
+                "         WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL"
+                "           AND rr.percent IS NOT NULL) AS composite_percent,"
+                "       COALESCE(("
+                "           SELECT json_agg(json_build_object("
+                "                      'round_id', rr.round_id, 'title', xr.title,"
+                "                      'position', xr.position, 'kind', xr.kind,"
+                "                      'percent', rr.percent, 'passed', rr.passed,"
+                "                      'graded_by', rr.graded_by)"
+                "                  ORDER BY xr.position, rr.created_at)"
+                "             FROM round_results rr"
+                "             JOIN workflow_rounds xr ON xr.id = rr.round_id"
+                "            WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL"
+                "       ), '[]'::json) AS round_results,"
                 "       a.full_name, a.email,"
                 "       wr.id AS review_round_id, wr.title AS review_round_title,"
                 "       COALESCE(("
@@ -910,6 +934,8 @@ async def decision_queue(
                 "         WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL) AS best_percent"
                 "  FROM enrolments e"
                 "  JOIN applicants a ON a.id = e.applicant_id AND a.deleted_at IS NULL"
+                "  LEFT JOIN workflows w ON w.id = e.workflow_id"
+                "  LEFT JOIN workflow_rounds cur ON cur.id = e.current_round_id"
                 "  LEFT JOIN workflow_rounds wr ON wr.id = e.current_round_id"
                 "                              AND wr.kind = 'human_review'"
                 "                              AND wr.deleted_at IS NULL"
@@ -933,7 +959,33 @@ async def decision_queue(
             "status": r["status"],
             "held": r["status"] == "held",
             "held_reason": r["held_reason"],
+            "applicant_id": str(r["applicant_id"]),
             "ats_overall": r["ats_overall"],
+            # The application's own resume match, with what produced it.
+            "ats_recommendation": r["ats_recommendation"],
+            "ats_summary": r["ats_summary"],
+            "ats_strengths": _as_json(r["ats_strengths"]) or [],
+            "ats_concerns": _as_json(r["ats_concerns"]) or [],
+            # Where they are: the version they are running and the round, if any.
+            "workflow_version": r["workflow_version"],
+            "current_round_title": r["current_round_title"],
+            "current_round_position": r["current_round_position"],
+            "total_rounds": int(r["total_rounds"] or 0),
+            # Since their last move, from the stage ledger.
+            "waiting_days": (
+                round(float(r["waiting_days"]), 1) if r["waiting_days"] is not None else None
+            ),
+            # The mean of their scored rounds. Labelled as exactly that on screen:
+            # it summarises, it does not decide (D-05).
+            "composite_percent": (
+                round(float(r["composite_percent"]), 1)
+                if r["composite_percent"] is not None
+                else None
+            ),
+            "round_results": [
+                {**x, "percent": float(x["percent"]) if x.get("percent") is not None else None}
+                for x in (_as_json(r["round_results"]) or [])
+            ],
             "rounds_taken": int(r["rounds_taken"] or 0),
             "best_percent": float(r["best_percent"]) if r["best_percent"] is not None else None,
             # Waiting on a review round rather than on the final decision.
@@ -950,13 +1002,20 @@ async def decision_queue(
             ),
             "review_round_title": r["review_round_title"] if r["status"] != "held" else None,
             "review_criteria": (
-                r["review_criteria"]
+                _as_json(r["review_criteria"])
                 if r["review_round_id"] and r["status"] != "held"
                 else []
             ),
         }
         for r in rows
     ]
+
+
+def _as_json(value: Any) -> Any:
+    """A json/jsonb column as Python. The driver may hand these back as text."""
+    import json  # noqa: PLC0415 — only needed on this read path
+
+    return json.loads(value) if isinstance(value, str) else value
 
 
 def _json(value: dict[str, Any] | None) -> str | None:

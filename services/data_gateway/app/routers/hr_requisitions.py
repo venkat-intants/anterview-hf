@@ -33,6 +33,7 @@ from sqlalchemy import text
 from app.application_questions import answers_for
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
+from app.final_decision import DECISIONS, DecisionRefusedError, record_final_decision
 from app.models import AuditLog
 from app.requisitions import (
     TERMINAL_STATUSES,
@@ -274,6 +275,22 @@ class StatusIn(BaseModel):
     def _known(cls, v: str) -> str:
         if v not in VALID_STATUSES:
             raise ValueError(f"status must be one of {sorted(VALID_STATUSES)}")
+        return v
+
+
+class FinalDecisionIn(BaseModel):
+    """A hire or reject on one application (E2)."""
+
+    decision: str
+    # Required, unlike a status move: this ends a candidacy, and the reason is
+    # what the ledger and the audit log keep against the person who decided.
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("decision")
+    @classmethod
+    def _final(cls, v: str) -> str:
+        if v not in DECISIONS:
+            raise ValueError(f"decision must be one of {sorted(DECISIONS)}")
         return v
 
 
@@ -720,7 +737,11 @@ async def update_requisition(
 @router.post("/requisitions/{requisition_id}/status", response_model=RequisitionOut)
 async def set_requisition_status(
     requisition_id: uuid.UUID,
-    body: dict[str, str],
+    # Any, not str: the console sends ``acknowledge_unresolved`` as a JSON
+    # boolean, and a dict[str, str] body refused it with a 422 — so closing an
+    # opening that still had candidates in it could never be confirmed from the
+    # screen built to confirm it. The handler already reads the flag either way.
+    body: dict[str, Any],
     request: Request,
     ctx: HrCtxDep,
     db: DbSessionDep,
@@ -746,7 +767,9 @@ async def set_requisition_status(
     stranded with nobody prompted.
     """
     hr_uid, company_id = ctx
-    new_status = (body or {}).get("status", "")
+    # str(): the body is no longer str-typed, and a non-string here must be a
+    # 400 below rather than a TypeError from the set membership test.
+    new_status = str((body or {}).get("status", ""))
     if new_status not in _VALID_REQ_STATUS:
         raise HTTPException(
             status_code=400, detail=f"status must be one of {sorted(_VALID_REQ_STATUS)}"
@@ -914,6 +937,27 @@ async def set_enrolment_status(
     if row is None:
         raise HTTPException(status_code=404, detail="Enrolment not found.")
 
+    # A hire or reject is a final decision and goes through the one guarded
+    # writer (E2) — the same rules, audit row and candidate email as the
+    # decision endpoint. This mover used to accept any status from any status,
+    # so a candidate mid-round could be hired and a hire moved back to 'new'.
+    if body.status in TERMINAL_STATUSES:
+        try:
+            await record_final_decision(
+                db, company_id=company_id, enrolment_id=enrolment_id,
+                decision=body.status, reason=body.reason, actor_user_id=hr_uid,
+                ip_address=extract_client_ip(request),
+                user_agent=extract_user_agent(request),
+            )
+        except DecisionRefusedError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        await db.commit()
+        for e in await list_enrolments(row[0], ctx, db, None, _MAX_PAGE, 0):
+            if e.id == str(enrolment_id):
+                return e
+        raise HTTPException(status_code=404, detail="Enrolment not found.")
+
     previous = await record_transition(
         db,
         enrolment_id=enrolment_id,
@@ -959,22 +1003,6 @@ async def set_enrolment_status(
             to_round=outcome.to_round,
             reason=outcome.reason,
         )
-    if body.status in TERMINAL_STATUSES:
-        now = datetime.now(tz=UTC)
-        db.add(
-            AuditLog(
-                actor_id=hr_uid,
-                actor_type="user",
-                action=f"enrolment.decision.{body.status}",
-                resource_type="enrolment",
-                resource_id=enrolment_id,
-                details={"company_id": str(company_id), "previous_status": previous,
-                         "reason": body.reason},
-                ip_address=extract_client_ip(request),
-                user_agent=extract_user_agent(request),
-                event_ts=now,
-            )
-        )
     await db.commit()
 
     found = await list_enrolments(row[0], ctx, db, None, _MAX_PAGE, 0)
@@ -982,6 +1010,37 @@ async def set_enrolment_status(
         if e.id == str(enrolment_id):
             return e
     raise HTTPException(status_code=404, detail="Enrolment not found.")
+
+
+@router.post("/enrolments/{enrolment_id}/decision")
+async def record_decision(
+    enrolment_id: uuid.UUID,
+    body: FinalDecisionIn,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> dict[str, Any]:
+    """Record the final human decision on one application — E2.
+
+    The decision queue's endpoint. Scores rank and explain; this is where a
+    person decides, with a reason, and the ledger and audit log say who.
+    Refused (409) while the candidate is still in an automated round, and when
+    hiring over a rejection; a reject is always allowed, including reversing a
+    hire, which is recorded as a reversal.
+    """
+    hr_uid, company_id = ctx
+    try:
+        out = await record_final_decision(
+            db, company_id=company_id, enrolment_id=enrolment_id,
+            decision=body.decision, reason=body.reason, actor_user_id=hr_uid,
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+        )
+    except DecisionRefusedError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    await db.commit()
+    return out
 
 
 @router.get("/enrolments/{enrolment_id}/history")

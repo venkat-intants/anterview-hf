@@ -1343,7 +1343,12 @@ def _criteria_list(raw: Any) -> list[CriterionScore]:
     summary="Per-round scores for one candidate, criterion by criterion",
 )
 async def list_applicant_round_results(
-    applicant_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+    applicant_id: uuid.UUID,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+    # One application's results. Without it every application this person has
+    # made comes back together, and two openings' scores read as one record.
+    enrolment_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> list[RoundResultOut]:
     """Why a candidate scored what they scored.
 
@@ -1374,10 +1379,11 @@ async def list_applicant_round_results(
                 "  JOIN enrolments e ON e.id = rr.enrolment_id"
                 "  JOIN workflow_rounds wr ON wr.id = rr.round_id"
                 " WHERE e.applicant_id = :a AND rr.company_id = :c"
+                "   AND (CAST(:e AS uuid) IS NULL OR e.id = CAST(:e AS uuid))"
                 "   AND rr.superseded_at IS NULL AND e.deleted_at IS NULL"
                 " ORDER BY wr.position, rr.created_at"
             ),
-            {"a": applicant_id, "c": company_id},
+            {"a": applicant_id, "c": company_id, "e": enrolment_id},
         )
     ).mappings().all()
 

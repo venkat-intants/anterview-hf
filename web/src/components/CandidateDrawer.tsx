@@ -81,10 +81,17 @@ function scoreTone(pct: number | null): string {
  * candidate below a threshold is held and nothing here has ended their
  * candidacy.
  */
-function RoundScores({ applicantId }: { applicantId: string }) {
+function RoundScores({
+  applicantId,
+  enrolmentId,
+}: {
+  applicantId: string;
+  /** Scopes the results to one application; a person may have several. */
+  enrolmentId?: string | null;
+}) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['hr', 'applicant', applicantId, 'round-results'],
-    queryFn: () => listRoundResults(applicantId),
+    queryKey: ['hr', 'applicant', applicantId, 'round-results', enrolmentId ?? null],
+    queryFn: () => listRoundResults(applicantId, enrolmentId),
   });
 
   if (isLoading) {
@@ -411,7 +418,7 @@ export default function CandidateDrawer({
         {/* The prop, not candidate.applicant_id: GET /hr/applicants/{id} returns
             the id as `id`, so that field was always undefined and the round
             scores never loaded. */}
-        <RoundScores applicantId={applicantId} />
+        <RoundScores applicantId={applicantId} enrolmentId={enrolmentId} />
 
         <div className="mt-5">
           <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">

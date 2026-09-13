@@ -1,4 +1,4 @@
-// Tests for the decision queue — the human end of the workflow engine (D-05).
+// Tests for the decision queue — the human end of the workflow engine (D-05, E2).
 //
 // The rule the whole engine is built on is that no automation ends a
 // candidacy. This page is where that rule is kept, so what matters is:
@@ -7,9 +7,11 @@
 //     their own tab are held candidates nobody opens, which would make the rule
 //     true on paper and false in practice;
 //   • a hire or a reject goes to the enrolment whose card it was pressed on,
-//     and never on the first click — it ends someone's candidacy and is
-//     audit-logged against the person who did it;
-//   • releasing a hold is offered only where there is a hold to release.
+//     never on the first click, and never without a reason — it ends someone's
+//     candidacy and is recorded against the person who did it;
+//   • releasing a hold is offered only where there is a hold to release;
+//   • the evidence is one click away, for THIS application;
+//   • a closed opening with people still waiting says so.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
@@ -20,6 +22,7 @@ import type { DecisionQueueRow } from '../api/workflows';
 
 const HELD: DecisionQueueRow = {
   enrolment_id: 'en-held',
+  applicant_id: 'ap-held',
   full_name: 'Asha Rao',
   email: 'asha@example.com',
   status: 'held',
@@ -28,10 +31,18 @@ const HELD: DecisionQueueRow = {
   ats_overall: 71,
   rounds_taken: 1,
   best_percent: 54,
+  current_round_title: 'Fundamentals',
+  workflow_version: 2,
+  composite_percent: 54,
+  round_results: [
+    { round_id: 'r1', title: 'Fundamentals', position: 0, kind: 'mcq', percent: 54,
+      passed: false, graded_by: 'auto' },
+  ],
 };
 
 const FINISHED: DecisionQueueRow = {
   enrolment_id: 'en-done',
+  applicant_id: 'ap-done',
   full_name: 'Bhavya Nair',
   email: 'bhavya@example.com',
   status: 'interviewed',
@@ -40,20 +51,29 @@ const FINISHED: DecisionQueueRow = {
   ats_overall: 88,
   rounds_taken: 3,
   best_percent: 82,
+  workflow_version: 2,
+  composite_percent: 79.3,
 };
 
 const getDecisionQueue = vi.fn();
 const releaseHold = vi.fn();
+const recordFinalDecision = vi.fn();
 vi.mock('../api/workflows', () => ({
   getDecisionQueue: (...a: unknown[]) => getDecisionQueue(...a) as unknown,
   releaseHold: (...a: unknown[]) => releaseHold(...a) as unknown,
+  recordFinalDecision: (...a: unknown[]) => recordFinalDecision(...a) as unknown,
+  recordRoundReview: vi.fn(),
 }));
 
 const getRequisition = vi.fn();
-const setEnrolmentStatus = vi.fn();
 vi.mock('../api/requisitions', () => ({
   getRequisition: (...a: unknown[]) => getRequisition(...a) as unknown,
-  setEnrolmentStatus: (...a: unknown[]) => setEnrolmentStatus(...a) as unknown,
+}));
+
+// The drawer has its own tests; here it only has to open for the right person.
+vi.mock('../components/CandidateDrawer', () => ({
+  default: ({ applicantId, enrolmentId }: { applicantId: string | null; enrolmentId?: string | null }) =>
+    applicantId ? <div data-testid="drawer">{`${applicantId}:${enrolmentId}`}</div> : null,
 }));
 
 const toastError = vi.fn();
@@ -92,9 +112,10 @@ function cardFor(name: string): HTMLElement {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getRequisition.mockResolvedValue({ id: 'req-1', title: 'Backend Engineer' });
+  getRequisition.mockResolvedValue({ id: 'req-1', title: 'Backend Engineer', status: 'open',
+    unresolved: 2 });
   getDecisionQueue.mockResolvedValue([HELD, FINISHED]);
-  setEnrolmentStatus.mockResolvedValue({ id: 'en-done', status: 'hired' });
+  recordFinalDecision.mockResolvedValue({ enrolment_id: 'en-done', status: 'hired' });
   releaseHold.mockResolvedValue({ action: 'released', enrolment_id: 'en-held' });
 });
 
@@ -123,6 +144,19 @@ describe('DecisionQueue — one list', () => {
     expect(within(cardFor('Asha Rao')).getByText('Let them continue')).toBeTruthy();
     expect(within(cardFor('Bhavya Nair')).queryByText('Let them continue')).toBeNull();
   });
+
+  it('shows where each candidate is, and their scores as a summary', async () => {
+    renderQueue();
+    await screen.findByText('Asha Rao');
+
+    const held = cardFor('Asha Rao');
+    expect(within(held).getByText(/Held on Fundamentals · workflow v2/)).toBeTruthy();
+    expect(within(held).getByText(/average across rounds 54%/)).toBeTruthy();
+    expect(within(held).getByLabelText(/Completed rounds for Asha Rao/).textContent).toMatch(
+      /Fundamentals\s*54%\s*· held/,
+    );
+    expect(within(cardFor('Bhavya Nair')).getByText(/Finished every round/)).toBeTruthy();
+  });
 });
 
 describe('DecisionQueue — the decision itself', () => {
@@ -133,11 +167,25 @@ describe('DecisionQueue — the decision itself', () => {
 
     await user.click(within(cardFor('Bhavya Nair')).getByText('Hire'));
 
-    expect(setEnrolmentStatus).not.toHaveBeenCalled();
+    expect(recordFinalDecision).not.toHaveBeenCalled();
     expect(within(cardFor('Bhavya Nair')).getByText(/ends their candidacy/)).toBeTruthy();
   });
 
-  it('sends the decision to the enrolment whose card it was pressed on', async () => {
+  it('will not record a hire or reject without a reason', async () => {
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText('Bhavya Nair');
+
+    const card = cardFor('Bhavya Nair');
+    await user.click(within(card).getByText('Reject'));
+    const confirm = within(card).getByText('Confirm').closest('button') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(within(card).getByText('Write why above first.')).toBeTruthy();
+    await user.click(confirm);
+    expect(recordFinalDecision).not.toHaveBeenCalled();
+  });
+
+  it('sends the decision and its reason to the enrolment whose card it was pressed on', async () => {
     const user = userEvent.setup();
     renderQueue();
     await screen.findByText('Bhavya Nair');
@@ -147,12 +195,11 @@ describe('DecisionQueue — the decision itself', () => {
     await user.click(within(card).getByText('Hire'));
     await user.click(within(card).getByText('Confirm'));
 
-    await waitFor(() => expect(setEnrolmentStatus).toHaveBeenCalledTimes(1));
-    expect(setEnrolmentStatus).toHaveBeenCalledWith(
-      'en-done',
-      'hired',
-      'Strong across all three rounds',
-    );
+    await waitFor(() => expect(recordFinalDecision).toHaveBeenCalledTimes(1));
+    expect(recordFinalDecision).toHaveBeenCalledWith('en-done', {
+      decision: 'hired',
+      reason: 'Strong across all three rounds',
+    });
   });
 
   it('releases the hold for the right person', async () => {
@@ -165,13 +212,48 @@ describe('DecisionQueue — the decision itself', () => {
     await waitFor(() => expect(releaseHold).toHaveBeenCalledTimes(1));
     expect(releaseHold).toHaveBeenCalledWith('en-held', { reason: '' });
   });
+
+  it('opens the evidence for this application, not the person in general', async () => {
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText('Asha Rao');
+
+    await user.click(within(cardFor('Asha Rao')).getByText(/Scores, evidence & history/));
+    expect(screen.getByTestId('drawer').textContent).toBe('ap-held:en-held');
+  });
 });
 
-describe('DecisionQueue — empty', () => {
-  it('says nobody is waiting rather than rendering an empty list', async () => {
+describe('DecisionQueue — resolved or not', () => {
+  it('says a closed opening still has people waiting, and that closing rejected nobody', async () => {
+    getRequisition.mockResolvedValue({ id: 'req-1', title: 'Backend Engineer', status: 'closed',
+      unresolved: 2 });
+    renderQueue();
+
+    const note = await screen.findByTestId('resolution-note');
+    expect(note.textContent).toMatch(/closed, and 2 candidates below still need a final decision/);
+    expect(note.textContent).toMatch(/did not reject anyone/);
+  });
+
+  it('says when an opening is fully resolved', async () => {
+    getRequisition.mockResolvedValue({ id: 'req-1', title: 'Backend Engineer', status: 'closed',
+      unresolved: 0 });
+    getDecisionQueue.mockResolvedValue([]);
+    renderQueue();
+
+    expect((await screen.findByTestId('resolution-note')).textContent).toMatch(
+      /Resolved — every candidate/,
+    );
+  });
+
+  it('explains an empty queue while candidates are still in progress', async () => {
+    getRequisition.mockResolvedValue({ id: 'req-1', title: 'Backend Engineer', status: 'open',
+      unresolved: 4 });
     getDecisionQueue.mockResolvedValue([]);
     renderQueue();
 
     expect(await screen.findByText('Nobody is waiting')).toBeTruthy();
+    expect((await screen.findByTestId('resolution-note')).textContent).toMatch(
+      /4 candidates are still in progress/,
+    );
   });
 });

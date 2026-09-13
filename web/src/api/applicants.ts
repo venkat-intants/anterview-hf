@@ -228,6 +228,11 @@ export interface RoundResult {
  * counted. Empty for a candidate who has not sat a scored round yet — which
  * is a normal state, not an error.
  */
-export function listRoundResults(applicantId: string): Promise<RoundResult[]> {
-  return apiGet<RoundResult[]>(`/hr/applicants/${applicantId}/round-results`);
+/** Per-round results — for one application when `enrolmentId` is given. */
+export function listRoundResults(
+  applicantId: string,
+  enrolmentId?: string | null,
+): Promise<RoundResult[]> {
+  const q = enrolmentId ? `?enrolment_id=${encodeURIComponent(enrolmentId)}` : '';
+  return apiGet<RoundResult[]>(`/hr/applicants/${applicantId}/round-results${q}`);
 }

@@ -234,6 +234,9 @@ class RequisitionOut(BaseModel):
     total_enrolments: int = 0
     hired: int = 0
     awaiting_decision: int = 0
+    # Everyone without a final decision. Distinct from awaiting_decision: a
+    # candidate mid-round is unresolved but is not waiting on a person.
+    unresolved: int = 0
     funnel: list[FunnelStage] = Field(default_factory=list)
     # 'on_track' | 'at_risk' | 'off_track', or null when the projection cannot
     # honestly be made (no closing date, no target, or too new to have a rate).
@@ -333,7 +336,18 @@ async def _owned(db: DbSessionDep, company_id: uuid.UUID, req_id: uuid.UUID) -> 
     return dict(row)
 
 
-def _to_out(row: dict[str, Any], counts: dict[str, int] | None = None) -> RequisitionOut:
+def _to_out(
+    row: dict[str, Any], counts: dict[str, int] | None = None, awaiting: int = 0
+) -> RequisitionOut:
+    """``counts`` is the status histogram; ``awaiting`` is how many of those
+    enrolments ``enrolment_awaits_human`` says are waiting on a person.
+
+    The two are different numbers on purpose. ``unresolved`` — everyone without
+    a final decision — is what closing an opening must account for.
+    ``awaiting_decision`` is the decision queue's own count. It used to be the
+    unresolved total, so every new and mid-round candidate showed as "awaiting
+    your decision" on the dashboard and the list.
+    """
     counts = counts or {}
     return RequisitionOut(
         id=str(row["id"]),
@@ -365,9 +379,8 @@ def _to_out(row: dict[str, Any], counts: dict[str, int] | None = None) -> Requis
         nice_to_have_skills=row.get("nice_to_have_skills") or [],
         total_enrolments=sum(counts.values()),
         hired=counts.get("hired", 0),
-        awaiting_decision=sum(
-            v for k, v in counts.items() if k not in TERMINAL_STATUSES
-        ),
+        awaiting_decision=awaiting,
+        unresolved=sum(v for k, v in counts.items() if k not in TERMINAL_STATUSES),
         funnel=[FunnelStage(status=k, count=v) for k, v in sorted(counts.items())],
         delivery_risk=delivery_risk(
             target_hires=row.get("target_hires"),
@@ -435,6 +448,29 @@ async def _counts(db: DbSessionDep, req_ids: list[uuid.UUID]) -> dict[str, dict[
     return out
 
 
+async def _awaiting(db: DbSessionDep, req_ids: list[uuid.UUID]) -> dict[str, int]:
+    """Per requisition, how many enrolments are waiting on a person.
+
+    ``enrolment_awaits_human`` is the database's single definition, shared with
+    the decision queue and the watcher, so the number on the dashboard is the
+    number of rows the queue shows.
+    """
+    if not req_ids:
+        return {}
+    rows = (
+        await db.execute(
+            text(
+                "SELECT requisition_id, count(*) AS n FROM enrolments"
+                " WHERE requisition_id = ANY(:ids) AND deleted_at IS NULL"
+                "   AND enrolment_awaits_human(status, current_round_id)"
+                " GROUP BY requisition_id"
+            ),
+            {"ids": req_ids},
+        )
+    ).mappings().all()
+    return {str(r["requisition_id"]): int(r["n"]) for r in rows}
+
+
 # ---------------------------------------------------------------------------
 # Requisitions
 # ---------------------------------------------------------------------------
@@ -474,8 +510,13 @@ async def list_requisitions(
             {"c": company_id, "s": status_filter, "lim": limit, "off": offset},
         )
     ).mappings().all()
-    counts = await _counts(db, [r["id"] for r in rows])
-    return [_to_out(dict(r), counts.get(str(r["id"]), {})) for r in rows]
+    ids = [r["id"] for r in rows]
+    counts = await _counts(db, ids)
+    awaiting = await _awaiting(db, ids)
+    return [
+        _to_out(dict(r), counts.get(str(r["id"]), {}), awaiting.get(str(r["id"]), 0))
+        for r in rows
+    ]
 
 
 @router.get("/team", response_model=list[TeamMemberOut])
@@ -616,7 +657,10 @@ async def get_requisition(
     _hr_uid, company_id = ctx
     row = await _owned(db, company_id, requisition_id)
     counts = await _counts(db, [requisition_id])
-    return _to_out(row, counts.get(str(requisition_id), {}))
+    awaiting = await _awaiting(db, [requisition_id])
+    return _to_out(
+        row, counts.get(str(requisition_id), {}), awaiting.get(str(requisition_id), 0)
+    )
 
 
 @router.patch("/requisitions/{requisition_id}", response_model=RequisitionOut)
@@ -716,7 +760,7 @@ async def set_requisition_status(
     if closing:
         pending = _to_out(
             row, (await _counts(db, [requisition_id])).get(str(requisition_id), {})
-        ).awaiting_decision
+        ).unresolved
         # Truthy check, not `is True`: the flag arrives as JSON and an operator
         # curling this endpoint may well send the string "true".
         ack = str((body or {}).get("acknowledge_unresolved", "")).lower() in {
@@ -766,11 +810,16 @@ async def set_requisition_status(
     )
     await db.commit()
     counts = await _counts(db, [requisition_id])
-    out = _to_out({**row, "status": new_status}, counts.get(str(requisition_id), {}))
+    awaiting = await _awaiting(db, [requisition_id])
+    out = _to_out(
+        {**row, "status": new_status},
+        counts.get(str(requisition_id), {}),
+        awaiting.get(str(requisition_id), 0),
+    )
     log.info(
         "hr.requisition.status",
         requisition_id=str(requisition_id), status=new_status,
-        unresolved=out.awaiting_decision,
+        unresolved=out.unresolved,
     )
     return out
 
@@ -1270,6 +1319,10 @@ async def requisition_dashboard(
         )
     ).mappings().all()
 
+    # Time in the current stage comes from the stage ledger
+    # (enrolment_state_since). It was NOW() - updated_at, which any rescore or
+    # edit resets, so it measured time since the row last changed.
+    #
     # Median, not mean: one candidate parked for six months would drag a mean
     # into uselessness, and the question being asked is "how long does this
     # normally take?".
@@ -1277,7 +1330,8 @@ async def requisition_dashboard(
         await db.execute(
             text(
                 "SELECT percentile_cont(0.5) WITHIN GROUP ("
-                "         ORDER BY EXTRACT(EPOCH FROM (NOW() - e.updated_at)) / 86400.0"
+                "         ORDER BY EXTRACT(EPOCH FROM ("
+                "           NOW() - enrolment_state_since(e.id, e.created_at))) / 86400.0"
                 "       ) AS median_days_in_stage,"
                 "       count(*) FILTER (WHERE a.pending_enrichment) AS still_being_read,"
                 "       count(*) FILTER (WHERE a.created_by_user_id IS NULL) AS unattributed"
@@ -1291,8 +1345,9 @@ async def requisition_dashboard(
     ).mappings().first()
 
     counts = {r["status"]: int(r["n"]) for r in by_status}
+    awaiting = (await _awaiting(db, [requisition_id])).get(str(requisition_id), 0)
     return {
-        "requisition": _to_out(req, counts).model_dump(),
+        "requisition": _to_out(req, counts, awaiting).model_dump(),
         "rounds": [
             {
                 "round_id": str(r["id"]),

@@ -440,7 +440,9 @@ def test_nothing_is_said_when_no_bar_is_set_or_nobody_clears_it() -> None:
         assert watch_ready_to_shortlist(WatcherInput(company_id="c", openings=[opening])) == []
 
 
-def test_the_shortlist_prompt_re_fires_only_when_the_count_changes() -> None:
+def test_the_shortlist_prompt_re_fires_only_when_the_count_grows_a_band() -> None:
+    """Keyed on the exact count, shortlisting one of five candidates re-sent the
+    prompt as if four were news."""
     from shared.agents.watchers import watch_ready_to_shortlist
 
     def key(n: int) -> str:
@@ -450,6 +452,7 @@ def test_the_shortlist_prompt_re_fires_only_when_the_count_changes() -> None:
         return watch_ready_to_shortlist(data)[0].dedupe_key
 
     assert key(4) == key(4)
+    assert key(3) == key(4)
     assert key(4) != key(5)
 
 
@@ -527,6 +530,25 @@ def test_the_backlog_dedupe_key_tracks_the_queue_size() -> None:
     c = watch_decision_backlog(WatcherInput(company_id="c", openings=[grown]))[0]
     assert a.dedupe_key == b.dedupe_key
     assert a.dedupe_key != c.dedupe_key
+
+
+def test_working_the_backlog_down_does_not_re_alert() -> None:
+    """Keyed on the exact count, deciding on one of eight candidates re-sent the
+    alert as if seven waiting were news — punishing the person doing the work."""
+    def key(n: int) -> str:
+        opening = _opening(awaiting_decision=n, longest_wait_days=5.0)
+        return watch_decision_backlog(WatcherInput(company_id="c", openings=[opening]))[0].dedupe_key
+
+    assert key(8) == key(7) == key(5)
+    assert key(8) != key(10)
+
+
+def test_size_bands() -> None:
+    from shared.agents.watchers import size_band
+
+    assert [size_band(n) for n in (0, 1, 2, 3, 4, 5, 9, 10, 24, 25, 99, 100, 500)] == [
+        0, 1, 1, 3, 3, 5, 5, 10, 10, 25, 50, 100, 100,
+    ]
 
 
 def test_each_opening_gets_its_own_finding() -> None:

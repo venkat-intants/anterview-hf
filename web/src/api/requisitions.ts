@@ -102,8 +102,13 @@ export interface Requisition extends PostingFields {
   created_at: string;
   total_enrolments: number;
   hired: number;
-  /** People sitting on a completed workflow or on hold, waiting for a human. */
+  /**
+   * People waiting on a person right now: held below a threshold, finished
+   * every round, or on a human-review round. Not new or mid-round candidates.
+   */
   awaiting_decision: number;
+  /** Everyone without a final decision — what closing the opening must account for. */
+  unresolved?: number;
   funnel: FunnelStage[];
   /**
    * Projected hiring throughput against the closing date (E3).

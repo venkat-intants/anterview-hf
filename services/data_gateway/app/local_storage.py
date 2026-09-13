@@ -107,6 +107,19 @@ async def put(directory: str, key: str, data: bytes) -> str:
     return key
 
 
+async def get(directory: str, key: str) -> bytes:
+    """Read the object at *key*. Raises ``LocalStorageError`` when it is missing.
+
+    Raises rather than returning empty bytes: the caller is scoring an
+    application against this file, and "no file" must be a retry, not a score.
+    """
+    target = _resolve(directory, key)
+    try:
+        return await asyncio.to_thread(target.read_bytes)
+    except FileNotFoundError as exc:
+        raise LocalStorageError(f"no object at {key!r}") from exc
+
+
 async def delete(directory: str, key: str) -> None:
     """Best-effort delete. Never raises — mirrors the S3 cleanup contract."""
     try:

@@ -105,6 +105,7 @@ async def enrol_applicant(
     target_jd_text: str | None = None,
     actor_user_id: uuid.UUID | None = None,
     reason: str = "enrolled on application",
+    resume_s3_key: str | None = None,
 ) -> RunnerOutcome:
     """Place an applicant into the requisition's published workflow. Caller commits.
 
@@ -118,6 +119,10 @@ async def enrol_applicant(
     ``actor_user_id`` is the person who filed the applicant (HR's upload); the
     ledger entry is then marked manual. None — a candidate applying — is the
     system's doing.
+
+    ``resume_s3_key`` is the CV submitted with THIS application. It is pinned
+    on the enrolment so the application is scored against it even if the
+    person uploads a newer CV before the reconciler gets to it.
     """
     existing = await db.scalar(
         text(
@@ -136,11 +141,13 @@ async def enrol_applicant(
     await db.execute(
         text(
             "INSERT INTO enrolments (id, company_id, requisition_id, applicant_id, status,"
-            " target_job_title, target_level, target_jd_text, workflow_id, created_at, updated_at)"
-            " VALUES (:i,:c,:r,:a,'new',:tt,:tl,:jd,:w,:n,:n)"
+            " target_job_title, target_level, target_jd_text, workflow_id,"
+            " applied_resume_s3_key, created_at, updated_at)"
+            " VALUES (:i,:c,:r,:a,'new',:tt,:tl,:jd,:w,:k,:n,:n)"
         ),
         {"i": enrolment_id, "c": company_id, "r": requisition_id, "a": applicant_id,
          "tt": target_job_title, "tl": target_level, "jd": target_jd_text,
+         "k": resume_s3_key,
          # NULL when nothing is published yet: the candidate is still a real
          # applicant and must not be lost. They join a workflow when one goes
          # live, rather than being rejected for arriving early.
@@ -908,9 +915,11 @@ async def decision_queue(
                 "                              AND wr.deleted_at IS NULL"
                 " WHERE e.company_id = :c AND e.requisition_id = :r"
                 "   AND e.deleted_at IS NULL"
-                "   AND e.status NOT IN ('hired','rejected')"
-                "   AND (e.status = 'held' OR e.current_round_id IS NULL"
-                "        OR wr.id IS NOT NULL)"
+                # One definition, shared with the watcher and the requisition
+                # counts (migration a1c3e5f7b9d2). The inline version this
+                # replaces also took every new or shortlisted applicant with no
+                # round yet, and the queue told HR they had finished the workflow.
+                "   AND enrolment_awaits_human(e.status, e.current_round_id)"
                 " ORDER BY (e.status = 'held') DESC, e.ats_overall DESC NULLS LAST"
             ),
             {"c": company_id, "r": requisition_id},

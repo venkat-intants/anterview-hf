@@ -345,7 +345,7 @@ async def _notify_batch_done(
 #
 # One literal, not assembled: the SAST gate fails SQL built from strings.
 _UNSCORED_WORK_SQL = """
-SELECT a.id AS applicant_id, e.id AS enrolment_id,
+SELECT a.id AS applicant_id, e.id AS enrolment_id, e.applied_resume_s3_key AS applied_key,
        CASE WHEN e.id IS NULL THEN a.target_job_title ELSE e.target_job_title END AS job_title,
        CASE WHEN e.id IS NULL THEN a.target_level     ELSE e.target_level     END AS level,
        CASE WHEN e.id IS NULL THEN a.target_jd_text   ELSE e.target_jd_text   END AS jd_text
@@ -400,9 +400,24 @@ async def _score_pass(db: AsyncSession, result: PassResult) -> None:
         # Read now: the failure path rolls back, which expires `applicant`.
         batch_id, uploader_id = applicant.upload_batch_id, applicant.created_by_user_id
         resume_key = applicant.resume_s3_key
+        resume_text = applicant.resume_text or ""
         try:
+            # Scored against the CV THIS application was submitted with. That is
+            # normally the one on the applicant row; after the person re-applies
+            # elsewhere it is an older file, read back from storage. Scoring the
+            # row's current text instead gave an earlier application a score for
+            # a CV it never had. A failed read lands in the except below: retry.
+            applied_key = w.get("applied_key")
+            if eid is not None and applied_key and applied_key != resume_key:
+                from app.routers.resume import (  # noqa: PLC0415 — router import stays off the loop's import path
+                    _download_from_s3,
+                    _extract_pdf_text,
+                )
+
+                resume_key = applied_key
+                resume_text = await _extract_pdf_text(await _download_from_s3(applied_key))
             score = await score_resume_remote(
-                resume_text=applicant.resume_text or "",
+                resume_text=resume_text,
                 job_title=w["job_title"],
                 level=w["level"],
                 jd_text=w["jd_text"],
@@ -473,6 +488,45 @@ async def _announce_batch(
             applicant_id=str(aid),
             error_type=type(exc).__name__,
         )
+
+
+# Applicants the scorer is never going to read. A row is stored "pending" until
+# the reconciler scores it — and when every unscored application the person has
+# sits in a workflow with scoring switched off (C9), nothing ever does. Those
+# rows showed "still being read" forever, and a bulk upload into such an opening
+# never reported finished. Settled here: the flag drops, the placeholder name
+# stays (nothing read the CV to replace it), and the batch can complete.
+#
+# An application with NO workflow yet still counts as scorable, so it stays
+# pending: publishing one may yet switch scoring on for it.
+_SETTLE_UNSCORABLE_SQL = """
+UPDATE applicants a
+   SET pending_enrichment = false, updated_at = :now
+ WHERE a.pending_enrichment
+   AND a.deleted_at IS NULL
+   AND EXISTS (SELECT 1 FROM enrolments e
+                WHERE e.applicant_id = a.id AND e.deleted_at IS NULL)
+   AND NOT EXISTS (SELECT 1 FROM enrolments e
+                     LEFT JOIN workflows w ON w.id = e.workflow_id
+                    WHERE e.applicant_id = a.id AND e.deleted_at IS NULL
+                      AND e.ats_overall IS NULL
+                      AND (w.id IS NULL OR w.auto_score_on_apply))
+RETURNING a.id, a.upload_batch_id, a.created_by_user_id
+"""
+
+
+async def _settle_pass(db: AsyncSession, result: PassResult) -> None:
+    """Clear ``pending_enrichment`` on rows no pass will ever score."""
+    rows = (
+        await db.execute(text(_SETTLE_UNSCORABLE_SQL), {"now": datetime.now(tz=UTC)})
+    ).mappings().all()
+    if not rows:
+        return
+    await db.commit()
+    log.info("reconcile.settled_unscorable", count=len(rows))
+    for r in rows:
+        await _announce_batch(db, result, r["id"], r["upload_batch_id"],
+                              r["created_by_user_id"])
 
 
 async def _embed_pass(db: AsyncSession, result: PassResult) -> None:
@@ -843,6 +897,8 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> PassResult:
         # down) must not cost the others their turn.
         for name, pass_ in (
             ("score", _score_pass),
+            # After scoring, so a row scored this pass is not also "settled".
+            ("settle", _settle_pass),
             ("embed", _embed_pass),
             ("scorecard", _scorecard_pass),
             ("pdf", _pdf_pass),

@@ -626,6 +626,7 @@ async def submit_application(
             target_job_title=req["title"],
             target_level=req["level"],
             target_jd_text=req["jd_text"],
+            resume_s3_key=s3_key,
         )
         # Same transaction as the enrolment they belong to: an application
         # whose answers did not land is not a complete application, and the
@@ -668,14 +669,17 @@ async def submit_application(
         ) from exc
 
     # The CV this one replaced, kept only while an application still points at
-    # it as the CV it was scored against. Otherwise it is PII nothing refers to
-    # — no erasure path would ever find it — so it goes. Best-effort, after the
-    # commit: a failed delete leaves an unreferenced object, never a broken
-    # application.
+    # it — as the CV it was scored against, OR as the CV it was submitted with
+    # and has not been scored on yet. Checking only the scored key deleted the
+    # file an unscored earlier application still needed. Otherwise it is PII
+    # nothing refers to — no erasure path would ever find it — so it goes.
+    # Best-effort, after the commit: a failed delete leaves an unreferenced
+    # object, never a broken application.
     if previous_key and previous_key != s3_key:
         try:
             still_used = await db.scalar(
-                text("SELECT 1 FROM enrolments WHERE scored_resume_s3_key = :k LIMIT 1"),
+                text("SELECT 1 FROM enrolments WHERE scored_resume_s3_key = :k"
+                     " OR applied_resume_s3_key = :k LIMIT 1"),
                 {"k": previous_key},
             )
             await db.rollback()

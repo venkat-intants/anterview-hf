@@ -313,6 +313,9 @@ async def _file_under(
         target_jd_text=opening["jd_text"],
         actor_user_id=hr_uid,
         reason="added by HR upload",
+        # The CV just stored for this upload — pinned so the application is
+        # scored against it even after a newer one replaces it on the person.
+        resume_s3_key=applicant.resume_s3_key,
     )
     return uuid.UUID(outcome.enrolment_id) if outcome.enrolment_id else None
 
@@ -699,10 +702,12 @@ async def create_applicant(
         ) from exc
 
     # The CV this one replaced is kept only while an application still points at
-    # it as the CV it was scored against; otherwise it is PII nothing refers to.
+    # it — scored against it, or submitted with it and not scored yet; otherwise
+    # it is PII nothing refers to.
     if previous_key and previous_key != s3_key:
         still_used = await db.scalar(
-            text("SELECT 1 FROM enrolments WHERE scored_resume_s3_key = :k LIMIT 1"),
+            text("SELECT 1 FROM enrolments WHERE scored_resume_s3_key = :k"
+                 " OR applied_resume_s3_key = :k LIMIT 1"),
             {"k": previous_key},
         )
         if still_used is None:

@@ -1364,3 +1364,16 @@ async def test_the_scored_key_is_collected_before_anything_nulls_it() -> None:
     select_at = next(i for i, s in enumerate(stmts) if "scored_resume_s3_key" in s)
     anonymise_at = next(i for i, s in enumerate(stmts) if "UPDATE applicants" in s)
     assert select_at < anonymise_at
+
+
+@pytest.mark.asyncio
+async def test_the_submitted_copy_of_the_resume_is_collected_too() -> None:
+    """enrolments.applied_resume_s3_key is the CV an application was sent with,
+    which can be older than both the current and the scored copy. It is a real
+    object, so an erasure that skipped it would leave the CV in the bucket."""
+    stmts = await _run_capturing()
+    assert any("applied_resume_s3_key" in s and "SELECT" in s for s in stmts)
+    select_at = next(i for i, s in enumerate(stmts) if "applied_resume_s3_key" in s)
+    anonymise_at = next(i for i, s in enumerate(stmts) if "UPDATE applicants" in s)
+    assert select_at < anonymise_at
+    assert select_at < anonymise_at

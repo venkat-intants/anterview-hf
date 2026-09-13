@@ -424,17 +424,25 @@ async def _execute_one_erasure(
     # (it is the company's assessment record against an anonymised applicant),
     # so without this the object simply stays in the bucket after a completed
     # erasure — the exact orphaning 1c exists to prevent, one table over.
+    #
+    # 1c-iii — the SUBMITTED copy. enrolments.applied_resume_s3_key records the
+    # CV each application was sent with, and it can be an older object than both
+    # the applicant's current CV and any scored one (an application still
+    # waiting to be scored when the person re-applied). Same orphaning, same fix.
     scored_keys_result = await db.execute(
         text(
-            "SELECT e.scored_resume_s3_key FROM enrolments e "
+            "SELECT e.scored_resume_s3_key, e.applied_resume_s3_key FROM enrolments e "
             "JOIN applicants a ON a.id = e.applicant_id "
-            "WHERE a.user_id = :uid AND e.scored_resume_s3_key IS NOT NULL"
+            "WHERE a.user_id = :uid AND (e.scored_resume_s3_key IS NOT NULL "
+            "OR e.applied_resume_s3_key IS NOT NULL)"
         ),
         {"uid": uid_str},
     )
-    applicant_resume_keys += [
-        str(row[0]) for row in scored_keys_result.fetchall() if row[0]
-    ]
+    for row in scored_keys_result.fetchall():
+        applicant_resume_keys += [str(k) for k in tuple(row)[:2] if k]
+    # One delete per object: the same file is often the current, scored AND
+    # submitted copy at once.
+    applicant_resume_keys = list(dict.fromkeys(applicant_resume_keys))
 
     # 1d — scorecard PDF + transcript keys (from scorecards table)
     scorecard_keys_result = await db.execute(

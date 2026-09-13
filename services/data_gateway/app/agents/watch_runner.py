@@ -100,10 +100,15 @@ QUESTION_STATS_SQL = text(
 # opening: the sweep runs for every company nightly, so round-trip count is
 # what decides whether this is cheap or a problem.
 #
-# "Awaiting a decision" is defined exactly as the decision-queue endpoint
-# defines it (workflow_runner.decision_queue) — held, or finished every round —
-# because a watcher that counted a different set from the screen it links to
-# would send people to a queue that does not match the alert.
+# "Awaiting a decision" is the database function enrolment_awaits_human — the
+# same one workflow_runner.decision_queue filters on — so the alert and the
+# screen it links to count the same people by construction. (This used to be a
+# hand-copied predicate with a comment claiming it matched; it did not, and it
+# counted never-shortlisted applicants as finished.)
+#
+# The wait is measured from the stage ledger (enrolment_state_since), not
+# updated_at: any rescore or edit resets updated_at, which made a candidate
+# three weeks into a queue read as one day.
 OPENING_HEALTH_SQL = text(
     """
     SELECT r.id,
@@ -112,18 +117,17 @@ OPENING_HEALTH_SQL = text(
            COUNT(e.id) FILTER (WHERE e.deleted_at IS NULL) AS live_enrolments,
            COUNT(e.id) FILTER (
                WHERE e.deleted_at IS NULL
-                 AND e.status NOT IN ('hired', 'rejected')
-                 AND (e.status = 'held' OR e.current_round_id IS NULL)
+                 AND enrolment_awaits_human(e.status, e.current_round_id)
            ) AS awaiting,
            COUNT(e.id) FILTER (
                WHERE e.deleted_at IS NULL AND e.status = 'held'
            ) AS held,
            COALESCE(MAX(
-               EXTRACT(EPOCH FROM (NOW() - e.updated_at)) / 86400.0
+               EXTRACT(EPOCH FROM (NOW() - enrolment_state_since(e.id, e.created_at)))
+               / 86400.0
            ) FILTER (
                WHERE e.deleted_at IS NULL
-                 AND e.status NOT IN ('hired', 'rejected')
-                 AND (e.status = 'held' OR e.current_round_id IS NULL)
+                 AND enrolment_awaits_human(e.status, e.current_round_id)
            ), 0) AS longest_wait_days,
            EXISTS (
                SELECT 1 FROM workflows w

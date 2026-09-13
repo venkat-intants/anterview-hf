@@ -1328,6 +1328,10 @@ class Enrolment(Base):
     # Which CV produced the score, so it stays reproducible after a re-upload.
     scored_resume_s3_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     scored_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # The CV this application was SUBMITTED with. scored_resume_s3_key is only
+    # written once a score exists, so an application still waiting to be scored
+    # needs this to be scored against its own CV rather than a newer upload.
+    applied_resume_s3_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     # ── Group C linkage ───────────────────────────────────────────────
     # Which workflow VERSION this candidate is running. Pinned at enrolment so
     # a later publish cannot re-grade someone mid-process.

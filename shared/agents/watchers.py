@@ -305,6 +305,18 @@ def watch_dpdp_deadlines(data: WatcherInput) -> list[WatcherFinding]:
     ]
 
 
+# Queue sizes an alert re-fires at. Keying the dedupe on the exact count made a
+# queue that SHRANK — someone working through it, 8 to 7 — notify again as if it
+# were news. Keyed on the band, it re-fires when the queue crosses into a bigger
+# band and stays quiet while it moves inside one.
+_SIZE_BANDS: tuple[int, ...] = (1, 3, 5, 10, 25, 50, 100)
+
+
+def size_band(n: int) -> int:
+    """The largest alert band at or below *n*; 0 below the first band."""
+    return max((b for b in _SIZE_BANDS if b <= n), default=0)
+
+
 def watch_decision_backlog(data: WatcherInput) -> list[WatcherFinding]:
     """People the workflow has handed to a human who has not looked yet — E6.
 
@@ -348,9 +360,10 @@ def watch_decision_backlog(data: WatcherInput) -> list[WatcherFinding]:
                     "Nothing advances them without a person."
                 ),
                 link=f"/hr/requisitions/{opening.requisition_id}/decisions",
-                # Keyed on the opening and the size of the queue, so it re-fires
-                # when the backlog grows but not every night while it sits.
-                dedupe_key=f"decisions:{opening.requisition_id}:{waiting}",
+                # Keyed on the opening and the queue's size BAND, so it re-fires
+                # when the backlog grows into a bigger band — not every night
+                # while it sits, and not when someone works it down by one.
+                dedupe_key=f"decisions:{opening.requisition_id}:ge{size_band(waiting)}",
                 citations=[
                     Citation(
                         kind="job",
@@ -391,8 +404,9 @@ def watch_ready_to_shortlist(data: WatcherInput) -> list[WatcherFinding]:
                 "starts their first round; the bar only suggests who to look at."
             ),
             link=f"/hr/requisitions/{o.requisition_id}",
-            # Re-fires when the count changes, not nightly until someone acts.
-            dedupe_key=f"ready_to_shortlist:{o.requisition_id}:{o.ready_to_shortlist}",
+            # Re-fires when the count grows into a bigger band, not nightly and
+            # not each time HR shortlists one of them.
+            dedupe_key=f"ready_to_shortlist:{o.requisition_id}:ge{size_band(o.ready_to_shortlist)}",
             citations=[
                 Citation(
                     # "job" is the vocabulary's word for an opening — the same

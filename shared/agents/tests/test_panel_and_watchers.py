@@ -25,6 +25,7 @@ from shared.agents.watchers import (
     FunnelRow,
     OpeningHealth,
     QuestionStat,
+    RoundStall,
     StalledApplicant,
     WatcherInput,
     digest,
@@ -630,10 +631,8 @@ def test_the_new_watchers_are_wired_into_the_sweep() -> None:
 # ---------------------------------------------------------------------------
 # Stalled rounds and stalled applicants, per opening — E6
 # ---------------------------------------------------------------------------
-def _stall(**kw: object) -> object:
+def _stall(**kw: object) -> RoundStall:
     from dataclasses import replace
-
-    from shared.agents.watchers import RoundStall
 
     base = RoundStall(
         requisition_id="req-1", requisition_title="Python Developer", round_id="r-1",

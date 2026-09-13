@@ -563,6 +563,8 @@ export default function PublicApply(): JSX.Element {
   const [email, setEmail] = useState('');
   const [resume, setResume] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
+  // The language of the emails this application sends — EN, HI or TE.
+  const [language, setLanguage] = useState<'en' | 'hi' | 'te'>('en');
   // Step two. All optional — see STEPS below for why the step exists at all.
   const [phone, setPhone] = useState('');
   const [yearsExperience, setYearsExperience] = useState('');
@@ -597,6 +599,7 @@ export default function PublicApply(): JSX.Element {
         email: email.trim(),
         resume: resume as File,
         consentGranted: consent,
+        language,
         phone,
         yearsExperience: yearsExperience === '' ? null : Number(yearsExperience),
         currentCompany,
@@ -1060,6 +1063,25 @@ export default function PublicApply(): JSX.Element {
                   />
                 ))}
               </div>
+
+          <div>
+            <label
+              htmlFor="apply-language"
+              className="mb-1.5 block text-[12.5px] text-[var(--ui-soft)]"
+            >
+              Emails about this application in
+            </label>
+            <select
+              id="apply-language"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as 'en' | 'hi' | 'te')}
+              className="w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[13.5px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            >
+              <option value="en">English</option>
+              <option value="hi">हिन्दी (Hindi)</option>
+              <option value="te">తెలుగు (Telugu)</option>
+            </select>
+          </div>
 
           {/* The lawful basis. Unticked by default, and the button below cannot
               be pressed until it is ticked. */}

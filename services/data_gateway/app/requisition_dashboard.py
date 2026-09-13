@@ -279,7 +279,9 @@ def attention_items(f: DashboardFacts) -> list[dict[str, Any]]:
         )
         add("no_workflow", "warning", "No live workflow",
             f"{who}Nobody advances until a workflow is published; publishing attaches "
-            "everyone who is waiting.", workflow)
+            "everyone who is waiting."
+            + (" The public link will not accept applications until then."
+               if f.accepting_public else ""), workflow)
 
     if f.held:
         add("held", "warning" if f.longest_hold_days >= DECISION_WAIT_WARN_DAYS else "info",

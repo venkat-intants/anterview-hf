@@ -92,6 +92,14 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
         await db.execute(text(
             "UPDATE workflows SET status='published', published_at=:n WHERE id=:i"),
             {"i": wf, "n": now})
+        # Openings B and C take public applications, which needs a live workflow (E4).
+        for rid in (req["b"], req["c"]):
+            await db.execute(text(
+                "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
+                " auto_score_on_apply,auto_assign_first_round,auto_advance_rounds,"
+                " reminders_enabled,hold_band,published_at,created_at,updated_at)"
+                " VALUES (:i,:c,:r,1,'published',true,true,true,true,10,:n,:n,:n)"),
+                {"i": uuid.uuid4(), "c": cid, "r": rid, "n": now})
 
         async def person(name: str, *, pending: bool = False) -> uuid.UUID:
             aid = uuid.uuid4()
@@ -239,12 +247,14 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
         scored[str(kw["job_title"])] = str(kw["resume_text"])
         return SCORE
 
+    # The person's record keeps the FIRST CV (a second application no longer
+    # replaces it), so it is the later application whose CV is read back.
     async def _download(key: str) -> bytes:
-        assert key == stored[0], key
+        assert key == stored[1], key
         return b"%PDF-1.4"
 
     async def _old_text(_raw: bytes) -> str:
-        return "first cv"
+        return "second cv"
 
     rec.score_resume_remote = _score  # type: ignore[assignment]
     resume._download_from_s3 = _download  # type: ignore[assignment]
@@ -258,7 +268,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
             " WHERE a.email = 'meera@example.com'"))).mappings().all()}
     check("the earlier application is scored against the CV it was sent with",
           scored.get("Data Analyst") == "first cv", str(scored))
-    check("the later application is scored against its own, newer CV",
+    check("the later application is scored against its own CV, read back from storage",
           scored.get("QA Engineer") == "second cv", str(scored))
     check("each score records the CV that produced it",
           keys.get(req["b"]) == stored[0] and keys.get(req["c"]) == stored[1], str(keys))

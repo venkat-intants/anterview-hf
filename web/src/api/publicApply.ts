@@ -107,6 +107,8 @@ export interface ApplicationInput {
   resume: File;
   /** The applicant's own act. Never defaulted. */
   consentGranted: boolean;
+  /** The language of the emails about this application. English when omitted. */
+  language?: 'en' | 'hi' | 'te';
   /**
    * The rest of the multi-step form. Every one optional, deliberately: a
    * required field here turns "I would rather not say what I earn now" into
@@ -133,6 +135,7 @@ export async function submitApplication(
   form.append('email', input.email);
   form.append('resume', input.resume);
   form.append('consent_granted', String(input.consentGranted));
+  if (input.language) form.append('language', input.language);
 
   // Only what they actually answered. An untouched input is '' and appending
   // that would be an answer — see the note on ApplicationInput.

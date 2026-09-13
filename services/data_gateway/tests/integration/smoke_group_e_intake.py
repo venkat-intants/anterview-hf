@@ -113,6 +113,7 @@ async def main() -> None:
     # and one belonging to another tenant.
     r_public, r_private, r_paused, r_expired, r_foreign = (uuid.uuid4() for _ in range(5))
     r_second = uuid.uuid4()  # a second public opening at the same company
+    r_noflow = uuid.uuid4()  # public and open, but no workflow published yet
 
     async with factory() as db:
         for c_id, slug in ((cid, "acme"), (other_cid, "globex")):
@@ -138,6 +139,7 @@ async def main() -> None:
             (r_paused, cid, "Paused Role", "paused", True, None),
             (r_expired, cid, "Closed Yesterday", "open", True, now - timedelta(days=1)),
             (r_second, cid, "Data Engineer", "open", True, None),
+            (r_noflow, cid, "No Process Yet", "open", True, None),
             (r_foreign, other_cid, "Their Role", "open", True, None),
         ]
         for rid, c_id, title, st, public, closes in rows:
@@ -152,6 +154,24 @@ async def main() -> None:
                 {"i": rid, "c": c_id, "t": title, "u": hr_uid if c_id == cid else None,
                  "s": st, "p": public, "cl": closes, "n": now},
             )
+        # A published workflow for every opening but r_noflow: an opening with
+        # no process does not take applications (E4).
+        for rid, c_id, *_ in rows:
+            if rid == r_noflow:
+                continue
+            await db.execute(
+                text(
+                    "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
+                    " auto_score_on_apply,auto_assign_first_round,auto_advance_rounds,"
+                    " reminders_enabled,hold_band,created_at,updated_at)"
+                    " VALUES (:i,:c,:r,1,'draft',true,true,true,true,10,:n,:n)"
+                ),
+                {"i": uuid.uuid4(), "c": c_id, "r": rid, "n": now},
+            )
+        await db.execute(
+            text("UPDATE workflows SET status = 'published', published_at = :n"),
+            {"n": now},
+        )
         await db.commit()
 
     async def _db_override():
@@ -187,6 +207,7 @@ async def main() -> None:
             ("a paused opening", r_paused),
             ("an opening past its closing date", r_expired),
             ("an id that is not a requisition", uuid.uuid4()),
+            ("an opening with no published workflow", r_noflow),
         ):
             r = await c.get(f"/apply/{rid}")
             check(f"{label} -> 404", r.status_code == 404, str(r.status_code))
@@ -279,6 +300,9 @@ async def main() -> None:
               str(r.status_code))
         check("it reports the existing application", r.json()["already_applied"] is True,
               str(r.json()))
+        check("…without echoing anything stored about them",
+              r.json()["applicant_id"] == "" and r.json()["enrolment_id"] is None
+              and r.json()["full_name"] == "Priya Sharma", str(r.json()))
         async with factory() as db:
             n_app = await db.scalar(text("SELECT count(*) FROM applicants"))
             n_enr = await db.scalar(
@@ -300,6 +324,20 @@ async def main() -> None:
         check("still one person", int(n_app) == 1, str(n_app))
         check("now with two enrolments", int(n_enr) == 2, str(n_enr))
         check("and consent was not re-recorded", int(consents) == 1, str(consents))
+        async with factory() as db:
+            person = (await db.execute(text(
+                "SELECT target_job_title, resume_s3_key FROM applicants"
+                " WHERE id = CAST(:i AS uuid)"), {"i": applicant_id})).mappings().first()
+            pins = (await db.execute(text(
+                "SELECT applied_resume_s3_key FROM enrolments"
+                " WHERE applicant_id = CAST(:i AS uuid) ORDER BY created_at"),
+                {"i": applicant_id})).scalars().all()
+        check("a second application does not rewrite the person's record",
+              person["target_job_title"] == "Backend Engineer", str(dict(person)))
+        check("…nor replace the CV on file",
+              len(pins) == 2 and person["resume_s3_key"] == pins[0], f"{dict(person)} {pins}")
+        check("…its own CV is pinned to the new application",
+              len(pins) == 2 and pins[1] not in (None, person["resume_s3_key"]), str(pins))
 
         print("\n--- bad uploads ---")
         r = await c.post(f"/apply/{r_public}", data=form(email="new@example.com"),
@@ -313,6 +351,9 @@ async def main() -> None:
         check("an empty file -> 400", r.status_code == 400, str(r.status_code))
         r = await c.post(f"/apply/{r_public}", data=form(email="not-an-email"), files=files())
         check("a malformed email -> 422", r.status_code == 422, str(r.status_code))
+        r = await c.post(f"/apply/{r_public}", data=form(email="big@example.com"),
+                         files=files(pdf=CV + b"0" * (5 * 1024 * 1024)))
+        check("a CV over 5 MB -> 413", r.status_code == 413, str(r.status_code))
         r = await c.post(f"/apply/{r_private}", data=form(email="new4@example.com"),
                          files=files())
         check("applying to a private opening -> 404", r.status_code == 404, str(r.status_code))
@@ -331,6 +372,21 @@ async def main() -> None:
                 )
             )
         check("the deferred row is due for scoring", int(due) == 1, str(due))
+
+        print("\n--- the applicant's language ---")
+        r = await c.post(f"/apply/{r_public}",
+                         data={**form(name="Lakshmi Rao", email="lakshmi@example.com"),
+                               "language": "te"}, files=files())
+        check("an application with emails in Telugu is accepted", r.status_code == 201,
+              r.text[:160])
+        async with factory() as db:
+            lang = await db.scalar(text(
+                "SELECT u.preferred_language FROM applicants a JOIN users u ON u.id = a.user_id"
+                " WHERE a.email = 'lakshmi@example.com'"))
+        check("…and the applicant's account carries it", lang == "te", str(lang))
+        r = await c.post(f"/apply/{r_second}",
+                         data={**form(email="fr@example.com"), "language": "fr"}, files=files())
+        check("an unsupported language -> 422", r.status_code == 422, str(r.status_code))
 
     app.dependency_overrides.clear()
     shutil.rmtree(store, ignore_errors=True)

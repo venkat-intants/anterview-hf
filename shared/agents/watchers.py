@@ -542,7 +542,8 @@ def watch_openings_without_workflow(data: WatcherInput) -> list[WatcherFinding]:
         if opening.has_published_workflow or opening.live_enrolments == 0:
             continue
         public = (
-            " It is also live on your public apply link, so more are arriving."
+            " Its public apply link is switched on, but it will not accept applications"
+            " until a workflow is published."
             if opening.accepting_public_applications
             else ""
         )

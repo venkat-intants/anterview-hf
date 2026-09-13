@@ -222,4 +222,14 @@ describe('the per-opening dashboard (E1)', () => {
     expect(screen.queryByText('By stage')).toBeNull();
     expect(screen.getByText(/refreshes on its own/)).toBeTruthy();
   });
+
+  it('warns that the public link waits for a published workflow', async () => {
+    mocks.getRequisitionDashboard.mockResolvedValue(
+      dash({ has_published_workflow: false, rounds: [] }),
+    );
+    renderPage();
+    expect((await screen.findByTestId('apply-needs-workflow')).textContent).toMatch(
+      /until a workflow is published/,
+    );
+  });
 });

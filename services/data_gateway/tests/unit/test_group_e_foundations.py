@@ -149,10 +149,12 @@ def test_a_replaced_cv_is_kept_while_an_unscored_application_needs_it() -> None:
     application still needed was deleted as unreferenced."""
     from app.routers import hr_applicants, public_apply
 
-    for module in (hr_applicants, public_apply):
-        # The SQL is split over two string literals; join them before looking.
-        src = _squash(inspect.getsource(module).replace('"\n', "").replace('"', ""))
-        assert "WHERE scored_resume_s3_key = :k OR applied_resume_s3_key = :k" in src
+    # HR's upload still replaces the CV on the person's record, so it keeps the
+    # guard. The public form replaces nothing since E4, so it deletes no CV.
+    # The SQL is split over two string literals; join them before looking.
+    src = _squash(inspect.getsource(hr_applicants).replace('"\n', "").replace('"', ""))
+    assert "WHERE scored_resume_s3_key = :k OR applied_resume_s3_key = :k" in src
+    assert "_delete_from_s3(previous_key)" not in inspect.getsource(public_apply)
 
 
 def _work(eid: uuid.UUID, applied_key: str | None) -> list[dict[str, Any]]:

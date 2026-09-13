@@ -201,21 +201,22 @@ def test_the_api_and_the_database_agree_on_name_sources() -> None:
 # A repeat application must not wipe what was said the first time
 # ===========================================================================
 def test_a_returning_applicant_keeps_details_they_did_not_repeat() -> None:
-    """COALESCE, not assignment. Skipping "current company" on a second
-    application does not mean somebody left their job."""
+    """Stronger since E4 than COALESCE: the public form no longer writes to a
+    returning applicant's record at all. Anyone can type an email address, so a
+    second application must not change what the first one said."""
     from app.routers.public_apply import submit_application
 
-    src = inspect.getsource(submit_application)
-    for column in ("phone", "current_company", "current_title", "linkedin_url"):
-        assert f"{column} = COALESCE(" in src
+    src = " ".join(inspect.getsource(submit_application).split())
+    assert "UPDATE applicants SET" not in src
 
 
 def test_a_repeat_application_does_not_rename_the_person() -> None:
     from app.routers.public_apply import submit_application
 
     src = inspect.getsource(submit_application)
-    update = src[src.index("UPDATE applicants SET") : src.index("WHERE id = :i")]
-    assert "full_name" not in update
+    # The only write to applicants is the INSERT for a new person.
+    assert "UPDATE applicants" not in src
+    assert src.count("Applicant(") == 1
 
 
 def test_a_blank_optional_field_is_stored_as_absent() -> None:

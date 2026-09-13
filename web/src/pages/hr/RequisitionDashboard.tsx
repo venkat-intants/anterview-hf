@@ -356,10 +356,13 @@ function PublicApplyCard({
   requisitionId,
   enabled,
   status,
+  hasWorkflow,
 }: {
   requisitionId: string;
   enabled: boolean;
   status: string;
+  /** No published workflow: the link refuses applications until there is one. */
+  hasWorkflow: boolean;
 }) {
   const qc = useQueryClient();
   const link = `${window.location.origin}/apply/${requisitionId}`;
@@ -396,7 +399,17 @@ function PublicApplyCard({
       </div>
 
       {enabled ? (
-        status === 'open' ? (
+        status === 'open' && !hasWorkflow ? (
+          // Said here so HR does not share a link that turns everyone away.
+          <p
+            className="mt-3 flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]"
+            data-testid="apply-needs-workflow"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            The link will not accept applications until a workflow is published, so nobody is
+            taken into a process that does not exist yet.
+          </p>
+        ) : status === 'open' ? (
           <div className="mt-3 flex items-center gap-2 rounded-[10px] border border-border bg-black/25 px-3 py-2">
             <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-[var(--ui-soft)]">
               {link}
@@ -804,6 +817,7 @@ export default function RequisitionDashboard(): JSX.Element {
             requisitionId={requisitionId}
             enabled={req.public_apply_enabled}
             status={req.status}
+            hasWorkflow={data.has_published_workflow}
           />
         </div>
       </div>

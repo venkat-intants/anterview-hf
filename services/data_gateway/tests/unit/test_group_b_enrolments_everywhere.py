@@ -287,6 +287,7 @@ def test_a_returning_candidates_cv_gets_its_own_key() -> None:
 
     src = inspect.getsource(submit_application)
     assert 'f"applicants/{company_id}/{applicant_id}-{uuid.uuid4().hex[:12]}.pdf"' in src
-    # The replaced CV is removed only if no application was scored against it.
-    assert "WHERE scored_resume_s3_key = :k" in src
-    assert "if still_used is None:" in src
+    # E4: the new CV belongs to the new application and replaces nothing on the
+    # person's record, so there is no "previous" CV to clean up here at all.
+    assert "resume_s3_key=s3_key," in src
+    assert "_delete_from_s3(previous_key)" not in src

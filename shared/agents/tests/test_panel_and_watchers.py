@@ -608,7 +608,9 @@ def test_a_public_opening_with_no_workflow_says_more_are_coming() -> None:
             )
         ],
     )
-    assert "more are arriving" in watch_openings_without_workflow(data)[0].body
+    assert "will not accept applications until a workflow is published" in (
+        watch_openings_without_workflow(data)[0].body
+    )
 
 
 def test_the_new_watchers_are_wired_into_the_sweep() -> None:

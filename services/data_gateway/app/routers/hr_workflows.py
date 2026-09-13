@@ -104,10 +104,21 @@ class RoundIn(BaseModel):
 
 class RoundPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
+    # Changing the type (D2). update_round clears whatever cannot apply to the
+    # new type; this was missing from the model, so the API silently dropped it
+    # even though update_round supported it.
+    kind: str | None = None
     pass_threshold: float | None = Field(default=None, ge=0, le=100)
     time_limit_seconds: int | None = Field(default=None, gt=0, le=86_400)
     deadline_days: int | None = Field(default=None, gt=0, le=365)
     exam_round_id: uuid.UUID | None = None
+
+    @field_validator("kind")
+    @classmethod
+    def _known_kind(cls, v: str | None) -> str | None:
+        if v is not None and v not in ROUND_KINDS:
+            raise ValueError(f"kind must be one of {sorted(ROUND_KINDS)}")
+        return v
 
 
 class SettingsPatch(BaseModel):

@@ -69,3 +69,17 @@ export function publishImpact(waiting?: { applied: number; shortlisted: number }
   }
   return parts.length ? `${parts.join('; ')}.` : null;
 }
+
+/**
+ * One line on whether the process measures the job overall (D3). The share is
+ * computed server-side from the same coverage rows; this only words it.
+ * Weighted, because missing a competency worth 0.05 and one worth 0.30 are both
+ * "one gap" and only the weight tells them apart.
+ */
+export function coverageVerdict(share: number | null | undefined): string | null {
+  if (share === null || share === undefined) return null;
+  const pct = Math.round(share * 100);
+  if (pct >= 90) return `Strong coverage: the rounds assess ${pct}% of what this role weighs.`;
+  if (pct >= 75) return `Reasonable coverage: the rounds assess ${pct}% of what this role weighs.`;
+  return `Thin coverage: the rounds assess only ${pct}% of what this role weighs — check the gaps below.`;
+}

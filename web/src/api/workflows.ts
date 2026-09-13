@@ -152,6 +152,8 @@ export interface ValidationReport {
   /** Advisory. Publish proceeds; the builder shows them anyway. */
   warnings: string[];
   coverage: CoverageRow[];
+  /** Share (0–1) of the role's competency weight that some round assesses. */
+  weighted_coverage?: number | null;
   /** Candidates who applied while nothing was live, who publishing will attach
    *  (D5): the shortlisted start the first round, the rest wait. */
   waiting?: { applied: number; shortlisted: number };
@@ -255,7 +257,9 @@ export function addRound(workflowId: string, body: RoundInput): Promise<Workflow
  * purpose: changing an MCQ round into an interview would silently invalidate
  * its attached questions and its rubric, so that is a delete and an add.
  */
-export type RoundPatch = Partial<Omit<RoundInput, 'kind' | 'criteria'>>;
+/** A round's own settings. `kind` changes the type (D2); the server clears
+ *  whatever cannot apply to the new type. Criteria have their own endpoint. */
+export type RoundPatch = Partial<Omit<RoundInput, 'criteria'>>;
 
 export function updateRound(
   workflowId: string,

@@ -151,12 +151,12 @@ function SettingsPanel({
 
       <div className="border-t border-border pt-4">
         <label htmlFor="hold-band" className="block text-[13px] text-foreground">
-          Send to you rather than past you
+          Mark near misses within
         </label>
         <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
-          A candidate scoring within this many points below a round&rsquo;s threshold is held
-          for your decision instead of quietly stalling. Nobody is ever rejected
-          automatically — this only decides who lands in front of you.
+          Everyone scoring below a round&rsquo;s threshold is held for your decision. Those
+          within this many points are marked as a near miss, so you can see who was close.
+          Nobody is ever rejected automatically.
         </p>
         <div className="mt-2 flex items-center gap-2">
           <input
@@ -178,11 +178,11 @@ function SettingsPanel({
 
       <div className="border-t border-border pt-4">
         <label htmlFor="ats-threshold" className="block text-[13px] text-foreground">
-          Auto-shortlist at ATS score
+          Suggest shortlisting at ATS score
         </label>
         <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
-          Applicants at or above this are shortlisted and enter the workflow. Leave empty
-          to shortlist everyone by hand.
+          Applicants at or above this are flagged to you as ready to shortlist. Nobody is
+          shortlisted automatically — you confirm, and that starts their first round.
         </p>
         <div className="mt-2 flex items-center gap-2">
           <input

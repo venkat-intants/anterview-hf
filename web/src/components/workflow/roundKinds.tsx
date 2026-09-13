@@ -32,8 +32,17 @@ export interface RoundKindMeta {
    * nothing to score, so it has nothing to threshold.
    */
   needsThreshold: boolean;
-  /** Whether a rubric (competencies + anchors) applies to this kind. */
+  /**
+   * Whether a rubric (competencies + anchors) applies to this kind. For a
+   * human review it is the reviewer's checklist, shown on the decision queue.
+   */
   supportsCriteria: boolean;
+  /**
+   * Who decides whether a candidate moves on (D1). A scored round is decided by
+   * the system against its threshold — and even then only ever holds, never
+   * rejects; a human review is decided by a person.
+   */
+  decidedBy: 'system' | 'person';
 }
 
 export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
@@ -46,6 +55,7 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     needsExam: true,
     needsThreshold: true,
     supportsCriteria: true,
+    decidedBy: 'system',
   },
   coding: {
     kind: 'coding',
@@ -56,6 +66,7 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     needsExam: true,
     needsThreshold: true,
     supportsCriteria: true,
+    decidedBy: 'system',
   },
   ai_interview: {
     kind: 'ai_interview',
@@ -67,6 +78,7 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     needsExam: false,
     needsThreshold: true,
     supportsCriteria: true,
+    decidedBy: 'system',
   },
   human_review: {
     kind: 'human_review',
@@ -76,7 +88,8 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     tone: 'amber',
     needsExam: false,
     needsThreshold: false,
-    supportsCriteria: false,
+    supportsCriteria: true,
+    decidedBy: 'person',
   },
 };
 

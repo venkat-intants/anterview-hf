@@ -15,6 +15,7 @@
 import { AlertTriangle, CheckCircle2, Info, Loader2 } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 import type { CoverageRow, ValidationReport } from '@/api/workflows';
+import { coverageVerdict } from '@/lib/workflowLifecycle';
 
 interface Props {
   report: ValidationReport | undefined;
@@ -133,6 +134,14 @@ export default function CoveragePanel({ report, loading }: Props): JSX.Element {
               <span className="text-[11.5px] text-[#27c93f]">all covered</span>
             )}
           </div>
+          {coverageVerdict(report.weighted_coverage) ? (
+            <p
+              className="mb-2 text-[12px] leading-relaxed text-[#b8babf]"
+              data-testid="coverage-verdict"
+            >
+              {coverageVerdict(report.weighted_coverage)}
+            </p>
+          ) : null}
           <ul className="flex list-none flex-col divide-y divide-white/[0.05]">
             {report.coverage.map((row) => (
               <CoverageBar key={row.competency_id} row={row} />

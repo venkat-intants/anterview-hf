@@ -99,11 +99,26 @@ class ValidationReport:
     def publishable(self) -> bool:
         return not self.errors
 
+    @property
+    def weighted_coverage(self) -> float | None:
+        """Share of the role's competency WEIGHT that at least one round assesses.
+
+        The per-competency rows say what is missing; this says how much it
+        matters. Missing a 0.05 competency and missing a 0.30 one are both "one
+        gap", and only the weight tells them apart. None with no role model.
+        """
+        total = sum(c.profile_weight for c in self.coverage)
+        if total <= 0:
+            return None
+        covered = sum(c.profile_weight for c in self.coverage if c.times_assessed > 0)
+        return round(covered / total, 3)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "publishable": self.publishable,
             "errors": self.errors,
             "warnings": self.warnings,
+            "weighted_coverage": self.weighted_coverage,
             "coverage": [
                 {
                     "competency_id": c.competency_id,
@@ -493,6 +508,19 @@ async def update_round(
         return
     if "kind" in updates and updates["kind"] not in ROUND_KINDS:
         raise WorkflowError(f"Unknown round type {updates['kind']!r}.")
+    if "kind" in updates:
+        # A new type clears what cannot apply to it, rather than leaving a
+        # stale value the canvas no longer shows: an MCQ turned into a human
+        # review kept its exam, threshold and time limit, invisible in the
+        # panel and still sitting on the row. Nothing is INVENTED for the new
+        # type — a scored round left without a threshold is flagged by
+        # validation, which is where HR is told to set one.
+        if updates["kind"] == "human_review":
+            updates["pass_threshold"] = None
+            updates["exam_round_id"] = None
+            updates["time_limit_seconds"] = None
+        elif updates["kind"] not in EXAM_BACKED_KINDS:
+            updates["exam_round_id"] = None
     sets = ", ".join(f"{k} = :{k}" for k in updates)
     await db.execute(
         text(

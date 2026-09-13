@@ -103,8 +103,8 @@ function SettingsDiff({ body }: { body: Record<string, unknown> }) {
     auto_assign_first_round: 'Send the first round automatically',
     auto_advance_rounds: 'Advance between rounds automatically',
     reminders_enabled: 'Remind candidates',
-    shortlist_ats_threshold: 'Auto-shortlist at ATS',
-    hold_band: 'Send to you rather than past you (points)',
+    shortlist_ats_threshold: 'Suggest shortlisting at ATS',
+    hold_band: 'Mark near misses within (points)',
   };
   return (
     <ul className="flex list-none flex-col gap-1.5">

@@ -32,6 +32,7 @@ import { StatusTag } from '@/design/components/primitives';
 import { cn } from '@/lib/utils';
 import { listExams, getStructure } from '@/api/exams';
 import type {
+  RoundKind,
   Criterion,
   CriterionInput,
   RoleModel,
@@ -39,7 +40,7 @@ import type {
   RoundPatch,
 } from '@/api/workflows';
 import { MAX_CRITERIA_PER_ROUND } from '@/api/workflows';
-import { ROUND_KIND_META } from './roundKinds';
+import { ROUND_KIND_META, ROUND_KIND_ORDER } from './roundKinds';
 
 interface Props {
   round: Round;
@@ -369,12 +370,33 @@ export default function RoundInspector({
         </span>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <StatusTag tone={meta.tone}>{meta.label}</StatusTag>
+            {editable ? (
+              <select
+                aria-label="Round type"
+                value={round.kind}
+                onChange={(e) => onPatch({ kind: e.target.value as RoundKind })}
+                className="rounded-[8px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[12px] text-white focus:border-[var(--accent)] focus:outline-none"
+              >
+                {ROUND_KIND_ORDER.map((k) => (
+                  <option key={k} value={k}>
+                    {ROUND_KIND_META[k].label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <StatusTag tone={meta.tone}>{meta.label}</StatusTag>
+            )}
             {saving ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin text-[#70757c]" aria-hidden="true" />
             ) : null}
           </div>
           <p className="mt-1 text-[11.5px] leading-snug text-[#888b91]">{meta.blurb}</p>
+          {editable ? (
+            <p className="mt-1 text-[11px] leading-snug text-[#70757c]">
+              Changing the type clears what no longer applies — questions, threshold or time
+              limit — and keeps the rest.
+            </p>
+          ) : null}
         </div>
       </header>
 
@@ -452,7 +474,9 @@ export default function RoundInspector({
       {meta.supportsCriteria ? (
         <section className="flex flex-col gap-2">
           <h3 className="text-[12px] font-medium text-[#b8babf]">
-            What this round assesses ({round.criteria.length})
+            {round.kind === 'human_review'
+              ? `Reviewer’s checklist (${round.criteria.length})`
+              : `What this round assesses (${round.criteria.length})`}
           </h3>
           <CriteriaPicker
             round={round}
@@ -496,7 +520,8 @@ export default function RoundInspector({
       ) : (
         <section className="rounded-[10px] border border-white/[0.07] p-3 text-[11.5px] leading-relaxed text-[#888b91]">
           A human review round has no threshold — nothing here is scored. Candidates
-          who reach it wait in your decision queue until someone moves them on.
+          who reach it appear in your decision queue with the checklist above; someone
+          passes them on or holds them for a decision. Nobody is rejected automatically.
         </section>
       )}
     </div>

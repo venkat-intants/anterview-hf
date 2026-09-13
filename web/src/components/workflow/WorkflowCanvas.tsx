@@ -117,6 +117,16 @@ function RoundNode({
           <span className="flex items-center gap-2">
             <span className="truncate text-[14px] font-medium text-white">{round.title}</span>
             <StatusTag tone={meta.tone}>{meta.label}</StatusTag>
+            <span
+              className={cn(
+                'rounded-pill border px-1.5 py-px text-[10.5px]',
+                meta.decidedBy === 'person'
+                  ? 'border-[#ffb764]/40 text-[#ffb764]'
+                  : 'border-white/15 text-[#888b91]',
+              )}
+            >
+              {meta.decidedBy === 'person' ? 'A person decides' : 'Automated'}
+            </span>
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11.5px] text-[#70757c]">
             <span>Step {index + 1}</span>
@@ -201,7 +211,22 @@ export default function WorkflowCanvas({
         <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white/15">
           <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
-        Shortlisted candidates enter here
+        Candidates apply
+      </div>
+      <span className="ml-[26px] h-4 w-px bg-white/15" aria-hidden="true" />
+      {/* The first human gate. Nothing below starts for anyone until a person
+          shortlists them — an ATS score can only suggest who to look at. */}
+      <div
+        className="flex items-center gap-2.5 rounded-[12px] border border-[#ffb764]/25 bg-[#ffb764]/[0.05] px-2.5 py-2 text-[12px] text-[#d5d7da]"
+        data-testid="shortlist-gate"
+      >
+        <span className="flex h-6 w-6 items-center justify-center rounded-full border border-[#ffb764]/40 text-[#ffb764]">
+          <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+        <span>
+          <span className="font-medium text-white">You shortlist</span>
+          <span className="text-[#888b91]"> — nothing below starts until a person does</span>
+        </span>
       </div>
 
       <ol className="mt-2 flex list-none flex-col">
@@ -253,6 +278,17 @@ export default function WorkflowCanvas({
                 misread part of the product: finishing the last round does not
                 hire anyone. */}
             Finishing the last round puts a candidate in your decision queue
+          </div>
+          {/* The other way in, drawn rather than implied: anyone held below a
+              threshold ends up in the same queue. Nothing ends a candidacy
+              automatically (D-05). */}
+          <div
+            className="ml-[34px] mt-1.5 flex items-start gap-1.5 border-l border-dashed border-[#ffb764]/40 pl-3 text-[11.5px] leading-snug text-[#888b91]"
+            data-testid="hold-path"
+          >
+            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-[#ffb764]" aria-hidden="true" />
+            So does anyone held below a round&rsquo;s threshold, from any round. Nobody is
+            rejected automatically — every candidate reaches a person.
           </div>
         </>
       ) : null}

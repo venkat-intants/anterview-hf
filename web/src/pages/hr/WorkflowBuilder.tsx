@@ -46,6 +46,9 @@ import { getRequisition } from '@/api/requisitions';
 import {
   addRound,
   cloneWorkflow,
+  createFromTemplate,
+  listWorkflowTemplates,
+  type WorkflowTemplateSummary,
   discardDraft,
   getRoleModel,
   getWorkflow,
@@ -71,9 +74,12 @@ import ProposalPreview from '@/components/workflow/ProposalPreview';
 import { getAgentStatus, type Proposal } from '@/api/agent';
 import RoundInspector from '@/components/workflow/RoundInspector';
 import CoveragePanel from '@/components/workflow/CoveragePanel';
+import CandidatePreview from '@/components/workflow/CandidatePreview';
+import LifecycleSteps from '@/components/workflow/LifecycleSteps';
+import { applicationsWarning, publishImpact } from '@/lib/workflowLifecycle';
 import PostingEditor from '@/components/workflow/PostingEditor';
 import QuestionEditor from '@/components/workflow/QuestionEditor';
-import { ROUND_KIND_META, TEMPLATES } from '@/components/workflow/roundKinds';
+import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -145,12 +151,12 @@ function SettingsPanel({
 
       <div className="border-t border-border pt-4">
         <label htmlFor="hold-band" className="block text-[13px] text-foreground">
-          Send to you rather than past you
+          Mark near misses within
         </label>
         <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
-          A candidate scoring within this many points below a round&rsquo;s threshold is held
-          for your decision instead of quietly stalling. Nobody is ever rejected
-          automatically — this only decides who lands in front of you.
+          Everyone scoring below a round&rsquo;s threshold is held for your decision. Those
+          within this many points are marked as a near miss, so you can see who was close.
+          Nobody is ever rejected automatically.
         </p>
         <div className="mt-2 flex items-center gap-2">
           <input
@@ -172,11 +178,11 @@ function SettingsPanel({
 
       <div className="border-t border-border pt-4">
         <label htmlFor="ats-threshold" className="block text-[13px] text-foreground">
-          Auto-shortlist at ATS score
+          Suggest shortlisting at ATS score
         </label>
         <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
-          Applicants at or above this are shortlisted and enter the workflow. Leave empty
-          to shortlist everyone by hand.
+          Applicants at or above this are flagged to you as ready to shortlist. Nobody is
+          shortlisted automatically — you confirm, and that starts their first round.
         </p>
         <div className="mt-2 flex items-center gap-2">
           <input
@@ -206,10 +212,13 @@ function EmptyState({
   onBlank,
   onTemplate,
   busy,
+  templates,
 }: {
   onBlank: () => void;
   onTemplate: (key: string) => void;
   busy: boolean;
+  /** Built on the server against this role's competencies (D4). */
+  templates: WorkflowTemplateSummary[] | undefined;
 }) {
   return (
     <GlassCard className="p-8">
@@ -221,31 +230,53 @@ function EmptyState({
       </p>
 
       <div className="mt-5 grid gap-3 md:grid-cols-3">
-        {TEMPLATES.map((t) => (
+        {templates === undefined ? (
+          <p className="text-[12.5px] text-muted-foreground">Loading templates for this role…</p>
+        ) : null}
+        {(templates ?? []).map((t) => (
           <button
             key={t.key}
             type="button"
             disabled={busy}
             onClick={() => onTemplate(t.key)}
-            className="flex flex-col rounded-[16px] border border-border p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-[var(--ui-inset-soft)] disabled:opacity-50"
+            aria-label={`Start from the ${t.name} template`}
+            className={cn(
+              'flex flex-col rounded-[16px] border p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-[var(--ui-inset-soft)] disabled:opacity-50',
+              t.recommended ? 'border-[var(--accent)]/40' : 'border-border',
+            )}
           >
-            <span className="text-[14px] font-medium text-foreground">{t.name}</span>
+            <span className="flex items-center justify-between gap-2">
+              <span className="text-[14px] font-medium text-foreground">{t.name}</span>
+              {t.recommended ? (
+                <span className="rounded-pill bg-[var(--accent)]/15 px-2 py-0.5 text-[10.5px] text-[var(--accent)]">
+                  Suits this role
+                </span>
+              ) : null}
+            </span>
             <span className="mt-1 text-[12px] leading-snug text-muted-foreground">
               {t.description}
             </span>
-            <span className="mt-3 flex flex-wrap gap-1">
+            {/* What it would actually create, for this role: each round and
+                the competencies it would assess. */}
+            <ol className="mt-3 flex flex-col gap-1.5">
               {t.rounds.map((r, i) => (
-                <span
-                  key={`${r.kind}-${i}`}
-                  className="rounded-pill border border-border px-2 py-0.5 text-[10.5px] text-[var(--ui-soft)]"
-                >
-                  {ROUND_KIND_META[r.kind].label}
-                </span>
+                <li key={`${r.kind}-${i}`} className="text-[11.5px] leading-snug">
+                  <span className="font-medium text-[var(--ui-soft)]">
+                    {i + 1}. {ROUND_KIND_META[r.kind].label}
+                  </span>
+                  {r.competencies.length > 0 ? (
+                    <span className="text-[var(--ui-faint)]"> — {r.competencies.join(', ')}</span>
+                  ) : null}
+                </li>
               ))}
-            </span>
+            </ol>
           </button>
         ))}
       </div>
+      <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
+        A template fills in the rounds, what each assesses, timings and settings. Test rounds
+        still need their questions attached before you can publish.
+      </p>
 
       <button
         type="button"
@@ -269,6 +300,9 @@ export default function WorkflowBuilder(): JSX.Element {
   const [selectedRound, setSelectedRound] = useState<string | null>(null);
   const [tab, setTab] = useState<'round' | 'settings'>('round');
   const [confirmPublish, setConfirmPublish] = useState(false);
+  // D5: the candidate's-eye preview, and whether it has been looked at.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewed, setPreviewed] = useState(false);
   // What the copilot has drafted and the user has not yet accepted or
   // discarded. Held here rather than inside the chat panel because the preview
   // is drawn on the canvas, and only one of the two surfaces can own it.
@@ -312,6 +346,11 @@ export default function WorkflowBuilder(): JSX.Element {
     enabled: Boolean(workflowId) && (wf.data?.rounds.length ?? 0) > 0,
   });
 
+  const templates = useQuery({
+    queryKey: ['hr', 'workflow-templates', requisitionId],
+    queryFn: () => listWorkflowTemplates(requisitionId),
+    staleTime: 5 * 60_000,
+  });
   const roleModel = useQuery({
     queryKey: ['hr', 'role-model', requisitionId],
     queryFn: () => getRoleModel(requisitionId),
@@ -346,18 +385,11 @@ export default function WorkflowBuilder(): JSX.Element {
   // ── Creating ──────────────────────────────────────────────────────────────
   const createMut = useMutation({
     mutationFn: async (templateKey: string | null) => {
-      const tpl = templateKey ? TEMPLATES.find((t) => t.key === templateKey) : null;
-      let draft = await startDraft(requisitionId, tpl?.name);
-      // Sequential, not parallel: rounds are positioned in insert order, and
-      // firing four concurrent POSTs would race for those positions.
-      for (const r of tpl?.rounds ?? []) {
-        draft = await addRound(draft.id, {
-          title: r.title,
-          kind: r.kind,
-          pass_threshold: r.pass_threshold,
-        });
-      }
-      return draft;
+      // A template is built server-side against the role and created in one
+      // transaction; a blank canvas is just a draft.
+      return templateKey
+        ? createFromTemplate(requisitionId, templateKey)
+        : startDraft(requisitionId);
     },
     onSuccess: (draft) => {
       setActiveId(draft.id);
@@ -373,7 +405,13 @@ export default function WorkflowBuilder(): JSX.Element {
     onSuccess: (res) => {
       setConfirmPublish(false);
       applyWorkflow(res);
-      toast.success(`Version ${res.version} is live`);
+      const started = res.started_candidates ?? 0;
+      const attached = res.attached_candidates ?? 0;
+      toast.success(
+        attached > 0
+          ? `Version ${res.version} is live — ${attached} waiting candidate${attached === 1 ? '' : 's'} joined${started > 0 ? `, ${started} started round 1` : ''}`
+          : `Version ${res.version} is live`,
+      );
     },
     onError: (e) => {
       setConfirmPublish(false);
@@ -544,6 +582,11 @@ export default function WorkflowBuilder(): JSX.Element {
           <div className="flex flex-wrap items-center gap-3">
             <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />
             <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-[var(--ui-soft)]">
+              {publishImpact(validation.data?.waiting) ? (
+                <strong className="mb-1 block font-medium text-foreground">
+                  {publishImpact(validation.data?.waiting)}
+                </strong>
+              ) : null}
               Publishing makes this version live for {req.data?.title ?? 'this opening'}.
               New candidates start here; anyone already inside an older version finishes
               it on the rounds they began with.
@@ -582,6 +625,7 @@ export default function WorkflowBuilder(): JSX.Element {
             busy={createMut.isPending}
             onBlank={() => createMut.mutate(null)}
             onTemplate={(key) => createMut.mutate(key)}
+            templates={templates.data}
           />
           {copilotAvailable ? (
             <GlassCard className="flex h-[440px] flex-col p-5">
@@ -611,6 +655,59 @@ export default function WorkflowBuilder(): JSX.Element {
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
           {/* Canvas */}
           <GlassCard className="p-5">
+            {/* D5: an opening taking applications with nothing live. Nobody is
+                lost — publishing attaches them — but nothing moves until then. */}
+            {(() => {
+              const warning = applicationsWarning({
+                title: req.data?.title ?? 'This opening',
+                accepting: Boolean(req.data?.public_apply_enabled && req.data?.status === 'open'),
+                hasLiveVersion: (versions.data ?? []).some((v) => v.status === 'published'),
+                draftVersion:
+                  (versions.data ?? []).find((v) => v.status === 'draft')?.version ?? null,
+                waiting: validation.data?.waiting,
+              });
+              return warning ? (
+                <div
+                  role="alert"
+                  className="mb-4 flex items-start gap-2 rounded-[12px] border border-[var(--ui-warn)]/35 bg-[var(--ui-warn)]/[0.07] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
+                >
+                  <AlertTriangle
+                    className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]"
+                    aria-hidden="true"
+                  />
+                  {warning}
+                </div>
+              ) : null;
+            })()}
+
+            {editable ? (
+              <LifecycleSteps
+                status={workflow.status}
+                previewed={previewed}
+                issues={validation.data?.errors.length ?? 0}
+                publishable={Boolean(validation.data?.publishable)}
+                onPreview={() => {
+                  setPreviewOpen((open) => !open);
+                  setPreviewed(true);
+                }}
+                onPublish={() => setConfirmPublish(true)}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPreviewOpen((open) => !open)}
+                className="mb-4 rounded-pill border border-border px-3 py-1 text-[12px] text-[var(--ui-soft)] hover:border-[var(--accent)]"
+              >
+                {previewOpen ? 'Hide candidate preview' : 'Preview as a candidate'}
+              </button>
+            )}
+
+            {previewOpen ? (
+              <div className="mb-5 rounded-[14px] border border-[var(--accent)]/25 p-4">
+                <CandidatePreview title={req.data?.title ?? 'this opening'} rounds={workflow.rounds} />
+              </div>
+            ) : null}
+
             {!editable ? (
               <div className="mb-4 flex items-start gap-2 rounded-[12px] border border-border bg-black/25 p-3 text-[12.5px] leading-relaxed text-muted-foreground">
                 <Eye className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />

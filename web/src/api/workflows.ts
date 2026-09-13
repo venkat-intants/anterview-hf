@@ -152,6 +152,11 @@ export interface ValidationReport {
   /** Advisory. Publish proceeds; the builder shows them anyway. */
   warnings: string[];
   coverage: CoverageRow[];
+  /** Share (0–1) of the role's competency weight that some round assesses. */
+  weighted_coverage?: number | null;
+  /** Candidates who applied while nothing was live, who publishing will attach
+   *  (D5): the shortlisted start the first round, the rest wait. */
+  waiting?: { applied: number; shortlisted: number };
 }
 
 export function validateWorkflow(workflowId: string): Promise<ValidationReport> {
@@ -169,6 +174,36 @@ export function getWorkflow(workflowId: string): Promise<Workflow> {
 }
 
 /** Start a draft. 409 when the opening already has one — there is only ever one. */
+/** A starter template, as it would be built for THIS role (D4). */
+export interface WorkflowTemplateSummary {
+  key: 'technical' | 'non_technical' | 'interview_only';
+  name: string;
+  description: string;
+  /** The one that suits the role's occupational family. */
+  recommended: boolean;
+  rounds: {
+    title: string;
+    kind: RoundKind;
+    pass_threshold: number | null;
+    time_limit_seconds: number | null;
+    deadline_days: number;
+    /** Names of the role competencies this round would assess. */
+    competencies: string[];
+  }[];
+}
+
+export function listWorkflowTemplates(requisitionId: string): Promise<WorkflowTemplateSummary[]> {
+  return apiGet<WorkflowTemplateSummary[]>(`/hr/requisitions/${requisitionId}/workflow-templates`);
+}
+
+/** Create a DRAFT from a template — rounds, competencies, timings and settings
+ *  in one transaction. Never touches a published workflow. */
+export function createFromTemplate(requisitionId: string, template: string): Promise<Workflow> {
+  return apiPost<Workflow>(`/hr/requisitions/${requisitionId}/workflows/from-template`, {
+    template,
+  });
+}
+
 export function startDraft(requisitionId: string, name?: string): Promise<Workflow> {
   const q = name ? `?name=${encodeURIComponent(name)}` : '';
   return apiPost<Workflow>(`/hr/requisitions/${requisitionId}/workflows${q}`, {});
@@ -222,7 +257,9 @@ export function addRound(workflowId: string, body: RoundInput): Promise<Workflow
  * purpose: changing an MCQ round into an interview would silently invalidate
  * its attached questions and its rubric, so that is a delete and an add.
  */
-export type RoundPatch = Partial<Omit<RoundInput, 'kind' | 'criteria'>>;
+/** A round's own settings. `kind` changes the type (D2); the server clears
+ *  whatever cannot apply to the new type. Criteria have their own endpoint. */
+export type RoundPatch = Partial<Omit<RoundInput, 'criteria'>>;
 
 export function updateRound(
   workflowId: string,
@@ -262,8 +299,20 @@ export function setRoundCriteria(
  */
 export function publishWorkflow(
   workflowId: string,
-): Promise<Workflow & { validation: ValidationReport }> {
-  return apiPost<Workflow & { validation: ValidationReport }>(
+): Promise<
+  Workflow & {
+    validation: ValidationReport;
+    attached_candidates?: number;
+    started_candidates?: number;
+  }
+> {
+  return apiPost<
+    Workflow & {
+      validation: ValidationReport;
+      attached_candidates?: number;
+      started_candidates?: number;
+    }
+  >(
     `/hr/workflows/${workflowId}/publish`,
     {},
   );

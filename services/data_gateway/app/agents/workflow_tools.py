@@ -800,13 +800,17 @@ async def _draft_round_criteria(args: dict[str, Any], ctx: ToolContext) -> ToolO
             "reminders_enabled": {"type": "boolean"},
             "shortlist_ats_threshold": {
                 "type": "integer",
-                "description": "0-10 ATS score at or above which an applicant is shortlisted.",
+                "description": (
+                    "0-10 ATS score at or above which an applicant is SUGGESTED to HR "
+                    "for shortlisting. It never shortlists anyone: a person confirms."
+                ),
             },
             "hold_band": {
                 "type": "integer",
                 "description": (
-                    "Percentage points below a round threshold that still route "
-                    "the candidate to a human rather than stalling."
+                    "Percentage points below a round threshold within which a held "
+                    "candidate is marked as a near miss. Everyone below a threshold "
+                    "is held for a human decision either way."
                 ),
             },
             "rationale": {"type": "string"},
@@ -852,8 +856,8 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
         "auto_assign_first_round": "send the first round automatically",
         "auto_advance_rounds": "advance between rounds automatically",
         "reminders_enabled": "remind candidates",
-        "shortlist_ats_threshold": "auto-shortlist at ATS",
-        "hold_band": "hold band",
+        "shortlist_ats_threshold": "suggest shortlisting at ATS",
+        "hold_band": "mark near misses within (points)",
     }
     summary = ", ".join(
         f"{labels[k]}: {'on' if v is True else 'off' if v is False else v}"

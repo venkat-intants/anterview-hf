@@ -99,11 +99,26 @@ class ValidationReport:
     def publishable(self) -> bool:
         return not self.errors
 
+    @property
+    def weighted_coverage(self) -> float | None:
+        """Share of the role's competency WEIGHT that at least one round assesses.
+
+        The per-competency rows say what is missing; this says how much it
+        matters. Missing a 0.05 competency and missing a 0.30 one are both "one
+        gap", and only the weight tells them apart. None with no role model.
+        """
+        total = sum(c.profile_weight for c in self.coverage)
+        if total <= 0:
+            return None
+        covered = sum(c.profile_weight for c in self.coverage if c.times_assessed > 0)
+        return round(covered / total, 3)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "publishable": self.publishable,
             "errors": self.errors,
             "warnings": self.warnings,
+            "weighted_coverage": self.weighted_coverage,
             "coverage": [
                 {
                     "competency_id": c.competency_id,
@@ -493,6 +508,19 @@ async def update_round(
         return
     if "kind" in updates and updates["kind"] not in ROUND_KINDS:
         raise WorkflowError(f"Unknown round type {updates['kind']!r}.")
+    if "kind" in updates:
+        # A new type clears what cannot apply to it, rather than leaving a
+        # stale value the canvas no longer shows: an MCQ turned into a human
+        # review kept its exam, threshold and time limit, invisible in the
+        # panel and still sitting on the row. Nothing is INVENTED for the new
+        # type — a scored round left without a threshold is flagged by
+        # validation, which is where HR is told to set one.
+        if updates["kind"] == "human_review":
+            updates["pass_threshold"] = None
+            updates["exam_round_id"] = None
+            updates["time_limit_seconds"] = None
+        elif updates["kind"] not in EXAM_BACKED_KINDS:
+            updates["exam_round_id"] = None
     sets = ", ".join(f"{k} = :{k}" for k in updates)
     await db.execute(
         text(
@@ -704,6 +732,62 @@ async def validate(
         report.coverage, warnings = build_coverage(profile_competencies, criteria, titles)
         report.warnings.extend(warnings)
     return report
+
+
+# Candidates who applied while the opening had no live workflow: enrolled
+# (C5 never loses an applicant) but with no workflow, so nothing could ever
+# start for them. Live, not decided, not already inside a round.
+#
+# Two whole literals rather than one shared WHERE fragment: the SAST gate
+# (bandit B608) fails SQL assembled from strings, and the test holds the two
+# predicates together instead.
+_WAITING_COUNT_SQL = """
+SELECT count(*) FILTER (WHERE status = 'shortlisted') AS shortlisted,
+       count(*) FILTER (WHERE status <> 'shortlisted') AS applied
+  FROM enrolments
+ WHERE requisition_id = :r AND deleted_at IS NULL AND workflow_id IS NULL
+   AND current_round_id IS NULL AND status NOT IN ('hired', 'rejected')
+"""
+
+_ATTACH_WAITING_SQL = """
+UPDATE enrolments SET workflow_id = :w, updated_at = now()
+ WHERE requisition_id = :r AND deleted_at IS NULL AND workflow_id IS NULL
+   AND current_round_id IS NULL AND status NOT IN ('hired', 'rejected')
+RETURNING id, status
+"""
+
+
+async def waiting_candidates(db: AsyncSession, requisition_id: uuid.UUID) -> dict[str, int]:
+    """How many candidates are waiting for a workflow to go live (D5).
+
+    ``shortlisted`` is the number a person has already confirmed: publishing
+    starts their first round. ``applied`` is everyone else, who join the
+    workflow and wait for the shortlist as normal.
+    """
+    row = (
+        await db.execute(text(_WAITING_COUNT_SQL), {"r": requisition_id})
+    ).mappings().first()
+    return {
+        "shortlisted": int(row["shortlisted"] or 0) if row else 0,
+        "applied": int(row["applied"] or 0) if row else 0,
+    }
+
+
+async def attach_waiting_candidates(
+    db: AsyncSession, *, requisition_id: uuid.UUID, workflow_id: uuid.UUID
+) -> list[tuple[uuid.UUID, str]]:
+    """Put everyone waiting onto the version just published. Caller commits.
+
+    The runner's own comment promised this — applicants who arrive early "join
+    a workflow when one goes live" — and nothing did it: publishing left them
+    with no workflow, so shortlisting them afterwards reported "no workflow
+    attached" and started nothing, silently. Returns (enrolment id, status) for
+    each, so the caller can start the ones a person already shortlisted.
+    """
+    rows = (
+        await db.execute(text(_ATTACH_WAITING_SQL), {"r": requisition_id, "w": workflow_id})
+    ).all()
+    return [(uuid.UUID(str(r[0])), str(r[1])) for r in rows]
 
 
 async def publish(

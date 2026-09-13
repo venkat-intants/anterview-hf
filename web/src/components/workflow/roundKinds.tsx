@@ -32,8 +32,17 @@ export interface RoundKindMeta {
    * nothing to score, so it has nothing to threshold.
    */
   needsThreshold: boolean;
-  /** Whether a rubric (competencies + anchors) applies to this kind. */
+  /**
+   * Whether a rubric (competencies + anchors) applies to this kind. For a
+   * human review it is the reviewer's checklist, shown on the decision queue.
+   */
   supportsCriteria: boolean;
+  /**
+   * Who decides whether a candidate moves on (D1). A scored round is decided by
+   * the system against its threshold — and even then only ever holds, never
+   * rejects; a human review is decided by a person.
+   */
+  decidedBy: 'system' | 'person';
 }
 
 export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
@@ -46,6 +55,7 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     needsExam: true,
     needsThreshold: true,
     supportsCriteria: true,
+    decidedBy: 'system',
   },
   coding: {
     kind: 'coding',
@@ -56,6 +66,7 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     needsExam: true,
     needsThreshold: true,
     supportsCriteria: true,
+    decidedBy: 'system',
   },
   ai_interview: {
     kind: 'ai_interview',
@@ -67,6 +78,7 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     needsExam: false,
     needsThreshold: true,
     supportsCriteria: true,
+    decidedBy: 'system',
   },
   human_review: {
     kind: 'human_review',
@@ -76,62 +88,10 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     tone: 'amber',
     needsExam: false,
     needsThreshold: false,
-    supportsCriteria: false,
+    supportsCriteria: true,
+    decidedBy: 'person',
   },
 };
 
 export const ROUND_KIND_ORDER: RoundKind[] = ['mcq', 'coding', 'ai_interview', 'human_review'];
 
-/**
- * Starting points — the "standardised template" half of the two ways in (D4).
- *
- * These are client-side presets, not server objects: each one is just a
- * sequence of addRound calls, so a template produces exactly the workflow HR
- * would have built by hand and stays fully editable afterwards. Nothing about a
- * templated workflow is special once it exists, which is deliberate — a
- * template that could not be edited would be a straitjacket, and one that were
- * stored separately would drift from the rounds it created.
- *
- * Thresholds here are conservative defaults, not recommendations. HR overrides
- * them in the inspector; the point of the preset is the SHAPE.
- */
-export interface WorkflowTemplate {
-  key: string;
-  name: string;
-  description: string;
-  rounds: { title: string; kind: RoundKind; pass_threshold: number | null }[];
-}
-
-export const TEMPLATES: WorkflowTemplate[] = [
-  {
-    key: 'screen-interview',
-    name: 'Screen, then interview',
-    description:
-      'A knowledge check to size the field, then a conversation with whoever clears it.',
-    rounds: [
-      { title: 'Screening test', kind: 'mcq', pass_threshold: 60 },
-      { title: 'AI interview', kind: 'ai_interview', pass_threshold: 60 },
-    ],
-  },
-  {
-    key: 'technical',
-    name: 'Technical hire',
-    description: 'Knowledge, then code, then a conversation, then your own read.',
-    rounds: [
-      { title: 'Fundamentals', kind: 'mcq', pass_threshold: 60 },
-      { title: 'Coding test', kind: 'coding', pass_threshold: 50 },
-      { title: 'AI interview', kind: 'ai_interview', pass_threshold: 60 },
-      { title: 'Hiring manager review', kind: 'human_review', pass_threshold: null },
-    ],
-  },
-  {
-    key: 'interview-only',
-    name: 'Interview only',
-    description:
-      'For roles where a written test tells you nothing. Straight to the conversation.',
-    rounds: [
-      { title: 'AI interview', kind: 'ai_interview', pass_threshold: 60 },
-      { title: 'Final review', kind: 'human_review', pass_threshold: null },
-    ],
-  },
-];

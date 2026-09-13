@@ -437,6 +437,77 @@ export interface RoundProgress {
   pass_rate: number | null;
 }
 
+export interface DashboardProgress {
+  applications: number;
+  /** Inside an automated round right now. */
+  in_progress: number;
+  awaiting_decision: number;
+  held: number;
+  hired: number;
+  rejected: number;
+  not_started: number;
+  /** Still finishing an earlier workflow version. */
+  on_older_version: number;
+  target_hires: number | null;
+}
+
+export interface StageTiming {
+  key: string;
+  label: string;
+  /** Median days from application; null when nobody has reached it yet. */
+  median_days: number | null;
+  count: number;
+}
+
+export interface DashboardScores {
+  avg_ats: number | null;
+  scored_applications: number;
+  /** Mean of each assessed candidate's scored rounds. A summary, never a decision. */
+  avg_composite: number | null;
+  assessed_candidates: number;
+}
+
+export interface HeldCandidate {
+  enrolment_id: string;
+  applicant_id: string;
+  full_name: string;
+  held_reason: string | null;
+  round_title: string | null;
+  ats_overall: number | null;
+  held_days: number | null;
+}
+
+export type AttentionSeverity = 'critical' | 'warning' | 'info';
+
+export interface DashboardAttention {
+  key: string;
+  severity: AttentionSeverity;
+  title: string;
+  body: string;
+  link: string | null;
+}
+
+export interface ManualStep {
+  key: string;
+  count: number;
+  label: string;
+  link: string | null;
+}
+
+export interface ActivityEntry {
+  occurred_at: string;
+  automated: boolean;
+  /** Named only when a person made the move. */
+  actor: string | null;
+  candidate: string | null;
+  enrolment_id: string;
+  from_status: string | null;
+  to_status: string;
+  from_round: string | null;
+  to_round: string | null;
+  reason: string | null;
+}
+
 export interface RequisitionDashboard {
   requisition: Requisition;
   rounds: RoundProgress[];
@@ -445,6 +516,19 @@ export interface RequisitionDashboard {
   median_days_in_stage: number | null;
   /** Resumes stored but not yet scored — an empty ATS column, explained. */
   still_being_read: number;
+  progress: DashboardProgress;
+  workflow_state: { published_version: number | null; draft_version: number | null };
+  stage_timing: StageTiming[];
+  scores: DashboardScores;
+  held_pool: HeldCandidate[];
+  attention: DashboardAttention[];
+  manual_steps: ManualStep[];
+  activity: ActivityEntry[];
+  activity_summary: {
+    automated_7d: number;
+    manual_7d: number;
+    last_automated_at: string | null;
+  };
 }
 
 export function getRequisitionDashboard(id: string): Promise<RequisitionDashboard> {

@@ -35,6 +35,7 @@ from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.final_decision import DECISIONS, DecisionRefusedError, record_final_decision
 from app.models import AuditLog
+from app.requisition_dashboard import gather_dashboard
 from app.requisitions import (
     TERMINAL_STATUSES,
     VALID_STATUSES,
@@ -1405,7 +1406,13 @@ async def requisition_dashboard(
 
     counts = {r["status"]: int(r["n"]) for r in by_status}
     awaiting = (await _awaiting(db, [requisition_id])).get(str(requisition_id), 0)
+    # Progress, timing, scores, the held pool, what needs attention, what the
+    # automation did, and what waits for a person on purpose (E1).
+    extras = await gather_dashboard(
+        db, company_id=company_id, requisition_id=requisition_id, req=req, rounds=list(rounds)
+    )
     return {
+        **extras,
         "requisition": _to_out(req, counts, awaiting).model_dump(),
         "rounds": [
             {

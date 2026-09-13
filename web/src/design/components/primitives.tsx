@@ -45,6 +45,8 @@ export function AnimatedNumber({ value }: { value: string }): JSX.Element {
 
 interface GlassCardProps {
   children: ReactNode;
+  /** Passed to the root element, so a card can be found in tests. */
+  'data-testid'?: string;
   className?: string;
   /** subtle hover lift */
   hover?: boolean;
@@ -53,9 +55,10 @@ interface GlassCardProps {
 }
 
 export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
-  ({ children, className, hover = false, feature = false }, ref) => (
+  ({ children, className, hover = false, feature = false, 'data-testid': testId }, ref) => (
     <div
       ref={ref}
+      data-testid={testId}
       className={cn(
         'rounded-[24px] border p-6',
         feature

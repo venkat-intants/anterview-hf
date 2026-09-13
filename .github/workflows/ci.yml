@@ -48,8 +48,8 @@ jobs:
     name: shared (intelligence + agents + auth)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -259,8 +259,8 @@ jobs:
           --health-retries 20
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -485,7 +485,7 @@ jobs:
     name: invariants (coverage floors + alert rules + env parity + Space metadata + SAST)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # actions/checkout leaves the job's GITHUB_TOKEN in .git/config as an
           # http.extraheader, where every later step can read it. This job runs
@@ -495,7 +495,7 @@ jobs:
           # looking for. The workflow-level `permissions: contents: read` caps
           # what that token could do; this removes the token itself.
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install
@@ -614,8 +614,8 @@ jobs:
     name: migrations (single linear head)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -685,8 +685,8 @@ jobs:
     name: web (typecheck + lint + test + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: npm
@@ -748,14 +748,14 @@ jobs:
     name: security (deps + secrets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # gitleaks scans history, not just the tip.
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: npm
@@ -873,7 +873,7 @@ jobs:
         # unscanned.
         image: [space, data_gateway, interview_core, feedback_billing, admin_ops]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Same reasoning as the `invariants` job, plus one this job owns
           # alone: `context: .` ships the whole checkout to the build daemon,
@@ -883,7 +883,7 @@ jobs:
           # already shut — this closes the other half, since nothing after the
           # clone (buildx, trivy) authenticates to git.
           persist-credentials: false
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Resolve the Dockerfile for this leg
         # The root image has no services/<name>/ directory, so the path cannot
@@ -918,7 +918,7 @@ jobs:
         #
         # Cache scoped per image: one shared gha cache key across five very
         # different images evicts constantly and ends up slower than no cache.
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ steps.df.outputs.path }}

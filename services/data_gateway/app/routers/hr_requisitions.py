@@ -1324,23 +1324,25 @@ async def confirm_requisition(
 async def requisition_dashboard(
     requisition_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
 ) -> dict[str, Any]:
-    """Everything about one opening on one screen — Group E, E1.
-
-    The list view answers "which openings need me?"; this answers "what is
-    actually happening inside this one?". Three things the list cannot show:
-
-    * WHERE candidates are, per round rather than per status. A status of
-      'shortlisted' is the same word whether someone is waiting for round one
-      or sitting between rounds three and four, and those are different
-      problems.
-    * WHERE THEY STOP. Per-round drop-off is the only view that distinguishes a
-      hard round from a broken one — a round nobody clears is usually the
-      second, not the first.
-    * WHERE THEY CAME FROM. Public applications and HR uploads behave
-      differently enough (volume, quality, consent basis) that a single total
-      hides which lever is working.
-    """
+    """Everything about one opening on one screen — HR's route (E1)."""
     _hr_uid, company_id = ctx
+    return await build_requisition_dashboard(
+        db, company_id=company_id, requisition_id=requisition_id
+    )
+
+
+async def build_requisition_dashboard(
+    db: DbSessionDep, *, company_id: uuid.UUID, requisition_id: uuid.UUID
+) -> dict[str, Any]:
+    """The per-opening dashboard, for HR and for the company super admin (E1, E3).
+
+    One builder, so the super admin's read-only view is the same numbers HR
+    sees rather than a second implementation of them. What the dashboard shows
+    that the openings list cannot: where candidates are per round of the live
+    workflow, where they stop, who is held, what needs attention, what the
+    automation did, and what waits for a person. Company-scoped: another
+    company's opening is a 404.
+    """
     req = await _owned(db, company_id, requisition_id)
 
     by_status = (

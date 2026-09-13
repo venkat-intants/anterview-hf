@@ -34,6 +34,11 @@ const mocks = vi.hoisted(() => {
   };
 });
 vi.mock('../api/requisitions', () => mocks);
+const getCompanyRequisitionDashboard = vi.fn();
+vi.mock('../api/companyBoard', () => ({
+  getCompanyRequisitionDashboard: (...a: unknown[]) =>
+    getCompanyRequisitionDashboard(...a) as unknown,
+}));
 
 import RequisitionDashboardPage from '../pages/hr/RequisitionDashboard';
 
@@ -101,13 +106,16 @@ function dash(over: Partial<RequisitionDashboard> = {}): RequisitionDashboard {
   };
 }
 
-function renderPage() {
+function renderPage(readOnly = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/hr/requisitions/req-1']}>
         <Routes>
-          <Route path="/hr/requisitions/:requisitionId" element={<RequisitionDashboardPage />} />
+          <Route
+            path="/hr/requisitions/:requisitionId"
+            element={<RequisitionDashboardPage readOnly={readOnly} />}
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -221,6 +229,27 @@ describe('the per-opening dashboard (E1)', () => {
     );
     expect(screen.queryByText('By stage')).toBeNull();
     expect(screen.getByText(/refreshes on its own/)).toBeTruthy();
+  });
+
+  it("gives the company super admin the same numbers, with nothing to change (E3)", async () => {
+    getCompanyRequisitionDashboard.mockResolvedValue(dash());
+    renderPage(true);
+    expect(await screen.findByText('Python Developer')).toBeTruthy();
+    expect(getCompanyRequisitionDashboard).toHaveBeenCalledWith('req-1');
+    expect(mocks.getRequisitionDashboard).not.toHaveBeenCalled();
+    expect(screen.getByText('Read-only')).toBeTruthy();
+    expect(screen.getByTestId('held-pool')).toBeTruthy();
+    for (const control of ['Close', 'Pause', 'Workflow', 'Decisions']) {
+      expect(screen.queryByRole('button', { name: control })).toBeNull();
+      expect(screen.queryByRole('link', { name: control })).toBeNull();
+    }
+    expect(screen.queryByRole('switch')).toBeNull();
+    expect(screen.queryByText(/Review them in the decision queue/)).toBeNull();
+    const panel = screen.getByTestId('needs-attention');
+    expect(panel.querySelector('a')).toBeNull();
+    expect(screen.getByRole('link', { name: /Hiring board/ }).getAttribute('href')).toBe(
+      '/superadmin/board',
+    );
   });
 
   it('warns that the public link waits for a published workflow', async () => {

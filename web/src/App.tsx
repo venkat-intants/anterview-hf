@@ -62,6 +62,7 @@ const AdminAnalytics = lazy(() => import('./pages/admin/AdminAnalytics'));
 const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const PlatformOwnerConsole = lazy(() => import('./pages/superadmin/PlatformOwnerConsole'));
 const CompanyAdminConsole = lazy(() => import('./pages/superadmin/CompanyAdminConsole'));
+const HiringBoard = lazy(() => import('./pages/superadmin/HiringBoard'));
 const HRConsole = lazy(() => import('./pages/hr/HRConsole'));
 const Applicants = lazy(() => import('./pages/hr/Applicants'));
 const Exams = lazy(() => import('./pages/hr/Exams'));
@@ -185,6 +186,12 @@ export default function App() {
           <Route element={<SuperAdminRoute />}>
             <Route element={<ShellLayout />}>
               <Route path="/superadmin" element={<CompanyAdminConsole />} />
+              {/* E3: every open opening's health, and each opening read-only. */}
+              <Route path="/superadmin/board" element={<HiringBoard />} />
+              <Route
+                path="/superadmin/requisitions/:requisitionId"
+                element={<RequisitionDashboard readOnly />}
+              />
             </Route>
           </Route>
 

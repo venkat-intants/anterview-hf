@@ -160,7 +160,8 @@ def test_every_query_is_scoped_and_reads_the_ledger() -> None:
 def test_the_dashboard_endpoint_returns_the_new_sections() -> None:
     import inspect
 
-    from app.routers.hr_requisitions import requisition_dashboard
+    from app.routers.hr_requisitions import build_requisition_dashboard, requisition_dashboard
 
-    src = inspect.getsource(requisition_dashboard)
+    src = inspect.getsource(build_requisition_dashboard)
     assert "gather_dashboard(" in src and "**extras" in src
+    assert "build_requisition_dashboard(" in inspect.getsource(requisition_dashboard)

@@ -63,6 +63,7 @@ import {
   type RoundProgress,
 } from '@/api/requisitions';
 import OpeningDetails from '@/components/OpeningDetails';
+import { getCompanyRequisitionDashboard } from '@/api/companyBoard';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -451,7 +452,15 @@ function PublicApplyCard({
 
 /* ── Held pool, manual steps, timing, activity ──────────────────────────── */
 
-function HeldPool({ data, requisitionId }: { data: Dashboard; requisitionId: string }) {
+function HeldPool({
+  data,
+  requisitionId,
+  readOnly = false,
+}: {
+  data: Dashboard;
+  requisitionId: string;
+  readOnly?: boolean;
+}) {
   const { held_pool: pool, progress } = data;
   return (
     <GlassCard className="p-5" data-testid="held-pool">
@@ -491,7 +500,7 @@ function HeldPool({ data, requisitionId }: { data: Dashboard; requisitionId: str
           and {progress.held - pool.length} more
         </p>
       ) : null}
-      {progress.held > 0 ? (
+      {progress.held > 0 && !readOnly ? (
         <Link
           to={`/hr/requisitions/${requisitionId}/decisions`}
           className="mt-3 inline-block text-[12.5px] text-[var(--accent)] hover:underline"
@@ -630,12 +639,25 @@ function Activity({ data }: { data: Dashboard }) {
 
 /* ── Page ───────────────────────────────────────────────────────────────── */
 
-export default function RequisitionDashboard(): JSX.Element {
+/**
+ * `readOnly` is the company super admin's view (E3): the same dashboard, from a
+ * read-only endpoint, with every control and every link into HR's screens
+ * removed. Nothing a super admin sees here can move a candidate or change the
+ * opening — that stays with HR.
+ */
+export default function RequisitionDashboard({
+  readOnly = false,
+}: {
+  readOnly?: boolean;
+}): JSX.Element {
   const { requisitionId = '' } = useParams();
 
   const dash = useQuery({
-    queryKey: ['hr', 'requisition-dashboard', requisitionId],
-    queryFn: () => getRequisitionDashboard(requisitionId),
+    queryKey: [readOnly ? 'superadmin' : 'hr', 'requisition-dashboard', requisitionId],
+    queryFn: () =>
+      readOnly
+        ? getCompanyRequisitionDashboard(requisitionId)
+        : getRequisitionDashboard(requisitionId),
     enabled: Boolean(requisitionId),
     refetchInterval: LIVE_POLL_MS,
   });
@@ -658,7 +680,14 @@ export default function RequisitionDashboard(): JSX.Element {
     );
   }
 
-  const data = dash.data;
+  // Read-only: the links point into HR's screens, which this viewer cannot use.
+  const data: Dashboard = readOnly
+    ? {
+        ...dash.data,
+        attention: dash.data.attention.map((a) => ({ ...a, link: null })),
+        manual_steps: dash.data.manual_steps.map((s) => ({ ...s, link: null })),
+      }
+    : dash.data;
   const { requisition: req, rounds, still_being_read, progress, workflow_state: wf } = data;
   const widest = Math.max(1, ...rounds.map((r) => r.attempted));
   const target = progress.target_hires;
@@ -669,11 +698,11 @@ export default function RequisitionDashboard(): JSX.Element {
       <Reveal>
         <header className="mb-6">
           <Link
-            to="/hr/requisitions"
+            to={readOnly ? '/superadmin/board' : '/hr/requisitions'}
             className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            All openings
+            {readOnly ? 'Hiring board' : 'All openings'}
           </Link>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
@@ -702,6 +731,11 @@ export default function RequisitionDashboard(): JSX.Element {
                 </span>
               </div>
             </div>
+            {readOnly ? (
+              <span className="rounded-full border border-border px-3 py-1 text-[12px] text-muted-foreground">
+                Read-only
+              </span>
+            ) : (
             <div className="flex flex-wrap gap-2">
               <Link
                 to={`/hr/requisitions/${requisitionId}/workflow`}
@@ -722,6 +756,7 @@ export default function RequisitionDashboard(): JSX.Element {
                 title={req.title}
               />
             </div>
+            )}
           </div>
           <p className="mt-2 text-[11.5px] text-[var(--ui-faint)]">
             Live — refreshes on its own
@@ -759,7 +794,7 @@ export default function RequisitionDashboard(): JSX.Element {
 
       <NeedsAttention items={data.attention} />
 
-      <OpeningDetails requisition={req} />
+      {readOnly ? null : <OpeningDetails requisition={req} />}
 
       {still_being_read > 0 ? (
         <div className="mb-5 flex items-center gap-2 rounded-[14px] border border-border bg-black/25 px-4 py-3 text-[12.5px] text-muted-foreground">
@@ -779,12 +814,14 @@ export default function RequisitionDashboard(): JSX.Element {
                   No published workflow yet, so nobody is being moved through anything
                   automatically.
                 </p>
-                <Link
-                  to={`/hr/requisitions/${requisitionId}/workflow`}
-                  className="mt-3 inline-block text-[13px] text-[var(--accent)] hover:underline"
-                >
-                  Build the hiring process →
-                </Link>
+                {readOnly ? null : (
+                  <Link
+                    to={`/hr/requisitions/${requisitionId}/workflow`}
+                    className="mt-3 inline-block text-[13px] text-[var(--accent)] hover:underline"
+                  >
+                    Build the hiring process →
+                  </Link>
+                )}
               </div>
             ) : (
               <>
@@ -806,19 +843,30 @@ export default function RequisitionDashboard(): JSX.Element {
             )}
           </GlassCard>
 
-          <HeldPool data={data} requisitionId={requisitionId} />
+          <HeldPool data={data} requisitionId={requisitionId} readOnly={readOnly} />
           <Activity data={data} />
         </div>
 
         <div className="flex flex-col gap-5">
           <ManualSteps data={data} />
           <TimingAndScores data={data} />
-          <PublicApplyCard
-            requisitionId={requisitionId}
-            enabled={req.public_apply_enabled}
-            status={req.status}
-            hasWorkflow={data.has_published_workflow}
-          />
+          {readOnly ? (
+            <GlassCard className="p-5">
+              <div className="flex items-center gap-2">
+                <Globe className="h-4 w-4 text-[var(--ui-faint)]" aria-hidden="true" />
+                <span className="text-[14px] font-medium text-foreground">
+                  Public applications {req.public_apply_enabled ? 'on' : 'off'}
+                </span>
+              </div>
+            </GlassCard>
+          ) : (
+            <PublicApplyCard
+              requisitionId={requisitionId}
+              enabled={req.public_apply_enabled}
+              status={req.status}
+              hasWorkflow={data.has_published_workflow}
+            />
+          )}
         </div>
       </div>
     </div>

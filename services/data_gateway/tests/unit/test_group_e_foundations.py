@@ -107,9 +107,9 @@ def test_the_watcher_measures_the_wait_from_the_ledger() -> None:
 
 
 def test_the_dashboard_median_comes_from_the_ledger() -> None:
-    from app.routers.hr_requisitions import requisition_dashboard
+    from app.routers.hr_requisitions import build_requisition_dashboard
 
-    src = _squash(inspect.getsource(requisition_dashboard))
+    src = _squash(inspect.getsource(build_requisition_dashboard))
     assert "enrolment_state_since(e.id, e.created_at)" in src
     assert "NOW() - e.updated_at" not in src
 

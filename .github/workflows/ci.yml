@@ -898,6 +898,13 @@ jobs:
             echo "path=services/${{ matrix.image }}/Dockerfile" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Date for the apt refresh
+        # Feeds APT_REFRESH in every Dockerfile's runtime stage. The gha cache
+        # otherwise replays a stale `apt-get upgrade` layer indefinitely, and the
+        # CVE scan below fails on base-package fixes Debian has already shipped.
+        id: apt
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       - name: Build
         # The sole production artefact was never built in CI — it went straight
         # from a green lint run to a force-push at the live Space, so a broken
@@ -918,6 +925,8 @@ jobs:
           push: false
           load: true
           tags: intants-${{ matrix.image }}:ci
+          build-args: |
+            APT_REFRESH=${{ steps.apt.outputs.day }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 

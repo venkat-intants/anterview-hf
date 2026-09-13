@@ -54,7 +54,12 @@ WORKDIR /app
 #
 # Runtime stage only. Trivy scans the final image; the builder stage ships
 # nothing but compiled wheels.
-RUN apt-get update \
+#
+# APT_REFRESH expires this layer's cache so the upgrade reruns in CI at most
+# daily — see the note in the root Dockerfile.
+ARG APT_REFRESH=local
+RUN echo "apt refresh: ${APT_REFRESH}" \
+    && apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         libffi8 \

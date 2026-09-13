@@ -106,7 +106,16 @@ FROM python:3.12-slim AS runtime
 #
 # Runtime stage only. Trivy scans the final image; the builder stage ships
 # nothing but compiled wheels.
-RUN apt-get update \
+#
+# APT_REFRESH expires this layer's cache. Without it the upgrade never reruns in
+# CI: the gha build cache keys the layer on the base digest and this RUN text,
+# neither changes when Debian publishes a fix, so the cached layer — with the old
+# packages — is replayed and Trivy fails on CVEs the upgrade would have fixed
+# (gzip, pcre2, sqlite, perl-base, 2026-09-13). CI passes the date, so the
+# upgrade reruns at most daily; a local build without the arg behaves as before.
+ARG APT_REFRESH=local
+RUN echo "apt refresh: ${APT_REFRESH}" \
+    && apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         libffi8 \

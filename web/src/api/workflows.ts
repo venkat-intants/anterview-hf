@@ -169,6 +169,36 @@ export function getWorkflow(workflowId: string): Promise<Workflow> {
 }
 
 /** Start a draft. 409 when the opening already has one — there is only ever one. */
+/** A starter template, as it would be built for THIS role (D4). */
+export interface WorkflowTemplateSummary {
+  key: 'technical' | 'non_technical' | 'interview_only';
+  name: string;
+  description: string;
+  /** The one that suits the role's occupational family. */
+  recommended: boolean;
+  rounds: {
+    title: string;
+    kind: RoundKind;
+    pass_threshold: number | null;
+    time_limit_seconds: number | null;
+    deadline_days: number;
+    /** Names of the role competencies this round would assess. */
+    competencies: string[];
+  }[];
+}
+
+export function listWorkflowTemplates(requisitionId: string): Promise<WorkflowTemplateSummary[]> {
+  return apiGet<WorkflowTemplateSummary[]>(`/hr/requisitions/${requisitionId}/workflow-templates`);
+}
+
+/** Create a DRAFT from a template — rounds, competencies, timings and settings
+ *  in one transaction. Never touches a published workflow. */
+export function createFromTemplate(requisitionId: string, template: string): Promise<Workflow> {
+  return apiPost<Workflow>(`/hr/requisitions/${requisitionId}/workflows/from-template`, {
+    template,
+  });
+}
+
 export function startDraft(requisitionId: string, name?: string): Promise<Workflow> {
   const q = name ? `?name=${encodeURIComponent(name)}` : '';
   return apiPost<Workflow>(`/hr/requisitions/${requisitionId}/workflows${q}`, {});

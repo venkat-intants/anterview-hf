@@ -42,6 +42,7 @@ from sqlalchemy import text
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.workflow_runner import decision_queue, record_result, release_hold
+from app.workflow_templates import TEMPLATES, build_template, template_summaries
 from app.workflows import (
     EXAM_BACKED_KINDS,
     MAX_ROUNDS,
@@ -204,6 +205,21 @@ def _settings_of(row: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # The competencies HR chooses from
 # ---------------------------------------------------------------------------
+def _role_profile(req: dict[str, Any]) -> Any:
+    """The role model for a requisition — taxonomy baseline, no LLM call.
+
+    Shared by the criteria picker and the starter templates, so a templated
+    round's competencies are exactly the ones the picker offers.
+    """
+    level = req["level"] if req["level"] in _LEVELS else "mid"
+    return baseline_profile(
+        profile_id=compute_profile_id(job_title=req["title"], seniority=level),
+        job_title=req["title"],
+        seniority=level,  # type: ignore[arg-type]
+    )
+
+
+
 @router.get("/requisitions/{requisition_id}/role-model")
 async def role_model(
     requisition_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
@@ -218,12 +234,7 @@ async def role_model(
     """
     _hr_uid, company_id = ctx
     req = await _owned_requisition(db, company_id, requisition_id)
-    level = req["level"] if req["level"] in _LEVELS else "mid"
-    profile = baseline_profile(
-        profile_id=compute_profile_id(job_title=req["title"], seniority=level),
-        job_title=req["title"],
-        seniority=level,  # type: ignore[arg-type]
-    )
+    profile = _role_profile(req)
     return {
         "job_title": profile.job_title,
         "domain_family": profile.domain_family,
@@ -366,6 +377,50 @@ async def apply_draft(
     log.info("hr.workflow.applied", workflow_id=str(wf_id),
              requisition_id=str(requisition_id), rounds=len(body.rounds))
     return await get_workflow(wf_id, ctx, db)
+
+
+class TemplateIn(BaseModel):
+    template: str
+
+    @field_validator("template")
+    @classmethod
+    def _known(cls, v: str) -> str:
+        if v not in TEMPLATES:
+            raise ValueError(f"template must be one of {sorted(TEMPLATES)}")
+        return v
+
+
+@router.get("/requisitions/{requisition_id}/workflow-templates")
+async def list_workflow_templates(
+    requisition_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> list[dict[str, Any]]:
+    """The starter templates, as they would be built for THIS role (D4).
+
+    A preview of the real thing — rounds, and which competencies each would
+    assess — with the one that suits the role's occupational family marked.
+    """
+    _hr_uid, company_id = ctx
+    req = await _owned_requisition(db, company_id, requisition_id)
+    return template_summaries(_role_profile(req))
+
+
+@router.post(
+    "/requisitions/{requisition_id}/workflows/from-template",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_from_template(
+    requisition_id: uuid.UUID, body: TemplateIn, ctx: HrCtxDep, db: DbSessionDep
+) -> dict[str, Any]:
+    """Create a DRAFT from a starter template, seeded from the role model (D4).
+
+    Goes through apply_draft — the same one-transaction path a copilot proposal
+    uses — so a template can never produce a half-built workflow, and never
+    touches a published one.
+    """
+    _hr_uid, company_id = ctx
+    req = await _owned_requisition(db, company_id, requisition_id)
+    payload = ApplyDraftIn.model_validate(build_template(body.template, _role_profile(req)))
+    return await apply_draft(requisition_id, payload, ctx, db)
 
 
 @router.get("/workflows/{workflow_id}")

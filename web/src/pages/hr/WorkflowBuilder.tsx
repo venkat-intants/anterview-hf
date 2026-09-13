@@ -46,6 +46,9 @@ import { getRequisition } from '@/api/requisitions';
 import {
   addRound,
   cloneWorkflow,
+  createFromTemplate,
+  listWorkflowTemplates,
+  type WorkflowTemplateSummary,
   discardDraft,
   getRoleModel,
   getWorkflow,
@@ -73,7 +76,7 @@ import RoundInspector from '@/components/workflow/RoundInspector';
 import CoveragePanel from '@/components/workflow/CoveragePanel';
 import PostingEditor from '@/components/workflow/PostingEditor';
 import QuestionEditor from '@/components/workflow/QuestionEditor';
-import { ROUND_KIND_META, TEMPLATES } from '@/components/workflow/roundKinds';
+import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -206,10 +209,13 @@ function EmptyState({
   onBlank,
   onTemplate,
   busy,
+  templates,
 }: {
   onBlank: () => void;
   onTemplate: (key: string) => void;
   busy: boolean;
+  /** Built on the server against this role's competencies (D4). */
+  templates: WorkflowTemplateSummary[] | undefined;
 }) {
   return (
     <GlassCard className="p-8">
@@ -221,31 +227,53 @@ function EmptyState({
       </p>
 
       <div className="mt-5 grid gap-3 md:grid-cols-3">
-        {TEMPLATES.map((t) => (
+        {templates === undefined ? (
+          <p className="text-[12.5px] text-muted-foreground">Loading templates for this role…</p>
+        ) : null}
+        {(templates ?? []).map((t) => (
           <button
             key={t.key}
             type="button"
             disabled={busy}
             onClick={() => onTemplate(t.key)}
-            className="flex flex-col rounded-[16px] border border-border p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-[var(--ui-inset-soft)] disabled:opacity-50"
+            aria-label={`Start from the ${t.name} template`}
+            className={cn(
+              'flex flex-col rounded-[16px] border p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-[var(--ui-inset-soft)] disabled:opacity-50',
+              t.recommended ? 'border-[var(--accent)]/40' : 'border-border',
+            )}
           >
-            <span className="text-[14px] font-medium text-foreground">{t.name}</span>
+            <span className="flex items-center justify-between gap-2">
+              <span className="text-[14px] font-medium text-foreground">{t.name}</span>
+              {t.recommended ? (
+                <span className="rounded-pill bg-[var(--accent)]/15 px-2 py-0.5 text-[10.5px] text-[var(--accent)]">
+                  Suits this role
+                </span>
+              ) : null}
+            </span>
             <span className="mt-1 text-[12px] leading-snug text-muted-foreground">
               {t.description}
             </span>
-            <span className="mt-3 flex flex-wrap gap-1">
+            {/* What it would actually create, for this role: each round and
+                the competencies it would assess. */}
+            <ol className="mt-3 flex flex-col gap-1.5">
               {t.rounds.map((r, i) => (
-                <span
-                  key={`${r.kind}-${i}`}
-                  className="rounded-pill border border-border px-2 py-0.5 text-[10.5px] text-[var(--ui-soft)]"
-                >
-                  {ROUND_KIND_META[r.kind].label}
-                </span>
+                <li key={`${r.kind}-${i}`} className="text-[11.5px] leading-snug">
+                  <span className="font-medium text-[var(--ui-soft)]">
+                    {i + 1}. {ROUND_KIND_META[r.kind].label}
+                  </span>
+                  {r.competencies.length > 0 ? (
+                    <span className="text-[var(--ui-faint)]"> — {r.competencies.join(', ')}</span>
+                  ) : null}
+                </li>
               ))}
-            </span>
+            </ol>
           </button>
         ))}
       </div>
+      <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
+        A template fills in the rounds, what each assesses, timings and settings. Test rounds
+        still need their questions attached before you can publish.
+      </p>
 
       <button
         type="button"
@@ -312,6 +340,11 @@ export default function WorkflowBuilder(): JSX.Element {
     enabled: Boolean(workflowId) && (wf.data?.rounds.length ?? 0) > 0,
   });
 
+  const templates = useQuery({
+    queryKey: ['hr', 'workflow-templates', requisitionId],
+    queryFn: () => listWorkflowTemplates(requisitionId),
+    staleTime: 5 * 60_000,
+  });
   const roleModel = useQuery({
     queryKey: ['hr', 'role-model', requisitionId],
     queryFn: () => getRoleModel(requisitionId),
@@ -346,18 +379,11 @@ export default function WorkflowBuilder(): JSX.Element {
   // ── Creating ──────────────────────────────────────────────────────────────
   const createMut = useMutation({
     mutationFn: async (templateKey: string | null) => {
-      const tpl = templateKey ? TEMPLATES.find((t) => t.key === templateKey) : null;
-      let draft = await startDraft(requisitionId, tpl?.name);
-      // Sequential, not parallel: rounds are positioned in insert order, and
-      // firing four concurrent POSTs would race for those positions.
-      for (const r of tpl?.rounds ?? []) {
-        draft = await addRound(draft.id, {
-          title: r.title,
-          kind: r.kind,
-          pass_threshold: r.pass_threshold,
-        });
-      }
-      return draft;
+      // A template is built server-side against the role and created in one
+      // transaction; a blank canvas is just a draft.
+      return templateKey
+        ? createFromTemplate(requisitionId, templateKey)
+        : startDraft(requisitionId);
     },
     onSuccess: (draft) => {
       setActiveId(draft.id);
@@ -582,6 +608,7 @@ export default function WorkflowBuilder(): JSX.Element {
             busy={createMut.isPending}
             onBlank={() => createMut.mutate(null)}
             onTemplate={(key) => createMut.mutate(key)}
+            templates={templates.data}
           />
           {copilotAvailable ? (
             <GlassCard className="flex h-[440px] flex-col p-5">

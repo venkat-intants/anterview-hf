@@ -169,6 +169,8 @@ const reorderRounds = vi.fn();
 const setRoundCriteria = vi.fn();
 const updateSettings = vi.fn();
 const startDraft = vi.fn();
+const listWorkflowTemplates = vi.fn();
+const createFromTemplate = vi.fn();
 const publishWorkflow = vi.fn();
 const cloneWorkflow = vi.fn();
 const discardDraft = vi.fn();
@@ -188,6 +190,8 @@ vi.mock('../api/workflows', () => ({
   setRoundCriteria: (...a: unknown[]) => setRoundCriteria(...a) as unknown,
   updateSettings: (...a: unknown[]) => updateSettings(...a) as unknown,
   startDraft: (...a: unknown[]) => startDraft(...a) as unknown,
+  listWorkflowTemplates: (...a: unknown[]) => listWorkflowTemplates(...a) as unknown,
+  createFromTemplate: (...a: unknown[]) => createFromTemplate(...a) as unknown,
   publishWorkflow: (...a: unknown[]) => publishWorkflow(...a) as unknown,
   cloneWorkflow: (...a: unknown[]) => cloneWorkflow(...a) as unknown,
   discardDraft: (...a: unknown[]) => discardDraft(...a) as unknown,
@@ -429,28 +433,49 @@ describe('WorkflowBuilder — publishing', () => {
 });
 
 describe('WorkflowBuilder — starting from nothing', () => {
-  it('offers templates and a blank canvas when the opening has no workflow', async () => {
+  const TEMPLATES = [
+    { key: 'technical', name: 'Technical', description: 'Aptitude, code, conversation, review.',
+      recommended: true,
+      rounds: [
+        { title: 'Aptitude', kind: 'mcq', pass_threshold: 60, time_limit_seconds: 1800,
+          deadline_days: 5, competencies: ['Python', 'Software Lifecycle'] },
+        { title: 'Human Review', kind: 'human_review', pass_threshold: null,
+          time_limit_seconds: null, deadline_days: 5, competencies: ['Ownership'] },
+      ] },
+    { key: 'interview_only', name: 'Interview only', description: 'Straight to the conversation.',
+      recommended: false,
+      rounds: [
+        { title: 'AI Interview', kind: 'ai_interview', pass_threshold: 60,
+          time_limit_seconds: null, deadline_days: 7, competencies: ['Communication'] },
+      ] },
+  ];
+
+  it('offers templates built for this role, marking the one that suits it', async () => {
     listWorkflows.mockResolvedValue([]);
+    listWorkflowTemplates.mockResolvedValue(TEMPLATES);
     renderBuilder();
 
     expect(await screen.findByText('Give this opening a process')).toBeTruthy();
-    expect(screen.getByText('Technical hire')).toBeTruthy();
+    expect(await screen.findByText('Technical')).toBeTruthy();
+    expect(screen.getByText('Suits this role')).toBeTruthy();
+    // What it would create, for this role: the competencies each round assesses.
+    expect(screen.getByText(/Python, Software Lifecycle/)).toBeTruthy();
     expect(screen.getByText('Start from an empty canvas instead')).toBeTruthy();
   });
 
-  it('builds a template one round at a time, in order', async () => {
+  it('creates a template as one draft on the server, not round by round', async () => {
     const user = userEvent.setup();
     listWorkflows.mockResolvedValue([]);
-    startDraft.mockResolvedValue({ ...DRAFT, rounds: [] });
+    listWorkflowTemplates.mockResolvedValue(TEMPLATES);
+    createFromTemplate.mockResolvedValue({ ...DRAFT });
     renderBuilder();
-    await screen.findByText('Give this opening a process');
 
-    await user.click(screen.getByText('Interview only'));
+    await user.click(await screen.findByRole('button', { name: /interview only template/i }));
 
-    await waitFor(() => expect(addRound).toHaveBeenCalledTimes(2));
-    // Sequential, and in the template's order — positions come from insert
-    // order, so a parallel fan-out would race for them.
-    expect(addRound.mock.calls[0][1]).toMatchObject({ kind: 'ai_interview' });
-    expect(addRound.mock.calls[1][1]).toMatchObject({ kind: 'human_review' });
+    await waitFor(() =>
+      expect(createFromTemplate).toHaveBeenCalledWith(expect.any(String), 'interview_only'),
+    );
+    // One transaction: the rounds, their competencies and settings together.
+    expect(addRound).not.toHaveBeenCalled();
   });
 });

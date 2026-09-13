@@ -152,6 +152,9 @@ export interface ValidationReport {
   /** Advisory. Publish proceeds; the builder shows them anyway. */
   warnings: string[];
   coverage: CoverageRow[];
+  /** Candidates who applied while nothing was live, who publishing will attach
+   *  (D5): the shortlisted start the first round, the rest wait. */
+  waiting?: { applied: number; shortlisted: number };
 }
 
 export function validateWorkflow(workflowId: string): Promise<ValidationReport> {
@@ -292,8 +295,20 @@ export function setRoundCriteria(
  */
 export function publishWorkflow(
   workflowId: string,
-): Promise<Workflow & { validation: ValidationReport }> {
-  return apiPost<Workflow & { validation: ValidationReport }>(
+): Promise<
+  Workflow & {
+    validation: ValidationReport;
+    attached_candidates?: number;
+    started_candidates?: number;
+  }
+> {
+  return apiPost<
+    Workflow & {
+      validation: ValidationReport;
+      attached_candidates?: number;
+      started_candidates?: number;
+    }
+  >(
     `/hr/workflows/${workflowId}/publish`,
     {},
   );

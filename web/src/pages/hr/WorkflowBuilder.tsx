@@ -74,6 +74,9 @@ import ProposalPreview from '@/components/workflow/ProposalPreview';
 import { getAgentStatus, type Proposal } from '@/api/agent';
 import RoundInspector from '@/components/workflow/RoundInspector';
 import CoveragePanel from '@/components/workflow/CoveragePanel';
+import CandidatePreview from '@/components/workflow/CandidatePreview';
+import LifecycleSteps from '@/components/workflow/LifecycleSteps';
+import { applicationsWarning, publishImpact } from '@/lib/workflowLifecycle';
 import PostingEditor from '@/components/workflow/PostingEditor';
 import QuestionEditor from '@/components/workflow/QuestionEditor';
 import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
@@ -297,6 +300,9 @@ export default function WorkflowBuilder(): JSX.Element {
   const [selectedRound, setSelectedRound] = useState<string | null>(null);
   const [tab, setTab] = useState<'round' | 'settings'>('round');
   const [confirmPublish, setConfirmPublish] = useState(false);
+  // D5: the candidate's-eye preview, and whether it has been looked at.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewed, setPreviewed] = useState(false);
   // What the copilot has drafted and the user has not yet accepted or
   // discarded. Held here rather than inside the chat panel because the preview
   // is drawn on the canvas, and only one of the two surfaces can own it.
@@ -399,7 +405,13 @@ export default function WorkflowBuilder(): JSX.Element {
     onSuccess: (res) => {
       setConfirmPublish(false);
       applyWorkflow(res);
-      toast.success(`Version ${res.version} is live`);
+      const started = res.started_candidates ?? 0;
+      const attached = res.attached_candidates ?? 0;
+      toast.success(
+        attached > 0
+          ? `Version ${res.version} is live — ${attached} waiting candidate${attached === 1 ? '' : 's'} joined${started > 0 ? `, ${started} started round 1` : ''}`
+          : `Version ${res.version} is live`,
+      );
     },
     onError: (e) => {
       setConfirmPublish(false);
@@ -570,6 +582,11 @@ export default function WorkflowBuilder(): JSX.Element {
           <div className="flex flex-wrap items-center gap-3">
             <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />
             <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-[var(--ui-soft)]">
+              {publishImpact(validation.data?.waiting) ? (
+                <strong className="mb-1 block font-medium text-foreground">
+                  {publishImpact(validation.data?.waiting)}
+                </strong>
+              ) : null}
               Publishing makes this version live for {req.data?.title ?? 'this opening'}.
               New candidates start here; anyone already inside an older version finishes
               it on the rounds they began with.
@@ -638,6 +655,59 @@ export default function WorkflowBuilder(): JSX.Element {
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
           {/* Canvas */}
           <GlassCard className="p-5">
+            {/* D5: an opening taking applications with nothing live. Nobody is
+                lost — publishing attaches them — but nothing moves until then. */}
+            {(() => {
+              const warning = applicationsWarning({
+                title: req.data?.title ?? 'This opening',
+                accepting: Boolean(req.data?.public_apply_enabled && req.data?.status === 'open'),
+                hasLiveVersion: (versions.data ?? []).some((v) => v.status === 'published'),
+                draftVersion:
+                  (versions.data ?? []).find((v) => v.status === 'draft')?.version ?? null,
+                waiting: validation.data?.waiting,
+              });
+              return warning ? (
+                <div
+                  role="alert"
+                  className="mb-4 flex items-start gap-2 rounded-[12px] border border-[var(--ui-warn)]/35 bg-[var(--ui-warn)]/[0.07] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
+                >
+                  <AlertTriangle
+                    className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]"
+                    aria-hidden="true"
+                  />
+                  {warning}
+                </div>
+              ) : null;
+            })()}
+
+            {editable ? (
+              <LifecycleSteps
+                status={workflow.status}
+                previewed={previewed}
+                issues={validation.data?.errors.length ?? 0}
+                publishable={Boolean(validation.data?.publishable)}
+                onPreview={() => {
+                  setPreviewOpen((open) => !open);
+                  setPreviewed(true);
+                }}
+                onPublish={() => setConfirmPublish(true)}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPreviewOpen((open) => !open)}
+                className="mb-4 rounded-pill border border-border px-3 py-1 text-[12px] text-[var(--ui-soft)] hover:border-[var(--accent)]"
+              >
+                {previewOpen ? 'Hide candidate preview' : 'Preview as a candidate'}
+              </button>
+            )}
+
+            {previewOpen ? (
+              <div className="mb-5 rounded-[14px] border border-[var(--accent)]/25 p-4">
+                <CandidatePreview title={req.data?.title ?? 'this opening'} rounds={workflow.rounds} />
+              </div>
+            ) : null}
+
             {!editable ? (
               <div className="mb-4 flex items-start gap-2 rounded-[12px] border border-border bg-black/25 p-3 text-[12.5px] leading-relaxed text-muted-foreground">
                 <Eye className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />

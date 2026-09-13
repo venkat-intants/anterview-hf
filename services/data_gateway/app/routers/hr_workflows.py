@@ -41,7 +41,7 @@ from sqlalchemy import text
 
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
-from app.workflow_runner import decision_queue, record_result, release_hold
+from app.workflow_runner import decision_queue, on_shortlisted, record_result, release_hold
 from app.workflow_templates import TEMPLATES, build_template, template_summaries
 from app.workflows import (
     EXAM_BACKED_KINDS,
@@ -49,6 +49,7 @@ from app.workflows import (
     ROUND_KINDS,
     WorkflowError,
     add_round,
+    attach_waiting_candidates,
     clone_for_edit,
     create_draft,
     discard_draft,
@@ -61,6 +62,7 @@ from app.workflows import (
     update_round,
     update_settings,
     validate,
+    waiting_candidates,
 )
 
 log = structlog.get_logger(__name__)
@@ -625,7 +627,8 @@ async def validate_workflow(
     wf = await _owned_workflow(db, company_id, workflow_id)
     comps = await _profile_competencies(db, company_id, wf["requisition_id"])
     report = await validate(db, workflow_id, comps)
-    return report.as_dict()
+    # Who publishing will affect, so the confirmation can say so beforehand.
+    return {**report.as_dict(), "waiting": await waiting_candidates(db, wf["requisition_id"])}
 
 
 @router.post("/workflows/{workflow_id}/publish")
@@ -653,10 +656,31 @@ async def publish_workflow(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=report.as_dict()
         )
+
+    # Candidates who applied while nothing was live join this version, in the
+    # same transaction as the publish. Those a person had already shortlisted
+    # start their first round now — their human gate already happened, and
+    # leaving them would strand them: re-saving "shortlisted" is a no-op. The
+    # rest wait for the shortlist as normal. on_shortlisted still honours
+    # auto_assign_first_round, and it never decides anything (D-05).
+    attached = await attach_waiting_candidates(
+        db, requisition_id=wf["requisition_id"], workflow_id=workflow_id
+    )
+    started = 0
+    for enrolment_id, st in attached:
+        if st == "shortlisted":
+            outcome = await on_shortlisted(db, enrolment_id=enrolment_id, actor_user_id=_hr_uid)
+            started += outcome.action == "advanced"
     await db.commit()
     log.info("hr.workflow.published", workflow_id=str(workflow_id),
-             company_id=str(company_id), warnings=len(report.warnings))
-    return {**await get_workflow(workflow_id, ctx, db), "validation": report.as_dict()}
+             company_id=str(company_id), warnings=len(report.warnings),
+             attached=len(attached), started=started)
+    return {
+        **await get_workflow(workflow_id, ctx, db),
+        "validation": report.as_dict(),
+        "attached_candidates": len(attached),
+        "started_candidates": started,
+    }
 
 
 @router.post("/workflows/{workflow_id}/clone", status_code=status.HTTP_201_CREATED)

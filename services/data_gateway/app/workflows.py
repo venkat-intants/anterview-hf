@@ -706,6 +706,62 @@ async def validate(
     return report
 
 
+# Candidates who applied while the opening had no live workflow: enrolled
+# (C5 never loses an applicant) but with no workflow, so nothing could ever
+# start for them. Live, not decided, not already inside a round.
+#
+# Two whole literals rather than one shared WHERE fragment: the SAST gate
+# (bandit B608) fails SQL assembled from strings, and the test holds the two
+# predicates together instead.
+_WAITING_COUNT_SQL = """
+SELECT count(*) FILTER (WHERE status = 'shortlisted') AS shortlisted,
+       count(*) FILTER (WHERE status <> 'shortlisted') AS applied
+  FROM enrolments
+ WHERE requisition_id = :r AND deleted_at IS NULL AND workflow_id IS NULL
+   AND current_round_id IS NULL AND status NOT IN ('hired', 'rejected')
+"""
+
+_ATTACH_WAITING_SQL = """
+UPDATE enrolments SET workflow_id = :w, updated_at = now()
+ WHERE requisition_id = :r AND deleted_at IS NULL AND workflow_id IS NULL
+   AND current_round_id IS NULL AND status NOT IN ('hired', 'rejected')
+RETURNING id, status
+"""
+
+
+async def waiting_candidates(db: AsyncSession, requisition_id: uuid.UUID) -> dict[str, int]:
+    """How many candidates are waiting for a workflow to go live (D5).
+
+    ``shortlisted`` is the number a person has already confirmed: publishing
+    starts their first round. ``applied`` is everyone else, who join the
+    workflow and wait for the shortlist as normal.
+    """
+    row = (
+        await db.execute(text(_WAITING_COUNT_SQL), {"r": requisition_id})
+    ).mappings().first()
+    return {
+        "shortlisted": int(row["shortlisted"] or 0) if row else 0,
+        "applied": int(row["applied"] or 0) if row else 0,
+    }
+
+
+async def attach_waiting_candidates(
+    db: AsyncSession, *, requisition_id: uuid.UUID, workflow_id: uuid.UUID
+) -> list[tuple[uuid.UUID, str]]:
+    """Put everyone waiting onto the version just published. Caller commits.
+
+    The runner's own comment promised this — applicants who arrive early "join
+    a workflow when one goes live" — and nothing did it: publishing left them
+    with no workflow, so shortlisting them afterwards reported "no workflow
+    attached" and started nothing, silently. Returns (enrolment id, status) for
+    each, so the caller can start the ones a person already shortlisted.
+    """
+    rows = (
+        await db.execute(text(_ATTACH_WAITING_SQL), {"r": requisition_id, "w": workflow_id})
+    ).all()
+    return [(uuid.UUID(str(r[0])), str(r[1])) for r in rows]
+
+
 async def publish(
     db: AsyncSession,
     *,

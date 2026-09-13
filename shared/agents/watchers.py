@@ -77,6 +77,10 @@ class StalledApplicant:
     name: str
     stage: str
     days_in_stage: int
+    # The opening they are stalled in (E6). Blank only for data gathered before
+    # openings existed, which is reported company-wide as it always was.
+    requisition_id: str = ""
+    requisition_title: str = ""
 
 
 @dataclass
@@ -133,6 +137,26 @@ class OpeningHealth:
 
 
 @dataclass
+class RoundStall:
+    """Candidates sitting on one round of one opening past its deadline — E6.
+
+    The threshold is the round's own ``deadline_days``: what the workflow told
+    candidates they had. Someone still on the round after that is stuck by the
+    process's own definition rather than by a number invented here.
+    """
+
+    requisition_id: str
+    requisition_title: str
+    round_id: str
+    round_title: str
+    threshold_days: int
+    waiting: int
+    longest_days: float
+    # (applicant_id, name), longest wait first.
+    candidates: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
 class WatcherInput:
     """Everything the watchers need, gathered by the service in one pass.
 
@@ -147,44 +171,68 @@ class WatcherInput:
     question_stats: list[QuestionStat] = field(default_factory=list)
     erasure_requests: list[ErasureRequest] = field(default_factory=list)
     openings: list[OpeningHealth] = field(default_factory=list)
+    round_stalls: list[RoundStall] = field(default_factory=list)
 
 
 def watch_stalled_applicants(data: WatcherInput) -> list[WatcherFinding]:
-    """Candidates going cold in a non-terminal stage."""
+    """Candidates going cold before any round starts — one finding per opening.
+
+    Per opening since E6: "7 applicants stalled" across a company tells a
+    manager nothing about where to look. Candidates stuck INSIDE a round are
+    ``watch_round_stalls``' job and candidates waiting on a person are
+    ``watch_decision_backlog``'s, so the gathering query leaves both out and no
+    one is alerted about twice.
+    """
     stalled = [a for a in data.stalled if a.days_in_stage >= STALLED_DAYS]
     if not stalled:
         return []
 
-    stalled.sort(key=lambda a: -a.days_in_stage)
-    worst = stalled[0]
-    names = ", ".join(a.name for a in stalled[:5])
-    more = f" and {len(stalled) - 5} more" if len(stalled) > 5 else ""
+    groups: dict[str, list[StalledApplicant]] = {}
+    for a in stalled:
+        groups.setdefault(a.requisition_id, []).append(a)
 
-    return [
-        WatcherFinding(
-            watcher="stalled_applicants",
-            severity="warning" if len(stalled) < 10 else "critical",
-            title=f"{len(stalled)} applicant(s) stalled over {STALLED_DAYS} days",
-            body=(
-                f"{names}{more} have not moved stage. The longest, {worst.name}, "
-                f"has been in '{worst.stage}' for {worst.days_in_stage} days. "
-                "Candidates usually assume silence means rejection."
-            ),
-            link="/hr/pipeline",
-            # Keyed on WHO is stalled, so the alert re-fires only when the set
-            # changes — not every night until someone acts.
-            dedupe_key="stalled:" + ",".join(sorted(a.applicant_id for a in stalled)),
-            citations=[
-                Citation(
-                    kind="applicant",
-                    id=a.applicant_id,
-                    label=a.name,
-                    href=f"/hr/applicants/{a.applicant_id}",
-                )
-                for a in stalled[:10]
-            ],
+    findings: list[WatcherFinding] = []
+    for rid, group in groups.items():
+        group.sort(key=lambda a: -a.days_in_stage)
+        worst = group[0]
+        names = ", ".join(a.name for a in group[:5])
+        more = f" and {len(group) - 5} more" if len(group) > 5 else ""
+        opening = f" — {worst.requisition_title}" if rid and worst.requisition_title else ""
+        where = f" for {worst.requisition_title}" if opening else ""
+        citations = (
+            [Citation(kind="job", id=rid, label=worst.requisition_title,
+                      href=f"/hr/requisitions/{rid}")]
+            if opening
+            else []
         )
-    ]
+        citations += [
+            Citation(
+                kind="applicant",
+                id=a.applicant_id,
+                label=a.name,
+                href=f"/hr/applicants/{a.applicant_id}",
+            )
+            for a in group[:10]
+        ]
+        findings.append(
+            WatcherFinding(
+                watcher="stalled_applicants",
+                severity="warning" if len(group) < 10 else "critical",
+                title=f"{len(group)} applicant(s) stalled over {STALLED_DAYS} days{opening}",
+                body=(
+                    f"{names}{more} have not moved stage{where}. The longest, {worst.name}, "
+                    f"has been in '{worst.stage}' for {worst.days_in_stage} days. "
+                    "Candidates usually assume silence means rejection."
+                ),
+                link=f"/hr/requisitions/{rid}" if rid else "/hr/pipeline",
+                # Keyed on the opening and WHO is stalled, so the alert re-fires
+                # only when the set changes — not every night until someone acts.
+                dedupe_key=(f"stalled:{rid}:" if rid else "stalled:")
+                + ",".join(sorted(a.applicant_id for a in group)),
+                citations=citations,
+            )
+        )
+    return findings
 
 
 def watch_funnel_health(data: WatcherInput) -> list[WatcherFinding]:
@@ -207,10 +255,13 @@ def watch_funnel_health(data: WatcherInput) -> list[WatcherFinding]:
                     "screening bar or the job description is off, rather than "
                     "the applicant pool."
                 ),
-                link="/hr/analytics",
+                # The opening itself (E6). job_id is the requisition id; it was
+                # the title, which merged two openings that shared one.
+                link=f"/hr/requisitions/{row.job_id}",
                 dedupe_key=f"funnel:{row.job_id}:{row.applicants // 10}",
                 citations=[
-                    Citation(kind="job", id=row.job_id, label=row.job_title)
+                    Citation(kind="job", id=row.job_id, label=row.job_title,
+                             href=f"/hr/requisitions/{row.job_id}")
                 ],
             )
         )
@@ -305,6 +356,18 @@ def watch_dpdp_deadlines(data: WatcherInput) -> list[WatcherFinding]:
     ]
 
 
+# Queue sizes an alert re-fires at. Keying the dedupe on the exact count made a
+# queue that SHRANK — someone working through it, 8 to 7 — notify again as if it
+# were news. Keyed on the band, it re-fires when the queue crosses into a bigger
+# band and stays quiet while it moves inside one.
+_SIZE_BANDS: tuple[int, ...] = (1, 3, 5, 10, 25, 50, 100)
+
+
+def size_band(n: int) -> int:
+    """The largest alert band at or below *n*; 0 below the first band."""
+    return max((b for b in _SIZE_BANDS if b <= n), default=0)
+
+
 def watch_decision_backlog(data: WatcherInput) -> list[WatcherFinding]:
     """People the workflow has handed to a human who has not looked yet — E6.
 
@@ -348,9 +411,10 @@ def watch_decision_backlog(data: WatcherInput) -> list[WatcherFinding]:
                     "Nothing advances them without a person."
                 ),
                 link=f"/hr/requisitions/{opening.requisition_id}/decisions",
-                # Keyed on the opening and the size of the queue, so it re-fires
-                # when the backlog grows but not every night while it sits.
-                dedupe_key=f"decisions:{opening.requisition_id}:{waiting}",
+                # Keyed on the opening and the queue's size BAND, so it re-fires
+                # when the backlog grows into a bigger band — not every night
+                # while it sits, and not when someone works it down by one.
+                dedupe_key=f"decisions:{opening.requisition_id}:ge{size_band(waiting)}",
                 citations=[
                     Citation(
                         kind="job",
@@ -358,6 +422,61 @@ def watch_decision_backlog(data: WatcherInput) -> list[WatcherFinding]:
                         label=opening.title,
                         href=f"/hr/requisitions/{opening.requisition_id}/decisions",
                     )
+                ],
+            )
+        )
+    return findings
+
+
+# A stall this wide is no longer a few slow candidates.
+ROUND_STALL_CRITICAL_COUNT: int = 10
+
+
+def watch_round_stalls(data: WatcherInput) -> list[WatcherFinding]:
+    """A round of one opening that candidates are stuck on — E6.
+
+    Names the opening AND the round, because "the pipeline has stalled" gives a
+    manager nowhere to start, and "Python Developer — Technical Test" does.
+    Critical once ten people are stuck or the longest has waited twice the
+    round's deadline: at that point it is the round, not the candidates.
+    """
+    findings: list[WatcherFinding] = []
+    for s in sorted(data.round_stalls, key=lambda s: -s.waiting):
+        if s.waiting <= 0:
+            continue
+        critical = (
+            s.waiting >= ROUND_STALL_CRITICAL_COUNT
+            or s.longest_days >= 2 * max(1, s.threshold_days)
+        )
+        people = "candidate has" if s.waiting == 1 else "candidates have"
+        named = ", ".join(name for _, name in s.candidates[:5])
+        more = f" and {s.waiting - 5} more" if s.waiting > 5 else ""
+        findings.append(
+            WatcherFinding(
+                watcher="round_stalls",
+                severity="critical" if critical else "warning",
+                title=f"{s.requisition_title} — {s.round_title} pipeline has stalled",
+                body=(
+                    f"{s.waiting} {people} been waiting for more than {s.threshold_days} "
+                    f"days on {s.round_title}. The longest has waited "
+                    f"{s.longest_days:.0f} days."
+                    + (f" Waiting: {named}{more}." if named else "")
+                    + " Nobody is rejected for this — they are simply not moving."
+                ),
+                link=f"/hr/requisitions/{s.requisition_id}",
+                # Per opening and round, and by size band: a stall that grows
+                # into a bigger band re-alerts; one being worked down does not.
+                dedupe_key=(
+                    f"roundstall:{s.requisition_id}:{s.round_id}:ge{size_band(s.waiting)}"
+                ),
+                citations=[
+                    Citation(kind="job", id=s.requisition_id, label=s.requisition_title,
+                             href=f"/hr/requisitions/{s.requisition_id}"),
+                    *[
+                        Citation(kind="applicant", id=aid, label=name,
+                                 href=f"/hr/applicants/{aid}")
+                        for aid, name in s.candidates[:10]
+                    ],
                 ],
             )
         )
@@ -391,8 +510,9 @@ def watch_ready_to_shortlist(data: WatcherInput) -> list[WatcherFinding]:
                 "starts their first round; the bar only suggests who to look at."
             ),
             link=f"/hr/requisitions/{o.requisition_id}",
-            # Re-fires when the count changes, not nightly until someone acts.
-            dedupe_key=f"ready_to_shortlist:{o.requisition_id}:{o.ready_to_shortlist}",
+            # Re-fires when the count grows into a bigger band, not nightly and
+            # not each time HR shortlists one of them.
+            dedupe_key=f"ready_to_shortlist:{o.requisition_id}:ge{size_band(o.ready_to_shortlist)}",
             citations=[
                 Citation(
                     # "job" is the vocabulary's word for an opening — the same
@@ -422,7 +542,8 @@ def watch_openings_without_workflow(data: WatcherInput) -> list[WatcherFinding]:
         if opening.has_published_workflow or opening.live_enrolments == 0:
             continue
         public = (
-            " It is also live on your public apply link, so more are arriving."
+            " Its public apply link is switched on, but it will not accept applications"
+            " until a workflow is published."
             if opening.accepting_public_applications
             else ""
         )
@@ -457,6 +578,7 @@ def watch_openings_without_workflow(data: WatcherInput) -> list[WatcherFinding]:
 WATCHERS: tuple[tuple[str, object], ...] = (
     ("dpdp_deadlines", watch_dpdp_deadlines),
     ("decision_backlog", watch_decision_backlog),
+    ("round_stalls", watch_round_stalls),
     ("stalled_applicants", watch_stalled_applicants),
     ("openings_without_workflow", watch_openings_without_workflow),
     ("ready_to_shortlist", watch_ready_to_shortlist),

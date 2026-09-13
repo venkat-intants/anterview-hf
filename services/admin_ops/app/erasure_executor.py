@@ -197,6 +197,10 @@ ERASED_TABLES: dict[str, str] = {
                            "identifying them after applicants is anonymised. "
                            "Deleted, not redacted: here the content IS the "
                            "personal data, with no structural residue to keep.",
+    "upload_items": "step 5d — filename, s3_key and error redacted for the files that "
+                    "became this person's applicant rows. HR names CVs after the "
+                    "candidate, so the original filename is personal data; the "
+                    "object itself is the applicant's resume_s3_key (step 1c).",
 }
 
 #: Tables deliberately left standing, each with the reason it is defensible.
@@ -281,6 +285,9 @@ EXCLUDED_TABLES: dict[str, str] = {
                          "D-05 evidence that a person, not the AI, decided; "
                          "deleting it would destroy proof the platform is "
                          "required to be able to show.",
+    "upload_batches": "one bulk upload: the opening, the HR uploader, a file count "
+                      "and a status. No candidate column — the per-file rows, "
+                      "which do carry filenames, are upload_items (erased).",
 
     # --- Company-authored structure and content ----------------------------
     "job_requisitions": "the opening itself — title, JD, salary band, skills. "
@@ -424,17 +431,25 @@ async def _execute_one_erasure(
     # (it is the company's assessment record against an anonymised applicant),
     # so without this the object simply stays in the bucket after a completed
     # erasure — the exact orphaning 1c exists to prevent, one table over.
+    #
+    # 1c-iii — the SUBMITTED copy. enrolments.applied_resume_s3_key records the
+    # CV each application was sent with, and it can be an older object than both
+    # the applicant's current CV and any scored one (an application still
+    # waiting to be scored when the person re-applied). Same orphaning, same fix.
     scored_keys_result = await db.execute(
         text(
-            "SELECT e.scored_resume_s3_key FROM enrolments e "
+            "SELECT e.scored_resume_s3_key, e.applied_resume_s3_key FROM enrolments e "
             "JOIN applicants a ON a.id = e.applicant_id "
-            "WHERE a.user_id = :uid AND e.scored_resume_s3_key IS NOT NULL"
+            "WHERE a.user_id = :uid AND (e.scored_resume_s3_key IS NOT NULL "
+            "OR e.applied_resume_s3_key IS NOT NULL)"
         ),
         {"uid": uid_str},
     )
-    applicant_resume_keys += [
-        str(row[0]) for row in scored_keys_result.fetchall() if row[0]
-    ]
+    for row in scored_keys_result.fetchall():
+        applicant_resume_keys += [str(k) for k in tuple(row)[:2] if k]
+    # One delete per object: the same file is often the current, scored AND
+    # submitted copy at once.
+    applicant_resume_keys = list(dict.fromkeys(applicant_resume_keys))
 
     # 1d — scorecard PDF + transcript keys (from scorecards table)
     scorecard_keys_result = await db.execute(
@@ -591,6 +606,31 @@ async def _execute_one_erasure(
         user_id=uid_str,
         request_id=str(request.request_id),
         count=application_answers_deleted,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5d: Bulk-upload file records (E5)
+    # ------------------------------------------------------------------
+    # upload_items keeps each uploaded CV's ORIGINAL filename, and HR names CVs
+    # after the person ("Priya_Sharma_CV.pdf"). The row is the upload's
+    # processing record; the name in it is personal data. The object itself is
+    # the applicant's resume_s3_key, already collected in step 1c.
+    #
+    # MUST run before step 6: it reaches these rows through applicants.user_id,
+    # which step 6 sets to NULL.
+    items_result = await db.execute(
+        text(
+            "UPDATE upload_items SET filename = '[redacted]', s3_key = NULL, error = NULL, "
+            "updated_at = now() "
+            "WHERE applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    log.info(
+        "erasure.executor.upload_items_redacted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        count=getattr(items_result, "rowcount", 0) or 0,
     )
 
     # ------------------------------------------------------------------

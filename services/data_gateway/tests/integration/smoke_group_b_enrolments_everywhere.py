@@ -183,18 +183,33 @@ async def main() -> None:
         r2 = await ac.post("/hr/applicants", files={"file": pdf},
                            data={"full_name": "Ravi", "target_job_title": "Anything typed",
                                  "requisition_id": str(s["req_nurse"])})
+        # E5: a bulk upload names a real opening, and is processed afterwards.
+        electrician = (await ac.post("/hr/requisitions",
+                                     json={"title": "Electrician", "level": "mid"})).json()
         r3 = await ac.post("/hr/applicants/bulk",
                            files=[("files", ("a.pdf", b"%PDF-1.4", "application/pdf")),
                                   ("files", ("b.pdf", b"%PDF-1.4", "application/pdf"))],
-                           data={"target_job_title": "Electrician"})
+                           data={"requisition_id": electrician["id"]})
         r4 = await ac.post("/hr/applicants", files={"file": pdf},
                            data={"full_name": "X", "target_job_title": "Nurse",
                                  "requisition_id": str(uuid.uuid4())})
     app.dependency_overrides.clear()
 
+    import app.bulk_ingest as bulk_ingest
+    import app.reconciliation as rec_mod
+    import app.routers.resume as resume_mod
+
+    async def _stored(_key: str) -> bytes:
+        return b"%PDF-1.4"
+
+    resume_mod._download_from_s3 = _stored  # type: ignore[assignment]
+    resume_mod._extract_pdf_text = _text  # type: ignore[assignment]
+    async with f() as db:
+        await bulk_ingest.ingest_pass(db, rec_mod.PassResult())
+
     check("single upload succeeds", r1.status_code == 201, r1.text[:200])
     check("single upload into a chosen opening succeeds", r2.status_code == 201, r2.text[:200])
-    check("bulk upload succeeds", r3.status_code == 201, r3.text[:200])
+    check("bulk upload is accepted", r3.status_code == 202, r3.text[:200])
     check("an opening from another company (or none) is refused", r4.status_code == 404,
           str(r4.status_code))
     async with f() as db:
@@ -209,7 +224,7 @@ async def main() -> None:
             " WHERE a.full_name IN ('Asha','Ravi')"))).mappings().all()}
         electrician = await db.scalar(text(
             "SELECT count(*) FROM enrolments e JOIN job_requisitions r ON r.id = e.requisition_id"
-            " WHERE r.title = 'Electrician' AND r.from_backfill"))
+            " WHERE r.title = 'Electrician'"))
     asha, ravi = rows.get("Asha", {}), rows.get("Ravi", {})
     check("a single upload is filed under the opening its title resolves to",
           asha.get("requisition_id") == s["req_nurse"], str(asha))
@@ -221,7 +236,7 @@ async def main() -> None:
           and asha.get("scored_resume_s3_key") == asha.get("resume_s3_key"), str(asha))
     check("the ledger records the upload as HR's doing, not the system's",
           asha.get("automated") is False and asha.get("actor") == s["hr"], str(asha))
-    check("every file in a bulk upload is filed under one new opening",
+    check("every file in a bulk upload is filed under the opening it named",
           electrician == 2, f"electrician={electrician}")
 
     # ── 3. The reconciler scores applications, against their own role ─────

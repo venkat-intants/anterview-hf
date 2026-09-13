@@ -51,6 +51,7 @@ const reindexApplicants = vi.fn();
 const updateApplicantStatus = vi.fn();
 const rescoreApplicant = vi.fn();
 const bulkUploadApplicants = vi.fn();
+const getUploadProgress = vi.fn();
 const whyMatch = vi.fn();
 const listApplications = vi.fn();
 vi.mock('../api/applicants', () => ({
@@ -61,6 +62,7 @@ vi.mock('../api/applicants', () => ({
   updateApplicantStatus: (...a: unknown[]) => updateApplicantStatus(...a) as unknown,
   rescoreApplicant: (...a: unknown[]) => rescoreApplicant(...a) as unknown,
   bulkUploadApplicants: (...a: unknown[]) => bulkUploadApplicants(...a) as unknown,
+  getUploadProgress: (...a: unknown[]) => getUploadProgress(...a) as unknown,
   whyMatch: (...a: unknown[]) => whyMatch(...a) as unknown,
 }));
 
@@ -132,47 +134,67 @@ beforeEach(() => {
     { id: 'req-9', title: 'Staff Nurse', level: 'senior', status: 'open' },
   ]);
   bulkUploadApplicants.mockResolvedValue({
-    created: [], failed: [], created_count: 1, failed_count: 0,
+    batch_id: 'batch-1', requisition_id: 'req-9', total_files: 1, accepted: 1,
+    failed_count: 0, failed: [],
+  });
+  getUploadProgress.mockResolvedValue({
+    batch_id: 'batch-1', requisition_id: 'req-9', requisition_title: 'Staff Nurse',
+    uploaded_by: 'HR', total_files: 3, queued: 1, created: 1, failed: 1, being_scored: 1,
+    finished: false, created_at: '2026-09-13T10:00:00Z', finished_at: null,
+    failures: [{ filename: 'scan.pdf', error: 'Could not read the PDF.' }],
   });
 });
 
 describe('Applicants — bulk upload', () => {
-  it('files the batch under the chosen opening, with its role', async () => {
-    // B5: picking an opening files every resume under it, rather than hoping a
-    // typed title matches an existing opening's spelling.
+  it('files the batch under the chosen opening — and nothing else', async () => {
+    // E5: the opening is a real requisition id. A typed role is not an opening,
+    // so the role, level and job description are the opening's, not the form's.
     const user = userEvent.setup();
     const { container } = renderPage();
 
     await screen.findByRole('option', { name: /staff nurse · senior/i });
     await user.selectOptions(screen.getByLabelText('Opening'), 'req-9');
-    expect(screen.getByLabelText('Target role')).toBeDisabled();
+    expect(screen.queryByLabelText('Target role')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Job description')).not.toBeInTheDocument();
 
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, new File(['%PDF-1.4'], 'a.pdf', { type: 'application/pdf' }));
-    await user.click(screen.getByRole('button', { name: /upload & score 1 resume/i }));
+    await user.click(screen.getByRole('button', { name: /upload 1 resume/i }));
 
     await waitFor(() => expect(bulkUploadApplicants).toHaveBeenCalled());
     const fd = bulkUploadApplicants.mock.calls[0][0] as FormData;
     expect(fd.get('requisition_id')).toBe('req-9');
-    expect(fd.get('target_job_title')).toBe('Staff Nurse');
-    expect(fd.get('target_level')).toBe('senior');
+    expect(fd.get('target_job_title')).toBeNull();
   });
 
-  it('still takes a typed role when no opening is chosen', async () => {
+  it('will not upload without an opening', async () => {
     const user = userEvent.setup();
     const { container } = renderPage();
 
     await screen.findByLabelText('Opening');
-    await user.type(screen.getByLabelText('Target role'), 'Welder');
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, new File(['%PDF-1.4'], 'a.pdf', { type: 'application/pdf' }));
-    await user.click(screen.getByRole('button', { name: /upload & score 1 resume/i }));
+    expect(screen.getByRole('button', { name: /upload 1 resume/i })).toBeDisabled();
+    expect(bulkUploadApplicants).not.toHaveBeenCalled();
+  });
 
-    await waitFor(() => expect(bulkUploadApplicants).toHaveBeenCalled());
-    const fd = bulkUploadApplicants.mock.calls[0][0] as FormData;
-    expect(fd.get('requisition_id')).toBeNull();
-    expect(fd.get('target_job_title')).toBe('Welder');
+  it('follows the accepted batch as it is read, listing every failed file', async () => {
+    const user = userEvent.setup();
+    const { container } = renderPage();
+
+    await screen.findByRole('option', { name: /staff nurse · senior/i });
+    await user.selectOptions(screen.getByLabelText('Opening'), 'req-9');
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(['%PDF-1.4'], 'a.pdf', { type: 'application/pdf' }));
+    await user.click(screen.getByRole('button', { name: /upload 1 resume/i }));
+
+    const panel = await screen.findByTestId('upload-progress');
+    expect(getUploadProgress).toHaveBeenCalledWith('batch-1');
+    expect(within(panel).getByText(/Processing upload — Staff Nurse/)).toBeInTheDocument();
+    expect(within(panel).getByText('2 of 3 files read')).toBeInTheDocument();
+    expect(within(panel).getByText(/1 waiting · 1 added · 1 being scored/)).toBeInTheDocument();
+    expect(within(panel).getByText('scan.pdf')).toBeInTheDocument();
+    expect(within(panel).getByText(/You can leave this page/)).toBeInTheDocument();
   });
 });
 

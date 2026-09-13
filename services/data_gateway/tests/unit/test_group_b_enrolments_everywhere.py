@@ -258,16 +258,17 @@ def test_a_single_upload_is_filed_under_an_opening_before_it_commits() -> None:
 
 
 def test_a_bulk_upload_files_every_row_under_one_opening() -> None:
-    from app.routers.hr_applicants import _ingest_resume, bulk_upload_applicants
+    """E5: the request stores and queues; the background pass files each file
+    under the batch's opening — a real requisition id, never a typed title."""
+    from app.bulk_ingest import _create_applicant
+    from app.routers.hr_applicants import bulk_upload_applicants
 
     bulk = inspect.getsource(bulk_upload_applicants)
-    # The opening is committed before the per-file loop, so one bad file's
-    # rollback cannot take it with it.
-    assert bulk.index("await _resolve_opening(") < bulk.index("await db.commit()")
-    assert bulk.index("await db.commit()") < bulk.index("for f in files:")
-    assert "opening=opening" in bulk
-    ingest = inspect.getsource(_ingest_resume)
-    assert ingest.index("await _file_under(") < ingest.index("await db.commit()")
+    assert "requisition_id: Annotated[uuid.UUID, Form()]" in bulk
+    assert "_resolve_opening(" not in bulk and "target_job_title" not in bulk
+    ingest = inspect.getsource(_create_applicant)
+    assert 'requisition_id=it["requisition_id"]' in ingest
+    assert ingest.index("db.add(") < ingest.index("await enrol_applicant(")
 
 
 def test_rescoring_scores_an_application_against_its_own_role() -> None:
@@ -287,6 +288,7 @@ def test_a_returning_candidates_cv_gets_its_own_key() -> None:
 
     src = inspect.getsource(submit_application)
     assert 'f"applicants/{company_id}/{applicant_id}-{uuid.uuid4().hex[:12]}.pdf"' in src
-    # The replaced CV is removed only if no application was scored against it.
-    assert "WHERE scored_resume_s3_key = :k" in src
-    assert "if still_used is None:" in src
+    # E4: the new CV belongs to the new application and replaces nothing on the
+    # person's record, so there is no "previous" CV to clean up here at all.
+    assert "resume_s3_key=s3_key," in src
+    assert "_delete_from_s3(previous_key)" not in src

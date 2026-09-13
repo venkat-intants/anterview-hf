@@ -96,6 +96,7 @@ const PLATFORM_NAV: NavItem[] = [
 
 // super_admin — a company's super admin: its HR managers.
 const SUPER_NAV: NavItem[] = [
+  { to: '/superadmin/board', label: 'Hiring board', icon: <Kanban className={ICON} aria-hidden="true" /> },
   { to: '/superadmin', label: 'HR Managers', icon: <Users className={ICON} aria-hidden="true" /> },
 ];
 

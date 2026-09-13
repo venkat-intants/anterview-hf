@@ -242,19 +242,39 @@ async def main() -> None:
 
     rf = await ac.post("/hr/applicants", files={"file": pdf},
                        data={"full_name": "x", "target_job_title": "Fitter", "email": "asha@x.in"})
-    check("the replaced CV nothing points at any more is deleted",
-          rf.status_code == 201 and welder_key in deleted, f"{rf.status_code} {deleted}")
+    # Since the Group E foundations, a CV is kept while any application was
+    # SUBMITTED with it, not only while one was scored against it — the Welder
+    # application still names this one, so deleting it would leave that
+    # application unscoreable.
+    check("the replaced CV is kept while the application sent with it needs it",
+          rf.status_code == 201 and welder_key not in deleted, f"{rf.status_code} {deleted}")
 
     # ── 5. Bulk upload + reconciler: a CV address already on file ──────────
+    # E5: a bulk upload names a real opening, and is read in the background.
+    electrician = (await ac.post("/hr/requisitions",
+                                 json={"title": "Electrician", "level": "mid"})).json()
     rb = await ac.post("/hr/applicants/bulk",
                        files=[("files", ("taken.pdf", b"%PDF-1.4", "application/pdf")),
                               ("files", ("free.pdf", b"%PDF-1.4", "application/pdf"))],
-                       data={"target_job_title": "Electrician"})
+                       data={"requisition_id": electrician["id"]})
     await ac.aclose()
     app.dependency_overrides.clear()
-    check("bulk upload succeeds", rb.status_code == 201, rb.text[:200])
+    check("bulk upload is accepted", rb.status_code == 202, rb.text[:200])
 
+    import app.bulk_ingest as bulk_ingest
     import app.reconciliation as rec
+    import app.routers.resume as resume_mod
+
+    async def _stored(_key: str) -> bytes:
+        return b"%PDF-1.4"
+
+    async def _cv_text(_raw: bytes) -> str:
+        return "cv text"
+
+    resume_mod._download_from_s3 = _stored  # type: ignore[assignment]
+    resume_mod._extract_pdf_text = _cv_text  # type: ignore[assignment]
+    async with f() as db:
+        await bulk_ingest.ingest_pass(db, rec.PassResult())
 
     emails = iter(["asha@x.in", "free@x.in"])
 

@@ -33,7 +33,9 @@ from sqlalchemy import text
 from app.application_questions import answers_for
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
+from app.final_decision import DECISIONS, DecisionRefusedError, record_final_decision
 from app.models import AuditLog
+from app.requisition_dashboard import gather_dashboard
 from app.requisitions import (
     TERMINAL_STATUSES,
     VALID_STATUSES,
@@ -234,6 +236,9 @@ class RequisitionOut(BaseModel):
     total_enrolments: int = 0
     hired: int = 0
     awaiting_decision: int = 0
+    # Everyone without a final decision. Distinct from awaiting_decision: a
+    # candidate mid-round is unresolved but is not waiting on a person.
+    unresolved: int = 0
     funnel: list[FunnelStage] = Field(default_factory=list)
     # 'on_track' | 'at_risk' | 'off_track', or null when the projection cannot
     # honestly be made (no closing date, no target, or too new to have a rate).
@@ -271,6 +276,22 @@ class StatusIn(BaseModel):
     def _known(cls, v: str) -> str:
         if v not in VALID_STATUSES:
             raise ValueError(f"status must be one of {sorted(VALID_STATUSES)}")
+        return v
+
+
+class FinalDecisionIn(BaseModel):
+    """A hire or reject on one application (E2)."""
+
+    decision: str
+    # Required, unlike a status move: this ends a candidacy, and the reason is
+    # what the ledger and the audit log keep against the person who decided.
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("decision")
+    @classmethod
+    def _final(cls, v: str) -> str:
+        if v not in DECISIONS:
+            raise ValueError(f"decision must be one of {sorted(DECISIONS)}")
         return v
 
 
@@ -333,7 +354,18 @@ async def _owned(db: DbSessionDep, company_id: uuid.UUID, req_id: uuid.UUID) -> 
     return dict(row)
 
 
-def _to_out(row: dict[str, Any], counts: dict[str, int] | None = None) -> RequisitionOut:
+def _to_out(
+    row: dict[str, Any], counts: dict[str, int] | None = None, awaiting: int = 0
+) -> RequisitionOut:
+    """``counts`` is the status histogram; ``awaiting`` is how many of those
+    enrolments ``enrolment_awaits_human`` says are waiting on a person.
+
+    The two are different numbers on purpose. ``unresolved`` — everyone without
+    a final decision — is what closing an opening must account for.
+    ``awaiting_decision`` is the decision queue's own count. It used to be the
+    unresolved total, so every new and mid-round candidate showed as "awaiting
+    your decision" on the dashboard and the list.
+    """
     counts = counts or {}
     return RequisitionOut(
         id=str(row["id"]),
@@ -365,9 +397,8 @@ def _to_out(row: dict[str, Any], counts: dict[str, int] | None = None) -> Requis
         nice_to_have_skills=row.get("nice_to_have_skills") or [],
         total_enrolments=sum(counts.values()),
         hired=counts.get("hired", 0),
-        awaiting_decision=sum(
-            v for k, v in counts.items() if k not in TERMINAL_STATUSES
-        ),
+        awaiting_decision=awaiting,
+        unresolved=sum(v for k, v in counts.items() if k not in TERMINAL_STATUSES),
         funnel=[FunnelStage(status=k, count=v) for k, v in sorted(counts.items())],
         delivery_risk=delivery_risk(
             target_hires=row.get("target_hires"),
@@ -435,6 +466,29 @@ async def _counts(db: DbSessionDep, req_ids: list[uuid.UUID]) -> dict[str, dict[
     return out
 
 
+async def _awaiting(db: DbSessionDep, req_ids: list[uuid.UUID]) -> dict[str, int]:
+    """Per requisition, how many enrolments are waiting on a person.
+
+    ``enrolment_awaits_human`` is the database's single definition, shared with
+    the decision queue and the watcher, so the number on the dashboard is the
+    number of rows the queue shows.
+    """
+    if not req_ids:
+        return {}
+    rows = (
+        await db.execute(
+            text(
+                "SELECT requisition_id, count(*) AS n FROM enrolments"
+                " WHERE requisition_id = ANY(:ids) AND deleted_at IS NULL"
+                "   AND enrolment_awaits_human(status, current_round_id)"
+                " GROUP BY requisition_id"
+            ),
+            {"ids": req_ids},
+        )
+    ).mappings().all()
+    return {str(r["requisition_id"]): int(r["n"]) for r in rows}
+
+
 # ---------------------------------------------------------------------------
 # Requisitions
 # ---------------------------------------------------------------------------
@@ -474,8 +528,13 @@ async def list_requisitions(
             {"c": company_id, "s": status_filter, "lim": limit, "off": offset},
         )
     ).mappings().all()
-    counts = await _counts(db, [r["id"] for r in rows])
-    return [_to_out(dict(r), counts.get(str(r["id"]), {})) for r in rows]
+    ids = [r["id"] for r in rows]
+    counts = await _counts(db, ids)
+    awaiting = await _awaiting(db, ids)
+    return [
+        _to_out(dict(r), counts.get(str(r["id"]), {}), awaiting.get(str(r["id"]), 0))
+        for r in rows
+    ]
 
 
 @router.get("/team", response_model=list[TeamMemberOut])
@@ -616,7 +675,10 @@ async def get_requisition(
     _hr_uid, company_id = ctx
     row = await _owned(db, company_id, requisition_id)
     counts = await _counts(db, [requisition_id])
-    return _to_out(row, counts.get(str(requisition_id), {}))
+    awaiting = await _awaiting(db, [requisition_id])
+    return _to_out(
+        row, counts.get(str(requisition_id), {}), awaiting.get(str(requisition_id), 0)
+    )
 
 
 @router.patch("/requisitions/{requisition_id}", response_model=RequisitionOut)
@@ -676,7 +738,11 @@ async def update_requisition(
 @router.post("/requisitions/{requisition_id}/status", response_model=RequisitionOut)
 async def set_requisition_status(
     requisition_id: uuid.UUID,
-    body: dict[str, str],
+    # Any, not str: the console sends ``acknowledge_unresolved`` as a JSON
+    # boolean, and a dict[str, str] body refused it with a 422 — so closing an
+    # opening that still had candidates in it could never be confirmed from the
+    # screen built to confirm it. The handler already reads the flag either way.
+    body: dict[str, Any],
     request: Request,
     ctx: HrCtxDep,
     db: DbSessionDep,
@@ -702,7 +768,9 @@ async def set_requisition_status(
     stranded with nobody prompted.
     """
     hr_uid, company_id = ctx
-    new_status = (body or {}).get("status", "")
+    # str(): the body is no longer str-typed, and a non-string here must be a
+    # 400 below rather than a TypeError from the set membership test.
+    new_status = str((body or {}).get("status", ""))
     if new_status not in _VALID_REQ_STATUS:
         raise HTTPException(
             status_code=400, detail=f"status must be one of {sorted(_VALID_REQ_STATUS)}"
@@ -716,7 +784,7 @@ async def set_requisition_status(
     if closing:
         pending = _to_out(
             row, (await _counts(db, [requisition_id])).get(str(requisition_id), {})
-        ).awaiting_decision
+        ).unresolved
         # Truthy check, not `is True`: the flag arrives as JSON and an operator
         # curling this endpoint may well send the string "true".
         ack = str((body or {}).get("acknowledge_unresolved", "")).lower() in {
@@ -766,11 +834,16 @@ async def set_requisition_status(
     )
     await db.commit()
     counts = await _counts(db, [requisition_id])
-    out = _to_out({**row, "status": new_status}, counts.get(str(requisition_id), {}))
+    awaiting = await _awaiting(db, [requisition_id])
+    out = _to_out(
+        {**row, "status": new_status},
+        counts.get(str(requisition_id), {}),
+        awaiting.get(str(requisition_id), 0),
+    )
     log.info(
         "hr.requisition.status",
         requisition_id=str(requisition_id), status=new_status,
-        unresolved=out.awaiting_decision,
+        unresolved=out.unresolved,
     )
     return out
 
@@ -865,6 +938,27 @@ async def set_enrolment_status(
     if row is None:
         raise HTTPException(status_code=404, detail="Enrolment not found.")
 
+    # A hire or reject is a final decision and goes through the one guarded
+    # writer (E2) — the same rules, audit row and candidate email as the
+    # decision endpoint. This mover used to accept any status from any status,
+    # so a candidate mid-round could be hired and a hire moved back to 'new'.
+    if body.status in TERMINAL_STATUSES:
+        try:
+            await record_final_decision(
+                db, company_id=company_id, enrolment_id=enrolment_id,
+                decision=body.status, reason=body.reason, actor_user_id=hr_uid,
+                ip_address=extract_client_ip(request),
+                user_agent=extract_user_agent(request),
+            )
+        except DecisionRefusedError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        await db.commit()
+        for e in await list_enrolments(row[0], ctx, db, None, _MAX_PAGE, 0):
+            if e.id == str(enrolment_id):
+                return e
+        raise HTTPException(status_code=404, detail="Enrolment not found.")
+
     previous = await record_transition(
         db,
         enrolment_id=enrolment_id,
@@ -910,22 +1004,6 @@ async def set_enrolment_status(
             to_round=outcome.to_round,
             reason=outcome.reason,
         )
-    if body.status in TERMINAL_STATUSES:
-        now = datetime.now(tz=UTC)
-        db.add(
-            AuditLog(
-                actor_id=hr_uid,
-                actor_type="user",
-                action=f"enrolment.decision.{body.status}",
-                resource_type="enrolment",
-                resource_id=enrolment_id,
-                details={"company_id": str(company_id), "previous_status": previous,
-                         "reason": body.reason},
-                ip_address=extract_client_ip(request),
-                user_agent=extract_user_agent(request),
-                event_ts=now,
-            )
-        )
     await db.commit()
 
     found = await list_enrolments(row[0], ctx, db, None, _MAX_PAGE, 0)
@@ -933,6 +1011,37 @@ async def set_enrolment_status(
         if e.id == str(enrolment_id):
             return e
     raise HTTPException(status_code=404, detail="Enrolment not found.")
+
+
+@router.post("/enrolments/{enrolment_id}/decision")
+async def record_decision(
+    enrolment_id: uuid.UUID,
+    body: FinalDecisionIn,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> dict[str, Any]:
+    """Record the final human decision on one application — E2.
+
+    The decision queue's endpoint. Scores rank and explain; this is where a
+    person decides, with a reason, and the ledger and audit log say who.
+    Refused (409) while the candidate is still in an automated round, and when
+    hiring over a rejection; a reject is always allowed, including reversing a
+    hire, which is recorded as a reversal.
+    """
+    hr_uid, company_id = ctx
+    try:
+        out = await record_final_decision(
+            db, company_id=company_id, enrolment_id=enrolment_id,
+            decision=body.decision, reason=body.reason, actor_user_id=hr_uid,
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+        )
+    except DecisionRefusedError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    await db.commit()
+    return out
 
 
 @router.get("/enrolments/{enrolment_id}/history")
@@ -1215,23 +1324,25 @@ async def confirm_requisition(
 async def requisition_dashboard(
     requisition_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
 ) -> dict[str, Any]:
-    """Everything about one opening on one screen — Group E, E1.
-
-    The list view answers "which openings need me?"; this answers "what is
-    actually happening inside this one?". Three things the list cannot show:
-
-    * WHERE candidates are, per round rather than per status. A status of
-      'shortlisted' is the same word whether someone is waiting for round one
-      or sitting between rounds three and four, and those are different
-      problems.
-    * WHERE THEY STOP. Per-round drop-off is the only view that distinguishes a
-      hard round from a broken one — a round nobody clears is usually the
-      second, not the first.
-    * WHERE THEY CAME FROM. Public applications and HR uploads behave
-      differently enough (volume, quality, consent basis) that a single total
-      hides which lever is working.
-    """
+    """Everything about one opening on one screen — HR's route (E1)."""
     _hr_uid, company_id = ctx
+    return await build_requisition_dashboard(
+        db, company_id=company_id, requisition_id=requisition_id
+    )
+
+
+async def build_requisition_dashboard(
+    db: DbSessionDep, *, company_id: uuid.UUID, requisition_id: uuid.UUID
+) -> dict[str, Any]:
+    """The per-opening dashboard, for HR and for the company super admin (E1, E3).
+
+    One builder, so the super admin's read-only view is the same numbers HR
+    sees rather than a second implementation of them. What the dashboard shows
+    that the openings list cannot: where candidates are per round of the live
+    workflow, where they stop, who is held, what needs attention, what the
+    automation did, and what waits for a person. Company-scoped: another
+    company's opening is a 404.
+    """
     req = await _owned(db, company_id, requisition_id)
 
     by_status = (
@@ -1270,6 +1381,10 @@ async def requisition_dashboard(
         )
     ).mappings().all()
 
+    # Time in the current stage comes from the stage ledger
+    # (enrolment_state_since). It was NOW() - updated_at, which any rescore or
+    # edit resets, so it measured time since the row last changed.
+    #
     # Median, not mean: one candidate parked for six months would drag a mean
     # into uselessness, and the question being asked is "how long does this
     # normally take?".
@@ -1277,7 +1392,8 @@ async def requisition_dashboard(
         await db.execute(
             text(
                 "SELECT percentile_cont(0.5) WITHIN GROUP ("
-                "         ORDER BY EXTRACT(EPOCH FROM (NOW() - e.updated_at)) / 86400.0"
+                "         ORDER BY EXTRACT(EPOCH FROM ("
+                "           NOW() - enrolment_state_since(e.id, e.created_at))) / 86400.0"
                 "       ) AS median_days_in_stage,"
                 "       count(*) FILTER (WHERE a.pending_enrichment) AS still_being_read,"
                 "       count(*) FILTER (WHERE a.created_by_user_id IS NULL) AS unattributed"
@@ -1291,8 +1407,15 @@ async def requisition_dashboard(
     ).mappings().first()
 
     counts = {r["status"]: int(r["n"]) for r in by_status}
+    awaiting = (await _awaiting(db, [requisition_id])).get(str(requisition_id), 0)
+    # Progress, timing, scores, the held pool, what needs attention, what the
+    # automation did, and what waits for a person on purpose (E1).
+    extras = await gather_dashboard(
+        db, company_id=company_id, requisition_id=requisition_id, req=req, rounds=list(rounds)
+    )
     return {
-        "requisition": _to_out(req, counts).model_dump(),
+        **extras,
+        "requisition": _to_out(req, counts, awaiting).model_dump(),
         "rounds": [
             {
                 "round_id": str(r["id"]),

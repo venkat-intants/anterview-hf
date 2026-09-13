@@ -90,6 +90,18 @@ function dash(over: Partial<RequisitionDashboard['requisition']> = {}): Requisit
     has_published_workflow: true,
     median_days_in_stage: 4,
     still_being_read: 0,
+    progress: {
+      applications: 9, in_progress: 4, awaiting_decision: 3, held: 1, hired: 0, rejected: 0,
+      not_started: 2, on_older_version: 0, target_hires: 2,
+    },
+    workflow_state: { published_version: 1, draft_version: null },
+    stage_timing: [],
+    scores: { avg_ats: null, scored_applications: 0, avg_composite: null, assessed_candidates: 0 },
+    held_pool: [],
+    attention: [],
+    manual_steps: [],
+    activity: [],
+    activity_summary: { automated_7d: 0, manual_7d: 0, last_automated_at: null },
   };
 }
 

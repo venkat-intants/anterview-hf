@@ -43,6 +43,7 @@ a fixed-hour cron silently skips the window it slept through.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -59,6 +60,7 @@ from app.applicant_enrichment import (
     store_embedding,
     valid_email_or_none,
 )
+from app.bulk_ingest import ingest_pass
 from app.config import settings
 from app.embedding_client import embed_texts_remote
 from app.models import Applicant
@@ -129,6 +131,8 @@ class PassResult:
     """What one pass did — returned for logging, tests and the ops endpoint."""
 
     scored: int = 0
+    # Bulk-uploaded files turned into applicants by this pass (E5).
+    ingested: int = 0
     embedded: int = 0
     # Interviews whose scorecard was written by this pass, and scorecards whose
     # PDF was rendered by it.
@@ -150,6 +154,7 @@ class PassResult:
     def as_dict(self) -> dict[str, Any]:
         return {
             "scored": self.scored,
+            "ingested": self.ingested,
             "embedded": self.embedded,
             "interviews_scored": self.interviews_scored,
             "pdfs_rendered": self.pdfs_rendered,
@@ -259,24 +264,40 @@ _DUE_PREDICATE = """
 # `stuck` is computed once per row in a lateral subquery, so the two counts
 # cannot disagree about which rows are stuck — and the query is one literal,
 # because the SAST gate (bandit B608) fails any SQL built by string formatting.
+#
+# E5: a batch is also its files. A file still queued for the background reader
+# is outstanding — the batch cannot be finished while it waits — and a file that
+# failed (refused at upload, unreadable, or given up on) never became an
+# applicant, so it is counted here or the "N of M" would leave it out.
 _BATCH_COUNTS_SQL = """
-SELECT count(*) AS total,
-       count(*) FILTER (WHERE a.pending_enrichment AND a.deleted_at IS NULL
-                          AND NOT st.stuck) AS outstanding,
-       count(*) FILTER (WHERE a.pending_enrichment AND a.deleted_at IS NULL
-                          AND a.ats_overall IS NULL AND st.stuck) AS unreadable
-  FROM applicants a
-  CROSS JOIN LATERAL (
-       SELECT (   a.ats_overall IS NOT NULL
-               OR a.resume_text IS NULL OR length(trim(a.resume_text)) = 0
-               OR EXISTS (SELECT 1 FROM reconciliation_state rs
-                           WHERE rs.gave_up_at IS NOT NULL
-                             AND ((rs.kind = :kind_ats AND rs.ref_id = a.id)
-                                  OR (rs.kind = :kind_enr AND rs.ref_id IN (
-                                        SELECT e.id FROM enrolments e
-                                         WHERE e.applicant_id = a.id))))) AS stuck
-  ) st
- WHERE a.upload_batch_id = :b
+WITH apps AS (
+     SELECT count(*) AS total,
+            count(*) FILTER (WHERE a.pending_enrichment AND a.deleted_at IS NULL
+                               AND NOT st.stuck) AS outstanding,
+            count(*) FILTER (WHERE a.pending_enrichment AND a.deleted_at IS NULL
+                               AND a.ats_overall IS NULL AND st.stuck) AS unreadable
+       FROM applicants a
+       CROSS JOIN LATERAL (
+            SELECT (   a.ats_overall IS NOT NULL
+                    OR a.resume_text IS NULL OR length(trim(a.resume_text)) = 0
+                    OR EXISTS (SELECT 1 FROM reconciliation_state rs
+                                WHERE rs.gave_up_at IS NOT NULL
+                                  AND ((rs.kind = :kind_ats AND rs.ref_id = a.id)
+                                       OR (rs.kind = :kind_enr AND rs.ref_id IN (
+                                             SELECT e.id FROM enrolments e
+                                              WHERE e.applicant_id = a.id))))) AS stuck
+       ) st
+      WHERE a.upload_batch_id = :b
+), files AS (
+     SELECT count(*) FILTER (WHERE i.status IN ('stored', 'processing')) AS queued,
+            count(*) FILTER (WHERE i.status = 'failed') AS failed
+       FROM upload_items i
+      WHERE i.batch_id = :b
+)
+SELECT apps.total + files.failed AS total,
+       apps.outstanding + files.queued AS outstanding,
+       apps.unreadable + files.failed AS unreadable
+  FROM apps, files
 """
 
 
@@ -329,6 +350,14 @@ async def _notify_batch_done(
         link="/hr/applicants",
         dedupe_key=f"bulk_upload:{batch_id}",
     )
+    # The batch the console polls says so too (E5).
+    await db.execute(
+        text(
+            "UPDATE upload_batches SET status = 'finished', finished_at = now()"
+            " WHERE id = :b AND status = 'processing'"
+        ),
+        {"b": batch_id},
+    )
     await db.commit()
     return staged
 
@@ -345,7 +374,7 @@ async def _notify_batch_done(
 #
 # One literal, not assembled: the SAST gate fails SQL built from strings.
 _UNSCORED_WORK_SQL = """
-SELECT a.id AS applicant_id, e.id AS enrolment_id,
+SELECT a.id AS applicant_id, e.id AS enrolment_id, e.applied_resume_s3_key AS applied_key,
        CASE WHEN e.id IS NULL THEN a.target_job_title ELSE e.target_job_title END AS job_title,
        CASE WHEN e.id IS NULL THEN a.target_level     ELSE e.target_level     END AS level,
        CASE WHEN e.id IS NULL THEN a.target_jd_text   ELSE e.target_jd_text   END AS jd_text
@@ -400,9 +429,24 @@ async def _score_pass(db: AsyncSession, result: PassResult) -> None:
         # Read now: the failure path rolls back, which expires `applicant`.
         batch_id, uploader_id = applicant.upload_batch_id, applicant.created_by_user_id
         resume_key = applicant.resume_s3_key
+        resume_text = applicant.resume_text or ""
         try:
+            # Scored against the CV THIS application was submitted with. That is
+            # normally the one on the applicant row; after the person re-applies
+            # elsewhere it is an older file, read back from storage. Scoring the
+            # row's current text instead gave an earlier application a score for
+            # a CV it never had. A failed read lands in the except below: retry.
+            applied_key = w.get("applied_key")
+            if eid is not None and applied_key and applied_key != resume_key:
+                from app.routers.resume import (  # noqa: PLC0415 — router import stays off the loop's import path
+                    _download_from_s3,
+                    _extract_pdf_text,
+                )
+
+                resume_key = applied_key
+                resume_text = await _extract_pdf_text(await _download_from_s3(applied_key))
             score = await score_resume_remote(
-                resume_text=applicant.resume_text or "",
+                resume_text=resume_text,
                 job_title=w["job_title"],
                 level=w["level"],
                 jd_text=w["jd_text"],
@@ -473,6 +517,45 @@ async def _announce_batch(
             applicant_id=str(aid),
             error_type=type(exc).__name__,
         )
+
+
+# Applicants the scorer is never going to read. A row is stored "pending" until
+# the reconciler scores it — and when every unscored application the person has
+# sits in a workflow with scoring switched off (C9), nothing ever does. Those
+# rows showed "still being read" forever, and a bulk upload into such an opening
+# never reported finished. Settled here: the flag drops, the placeholder name
+# stays (nothing read the CV to replace it), and the batch can complete.
+#
+# An application with NO workflow yet still counts as scorable, so it stays
+# pending: publishing one may yet switch scoring on for it.
+_SETTLE_UNSCORABLE_SQL = """
+UPDATE applicants a
+   SET pending_enrichment = false, updated_at = :now
+ WHERE a.pending_enrichment
+   AND a.deleted_at IS NULL
+   AND EXISTS (SELECT 1 FROM enrolments e
+                WHERE e.applicant_id = a.id AND e.deleted_at IS NULL)
+   AND NOT EXISTS (SELECT 1 FROM enrolments e
+                     LEFT JOIN workflows w ON w.id = e.workflow_id
+                    WHERE e.applicant_id = a.id AND e.deleted_at IS NULL
+                      AND e.ats_overall IS NULL
+                      AND (w.id IS NULL OR w.auto_score_on_apply))
+RETURNING a.id, a.upload_batch_id, a.created_by_user_id
+"""
+
+
+async def _settle_pass(db: AsyncSession, result: PassResult) -> None:
+    """Clear ``pending_enrichment`` on rows no pass will ever score."""
+    rows = (
+        await db.execute(text(_SETTLE_UNSCORABLE_SQL), {"now": datetime.now(tz=UTC)})
+    ).mappings().all()
+    if not rows:
+        return
+    await db.commit()
+    log.info("reconcile.settled_unscorable", count=len(rows))
+    for r in rows:
+        await _announce_batch(db, result, r["id"], r["upload_batch_id"],
+                              r["created_by_user_id"])
 
 
 async def _embed_pass(db: AsyncSession, result: PassResult) -> None:
@@ -820,7 +903,9 @@ async def _outstanding(db: AsyncSession) -> dict[str, int]:
                     WHERE sc.report_pdf_key IS NULL
                       AND NOT EXISTS (SELECT 1 FROM reconciliation_state rs
                                        WHERE rs.kind = :pdf AND rs.ref_id = sc.scorecard_id
-                                         AND rs.gave_up_at IS NOT NULL)) AS missing_pdfs
+                                         AND rs.gave_up_at IS NOT NULL)) AS missing_pdfs,
+                  (SELECT count(*) FROM upload_items
+                    WHERE status IN ('stored', 'processing')) AS queued_uploads
                 """
             ),
             {"floor": datetime.now(tz=UTC) - _SCORECARD_LOOKBACK, "pdf": KIND_PDF},
@@ -831,6 +916,7 @@ async def _outstanding(db: AsyncSession) -> dict[str, int]:
         "unembedded": int(row[1] or 0) if row else 0,
         "unscored_interviews": int(later[0] or 0) if later else 0,
         "missing_pdfs": int(later[1] or 0) if later else 0,
+        "queued_uploads": int(later[2] or 0) if later is not None and len(later) > 2 else 0,
         "parked": int(parked or 0),
     }
 
@@ -842,7 +928,12 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> PassResult:
         # Each pass is isolated: a failure in one (a bad query, a service
         # down) must not cost the others their turn.
         for name, pass_ in (
+            # First: files a bulk upload queued become applicants, which the
+            # score pass below can then read in the same pass (E5).
+            ("ingest", ingest_pass),
             ("score", _score_pass),
+            # After scoring, so a row scored this pass is not also "settled".
+            ("settle", _settle_pass),
             ("embed", _embed_pass),
             ("scorecard", _scorecard_pass),
             ("pdf", _pdf_pass),
@@ -855,7 +946,7 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> PassResult:
                 log.error("reconcile.pass_failed", stage=name,
                           error_type=type(exc).__name__, error=str(exc)[:300])
         result.outstanding = await _outstanding(db)
-    if (result.scored or result.embedded or result.interviews_scored
+    if (result.scored or result.ingested or result.embedded or result.interviews_scored
             or result.pdfs_rendered or result.failed):
         log.info("reconcile.pass", **result.as_dict())
     return result
@@ -866,6 +957,41 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> PassResult:
 # ---------------------------------------------------------------------------
 _task: asyncio.Task[None] | None = None
 
+# E5. A bulk upload wakes the loop, so its first file is read now rather than
+# at the next interval — up to ten minutes later. And while a pass is making
+# progress on queued files or unscored applications, the next one starts after
+# a short pause instead of the full interval, so a large batch drains steadily.
+# Idle, the loop keeps its interval: nothing here polls when there is no work.
+DRAIN_PAUSE_SECONDS = 5
+_wake: asyncio.Event | None = None
+
+
+def _event() -> asyncio.Event:
+    global _wake
+    if _wake is None:
+        _wake = asyncio.Event()
+    return _wake
+
+
+def wake() -> None:
+    """Start the next pass now. Safe to call from a request handler."""
+    _event().set()
+
+
+async def _wait(seconds: float) -> None:
+    """Sleep up to ``seconds``, or until someone calls ``wake``."""
+    event = _event()
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(event.wait(), timeout=seconds)
+    event.clear()
+
+
+def _draining(result: PassResult | None) -> bool:
+    """This pass moved work forward, and there is more of the same waiting."""
+    if result is None or not (result.ingested or result.scored):
+        return False
+    return bool(result.outstanding.get("queued_uploads") or result.outstanding.get("unscored"))
+
 
 async def _loop(factory: async_sessionmaker[AsyncSession]) -> None:
     interval = max(60, settings.reconciliation_interval_seconds)
@@ -875,6 +1001,7 @@ async def _loop(factory: async_sessionmaker[AsyncSession]) -> None:
     while True:
         started = datetime.now(tz=UTC)
         error: str | None = None
+        result: PassResult | None = None
         try:
             result = await run_once(factory)
             error = "; ".join(result.failed_passes) or None
@@ -887,7 +1014,7 @@ async def _loop(factory: async_sessionmaker[AsyncSession]) -> None:
             )
         # A6: every pass leaves a record — see scheduling.record_loop_pass.
         await record_loop_pass(factory, LOOP_JOB_ID, started_at=started, error=error)
-        await asyncio.sleep(interval)
+        await _wait(DRAIN_PAUSE_SECONDS if _draining(result) else interval)
 
 
 def start(factory: async_sessionmaker[AsyncSession]) -> None:

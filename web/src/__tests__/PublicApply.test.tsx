@@ -219,6 +219,23 @@ describe('PublicApply — consent gates everything', () => {
     );
   });
 
+  it('sends the language the applicant chose for their emails', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    await user.selectOptions(screen.getByLabelText('Emails about this application in'), 'hi');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(submitButton());
+
+    await waitFor(() => expect(submitApplication).toHaveBeenCalledTimes(1));
+    expect(submitApplication).toHaveBeenCalledWith(
+      'req-1',
+      expect.objectContaining({ language: 'hi' }),
+    );
+  });
+
   it('names the company in the consent text, because that is who holds the data', async () => {
     const user = userEvent.setup();
     renderPage();

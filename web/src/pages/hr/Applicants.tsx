@@ -1,7 +1,8 @@
 // Applicants — HR resume screening dashboard.
 // Layout: design screen Applicants.tsx (GlassCard table, SegTabs, Avatar, StatusTag, Pill).
-// Behavior: all live logic — listApplicants query, bulk PDF upload (multi/de-dupe/cap 25),
-//           progress bar, failure list, shortlist/reject/rescore mutations,
+// Behavior: all live logic — listApplicants query, bulk PDF upload into one opening
+//           (stored, then read and scored in the background, with a progress panel
+//           that lists every failed file), shortlist/reject/rescore mutations,
 //           real ats_breakdown/strengths/concerns in the detail drawer.
 
 import { useEffect, useState } from 'react';
@@ -25,6 +26,7 @@ import {
 import {
   listApplicants,
   bulkUploadApplicants,
+  getUploadProgress,
   updateApplicantStatus,
   rescoreApplicant,
   listApplications,
@@ -33,7 +35,6 @@ import {
   reindexApplicants,
   type Applicant,
   type ApplicantStatus,
-  type BulkUploadResult,
 } from '@/api/applicants';
 import { listRequisitions, type Requisition } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
@@ -621,31 +622,94 @@ function ApplicantRow({
 
 interface UploadSectionProps {
   files: File[];
-  jobTitle: string;
-  level: string;
-  jd: string;
   progress: number;
   pending: boolean;
-  lastResult: BulkUploadResult | null;
+  /** The upload the progress panel follows, once the server has accepted it. */
+  batchId: string | null;
   onFilesAdd: (fl: FileList | null) => void;
   onFileRemove: (idx: number) => void;
   onFilesClear: () => void;
-  onJobTitle: (v: string) => void;
-  onLevel: (v: string) => void;
-  onJd: (v: string) => void;
   onSubmit: (e: React.FormEvent) => void;
-  /** Open openings to file the batch under; '' = a role typed here. */
+  /** Open openings to file the batch under. Required: a typed role is not an opening (E5). */
   openings: Requisition[];
   openingId: string;
   onOpening: (id: string) => void;
 }
 
+/**
+ * One upload's progress, polled until it is finished (E5).
+ *
+ * The upload request only stores the files. Reading them, filing each person
+ * under the opening and scoring them happen in the background, so this is how
+ * HR sees where a batch has got to — and which files failed, and why — without
+ * having to keep the page open for it.
+ */
+function UploadBatchProgress({ batchId }: { batchId: string }) {
+  const { data, isError } = useQuery({
+    queryKey: ['hr', 'upload', batchId],
+    queryFn: () => getUploadProgress(batchId),
+    refetchInterval: (q) => (q.state.data?.finished ? false : 3000),
+  });
+  if (isError) {
+    return (
+      <p className="mt-4 text-[12.5px] text-muted-foreground">
+        Could not load this upload&apos;s progress. It is still being processed.
+      </p>
+    );
+  }
+  if (!data) return null;
+  const read = data.created + data.failed;
+  const pct = data.total_files ? Math.round((read / data.total_files) * 100) : 100;
+  return (
+    <div
+      className="mt-4 rounded-[14px] border border-border bg-[var(--ui-inset-soft)] p-3.5"
+      data-testid="upload-progress"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[13px] font-medium text-foreground">
+          {data.finished ? 'Upload finished' : 'Processing upload'} — {data.requisition_title}
+        </p>
+        <span className="text-[12px] tabular-nums text-muted-foreground">
+          {read} of {data.total_files} files read
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
+        <div
+          className="h-1.5 rounded-full bg-[var(--accent)] transition-all"
+          style={{ width: `${pct}%` }}
+          role="progressbar"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        />
+      </div>
+      <p className="mt-2 text-[12px] text-[var(--ui-soft)]">
+        {data.queued} waiting · {data.created} added · {data.being_scored} being scored ·{' '}
+        {data.failed} failed
+      </p>
+      <p className="mt-1 text-[12px] text-muted-foreground">
+        {data.finished
+          ? 'Every added candidate is filed under this opening.'
+          : 'You can leave this page — it carries on, and you will be notified when it is done.'}
+      </p>
+      {data.failures && data.failures.length > 0 ? (
+        <ul className="mt-2 space-y-0.5 text-[12px] text-[var(--ui-warn)]">
+          {data.failures.map((f, i) => (
+            <li key={`${f.filename}-${i}`} className="truncate">
+              <span className="font-medium">{f.filename}</span> — {f.error}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function UploadSection({
-  files, jobTitle, level, jd, progress, pending, lastResult,
-  onFilesAdd, onFileRemove, onFilesClear, onJobTitle, onLevel, onJd, onSubmit,
+  files, progress, pending, batchId,
+  onFilesAdd, onFileRemove, onFilesClear, onSubmit,
   openings, openingId, onOpening,
 }: UploadSectionProps) {
-  const opening = openings.find((o) => o.id === openingId);
   return (
     <GlassCard className="p-6">
       {/* Card header */}
@@ -656,51 +720,38 @@ function UploadSection({
         <div>
           <p className="text-[15px] font-semibold text-foreground">Bulk upload resumes</p>
           <p className="text-[12.5px] text-muted-foreground">
-            Pick the role once, then select up to {MAX_BULK_FILES} PDF resumes — names extracted automatically.
+            Pick the opening, then select up to {MAX_BULK_FILES} PDF resumes. They are read,
+            filed and scored in the background.
           </p>
         </div>
       </div>
 
       <form onSubmit={onSubmit} className="space-y-4">
-        {/* Opening. Choosing one files every resume under it, scored against
-            its role and job description — rather than trusting that a typed
-            title happens to match an existing opening's. */}
-        <select
-          className={inputCls}
-          value={openingId}
-          onChange={(e) => onOpening(e.target.value)}
-          aria-label="Opening"
-        >
-          <option value="">New role — type it below</option>
-          {openings.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.title} · {o.level}
-            </option>
-          ))}
-        </select>
-
-        {/* Role + level (the opening's own, when one is chosen) */}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <input
-            className={inputCls}
-            placeholder="Role (e.g. Blockchain Engineer)"
-            value={opening ? opening.title : jobTitle}
-            onChange={(e) => onJobTitle(e.target.value)}
-            disabled={Boolean(opening)}
-            aria-label="Target role"
-          />
+        {/* The opening. Required: every resume is filed under it and scored
+            against its role and job description (E5). */}
+        {openings.length === 0 ? (
+          <p className="text-[12.5px] text-muted-foreground">
+            There is no open opening to upload into.{' '}
+            <Link to="/hr/requisitions" className="text-[var(--accent)] hover:underline">
+              Create one first
+            </Link>
+            .
+          </p>
+        ) : (
           <select
             className={inputCls}
-            value={opening ? opening.level : level}
-            onChange={(e) => onLevel(e.target.value)}
-            disabled={Boolean(opening)}
-            aria-label="Experience level"
+            value={openingId}
+            onChange={(e) => onOpening(e.target.value)}
+            aria-label="Opening"
           >
-            <option value="entry">Entry level</option>
-            <option value="mid">Mid level</option>
-            <option value="senior">Senior level</option>
+            <option value="">Choose the opening…</option>
+            {openings.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.title} · {o.level}
+              </option>
+            ))}
           </select>
-        </div>
+        )}
 
         {/* File drop zone */}
         <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[16px] border-2 border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-inset-soft)] px-4 py-8 text-center transition-colors hover:border-[rgba(var(--accent-rgb),0.5)] hover:bg-[rgba(var(--accent-rgb),0.04)]">
@@ -764,19 +815,7 @@ function UploadSection({
           </div>
         )}
 
-        {/* JD textarea — hidden when an opening is chosen: its own job
-            description is what the batch is scored against. */}
-        {!opening && (
-        <textarea
-          className={cn(inputCls, 'min-h-[72px] resize-y')}
-          placeholder="Job description (optional — applied to the whole batch, improves scoring accuracy)"
-          value={jd}
-          onChange={(e) => onJd(e.target.value)}
-          aria-label="Job description"
-        />
-        )}
-
-        {/* Upload progress */}
+        {/* Upload progress — the bytes only; reading happens afterwards */}
         {pending && (
           <div className="space-y-1.5">
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
@@ -790,9 +829,7 @@ function UploadSection({
               />
             </div>
             <p className="text-[12px] text-[var(--ui-faint)]">
-              {progress < 100
-                ? `Uploading ${progress}%…`
-                : `Scoring ${files.length || 'the'} resume${files.length === 1 ? '' : 's'} — this can take a moment…`}
+              {progress < 100 ? `Uploading ${progress}%…` : 'Storing the files…'}
             </p>
           </div>
         )}
@@ -801,33 +838,18 @@ function UploadSection({
         <Pill
           type="submit"
           variant="primary"
-          disabled={pending || files.length === 0}
+          disabled={pending || files.length === 0 || !openingId}
           aria-busy={pending}
           className="gap-1.5"
         >
           <Upload size={15} aria-hidden="true" />
           {pending
-            ? 'Processing…'
-            : `Upload & score${files.length > 0 ? ` ${files.length} resume${files.length === 1 ? '' : 's'}` : ''}`}
+            ? 'Uploading…'
+            : `Upload${files.length > 0 ? ` ${files.length} resume${files.length === 1 ? '' : 's'}` : ''}`}
         </Pill>
       </form>
 
-      {/* Per-file failure summary */}
-      {lastResult && lastResult.failed_count > 0 && (
-        <div className="mt-4 rounded-[14px] border border-[rgba(255,183,100,0.25)] bg-[rgba(255,183,100,0.08)] p-3.5">
-          <p className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--ui-warn)]">
-            <AlertTriangle size={14} aria-hidden="true" />
-            {lastResult.failed_count} file{lastResult.failed_count === 1 ? '' : 's'} skipped
-          </p>
-          <ul className="space-y-0.5 text-[12px] text-[var(--ui-warn)]">
-            {lastResult.failed.map((f, i) => (
-              <li key={i} className="truncate">
-                <span className="font-medium">{f.filename}</span> — {f.error}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {batchId ? <UploadBatchProgress batchId={batchId} /> : null}
     </GlassCard>
   );
 }
@@ -839,12 +861,10 @@ export default function Applicants() {
 
   // Upload form state
   const [files, setFiles] = useState<File[]>([]);
-  const [jobTitle, setJobTitle] = useState('');
-  const [level, setLevel] = useState('mid');
-  const [jd, setJd] = useState('');
   const [openingId, setOpeningId] = useState('');
   const [progress, setProgress] = useState(0);
-  const [lastResult, setLastResult] = useState<BulkUploadResult | null>(null);
+  // The upload the progress panel follows, once the server has accepted it.
+  const [batchId, setBatchId] = useState<string | null>(null);
   // Open openings for the upload picker (B5).
   const { data: openingsData } = useQuery({
     queryKey: ['hr', 'requisitions', 'open'],
@@ -905,37 +925,22 @@ export default function Applicants() {
     mutationFn: () => {
       const fd = new FormData();
       files.forEach((f) => fd.append('files', f));
-      const opening = openings.find((o) => o.id === openingId);
-      if (opening) {
-        // The server files them under this opening and uses its role; the
-        // title still travels because the endpoint requires it.
-        fd.append('requisition_id', opening.id);
-        fd.append('target_job_title', opening.title);
-        fd.append('target_level', opening.level);
-      } else {
-        fd.append('target_job_title', jobTitle.trim());
-        fd.append('target_level', level);
-        if (jd.trim()) fd.append('target_jd_text', jd.trim());
-      }
+      fd.append('requisition_id', openingId);
       setProgress(0);
       return bulkUploadApplicants(fd, setProgress);
     },
     onSuccess: (res) => {
-      setLastResult(res);
-      if (res.created_count > 0) {
-        // "added & scored" was true when scoring happened inside this request.
-        // It no longer does, and saying so would send someone looking for an
-        // ATS column that is deliberately still empty.
+      setBatchId(res.batch_id);
+      if (res.accepted > 0) {
         toast.success(
-          `${res.created_count} resume${res.created_count === 1 ? '' : 's'} uploaded — ` +
-            'reading and scoring them now' +
-            (res.failed_count > 0 ? ` · ${res.failed_count} skipped` : ''),
+          `${res.accepted} resume${res.accepted === 1 ? '' : 's'} accepted — reading and ` +
+            'scoring them in the background' +
+            (res.failed_count > 0 ? ` · ${res.failed_count} refused` : ''),
         );
       } else {
-        toast.error('No resumes could be processed — see details below.');
+        toast.error('None of those files could be accepted — see why below.');
       }
       setFiles([]);
-      setJd('');
       void qc.invalidateQueries({ queryKey: ['hr', 'applicants'] });
     },
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Upload failed'),
@@ -1001,8 +1006,7 @@ export default function Applicants() {
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (files.length === 0) return toast.error('Choose one or more PDF resumes.');
-    if (!openingId && !jobTitle.trim())
-      return toast.error('Choose an opening, or type the role to screen for.');
+    if (!openingId) return toast.error('Choose the opening these resumes are for.');
     uploadMut.mutate();
   }
 
@@ -1039,18 +1043,12 @@ export default function Applicants() {
       {/* Upload panel */}
       <UploadSection
         files={files}
-        jobTitle={jobTitle}
-        level={level}
-        jd={jd}
         progress={progress}
         pending={pending}
-        lastResult={lastResult}
+        batchId={batchId}
         onFilesAdd={addFiles}
         onFileRemove={(idx) => setFiles((prev) => prev.filter((_, j) => j !== idx))}
         onFilesClear={() => setFiles([])}
-        onJobTitle={setJobTitle}
-        onLevel={setLevel}
-        onJd={setJd}
         onSubmit={onSubmit}
         openings={openings}
         openingId={openingId}

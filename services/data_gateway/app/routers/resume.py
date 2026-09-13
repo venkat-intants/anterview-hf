@@ -262,6 +262,34 @@ async def _delete_from_s3(s3_key: str) -> None:
         )
 
 
+async def _download_from_s3(s3_key: str) -> bytes:
+    """Read stored resume bytes back — S3/R2, or local disk in development.
+
+    Unlike the delete this raises. Its caller is the reconciler scoring an
+    older application against the CV it was submitted with, and a failed read
+    has to become a retry, never a score against nothing.
+    """
+    if local_storage.enabled(
+        app_env=settings.app_env,
+        directory=settings.storage_local_dir,
+        has_s3_credentials=bool(settings.s3_access_key_id),
+    ):
+        return await local_storage.get(settings.storage_local_dir, s3_key)
+    if not settings.s3_access_key_id:
+        raise local_storage.LocalStorageError("no object storage is configured")
+
+    async with s3_client(
+        endpoint=settings.s3_endpoint,
+        region=settings.s3_region,
+        access_key=settings.s3_access_key_id,
+        secret_key=settings.s3_secret_access_key,
+        use_ssl=settings.s3_use_ssl,
+    ) as s3:
+        obj = await s3.get_object(Bucket=settings.s3_bucket_name, Key=s3_key)
+        data: bytes = await obj["Body"].read()
+    return data
+
+
 async def _sync_users_table(
     db: AsyncSession,
     user_uuid: uuid.UUID,

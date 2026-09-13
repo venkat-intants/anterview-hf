@@ -371,6 +371,32 @@ export interface DecisionQueueRow {
   review_round_title?: string | null;
   /** What that round assesses — the reviewer's checklist. */
   review_criteria?: ReviewCriterion[];
+  applicant_id?: string;
+  ats_recommendation?: string | null;
+  ats_summary?: string | null;
+  ats_strengths?: string[];
+  ats_concerns?: string[];
+  /** The workflow version this candidate is running. */
+  workflow_version?: number | null;
+  current_round_title?: string | null;
+  current_round_position?: number | null;
+  total_rounds?: number;
+  /** Days since their last move, from the stage ledger. */
+  waiting_days?: number | null;
+  /** Mean of their scored rounds — a summary, never the decision. */
+  composite_percent?: number | null;
+  round_results?: QueueRoundResult[];
+}
+
+/** One completed round, as the queue summarises it. Criteria and evidence are in the drawer. */
+export interface QueueRoundResult {
+  round_id: string;
+  title: string;
+  position: number;
+  kind: string;
+  percent: number | null;
+  passed: boolean | null;
+  graded_by: string;
 }
 
 /**
@@ -391,6 +417,32 @@ export function recordRoundReview(
 
 export function getDecisionQueue(requisitionId: string): Promise<DecisionQueueRow[]> {
   return apiGet<DecisionQueueRow[]>(`/hr/requisitions/${requisitionId}/decision-queue`);
+}
+
+export interface FinalDecisionResult {
+  enrolment_id: string;
+  status: 'hired' | 'rejected';
+  previous_status: string;
+  decided_by: string;
+  decided_at: string;
+  /** True when this reject reversed an earlier hire. */
+  reversal: boolean;
+}
+
+/**
+ * Record the final human decision on one application (E2).
+ *
+ * The reason is required: a hire or reject ends a candidacy, and the reason is
+ * kept against the person deciding, on the ledger and in the audit log.
+ */
+export function recordFinalDecision(
+  enrolmentId: string,
+  body: { decision: 'hired' | 'rejected'; reason: string },
+): Promise<FinalDecisionResult> {
+  return apiPost<FinalDecisionResult>(`/hr/enrolments/${enrolmentId}/decision`, {
+    decision: body.decision,
+    reason: body.reason.trim(),
+  });
 }
 
 /**

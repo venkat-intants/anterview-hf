@@ -105,6 +105,7 @@ async def enrol_applicant(
     target_jd_text: str | None = None,
     actor_user_id: uuid.UUID | None = None,
     reason: str = "enrolled on application",
+    resume_s3_key: str | None = None,
 ) -> RunnerOutcome:
     """Place an applicant into the requisition's published workflow. Caller commits.
 
@@ -118,6 +119,10 @@ async def enrol_applicant(
     ``actor_user_id`` is the person who filed the applicant (HR's upload); the
     ledger entry is then marked manual. None — a candidate applying — is the
     system's doing.
+
+    ``resume_s3_key`` is the CV submitted with THIS application. It is pinned
+    on the enrolment so the application is scored against it even if the
+    person uploads a newer CV before the reconciler gets to it.
     """
     existing = await db.scalar(
         text(
@@ -136,11 +141,13 @@ async def enrol_applicant(
     await db.execute(
         text(
             "INSERT INTO enrolments (id, company_id, requisition_id, applicant_id, status,"
-            " target_job_title, target_level, target_jd_text, workflow_id, created_at, updated_at)"
-            " VALUES (:i,:c,:r,:a,'new',:tt,:tl,:jd,:w,:n,:n)"
+            " target_job_title, target_level, target_jd_text, workflow_id,"
+            " applied_resume_s3_key, created_at, updated_at)"
+            " VALUES (:i,:c,:r,:a,'new',:tt,:tl,:jd,:w,:k,:n,:n)"
         ),
         {"i": enrolment_id, "c": company_id, "r": requisition_id, "a": applicant_id,
          "tt": target_job_title, "tl": target_level, "jd": target_jd_text,
+         "k": resume_s3_key,
          # NULL when nothing is published yet: the candidate is still a real
          # applicant and must not be lost. They join a workflow when one goes
          # live, rather than being rejected for arriving early.
@@ -887,6 +894,30 @@ async def decision_queue(
         await db.execute(
             text(
                 "SELECT e.id, e.status, e.held_reason, e.held_at, e.ats_overall,"
+                "       e.applicant_id, e.ats_recommendation, e.ats_summary,"
+                "       e.ats_strengths, e.ats_concerns,"
+                "       w.version AS workflow_version,"
+                "       cur.title AS current_round_title,"
+                "       cur.position AS current_round_position,"
+                "       (SELECT count(*) FROM workflow_rounds x"
+                "         WHERE x.workflow_id = e.workflow_id AND x.deleted_at IS NULL"
+                "       ) AS total_rounds,"
+                "       EXTRACT(EPOCH FROM (NOW() - enrolment_state_since(e.id, e.created_at)))"
+                "         / 86400.0 AS waiting_days,"
+                "       (SELECT avg(rr.percent) FROM round_results rr"
+                "         WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL"
+                "           AND rr.percent IS NOT NULL) AS composite_percent,"
+                "       COALESCE(("
+                "           SELECT json_agg(json_build_object("
+                "                      'round_id', rr.round_id, 'title', xr.title,"
+                "                      'position', xr.position, 'kind', xr.kind,"
+                "                      'percent', rr.percent, 'passed', rr.passed,"
+                "                      'graded_by', rr.graded_by)"
+                "                  ORDER BY xr.position, rr.created_at)"
+                "             FROM round_results rr"
+                "             JOIN workflow_rounds xr ON xr.id = rr.round_id"
+                "            WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL"
+                "       ), '[]'::json) AS round_results,"
                 "       a.full_name, a.email,"
                 "       wr.id AS review_round_id, wr.title AS review_round_title,"
                 "       COALESCE(("
@@ -903,14 +934,18 @@ async def decision_queue(
                 "         WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL) AS best_percent"
                 "  FROM enrolments e"
                 "  JOIN applicants a ON a.id = e.applicant_id AND a.deleted_at IS NULL"
+                "  LEFT JOIN workflows w ON w.id = e.workflow_id"
+                "  LEFT JOIN workflow_rounds cur ON cur.id = e.current_round_id"
                 "  LEFT JOIN workflow_rounds wr ON wr.id = e.current_round_id"
                 "                              AND wr.kind = 'human_review'"
                 "                              AND wr.deleted_at IS NULL"
                 " WHERE e.company_id = :c AND e.requisition_id = :r"
                 "   AND e.deleted_at IS NULL"
-                "   AND e.status NOT IN ('hired','rejected')"
-                "   AND (e.status = 'held' OR e.current_round_id IS NULL"
-                "        OR wr.id IS NOT NULL)"
+                # One definition, shared with the watcher and the requisition
+                # counts (migration a1c3e5f7b9d2). The inline version this
+                # replaces also took every new or shortlisted applicant with no
+                # round yet, and the queue told HR they had finished the workflow.
+                "   AND enrolment_awaits_human(e.status, e.current_round_id)"
                 " ORDER BY (e.status = 'held') DESC, e.ats_overall DESC NULLS LAST"
             ),
             {"c": company_id, "r": requisition_id},
@@ -924,7 +959,33 @@ async def decision_queue(
             "status": r["status"],
             "held": r["status"] == "held",
             "held_reason": r["held_reason"],
+            "applicant_id": str(r["applicant_id"]),
             "ats_overall": r["ats_overall"],
+            # The application's own resume match, with what produced it.
+            "ats_recommendation": r["ats_recommendation"],
+            "ats_summary": r["ats_summary"],
+            "ats_strengths": _as_json(r["ats_strengths"]) or [],
+            "ats_concerns": _as_json(r["ats_concerns"]) or [],
+            # Where they are: the version they are running and the round, if any.
+            "workflow_version": r["workflow_version"],
+            "current_round_title": r["current_round_title"],
+            "current_round_position": r["current_round_position"],
+            "total_rounds": int(r["total_rounds"] or 0),
+            # Since their last move, from the stage ledger.
+            "waiting_days": (
+                round(float(r["waiting_days"]), 1) if r["waiting_days"] is not None else None
+            ),
+            # The mean of their scored rounds. Labelled as exactly that on screen:
+            # it summarises, it does not decide (D-05).
+            "composite_percent": (
+                round(float(r["composite_percent"]), 1)
+                if r["composite_percent"] is not None
+                else None
+            ),
+            "round_results": [
+                {**x, "percent": float(x["percent"]) if x.get("percent") is not None else None}
+                for x in (_as_json(r["round_results"]) or [])
+            ],
             "rounds_taken": int(r["rounds_taken"] or 0),
             "best_percent": float(r["best_percent"]) if r["best_percent"] is not None else None,
             # Waiting on a review round rather than on the final decision.
@@ -941,13 +1002,20 @@ async def decision_queue(
             ),
             "review_round_title": r["review_round_title"] if r["status"] != "held" else None,
             "review_criteria": (
-                r["review_criteria"]
+                _as_json(r["review_criteria"])
                 if r["review_round_id"] and r["status"] != "held"
                 else []
             ),
         }
         for r in rows
     ]
+
+
+def _as_json(value: Any) -> Any:
+    """A json/jsonb column as Python. The driver may hand these back as text."""
+    import json  # noqa: PLC0415 — only needed on this read path
+
+    return json.loads(value) if isinstance(value, str) else value
 
 
 def _json(value: dict[str, Any] | None) -> str | None:

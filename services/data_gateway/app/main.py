@@ -51,6 +51,7 @@ from app.routers.agent import router as agent_router
 from app.routers.auth import router as auth_router
 from app.routers.candidate_applications import router as candidate_applications_router
 from app.routers.careers import router as careers_router
+from app.routers.company_board import router as company_board_router
 from app.routers.consent import router as consent_router
 from app.routers.exam_take import router as exam_take_router
 from app.routers.hr_applicants import router as hr_applicants_router
@@ -353,6 +354,8 @@ install_http_observability(app, service_name=settings.service_name)
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(admin_hr_router)
+# Read-only: the company super admin's hiring board (E3).
+app.include_router(company_board_router)
 app.include_router(hr_applicants_router)
 app.include_router(hr_exams_router)
 app.include_router(hr_coding_router)

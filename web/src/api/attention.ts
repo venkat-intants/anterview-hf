@@ -37,6 +37,8 @@ export interface AttentionBoard {
   items: AttentionItem[];
 }
 
-export function getAttention(): Promise<AttentionBoard> {
-  return apiGet<AttentionBoard>('/hr/attention');
+/** The company's findings, or one opening's when `requisitionId` is given. */
+export function getAttention(requisitionId?: string): Promise<AttentionBoard> {
+  const q = requisitionId ? `?requisition_id=${encodeURIComponent(requisitionId)}` : '';
+  return apiGet<AttentionBoard>(`/hr/attention${q}`);
 }

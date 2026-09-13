@@ -88,7 +88,7 @@ async def test_bulk_upload_rejects_oversized_batch() -> None:
     with pytest.raises(HTTPException) as exc:
         await bulk_upload_applicants(
             files=too_many,  # type: ignore[arg-type]
-            target_job_title="Engineer",
+            requisition_id=uuid.uuid4(),
             ctx=(uuid.uuid4(), uuid.uuid4()),
             db=db,
         )
@@ -115,7 +115,7 @@ async def test_bulk_upload_empty_batch_400() -> None:
     db = AsyncMock()
     with pytest.raises(HTTPException) as exc:
         await bulk_upload_applicants(
-            files=[], target_job_title="Engineer", ctx=(uuid.uuid4(), uuid.uuid4()), db=db
+            files=[], requisition_id=uuid.uuid4(), ctx=(uuid.uuid4(), uuid.uuid4()), db=db
         )
     assert exc.value.status_code == 400
 

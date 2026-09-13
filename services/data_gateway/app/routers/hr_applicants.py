@@ -35,6 +35,7 @@ from app.applicant_enrichment import (
     store_embedding,
     valid_email_or_none,
 )
+from app.bulk_ingest import StagedFile, batch_progress, create_batch, recent_batches
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep, get_hr_company
 from app.embedding_client import (
@@ -313,6 +314,9 @@ async def _file_under(
         target_jd_text=opening["jd_text"],
         actor_user_id=hr_uid,
         reason="added by HR upload",
+        # The CV just stored for this upload — pinned so the application is
+        # scored against it even after a newer one replaces it on the person.
+        resume_s3_key=applicant.resume_s3_key,
     )
     return uuid.UUID(outcome.enrolment_id) if outcome.enrolment_id else None
 
@@ -699,10 +703,12 @@ async def create_applicant(
         ) from exc
 
     # The CV this one replaced is kept only while an application still points at
-    # it as the CV it was scored against; otherwise it is PII nothing refers to.
+    # it — scored against it, or submitted with it and not scored yet; otherwise
+    # it is PII nothing refers to.
     if previous_key and previous_key != s3_key:
         still_used = await db.scalar(
-            text("SELECT 1 FROM enrolments WHERE scored_resume_s3_key = :k LIMIT 1"),
+            text("SELECT 1 FROM enrolments WHERE scored_resume_s3_key = :k"
+                 " OR applied_resume_s3_key = :k LIMIT 1"),
             {"k": previous_key},
         )
         if still_used is None:
@@ -749,34 +755,66 @@ async def create_applicant(
     return _to_out(applicant)
 
 
+class BulkUploadAccepted(BaseModel):
+    """What the upload request can say before anything has been read (E5)."""
+
+    batch_id: str
+    requisition_id: str
+    total_files: int
+    # Stored and queued for the background reader.
+    accepted: int
+    failed_count: int
+    # Refused at upload: not a PDF, empty, too large, or not stored.
+    failed: list[dict[str, str]]
+
+
+class UploadProgressOut(BaseModel):
+    """One bulk upload's progress through the background reader and scorer."""
+
+    batch_id: str
+    requisition_id: str
+    requisition_title: str
+    uploaded_by: str | None
+    total_files: int
+    queued: int
+    created: int
+    failed: int
+    being_scored: int
+    finished: bool
+    created_at: str
+    finished_at: str | None
+    failures: list[dict[str, str | None]] = Field(default_factory=list)
+
+
 @router.post(
     "/applicants/bulk",
-    status_code=status.HTTP_201_CREATED,
-    response_model=BulkUploadResult,
-    summary="Bulk-upload many resumes for one role (names auto-extracted)",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=BulkUploadAccepted,
+    summary="Accept a batch of resumes for one opening; they are processed in the background",
 )
 async def bulk_upload_applicants(
     files: Annotated[list[UploadFile], File(description="One or more PDF resumes")],
-    target_job_title: Annotated[str, Form()],
+    requisition_id: Annotated[uuid.UUID, Form()],
     ctx: HrCtxDep,
     db: DbSessionDep,
-    target_level: Annotated[str, Form()] = "mid",
-    target_jd_text: Annotated[str | None, Form()] = None,
-    requisition_id: Annotated[uuid.UUID | None, Form()] = None,
-) -> BulkUploadResult:
-    """Upload many resumes at once for a SINGLE role.
+) -> BulkUploadAccepted:
+    """Accept many resumes for ONE opening and return straight away — E5.
 
-    Each PDF is read and stored; scoring, embedding and name extraction happen
-    afterwards in the background (Group A's reconciler). A bad, empty or
-    oversized file is reported in ``failed`` without aborting the rest.
+    This request only STORES. Each file is checked (a PDF, not empty, under
+    5 MB, inside the batch budget), its bytes are written to object storage,
+    and the batch is recorded with one row per file. Reading the PDF, creating
+    the applicant and filing them under the opening happen in the reconciler's
+    background pass (app.bulk_ingest), and scoring, embedding and the real name
+    follow in its existing passes. The reconciler is woken so the first file
+    does not wait for the next interval.
 
-    Scoring used to run inside this request, sequentially, at roughly ten
-    seconds a file — so a full twenty-five-resume batch held one connection
-    open for four minutes, and a dropped connection lost the tail of it. That
-    is why every row comes back with ``pending_enrichment`` true and no ATS
-    score: the work is queued, not skipped, and the response says which rows
-    are still being read so the console can say so too rather than showing
-    filename-derived names as though they were real.
+    It used to read every PDF and write every applicant inside the request, so
+    a few hundred CVs held one connection for minutes and a failure list
+    existed only in a response that was gone once the page closed. Every file's
+    outcome is now a row: ``GET /hr/uploads/{batch_id}``.
+
+    The opening is a real requisition id — a typed title no longer creates or
+    matches one — and must belong to the caller's company (404 otherwise).
     """
     hr_uid, company_id = ctx
     if not files:
@@ -786,116 +824,121 @@ async def bulk_upload_applicants(
             status_code=413,
             detail=f"Up to {_MAX_BULK_FILES} resumes per batch — you sent {len(files)}.",
         )
+    opening = (
+        await db.execute(
+            text(
+                "SELECT id, status FROM job_requisitions"
+                " WHERE id = :r AND company_id = :c AND deleted_at IS NULL"
+            ),
+            {"r": requisition_id, "c": company_id},
+        )
+    ).mappings().first()
+    if opening is None:
+        raise HTTPException(status_code=404, detail="Opening not found.")
+    if opening["status"] == "closed":
+        raise HTTPException(
+            status_code=409, detail="This opening is closed. Reopen it to add candidates."
+        )
 
-    level = target_level.strip() or "mid"
-    opening = await _resolve_opening(
-        db, company_id=company_id, hr_uid=hr_uid, requisition_id=requisition_id,
-        title=target_job_title.strip() or "General Role", level=level, jd_text=target_jd_text,
-    )
-    job_title = str(opening["title"])
-    if requisition_id is not None:
-        level = str(opening["level"] or level)
-        target_jd_text = opening["jd_text"]
-    # Committed before the loop: each file commits (or rolls back) on its own,
-    # and a rollback after one bad file must not take the opening with it.
-    await db.commit()
-
-    # One id for the whole batch, so the reconciler can tell when the last row
-    # of THIS upload has finished being read and emit a single notification
-    # (A4) rather than one per applicant.
     batch_id = uuid.uuid4()
-
-    created: list[ApplicantOut] = []
-    failed: list[dict[str, str]] = []
-    embed_ids: list[uuid.UUID] = []
+    staged: list[StagedFile] = []
+    stored_keys: list[str] = []
     batch_bytes = 0
     for f in files:
-        fname = f.filename or "resume.pdf"
-        # Browsers usually send application/pdf; some send octet-stream — allow both
-        # and let _extract_pdf_text reject anything that is not actually a PDF.
+        fname = (f.filename or "resume.pdf")[:300]
+        item_id = uuid.uuid4()
+        # Browsers usually send application/pdf; some send octet-stream. The
+        # background reader rejects anything that is not actually a PDF.
         if f.content_type not in ("application/pdf", "application/octet-stream"):
-            failed.append({"filename": fname, "error": "not a PDF"})
+            staged.append(StagedFile(item_id, fname, None, 0, "Not a PDF."))
             continue
         try:
-            raw = await f.read()
+            # Bounded: one byte past the limit is enough to know it is over.
+            raw = await f.read(_MAX_RESUME_BYTES + 1)
         except Exception:  # noqa: BLE001
-            failed.append({"filename": fname, "error": "could not read upload"})
+            staged.append(StagedFile(item_id, fname, None, 0, "Could not read the upload."))
             continue
         if not raw:
-            failed.append({"filename": fname, "error": "empty file"})
+            staged.append(StagedFile(item_id, fname, None, 0, "The file is empty."))
             continue
         if len(raw) > _MAX_RESUME_BYTES:
-            failed.append({"filename": fname, "error": "over 5 MB"})
+            staged.append(StagedFile(item_id, fname, None, len(raw), "Over 5 MB."))
             continue
         batch_bytes += len(raw)
         if batch_bytes > _MAX_BULK_TOTAL_BYTES:
-            # Reported per file rather than raised, so the files already stored
-            # stay stored. Aborting here would discard work that succeeded and
-            # give the operator nothing to retry from.
-            failed.append({"filename": fname, "error": "batch size limit reached"})
+            # Per file rather than raised, so what is already stored stays stored.
+            staged.append(StagedFile(item_id, fname, None, len(raw),
+                                     "The batch size limit was reached before this file."))
             continue
+        key = f"applicants/{company_id}/uploads/{batch_id}/{item_id}.pdf"
         try:
-            applicant = await _ingest_resume(
-                db=db,
-                company_id=company_id,
-                hr_uid=hr_uid,
-                raw=raw,
-                fallback_name=_name_from_filename(fname),
-                job_title=job_title,
-                level=level,
-                jd_text=target_jd_text,
-                score_now=False,
-                upload_batch_id=batch_id,
-                opening=opening,
-            )
-            created.append(_to_out(applicant))
-            embed_ids.append(applicant.id)
-        except (ValueError, BotoCoreError, ClientError) as exc:
-            await db.rollback()
-            failed.append({"filename": fname, "error": str(exc)[:140]})
-        except Exception as exc:  # noqa: BLE001 — one bad file must not kill the batch
-            await db.rollback()
-            # Full traceback — an "unexpected error" with only the type name is
-            # undiagnosable from production logs (learned the hard way on the Space).
-            log.exception(
-                "hr.applicant.bulk.unexpected",
-                error_type=type(exc).__name__,
-                error=str(exc)[:300],
-            )
-            failed.append({"filename": fname, "error": "unexpected error"})
+            await _upload_to_s3(raw, key)
+        except Exception as exc:  # noqa: BLE001 — one file's storage failure is that file's
+            log.warning("hr.applicant.bulk.store_failed", error_type=type(exc).__name__)
+            staged.append(StagedFile(item_id, fname, None, len(raw),
+                                     "Could not store the file — try it again."))
+            continue
+        stored_keys.append(key)
+        staged.append(StagedFile(item_id, fname, key, len(raw)))
 
-    # Embedding is left to the reconciler along with the scoring. Doing it here
-    # would put a network round-trip back into a request whose whole purpose is
-    # now to return quickly, and the reconciler already finds unembedded rows by
-    # the same absence it uses for unscored ones.
-
-    # An opening this upload minted, that ended up with nobody in it, is noise
-    # in HR's review queue. Removed rather than left empty — nothing refers to
-    # it, and it was never a decision anyone made.
-    if opening["created"] and not created:
-        await db.execute(
-            text("DELETE FROM job_requisitions WHERE id = :i AND company_id = :c"
-                 " AND NOT EXISTS (SELECT 1 FROM enrolments WHERE requisition_id = :i)"),
-            {"i": opening["id"], "c": company_id},
-        )
+    try:
+        await create_batch(db, batch_id=batch_id, company_id=company_id,
+                           requisition_id=requisition_id, uploaded_by=hr_uid, files=staged)
         await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        # Objects with no row are PII nothing refers to — no erasure path would
+        # ever find them.
+        for key in stored_keys:
+            await _delete_from_s3(key)
+        log.exception("hr.applicant.bulk.record_failed", error_type=type(exc).__name__)
+        raise HTTPException(
+            status_code=503, detail="Could not record the upload. Please try again."
+        ) from exc
 
+    from app.reconciliation import wake as wake_reconciler  # noqa: PLC0415
+
+    wake_reconciler()
+    failed = [{"filename": s.filename, "error": s.error or ""} for s in staged if s.error]
     log.info(
-        "hr.applicant.bulk.complete",
-        company_id=str(company_id),
-        created=len(created),
-        failed=len(failed),
-        deferred=len(embed_ids),
-        requisition_id=str(opening["id"]),
+        "hr.applicant.bulk.accepted",
+        company_id=str(company_id), requisition_id=str(requisition_id),
+        batch_id=str(batch_id), accepted=len(staged) - len(failed), refused=len(failed),
     )
-    return BulkUploadResult(
-        created=created,
-        failed=failed,
-        created_count=len(created),
+    return BulkUploadAccepted(
+        batch_id=str(batch_id),
+        requisition_id=str(requisition_id),
+        total_files=len(staged),
+        accepted=len(staged) - len(failed),
         failed_count=len(failed),
-        requisition_id=str(opening["id"]) if created else None,
-        pending_enrichment=len(created),
+        failed=failed,
     )
+
+
+@router.get("/uploads/{batch_id}", response_model=UploadProgressOut)
+async def get_upload_progress(
+    batch_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> UploadProgressOut:
+    """Where one bulk upload has got to, with every file that failed and why."""
+    _hr_uid, company_id = ctx
+    out = await batch_progress(db, company_id=company_id, batch_id=batch_id)
+    if out is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    return UploadProgressOut(**out)
+
+
+@router.get("/uploads", response_model=list[UploadProgressOut])
+async def list_uploads(
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+    requisition_id: Annotated[uuid.UUID | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+) -> list[UploadProgressOut]:
+    """This company's recent bulk uploads, newest first, optionally for one opening."""
+    _hr_uid, company_id = ctx
+    rows = await recent_batches(db, company_id=company_id, requisition_id=requisition_id,
+                                limit=limit)
+    return [UploadProgressOut(**r) for r in rows]
 
 
 # Hybrid weighting: semantic meaning dominates, exact-keyword presence boosts.
@@ -1338,7 +1381,12 @@ def _criteria_list(raw: Any) -> list[CriterionScore]:
     summary="Per-round scores for one candidate, criterion by criterion",
 )
 async def list_applicant_round_results(
-    applicant_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+    applicant_id: uuid.UUID,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+    # One application's results. Without it every application this person has
+    # made comes back together, and two openings' scores read as one record.
+    enrolment_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> list[RoundResultOut]:
     """Why a candidate scored what they scored.
 
@@ -1369,10 +1417,11 @@ async def list_applicant_round_results(
                 "  JOIN enrolments e ON e.id = rr.enrolment_id"
                 "  JOIN workflow_rounds wr ON wr.id = rr.round_id"
                 " WHERE e.applicant_id = :a AND rr.company_id = :c"
+                "   AND (CAST(:e AS uuid) IS NULL OR e.id = CAST(:e AS uuid))"
                 "   AND rr.superseded_at IS NULL AND e.deleted_at IS NULL"
                 " ORDER BY wr.position, rr.created_at"
             ),
-            {"a": applicant_id, "c": company_id},
+            {"a": applicant_id, "c": company_id, "e": enrolment_id},
         )
     ).mappings().all()
 

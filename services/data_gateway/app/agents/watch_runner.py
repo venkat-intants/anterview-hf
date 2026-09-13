@@ -23,8 +23,10 @@ Runs under the same APScheduler instance as the DPDP retention job.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from shared.agents import (
@@ -32,6 +34,7 @@ from shared.agents import (
     FunnelRow,
     OpeningHealth,
     QuestionStat,
+    RoundStall,
     StalledApplicant,
     WatcherFinding,
     WatcherInput,
@@ -100,10 +103,15 @@ QUESTION_STATS_SQL = text(
 # opening: the sweep runs for every company nightly, so round-trip count is
 # what decides whether this is cheap or a problem.
 #
-# "Awaiting a decision" is defined exactly as the decision-queue endpoint
-# defines it (workflow_runner.decision_queue) — held, or finished every round —
-# because a watcher that counted a different set from the screen it links to
-# would send people to a queue that does not match the alert.
+# "Awaiting a decision" is the database function enrolment_awaits_human — the
+# same one workflow_runner.decision_queue filters on — so the alert and the
+# screen it links to count the same people by construction. (This used to be a
+# hand-copied predicate with a comment claiming it matched; it did not, and it
+# counted never-shortlisted applicants as finished.)
+#
+# The wait is measured from the stage ledger (enrolment_state_since), not
+# updated_at: any rescore or edit resets updated_at, which made a candidate
+# three weeks into a queue read as one day.
 OPENING_HEALTH_SQL = text(
     """
     SELECT r.id,
@@ -112,18 +120,17 @@ OPENING_HEALTH_SQL = text(
            COUNT(e.id) FILTER (WHERE e.deleted_at IS NULL) AS live_enrolments,
            COUNT(e.id) FILTER (
                WHERE e.deleted_at IS NULL
-                 AND e.status NOT IN ('hired', 'rejected')
-                 AND (e.status = 'held' OR e.current_round_id IS NULL)
+                 AND enrolment_awaits_human(e.status, e.current_round_id)
            ) AS awaiting,
            COUNT(e.id) FILTER (
                WHERE e.deleted_at IS NULL AND e.status = 'held'
            ) AS held,
            COALESCE(MAX(
-               EXTRACT(EPOCH FROM (NOW() - e.updated_at)) / 86400.0
+               EXTRACT(EPOCH FROM (NOW() - enrolment_state_since(e.id, e.created_at)))
+               / 86400.0
            ) FILTER (
                WHERE e.deleted_at IS NULL
-                 AND e.status NOT IN ('hired', 'rejected')
-                 AND (e.status = 'held' OR e.current_round_id IS NULL)
+                 AND enrolment_awaits_human(e.status, e.current_round_id)
            ), 0) AS longest_wait_days,
            EXISTS (
                SELECT 1 FROM workflows w
@@ -160,43 +167,143 @@ OPENING_HEALTH_SQL = text(
 )
 
 
+# Applications going cold BEFORE any round starts, per opening (E6).
+#
+# The division of labour between the rules is what keeps one candidate from
+# being alerted about three times: someone inside a round is a round stall
+# (ROUND_STALL_SQL), someone waiting on a person is the decision backlog
+# (enrolment_awaits_human), and this is everyone else who is not moving — never
+# shortlisted, or shortlisted with no workflow to start.
+#
+# Time from the stage ledger, not updated_at, which a rescore resets. Closed
+# openings are finished, not neglected, so they are left out.
+STALLED_SQL = text(
+    """
+    SELECT e.applicant_id AS id, a.full_name, e.status,
+           r.id AS requisition_id, r.title AS requisition_title,
+           FLOOR(EXTRACT(EPOCH FROM (NOW() - enrolment_state_since(e.id, e.created_at)))
+                 / 86400.0)::int AS days
+      FROM enrolments e
+      JOIN applicants a
+        ON a.id = e.applicant_id AND a.company_id = e.company_id AND a.deleted_at IS NULL
+      JOIN job_requisitions r
+        ON r.id = e.requisition_id AND r.company_id = e.company_id
+       AND r.deleted_at IS NULL AND r.status IN ('open', 'paused')
+     WHERE e.company_id = CAST(:cid AS uuid)
+       AND e.deleted_at IS NULL
+       AND e.status NOT IN ('hired', 'rejected')
+       AND e.current_round_id IS NULL
+       AND NOT enrolment_awaits_human(e.status, e.current_round_id)
+     ORDER BY days DESC
+     LIMIT :limit
+    """
+)
+
+# Per OPENING (E6). It grouped by title, which merged two openings that shared
+# one and cited the title as if it were an id.
+FUNNEL_SQL = text(
+    """
+    SELECT p.requisition_id AS job_id, r.title,
+           COUNT(*) AS applicants,
+           COUNT(p.scorecard_id) AS interviewed
+      FROM application_progress p
+      JOIN job_requisitions r
+        ON r.id = p.requisition_id AND r.company_id = p.company_id
+       AND r.deleted_at IS NULL AND r.status IN ('open', 'paused')
+     WHERE p.company_id = CAST(:cid AS uuid)
+     GROUP BY p.requisition_id, r.title
+     LIMIT :limit
+    """
+)
+
+# Candidates stuck on one round of one opening past that round's deadline (E6).
+#
+# * The clock starts when they reached THIS round — the ledger's to_round_id
+#   entry — falling back to their last move.
+# * Held candidates are the decision backlog's; human_review rounds are waiting
+#   on a person, which is also the backlog's. Both are left out.
+# * Every table is constrained to the company, not only the first.
+# * :rid narrows to one opening, for the per-opening dashboard.
+ROUND_STALL_SQL = text(
+    """
+    SELECT r.id AS requisition_id, r.title AS requisition_title,
+           wr.id AS round_id, wr.title AS round_title, wr.deadline_days AS threshold_days,
+           COUNT(*) AS waiting,
+           MAX(x.days) AS longest_days,
+           json_agg(json_build_object('id', x.applicant_id, 'name', x.full_name)
+                    ORDER BY x.days DESC) AS sample
+      FROM (
+            SELECT e.applicant_id, a.full_name, e.requisition_id, e.current_round_id,
+                   EXTRACT(EPOCH FROM (NOW() - COALESCE(
+                       (SELECT max(t.occurred_at) FROM stage_transitions t
+                         WHERE t.enrolment_id = e.id
+                           AND t.to_round_id = e.current_round_id),
+                       enrolment_state_since(e.id, e.created_at)))) / 86400.0 AS days
+              FROM enrolments e
+              JOIN applicants a
+                ON a.id = e.applicant_id AND a.company_id = e.company_id
+               AND a.deleted_at IS NULL
+             WHERE e.company_id = CAST(:cid AS uuid)
+               AND e.deleted_at IS NULL
+               AND e.current_round_id IS NOT NULL
+               AND e.status NOT IN ('hired', 'rejected', 'held')
+               AND (CAST(:rid AS uuid) IS NULL OR e.requisition_id = CAST(:rid AS uuid))
+           ) x
+      JOIN workflow_rounds wr
+        ON wr.id = x.current_round_id AND wr.company_id = CAST(:cid AS uuid)
+       AND wr.deleted_at IS NULL AND wr.kind <> 'human_review'
+      JOIN job_requisitions r
+        ON r.id = x.requisition_id AND r.company_id = CAST(:cid AS uuid)
+       AND r.deleted_at IS NULL AND r.status IN ('open', 'paused')
+     WHERE x.days > wr.deadline_days
+     GROUP BY r.id, r.title, wr.id, wr.title, wr.deadline_days, wr.position
+     ORDER BY COUNT(*) DESC, wr.position
+     LIMIT :limit
+    """
+)
+
+
+def _opt_str(value: Any) -> str:
+    """A text or uuid column as str; anything else (a missing column) as ""."""
+    return str(value) if isinstance(value, str | uuid.UUID) else ""
+
+
+async def gather_round_stalls(
+    db: AsyncSession, company_id: str, requisition_id: str | None = None
+) -> list[RoundStall]:
+    """Stalled rounds for one company, or one of its openings."""
+    rows = (
+        await db.execute(
+            ROUND_STALL_SQL,
+            {"cid": company_id, "rid": requisition_id, "limit": MAX_ROWS_PER_QUERY},
+        )
+    ).all()
+    stalls: list[RoundStall] = []
+    for r in rows:
+        sample = json.loads(r.sample) if isinstance(r.sample, str) else (r.sample or [])
+        stalls.append(
+            RoundStall(
+                requisition_id=str(r.requisition_id),
+                requisition_title=r.requisition_title,
+                round_id=str(r.round_id),
+                round_title=r.round_title,
+                threshold_days=int(r.threshold_days),
+                waiting=int(r.waiting),
+                longest_days=float(r.longest_days or 0.0),
+                candidates=[(str(x["id"]), str(x["name"])) for x in sample][:10],
+            )
+        )
+    return stalls
+
+
 async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInput:
     """Run the gathering queries for one company."""
     stalled = (
-        await db.execute(
-            text(
-                """
-                -- Per APPLICATION (B5): someone rejected for one opening can
-                -- still be stalled in another, and vice versa.
-                SELECT applicant_id AS id, full_name, status,
-                       EXTRACT(DAY FROM (NOW() - updated_at))::int AS days
-                FROM application_progress
-                WHERE company_id = CAST(:cid AS uuid)
-                  -- Terminal stages are done, not stalled.
-                  AND status NOT IN ('hired', 'rejected')
-                ORDER BY updated_at ASC
-                LIMIT :limit
-                """
-            ),
-            {"cid": company_id, "limit": MAX_ROWS_PER_QUERY},
-        )
+        await db.execute(STALLED_SQL, {"cid": company_id, "limit": MAX_ROWS_PER_QUERY})
     ).all()
 
     funnels = (
-        await db.execute(
-            text(
-                """
-                SELECT opening_title AS title,
-                       COUNT(*) AS applicants,
-                       COUNT(scorecard_id) AS interviewed
-                FROM application_progress
-                WHERE company_id = CAST(:cid AS uuid)
-                GROUP BY opening_title
-                LIMIT :limit
-                """
-            ),
-            {"cid": company_id, "limit": MAX_ROWS_PER_QUERY},
-        )
+        await db.execute(FUNNEL_SQL, {"cid": company_id, "limit": MAX_ROWS_PER_QUERY})
     ).all()
 
     questions = (
@@ -207,18 +314,23 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
         await db.execute(OPENING_HEALTH_SQL, {"cid": company_id, "limit": MAX_ROWS_PER_QUERY})
     ).all()
 
+    round_stalls = await gather_round_stalls(db, company_id)
+
     return WatcherInput(
         company_id=company_id,
         stalled=[
-            StalledApplicant(str(r.id), r.full_name, r.status, int(r.days or 0))
+            StalledApplicant(
+                str(r.id), r.full_name, r.status, int(r.days or 0),
+                requisition_id=_opt_str(getattr(r, "requisition_id", None)),
+                requisition_title=_opt_str(getattr(r, "requisition_title", None)),
+            )
             for r in stalled
         ],
         funnels=[
             FunnelRow(
-                # No stable job id on the denormalised applicant row, so the
-                # title doubles as the grouping key. It is what the dedupe key
-                # and the citation both need.
-                job_id=r.title,
+                # The requisition id since E6; the title only for a row that
+                # somehow lacks one, so the rule still has a key.
+                job_id=_opt_str(getattr(r, "job_id", None)) or r.title,
                 job_title=r.title,
                 applicants=int(r.applicants),
                 interviewed=int(r.interviewed),
@@ -253,6 +365,7 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
             )
             for r in openings
         ],
+        round_stalls=round_stalls,
     )
 
 

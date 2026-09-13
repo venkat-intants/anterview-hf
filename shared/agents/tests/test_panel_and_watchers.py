@@ -440,7 +440,9 @@ def test_nothing_is_said_when_no_bar_is_set_or_nobody_clears_it() -> None:
         assert watch_ready_to_shortlist(WatcherInput(company_id="c", openings=[opening])) == []
 
 
-def test_the_shortlist_prompt_re_fires_only_when_the_count_changes() -> None:
+def test_the_shortlist_prompt_re_fires_only_when_the_count_grows_a_band() -> None:
+    """Keyed on the exact count, shortlisting one of five candidates re-sent the
+    prompt as if four were news."""
     from shared.agents.watchers import watch_ready_to_shortlist
 
     def key(n: int) -> str:
@@ -450,6 +452,7 @@ def test_the_shortlist_prompt_re_fires_only_when_the_count_changes() -> None:
         return watch_ready_to_shortlist(data)[0].dedupe_key
 
     assert key(4) == key(4)
+    assert key(3) == key(4)
     assert key(4) != key(5)
 
 
@@ -529,6 +532,25 @@ def test_the_backlog_dedupe_key_tracks_the_queue_size() -> None:
     assert a.dedupe_key != c.dedupe_key
 
 
+def test_working_the_backlog_down_does_not_re_alert() -> None:
+    """Keyed on the exact count, deciding on one of eight candidates re-sent the
+    alert as if seven waiting were news — punishing the person doing the work."""
+    def key(n: int) -> str:
+        opening = _opening(awaiting_decision=n, longest_wait_days=5.0)
+        return watch_decision_backlog(WatcherInput(company_id="c", openings=[opening]))[0].dedupe_key
+
+    assert key(8) == key(7) == key(5)
+    assert key(8) != key(10)
+
+
+def test_size_bands() -> None:
+    from shared.agents.watchers import size_band
+
+    assert [size_band(n) for n in (0, 1, 2, 3, 4, 5, 9, 10, 24, 25, 99, 100, 500)] == [
+        0, 1, 1, 3, 3, 5, 5, 10, 10, 25, 50, 100, 100,
+    ]
+
+
 def test_each_opening_gets_its_own_finding() -> None:
     """"You have decisions waiting" across six roles tells a manager nothing
     about where to start."""
@@ -586,7 +608,9 @@ def test_a_public_opening_with_no_workflow_says_more_are_coming() -> None:
             )
         ],
     )
-    assert "more are arriving" in watch_openings_without_workflow(data)[0].body
+    assert "will not accept applications until a workflow is published" in (
+        watch_openings_without_workflow(data)[0].body
+    )
 
 
 def test_the_new_watchers_are_wired_into_the_sweep() -> None:
@@ -601,3 +625,88 @@ def test_the_new_watchers_are_wired_into_the_sweep() -> None:
     )
     fired = {f.watcher for f in run_watchers(data)}
     assert {"decision_backlog", "openings_without_workflow"} <= fired
+
+
+# ---------------------------------------------------------------------------
+# Stalled rounds and stalled applicants, per opening — E6
+# ---------------------------------------------------------------------------
+def _stall(**kw: object) -> object:
+    from dataclasses import replace
+
+    from shared.agents.watchers import RoundStall
+
+    base = RoundStall(
+        requisition_id="req-1", requisition_title="Python Developer", round_id="r-1",
+        round_title="Technical Test", threshold_days=5, waiting=8, longest_days=9.0,
+        candidates=[("a-1", "Asha"), ("a-2", "Bala")],
+    )
+    return replace(base, **kw)  # type: ignore[arg-type]
+
+
+def test_a_stalled_round_names_the_opening_and_the_round() -> None:
+    from shared.agents.watchers import watch_round_stalls
+
+    f = watch_round_stalls(WatcherInput(company_id="c", round_stalls=[_stall()]))[0]
+    assert f.title == "Python Developer — Technical Test pipeline has stalled"
+    assert f.body.startswith("8 candidates have been waiting for more than 5 days on Technical Test.")
+    assert "Asha" in f.body and "rejected" in f.body
+    assert f.link == "/hr/requisitions/req-1"
+    assert f.citations[0].kind == "job" and f.citations[0].id == "req-1"
+    assert [c.label for c in f.citations[1:]] == ["Asha", "Bala"]
+
+
+def test_a_wide_or_long_stall_is_critical() -> None:
+    from shared.agents.watchers import watch_round_stalls
+
+    def sev(**kw: object) -> str:
+        return watch_round_stalls(WatcherInput(company_id="c", round_stalls=[_stall(**kw)]))[0].severity
+
+    assert sev() == "warning"
+    assert sev(waiting=12) == "critical"
+    assert sev(waiting=2, longest_days=11.0) == "critical"
+
+
+def test_stall_alerts_are_per_round_and_banded() -> None:
+    from shared.agents.watchers import watch_round_stalls
+
+    def key(**kw: object) -> str:
+        return watch_round_stalls(WatcherInput(company_id="c", round_stalls=[_stall(**kw)]))[0].dedupe_key
+
+    assert key(waiting=6) == key(waiting=9)
+    assert key(waiting=9) != key(waiting=10)
+    assert key(round_id="r-1") != key(round_id="r-2")
+    assert key(requisition_id="req-1") != key(requisition_id="req-2")
+
+
+def test_round_stalls_are_registered_with_the_sweep() -> None:
+    findings = run_watchers(WatcherInput(company_id="c", round_stalls=[_stall()]))
+    assert [f.watcher for f in findings] == ["round_stalls"]
+
+
+def test_stalled_applicants_are_reported_per_opening() -> None:
+    data = WatcherInput(
+        company_id="c",
+        stalled=[
+            StalledApplicant("a-1", "Asha", "new", 12, "req-1", "Python Developer"),
+            StalledApplicant("a-2", "Bala", "new", 15, "req-1", "Python Developer"),
+            StalledApplicant("a-3", "Chandra", "shortlisted", 11, "req-2", "Designer"),
+        ],
+    )
+    findings = [f for f in run_watchers(data) if f.watcher == "stalled_applicants"]
+    titles = sorted(f.title for f in findings)
+    assert titles == ["1 applicant(s) stalled over 10 days — Designer",
+                      "2 applicant(s) stalled over 10 days — Python Developer"]
+    py = next(f for f in findings if "Python" in f.title)
+    assert py.link == "/hr/requisitions/req-1"
+    assert py.citations[0].kind == "job" and py.citations[0].id == "req-1"
+    assert "for Python Developer" in py.body
+    assert py.dedupe_key.startswith("stalled:req-1:")
+
+
+def test_a_lossy_funnel_links_to_its_opening() -> None:
+    data = WatcherInput(
+        company_id="c", funnels=[FunnelRow("req-9", "Welder", applicants=40, interviewed=1)]
+    )
+    f = next(x for x in run_watchers(data) if x.watcher == "funnel_health")
+    assert f.link == "/hr/requisitions/req-9"
+    assert f.citations[0].href == "/hr/requisitions/req-9"

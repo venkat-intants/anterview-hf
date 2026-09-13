@@ -35,7 +35,12 @@ def test_the_queue_includes_candidates_sitting_on_a_review_round() -> None:
 
     sql = " ".join(inspect.getsource(decision_queue).split())
     assert "wr.kind = 'human_review'" in sql
-    assert "OR wr.id IS NOT NULL" in sql, "a candidate on a review round is still missing"
+    # Who is awaiting a person is the shared database function, which counts a
+    # human_review round (migration a1c3e5f7b9d2; exercised against a real
+    # database in smoke_group_e_foundations).
+    assert "enrolment_awaits_human(e.status, e.current_round_id)" in sql, (
+        "a candidate on a review round is still missing"
+    )
     # …with the competencies that round assesses: the reviewer's checklist (C3).
     assert "rc.competency_name" in sql
 

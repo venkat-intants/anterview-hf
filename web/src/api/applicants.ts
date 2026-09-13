@@ -111,34 +111,64 @@ export function uploadApplicant(
   return uploadWithProgress<Applicant>(`${API_BASE}/hr/applicants`, form, onProgress);
 }
 
-export interface BulkUploadResult {
-  created: Applicant[];
-  failed: { filename: string; error: string }[];
-  created_count: number;
+/** What the server says when it accepts a bulk upload — before anything is read (E5). */
+export interface BulkUploadAccepted {
+  batch_id: string;
+  requisition_id: string;
+  total_files: number;
+  /** Stored and queued for the background reader. */
+  accepted: number;
   failed_count: number;
-  /** How many of `created` are still being read and scored in the background. */
-  pending_enrichment?: number;
+  /** Refused at upload — not a PDF, empty, too large, or not stored. */
+  failed: { filename: string; error: string }[];
+}
+
+/** One bulk upload's progress through the background reader and scorer (E5). */
+export interface UploadProgress {
+  batch_id: string;
+  requisition_id: string;
+  requisition_title: string;
+  uploaded_by: string | null;
+  total_files: number;
+  /** Stored, waiting to be read. */
+  queued: number;
+  /** Became applicants under the opening. */
+  created: number;
+  /** Refused at upload, unreadable, or given up on — each with a reason. */
+  failed: number;
+  /** Added, and still being read and scored. */
+  being_scored: number;
+  finished: boolean;
+  created_at: string;
+  finished_at: string | null;
+  failures?: { filename: string; error: string | null }[];
 }
 
 /**
- * Bulk-upload many resumes for ONE role. Append each PDF under the `files`
- * key, plus target_job_title and optionally target_level / target_jd_text.
- *
- * Returns as soon as the files are STORED. Scoring, embedding and pulling the
- * candidate's real name out of the PDF happen in the background, so every row
- * comes back with `pending_enrichment` true, a filename-derived name and no
- * ATS score. Show them as in progress; they fill in within a minute and the
- * list poll picks them up.
+ * Upload many resumes for ONE opening: each PDF under `files`, plus
+ * `requisition_id`. Returns as soon as the files are STORED. Reading them,
+ * filing each candidate under the opening and scoring happen in the background
+ * — follow them with getUploadProgress(batch_id).
  */
 export function bulkUploadApplicants(
   form: FormData,
   onProgress?: (pct: number) => void,
-): Promise<BulkUploadResult> {
-  return uploadWithProgress<BulkUploadResult>(
+): Promise<BulkUploadAccepted> {
+  return uploadWithProgress<BulkUploadAccepted>(
     `${API_BASE}/hr/applicants/bulk`,
     form,
     onProgress,
   );
+}
+
+export function getUploadProgress(batchId: string): Promise<UploadProgress> {
+  return apiGet<UploadProgress>(`/hr/uploads/${batchId}`);
+}
+
+/** Recent bulk uploads, newest first — for one opening when given. */
+export function listUploads(requisitionId?: string): Promise<UploadProgress[]> {
+  const q = requisitionId ? `?requisition_id=${encodeURIComponent(requisitionId)}` : '';
+  return apiGet<UploadProgress[]>(`/hr/uploads${q}`);
 }
 
 /**

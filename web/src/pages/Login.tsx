@@ -200,6 +200,7 @@ export default function Login() {
             type="email"
             autoComplete="email"
             placeholder="you@email.com"
+            data-testid="login-email"
             icon={<Mail size={15} aria-hidden="true" />}
             {...register('email')}
           />
@@ -216,6 +217,7 @@ export default function Login() {
             type="password"
             autoComplete="current-password"
             placeholder="••••••••"
+            data-testid="login-password"
             icon={<Lock size={15} aria-hidden="true" />}
             {...register('password')}
           />
@@ -239,6 +241,7 @@ export default function Login() {
         {/* Submit */}
         <Pill
           type="submit"
+          data-testid="login-submit"
           disabled={mutation.isPending}
           aria-busy={mutation.isPending}
           className="w-full py-3"

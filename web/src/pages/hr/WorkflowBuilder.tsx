@@ -242,6 +242,7 @@ function EmptyState({
             disabled={busy}
             onClick={() => onTemplate(t.key)}
             aria-label={`Start from the ${t.name} template`}
+            data-testid={`template-${t.key}`}
             className={cn(
               'flex flex-col rounded-[16px] border p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-[var(--ui-inset-soft)] disabled:opacity-50',
               t.recommended ? 'border-[var(--accent)]/40' : 'border-border',
@@ -483,7 +484,10 @@ export default function WorkflowBuilder(): JSX.Element {
               <h1 className="truncate text-[24px] font-semibold tracking-[-0.8px] text-foreground">
                 {req.data?.title ?? 'Hiring workflow'}
               </h1>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
+              <div
+                data-testid="workflow-meta"
+                className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground"
+              >
                 {workflow ? (
                   <>
                     <StatusTag
@@ -559,6 +563,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     <button
                       type="button"
                       onClick={() => setConfirmPublish(true)}
+                      data-testid="publish-workflow"
                       // Same gate as the lifecycle strip's "4. Publish": the
                       // server refuses anything validate does not call
                       // publishable, so the button should not offer it.
@@ -578,6 +583,7 @@ export default function WorkflowBuilder(): JSX.Element {
                   <button
                     type="button"
                     onClick={() => cloneMut.mutate()}
+                    data-testid="edit-as-new-version"
                     disabled={cloneMut.isPending}
                     className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
                   >
@@ -615,6 +621,7 @@ export default function WorkflowBuilder(): JSX.Element {
               <button
                 type="button"
                 onClick={() => publishMut.mutate()}
+                data-testid="confirm-publish"
                 className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground hover:opacity-90"
               >
                 Publish version {workflow.version}

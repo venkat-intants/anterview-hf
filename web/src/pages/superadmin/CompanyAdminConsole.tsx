@@ -77,7 +77,12 @@ export default function CompanyAdminConsole() {
       <Reveal>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Super Admin</h1>
+            <h1
+              data-testid="page-title"
+              className="text-[28px] font-semibold tracking-[-1px] text-foreground"
+            >
+              Super Admin
+            </h1>
             <p className="mt-1 flex items-center gap-1.5 text-[14px] text-muted-foreground">
               <Building2 size={14} className="text-[var(--ui-info)]" aria-hidden="true" />
               HR managers for {companyName}.

@@ -28,6 +28,17 @@ unit tests (`services/*/tests/unit`, `web/src/__tests__`) and the database smoke
 `global-setup.ts` fails first, with the command to run, if data_gateway or the web
 app is not answering.
 
+### Watching it run
+
+| Command (from `web/`) | What you get |
+|---|---|
+| `npm run e2e -- --headed` | a real browser window doing each step |
+| `E2E_SLOWMO=500 npm run e2e -- --headed` | the same, pausing 500 ms between actions |
+| `npm run e2e -- --ui` | Playwright's UI: pick tests, step through, time-travel each action |
+| `npx playwright show-report` | the HTML report of the last run, with traces of any failure |
+
+In PowerShell set variables first: `$env:E2E_SLOWMO = '500'; npm run e2e -- --headed`.
+
 | Variable | Default | What it changes |
 |---|---|---|
 | `E2E_WEB_URL` | `http://localhost:5174` | the app under test |

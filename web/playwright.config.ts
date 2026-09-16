@@ -33,6 +33,9 @@ export default defineConfig({
     headless: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    // Watching a run: `npm run e2e -- --headed` with E2E_SLOWMO=500 pauses
+    // that many milliseconds between actions so each step can be followed.
+    launchOptions: { slowMo: Number(process.env.E2E_SLOWMO ?? 0) },
   },
   projects: [
     {

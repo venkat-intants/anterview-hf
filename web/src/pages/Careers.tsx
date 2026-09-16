@@ -85,7 +85,11 @@ function Card({ job }: { job: JobCard }) {
   const salary = salaryLine(job);
   return (
     <Link
-      to={`/apply/${job.requisition_id}`}
+      // Tagged at source (PH3-B1). An application that arrives from the
+      // company's own board is attributable without the recruiter having to
+      // build a tracked link by hand, which is the attribution they would
+      // otherwise never get — and the one they most often want.
+      to={`/apply/${job.requisition_id}?src=careers_site`}
       className="block rounded-[16px] border border-border bg-card p-5 transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">

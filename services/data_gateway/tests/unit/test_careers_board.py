@@ -91,20 +91,21 @@ def test_a_closed_role_drops_off_the_board_without_anyone_editing_it() -> None:
 def test_the_board_uses_the_same_predicate_as_the_apply_endpoint() -> None:
     """Drift here means advertising a role that 404s on click.
 
-    Compared as conditions rather than as text: the two are written against
-    different aliases, so the useful assertion is that neither has a gate the
-    other lacks.
+    This used to compare the two hand-written predicates gate by gate, and it
+    passed while they disagreed: the apply endpoint required a published
+    workflow and the board did not, so the board advertised openings that 404'd.
+    Comparing three of the five gates could not catch the two it skipped.
+
+    Since PH3-B0 there is one predicate, so the assertion is identity rather
+    than similarity — which is the only version of this test that cannot drift.
     """
+    from app.publishing import visible_sql
     from app.routers.careers import _VISIBLE
     from app.routers.public_apply import _open_posting
 
-    posting_sql = inspect.getsource(_open_posting)
-    for gate in ("public_apply_enabled", "status = 'open'", "deleted_at IS NULL"):
-        assert gate in _VISIBLE
-        assert gate in posting_sql
-    # Both enforce the closing date; the posting endpoint does it in Python.
-    assert "closes_at" in _VISIBLE
-    assert "closes_at" in posting_sql
+    assert visible_sql("r") == _VISIBLE
+    # The apply endpoint interpolates the same call rather than restating it.
+    assert "visible_sql('r')" in inspect.getsource(_open_posting)
 
 
 # ===========================================================================

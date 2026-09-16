@@ -48,6 +48,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.database import DbSessionDep
+from app.publishing import visible_sql
 from app.rate_limit import rate_limit
 from app.utils.sql_like import LIKE_ESCAPE, like_literal
 
@@ -64,15 +65,12 @@ _MAX_PER_PAGE = 60
 # glance, and eight tags is already more than anyone reads in a grid.
 _CARD_SKILLS = 6
 
-# Every visible role must satisfy this, and it is deliberately the same
-# predicate the apply endpoint enforces. Listing a role that cannot be applied
-# to is the one failure a board must not have.
-_VISIBLE = (
-    " r.deleted_at IS NULL"
-    " AND r.status = 'open'"
-    " AND r.public_apply_enabled"
-    " AND (r.closes_at IS NULL OR r.closes_at > :now)"
-)
+# Every visible role must satisfy this, and it is now literally the same
+# predicate the apply endpoint enforces rather than a hand-copied version of it
+# (PH3-B0). Listing a role that cannot be applied to is the one failure a board
+# must not have, and the hand-copied version had already drifted: it lacked the
+# published-workflow gate, so the board advertised openings that 404'd on click.
+_VISIBLE = visible_sql("r")
 
 _NOT_FOUND = HTTPException(
     status_code=status.HTTP_404_NOT_FOUND,

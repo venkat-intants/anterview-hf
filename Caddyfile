@@ -98,6 +98,22 @@
 	handle /auth/* {
 		reverse_proxy data_gateway:8002
 	}
+	# /apply* and /careers* are the PUBLIC candidate surface (PH3): the careers
+	# board, the application form, the activation links and all six Save & Resume
+	# draft routes. They were missing from both Caddyfiles from the day the
+	# routers landed, so every one of them bypassed data_gateway entirely, answering
+	# the catch-all 404 instead.
+	#
+	# Browser NAVIGATION to /apply/:id, /apply/draft and /careers/:slug is still
+	# the SPA's — the @spa_nav rewrite above runs before every handle block, which
+	# is the same mechanism that lets /hr/*, /jobs* and /exam* be both a React
+	# route and an API prefix. Only XHR (Accept: */*) reaches the backend.
+	handle /apply* {
+		reverse_proxy data_gateway:8002
+	}
+	handle /careers* {
+		reverse_proxy data_gateway:8002
+	}
 	handle /consent* {
 		reverse_proxy data_gateway:8002
 	}
@@ -170,9 +186,9 @@
 	# Logging — structured JSON for Loki scraping
 	# ------------------------------------------------------------------
 	# Access log — see space/Caddyfile for the full reasoning. Caddy redacts only
-	# Cookie/Authorization; the exam and interview magic-link tokens ride in
-	# custom headers and would otherwise be written verbatim to a persistent
-	# sink, defeating the #fragment design that keeps them out of URLs.
+	# Cookie/Authorization; the exam, interview and draft-resume magic-link
+	# tokens ride in custom headers and would otherwise be written verbatim to a
+	# persistent sink, defeating the #fragment design that keeps them out of URLs.
 	log {
 		output stdout
 		format filter {
@@ -180,6 +196,7 @@
 			fields {
 				request>headers>X-Exam-Token delete
 				request>headers>X-Interview-Token delete
+				request>headers>X-Draft-Token delete
 				request>uri query {
 					replace code REDACTED
 					replace state REDACTED

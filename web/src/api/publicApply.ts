@@ -72,6 +72,18 @@ export interface Posting {
    * never sort by anything here. Empty for most openings.
    */
   questions: PostingQuestion[];
+  /**
+   * The acquisition channel this view was tracked under (PH3-B1), already
+   * normalised by the server. Echoed rather than re-derived here so there is
+   * one implementation of the vocabulary and it is the server's — a client
+   * that normalised `?src=` itself would be a second one, and the two would
+   * eventually disagree about what "linkedin" means.
+   *
+   * Carry it to submitApplication. Nothing is stored on the view itself; a
+   * page view is not an application.
+   */
+  source: string;
+  source_detail: string | null;
 }
 
 export interface ApplicationResult {
@@ -95,8 +107,13 @@ async function readError(res: Response): Promise<never> {
  * because distinguishing them would let anyone with a URL enumerate a
  * company's private roles.
  */
-export async function getPosting(requisitionId: string): Promise<Posting> {
-  const res = await fetch(`${API_BASE}/apply/${requisitionId}`);
+export async function getPosting(requisitionId: string, src?: string | null): Promise<Posting> {
+  // The tracked link is this GET: a recruiter shares /apply/<id>?src=linkedin.
+  // Passed through unvalidated — the server never refuses a malformed campaign
+  // tag, because losing a real applicant to a recruiter's typo is a far worse
+  // outcome than an unattributed application.
+  const qs = src ? `?src=${encodeURIComponent(src)}` : '';
+  const res = await fetch(`${API_BASE}/apply/${requisitionId}${qs}`);
   if (!res.ok) return readError(res);
   return (await res.json()) as Posting;
 }
@@ -124,6 +141,14 @@ export interface ApplicationInput {
   githubUrl?: string;
   /** Keyed by question id. Omitted entirely when the opening asks nothing. */
   answers?: Record<string, AnswerValue>;
+  /**
+   * The channel from the posting fetch (PH3-B1). Send back what `Posting.source`
+   * said rather than the raw `?src=` — by submit time the original parameter is
+   * several screens back, and the server has already told us what it will
+   * record.
+   */
+  source?: string;
+  sourceDetail?: string | null;
 }
 
 export async function submitApplication(
@@ -136,6 +161,10 @@ export async function submitApplication(
   form.append('resume', input.resume);
   form.append('consent_granted', String(input.consentGranted));
   if (input.language) form.append('language', input.language);
+  // The normalised channel goes back as `src`; the server normalises again,
+  // which is why sending the already-normalised value is safe and sending
+  // nothing simply means "direct".
+  if (input.source) form.append('src', input.source);
 
   // Only what they actually answered. An untouched input is '' and appending
   // that would be an answer — see the note on ApplicationInput.
@@ -220,4 +249,174 @@ export async function activateAccount(
   });
   if (!res.ok) return readError(res);
   return (await res.json()) as ActivationResult;
+}
+
+
+// ---------------------------------------------------------------------------
+// Save & resume, and the confirmation step — PH3-B4c / PH3-B5
+//
+// CONSENT COMES FIRST HERE. Starting a draft stores the candidate's email, so
+// the consent checkbox moves to that moment rather than to submission. The
+// server refuses a draft without it; this client does not try to be clever
+// about that, it just sends what the person ticked.
+//
+// The resume token is the only credential. It is returned once, by
+// startDraft, and is never recoverable from the server — the database holds
+// only its hash. A caller that loses it has lost the draft.
+// ---------------------------------------------------------------------------
+
+/** What the CV parser read, for the candidate to check. */
+export interface ParsedDetails {
+  full_name: string | null;
+  email: string | null;
+}
+
+export interface ApplicationDraft {
+  requisition_id: string;
+  title: string;
+  company_name: string;
+  email: string;
+  full_name: string | null;
+  phone: string | null;
+  years_experience: number | null;
+  current_company: string | null;
+  current_title: string | null;
+  linkedin_url: string | null;
+  github_url: string | null;
+  language: string;
+  answers: Record<string, AnswerValue>;
+  resume_filename: string | null;
+  has_resume: boolean;
+  /** What we read off the CV. Every field may be null — an unparsed field
+   *  renders as an empty editable box and never blocks the application. */
+  parsed: ParsedDetails;
+  confirmed: boolean;
+  expires_at: string;
+}
+
+export interface DraftStarted {
+  /** Returned ONCE. Not recoverable — the server stores only its hash. */
+  resume_token: string;
+  draft: ApplicationDraft;
+}
+
+export interface DraftFields {
+  full_name?: string | null;
+  phone?: string | null;
+  years_experience?: number | null;
+  current_company?: string | null;
+  current_title?: string | null;
+  linkedin_url?: string | null;
+  github_url?: string | null;
+  language?: 'en' | 'hi' | 'te';
+  answers?: Record<string, AnswerValue>;
+}
+
+export async function startDraft(
+  requisitionId: string,
+  input: { email: string; consentGranted: boolean; language?: 'en' | 'hi' | 'te'; src?: string | null },
+): Promise<DraftStarted> {
+  const res = await fetch(`${API_BASE}/apply/${requisitionId}/draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: input.email,
+      consent_granted: input.consentGranted,
+      language: input.language ?? 'en',
+      src: input.src ?? null,
+    }),
+  });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as DraftStarted;
+}
+
+/**
+ * The resume token travels in a HEADER, never in the URL.
+ *
+ * It is a live credential to the holder's name, phone, employer, screening
+ * answers and CV. In a path it lands in the server's access log, the Space and
+ * Railway edge logs, browser history and any cross-origin `Referer`. This is
+ * the pattern the exam and interview clients already use (`X-Exam-Token`,
+ * `X-Interview-Token`); the shared link carries it in the URL *fragment*,
+ * which browsers do not send to servers, and the page moves it into this
+ * header.
+ */
+function draftHeaders(token: string, extra?: Record<string, string>): HeadersInit {
+  return { 'X-Draft-Token': token, ...(extra ?? {}) };
+}
+
+export async function getDraft(token: string): Promise<ApplicationDraft> {
+  const res = await fetch(`${API_BASE}/apply/draft`, { headers: draftHeaders(token) });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as ApplicationDraft;
+}
+
+export async function saveDraft(
+  token: string,
+  fields: DraftFields,
+): Promise<ApplicationDraft> {
+  const res = await fetch(`${API_BASE}/apply/draft`, {
+    method: 'PATCH',
+    headers: draftHeaders(token, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(fields),
+  });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as ApplicationDraft;
+}
+
+/**
+ * Confirm the details read off the CV — PH3-B5.
+ *
+ * Whatever is sent here WINS over what the parser produced: a name read out of
+ * a PDF is a guess and a person's own answer is not.
+ */
+export async function confirmDraft(
+  token: string,
+  corrections: DraftFields,
+): Promise<ApplicationDraft> {
+  const res = await fetch(`${API_BASE}/apply/draft/confirm`, {
+    method: 'POST',
+    headers: draftHeaders(token, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(corrections),
+  });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as ApplicationDraft;
+}
+
+/**
+ * Throw the saved application away — the data principal exercising erasure on
+ * their own draft, which DPDP gives them a right to DO rather than merely wait
+ * thirty days for. The CV object goes with the row.
+ */
+export async function deleteDraft(token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/apply/draft`, {
+    method: 'DELETE',
+    headers: draftHeaders(token),
+  });
+  if (!res.ok) return readError(res);
+}
+
+export async function uploadDraftResume(
+  token: string,
+  resume: File,
+): Promise<ApplicationDraft> {
+  const form = new FormData();
+  form.append('resume', resume);
+  // No Content-Type: the browser must set the multipart boundary.
+  const res = await fetch(`${API_BASE}/apply/draft/resume-upload`, {
+    method: 'POST',
+    headers: draftHeaders(token),
+    body: form,
+  });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as ApplicationDraft;
+}
+
+export async function submitDraft(token: string): Promise<ApplicationResult> {
+  const res = await fetch(`${API_BASE}/apply/draft/submit`, {
+    method: 'POST',
+    headers: draftHeaders(token),
+  });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as ApplicationResult;
 }

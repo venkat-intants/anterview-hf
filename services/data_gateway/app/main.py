@@ -38,7 +38,8 @@ from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
-from app import reconciliation, reminders
+from app import reconciliation, reminders, scheduled_publishing
+from app.application_drafts import purge_expired as purge_expired_drafts
 from app.config import settings
 from app.database import dispose_engine, get_db_session, get_session_factory, init_engine
 from app.dependencies import set_auth_provider
@@ -71,6 +72,7 @@ from app.routers.notifications import router as notifications_router
 from app.routers.onboarding import router as onboarding_router
 from app.routers.profile import router as profile_router
 from app.routers.public_apply import router as public_apply_router
+from app.routers.resume import _delete_from_s3
 from app.routers.resume import router as resume_router
 from app.routers.sso_google import router as sso_google_router
 from app.routers.sso_naipunyam import router as sso_naipunyam_router
@@ -178,6 +180,33 @@ async def _run_retention_job() -> None:
             "email.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc)
         )
 
+    # Same tick again: abandoned application drafts (PH3-B4c). An expired draft
+    # holds a name, an email, a phone number and a CV — personal data past its
+    # purpose, which is exactly what this cron is for. Deliberately NOT a
+    # bespoke sweep: a second cleanup schedule is a second thing to notice has
+    # stopped running.
+    try:
+        async with factory() as session:
+            keys = await purge_expired_drafts(session)
+            await session.commit()
+        for key in keys:
+            # The row is already gone; a failed object delete leaves an orphan
+            # rather than an un-erased record, and is logged rather than
+            # retried here — the next pass has nothing to find.
+            try:
+                await _delete_from_s3(key)
+            except Exception as exc:  # noqa: BLE001, PERF203 - see above
+                log.warning(
+                    "draft.retention.object_orphaned",
+                    exc_type=type(exc).__name__,
+                )
+        if keys:
+            log.info("draft.retention.purged", objects=len(keys))
+    except Exception as exc:  # broad — never let draft cleanup kill the scheduler
+        log.error(
+            "draft.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc)
+        )
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
@@ -250,6 +279,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # silently skipped the window it slept through.
     reconciliation.start(_factory)
     reminders.start(_factory)
+    # PH3-B4a. An interval loop rather than a scheduler job for the same reason
+    # the two above are: a clock trigger cannot fire while the container is
+    # suspended, and an opening scheduled for 09:00 must go live when the
+    # service wakes rather than be skipped for the day.
+    scheduled_publishing.start(_factory)
 
     # --- A6: replay anything whose window passed while we were not running ---
     # In the background, every fifteen minutes, starting a minute after boot.
@@ -306,6 +340,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     await stop_catchup()
     await reconciliation.stop()
     await reminders.stop()
+    await scheduled_publishing.stop()
     await stop_email_worker()
     await dispose_engine()
     await close_redis()
@@ -339,8 +374,21 @@ app.add_middleware(
     # CSRF pattern on /auth/refresh — it MUST appear here so the preflight passes.
     # X-Exam-Token: the applicant's magic-link token, sent by the public exam
     # take page (no login) on /exam calls.
+    # X-Draft-Token: the same pattern for Save & Resume (PH3-B5). It was missed
+    # here when the draft routes moved the token out of the URL, which is the
+    # failure the comment above predicts: every draft call — including the DPDP
+    # self-serve delete — is blocked at preflight on any split-origin deploy
+    # (render.yaml, the Oracle/Vercel split, and local Vite on :5173). The Space
+    # is same-origin, so it would have shipped green there and dead everywhere
+    # else. Anything added to _CUSTOM_TOKEN_HEADERS must appear here; a test
+    # asserts it rather than a reviewer.
     allow_headers=[
-        "Authorization", "Content-Type", "X-CSRF-Token", "X-Exam-Token", "X-Interview-Token"
+        "Authorization",
+        "Content-Type",
+        "X-CSRF-Token",
+        "X-Exam-Token",
+        "X-Interview-Token",
+        "X-Draft-Token",
     ],
 )
 

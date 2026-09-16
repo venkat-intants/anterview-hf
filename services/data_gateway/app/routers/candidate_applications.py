@@ -59,6 +59,7 @@ from app.config import settings
 from app.database import get_db_session
 from app.dependencies import get_current_user
 from app.interview_link import hash_interview_token, mint_interview_token
+from app.publishing import visible_sql
 
 log = structlog.get_logger(__name__)
 
@@ -339,7 +340,7 @@ async def get_my_application(
 # making a commercial decision, and that is not one to arrive at as a side
 # effect of sorting.
 # ---------------------------------------------------------------------------
-_OPEN_ROLES_SQL = """
+_OPEN_ROLES_TEMPLATE = """
 SELECT r.id, r.title, r.level, r.department, r.location, r.employment_type,
        r.experience_min_years, r.experience_max_years,
        r.required_skills, r.salary_min, r.salary_max, r.salary_currency,
@@ -358,13 +359,15 @@ SELECT r.id, r.title, r.level, r.department, r.location, r.employment_type,
        ) AS already_applied
   FROM job_requisitions r
   JOIN companies c ON c.id = r.company_id AND c.is_active AND c.deleted_at IS NULL
- WHERE r.deleted_at IS NULL
-   AND r.status = 'open'
-   AND r.public_apply_enabled
-   AND (r.closes_at IS NULL OR r.closes_at > :now)
+ WHERE {visible}
  ORDER BY r.created_at DESC
  LIMIT :lim
 """
+
+# SAFE: the only substitution is visible_sql("r"), which returns a predicate
+# assembled from module-level literals in app/publishing.py. Nothing a caller
+# supplies reaches the statement text; every value below is a bound parameter.
+_OPEN_ROLES_SQL = _OPEN_ROLES_TEMPLATE.format(visible=visible_sql("r"))  # nosec B608
 
 
 class OpenRole(BaseModel):

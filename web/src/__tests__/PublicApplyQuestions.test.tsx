@@ -63,6 +63,9 @@ function posting(questions: PostingQuestion[]): Posting {
     salary_max: null,
     salary_currency: null,
     questions,
+    // PH3-B1: the channel the server attributed this view to.
+    source: 'direct',
+    source_detail: null,
   };
 }
 

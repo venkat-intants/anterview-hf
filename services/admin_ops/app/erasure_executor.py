@@ -197,6 +197,23 @@ ERASED_TABLES: dict[str, str] = {
                            "identifying them after applicants is anonymised. "
                            "Deleted, not redacted: here the content IS the "
                            "personal data, with no structural residue to keep.",
+    "application_drafts": "step 5e — hard-deleted, matched three genuinely "
+                          "independent ways: the draft's user_id, the erased "
+                          "user's address, and the address of any applicant "
+                          "linked to them. So a draft whose user_id was "
+                          "re-pointed by activation-linking (or was not) cannot "
+                          "escape. MUST run before step 7, which overwrites "
+                          "users.email. NOTE the one over-match we accept: a "
+                          "genuinely shared mailbox means erasing one person "
+                          "deletes another's in-progress draft. Data loss, not "
+                          "disclosure, and the alternative is leaving personal "
+                          "data behind. A half-finished application "
+                          "holds the person's name, email, phone and CV, and "
+                          "unlike `applicants` there is no structural record "
+                          "worth keeping: nobody applied. Keyed on user_id "
+                          "directly rather than through applicants, because a "
+                          "draft that was never submitted has no applicant row "
+                          "to be reached through. The CV object goes in step 8.",
     "upload_items": "step 5d — filename, s3_key and error redacted for the files that "
                     "became this person's applicant rows. HR names CVs after the "
                     "candidate, so the original filename is personal data; the "
@@ -292,6 +309,13 @@ EXCLUDED_TABLES: dict[str, str] = {
     # --- Company-authored structure and content ----------------------------
     "job_requisitions": "the opening itself — title, JD, salary band, skills. "
                         "owner_user_id / created_by_user_id are HR staff.",
+    "jd_versions": "the history of one opening's advert (PH3-B3). Company-"
+                   "authored content on the job_requisitions precedent, and "
+                   "nothing in it describes a candidate: the columns are the "
+                   "JD prose, three skill lists, a change note and the HR "
+                   "author's user id. Deleting it would destroy the record of "
+                   "which JD a candidate was shown when they applied, which is "
+                   "evidence FOR the candidate rather than data about them.",
     "application_questions": "HR-authored screening prompts attached to a "
                              "requisition. The company's form, not anyone's "
                              "answer — the answers are erased in step 5c.",
@@ -447,6 +471,31 @@ async def _execute_one_erasure(
     )
     for row in scored_keys_result.fetchall():
         applicant_resume_keys += [str(k) for k in tuple(row)[:2] if k]
+
+    # 1c-iv — the CV attached to an abandoned DRAFT (PH3-B4c). A draft that was
+    # never submitted has no applicant row and no enrolment, so none of the
+    # three collectors above reach it: without this, erasing somebody who
+    # started an application and walked away leaves their CV in the bucket and
+    # stamps the request 'completed'. Collected before step 5e deletes the row.
+    draft_keys_result = await db.execute(
+        text(
+            "SELECT d.resume_s3_key FROM application_drafts d "
+            "WHERE d.resume_s3_key IS NOT NULL AND ("
+            "  d.user_id = :uid"
+            "  OR lower(btrim(d.email)) IN ("
+            "       SELECT lower(btrim(u.email)) FROM users u"
+            "        WHERE u.id = :uid AND u.email IS NOT NULL)"
+            "  OR lower(btrim(d.email)) IN ("
+            "       SELECT lower(btrim(a.email)) FROM applicants a"
+            "        WHERE a.user_id = :uid AND a.email IS NOT NULL)"
+            ")"
+        ),
+        {"uid": uid_str},
+    )
+    applicant_resume_keys += [
+        str(row[0]) for row in draft_keys_result.fetchall() if row[0]
+    ]
+
     # One delete per object: the same file is often the current, scored AND
     # submitted copy at once.
     applicant_resume_keys = list(dict.fromkeys(applicant_resume_keys))
@@ -631,6 +680,61 @@ async def _execute_one_erasure(
         user_id=uid_str,
         request_id=str(request.request_id),
         count=getattr(items_result, "rowcount", 0) or 0,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5e: Abandoned application drafts (PH3-B4c)
+    # ------------------------------------------------------------------
+    # A half-finished application holds the person's name, email, phone and CV.
+    # Deleted rather than anonymised: unlike `applicants`, there is no
+    # structural record worth keeping, because nobody applied — an anonymised
+    # draft is a row that means nothing to anyone.
+    #
+    # Keyed on user_id DIRECTLY, not through applicants. A draft that was never
+    # submitted has no applicant row to be reached through, and reaching for one
+    # is precisely how this table would have been missed.
+    #
+    # The CV object itself was collected in step 1c-iii and is deleted in step 8.
+    # Matched THREE ways, not one. user_id alone was not enough: when a guest
+    # activates into an account they already had, apply_activation re-points the
+    # draft — and a draft written before that repair existed, or one whose
+    # re-point failed, would be invisible here and survive a completed erasure.
+    # The address and the linked applicants are independent routes to the same
+    # row, so the executor no longer depends on a repair elsewhere being correct.
+    drafts_result = await db.execute(
+        text(
+            "DELETE FROM application_drafts d"
+            # 1. The draft still points at this user.
+            " WHERE d.user_id = :uid"
+            # 2. The draft carries the address this user is erasing under.
+            #    MUST run before step 7, which overwrites users.email with the
+            #    erased_{uid} sentinel — after that this route matches nothing.
+            #    test_erasure_step_order.py asserts the ordering.
+            "    OR lower(btrim(d.email)) IN ("
+            "         SELECT lower(btrim(u.email)) FROM users u"
+            "          WHERE u.id = :uid AND u.email IS NOT NULL)"
+            # 3. The draft carries the address of an APPLICANT linked to this
+            #    user. Genuinely independent of 1 and 2: it catches the
+            #    returning applicant whose draft kept a throwaway guest id and
+            #    whose account was never activated, so users.email is still the
+            #    guest sentinel and route 2 cannot see them.
+            #
+            #    This predicate previously read `d.user_id IN (SELECT a.user_id
+            #    FROM applicants a WHERE a.user_id = :uid)`, which is
+            #    algebraically just route 1 — a third route in the comments and
+            #    nowhere else.
+            "    OR lower(btrim(d.email)) IN ("
+            "         SELECT lower(btrim(a.email)) FROM applicants a"
+            "          WHERE a.user_id = :uid AND a.email IS NOT NULL)"
+        ),
+        {"uid": uid_str},
+    )
+    application_drafts_deleted: int = getattr(drafts_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.application_drafts_deleted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        count=application_drafts_deleted,
     )
 
     # ------------------------------------------------------------------

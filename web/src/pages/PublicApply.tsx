@@ -17,7 +17,7 @@
 // will not parse needs to know to re-export it, not to see a status code.
 
 import { useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -30,6 +30,7 @@ import {
 } from '@/design/components/icons';
 import {
   getPosting,
+  startDraft,
   submitApplication,
   type ApplicationResult,
   type AnswerValue,
@@ -559,6 +560,12 @@ function ReviewRow({ label, value }: { label: string; value: string | null }) {
 
 export default function PublicApply(): JSX.Element {
   const { requisitionId = '' } = useParams();
+  // The tracked link's campaign tag (PH3-B1). Read once, here, and then only
+  // ever used through what the server echoes back: the vocabulary belongs to
+  // the server, and a page that normalised `?src=` itself would be a second
+  // implementation of it.
+  const [searchParams] = useSearchParams();
+  const src = searchParams.get('src');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [resume, setResume] = useState<File | null>(null);
@@ -586,8 +593,11 @@ export default function PublicApply(): JSX.Element {
   const folderInput = useRef<HTMLInputElement>(null);
 
   const posting = useQuery({
-    queryKey: ['public', 'posting', requisitionId],
-    queryFn: () => getPosting(requisitionId),
+    // `src` is in the key: two campaign links to the same opening are two
+    // different tracked views, and a cached response from the first would
+    // attribute the second to the wrong channel.
+    queryKey: ['public', 'posting', requisitionId, src],
+    queryFn: () => getPosting(requisitionId, src),
     enabled: Boolean(requisitionId),
     retry: false,
   });
@@ -607,6 +617,21 @@ export default function PublicApply(): JSX.Element {
         linkedinUrl,
         githubUrl,
         answers,
+        // What the server said this view's channel was, not the raw `?src=`.
+        source: posting.data?.source,
+      }),
+  });
+
+  // PH3-B4c. Starting a draft is what records consent — it is the first moment
+  // this person's email is stored — so it carries the checkbox's value rather
+  // than assuming it, and the server refuses without it.
+  const saveLater = useMutation({
+    mutationFn: () =>
+      startDraft(requisitionId, {
+        email: email.trim(),
+        consentGranted: consent,
+        language,
+        src: posting.data?.source,
       }),
   });
 
@@ -669,6 +694,7 @@ export default function PublicApply(): JSX.Element {
           email: seedEmailFor(row.file.name),
           resume: row.file,
           consentGranted: true,
+          source: posting.data?.source,
         });
         setSeedRows((prev) =>
           prev.map((r, j) =>
@@ -1098,6 +1124,54 @@ export default function PublicApply(): JSX.Element {
               data at any time.
             </span>
           </label>
+
+          {/* PH3-B4c — save and come back.
+              Deliberately BELOW the consent box and disabled until it is
+              ticked: saving stores this person's email, and the server refuses
+              a draft without recorded permission. The button is not hidden
+              when consent is missing — it is visible and inert, so the reason
+              it cannot be pressed is the checkbox directly above it. */}
+          <div className="rounded-[12px] border border-border p-3">
+            {saveLater.data ? (
+              <>
+                <p className="text-[12.5px] font-medium text-[var(--ui-text)]">
+                  Saved. Keep this link to carry on later.
+                </p>
+                <input
+                  readOnly
+                  aria-label="Your resume link"
+                  value={`${window.location.origin}/apply/draft#${saveLater.data.resume_token}`}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="mt-2 w-full rounded-[10px] border border-border bg-transparent px-2.5 py-2 text-[12px] text-[var(--ui-soft)]"
+                />
+                <p className="mt-1.5 text-[11.5px] text-[var(--ui-soft)]">
+                  We have also stored your progress against {email.trim()}. This link is
+                  the only way back in, so keep it somewhere safe.
+                </p>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => saveLater.mutate()}
+                  disabled={!consent || email.trim().length < 4 || saveLater.isPending}
+                  className="text-[12.5px] font-medium text-[var(--ui-text)] underline underline-offset-2 disabled:opacity-40 disabled:no-underline"
+                >
+                  {saveLater.isPending ? 'Saving…' : 'Save and finish later'}
+                </button>
+                <p className="mt-1 text-[11.5px] text-[var(--ui-soft)]">
+                  {consent
+                    ? 'We will give you a link that brings you back to this application.'
+                    : 'Tick the box above first — we need your permission before we can store anything.'}
+                </p>
+                {saveLater.isError ? (
+                  <p className="mt-1.5 text-[11.5px] text-[var(--ui-danger)]">
+                    {errText(saveLater.error, 'Could not save your progress.')}
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>
 
           {submit.isError ? (
             <div

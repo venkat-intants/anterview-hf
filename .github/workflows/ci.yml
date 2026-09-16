@@ -575,6 +575,23 @@ jobs:
         # feedback_billing, which declares only s3_scorecard_bucket (CICD-7).
         run: python ops/ci/check_env_parity.py
 
+      - name: Every route reaches a backend and every token header is redacted
+        # Two hand-maintained lists that nothing checked, both of which have now
+        # lagged the code twice. /apply* and /careers* — the whole public
+        # candidate surface — were in NEITHER Caddyfile from the day the routers
+        # landed: on the Space an XHR to an unrouted prefix falls through to
+        # `try_files {path} /index.html` and returns index.html with HTTP 200,
+        # so the feature ships dead and reports success. (Precedent: 09483b5,
+        # "the agent layer was dead on the Space".) Separately X-Draft-Token
+        # reached neither Caddy log filter — putting a live credential to a
+        # candidate's PII verbatim into a persistent log, undoing the #fragment
+        # design — nor allow_headers, which blocks every draft call at preflight
+        # on each split-origin deploy while the same-origin Space stays green.
+        #
+        # Neither is reachable from any test that runs a service: they live in
+        # config, and the Space variant fails as a 200.
+        run: python ops/ci/check_routing_contract.py
+
       - name: The gate scripts' own tests
         # ops/ci/ had no tests, and the way a checker fails is silent: a parser
         # stops matching, every set comes back empty, and it prints OK forever.

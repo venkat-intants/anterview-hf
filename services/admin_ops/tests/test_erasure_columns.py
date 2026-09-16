@@ -46,6 +46,12 @@ _KEPT: dict[str, dict[str, str]] = {
         "pending_enrichment": "processing flag",
         "upload_batch_id": "processing batch",
         "full_name_source": "which kind of source the (redacted) name came from",
+        # PH3-B5. A timestamp saying WHEN somebody acted, not WHO they were.
+        # The values it attested to are erased around it; this is kept because
+        # it is the evidence that the stored details were the candidate's own
+        # answer rather than a parser's guess — which is what a dispute about
+        # an erased application would actually turn on.
+        "details_confirmed_at": "when the candidate confirmed their details; a time, not an identity",
         "created_at": "timestamps",
         "updated_at": "timestamps",
         "deleted_at": "timestamps",

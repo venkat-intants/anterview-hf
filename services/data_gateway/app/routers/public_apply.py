@@ -33,24 +33,38 @@ failure for this particular endpoint.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from app import application_drafts as draft_store
 from app.application_questions import (
     AnswerError,
     list_questions,
     store_answers,
     validate_answers,
 )
+from app.application_source import DIRECT, normalise_source
 from app.apply_activation import (
     ActivationError,
     activate,
@@ -61,7 +75,10 @@ from app.config import settings
 from app.database import DbSessionDep
 from app.local_storage import LocalStorageError
 from app.models import Applicant
+from app.publishing import visible_sql
 from app.rate_limit import rate_limit
+from app.reapplication import check as cooldown_check
+from app.resume_details import extract_contact_details
 from app.routers.consent import _hash_value
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
 from app.utils.request_ip import extract_client_ip, extract_user_agent
@@ -73,6 +90,11 @@ router = APIRouter(prefix="/apply", tags=["public-apply"])
 
 _MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB — same ceiling as the HR upload path.
 
+# How long the CV detail parser may take before we give up and show the
+# candidate empty fields instead. Generous: the parser is linear and capped,
+# so reaching this means something is wrong rather than merely large.
+_PARSE_TIMEOUT_SECONDS = 5.0
+
 # One uniform refusal. Closed, paused, not-public, deleted, another tenant's,
 # or simply not a real id all answer identically: an opening that is not taking
 # applications must be indistinguishable from one that does not exist, or the
@@ -80,6 +102,12 @@ _MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB — same ceiling as the HR upload pa
 _NOT_AVAILABLE = HTTPException(
     status_code=status.HTTP_404_NOT_FOUND,
     detail="This opening is not accepting applications.",
+)
+
+# Expired, submitted, deleted, never-existed, and no header at all: one answer.
+_NO_SUCH_DRAFT = HTTPException(
+    status_code=status.HTTP_404_NOT_FOUND,
+    detail="That link has expired or is no longer valid. Please start again.",
 )
 
 
@@ -139,6 +167,13 @@ class PostingOut(BaseModel):
     # What this opening asks, in the order HR put them in. Empty for most
     # openings — the form renders the step only when there is something on it.
     questions: list[PostingQuestion] = Field(default_factory=list)
+    # The acquisition channel this view was tracked under (PH3-B1), already
+    # normalised. The client sends it back with the submission; it is echoed
+    # rather than left to the client to re-derive so there is one implementation
+    # of the vocabulary and it is the server's. Not personal data and not
+    # company data — it is what the reader's own link said.
+    source: str = "direct"
+    source_detail: str | None = None
 
 
 class ApplicationOut(BaseModel):
@@ -171,40 +206,40 @@ def _clean(value: str | None, limit: int) -> str | None:
 
 
 async def _open_posting(db: DbSessionDep, requisition_id: uuid.UUID) -> dict[str, Any]:
-    """The opening if it is genuinely taking applications, else 404."""
+    """The opening if it is genuinely taking applications, else 404.
+
+    The gate is ``app.publishing.visible_sql`` and nothing else (PH3-B0). It
+    used to be written out here, including the closing-date check in Python
+    below the query, and the careers board carried a hand-copy that had already
+    lost the published-workflow clause.
+    """
     row = (
         await db.execute(
             text(
-                "SELECT r.id, r.company_id, r.title, r.level, r.jd_text, r.closes_at,"
+                # SAFE: the only interpolation below is visible_sql("r"), which
+                # returns a predicate assembled from module-level literals in
+                # app/publishing.py. Every value here is a bound parameter.
+                # bandit reports the first fragment of the concatenation, so
+                # the directive lives on this line rather than on the f-string.
+                "SELECT r.id, r.company_id, r.title, r.level, r.jd_text, r.closes_at,"  # nosec B608
                 "       r.owner_user_id, r.created_by_user_id, c.name AS company_name,"
                 "       r.department, r.location, r.employment_type,"
                 "       r.experience_min_years, r.experience_max_years,"
                 "       r.responsibilities, r.required_skills, r.nice_to_have_skills,"
-                "       r.salary_min, r.salary_max, r.salary_currency, r.salary_visible"
+                "       r.salary_min, r.salary_max, r.salary_currency, r.salary_visible,"
+                # PH3-B4b. Read here rather than in a second query: the apply
+                # path already has this row, and a separate SELECT would be a
+                # round trip for one smallint.
+                "       r.reapply_cooldown_days"
                 "  FROM job_requisitions r"
                 "  JOIN companies c ON c.id = r.company_id AND c.is_active"
                 " WHERE r.id = :i"
-                "   AND r.deleted_at IS NULL"
-                "   AND r.status = 'open'"
-                "   AND r.public_apply_enabled"
-                # No published workflow, no applications (E4). An opening
-                # switched on before its process existed took candidates into
-                # nothing: no scoring gate, no first round, nobody told. It now
-                # answers like any other opening not taking applications, and
-                # the dashboard and the watcher say why.
-                "   AND EXISTS (SELECT 1 FROM workflows w"
-                "                WHERE w.requisition_id = r.id AND w.status = 'published'"
-                "                  AND w.deleted_at IS NULL)"
+                f"   AND {visible_sql('r')}"
             ),
-            {"i": requisition_id},
+            {"i": requisition_id, "now": datetime.now(tz=UTC)},
         )
     ).mappings().first()
     if row is None:
-        raise _NOT_AVAILABLE
-    # A closing date that has passed stops applications without HR having to
-    # remember to flip the status.
-    closes_at = row["closes_at"]
-    if closes_at is not None and closes_at <= datetime.now(tz=UTC):
         raise _NOT_AVAILABLE
     return dict(row)
 
@@ -320,14 +355,803 @@ async def activate_account(body: ActivateIn, db: DbSessionDep) -> ActivateOut:
     return ActivateOut(email=result["email"], linked=result["linked"], message=message)
 
 
+# ---------------------------------------------------------------------------
+# DECLARED BEFORE THE PARAMETERISED ROUTES, and that is not stylistic.
+#
+# FastAPI matches in declaration order and `/apply/{requisition_id}` happily
+# matches the literal string "draft". With these below it, `GET /apply/draft`
+# was being served by get_posting with requisition_id="draft" — verified, it
+# returned a 500 and fired the wrong rate-limit bucket. The module docstring
+# above already warned about exactly this for /apply/activate; this block
+# ignored it. Anything else added under /apply with a literal first segment
+# goes here too.
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Save & resume, and the confirmation step — PH3-B4c and PH3-B5
+#
+# CONSENT COMES FIRST HERE, NOT AT SUBMIT.
+# A draft holds a name, an email, a phone number and a CV. That is exactly the
+# personal data CLAUDE.md forbids storing without a dpdp_consent_ledger entry,
+# and the submitted-application path has always honoured that by writing both in
+# one transaction. A draft saved before the consent checkbox would break it, so
+# the checkbox moves to the first save: POST /apply/{id}/draft refuses without
+# consent and writes the ledger row in the same transaction as the draft.
+#
+# The ledger entry is the same one the submitted application uses and is
+# idempotent per user, so drafting and then submitting neither asks twice nor
+# records twice.
+#
+# THE TOKEN IS THE ONLY CREDENTIAL. There is no login. The candidate keeps a
+# resume link; the database stores only the token's hash. Every route below is
+# rate-limited for the same reason interview links are — an unthrottled endpoint
+# that reports valid-or-invalid is a free oracle even against 256 random bits.
+# ---------------------------------------------------------------------------
+class DraftStartIn(BaseModel):
+    """Opening a draft. The email identifies the person; consent permits us to
+    remember it."""
+
+    email: EmailStr
+    # Not defaulted to True and not inferred from the request reaching us.
+    # DPDP consent has to be an act the person took.
+    consent_granted: bool = False
+    language: Literal["en", "hi", "te"] = "en"
+    src: str | None = Field(default=None, max_length=200)
+
+
+class DraftFieldsIn(BaseModel):
+    """Progress. Every field optional — a draft is allowed to be incomplete."""
+
+    full_name: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=40)
+    years_experience: int | None = Field(default=None, ge=0, le=60)
+    current_company: str | None = Field(default=None, max_length=200)
+    current_title: str | None = Field(default=None, max_length=200)
+    linkedin_url: str | None = Field(default=None, max_length=500)
+    github_url: str | None = Field(default=None, max_length=500)
+    language: Literal["en", "hi", "te"] | None = None
+    answers: dict[str, Any] | None = None
+
+
+class ParsedDetails(BaseModel):
+    """What the CV parser read, for the candidate to check — PH3-B5.
+
+    Only fields the parser actually produces. The story lists education and
+    skills as examples; the resume scorer does not return them today, and
+    showing an empty box labelled "Education" that can never fill in would be
+    worse than not asking. PH3-B5b extends the scorer; this shape grows with it.
+    """
+
+    full_name: str | None = None
+    email: str | None = None
+
+
+class DraftOut(BaseModel):
+    """A draft, as the candidate's own browser sees it.
+
+    Carries no ids belonging to anyone else and no company data beyond the
+    posting they are already looking at.
+    """
+
+    requisition_id: str
+    title: str
+    company_name: str
+    email: str
+    full_name: str | None = None
+    phone: str | None = None
+    years_experience: int | None = None
+    current_company: str | None = None
+    current_title: str | None = None
+    linkedin_url: str | None = None
+    github_url: str | None = None
+    language: str = "en"
+    answers: dict[str, Any] = Field(default_factory=dict)
+    resume_filename: str | None = None
+    has_resume: bool = False
+    # PH3-B5. What we read off the CV, and whether they have said it is right.
+    parsed: ParsedDetails = Field(default_factory=ParsedDetails)
+    confirmed: bool = False
+    expires_at: str
+
+
+class DraftStartOut(BaseModel):
+    """The draft plus the one credential that reopens it."""
+
+    resume_token: str
+    draft: DraftOut
+
+
+def _draft_out(row: dict[str, Any]) -> DraftOut:
+    parsed = dict(row.get("parsed") or {})
+    return DraftOut(
+        requisition_id=str(row["requisition_id"]),
+        title=str(row.get("title") or ""),
+        company_name=str(row.get("company_name") or ""),
+        email=row["email"],
+        full_name=row.get("full_name"),
+        phone=row.get("phone"),
+        years_experience=row.get("years_experience"),
+        current_company=row.get("current_company"),
+        current_title=row.get("current_title"),
+        linkedin_url=row.get("linkedin_url"),
+        github_url=row.get("github_url"),
+        language=str(row.get("language") or "en"),
+        answers=dict(row.get("answers") or {}),
+        resume_filename=row.get("resume_filename"),
+        has_resume=bool(row.get("resume_s3_key")),
+        parsed=ParsedDetails(
+            full_name=parsed.get("full_name"),
+            email=parsed.get("email"),
+        ),
+        confirmed=row.get("confirmed_at") is not None,
+        expires_at=row["expires_at"].isoformat(),
+    )
+
+
+async def _draft_token(
+    x_draft_token: Annotated[str | None, Header(alias="X-Draft-Token")] = None,
+) -> str:
+    """The resume token, from a HEADER — never the URL.
+
+    This is the pattern ``exam_take`` and ``interview_take`` already use
+    (``X-Exam-Token``, ``X-Interview-Token``), and exam_take's own docstring
+    spells out why: "never the URL path/query". The token was briefly in the
+    path here, which put a live credential to somebody's name, phone, employer,
+    screening answers and CV into uvicorn's access log, the Space and Railway
+    edge logs, browser history and any cross-origin Referer. CWE-598, CWE-532.
+
+    The emailed/shared link still carries it — in the URL FRAGMENT, which
+    browsers do not send to servers, exactly as the exam and interview links do.
+    The SPA reads the fragment and puts it in this header.
+    """
+    if not x_draft_token:
+        # Same uniform refusal as a bad token: whether the header was missing or
+        # simply wrong is not information anyone needs.
+        raise _NO_SUCH_DRAFT
+    return x_draft_token
+
+
+DraftTokenDep = Annotated[str, Depends(_draft_token)]
+
+
+async def _draft_or_404(db: DbSessionDep, token: str) -> dict[str, Any]:
+    """The draft this token opens, or a uniform 404.
+
+    Expired, submitted, deleted and never-existed all answer identically — the
+    same reasoning as ``_NOT_AVAILABLE`` above.
+    """
+    row = await draft_store.load(db, raw_token=token)
+    if row is None:
+        raise _NO_SUCH_DRAFT
+    return row
+
+
+@router.post(
+    "/{requisition_id}/draft",
+    response_model=DraftStartOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[rate_limit("public_apply_draft_start", 10)],
+)
+async def start_draft(
+    requisition_id: uuid.UUID,
+    body: DraftStartIn,
+    request: Request,
+    db: DbSessionDep,
+) -> DraftStartOut:
+    """Begin an application you can come back to.
+
+    CONSENT IS TAKEN HERE. This is the first moment a person's email is stored,
+    so it is the moment their permission is recorded — in the same transaction,
+    exactly as the submitted-application path does it.
+
+    THIS ROUTE CREATES. IT NEVER RESUMES, AND THAT IS A SECURITY PROPERTY.
+
+    An earlier version resolved the email in the request body to an existing
+    identity and, if that person already had a live draft, rotated its token
+    and returned its contents. The email was therefore an authenticator — and
+    it is not one. Anyone holding the apply link (which the module docstring
+    above is explicit is not a secret) plus a candidate's address could read
+    their name, phone, employer, job title, profile links, every screening
+    answer and their CV filename, receive a working token for their draft,
+    alter it, replace their CV and submit an application in their name — in one
+    unauthenticated request, with the victim's own link silently killed.
+
+    So identity is no longer derived from anything the caller says. Every call
+    mints a FRESH draft with a FRESH guest identity, and the returned token is
+    the only way back to it. Two saves make two drafts, each reachable only by
+    its own link; that is the cost, and it is much cheaper than the alternative.
+
+    The consequence worth naming: somebody who loses their link cannot recover
+    it here, by design — recovering it would mean proving ownership of the
+    address, and this endpoint cannot do that. The draft expires in
+    DRAFT_TTL_DAYS and they start again.
+    """
+    req = await _open_posting(db, requisition_id)
+    company_id = req["company_id"]
+
+    if not body.consent_granted:
+        # 422 rather than 403: nothing is wrong with the caller's authority,
+        # the form is incomplete. The frontend renders this by the checkbox.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "We need your permission to store your details before we can save "
+                "your progress."
+            ),
+        )
+
+    address = str(body.email).strip().lower()[:320]
+    now = datetime.now(tz=UTC)
+
+    try:
+        # A FRESH identity, every time. Deliberately no lookup by the address
+        # the caller supplied: see the docstring. No applicant row is created
+        # either — a draft is not an application, and putting somebody in HR's
+        # pipeline before they have applied would be both wrong and visible.
+        user_id = await _draft_only_guest_user(
+            db, company_id=company_id, now=now, language=body.language,
+        )
+
+        draft, raw_token = await draft_store.start(
+            db,
+            requisition_id=requisition_id,
+            company_id=company_id,
+            email=address,
+            consent_granted=body.consent_granted,
+            user_id=user_id,
+            source=normalise_source(body.src, default=DIRECT),
+            now=now,
+        )
+        # SAME TRANSACTION as the draft row. This is the invariant that
+        # CLAUDE.md hard constraint 3 requires, and it is why the consent
+        # checkbox moved to the first save rather than to submission.
+        #
+        # The ledger row hangs off the fresh guest identity. When this draft is
+        # submitted, submit_draft records consent against the identity that
+        # ends up OWNING the application too, so an audit that looks the person
+        # up by their real user id finds it.
+        await _record_apply_consent(
+            db, request=request, user_id=user_id, applicant_id=uuid.uuid4(),
+            company_id=company_id, requisition_id=requisition_id, now=now,
+        )
+        await db.commit()
+    except draft_store.ConsentRequiredError as exc:  # pragma: no cover - checked above
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        await db.rollback()
+        log.exception("public_apply.draft_start_failed", requisition_id=str(requisition_id))
+        raise HTTPException(
+            status_code=503, detail="We could not save your progress just now."
+        ) from None
+
+    return DraftStartOut(
+        resume_token=raw_token,
+        draft=_draft_out({**draft, "title": req["title"],
+                          "company_name": req.get("company_name")}),
+    )
+
+
+@router.get(
+    "/draft",
+    response_model=DraftOut,
+    dependencies=[rate_limit("public_apply_draft_read", 30)],
+)
+async def resume_draft(db: DbSessionDep, token: DraftTokenDep) -> DraftOut:
+    """Pick up where you left off."""
+    return _draft_out(await _draft_or_404(db, token))
+
+
+@router.patch(
+    "/draft",
+    response_model=DraftOut,
+    dependencies=[rate_limit("public_apply_draft", 30)],
+)
+async def update_draft(
+    body: DraftFieldsIn, db: DbSessionDep, token: DraftTokenDep
+) -> DraftOut:
+    """Save progress. Nothing here is required and nothing is validated against
+    the opening's rules — those apply at submission, because a draft is allowed
+    to be incomplete."""
+    row = await _draft_or_404(db, token)
+    fields = body.model_dump(exclude_unset=True)
+    answers = fields.pop("answers", None)
+    await draft_store.save(db, draft_id=row["id"], fields=fields, answers=answers)
+    await db.commit()
+    return _draft_out(await _draft_or_404(db, token))
+
+
+@router.post(
+    "/draft/confirm",
+    response_model=DraftOut,
+    dependencies=[rate_limit("public_apply_draft", 30)],
+)
+async def confirm_draft(
+    body: DraftFieldsIn, db: DbSessionDep, token: DraftTokenDep
+) -> DraftOut:
+    """Confirm the details we read off your CV — PH3-B5.
+
+    The corrections in the body win over whatever the parser produced, and they
+    become the values the application is submitted with. That is the entire
+    point: a name read out of a PDF is a guess and a person's own answer is not.
+
+    A parser that produced nothing does not block this. PH3-B5 Task 4 is
+    explicit — an optional field that could not be extracted must not stop
+    somebody applying — so the only requirement is the one the application
+    itself has: a name and an email.
+    """
+    row = await _draft_or_404(db, token)
+    corrections = body.model_dump(exclude_unset=True)
+    corrections.pop("answers", None)
+
+    # The one check worth making here rather than at submit: confirming means
+    # "these details are right", and confirming an empty name is not meaningful.
+    name = corrections.get("full_name") or row.get("full_name")
+    if not (name or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Please tell us your name before confirming.",
+        )
+
+    await draft_store.confirm(db, draft_id=row["id"], corrections=corrections)
+    await db.commit()
+    return _draft_out(await _draft_or_404(db, token))
+
+
+async def _draft_only_guest_user(
+    db: DbSessionDep,
+    *,
+    company_id: uuid.UUID,
+    now: datetime,
+    language: str,
+) -> uuid.UUID:
+    """A fresh ``guest_candidate`` user to anchor one draft's consent record.
+
+    Needed because ``dpdp_consent_ledger.user_id`` is NOT NULL and the consent
+    is recorded at the first save.
+
+    TAKES NO EMAIL, AND LOOKS NOTHING UP. An earlier version reused an existing
+    identity found by matching the address the caller supplied, which is what
+    let an anonymous request reach somebody else's draft. Resolving identity
+    from unverified input is the vulnerability; not doing it is the fix.
+
+    THE ADDRESS STORED HERE IS SYNTHETIC. ``users.email`` is UNIQUE across the
+    whole platform, not per company, so writing a candidate's real address here
+    would collide with any account that already held it — which was a separate
+    bug, fixed separately. The real address lives on
+    ``application_drafts.email``, and moves to ``applicants.email`` if and when
+    the person actually applies.
+
+    Deliberately does NOT create an applicant row: a draft is not an
+    application.
+    """
+    user_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO users (id, email, password_hash, full_name, company_id,"
+            " preferred_language, is_active, notify_login_email, created_at, updated_at)"
+            " VALUES (:i,:e,NULL,'',:c,:lang,true,false,:n,:n)"
+        ),
+        {"i": user_id, "e": f"guest+{user_id}@applicants.invalid",
+         "c": company_id, "lang": language, "n": now},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO user_roles (user_id, role_id, assigned_at)"
+            " SELECT :u, id, :n FROM roles WHERE name = 'guest_candidate'"
+            " ON CONFLICT DO NOTHING"
+        ),
+        {"u": user_id, "n": now},
+    )
+    return user_id
+
+
+@router.delete(
+    "/draft",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[rate_limit("public_apply_draft", 30)],
+)
+async def delete_draft(db: DbSessionDep, token: DraftTokenDep) -> Response:
+    """Throw this saved application away, now.
+
+    DPDP gives a data principal the right to ACT, not merely to be forgotten on
+    a schedule. Without this, somebody who started a draft and changed their
+    mind had no route at all: the guest account has no password, so there is
+    nothing to sign in to and nothing to ask from. The 30-day expiry is a
+    backstop, not an answer.
+
+    Token-authenticated, so it is neither an oracle nor available to anyone but
+    the person holding the link. The CV object goes with the row — deleting the
+    record and leaving the file is the failure mode this whole area keeps
+    having, so it is done here explicitly rather than left to the cron.
+    """
+    row = await _draft_or_404(db, token)
+    key = row.get("resume_s3_key")
+    await db.execute(
+        text("DELETE FROM application_drafts WHERE id = :i"), {"i": row["id"]}
+    )
+    # And the guest identity it anchored, on exactly the terms purge_expired
+    # uses. Without this, the self-serve erasure path — added for the DPDP
+    # right to ACT — left behind the users row, its role grant and its consent
+    # ledger entry, which is the unbounded growth the retention pass exists to
+    # stop. Scoped to the synthetic address, and guarded on everything that
+    # could still need the row, so a real account can never be caught.
+    await db.execute(
+        text(
+            "DELETE FROM users u"
+            " WHERE u.id = :uid"
+            "   AND u.email LIKE 'guest+%@applicants.invalid'"
+            "   AND NOT EXISTS (SELECT 1 FROM applicants a WHERE a.user_id = u.id)"
+            "   AND NOT EXISTS ("
+            "         SELECT 1 FROM application_drafts d WHERE d.user_id = u.id)"
+            "   AND NOT EXISTS ("
+            "         SELECT 1 FROM erasure_requests e WHERE e.user_id = u.id)"
+        ),
+        {"uid": row["user_id"]},
+    )
+    await db.commit()
+    if key:
+        try:
+            await _delete_from_s3(str(key))
+        except Exception:  # noqa: BLE001 — the row is already gone
+            log.warning("public_apply.draft_object_orphaned", draft_id=str(row["id"]))
+    log.info("application_draft.deleted_by_candidate", draft_id=str(row["id"]))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/draft/resume-upload",
+    response_model=DraftOut,
+    dependencies=[rate_limit("public_apply_draft_upload", 6)],
+)
+async def upload_draft_resume(
+    db: DbSessionDep, resume: UploadFile, token: DraftTokenDep
+) -> DraftOut:
+    """Attach a CV to a draft, and read it so PH3-B5 has something to confirm.
+
+    The same size and type limits as the submitted path, enforced here too
+    rather than deferred: a candidate should be told their 30 MB scan is no good
+    while they are still on the upload step, not at the end.
+    """
+    row = await _draft_or_404(db, token)
+
+    if resume.content_type not in ("application/pdf", "application/octet-stream"):
+        raise HTTPException(status_code=400, detail="Please upload your CV as a PDF.")
+    raw = await resume.read(_MAX_RESUME_BYTES + 1)
+    if not raw:
+        raise HTTPException(status_code=400, detail="That file was empty.")
+    if len(raw) > _MAX_RESUME_BYTES:
+        raise HTTPException(status_code=413, detail="Your CV must be under 5 MB.")
+    try:
+        resume_text = await _extract_pdf_text(raw)
+    except Exception as exc:  # noqa: BLE001 — encrypted or image-only PDF
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "We could not read that PDF. If it is a scan, please upload a "
+                "text-based version."
+            ),
+        ) from exc
+
+    s3_key = f"drafts/{row['company_id']}/{row['id']}.pdf"
+    try:
+        await _upload_to_s3(raw, s3_key)
+    except (BotoCoreError, ClientError, LocalStorageError) as exc:
+        log.warning("public_apply.draft_storage_failed", error_type=type(exc).__name__)
+        raise HTTPException(
+            status_code=503, detail="We could not store your CV just now. Please try again."
+        ) from exc
+
+    # What the candidate will be asked to confirm (PH3-B5).
+    #
+    # OFF THE EVENT LOOP, with a wall-clock bound — the same treatment
+    # _extract_pdf_text gets two calls up, and for the same reason. The
+    # patterns are bounded and the input is truncated, so this is linear and
+    # capped; running it inline would still put a stranger's upload on the
+    # thread that serves every other request, health probe included.
+    #
+    # A timeout here is not a failure worth refusing the upload over: the
+    # candidate is about to be shown these fields to correct anyway, so an
+    # empty set of suggestions is a slightly worse form, not a lost applicant.
+    try:
+        parsed = await asyncio.wait_for(
+            asyncio.to_thread(extract_contact_details, resume_text),
+            timeout=_PARSE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        log.warning("public_apply.draft_parse_timeout", draft_id=str(row["id"]))
+        parsed = {}
+    await draft_store.attach_resume(
+        db, draft_id=row["id"], s3_key=s3_key,
+        filename=resume.filename, parsed=parsed,
+    )
+    await db.commit()
+    return _draft_out(await _draft_or_404(db, token))
+
+
+@router.post(
+    "/draft/submit",
+    response_model=ApplicationOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[rate_limit("public_apply_submit", 6)],
+)
+async def submit_draft(
+    request: Request, db: DbSessionDep, token: DraftTokenDep
+) -> ApplicationOut:
+    """Turn a confirmed draft into an application.
+
+    Everything the one-shot endpoint enforces is enforced here too — the opening
+    must still be taking applications, the required questions must be answered,
+    the cooldown must have passed — because a draft started last week says
+    nothing about whether any of those is still true today.
+
+    Consent is NOT re-taken: it was recorded when the draft was created, in the
+    same transaction as the first row that held this person's email, and the
+    ledger entry is idempotent per person. Asking again would imply the first
+    answer had not counted.
+    """
+    row = await _draft_or_404(db, token)
+    requisition_id = uuid.UUID(str(row["requisition_id"]))
+
+    # Re-checked, not trusted: the opening may have closed since the draft
+    # started, and a draft is not a reservation.
+    req = await _open_posting(db, requisition_id)
+    company_id = req["company_id"]
+
+    name = (row.get("full_name") or "").strip()[:200]
+    address = str(row["email"]).strip().lower()[:320]
+    if not name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Please tell us your name before submitting.",
+        )
+    if not row.get("resume_s3_key"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Please upload your CV before submitting.",
+        )
+    if row.get("confirmed_at") is None:
+        # PH3-B5. The confirmed details are what gets stored, so submitting
+        # without confirming would mean storing what a parser guessed.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Please review and confirm your details before submitting.",
+        )
+
+    # The opening's own required questions, validated against the draft's
+    # answers. A draft may be incomplete; an application may not.
+    questions = await list_questions(db, requisition_id=requisition_id)
+    try:
+        checked_answers = validate_answers(questions, dict(row.get("answers") or {}))
+    except AnswerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    existing = (
+        await db.execute(
+            text(
+                "SELECT a.id, e.id AS enrolment_id"
+                "  FROM applicants a"
+                "  LEFT JOIN enrolments e ON e.applicant_id = a.id"
+                "   AND e.requisition_id = :r AND e.deleted_at IS NULL"
+                " WHERE a.company_id = :c AND a.deleted_at IS NULL"
+                "   AND lower(btrim(a.email)) = :em"
+                " ORDER BY a.created_at LIMIT 1"
+            ),
+            {"c": company_id, "r": requisition_id, "em": address},
+        )
+    ).mappings().first()
+
+    if existing is not None and existing["enrolment_id"] is not None:
+        # Nothing adopts the uploaded CV on this branch: no Applicant is created
+        # and no enrolment is made, so neither applicants.resume_s3_key nor
+        # enrolments.applied_resume_s3_key ever comes to reference it. Every
+        # other path deliberately KEEPS the object because those columns are
+        # this very key — but here it is referenced by nobody, and the purge
+        # (rightly) refuses to delete a submitted draft's object, so without
+        # this it would have no deletion path at all and sit in the bucket for
+        # ever, past its purpose. Released the same way delete_draft does it:
+        # pointer cleared inside the transaction, object deleted after commit.
+        orphaned_cv = row.get("resume_s3_key")
+        await draft_store.mark_submitted(db, draft_id=row["id"], release_resume=True)
+        await db.commit()
+        if orphaned_cv:
+            try:
+                await _delete_from_s3(str(orphaned_cv))
+            except Exception:  # noqa: BLE001 — the pointer is already cleared
+                log.warning(
+                    "public_apply.draft_object_orphaned", draft_id=str(row["id"])
+                )
+        return ApplicationOut(
+            applicant_id="", enrolment_id=None, full_name=name, already_applied=True,
+            message="You have already applied for this role. We have your application.",
+        )
+
+    if existing is not None:
+        verdict = await cooldown_check(
+            db,
+            requisition_id=requisition_id,
+            applicant_id=uuid.UUID(str(existing["id"])),
+            cooldown_days=req.get("reapply_cooldown_days"),
+        )
+        if not verdict.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=verdict.message()
+            )
+
+    applicant_id = uuid.UUID(str(existing["id"])) if existing is not None else uuid.uuid4()
+    is_new_person = existing is None
+    now = datetime.now(tz=UTC)
+    actor = req["owner_user_id"] or req["created_by_user_id"]
+    source = str(row.get("source") or DIRECT)
+    source_detail = row.get("source_detail")
+
+    try:
+        if is_new_person:
+            db.add(
+                Applicant(
+                    id=applicant_id,
+                    company_id=company_id,
+                    created_by_user_id=actor,
+                    user_id=uuid.UUID(str(row["user_id"])),
+                    full_name=name,
+                    email=address,
+                    target_job_title=req["title"],
+                    target_level=req["level"],
+                    target_jd_text=req["jd_text"],
+                    resume_s3_key=row["resume_s3_key"],
+                    # The candidate CONFIRMED this name (PH3-B5), so it is
+                    # authored rather than parsed — the reconciler must not
+                    # overwrite it with whatever the CV says.
+                    full_name_source="candidate",
+                    details_confirmed_at=row["confirmed_at"],
+                    pending_enrichment=True,
+                    phone=row.get("phone"),
+                    years_experience=row.get("years_experience"),
+                    current_company=row.get("current_company"),
+                    current_title=row.get("current_title"),
+                    linkedin_url=row.get("linkedin_url"),
+                    github_url=row.get("github_url"),
+                    status="new",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        # A RETURNING applicant's record is NOT touched, exactly as the one-shot
+        # path refuses to touch it, and for the same reason its comment gives:
+        # "this form replaced their CV, target role, contact details and scores
+        # for anyone who typed their email address, with no proof of who they
+        # were."
+        #
+        # This path had re-introduced precisely that. It overwrote `full_name`
+        # unconditionally and stamped `full_name_source='candidate'` plus
+        # `details_confirmed_at` — which assert to the reconciler and to HR that
+        # the real person personally confirmed those values. An anonymous caller
+        # with a public apply link and somebody's address could therefore rename
+        # them in a company's ATS, back-fill empty fields with chosen values and
+        # give it all false provenance.
+        #
+        # The draft's details are not lost: they live on the draft row, the CV
+        # belongs to this application alone via applied_resume_s3_key below, and
+        # the confirmation email goes to the address on file — so the real owner
+        # hears about an application they did not make. The record itself may
+        # change only after activation has proved the address.
+        await db.flush()
+
+        outcome = await enrol_applicant(
+            db,
+            company_id=company_id,
+            applicant_id=applicant_id,
+            requisition_id=requisition_id,
+            target_job_title=req["title"],
+            target_level=req["level"],
+            target_jd_text=req["jd_text"],
+            resume_s3_key=row["resume_s3_key"],
+            source=source,
+            source_detail=source_detail,
+        )
+        if checked_answers and outcome.enrolment_id:
+            await store_answers(
+                db,
+                company_id=company_id,
+                enrolment_id=uuid.UUID(outcome.enrolment_id),
+                answers=checked_answers,
+            )
+        # The draft's consent row hangs off the throwaway guest identity that
+        # created it. Record it against the identity that owns the application
+        # too, so an audit that looks this person up by their real user id
+        # finds their consent rather than missing it. Idempotent per user, so
+        # a returning applicant is not double-recorded.
+        owner_user_id = await db.scalar(
+            text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
+        )
+        if owner_user_id is not None:
+            await _record_apply_consent(
+                db, request=request, user_id=uuid.UUID(str(owner_user_id)),
+                applicant_id=applicant_id, company_id=company_id,
+                requisition_id=requisition_id, now=now,
+            )
+        await draft_store.mark_submitted(db, draft_id=row["id"], now=now)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return ApplicationOut(
+            applicant_id="", enrolment_id=None, full_name=name, already_applied=True,
+            message="You have already applied for this role. We have your application.",
+        )
+    except Exception:
+        await db.rollback()
+        log.exception("public_apply.draft_submit_failed", requisition_id=str(requisition_id))
+        raise HTTPException(
+            status_code=503, detail="We could not submit your application just now."
+        ) from None
+
+    # Confirmation email, with a link to activate the account this application
+    # just created. The one-shot path has always sent this and its own comment
+    # names why it matters: "the confirmation email goes to the address on file
+    # — so the real owner of that address hears about an application they did
+    # not make." The draft path shipped without it, which removed that control
+    # from the very flow this branch adds, and left draft-path applicants with
+    # no way to claim their account.
+    #
+    # AFTER the commit and in its own transaction, for the reason spelled out
+    # on the one-shot path: a SQL failure while staging the email would abort
+    # the transaction and take the application down with it. The application is
+    # already safe; only the email is at risk.
+    guest_user_id = await db.scalar(
+        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
+    )
+    if guest_user_id is not None:
+        try:
+            await stage_activation_email(
+                db,
+                user_id=uuid.UUID(str(guest_user_id)),
+                applicant_email=address,
+                applicant_name=name,
+                job_title=req["title"],
+                company_id=company_id,
+                company_name=req.get("company_name"),
+                now=now,
+            )
+            await db.commit()
+        except Exception:  # noqa: BLE001 — see above
+            await db.rollback()
+            log.warning(
+                "public.apply.draft_activation_email_failed",
+                requisition_id=str(requisition_id),
+                applicant_id=str(applicant_id),
+            )
+
+    log.info(
+        "public.apply.received_from_draft",
+        company_id=str(company_id), requisition_id=str(requisition_id),
+        applicant_id=str(applicant_id), returning=not is_new_person,
+    )
+    return ApplicationOut(
+        applicant_id=str(applicant_id),
+        enrolment_id=outcome.enrolment_id,
+        full_name=name,
+        already_applied=False,
+        message="Thanks — your application is in. We will be in touch by email.",
+    )
+
+
 @router.get(
     "/{requisition_id}",
     response_model=PostingOut,
     dependencies=[rate_limit("public_apply_view", 60)],
 )
-async def get_posting(requisition_id: uuid.UUID, db: DbSessionDep) -> PostingOut:
+async def get_posting(
+    requisition_id: uuid.UUID,
+    db: DbSessionDep,
+    # The tracked link is this GET: a recruiter shares /apply/<id>?src=linkedin.
+    # Echoed back normalised (PH3-B1) so the client can carry it to the POST
+    # without having to know the vocabulary, and so a tracked link that arrives
+    # with a channel we do not recognise still tells the client what we will
+    # record. Nothing is stored here — a page view is not an application.
+    src: Annotated[str | None, Query(max_length=200)] = None,
+) -> PostingOut:
     """The public posting. Never reveals anything about who else applied."""
     req = await _open_posting(db, requisition_id)
+    source, source_detail = normalise_source(src, default=DIRECT)
     shows_salary = bool(req.get("salary_visible"))
     questions = await list_questions(db, requisition_id=requisition_id)
     return PostingOut(
@@ -359,6 +1183,8 @@ async def get_posting(requisition_id: uuid.UUID, db: DbSessionDep) -> PostingOut
             )
             for q in questions
         ],
+        source=source,
+        source_detail=source_detail,
     )
 
 
@@ -400,6 +1226,13 @@ async def submit_application(
     # placeholder account created for a NEW applicant; someone already on file
     # keeps the language they chose before.
     language: Annotated[str, Form(pattern="^(en|hi|te)$")] = "en",
+    # Where this application came from (PH3-B1). A form field rather than a
+    # query parameter because the tracked link is the GET; by the time the
+    # candidate submits, the ?src= is several screens back and the client
+    # carries it forward. Unvalidated by FastAPI on purpose — normalise_source
+    # never refuses, and a 422 over a mistyped campaign tag would lose a real
+    # applicant to a recruiter's typo.
+    src: Annotated[str | None, Form(max_length=200)] = None,
 ) -> ApplicationOut:
     """Apply to an opening. Stores name, email and resume — with consent.
 
@@ -411,6 +1244,7 @@ async def submit_application(
     """
     req = await _open_posting(db, requisition_id)
     company_id = req["company_id"]
+    source, source_detail = normalise_source(src, default=DIRECT)
 
     if not consent_granted:
         # 422, not 403: nothing is wrong with the caller's authority, the form
@@ -496,6 +1330,38 @@ async def submit_application(
             already_applied=True,
             message="You have already applied for this role. We have your application.",
         )
+
+    # ── Still inside a reapplication cooldown? (PH3-B4b) ────────────────────
+    # AFTER the already-applied branch, deliberately: a live application is
+    # answered with "we have it", which is not a refusal, and a person whose
+    # application is still open must never be told to wait.
+    #
+    # Also after the CV has been read, for the same reason the check above is:
+    # answering it earlier would let anyone holding the link discover, by
+    # typing addresses, who had been turned down for this role and when.
+    #
+    # And BEFORE the upload below, so a refusal costs no stored object. That
+    # ordering is the same one the consent and answer checks use, and for the
+    # same stated reason: refusing after the upload would mean deleting a file
+    # we had just written.
+    if existing is not None:
+        verdict = await cooldown_check(
+            db,
+            requisition_id=requisition_id,
+            applicant_id=uuid.UUID(str(existing["id"])),
+            cooldown_days=req.get("reapply_cooldown_days"),
+        )
+        if not verdict.allowed:
+            log.info(
+                "public_apply.cooldown_blocked",
+                requisition_id=str(requisition_id),
+                until=verdict.until.isoformat() if verdict.until else None,
+            )
+            # 409, not 403: nothing is wrong with their authority and nothing
+            # is wrong with the form. The state of the world says not yet, and
+            # the message carries the date so the refusal can be acted on.
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail=verdict.message())
 
     # ── Store ───────────────────────────────────────────────────────────────
     # An applicant already exists for this email (they applied to a DIFFERENT
@@ -615,6 +1481,11 @@ async def submit_application(
             target_level=req["level"],
             target_jd_text=req["jd_text"],
             resume_s3_key=s3_key,
+            # No ?src= means direct, not untracked: this arrival came through
+            # the public apply link, which is itself a fact worth keeping apart
+            # from the historical rows nobody was tracking at all.
+            source=source,
+            source_detail=source_detail,
         )
         # Same transaction as the enrolment they belong to: an application
         # whose answers did not land is not a complete application, and the
@@ -783,15 +1654,45 @@ async def _record_apply_consent(
     the ledger is read during audits by people who have no business seeing the
     applicant's address.
     """
-    already = await db.scalar(
+    # Any row at all, granted or REVOKED. The revoked case is the one that
+    # matters: this function is reachable from an unauthenticated submission
+    # carrying an address anybody can type, and the previous predicate filtered
+    # `revoked_at IS NULL` — so a stranger could mint a fresh `granted = TRUE`
+    # row for somebody who had explicitly withdrawn, and reconciliation.py gates
+    # processing on exactly `granted AND revoked_at IS NULL`. A withdrawal has
+    # to be sticky against anyone but its owner, or it is not a withdrawal.
+    #
+    # Be precise about what that costs, because this comment used to claim a
+    # remedy that does not exist: "it goes through the consent router, which is
+    # authenticated". It does not. consent.py accepts only
+    # consent_type in {interview_voice_recording, video_capture} with
+    # _VALID_PURPOSES == {"interview"}, so NO endpoint anywhere can re-grant
+    # application_data/recruitment. This function is its only writer.
+    #
+    # It is still not a lock-out, for a different reason: the only path that
+    # revokes this row is a completed DPDP erasure, and the executor also NULLs
+    # applicants.email and applicants.user_id — so a later application finds no
+    # existing person, mints a fresh guest identity, and consents against that.
+    # The withdrawn row belongs to an identity nobody can reach again.
+    #
+    # If a self-serve withdrawal is ever added WITHOUT erasure, that stops being
+    # true and this becomes a real lock-out. Add the re-grant route in the same
+    # change.
+    existing = await db.scalar(
         text(
-            "SELECT 1 FROM dpdp_consent_ledger WHERE user_id = :uid"
+            "SELECT revoked_at IS NOT NULL AS was_revoked"
+            "  FROM dpdp_consent_ledger WHERE user_id = :uid"
             " AND consent_type = 'application_data' AND purpose = 'recruitment'"
-            " AND granted = TRUE AND revoked_at IS NULL LIMIT 1"
+            " ORDER BY granted_at DESC LIMIT 1"
         ),
         {"uid": user_id},
     )
-    if already:
+    if existing is not None:
+        if existing:
+            log.info(
+                "consent.not_regranted_after_withdrawal",
+                user_id=str(user_id), requisition_id=str(requisition_id),
+            )
         return
     await db.execute(
         text(
@@ -821,3 +1722,5 @@ async def _record_apply_consent(
             ),
         },
     )
+
+

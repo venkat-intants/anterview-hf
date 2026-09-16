@@ -16,10 +16,16 @@ def _submit() -> str:
 
 
 def test_an_opening_without_a_published_workflow_takes_no_applications() -> None:
+    """Since PH3-B0 the gate is one shared predicate, so this asserts against
+    that rather than against this endpoint's own copy of it — the copy is what
+    the careers board drifted away from."""
+    from app.publishing import visible_sql
     from app.routers.public_apply import _open_posting
 
-    src = " ".join(inspect.getsource(_open_posting).split())
-    assert "w.status = 'published'" in src and "r.public_apply_enabled" in src
+    gate = visible_sql("r")
+    assert "w.status = 'published'" in gate
+    assert "r.public_apply_enabled" in gate
+    assert "visible_sql('r')" in inspect.getsource(_open_posting)
 
 
 def test_already_applied_is_answered_only_after_a_readable_cv() -> None:

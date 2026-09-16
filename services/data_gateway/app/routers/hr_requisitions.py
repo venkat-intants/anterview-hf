@@ -23,18 +23,36 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import text
 
 from app.application_questions import answers_for
 from app.database import DbSessionDep
-from app.dependencies import HrCtxDep
+from app.dependencies import HrCtxDep, SuperAdminCtxDep
 from app.final_decision import DECISIONS, DecisionRefusedError, record_final_decision
+from app.jd_versions import (
+    current_draft,
+    discard_draft,
+    list_versions,
+    publish_version,
+    record_edit,
+    save_draft,
+    touches_jd,
+)
 from app.models import AuditLog
+from app.publishing import APPROVED
+from app.reapplication import grant_override
+from app.requisition_approval import (
+    ApprovalError,
+    clean_note,
+    decide,
+    pending_for_company,
+    submit_for_approval,
+)
 from app.requisition_dashboard import gather_dashboard
 from app.requisitions import (
     TERMINAL_STATUSES,
@@ -48,6 +66,7 @@ from app.requisitions import (
     record_transition,
     split_requisition,
 )
+from app.scheduled_publishing import tolerance_note
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 from app.workflow_runner import on_shortlisted
 
@@ -199,6 +218,50 @@ class RequisitionPatch(PostingFields):
     # Whether the open web may apply. Off until someone turns it on — see the
     # note in public_apply.py on why a requisition id is not a secret.
     public_apply_enabled: bool | None = None
+    # ── Budget (PH3-B2) ────────────────────────────────────────────────
+    # Money, not headcount. target_hires above is the headcount constraint and
+    # neither replaces the other. Never rendered on any public surface — unlike
+    # salary_min/max there is no visibility flag, because there is no version
+    # of a careers page that should carry a hiring budget.
+    budget_amount: int | None = Field(default=None, ge=0, le=10**15)
+    budget_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    budget_basis: Literal["per_hire", "total"] | None = None
+    budget_period: Literal["annual", "monthly", "one_time"] | None = None
+    budget_notes: str | None = Field(default=None, max_length=2000)
+    # PH3-B4b. None means nobody has set one, which is the default and is NOT
+    # the same as 0 — zero is "we considered this and decided there is no
+    # waiting period". Three years is the ceiling: beyond that a cooldown is
+    # indistinguishable from a permanent bar, which is a different decision and
+    # should be taken deliberately rather than by typing a large number.
+    reapply_cooldown_days: int | None = Field(default=None, ge=0, le=1095)
+
+    @field_validator("budget_currency")
+    @classmethod
+    def _currency_code(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        code = v.strip().upper()
+        if not code.isalpha():
+            raise ValueError("currency must be a 3-letter code, e.g. INR")
+        return code
+
+    @model_validator(mode="after")
+    def _budget_is_complete(self) -> RequisitionPatch:
+        """An amount with no currency or basis is a number nobody can act on.
+
+        Caught here as well as by the CHECK constraint so the caller gets a 422
+        naming the missing field rather than a 503 from a constraint violation.
+        """
+        if self.budget_amount is not None and (
+            self.budget_currency is None
+            or self.budget_basis is None
+            or self.budget_period is None
+        ):
+            raise ValueError(
+                "a budget needs an amount, a currency, a basis (per_hire or total)"
+                " and a period (annual, monthly or one_time)"
+            )
+        return self
 
 
 class FunnelStage(BaseModel):
@@ -220,6 +283,25 @@ class RequisitionOut(BaseModel):
     from_backfill: bool
     public_apply_enabled: bool = False
     created_at: str
+    # ── Approval (PH3-B2) ──────────────────────────────────────────────
+    # A separate axis from `status`: approved does not imply open, and closing
+    # an opening does not un-approve it.
+    approval_status: str = "draft"
+    submitted_for_approval_at: str | None = None
+    submitted_by_name: str | None = None
+    approval_decided_at: str | None = None
+    approval_decided_by_name: str | None = None
+    approval_note: str | None = None
+    # ── Budget (PH3-B2) ────────────────────────────────────────────────
+    # HR-facing only. RequisitionOut is never served to a candidate; the public
+    # shapes are PostingOut and JobCard, and neither carries these.
+    budget_amount: int | None = None
+    budget_currency: str | None = None
+    budget_basis: str | None = None
+    budget_period: str | None = None
+    budget_notes: str | None = None
+    # PH3-B4b. Null means no cooldown is configured for this opening.
+    reapply_cooldown_days: int | None = None
     department: str | None = None
     location: str | None = None
     employment_type: str | None = None
@@ -265,6 +347,14 @@ class EnrolmentOut(BaseModel):
     # whose opening has no published workflow.
     current_round_id: str | None = None
     current_round_title: str | None = None
+    # Where this application came from (PH3-B1). Exposed on the internal view
+    # only: it is the company's own attribution data, and a candidate has no
+    # business learning which campaign the company filed them under. PH3-B1
+    # deliberately stops here — the funnel and quality-of-hire analytics that
+    # read it are PH5-C1, and building a dashboard now would be building it
+    # against a single day of data.
+    source: str = "unknown"
+    source_detail: str | None = None
 
 
 class StatusIn(BaseModel):
@@ -329,6 +419,14 @@ class MergeRequisitionIn(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+# One uniform refusal for the approval routes. A cross-tenant requisition id
+# must be indistinguishable from one that does not exist, or the 403/404 split
+# becomes a way to enumerate another company's openings.
+_NO_SUCH_REQUISITION = HTTPException(
+    status_code=status.HTTP_404_NOT_FOUND, detail="No such requisition."
+)
+
+
 async def _owned(db: DbSessionDep, company_id: uuid.UUID, req_id: uuid.UUID) -> dict[str, Any]:
     """Fetch a requisition or 404. Cross-tenant reads are indistinguishable from
     missing ones — never 403, which would confirm the row exists."""
@@ -342,7 +440,18 @@ async def _owned(db: DbSessionDep, company_id: uuid.UUID, req_id: uuid.UUID) -> 
                 "       department, location, employment_type,"
                 "       experience_min_years, experience_max_years,"
                 "       salary_min, salary_max, salary_currency, salary_visible,"
-                "       responsibilities, required_skills, nice_to_have_skills"
+                "       responsibilities, required_skills, nice_to_have_skills,"
+                # PH3-B2. published_jd_version_id (PH3-B3) rides along: the JD
+                # history endpoint reads it from the same row.
+                "       approval_status, submitted_for_approval_at,"
+                "       approval_decided_at, approval_note, published_jd_version_id,"
+                "       (SELECT u.full_name FROM users u"
+                "         WHERE u.id = submitted_by_user_id) AS submitted_by_name,"
+                "       (SELECT u.full_name FROM users u"
+                "         WHERE u.id = approval_decided_by_user_id)"
+                "         AS approval_decided_by_name,"
+                "       budget_amount, budget_currency, budget_basis,"
+                "       budget_period, budget_notes, reapply_cooldown_days"
                 "  FROM job_requisitions"
                 " WHERE id = :i AND company_id = :c AND deleted_at IS NULL"
             ),
@@ -352,6 +461,12 @@ async def _owned(db: DbSessionDep, company_id: uuid.UUID, req_id: uuid.UUID) -> 
     if row is None:
         raise HTTPException(status_code=404, detail="Requisition not found.")
     return dict(row)
+
+
+def _iso(value: Any) -> str | None:
+    """A timestamp as ISO-8601, or None. Tolerant of a row that never selected
+    the column, which several callers of _to_out hand it."""
+    return value.isoformat() if isinstance(value, datetime) else None
 
 
 def _to_out(
@@ -395,6 +510,21 @@ def _to_out(
         responsibilities=row.get("responsibilities") or [],
         required_skills=row.get("required_skills") or [],
         nice_to_have_skills=row.get("nice_to_have_skills") or [],
+        # PH3-B2. Defaulted for the same reason as the lists above: _to_out is
+        # handed rows from several queries and from tests, and the column is
+        # only guaranteed present on the ones that select it.
+        approval_status=str(row.get("approval_status") or "draft"),
+        submitted_for_approval_at=_iso(row.get("submitted_for_approval_at")),
+        submitted_by_name=row.get("submitted_by_name"),
+        approval_decided_at=_iso(row.get("approval_decided_at")),
+        approval_decided_by_name=row.get("approval_decided_by_name"),
+        approval_note=row.get("approval_note"),
+        budget_amount=row.get("budget_amount"),
+        budget_currency=row.get("budget_currency"),
+        budget_basis=row.get("budget_basis"),
+        budget_period=row.get("budget_period"),
+        budget_notes=row.get("budget_notes"),
+        reapply_cooldown_days=row.get("reapply_cooldown_days"),
         total_enrolments=sum(counts.values()),
         hired=counts.get("hired", 0),
         awaiting_decision=awaiting,
@@ -515,7 +645,18 @@ async def list_requisitions(
                 "       department, location, employment_type,"
                 "       experience_min_years, experience_max_years,"
                 "       salary_min, salary_max, salary_currency, salary_visible,"
-                "       responsibilities, required_skills, nice_to_have_skills"
+                "       responsibilities, required_skills, nice_to_have_skills,"
+                # PH3-B2. published_jd_version_id (PH3-B3) rides along: the JD
+                # history endpoint reads it from the same row.
+                "       approval_status, submitted_for_approval_at,"
+                "       approval_decided_at, approval_note, published_jd_version_id,"
+                "       (SELECT u.full_name FROM users u"
+                "         WHERE u.id = submitted_by_user_id) AS submitted_by_name,"
+                "       (SELECT u.full_name FROM users u"
+                "         WHERE u.id = approval_decided_by_user_id)"
+                "         AS approval_decided_by_name,"
+                "       budget_amount, budget_currency, budget_basis,"
+                "       budget_period, budget_notes, reapply_cooldown_days"
                 "  FROM job_requisitions"
                 " WHERE company_id = :c AND deleted_at IS NULL"
                 # CAST is required: asyncpg cannot infer the type of a
@@ -685,8 +826,9 @@ async def get_requisition(
 async def update_requisition(
     requisition_id: uuid.UUID, body: RequisitionPatch, ctx: HrCtxDep, db: DbSessionDep
 ) -> RequisitionOut:
+    # _hr_uid is no longer discarded: a JD version records who wrote it.
     _hr_uid, company_id = ctx
-    await _owned(db, company_id, requisition_id)
+    current = await _owned(db, company_id, requisition_id)
     fields = body.model_dump(exclude_unset=True)
     if not fields:
         return await get_requisition(requisition_id, ctx, db)
@@ -694,6 +836,26 @@ async def update_requisition(
         raise HTTPException(status_code=422, detail="title cannot be blank")
     if fields.get("owner_user_id") is not None:
         await _check_owner(db, company_id, fields["owner_user_id"])
+    # Switching on public applications for an unapproved opening is refused
+    # HERE, loudly, rather than being allowed to succeed and then silently
+    # having no effect (PH3-B2). The publish gate would refuse the opening
+    # anyway, so the flag would be on and the careers board empty — which is
+    # exactly the confusing half-state "cannot ACCIDENTALLY become publicly
+    # available" is meant to prevent, read from the other direction.
+    # `current` is the row _owned() already fetched above — it carries
+    # approval_status, so re-reading it here was a second round trip for a
+    # value we were already holding.
+    if (
+        fields.get("public_apply_enabled") is True
+        and str(current.get("approval_status")) != APPROVED
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This opening has not been approved yet, so it cannot be opened "
+                "to public applications. Submit it for approval first."
+            ),
+        )
 
     # The three list columns are jsonb. Bound as a plain Python list, asyncpg
     # sends a Postgres ARRAY and the UPDATE fails on a type it cannot cast — so
@@ -710,7 +872,10 @@ async def update_requisition(
     try:
         await db.execute(
             text(
-                f"UPDATE job_requisitions SET {sets}, updated_at = :n"
+                # SAFE: `sets` is built from RequisitionPatch field names via
+                # model_dump(exclude_unset=True) — Pydantic model attributes,
+                # never caller-supplied text. Every value is bound.
+                f"UPDATE job_requisitions SET {sets}, updated_at = :n"  # nosec B608
                 " WHERE id = :i AND company_id = :c"
             ),
             params,
@@ -730,6 +895,23 @@ async def update_requisition(
         await db.execute(
             text("UPDATE job_requisitions SET from_backfill = false WHERE id = :i"),
             {"i": requisition_id},
+        )
+        await db.commit()
+    # The advert just changed, so record what it now says (PH3-B3). AFTER the
+    # UPDATE, deliberately: the patch is partial and the version must capture
+    # the whole document as it stands, not the subset of fields that moved.
+    #
+    # This endpoint keeps meaning "change the advert, now" — a dozen screens
+    # depend on that and PH3-B3's compatibility criterion requires it. What it
+    # additionally does is leave the previous wording readable instead of
+    # destroying it. The deliberate draft-then-publish path is the /jd routes
+    # below.
+    if touches_jd(fields):
+        await record_edit(
+            db,
+            requisition_id=requisition_id,
+            company_id=company_id,
+            actor_user_id=_hr_uid,
         )
         await db.commit()
     return await get_requisition(requisition_id, ctx, db)
@@ -871,6 +1053,7 @@ async def list_enrolments(
             text(
                 "SELECT e.id, e.applicant_id, a.full_name, a.email, e.status,"
                 "       e.target_job_title, e.ats_overall, e.ats_recommendation, e.created_at,"
+                "       e.source, e.source_detail,"
                 "       e.current_round_id, wr.title AS current_round_title,"
                 # Days since the last recorded move — the number that makes a
                 # stall visible. Derived from the ledger, not from updated_at.
@@ -904,6 +1087,8 @@ async def list_enrolments(
             ats_recommendation=r["ats_recommendation"],
             days_in_stage=round(float(r["days"]), 2) if r["days"] is not None else None,
             created_at=r["created_at"].isoformat(),
+            source=r["source"],
+            source_detail=r["source_detail"],
         )
         for r in rows
     ]
@@ -1446,3 +1631,815 @@ async def build_requisition_dashboard(
         # as "not read yet" rather than "scored zero".
         "still_being_read": int(timing["still_being_read"] or 0) if timing else 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# JD versions — PH3-B3 (the data) and PH3-B6 (the authoring surface)
+#
+# The requisition's own jd_text and three list columns remain THE LIVE ADVERT.
+# Everything the public reads — the careers board, the apply endpoint, the role
+# engine, the ATS scorer — still reads them, unchanged. These routes add the
+# history around that, plus a draft that is invisible to the public precisely
+# because it does not touch those columns.
+#
+# PATCH /requisitions/{id} still publishes immediately. That is not an oversight
+# but PH3-B3's compatibility criterion: a dozen screens use it, and "editing a
+# JD quietly stopped taking effect" would be a far worse regression than the
+# absence of a draft step. A recruiter who wants to revise privately uses the
+# draft routes below.
+#
+# NOTHING HERE WRITES round_criteria. A published workflow froze its
+# competencies at authoring time so that editing the advert cannot re-grade
+# somebody who already sat the round (Group C, D-02).
+# ---------------------------------------------------------------------------
+class JdContentIn(BaseModel):
+    """A JD edit. Every field optional — a draft may change only the prose."""
+
+    jd_text: str | None = Field(default=None, max_length=50_000)
+    responsibilities: list[str] | None = None
+    required_skills: list[str] | None = None
+    nice_to_have_skills: list[str] | None = None
+    change_note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("responsibilities", "required_skills", "nice_to_have_skills")
+    @classmethod
+    def _bounded_list(cls, value: list[str] | None) -> list[str] | None:
+        """Bounded in count and in item length. These render on a public page."""
+        if value is None:
+            return None
+        cleaned = [" ".join(v.split())[:300] for v in value if v and v.strip()]
+        if len(cleaned) > 60:
+            raise ValueError("that is more than 60 items — trim the list")
+        return cleaned
+
+
+class JdVersionOut(BaseModel):
+    id: str
+    version: int
+    status: str
+    jd_text: str | None = None
+    responsibilities: list[str] = Field(default_factory=list)
+    required_skills: list[str] = Field(default_factory=list)
+    nice_to_have_skills: list[str] = Field(default_factory=list)
+    change_note: str | None = None
+    created_by_user_id: str | None = None
+    created_by_name: str | None = None
+    created_at: str
+    published_at: str | None = None
+    superseded_at: str | None = None
+
+
+class JdHistoryOut(BaseModel):
+    requisition_id: str
+    # Which version the live advert came from. None for an opening that has
+    # never had a JD — distinct from "we lost track of it".
+    published_version_id: str | None = None
+    versions: list[JdVersionOut] = Field(default_factory=list)
+
+
+def _version_out(row: dict[str, Any]) -> JdVersionOut:
+    def _iso(key: str) -> str | None:
+        value = row.get(key)
+        return value.isoformat() if isinstance(value, datetime) else None
+
+    return JdVersionOut(
+        id=str(row["id"]),
+        version=int(row["version"]),
+        status=str(row["status"]),
+        jd_text=row.get("jd_text"),
+        responsibilities=list(row.get("responsibilities") or []),
+        required_skills=list(row.get("required_skills") or []),
+        nice_to_have_skills=list(row.get("nice_to_have_skills") or []),
+        change_note=row.get("change_note"),
+        created_by_user_id=(
+            str(row["created_by_user_id"]) if row.get("created_by_user_id") else None
+        ),
+        created_by_name=row.get("created_by_name"),
+        created_at=_iso("created_at") or "",
+        published_at=_iso("published_at"),
+        superseded_at=_iso("superseded_at"),
+    )
+
+
+@router.get("/requisitions/{requisition_id}/jd/versions", response_model=JdHistoryOut)
+async def get_jd_history(
+    requisition_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> JdHistoryOut:
+    """Every version of this opening's JD, newest first.
+
+    Answers "which JD version was published at this point in time?" —
+    published_at and superseded_at bound each version's live window, so the
+    question does not require reconstructing an order from version numbers.
+    """
+    _hr_uid, company_id = ctx
+    row = await _owned(db, company_id, requisition_id)
+    versions = await list_versions(
+        db, requisition_id=requisition_id, company_id=company_id
+    )
+    return JdHistoryOut(
+        requisition_id=str(requisition_id),
+        published_version_id=(
+            str(row["published_jd_version_id"]) if row.get("published_jd_version_id") else None
+        ),
+        versions=[_version_out(v) for v in versions],
+    )
+
+
+@router.put("/requisitions/{requisition_id}/jd/draft", response_model=JdVersionOut)
+async def put_jd_draft(
+    requisition_id: uuid.UUID,
+    body: JdContentIn,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> JdVersionOut:
+    """Create or update the single draft. Does NOT change what the public sees.
+
+    Idempotent on the draft rather than creating one per save: a recruiter who
+    saves eleven times should not burn eleven version numbers and make the
+    history read as eleven revisions.
+    """
+    hr_uid, company_id = ctx
+    await _owned(db, company_id, requisition_id)
+    fields = body.model_dump(exclude_unset=True)
+    note = fields.pop("change_note", None)
+    draft = await save_draft(
+        db,
+        requisition_id=requisition_id,
+        company_id=company_id,
+        actor_user_id=hr_uid,
+        content=fields,
+        change_note=note,
+    )
+    db.add(
+        AuditLog(
+            actor_id=hr_uid,
+            actor_type="user",
+            action="requisition.jd.draft_saved",
+            resource_type="job_requisition",
+            resource_id=requisition_id,
+            details={"company_id": str(company_id), "version": int(draft["version"])},
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+            event_ts=datetime.now(tz=UTC),
+        )
+    )
+    await db.commit()
+    return _version_out(draft)
+
+
+@router.get("/requisitions/{requisition_id}/jd/draft", response_model=JdVersionOut | None)
+async def get_jd_draft(
+    requisition_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> JdVersionOut | None:
+    """The draft, or null. Null is not a 404: having no draft is a normal state
+    of an opening, not a missing resource."""
+    _hr_uid, company_id = ctx
+    await _owned(db, company_id, requisition_id)
+    draft = await current_draft(
+        db, requisition_id=requisition_id, company_id=company_id
+    )
+    return _version_out(draft) if draft else None
+
+
+@router.delete(
+    "/requisitions/{requisition_id}/jd/draft", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_jd_draft(
+    requisition_id: uuid.UUID, request: Request, ctx: HrCtxDep, db: DbSessionDep
+) -> Response:
+    """Discard the draft. The published JD is untouched.
+
+    The version number is not reused — the gap is the record that somebody
+    started a revision and abandoned it.
+    """
+    hr_uid, company_id = ctx
+    await _owned(db, company_id, requisition_id)
+    if await discard_draft(db, requisition_id=requisition_id, company_id=company_id):
+        db.add(
+            AuditLog(
+                actor_id=hr_uid,
+                actor_type="user",
+                action="requisition.jd.draft_discarded",
+                resource_type="job_requisition",
+                resource_id=requisition_id,
+                details={"company_id": str(company_id)},
+                ip_address=extract_client_ip(request),
+                user_agent=extract_user_agent(request),
+                event_ts=datetime.now(tz=UTC),
+            )
+        )
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/requisitions/{requisition_id}/jd/versions/{version_id}/publish",
+    response_model=JdVersionOut,
+)
+async def publish_jd_version(
+    requisition_id: uuid.UUID,
+    version_id: uuid.UUID,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> JdVersionOut:
+    """Make a version the live advert.
+
+    Works for the draft (the normal case) and for an archived version, which is
+    how a revert happens: forward, as a new publication of old content, rather
+    than by editing history. "Historical versions cannot be accidentally
+    overwritten" is only true if reverting is a publish.
+    """
+    hr_uid, company_id = ctx
+    await _owned(db, company_id, requisition_id)
+    try:
+        published = await publish_version(
+            db,
+            requisition_id=requisition_id,
+            company_id=company_id,
+            version_id=version_id,
+            actor_user_id=hr_uid,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No such JD version for this opening.",
+        ) from exc
+    db.add(
+        AuditLog(
+            actor_id=hr_uid,
+            actor_type="user",
+            action="requisition.jd.published",
+            resource_type="job_requisition",
+            resource_id=requisition_id,
+            details={
+                "company_id": str(company_id),
+                "version": int(published["version"]),
+                "version_id": str(version_id),
+            },
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+            event_ts=datetime.now(tz=UTC),
+        )
+    )
+    await db.commit()
+    log.info(
+        "hr.requisition.jd_published",
+        requisition_id=str(requisition_id), version=int(published["version"]),
+    )
+    return _version_out(published)
+
+
+# ---------------------------------------------------------------------------
+# Requisition approval — PH3-B2
+#
+# Two audiences, two dependencies, and that split IS the control:
+#
+#   HrCtxDep          an hr_manager. May SUBMIT its own company's requisitions.
+#   SuperAdminCtxDep  the company's super admin. May APPROVE or REJECT them.
+#
+# Both resolve the company from the authenticated session, never from the
+# request, so a cross-tenant approval is unreachable rather than merely refused.
+# An hr_manager calling an approve route fails the dependency before the handler
+# runs — there is no code path in which HR decides its own submission.
+#
+# The publish gate itself is NOT enforced here. It lives in app.publishing and
+# every public surface reads it, which is why approving a requisition needs no
+# corresponding change on the careers board, the candidate feed or the apply
+# endpoint.
+# ---------------------------------------------------------------------------
+class ApprovalActionIn(BaseModel):
+    """A note accompanying a submission or a decision.
+
+    Optional on approval, and deliberately NOT required on rejection either:
+    forcing a reason produces "no" a hundred times, which looks like
+    information and is not. The UI asks for one; the API does not refuse
+    without it.
+    """
+
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class PendingRequisitionOut(BaseModel):
+    """One row of the super admin's approval queue.
+
+    Carries the budget, because "should this opening exist?" is not answerable
+    without it — which is the whole reason budget and approval landed in the
+    same story.
+    """
+
+    id: str
+    title: str
+    level: str
+    department: str | None = None
+    location: str | None = None
+    target_hires: int | None = None
+    budget_amount: int | None = None
+    budget_currency: str | None = None
+    budget_basis: str | None = None
+    budget_period: str | None = None
+    budget_notes: str | None = None
+    submitted_at: str | None = None
+    submitted_by_name: str | None = None
+    note: str | None = None
+
+
+def _approval_audit(
+    *,
+    actor: uuid.UUID,
+    action: str,
+    requisition_id: uuid.UUID,
+    company_id: uuid.UUID,
+    request: Request,
+    extra: dict[str, Any] | None = None,
+) -> AuditLog:
+    return AuditLog(
+        actor_id=actor,
+        actor_type="user",
+        action=action,
+        resource_type="job_requisition",
+        resource_id=requisition_id,
+        details={"company_id": str(company_id), **(extra or {})},
+        ip_address=extract_client_ip(request),
+        user_agent=extract_user_agent(request),
+        event_ts=datetime.now(tz=UTC),
+    )
+
+
+@router.post(
+    "/requisitions/{requisition_id}/approval/submit", response_model=RequisitionOut
+)
+async def submit_requisition_for_approval(
+    requisition_id: uuid.UUID,
+    body: ApprovalActionIn,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> RequisitionOut:
+    """HR sends a requisition to its company's super admin for approval."""
+    hr_uid, company_id = ctx
+    try:
+        result = await submit_for_approval(
+            db,
+            requisition_id=requisition_id,
+            company_id=company_id,
+            actor_user_id=hr_uid,
+            note=body.note,
+        )
+    except LookupError as exc:
+        raise _NO_SUCH_REQUISITION from exc
+    except ApprovalError as exc:
+        # 409, not 422: the request is well-formed, the requisition is simply
+        # not in a state this action applies to. The message names what IS
+        # possible from here, so the console can say something useful.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.add(
+        _approval_audit(
+            actor=hr_uid,
+            action="requisition.approval.submitted",
+            requisition_id=requisition_id,
+            company_id=company_id,
+            request=request,
+            extra={"previous_status": result["previous"], "title": result["title"]},
+        )
+    )
+    await db.commit()
+    return await get_requisition(requisition_id, ctx, db)
+
+
+@router.get("/requisitions/approvals/pending", response_model=list[PendingRequisitionOut])
+async def list_pending_approvals(
+    ctx: SuperAdminCtxDep, db: DbSessionDep
+) -> list[PendingRequisitionOut]:
+    """The super admin's approval queue, oldest first.
+
+    Oldest first because an approval queue is a waiting list: the person who
+    has been waiting longest should not be at the bottom of the screen.
+    """
+    _uid, company_id = ctx
+    rows = await pending_for_company(db, company_id=company_id)
+    return [
+        PendingRequisitionOut(
+            id=str(r["id"]),
+            title=r["title"],
+            level=r["level"],
+            department=r.get("department"),
+            location=r.get("location"),
+            target_hires=r.get("target_hires"),
+            budget_amount=r.get("budget_amount"),
+            budget_currency=r.get("budget_currency"),
+            budget_basis=r.get("budget_basis"),
+            budget_period=r.get("budget_period"),
+            budget_notes=r.get("budget_notes"),
+            submitted_at=_iso(r.get("submitted_for_approval_at")),
+            submitted_by_name=r.get("submitted_by_name"),
+            note=r.get("approval_note"),
+        )
+        for r in rows
+    ]
+
+
+async def _decide(
+    *,
+    requisition_id: uuid.UUID,
+    approve: bool,
+    body: ApprovalActionIn,
+    request: Request,
+    ctx: tuple[uuid.UUID, uuid.UUID],
+    db: DbSessionDep,
+) -> RequisitionOut:
+    approver_uid, company_id = ctx
+    try:
+        result = await decide(
+            db,
+            requisition_id=requisition_id,
+            company_id=company_id,
+            approver_user_id=approver_uid,
+            approve=approve,
+            note=body.note,
+        )
+    except LookupError as exc:
+        raise _NO_SUCH_REQUISITION from exc
+    except ApprovalError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.add(
+        _approval_audit(
+            actor=approver_uid,
+            action=f"requisition.approval.{'approved' if approve else 'rejected'}",
+            requisition_id=requisition_id,
+            company_id=company_id,
+            request=request,
+            extra={
+                "previous_status": result["previous"],
+                "title": result["title"],
+                # The reason is part of the decision, so it belongs in the
+                # immutable record rather than only on the mutable row.
+                **({"note": clean_note(body.note)} if body.note else {}),
+            },
+        )
+    )
+    await db.commit()
+    row = await _owned(db, company_id, requisition_id)
+    counts = await _counts(db, [requisition_id])
+    awaiting = await _awaiting(db, [requisition_id])
+    return _to_out(
+        row, counts.get(str(requisition_id), {}), awaiting.get(str(requisition_id), 0)
+    )
+
+
+@router.post(
+    "/requisitions/{requisition_id}/approval/approve", response_model=RequisitionOut
+)
+async def approve_requisition(
+    requisition_id: uuid.UUID,
+    body: ApprovalActionIn,
+    request: Request,
+    ctx: SuperAdminCtxDep,
+    db: DbSessionDep,
+) -> RequisitionOut:
+    """The company's super admin approves a pending requisition.
+
+    SuperAdminCtxDep is the authorisation: an hr_manager fails the dependency
+    before this function is entered, so "HR cannot approve its own submission"
+    is structural rather than a check somebody could forget to write.
+    """
+    return await _decide(
+        requisition_id=requisition_id, approve=True, body=body,
+        request=request, ctx=ctx, db=db,
+    )
+
+
+@router.post(
+    "/requisitions/{requisition_id}/approval/reject", response_model=RequisitionOut
+)
+async def reject_requisition(
+    requisition_id: uuid.UUID,
+    body: ApprovalActionIn,
+    request: Request,
+    ctx: SuperAdminCtxDep,
+    db: DbSessionDep,
+) -> RequisitionOut:
+    """Send a requisition back. It becomes 'rejected' and can be resubmitted.
+
+    Nothing is taken off the public web by this, because nothing pending was on
+    it — the publish gate refuses an unapproved opening. Rejecting therefore
+    does not touch public_apply_enabled: flipping an HR setting as a side
+    effect of a decision would be a change nobody could see.
+    """
+    return await _decide(
+        requisition_id=requisition_id, approve=False, body=body,
+        request=request, ctx=ctx, db=db,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scheduled publishing — PH3-B4a
+#
+# `publish_at` is a REQUEST, not a state: it says "turn public applications on
+# at this moment". The publisher loop does the turning and clears the request,
+# so nothing here is a second source of truth for "is this opening live" — the
+# publish gate in app.publishing still decides that, from the same five
+# conditions it already read.
+#
+# The approval gate is enforced twice on purpose: here, so scheduling an
+# unapproved opening is refused while somebody is looking at the screen, and
+# again in the publisher at fire time, because a requisition approved on Monday
+# can be rejected on Tuesday and must not publish on Wednesday.
+# ---------------------------------------------------------------------------
+class PublishScheduleIn(BaseModel):
+    """When this opening should go live."""
+
+    publish_at: datetime
+
+    @field_validator("publish_at")
+    @classmethod
+    def _in_the_future(cls, v: datetime) -> datetime:
+        # Timezone-aware required: a naive datetime here means the client's
+        # local clock, and "publish at 09:00" landing five and a half hours out
+        # is exactly the class of bug a scheduling feature must not have.
+        if v.tzinfo is None:
+            raise ValueError("publish_at must include a timezone offset")
+        if v <= datetime.now(tz=UTC):
+            raise ValueError("publish_at must be in the future")
+        return v
+
+
+class PublishScheduleOut(BaseModel):
+    requisition_id: str
+    publish_at: str | None = None
+    published_at: str | None = None
+    public_apply_enabled: bool
+    # The promise, in words, alongside the time. A UI that shows only "09:00"
+    # is making a guarantee the architecture does not offer.
+    tolerance: str
+
+
+def _schedule_out(row: dict[str, Any]) -> PublishScheduleOut:
+    return PublishScheduleOut(
+        requisition_id=str(row["id"]),
+        publish_at=_iso(row.get("publish_at")),
+        published_at=_iso(row.get("published_at")),
+        public_apply_enabled=bool(row.get("public_apply_enabled")),
+        tolerance=tolerance_note(),
+    )
+
+
+async def _schedule_row(
+    db: DbSessionDep, company_id: uuid.UUID, requisition_id: uuid.UUID
+) -> dict[str, Any]:
+    row = (
+        await db.execute(
+            text(
+                "SELECT id, publish_at, published_at, public_apply_enabled,"
+                "       approval_status, status"
+                "  FROM job_requisitions"
+                " WHERE id = :i AND company_id = :c AND deleted_at IS NULL"
+            ),
+            {"i": requisition_id, "c": company_id},
+        )
+    ).mappings().first()
+    if row is None:
+        raise _NO_SUCH_REQUISITION
+    return dict(row)
+
+
+@router.get(
+    "/requisitions/{requisition_id}/publish-schedule", response_model=PublishScheduleOut
+)
+async def get_publish_schedule(
+    requisition_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> PublishScheduleOut:
+    _hr_uid, company_id = ctx
+    return _schedule_out(await _schedule_row(db, company_id, requisition_id))
+
+
+@router.put(
+    "/requisitions/{requisition_id}/publish-schedule", response_model=PublishScheduleOut
+)
+async def set_publish_schedule(
+    requisition_id: uuid.UUID,
+    body: PublishScheduleIn,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> PublishScheduleOut:
+    """Schedule this opening to go live.
+
+    NOT AT THE INSTANT NAMED. The publisher is an interval loop rather than a
+    clock trigger, because a clock trigger cannot fire while the container is
+    suspended and the demo tier suspends — see app/scheduled_publishing.py. The
+    promise is "within about one interval, while the service is running", and
+    the response carries that sentence so a console cannot show a time without
+    it.
+
+    Idempotent: setting a schedule on an opening that already has one replaces
+    it, which is what "authorized users can modify schedule" means.
+    """
+    hr_uid, company_id = ctx
+    row = await _schedule_row(db, company_id, requisition_id)
+
+    # Refused here as well as at fire time. Here so it is visible to somebody
+    # who can act on it; there because approval can be withdrawn in between.
+    if str(row.get("approval_status")) != APPROVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This opening has not been approved yet, so it cannot be scheduled "
+                "to publish. Submit it for approval first."
+            ),
+        )
+    if bool(row.get("public_apply_enabled")):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This opening is already accepting public applications. "
+                "Pause it first if you want to schedule a new publication."
+            ),
+        )
+
+    now = datetime.now(tz=UTC)
+    await db.execute(
+        text(
+            "UPDATE job_requisitions"
+            "   SET publish_at = :p, publish_at_set_by_user_id = :by, updated_at = :n"
+            " WHERE id = :i AND company_id = :c"
+        ),
+        {"p": body.publish_at, "by": hr_uid, "n": now,
+         "i": requisition_id, "c": company_id},
+    )
+    db.add(
+        AuditLog(
+            actor_id=hr_uid,
+            actor_type="user",
+            action=(
+                "requisition.publish_schedule.updated"
+                if row.get("publish_at") else "requisition.publish_schedule.set"
+            ),
+            resource_type="job_requisition",
+            resource_id=requisition_id,
+            details={
+                "company_id": str(company_id),
+                "publish_at": body.publish_at.isoformat(),
+                **({"previous_publish_at": row["publish_at"].isoformat()}
+                   if row.get("publish_at") else {}),
+            },
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+            event_ts=now,
+        )
+    )
+    await db.commit()
+    log.info(
+        "hr.requisition.publish_scheduled",
+        requisition_id=str(requisition_id), publish_at=body.publish_at.isoformat(),
+    )
+    return _schedule_out(await _schedule_row(db, company_id, requisition_id))
+
+
+@router.delete(
+    "/requisitions/{requisition_id}/publish-schedule", response_model=PublishScheduleOut
+)
+async def cancel_publish_schedule(
+    requisition_id: uuid.UUID, request: Request, ctx: HrCtxDep, db: DbSessionDep
+) -> PublishScheduleOut:
+    """Cancel a pending publication. A cancelled schedule does not publish.
+
+    Does not touch public_apply_enabled: cancelling a FUTURE publication must
+    not take down an opening that is already live for some other reason.
+    """
+    hr_uid, company_id = ctx
+    row = await _schedule_row(db, company_id, requisition_id)
+    if row.get("publish_at") is None:
+        # Idempotent rather than a 404: cancelling something already cancelled
+        # is the outcome the caller wanted.
+        return _schedule_out(row)
+
+    now = datetime.now(tz=UTC)
+    await db.execute(
+        text(
+            "UPDATE job_requisitions"
+            "   SET publish_at = NULL, publish_at_set_by_user_id = NULL, updated_at = :n"
+            " WHERE id = :i AND company_id = :c"
+        ),
+        {"n": now, "i": requisition_id, "c": company_id},
+    )
+    db.add(
+        AuditLog(
+            actor_id=hr_uid,
+            actor_type="user",
+            action="requisition.publish_schedule.cancelled",
+            resource_type="job_requisition",
+            resource_id=requisition_id,
+            details={
+                "company_id": str(company_id),
+                "cancelled_publish_at": row["publish_at"].isoformat(),
+            },
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+            event_ts=now,
+        )
+    )
+    await db.commit()
+    return _schedule_out(await _schedule_row(db, company_id, requisition_id))
+
+
+# ---------------------------------------------------------------------------
+# Reapplication override — PH3-B4b
+#
+# The cooldown is measured from a rejection, so the override is written on the
+# enrolment that carries that rejection. That keeps the grant attached to the
+# specific decision it forgives rather than being a blanket exemption on the
+# person, and it needs no new table.
+# ---------------------------------------------------------------------------
+class ReapplyOverrideIn(BaseModel):
+    """Why this person may apply again despite the cooldown.
+
+    A reason is asked for and not required. Requiring one produces "ok" a
+    hundred times, which looks like information and is not — but an override is
+    exactly the kind of exception somebody will later be asked to justify, so
+    the field exists and the console prompts for it.
+    """
+
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+@router.post("/enrolments/{enrolment_id}/reapply-override", response_model=EnrolmentOut)
+async def override_reapply_cooldown(
+    enrolment_id: uuid.UUID,
+    body: ReapplyOverrideIn,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> EnrolmentOut:
+    """Let this candidate apply to this opening again now.
+
+    Scoped by company in the UPDATE itself, so another tenant's enrolment reads
+    as missing rather than as forbidden.
+    """
+    hr_uid, company_id = ctx
+    granted = await grant_override(
+        db,
+        enrolment_id=enrolment_id,
+        company_id=company_id,
+        actor_user_id=hr_uid,
+        reason=body.reason,
+    )
+    if granted is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No such application."
+        )
+    db.add(
+        AuditLog(
+            actor_id=hr_uid,
+            actor_type="user",
+            action="enrolment.reapply_override",
+            resource_type="enrolment",
+            resource_id=enrolment_id,
+            details={
+                "company_id": str(company_id),
+                "requisition_id": str(granted["requisition_id"]),
+                **({"reason": " ".join(body.reason.split())[:1000]} if body.reason else {}),
+            },
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+            event_ts=datetime.now(tz=UTC),
+        )
+    )
+    await db.commit()
+    log.info(
+        "hr.enrolment.reapply_override",
+        enrolment_id=str(enrolment_id), requisition_id=str(granted["requisition_id"]),
+    )
+    row = (
+        await db.execute(
+            text(
+                "SELECT e.id, e.applicant_id, a.full_name, a.email, e.status,"
+                "       e.target_job_title, e.ats_overall, e.ats_recommendation,"
+                "       e.created_at, e.source, e.source_detail,"
+                "       e.current_round_id, wr.title AS current_round_title"
+                "  FROM enrolments e"
+                "  JOIN applicants a ON a.id = e.applicant_id"
+                "  LEFT JOIN workflow_rounds wr ON wr.id = e.current_round_id"
+                " WHERE e.id = :i AND e.company_id = :c"
+            ),
+            {"i": enrolment_id, "c": company_id},
+        )
+    ).mappings().first()
+    if row is None:  # pragma: no cover - the UPDATE above just matched it
+        raise HTTPException(status_code=404, detail="No such application.")
+    return EnrolmentOut(
+        id=str(row["id"]),
+        applicant_id=str(row["applicant_id"]),
+        full_name=row["full_name"],
+        email=row["email"],
+        status=row["status"],
+        target_job_title=row["target_job_title"],
+        current_round_id=str(row["current_round_id"]) if row["current_round_id"] else None,
+        current_round_title=row["current_round_title"],
+        ats_overall=row["ats_overall"],
+        ats_recommendation=row["ats_recommendation"],
+        created_at=row["created_at"].isoformat(),
+        source=row["source"],
+        source_detail=row["source_detail"],
+    )

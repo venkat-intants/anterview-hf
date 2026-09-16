@@ -114,6 +114,15 @@ class Settings(BaseSettings):
     watchers_enabled: bool = True
     watchers_cron_hour: int = Field(default=2, ge=0, le=23)
 
+    # PH3-B4a — how often the scheduled-publish loop looks for due openings.
+    # An interval, not a cron hour, and for the reason app/scheduling.py spells
+    # out: a clock trigger cannot fire while the container is suspended, and the
+    # demo Space suspends. This number IS the tolerance a recruiter experiences
+    # between "publish at 09:00" and the opening actually going live, so it is
+    # deliberately small; the cost of a pass is one probe against a partial
+    # index. Floored at 60s in scheduled_publishing.interval_seconds().
+    scheduled_publish_interval_seconds: int = Field(default=60, ge=60, le=3600)
+
     jwt_secret: str
     jwt_algorithm: str = "HS256"
     jwt_expiry_hours: int = 24

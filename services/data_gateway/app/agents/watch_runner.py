@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_session_factory
+from app.publishing import public_gate_open
 from app.redis_client import get_redis
 
 log = structlog.get_logger(__name__)
@@ -117,6 +118,13 @@ OPENING_HEALTH_SQL = text(
     SELECT r.id,
            r.title,
            r.public_apply_enabled,
+           -- Carried so the watcher can apply the SHARED publish gate rather
+           -- than reading the opt-in flag on its own (PH3-B0). A paused opening
+           -- whose flag is still on is not accepting applications, and an alert
+           -- that says it is sends somebody to fix the wrong thing.
+           r.status,
+           r.closes_at,
+           r.approval_status,
            COUNT(e.id) FILTER (WHERE e.deleted_at IS NULL) AS live_enrolments,
            COUNT(e.id) FILTER (
                WHERE e.deleted_at IS NULL
@@ -161,7 +169,8 @@ OPENING_HEALTH_SQL = text(
        -- A closed opening is finished, not neglected. Paused still counts:
        -- candidates already inside it are still waiting on somebody.
        AND r.status IN ('open', 'paused')
-     GROUP BY r.id, r.title, r.public_apply_enabled, wf.thr
+     GROUP BY r.id, r.title, r.public_apply_enabled, r.status, r.closes_at,
+              r.approval_status, wf.thr
      LIMIT :limit
     """
 )
@@ -357,7 +366,12 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
                 held=int(r.held or 0),
                 live_enrolments=int(r.live_enrolments or 0),
                 has_published_workflow=bool(r.has_workflow),
-                accepting_public_applications=bool(r.public_apply_enabled),
+                accepting_public_applications=public_gate_open(
+                    status=r.status,
+                    public_apply_enabled=r.public_apply_enabled,
+                    approval_status=r.approval_status,
+                    closes_at=r.closes_at,
+                ),
                 shortlist_threshold=(
                     int(r.shortlist_threshold) if r.shortlist_threshold is not None else None
                 ),

@@ -5,7 +5,7 @@
 
 import fs from 'node:fs';
 import { test as base, expect, type APIRequestContext, type Page } from '@playwright/test';
-import { API_URL, TENANT_FILE } from './env';
+import { API_URL, TENANT_FILE, TEST_HOOKS_TOKEN } from './env';
 
 export type Role = 'platform_owner' | 'super_admin' | 'hr_manager' | 'candidate';
 
@@ -94,6 +94,33 @@ export class Api {
   async patchRaw(route: string, data: unknown): Promise<{ status: number; body: string }> {
     const res = await this.request.patch(`${API_URL}${route}`, { headers: this.headers(), data });
     return { status: res.status(), body: await res.text() };
+  }
+}
+
+/**
+ * Run data_gateway's background passes now instead of waiting for their timers:
+ * the reconciler scores applications and ingests uploads; the reminder sweep
+ * records interview results. Needs TEST_HOOKS_ENABLED on the server and
+ * E2E_TEST_HOOKS_TOKEN here.
+ */
+export async function runBackgroundPasses(
+  request: APIRequestContext,
+  which: ('reconcile' | 'reminders')[] = ['reconcile'],
+): Promise<void> {
+  if (!TEST_HOOKS_TOKEN) {
+    throw new Error(
+      'E2E_TEST_HOOKS_TOKEN is not set. Start data_gateway with TEST_HOOKS_ENABLED=true and ' +
+        'TEST_HOOKS_TOKEN, and give the suite the same token (see e2e/README.md).',
+    );
+  }
+  for (const pass of which) {
+    const res = await request.post(`${API_URL}/test-hooks/${pass}`, {
+      headers: { 'X-Test-Hooks-Token': TEST_HOOKS_TOKEN },
+    });
+    expect(
+      res.ok(),
+      `test hook ${pass} returned ${res.status()} — is data_gateway running with TEST_HOOKS_ENABLED and the same token?`,
+    ).toBeTruthy();
   }
 }
 

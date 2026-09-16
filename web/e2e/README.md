@@ -46,6 +46,29 @@ In PowerShell set variables first: `$env:E2E_SLOWMO = '500'; npm run e2e -- --he
 | `E2E_BROWSER_CHANNEL` | Playwright's Chromium | e.g. `msedge`, `chrome` |
 | `E2E_PYTHON` | data_gateway's `.venv` python | runs the provisioning script |
 | `E2E_DATABASE_URL` | `DATABASE_URL` from `services/data_gateway/.env` | where accounts are provisioned |
+| `E2E_TEST_HOOKS_TOKEN` | — | data_gateway's `TEST_HOOKS_TOKEN`; needed by specs that run a background pass |
+
+### data_gateway settings for an e2e run
+
+Start data_gateway with these for the whole suite. Each is for local testing
+only; the service **refuses to start** with `AI_FAKE_MODE` or
+`TEST_HOOKS_ENABLED` on when `APP_ENV` is production or staging.
+
+| Setting | Why |
+|---|---|
+| `RATE_LIMIT_LOGIN_PER_MINUTE=1000` | the suite signs in far more than 5 times a minute from one IP |
+| `AI_FAKE_MODE=true` | resume scoring, question generation and embeddings return deterministic stand-ins (`app/fake_ai.py`): no model spend, same answer every run. A CV containing `E2E-SCORE: 85` scores exactly 85 |
+| `TEST_HOOKS_ENABLED=true` and `TEST_HOOKS_TOKEN=<32+ chars>` | mounts `/test-hooks/reconcile` and `/test-hooks/reminders`, so a spec runs the scoring pass or the reminder sweep now instead of waiting up to 10 minutes. Every call needs `X-Test-Hooks-Token`; without it the paths answer 404 |
+
+```powershell
+$env:RATE_LIMIT_LOGIN_PER_MINUTE = '1000'
+$env:AI_FAKE_MODE = 'true'
+$env:TEST_HOOKS_ENABLED = 'true'
+$env:TEST_HOOKS_TOKEN = '<a random string of 32+ characters>'
+cd services/data_gateway; .\.venv\Scripts\python -m uvicorn app.main:app --port 8002
+# and for the suite, the same token:
+$env:E2E_TEST_HOOKS_TOKEN = '<the same string>'
+```
 
 ## Test data
 

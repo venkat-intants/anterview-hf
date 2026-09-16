@@ -16,6 +16,7 @@ import structlog
 from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
 
 from app.config import settings
+from app.fake_ai import fake_resume_score
 from app.remote import describe_unreachable
 
 log = structlog.get_logger(__name__)
@@ -71,6 +72,10 @@ async def score_resume_remote(
     acting_user_id: str,
 ) -> dict[str, Any]:
     """ATS-score a resume via feedback_billing. Raises ResumeScoreError on failure."""
+    if settings.ai_fake_mode:
+        return fake_resume_score(
+            resume_text=resume_text, job_title=job_title, level=level, jd_text=jd_text
+        )
     url = f"{settings.feedback_billing_url}/internal/score-resume"
     token = _internal_token(acting_user_id)
     try:

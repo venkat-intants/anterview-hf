@@ -16,6 +16,7 @@ import structlog
 from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
 
 from app.config import settings
+from app.fake_ai import fake_coding_questions, fake_mcq_questions
 from app.remote import describe_unreachable
 
 log = structlog.get_logger(__name__)
@@ -77,6 +78,8 @@ async def generate_exam_questions_remote(
 
     Returns a list of {"prompt", "options", "correct_index"} dicts.
     """
+    if settings.ai_fake_mode:
+        return fake_mcq_questions(topic=topic, num_questions=num_questions)
     url = f"{settings.feedback_billing_url}/internal/generate-exam"
     token = _internal_token(acting_user_id)
     try:
@@ -129,6 +132,10 @@ async def generate_coding_questions_remote(
     Returns a list of {"prompt", "reference_solution", "test_cases"} dicts where
     test_cases items are {"stdin", "expected_output", "is_sample", "weight"}.
     """
+    if settings.ai_fake_mode:
+        return fake_coding_questions(
+            topic=topic, num_questions=num_questions, allowed_languages=allowed_languages
+        )
     url = f"{settings.feedback_billing_url}/internal/generate-coding"
     token = _internal_token(acting_user_id)
     try:

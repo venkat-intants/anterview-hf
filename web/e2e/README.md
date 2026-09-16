@@ -95,6 +95,8 @@ same change.
 
 ## Coverage
 
+The full map — every Phase 2 item, where it is tested at each level, and the gaps — is [COVERAGE.md](COVERAGE.md).
+
 | Layer | Covers | Status |
 |---|---|---|
 | 1 | Sign-in and landing for every role, access refusals, creating an opening, the workflow builder (templates, human gates, publish blocked by issues, publish and read-only) | `auth`, `opening`, `workflow` specs |

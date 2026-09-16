@@ -531,6 +531,101 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await client.get(f"/apply/draft/{victim_token}")
         check("and it is really gone", r.status_code == 404, str(r.status_code))
 
+        # ── ERASURE AFTER ACTIVATION — the case that silently failed ──
+        # A guest drafts, submits, then activates into an account they already
+        # had. _link_to_existing moved applicants.user_id and the consent ledger
+        # but NOT application_drafts.user_id, so both erasure hooks — which key
+        # on user_id — missed the draft. It survived a COMPLETED erasure with
+        # the person's name, phone, employer and CV still in it, and the CV
+        # object was never collected for deletion.
+        #
+        # Source-inspection tests cannot see this: it is an interaction between
+        # two modules and a database. So this exercises the real repair against
+        # real rows, and then runs the executor's own matching logic over them.
+        print("\nDPDP — a draft survives activation and is still erasable")
+
+        from app.apply_activation import _link_to_existing
+
+        real_uid = uuid.uuid4()
+        guest_uid = uuid.uuid4()
+        drafted = uuid.uuid4()
+        async with factory() as db:
+            await db.execute(text(
+                "INSERT INTO users (id,email,full_name,password_hash,company_id,"
+                " preferred_language,is_active,notify_login_email,must_change_password,"
+                " created_at,updated_at)"
+                " VALUES (:i,'returning@example.com','Returning Person','x',:c,'en',"
+                " true,false,false,:n,:n)"), {"i": real_uid, "c": other_cid, "n": now})
+            await db.execute(text(
+                "INSERT INTO users (id,email,full_name,password_hash,company_id,"
+                " preferred_language,is_active,notify_login_email,must_change_password,"
+                " created_at,updated_at)"
+                " VALUES (:i,:e,'','x',:c,'en',true,false,false,:n,:n)"),
+                {"i": guest_uid, "e": f"guest+{guest_uid}@applicants.invalid",
+                 "c": other_cid, "n": now})
+            await db.execute(text(
+                "INSERT INTO application_drafts (id,company_id,requisition_id,user_id,"
+                " token_hash,email,full_name,phone,resume_s3_key,status,expires_at,"
+                " created_at,updated_at)"
+                " VALUES (:i,:c,:r,:u,:h,'returning@example.com','Returning Person',"
+                " '+91 90000 00002','drafts/x/y.pdf','submitted',:exp,:n,:n)"),
+                {"i": drafted, "c": other_cid, "r": other_req, "u": guest_uid,
+                 "h": "hash-" + str(drafted), "exp": now + timedelta(days=30), "n": now})
+            await db.commit()
+
+        async with factory() as db:
+            await _link_to_existing(
+                db, guest_user_id=guest_uid, target_user_id=real_uid, now=now
+            )
+            await db.commit()
+
+        async with factory() as db:
+            moved = await db.scalar(text(
+                "SELECT user_id FROM application_drafts WHERE id = :i"), {"i": drafted})
+        check("activation re-points the draft to the real account",
+              str(moved) == str(real_uid), f"{moved} != {real_uid}")
+
+        # Now the executor's own matching, run verbatim against these rows.
+        async with factory() as db:
+            reachable = await db.scalar(text(
+                "SELECT count(*) FROM application_drafts d"
+                " WHERE d.user_id = :uid"
+                "    OR lower(btrim(d.email)) IN ("
+                "         SELECT lower(btrim(u.email)) FROM users u"
+                "          WHERE u.id = :uid AND u.email IS NOT NULL)"
+                "    OR d.user_id IN ("
+                "         SELECT a.user_id FROM applicants a"
+                "          WHERE a.user_id = :uid)"), {"uid": real_uid})
+            keys = (await db.execute(text(
+                "SELECT d.resume_s3_key FROM application_drafts d"
+                " WHERE d.resume_s3_key IS NOT NULL AND ("
+                "  d.user_id = :uid"
+                "  OR lower(btrim(d.email)) IN ("
+                "       SELECT lower(btrim(u.email)) FROM users u"
+                "        WHERE u.id = :uid AND u.email IS NOT NULL))"),
+                {"uid": real_uid})).scalars().all()
+        check("erasure reaches the draft after activation", reachable == 1,
+              f"{reachable} drafts matched")
+        check("and collects its CV for deletion", list(keys) == ["drafts/x/y.pdf"],
+              str(list(keys)))
+
+        # Belt and braces: even if the re-point had NOT happened, the address
+        # route must still find it. This is the property that stops the
+        # executor depending on a repair elsewhere being correct.
+        async with factory() as db:
+            await db.execute(text(
+                "UPDATE application_drafts SET user_id = :g WHERE id = :i"),
+                {"g": guest_uid, "i": drafted})
+            await db.commit()
+            still = await db.scalar(text(
+                "SELECT count(*) FROM application_drafts d"
+                " WHERE d.user_id = :uid"
+                "    OR lower(btrim(d.email)) IN ("
+                "         SELECT lower(btrim(u.email)) FROM users u"
+                "          WHERE u.id = :uid AND u.email IS NOT NULL)"), {"uid": real_uid})
+        check("and still reaches it even if the re-point never happened",
+              still == 1, f"{still} drafts matched by address alone")
+
     await eng.dispose()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

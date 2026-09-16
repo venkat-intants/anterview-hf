@@ -8,7 +8,7 @@ document, in the document's own order and wording.
 **How each line was verified** is named, because "done" without that is an opinion.
 `unit` = a test in `services/data_gateway/tests/unit/`; `smoke` =
 `tests/integration/smoke_ph3_apply.py`, which runs the real endpoints against a real
-Postgres 16 and passes 53/53; `db` = asserted directly against the migrated schema.
+Postgres 16 and passes 57/57; `db` = asserted directly against the migrated schema.
 
 ---
 
@@ -419,7 +419,7 @@ Stated plainly so nobody reads this checklist as claiming more than it proves.
 | `admin_ops` tests | 158 passed |
 | `shared` tests | 676 passed |
 | Web tests | 936 passed |
-| End-to-end smoke against real Postgres | 53/53 |
+| End-to-end smoke against real Postgres | 57/57 |
 | `ruff` | clean |
 | `mypy` (root config, as CI runs it) | clean, 115 files |
 | Alembic | 6 new migrations, single linear head, applied cleanly |

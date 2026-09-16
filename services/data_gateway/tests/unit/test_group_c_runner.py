@@ -350,9 +350,13 @@ async def test_a_workflow_issued_exam_link_belongs_to_the_workflow_owner(
     async def _enqueue(_db: object, **_: object) -> object:
         return object()
 
+    async def _ready(_db: object, ids: list[object]) -> dict[str, object]:
+        return {str(ids[0]): {"exam_id": uuid.uuid4(), "status": "published", "questions": 5}}
+
     monkeypatch.setattr(wr, "enqueue_email", _enqueue)
+    monkeypatch.setattr(wr, "exam_round_readiness", _ready)
     owner = uuid.uuid4()
-    db = _db(scalar=uuid.uuid4())  # the exam_id lookup
+    db = _db()
 
     await wr._assign_round(
         db,

@@ -230,9 +230,11 @@ vi.mock('../api/questions', async () => {
 });
 
 
+const listExams = vi.fn();
+const getStructure = vi.fn();
 vi.mock('../api/exams', () => ({
-  listExams: () => Promise.resolve([]),
-  getStructure: () => Promise.resolve({ exam_id: 'e1', rounds: [] }),
+  listExams: (...a: unknown[]) => listExams(...a) as unknown,
+  getStructure: (...a: unknown[]) => getStructure(...a) as unknown,
 }));
 
 const toastError = vi.fn();
@@ -283,6 +285,8 @@ beforeEach(() => {
   setRoundCriteria.mockResolvedValue(DRAFT);
   publishWorkflow.mockResolvedValue({ ...PUBLISHED, validation: REPORT_BLOCKED });
   cloneWorkflow.mockResolvedValue(DRAFT);
+  listExams.mockResolvedValue([]);
+  getStructure.mockResolvedValue({ exam_id: 'e1', rounds: [] });
 });
 
 describe('WorkflowBuilder — the canvas', () => {
@@ -403,10 +407,18 @@ describe('WorkflowBuilder — coverage', () => {
 });
 
 describe('WorkflowBuilder — publishing', () => {
+  const REPORT_READY: ValidationReport = { ...REPORT_BLOCKED, publishable: true, errors: [] };
+
   it('asks before publishing, because publishing emails real people', async () => {
     const user = userEvent.setup();
+    validateWorkflow.mockResolvedValue(REPORT_READY);
     renderBuilder();
     await screen.findByText('Fundamentals');
+    await waitFor(() =>
+      expect((screen.getByText('Publish').closest('button') as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
 
     await user.click(screen.getByText('Publish'));
 
@@ -419,9 +431,17 @@ describe('WorkflowBuilder — publishing', () => {
 
   it('rechecks so a refusal lands in the panel rather than a toast that scrolls away', async () => {
     const user = userEvent.setup();
+    // Validate said ready, the server disagreed at publish time (a race, or a
+    // check only publish runs) — the panel must pick up the new reasons.
+    validateWorkflow.mockResolvedValue(REPORT_READY);
     publishWorkflow.mockRejectedValue(new Error('This workflow is not ready to publish'));
     renderBuilder();
     await screen.findByText('Fundamentals');
+    await waitFor(() =>
+      expect((screen.getByText('Publish').closest('button') as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
 
     const before = validateWorkflow.mock.calls.length;
     await user.click(screen.getByText('Publish'));
@@ -429,6 +449,70 @@ describe('WorkflowBuilder — publishing', () => {
 
     await waitFor(() => expect(validateWorkflow.mock.calls.length).toBeGreaterThan(before));
     expect(toastError).toHaveBeenCalledWith('This workflow is not ready to publish');
+  });
+
+  it('disables the header Publish on the same condition as the lifecycle strip, and says why', async () => {
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await screen.findByText('1 thing to fix before this can go live.');
+
+    const header = screen.getByText('Publish').closest('button');
+    const lifecycle = screen.getByRole('button', { name: '4. Publish' });
+    expect(lifecycle).toBeDisabled();
+    expect(header).toBeDisabled();
+    expect(header).toHaveAttribute('title', 'Fix 1 issue before publishing.');
+  });
+});
+
+describe('WorkflowBuilder — attaching exam questions', () => {
+  it('offers only published exams, and only rounds that are published and have questions', async () => {
+    const user = userEvent.setup();
+    listExams.mockResolvedValue([
+      { id: 'e1', title: 'Backend fundamentals', status: 'published', question_count: 12 },
+    ]);
+    const section = (n: number) => ({
+      id: `s-${n}`, round_id: 'x', title: 'S', kind: 'mcq', time_limit_seconds: null,
+      position: 0, question_count: n,
+    });
+    const round = (id: string, title: string, status: 'draft' | 'published', questions: number) => ({
+      id, title, round_number: 1, pass_threshold: 60, time_limit_seconds: null,
+      advances_to_interview: false, status, position: 0, sections: [section(questions)],
+    });
+    getStructure.mockResolvedValue({
+      exam_id: 'e1',
+      rounds: [
+        round('er-ready', 'Ready round', 'published', 10),
+        round('er-draft', 'Draft round', 'draft', 5),
+        round('er-empty', 'Empty round', 'published', 0),
+      ],
+    });
+    renderBuilder();
+    await screen.findByText('Conversation');
+
+    await user.click(screen.getByRole('button', { name: /^Fundamentals/ }));
+    await waitFor(() => expect(listExams).toHaveBeenCalledWith('published'));
+
+    await user.selectOptions(await screen.findByLabelText('Take questions from'), 'e1');
+
+    const ready = (await screen.findByText('Ready round')).closest('button') as HTMLButtonElement;
+    const draft = screen.getByText('Draft round').closest('button') as HTMLButtonElement;
+    const empty = screen.getByText('Empty round').closest('button') as HTMLButtonElement;
+
+    expect(ready.disabled).toBe(false);
+    expect(within(ready).getByText('Published')).toBeTruthy();
+    expect(within(ready).getByText('10 questions')).toBeTruthy();
+
+    expect(draft.disabled).toBe(true);
+    expect(within(draft).getByText('Draft')).toBeTruthy();
+    expect(screen.getByText(/Publish this round in the exam editor first/)).toBeTruthy();
+
+    expect(empty.disabled).toBe(true);
+    expect(within(empty).getByText('0 questions')).toBeTruthy();
+    expect(screen.getByText(/Add questions to this round in the exam editor first/)).toBeTruthy();
+    expect(screen.getAllByRole('link', { name: /Open the exam editor/ })).toHaveLength(2);
+
+    await user.click(draft);
+    expect(updateRound).not.toHaveBeenCalled();
   });
 });
 

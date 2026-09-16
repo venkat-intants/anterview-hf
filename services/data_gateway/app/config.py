@@ -251,13 +251,16 @@ class Settings(BaseSettings):
     # --- Coding round — code execution (HR workflow Phase 2) ---
     # Swappable provider:
     #   'jdoodle' (default) — hosted API, NO VM needed; free tier ~200 runs/day.
-    #   'piston'            — self-hosted sandbox; needs a VM (set PISTON_API_URL).
+    #   'piston'            — self-hosted sandbox. scripts/piston-up.ps1 runs it in
+    #                         Docker on localhost:2000; set PISTON_API_URL to it.
     execution_provider: str = "jdoodle"
     # JDoodle hosted execution (get free credentials at https://www.jdoodle.com/).
     jdoodle_client_id: str = ""
     jdoodle_client_secret: str = ""
     jdoodle_api_url: str = "https://api.jdoodle.com/v1"
-    # Piston (only used when execution_provider='piston').
+    # Piston (only used when execution_provider='piston'). The public emkc.org API
+    # below has been whitelist-only since 2026-02-15, so set PISTON_API_URL to a
+    # self-hosted instance (http://localhost:2000/api/v2 from piston-up.ps1).
     piston_api_url: str = "https://emkc.org/api/v2/piston"
     # Per-run wall-clock cap (ms) passed to the runner; also our own client timeout.
     code_run_timeout_ms: int = 5000

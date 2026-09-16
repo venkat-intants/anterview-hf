@@ -121,16 +121,16 @@ export default function WorkflowCopilot({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-2 border-b border-white/[0.07] pb-3">
+      <header className="flex items-center gap-2 border-b border-border pb-3">
         <Sparkles className="h-4 w-4 text-[var(--accent)]" aria-hidden="true" />
-        <span className="text-[13px] font-medium text-white">Design assistant</span>
-        <span className="ml-auto text-[11px] text-[#70757c]">reads &amp; drafts only</span>
+        <span className="text-[13px] font-medium text-foreground">Design assistant</span>
+        <span className="ml-auto text-[11px] text-[var(--ui-faint)]">reads &amp; drafts only</span>
       </header>
 
       <div className="flex-1 overflow-y-auto py-3">
         {turns.length === 0 ? (
           <div>
-            <p className="text-[12.5px] leading-relaxed text-[#888b91]">
+            <p className="text-[12.5px] leading-relaxed text-muted-foreground">
               Describe the process you want and I&rsquo;ll lay it out on the canvas. I can
               read this opening&rsquo;s role model and your exams. I can&rsquo;t create
               anything — you approve every change, and it stays a draft until you publish.
@@ -142,7 +142,7 @@ export default function WorkflowCopilot({
                   type="button"
                   disabled={!editable}
                   onClick={() => void send(s)}
-                  className="rounded-[10px] border border-white/[0.08] px-3 py-2 text-left text-[12.5px] text-[#d5d7da] hover:border-[var(--accent)]/50 hover:text-white disabled:opacity-40"
+                  className="rounded-[10px] border border-border px-3 py-2 text-left text-[12.5px] text-foreground hover:border-electric/50 hover:text-foreground disabled:opacity-40"
                 >
                   {s}
                 </button>
@@ -154,11 +154,11 @@ export default function WorkflowCopilot({
             {turns.map((turn, i) => (
               <div key={i}>
                 {turn.role === 'user' ? (
-                  <div className="ml-auto max-w-[85%] rounded-[12px] bg-white/[0.07] px-3 py-2 text-[12.5px] text-white">
+                  <div className="ml-auto max-w-[85%] rounded-[12px] bg-[var(--ui-inset)] px-3 py-2 text-[12.5px] text-foreground">
                     {turn.text}
                   </div>
                 ) : (
-                  <div className="max-w-[95%] whitespace-pre-wrap text-[12.5px] leading-relaxed text-[#d5d7da]">
+                  <div className="max-w-[95%] whitespace-pre-wrap text-[12.5px] leading-relaxed text-foreground">
                     {turn.text}
                   </div>
                 )}
@@ -167,7 +167,7 @@ export default function WorkflowCopilot({
                     as a preview; this line only says one arrived, so the two
                     surfaces cannot disagree about what is pending. */}
                 {turn.proposals && turn.proposals.length > 0 ? (
-                  <div className="mt-2 flex items-center gap-1.5 rounded-[10px] border border-[var(--accent)]/35 bg-[var(--accent)]/[0.07] px-3 py-2 text-[12px] text-[#d5d7da]">
+                  <div className="mt-2 flex items-center gap-1.5 rounded-[10px] border border-electric/35 bg-electric/[0.07] px-3 py-2 text-[12px] text-foreground">
                     <Sparkles className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" aria-hidden="true" />
                     {turn.proposals.length === 1
                       ? 'Previewed on the canvas — review it there.'
@@ -176,7 +176,7 @@ export default function WorkflowCopilot({
                 ) : null}
 
                 {turn.stopReason && turn.stopReason !== 'completed' ? (
-                  <div className="mt-1.5 flex items-start gap-1.5 text-[11.5px] text-[#ffb764]">
+                  <div className="mt-1.5 flex items-start gap-1.5 text-[11.5px] text-[var(--ui-warn)]">
                     <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
                     {turn.stopReason === 'no_llm'
                       ? 'No language model is configured for this deployment.'
@@ -188,7 +188,7 @@ export default function WorkflowCopilot({
               </div>
             ))}
             {busy ? (
-              <div className="flex items-center gap-2 text-[12px] text-[#888b91]">
+              <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                 Reading the role and your exams…
               </div>
@@ -203,7 +203,7 @@ export default function WorkflowCopilot({
           e.preventDefault();
           void send(input);
         }}
-        className="flex items-center gap-2 border-t border-white/[0.07] pt-3"
+        className="flex items-center gap-2 border-t border-border pt-3"
       >
         <input
           value={input}
@@ -213,14 +213,14 @@ export default function WorkflowCopilot({
           placeholder={
             editable ? 'Describe the process you want…' : 'Published — clone to edit'
           }
-          className="min-w-0 flex-1 rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none disabled:opacity-50"
+          className="min-w-0 flex-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-50"
         />
         <button
           type="submit"
           disabled={!editable || busy || !input.trim()}
           aria-label="Send"
           className={cn(
-            'flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white text-black transition-opacity',
+            'flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-primary text-primary-foreground transition-opacity',
             (!editable || busy || !input.trim()) && 'opacity-40',
           )}
         >

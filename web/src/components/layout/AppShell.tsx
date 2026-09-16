@@ -670,7 +670,10 @@ export default function AppShell({ children }: AppShellProps) {
         )}
       >
         <TopBar />
-        <main className="w-full px-4 py-8 sm:px-6 lg:px-8">
+        {/* pb-28 reserves a lane under the last card for the floating
+            "Ask assistant" button (bottom-6, ~44px tall), so whatever sits at
+            the bottom of a page can always be scrolled clear of it. */}
+        <main className="w-full px-4 pb-28 pt-8 sm:px-6 lg:px-8">
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

@@ -652,7 +652,6 @@ const en = {
       liveExam: 'Live exam',
       factQuestions: 'Questions',
       factDuration: 'Duration',
-      factLanguage: 'Language',
       consentLabel:
         'I consent to this exam being recorded for AI scoring, per the DPDP-compliant privacy policy.',
       timeRemaining: 'Time remaining: {{time}}',
@@ -1290,7 +1289,6 @@ const hi = {
       liveExam: 'लाइव परीक्षा',
       factQuestions: 'प्रश्न',
       factDuration: 'अवधि',
-      factLanguage: 'भाषा',
       consentLabel: 'मैं DPDP-अनुपालन गोपनीयता नीति के अनुसार AI स्कोरिंग के लिए इस परीक्षा की रिकॉर्डिंग की सहमति देता/देती हूं।',
       timeRemaining: 'शेष समय: {{time}}',
       // Round / section additions (Phase 2+)
@@ -1923,7 +1921,6 @@ const te = {
       liveExam: 'లైవ్ పరీక్ష',
       factQuestions: 'ప్రశ్నలు',
       factDuration: 'వ్యవధి',
-      factLanguage: 'భాష',
       consentLabel: 'DPDP-అనుగుణ గోప్యతా విధానం ప్రకారం AI స్కోరింగ్ కోసం ఈ పరీక్ష రికార్డ్ చేయబడటానికి నేను సమ్మతిస్తున్నాను.',
       timeRemaining: 'మిగిలిన సమయం: {{time}}',
       // Round / section additions (Phase 2+)

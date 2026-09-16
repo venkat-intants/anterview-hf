@@ -684,6 +684,13 @@ async def submit_application(
             applicant_id=str(applicant_id),
         )
 
+    # Scoring happens in the reconciler. Wake it, as a bulk upload does, rather
+    # than leaving this application for the next scheduled pass (up to ten
+    # minutes).
+    from app.reconciliation import wake as wake_reconciler  # noqa: PLC0415
+
+    wake_reconciler()
+
     log.info(
         "public.apply.received",
         company_id=str(company_id),

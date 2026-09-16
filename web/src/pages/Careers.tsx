@@ -22,6 +22,8 @@
 // filter changes, which is what people expect from a search page.
 
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getCareersBoard, type BoardQuery, type JobCard } from '@/api/careers';
@@ -29,13 +31,14 @@ import { ApiError } from '@/api/client';
 import { Briefcase, MapPin, Search, X } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 
-const EMPLOYMENT_LABELS: Record<string, string> = {
-  full_time: 'Full-time',
-  part_time: 'Part-time',
-  contract: 'Contract',
-  internship: 'Internship',
-  temporary: 'Temporary',
-};
+// Employment types are a closed server vocabulary, so they are looked up by
+// key. An unknown value falls back to the raw string rather than rendering a
+// missing-key placeholder at a candidate.
+function employmentLabel(t: TFunction, value: string): string {
+  const key = `careers.employment.${value}`;
+  const label = t(key);
+  return label === key ? value : label;
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -46,43 +49,54 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 /** "Hyderabad · Full-time · Engineering", skipping whatever is missing. */
-function metaLine(job: JobCard): string {
+function metaLine(t: TFunction, job: JobCard): string {
   const employment = job.employment_type
-    ? (EMPLOYMENT_LABELS[job.employment_type] ?? job.employment_type)
+    ? employmentLabel(t, job.employment_type)
     : null;
   return [job.location, employment, job.department].filter(Boolean).join(' · ');
 }
 
 /** "4–8 years", "4+ years", "Up to 8 years", or nothing. */
-function experienceLine(job: JobCard): string | null {
+function experienceLine(t: TFunction, job: JobCard): string | null {
   const { experience_min_years: lo, experience_max_years: hi } = job;
   if (lo == null && hi == null) return null;
-  if (lo != null && hi != null) return lo === hi ? `${lo} years` : `${lo}–${hi} years`;
-  return lo != null ? `${lo}+ years` : `Up to ${hi} years`;
+  if (lo != null && hi != null) {
+    return lo === hi
+      ? t('careers.yearsExact', { years: lo })
+      : t('careers.yearsRange', { lo, hi });
+  }
+  return lo != null
+    ? t('careers.yearsMin', { lo })
+    : t('careers.yearsMax', { hi });
 }
 
-function salaryLine(job: JobCard): string | null {
+function salaryLine(t: TFunction, job: JobCard): string | null {
   const { salary_min: lo, salary_max: hi } = job;
   if (lo == null && hi == null) return null;
   const currency = job.salary_currency ?? '';
   const money = (n: number) => `${currency} ${n.toLocaleString()}`.trim();
-  if (lo != null && hi != null) return `${money(lo)} – ${money(hi)}`;
-  return lo != null ? `From ${money(lo)}` : `Up to ${money(hi as number)}`;
+  if (lo != null && hi != null) {
+    return t('careers.salaryRange', { lo: money(lo), hi: money(hi) });
+  }
+  return lo != null
+    ? t('careers.salaryFrom', { value: money(lo) })
+    : t('careers.salaryUpTo', { value: money(hi as number) });
 }
 
 /** "2 days ago" — recency is what a candidate reads, not a date. */
-function postedLine(iso: string): string {
+function postedLine(t: TFunction, iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
-  if (days <= 0) return 'Posted today';
-  if (days === 1) return 'Posted yesterday';
-  if (days < 30) return `Posted ${days} days ago`;
-  return `Posted ${new Date(iso).toLocaleDateString()}`;
+  if (days <= 0) return t('careers.postedToday');
+  if (days === 1) return t('careers.postedYesterday');
+  if (days < 30) return t('careers.postedDaysAgo', { count: days });
+  return t('careers.postedOn', { date: new Date(iso).toLocaleDateString() });
 }
 
 function Card({ job }: { job: JobCard }) {
-  const meta = metaLine(job);
-  const experience = experienceLine(job);
-  const salary = salaryLine(job);
+  const { t } = useTranslation();
+  const meta = metaLine(t, job);
+  const experience = experienceLine(t, job);
+  const salary = salaryLine(t, job);
   return (
     <Link
       // Tagged at source (PH3-B1). An application that arrives from the
@@ -118,8 +132,8 @@ function Card({ job }: { job: JobCard }) {
       ) : null}
 
       <p className="mt-3 text-[12.5px] text-[var(--ui-faint)]">
-        {job.level} level
-        {experience ? ` · ${experience}` : ''} · {postedLine(job.posted_at)}
+        {t('careers.levelLine', { level: job.level })}
+        {experience ? ` · ${experience}` : ''} · {postedLine(t, job.posted_at)}
       </p>
     </Link>
   );
@@ -145,6 +159,7 @@ const SALARY_STEPS = [
 ];
 
 export default function Careers() {
+  const { t } = useTranslation();
   const { companySlug = '' } = useParams<{ companySlug: string }>();
   const [params, setParams] = useSearchParams();
 
@@ -196,12 +211,10 @@ export default function Careers() {
         <div className="rounded-[20px] border border-border bg-card p-8 text-center">
           <Briefcase className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
           <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-            {missing ? 'No careers page here' : 'Could not load these roles'}
+            {missing ? t('careers.notFoundTitle') : t('careers.errorTitle')}
           </h1>
           <p className="mx-auto mt-2 max-w-[48ch] text-[13.5px] leading-relaxed text-muted-foreground">
-            {missing
-              ? 'Check the address with whoever shared it — this company does not have a careers page at this link.'
-              : 'Something went wrong on our side. Refresh the page to try again.'}
+            {missing ? t('careers.notFoundDesc') : t('careers.errorDesc')}
           </p>
         </div>
       </Shell>
@@ -225,13 +238,13 @@ export default function Careers() {
           {data?.company_name ?? ' '}
         </div>
         <h1 className="mt-1 text-[30px] font-semibold tracking-[-0.9px] text-foreground">
-          Open roles
+          {t('careers.openRoles')}
         </h1>
       </header>
 
       <div className="mb-5 flex flex-col gap-3">
         <label className="relative block">
-          <span className="sr-only">Search roles</span>
+          <span className="sr-only">{t('careers.searchLabel')}</span>
           <Search
             className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ui-faint)]"
             aria-hidden="true"
@@ -239,7 +252,7 @@ export default function Careers() {
           <input
             type="search"
             defaultValue={params.get('q') ?? ''}
-            placeholder="Search by title or skill"
+            placeholder={t('careers.searchPlaceholder')}
             onKeyDown={(e) => {
               if (e.key === 'Enter') setFilter('q', e.currentTarget.value.trim());
             }}
@@ -254,12 +267,12 @@ export default function Careers() {
         <div className="flex flex-wrap items-center gap-2">
           {filters && filters.departments.length > 0 ? (
             <select
-              aria-label="Department"
+              aria-label={t('careers.departmentAria')}
               value={params.get('department') ?? ''}
               onChange={(e) => setFilter('department', e.target.value)}
               className={SELECT_CLASS}
             >
-              <option value="">All departments</option>
+              <option value="">{t('careers.allDepartments')}</option>
               {filters.departments.map((d) => (
                 <option key={d} value={d}>
                   {d}
@@ -270,12 +283,12 @@ export default function Careers() {
 
           {filters && filters.locations.length > 0 ? (
             <select
-              aria-label="Location"
+              aria-label={t('careers.locationAria')}
               value={params.get('location') ?? ''}
               onChange={(e) => setFilter('location', e.target.value)}
               className={SELECT_CLASS}
             >
-              <option value="">All locations</option>
+              <option value="">{t('careers.allLocations')}</option>
               {filters.locations.map((l) => (
                 <option key={l} value={l}>
                   {l}
@@ -286,15 +299,15 @@ export default function Careers() {
 
           {filters && filters.employment_types.length > 0 ? (
             <select
-              aria-label="Employment type"
+              aria-label={t('careers.employmentAria')}
               value={params.get('employment_type') ?? ''}
               onChange={(e) => setFilter('employment_type', e.target.value)}
               className={SELECT_CLASS}
             >
-              <option value="">Any type</option>
-              {filters.employment_types.map((t) => (
-                <option key={t} value={t}>
-                  {EMPLOYMENT_LABELS[t] ?? t}
+              <option value="">{t('careers.anyType')}</option>
+              {filters.employment_types.map((type) => (
+                <option key={type} value={type}>
+                  {employmentLabel(t, type)}
                 </option>
               ))}
             </select>
@@ -304,12 +317,12 @@ export default function Careers() {
               "at least X", and an open number field on a public page invites
               nonsense that returns nothing. */}
           <select
-            aria-label="Minimum salary"
+            aria-label={t('careers.salaryAria')}
             value={params.get('min_salary') ?? ''}
             onChange={(e) => setFilter('min_salary', e.target.value)}
             className={SELECT_CLASS}
           >
-            <option value="">Any salary</option>
+            <option value="">{t('careers.anySalary')}</option>
             {SALARY_STEPS.map((s) => (
               <option key={s.value} value={String(s.value)}>
                 {s.label}
@@ -322,15 +335,15 @@ export default function Careers() {
               newest while claiming otherwise. */}
           {params.get('q') ? (
             <select
-              aria-label="Sort by"
+              aria-label={t('careers.sortAria')}
               value={params.get('sort') ?? 'newest'}
               onChange={(e) =>
                 setFilter('sort', e.target.value === 'relevance' ? 'relevance' : '')
               }
               className={SELECT_CLASS}
             >
-              <option value="newest">Newest first</option>
-              <option value="relevance">Most relevant</option>
+              <option value="newest">{t('careers.newestFirst')}</option>
+              <option value="relevance">{t('careers.mostRelevant')}</option>
             </select>
           ) : null}
 
@@ -341,7 +354,7 @@ export default function Careers() {
               className="inline-flex items-center gap-1 rounded-[10px] border border-border px-2.5 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground focus:outline-none focus-visible:border-[var(--accent)]"
             >
               <X size={13} aria-hidden="true" />
-              Clear filters
+              {t('careers.clearFilters')}
             </button>
           ) : null}
         </div>
@@ -349,8 +362,8 @@ export default function Careers() {
 
       <p className="mb-3 text-[13px] text-muted-foreground" aria-live="polite">
         {board.isLoading
-          ? 'Loading roles…'
-          : `${data?.total ?? 0} open ${data?.total === 1 ? 'position' : 'positions'}`}
+          ? t('careers.loadingRoles')
+          : t('careers.positions', { count: data?.total ?? 0 })}
       </p>
 
       <div className="flex flex-col gap-3">
@@ -365,12 +378,12 @@ export default function Careers() {
           <div className="rounded-[16px] border border-border bg-card p-8 text-center">
             <MapPin className="mx-auto h-7 w-7 text-[var(--ui-faint)]" aria-hidden="true" />
             <h2 className="mt-3 text-[16px] font-semibold text-foreground">
-              {activeCount > 0 ? 'No roles match those filters' : 'No open roles right now'}
+              {activeCount > 0 ? t('careers.noMatchTitle') : t('careers.noRolesTitle')}
             </h2>
             <p className="mx-auto mt-2 max-w-[44ch] text-[13.5px] leading-relaxed text-muted-foreground">
               {activeCount > 0
-                ? 'Try widening your search — clearing a filter usually brings more back.'
-                : `${data.company_name} is not advertising anything at the moment. Check back later.`}
+                ? t('careers.noMatchDesc')
+                : t('careers.noRolesDesc', { company: data.company_name })}
             </p>
           </div>
         ) : null}
@@ -391,10 +404,13 @@ export default function Careers() {
               data.page <= 1 ? 'opacity-40' : 'hover:text-foreground',
             )}
           >
-            Previous
+            {t('careers.previous')}
           </button>
           <span className="text-[12.5px] text-[var(--ui-faint)]">
-            Page {data.page} of {Math.ceil(data.total / data.per_page)}
+            {t('careers.pageOf', {
+              page: data.page,
+              total: Math.ceil(data.total / data.per_page),
+            })}
           </span>
           <button
             type="button"
@@ -407,7 +423,7 @@ export default function Careers() {
                 : 'hover:text-foreground',
             )}
           >
-            Next
+            {t('careers.next')}
           </button>
         </div>
       ) : null}

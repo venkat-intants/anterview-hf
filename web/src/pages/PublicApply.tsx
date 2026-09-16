@@ -17,6 +17,8 @@
 // will not parse needs to know to re-export it, not to see a status code.
 
 import { useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
@@ -84,16 +86,16 @@ function Panel({ children, className }: { children: React.ReactNode; className?:
 }
 
 function Unavailable() {
+  const { t } = useTranslation();
   return (
     <Shell>
       <Panel className="text-center">
         <Briefcase className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
         <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-          This opening is not accepting applications
+          {t('apply.unavailableTitle')}
         </h1>
         <p className="mx-auto mt-2 max-w-[48ch] text-[13.5px] leading-relaxed text-muted-foreground">
-          The role may have been filled or closed. If you were sent this link recently,
-          check with whoever shared it — they will have the current one.
+          {t('apply.unavailableDesc')}
         </p>
       </Panel>
     </Shell>
@@ -101,12 +103,13 @@ function Unavailable() {
 }
 
 function Submitted({ result, title }: { result: ApplicationResult; title: string }) {
+  const { t } = useTranslation();
   return (
     <Shell>
       <Panel className="text-center">
         <CheckCircle2 className="mx-auto h-9 w-9 text-[var(--ui-ok)]" aria-hidden="true" />
         <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-          {result.already_applied ? 'You have already applied' : 'Application received'}
+          {result.already_applied ? t('apply.alreadyApplied') : t('apply.received')}
         </h1>
         <p className="mx-auto mt-2 max-w-[50ch] text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
           {result.message}
@@ -114,9 +117,7 @@ function Submitted({ result, title }: { result: ApplicationResult; title: string
         <p className="mx-auto mt-4 max-w-[50ch] text-[12.5px] leading-relaxed text-muted-foreground">
           {/* Said plainly because the alternative — silence — is what makes
               candidates assume they were rejected. */}
-          Your CV is with the hiring team for <span className="text-foreground">{title}</span>.
-          If they move you forward you will get an email with the next step; nothing is
-          decided automatically.
+          {t('apply.reviewNote', { title })}
         </p>
       </Panel>
     </Shell>
@@ -236,28 +237,32 @@ function SeedPanel({
  * database check, so a value outside it means someone added a type, and
  * showing `contract_to_hire` beats showing nothing.
  */
-const EMPLOYMENT_LABELS: Record<string, string> = {
-  full_time: 'Full-time',
-  part_time: 'Part-time',
-  contract: 'Contract',
-  internship: 'Internship',
-  temporary: 'Temporary',
-};
+// Same closed server vocabulary the careers board renders, so it reads the
+// same keys. Two copies of these labels would drift apart.
+function employmentLabel(t: TFunction, value: string): string {
+  const key = `careers.employment.${value}`;
+  const label = t(key);
+  return label === key ? value : label;
+}
 
 /** "Bengaluru · Full-time · Engineering", skipping whatever is missing. */
-function metaLine(job: Posting): string {
+function metaLine(t: TFunction, job: Posting): string {
   const employment = job.employment_type
-    ? (EMPLOYMENT_LABELS[job.employment_type] ?? job.employment_type)
+    ? employmentLabel(t, job.employment_type)
     : null;
   return [job.location, employment, job.department].filter(Boolean).join(' · ');
 }
 
 /** "4–8 years", "4+ years", "Up to 8 years", or nothing. */
-function experienceLine(job: Posting): string | null {
+function experienceLine(t: TFunction, job: Posting): string | null {
   const { experience_min_years: lo, experience_max_years: hi } = job;
   if (lo == null && hi == null) return null;
-  if (lo != null && hi != null) return lo === hi ? `${lo} years` : `${lo}–${hi} years`;
-  return lo != null ? `${lo}+ years` : `Up to ${hi} years`;
+  if (lo != null && hi != null) {
+    return lo === hi
+      ? t('careers.yearsExact', { years: lo })
+      : t('careers.yearsRange', { lo, hi });
+  }
+  return lo != null ? t('careers.yearsMin', { lo }) : t('careers.yearsMax', { hi });
 }
 
 /**
@@ -265,13 +270,17 @@ function experienceLine(job: Posting): string | null {
  * for both a withheld salary and an unrecorded one — so there is deliberately
  * no "salary not specified" copy here to distinguish them.
  */
-function salaryLine(job: Posting): string | null {
+function salaryLine(t: TFunction, job: Posting): string | null {
   const { salary_min: lo, salary_max: hi } = job;
   if (lo == null && hi == null) return null;
   const currency = job.salary_currency ?? '';
   const money = (n: number) => `${currency} ${n.toLocaleString()}`.trim();
-  if (lo != null && hi != null) return `${money(lo)} – ${money(hi)}`;
-  return lo != null ? `From ${money(lo)}` : `Up to ${money(hi as number)}`;
+  if (lo != null && hi != null) {
+    return t('careers.salaryRange', { lo: money(lo), hi: money(hi) });
+  }
+  return lo != null
+    ? t('careers.salaryFrom', { value: money(lo) })
+    : t('careers.salaryUpTo', { value: money(hi as number) });
 }
 
 function BulletPanel({ heading, items }: { heading: string; items?: string[] }) {
@@ -499,13 +508,17 @@ function QuestionField({
  * has been chosen and consent has not yet been refused — the file never leaves
  * the browser until the final submit.
  */
-function stepsFor(questionCount: number): string[] {
+function stepsFor(t: TFunction, questionCount: number): string[] {
   // The questions step exists only when there is something on it. Most
   // openings ask nothing, and an empty "Questions" step is a click that makes
   // the form look longer than it is.
+  const you = t('apply.stepYou');
+  const experience = t('apply.stepExperience');
+  const cv = t('apply.stepCv');
+  const review = t('apply.stepReview');
   return questionCount > 0
-    ? ['You', 'Experience', 'Your CV', 'Questions', 'Review']
-    : ['You', 'Experience', 'Your CV', 'Review'];
+    ? [you, experience, cv, t('apply.stepQuestions'), review]
+    : [you, experience, cv, review];
 }
 
 function Stepper({ current, steps }: { current: number; steps: string[] }) {
@@ -543,6 +556,7 @@ function Stepper({ current, steps }: { current: number; steps: string[] }) {
 
 /** One line of the review step. Missing answers say so rather than sitting blank. */
 function ReviewRow({ label, value }: { label: string; value: string | null }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-baseline justify-between gap-4 border-b border-border py-2 last:border-b-0">
       <span className="text-[12.5px] text-muted-foreground">{label}</span>
@@ -552,13 +566,14 @@ function ReviewRow({ label, value }: { label: string; value: string | null }) {
           value ? 'text-foreground' : 'italic text-[var(--ui-faint)]',
         )}
       >
-        {value || 'Not provided'}
+        {value || t('apply.notProvided')}
       </span>
     </div>
   );
 }
 
 export default function PublicApply(): JSX.Element {
+  const { t } = useTranslation();
   const { requisitionId = '' } = useParams();
   // The tracked link's campaign tag (PH3-B1). Read once, here, and then only
   // ever used through what the server echoes back: the vocabulary belongs to
@@ -644,12 +659,12 @@ export default function PublicApply(): JSX.Element {
     // Checked here as well as server-side so someone does not upload 30 MB over
     // a phone connection to be told no at the end of it.
     if (file.size > MAX_BYTES) {
-      setFileError('That file is over 5 MB. Please upload a smaller PDF.');
+      setFileError(t('apply.errTooBig'));
       setResume(null);
       return;
     }
     if (!file.name.toLowerCase().endsWith('.pdf')) {
-      setFileError('Please upload your CV as a PDF.');
+      setFileError(t('apply.errNotPdf'));
       setResume(null);
       return;
     }
@@ -660,7 +675,7 @@ export default function PublicApply(): JSX.Element {
   function acceptDropped(files: File[]): void {
     setFileError('');
     if (files.length === 0) {
-      setFileError('No PDFs in there. A CV needs to be a PDF.');
+      setFileError(t('apply.errNoPdfs'));
       return;
     }
     if (files.length === 1 || !SEEDING_ENABLED) {
@@ -731,7 +746,7 @@ export default function PublicApply(): JSX.Element {
       <Shell>
         <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading…
+          {t('apply.loading')}
         </div>
       </Shell>
     );
@@ -751,7 +766,7 @@ export default function PublicApply(): JSX.Element {
   // gated by `ready` on its own submit button, so consent is never a
   // "Continue" — it stays the last thing that happens before an upload.
   const questions = job.questions ?? [];
-  const steps = stepsFor(questions.length);
+  const steps = stepsFor(t, questions.length);
   const questionsStep = questions.length > 0 ? 3 : -1;
 
   /** Whether a required question has an answer that is not blank. */
@@ -785,45 +800,51 @@ export default function PublicApply(): JSX.Element {
         <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.8px] text-foreground">
           {job.title}
         </h1>
-        {metaLine(job) ? (
-          <div className="mt-1.5 text-[13.5px] text-[var(--ui-soft)]">{metaLine(job)}</div>
+        {metaLine(t, job) ? (
+          <div className="mt-1.5 text-[13.5px] text-[var(--ui-soft)]">{metaLine(t, job)}</div>
         ) : null}
         <div className="mt-1 text-[13px] text-muted-foreground">
-          {job.level} level
-          {experienceLine(job) ? ` · ${experienceLine(job)}` : ''}
+          {t('careers.levelLine', { level: job.level })}
+          {experienceLine(t, job) ? ` · ${experienceLine(t, job)}` : ''}
           {job.closes_at
-            ? ` · closes ${new Date(job.closes_at).toLocaleDateString()}`
+            ? ` · ${t('apply.closesOn', {
+                date: new Date(job.closes_at).toLocaleDateString(),
+              })}`
             : ''}
         </div>
-        {salaryLine(job) ? (
+        {salaryLine(t, job) ? (
           <div className="mt-2 inline-block rounded-[10px] border border-border bg-[var(--ui-inset)] px-3 py-1.5 text-[13.5px] font-medium text-foreground">
-            {salaryLine(job)}
+            {salaryLine(t, job)}
           </div>
         ) : null}
       </header>
 
       {job.jd_text ? (
         <Panel className="mb-5">
-          <h2 className="mb-2 text-[14px] font-medium text-foreground">About the role</h2>
+          <h2 className="mb-2 text-[14px] font-medium text-foreground">
+            {t('apply.aboutRole')}
+          </h2>
           <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
             {job.jd_text}
           </p>
         </Panel>
       ) : null}
 
-      <BulletPanel heading="What you will do" items={job.responsibilities} />
+      <BulletPanel heading={t('apply.whatYouWillDo')} items={job.responsibilities} />
 
       {(job.required_skills?.length ?? 0) > 0 || (job.nice_to_have_skills?.length ?? 0) > 0 ? (
         <Panel className="mb-5">
           <div className="flex flex-col gap-4">
-            <SkillTags heading="Required skills" skills={job.required_skills} />
-            <SkillTags heading="Nice to have" skills={job.nice_to_have_skills} />
+            <SkillTags heading={t('apply.requiredSkills')} skills={job.required_skills} />
+            <SkillTags heading={t('apply.niceToHave')} skills={job.nice_to_have_skills} />
           </div>
         </Panel>
       ) : null}
 
       <Panel>
-        <h2 className="text-[16px] font-semibold text-foreground">Apply</h2>
+        <h2 className="text-[16px] font-semibold text-foreground">
+          {t('apply.applyHeading')}
+        </h2>
 
         <div className="mt-4">
           <Stepper current={step} steps={steps} />
@@ -847,7 +868,7 @@ export default function PublicApply(): JSX.Element {
             <>
           <div>
             <label htmlFor="name" className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
-              Your name
+              {t('apply.yourName')}
             </label>
             <input
               id="name"
@@ -860,7 +881,7 @@ export default function PublicApply(): JSX.Element {
 
           <div>
             <label htmlFor="email" className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
-              Email
+              {t('apply.email')}
             </label>
             <input
               id="email"
@@ -871,7 +892,7 @@ export default function PublicApply(): JSX.Element {
               className={field}
             />
             <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
-              This is how the hiring team will reach you.
+              {t('apply.emailHint')}
             </p>
           </div>
 
@@ -880,7 +901,10 @@ export default function PublicApply(): JSX.Element {
                   htmlFor="phone"
                   className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                 >
-                  Phone <span className="font-normal text-[var(--ui-faint)]">(optional)</span>
+                  {t('apply.phone')}{' '}
+                  <span className="font-normal text-[var(--ui-faint)]">
+                    {t('apply.optional')}
+                  </span>
                 </label>
                 <input
                   id="phone"
@@ -897,8 +921,7 @@ export default function PublicApply(): JSX.Element {
           {step === 1 ? (
             <>
               <p className="text-[12.5px] leading-relaxed text-muted-foreground">
-                All optional. It helps the hiring team place you quickly, but skip
-                anything you would rather not answer.
+                {t('apply.optionalIntro')}
               </p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
@@ -906,7 +929,7 @@ export default function PublicApply(): JSX.Element {
                     htmlFor="years"
                     className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                   >
-                    Years of experience
+                    {t('apply.years')}
                   </label>
                   <input
                     id="years"
@@ -923,7 +946,7 @@ export default function PublicApply(): JSX.Element {
                     htmlFor="company"
                     className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                   >
-                    Current company
+                    {t('apply.currentCompany')}
                   </label>
                   <input
                     id="company"
@@ -939,7 +962,7 @@ export default function PublicApply(): JSX.Element {
                   htmlFor="title"
                   className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                 >
-                  Current role
+                  {t('apply.currentRole')}
                 </label>
                 <input
                   id="title"
@@ -955,7 +978,7 @@ export default function PublicApply(): JSX.Element {
                     htmlFor="linkedin"
                     className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                   >
-                    LinkedIn
+                    {t('apply.linkedin')}
                   </label>
                   <input
                     id="linkedin"
@@ -971,7 +994,7 @@ export default function PublicApply(): JSX.Element {
                     htmlFor="github"
                     className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
                   >
-                    GitHub
+                    {t('apply.github')}
                   </label>
                   <input
                     id="github"
@@ -988,7 +1011,7 @@ export default function PublicApply(): JSX.Element {
 
           {step === 2 ? <>          <div>
             <label htmlFor="cv" className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
-              Your CV (PDF)
+              {t('apply.cvLabel')}
             </label>
             <label
               htmlFor="cv"
@@ -1021,8 +1044,8 @@ export default function PublicApply(): JSX.Element {
                 {resume
                   ? resume.name
                   : dragging
-                    ? 'Drop it here'
-                    : 'Drop a PDF here, or click to choose — up to 5 MB'}
+                    ? t('apply.dropHere')
+                    : t('apply.dropPrompt')}
               </span>
             </label>
             <input
@@ -1038,7 +1061,7 @@ export default function PublicApply(): JSX.Element {
               </p>
             ) : (
               <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
-                A text-based PDF, not a scan — a scanned image cannot be read.
+                {t('apply.cvHint')}
               </p>
             )}
           </div>
@@ -1061,18 +1084,25 @@ export default function PublicApply(): JSX.Element {
           {step === steps.length - 1 ? (
             <>
               <div className="rounded-[12px] border border-border p-3">
-                <ReviewRow label="Name" value={fullName.trim() || null} />
-                <ReviewRow label="Email" value={email.trim() || null} />
-                <ReviewRow label="Phone" value={phone.trim() || null} />
+                <ReviewRow label={t('apply.reviewName')} value={fullName.trim() || null} />
+                <ReviewRow label={t('apply.email')} value={email.trim() || null} />
+                <ReviewRow label={t('apply.phone')} value={phone.trim() || null} />
                 <ReviewRow
-                  label="Experience"
-                  value={yearsExperience === '' ? null : yearsExperience + ' years'}
+                  label={t('apply.stepExperience')}
+                  value={
+                    yearsExperience === ''
+                      ? null
+                      : t('apply.experienceYears', { count: Number(yearsExperience) })
+                  }
                 />
-                <ReviewRow label="Current company" value={currentCompany.trim() || null} />
-                <ReviewRow label="Current role" value={currentTitle.trim() || null} />
-                <ReviewRow label="LinkedIn" value={linkedinUrl.trim() || null} />
-                <ReviewRow label="GitHub" value={githubUrl.trim() || null} />
-                <ReviewRow label="CV" value={resume ? resume.name : null} />
+                <ReviewRow
+                  label={t('apply.currentCompany')}
+                  value={currentCompany.trim() || null}
+                />
+                <ReviewRow label={t('apply.currentRole')} value={currentTitle.trim() || null} />
+                <ReviewRow label={t('apply.linkedin')} value={linkedinUrl.trim() || null} />
+                <ReviewRow label={t('apply.github')} value={githubUrl.trim() || null} />
+                <ReviewRow label={t('apply.reviewCv')} value={resume ? resume.name : null} />
                 {questions.map((q) => (
                   <ReviewRow
                     key={q.id}
@@ -1083,7 +1113,7 @@ export default function PublicApply(): JSX.Element {
                         : Array.isArray(answers[q.id])
                           ? (answers[q.id] as string[]).join(', ') || null
                           : typeof answers[q.id] === 'boolean'
-                            ? ((answers[q.id] as boolean) ? 'Yes' : 'No')
+                            ? ((answers[q.id] as boolean) ? t('apply.yes') : t('apply.no'))
                             : (answers[q.id] as string).trim() || null
                     }
                   />
@@ -1095,7 +1125,7 @@ export default function PublicApply(): JSX.Element {
               htmlFor="apply-language"
               className="mb-1.5 block text-[12.5px] text-[var(--ui-soft)]"
             >
-              Emails about this application in
+              {t('apply.emailLanguage')}
             </label>
             <select
               id="apply-language"
@@ -1119,9 +1149,7 @@ export default function PublicApply(): JSX.Element {
               className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
             />
             <span className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
-              I agree that {job.company_name} may store my name, email and CV to consider
-              me for this role, and may contact me about it. I can ask them to delete my
-              data at any time.
+              {t('apply.consent', { company: job.company_name })}
             </span>
           </label>
 
@@ -1135,18 +1163,17 @@ export default function PublicApply(): JSX.Element {
             {saveLater.data ? (
               <>
                 <p className="text-[12.5px] font-medium text-[var(--ui-text)]">
-                  Saved. Keep this link to carry on later.
+                  {t('apply.savedTitle')}
                 </p>
                 <input
                   readOnly
-                  aria-label="Your resume link"
+                  aria-label={t('apply.resumeLinkAria')}
                   value={`${window.location.origin}/apply/draft#${saveLater.data.resume_token}`}
                   onFocus={(e) => e.currentTarget.select()}
                   className="mt-2 w-full rounded-[10px] border border-border bg-transparent px-2.5 py-2 text-[12px] text-[var(--ui-soft)]"
                 />
                 <p className="mt-1.5 text-[11.5px] text-[var(--ui-soft)]">
-                  We have also stored your progress against {email.trim()}. This link is
-                  the only way back in, so keep it somewhere safe.
+                  {t('apply.savedAgainst', { email: email.trim() })}
                 </p>
               </>
             ) : (
@@ -1157,16 +1184,14 @@ export default function PublicApply(): JSX.Element {
                   disabled={!consent || email.trim().length < 4 || saveLater.isPending}
                   className="text-[12.5px] font-medium text-[var(--ui-text)] underline underline-offset-2 disabled:opacity-40 disabled:no-underline"
                 >
-                  {saveLater.isPending ? 'Saving…' : 'Save and finish later'}
+                  {saveLater.isPending ? t('apply.saving') : t('apply.saveLater')}
                 </button>
                 <p className="mt-1 text-[11.5px] text-[var(--ui-soft)]">
-                  {consent
-                    ? 'We will give you a link that brings you back to this application.'
-                    : 'Tick the box above first — we need your permission before we can store anything.'}
+                  {consent ? t('apply.saveHint') : t('apply.saveNeedsConsent')}
                 </p>
                 {saveLater.isError ? (
                   <p className="mt-1.5 text-[11.5px] text-[var(--ui-danger)]">
-                    {errText(saveLater.error, 'Could not save your progress.')}
+                    {errText(saveLater.error, t('apply.errSave'))}
                   </p>
                 ) : null}
               </>
@@ -1182,7 +1207,7 @@ export default function PublicApply(): JSX.Element {
                 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]"
                 aria-hidden="true"
               />
-              {errText(submit.error, 'Something went wrong. Please try again.')}
+              {errText(submit.error, t('apply.errSubmit'))}
             </div>
           ) : null}
 
@@ -1194,7 +1219,7 @@ export default function PublicApply(): JSX.Element {
             {submit.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : null}
-            Send application
+            {t('apply.send')}
           </button>
             </>
           ) : null}
@@ -1209,7 +1234,7 @@ export default function PublicApply(): JSX.Element {
                   onClick={() => setStep(step - 1)}
                   className="rounded-[12px] border border-border px-4 py-2.5 text-[13.5px] text-[var(--ui-soft)] hover:text-foreground"
                 >
-                  Back
+                  {t('apply.back')}
                 </button>
               ) : (
                 <span />
@@ -1221,7 +1246,7 @@ export default function PublicApply(): JSX.Element {
                     onClick={() => setStep(step + 1)}
                     className="rounded-[12px] px-3 py-2.5 text-[13.5px] text-muted-foreground hover:text-foreground"
                   >
-                    Skip
+                    {t('apply.skip')}
                   </button>
                 ) : null}
                 <button
@@ -1229,7 +1254,7 @@ export default function PublicApply(): JSX.Element {
                   disabled={!canContinue}
                   className="rounded-[12px] bg-primary px-5 py-2.5 text-[14px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
                 >
-                  Continue
+                  {t('apply.continue')}
                 </button>
               </div>
             </div>
@@ -1239,7 +1264,7 @@ export default function PublicApply(): JSX.Element {
               onClick={() => setStep(step - 1)}
               className="self-start rounded-[12px] border border-border px-4 py-2.5 text-[13.5px] text-[var(--ui-soft)] hover:text-foreground"
             >
-              Back
+              {t('apply.back')}
             </button>
           )}
         </form>
@@ -1280,8 +1305,7 @@ export default function PublicApply(): JSX.Element {
       ) : null}
 
       <p className="mt-4 text-center text-[11.5px] text-[var(--ui-faint)]">
-        Your application is reviewed by people at {job.company_name}. Assessments may be
-        scored automatically, but no hiring decision is made without a person.
+        {t('apply.humanReview', { company: job.company_name })}
       </p>
     </Shell>
   );

@@ -979,3 +979,35 @@ def test_the_purge_log_still_carries_the_row_count() -> None:
 
     src = inspect.getsource(purge_expired)
     assert "drafts=purged" in src
+
+
+# ===========================================================================
+# A deletion is claimed only after it has happened
+#
+# delete_draft used to delete the rows, commit, then attempt the object and
+# swallow any failure into a warning nothing consumes. On a storage outage the
+# candidate saw "Your saved application has been deleted" while their CV was
+# still in the bucket — and the row that pointed at it was already gone, so
+# nothing could ever find the object again. A false statement to a data
+# principal about erasure, and a permanent orphan.
+# ===========================================================================
+def test_the_object_is_deleted_before_the_rows() -> None:
+    from app.routers.public_apply import delete_draft
+
+    src = inspect.getsource(delete_draft)
+    assert src.index("_delete_from_s3") < src.index("DELETE FROM application_drafts"), (
+        "the rows go first again, so a storage failure leaves an unfindable "
+        "orphan and tells the candidate it was deleted"
+    )
+
+
+def test_a_storage_failure_refuses_rather_than_lying() -> None:
+    """503 and nothing removed beats 204 and a false claim."""
+    from app.routers.public_apply import delete_draft
+
+    src = inspect.getsource(delete_draft)
+    guard = src[src.index("_delete_from_s3"):src.index("DELETE FROM application_drafts")]
+    assert "raise HTTPException" in guard
+    assert "503" in guard or "SERVICE_UNAVAILABLE" in guard
+    # And it must not still be swallowing the error into a warning.
+    assert "draft_object_orphaned" not in src

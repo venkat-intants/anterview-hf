@@ -188,6 +188,11 @@ async def _run_retention_job() -> None:
     try:
         async with factory() as session:
             keys = await purge_expired_drafts(session)
+            # A no-op now: purge_expired commits each pass itself, so that the
+            # bound on work is also a bound on the open transaction. Kept
+            # because the function's contract does not promise to commit, and a
+            # caller that assumes it does would be relying on an implementation
+            # detail — the same coupling this module has been bitten by before.
             await session.commit()
         for key in keys:
             # The row is already gone; a failed object delete leaves an orphan

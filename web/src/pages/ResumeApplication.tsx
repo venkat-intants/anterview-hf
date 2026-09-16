@@ -75,12 +75,44 @@ export default function ResumeApplication(): JSX.Element {
     retry: false,
   });
 
-  // Seed the form from the draft once it arrives, and again if it changes
-  // underneath us — an editor that ignores that shows stale values with no
-  // indication why.
+  // Seed the form from the draft when the SERVER'S VALUES CHANGE, rather than
+  // on every new `draft.data` object identity.
+  //
+  // Be precise about what this does and does not fix, because the first version
+  // of this comment overclaimed. React Query's structural sharing means a
+  // refetch returning deeply-equal data hands back the SAME reference, and
+  // DraftOut carries no per-fetch-changing field (expires_at is fixed at
+  // creation), so the app-wide `refetchOnWindowFocus: true` in main.tsx does
+  // NOT currently discard a candidate's typing. I asserted that it did; it does
+  // not, and the test written to prove it passed with this guard removed.
+  //
+  // What this is, then: making the seed idempotent rather than
+  // identity-triggered. It costs one string compare and removes a whole class
+  // of "some upstream change churns the object and the form silently resets",
+  // on the one screen whose entire purpose is letting somebody correct what the
+  // parser got wrong. The behaviour that matters is preserved — after an upload
+  // re-parses the CV or a save normalises a value, the payload really differs,
+  // so the new reading still lands.
+  //
+  // Prompted by a genuinely flaky test: the same commit passed one CI run and
+  // failed the next. That flake is NOT root-caused, and this guard is not
+  // claimed to fix it — see the test's own note.
+  const seeded = useRef<string>('');
   useEffect(() => {
     if (!draft.data) return;
     const d = draft.data;
+    const signature = JSON.stringify([
+      d.full_name,
+      d.parsed.full_name,
+      d.phone,
+      d.years_experience,
+      d.current_company,
+      d.current_title,
+      d.linkedin_url,
+      d.github_url,
+    ]);
+    if (signature === seeded.current) return;
+    seeded.current = signature;
     setForm({
       // The parser's reading is the STARTING POINT, not the answer: it fills
       // the box only where the candidate has not already given us something.

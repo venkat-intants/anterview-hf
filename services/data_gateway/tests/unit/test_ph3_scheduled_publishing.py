@@ -13,7 +13,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -59,6 +59,9 @@ def _factory(rows: list[dict]) -> tuple[object, AsyncMock]:
     db.execute = AsyncMock(side_effect=_execute)
     db.add = MagicMock()
     db.commit = AsyncMock()
+    # blocked_backlog's count. Zero unless a test says otherwise — these older
+    # cases are about the publish decision, not the backlog report.
+    db.scalar = AsyncMock(return_value=0)
 
     @asynccontextmanager
     async def factory():  # noqa: ANN202
@@ -76,7 +79,7 @@ async def test_an_approved_opening_publishes() -> None:
 
     factory, db = _factory([_due()])
     result = await publish_due(factory)
-    assert result == {"published": 1, "skipped": 0}
+    assert (result["published"], result["skipped"]) == (1, 0)
     assert any(
         "public_apply_enabled = true" in c.args[0].text
         for c in db.execute.await_args_list
@@ -100,7 +103,7 @@ async def test_a_no_longer_eligible_opening_does_not_publish(override: dict) -> 
 
     factory, db = _factory([_due(**override)])
     result = await publish_due(factory)
-    assert result == {"published": 0, "skipped": 1}
+    assert (result["published"], result["skipped"]) == (0, 1)
     assert not any(
         "public_apply_enabled = true" in c.args[0].text
         for c in db.execute.await_args_list
@@ -403,3 +406,110 @@ def _factory_returning(value: object) -> MagicMock:
     ctx.__aenter__ = AsyncMock(return_value=db)
     ctx.__aexit__ = AsyncMock(return_value=False)
     return MagicMock(return_value=ctx)
+
+
+# ===========================================================================
+# Blocked rows must not starve the batch
+#
+# Nothing clears publish_at when a requisition stops being publishable —
+# closing it and rejecting it both leave the schedule intact, on purpose, so the
+# request is not silently lost. Such a row is permanently past due, and
+# due_requisitions is ORDER BY publish_at LIMIT 100, so past-due rows sort
+# FIRST. A hundred of them and every pass claims the same hundred, skips all
+# hundred, and publishes nothing, for ever — across tenants, because one
+# scheduler serves the platform.
+# ===========================================================================
+def test_the_claim_query_refuses_rows_that_cannot_publish() -> None:
+    """The filter is the fix. Without it the batch fills with corpses."""
+    from app.scheduled_publishing import due_requisitions
+
+    src = inspect.getsource(due_requisitions)
+    # From the SQL onwards, not from the start: the docstring explains the
+    # FOR UPDATE choice, so searching the whole source for it lands in the prose
+    # and slices an empty string that trivially "contains" nothing.
+    start = src.index('"SELECT id')
+    sql = src[start:src.index("FOR UPDATE", start)]
+    assert "approval_status = :approved" in sql
+    assert "status = 'open'" in sql
+
+
+@pytest.mark.asyncio
+async def test_the_claim_query_binds_the_approved_constant() -> None:
+    """A literal 'approved' here and a different APPROVED in publishing.py would
+    silently stop every scheduled publish."""
+    from app.publishing import APPROVED
+    from app.scheduled_publishing import due_requisitions
+
+    db = AsyncMock()
+    res = MagicMock()
+    res.mappings = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    db.execute = AsyncMock(return_value=res)
+    await due_requisitions(db, now=NOW)
+    assert db.execute.await_args.args[1]["approved"] == APPROVED
+
+
+@pytest.mark.asyncio
+async def test_a_stuck_backlog_is_counted_not_silently_dropped() -> None:
+    """Filtering them out must not make them invisible — an opening somebody
+    scheduled and never got approved is a real thing an operator wants to see."""
+    from app.scheduled_publishing import blocked_backlog
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=7)
+    res = MagicMock()
+    res.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[REQ])))
+    db.execute = AsyncMock(return_value=res)
+
+    count, sample = await blocked_backlog(db, now=NOW)
+    assert count == 7
+    assert sample == [str(REQ)]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_backlog_costs_no_second_query() -> None:
+    """The common case is zero; it should not pay for a sample it will not use."""
+    from app.scheduled_publishing import blocked_backlog
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=0)
+    db.execute = AsyncMock()
+    assert await blocked_backlog(db, now=NOW) == (0, [])
+    assert db.execute.await_count == 0
+
+
+def test_the_backlog_query_is_the_complement_of_the_claim_query() -> None:
+    """If these two ever disagree, a row is either counted twice or lost — the
+    backlog exists precisely to account for what the claim query refuses."""
+    from app.scheduled_publishing import blocked_backlog, due_requisitions
+
+    claim = inspect.getsource(due_requisitions)
+    back = inspect.getsource(blocked_backlog)
+    # Claim takes approved AND open; backlog takes NOT(approved AND open).
+    assert "approval_status = :approved" in claim
+    assert "approval_status <> :approved OR status <> 'open'" in back
+    for shared in ("publish_at IS NOT NULL", "publish_at <= :now", "deleted_at IS NULL"):
+        assert shared in claim, shared
+        assert shared in back, shared
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_stuck_backlog_does_not_warn_every_pass() -> None:
+    """The previous code logged a warning per blocked row per pass — a warning a
+    minute, for ever, which is a log nobody reads."""
+    from app import scheduled_publishing as sp
+
+    sp._last_blocked = -1
+    factory, db = _factory([])
+    db.scalar = AsyncMock(return_value=3)
+    res = MagicMock()
+    res.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    db.execute = AsyncMock(return_value=res)
+
+    with patch.object(sp.log, "warning") as warn:
+        await sp.publish_due(factory)
+        first = warn.call_count
+        await sp.publish_due(factory)
+        await sp.publish_due(factory)
+        assert warn.call_count == first, "an unchanged backlog warned again"
+    assert first == 1, "the first sighting of a backlog must warn once"
+    sp._last_blocked = -1

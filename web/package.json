@@ -17,6 +17,7 @@
     "typecheck": "tsc -b --noEmit",
     "format": "prettier --write src",
     "e2e": "node scripts/run-e2e.mjs",
+    "typecheck:e2e": "tsc -p e2e/tsconfig.json",
     "audit:ci": "node scripts/audit-ci.mjs"
   },
   "dependencies": {

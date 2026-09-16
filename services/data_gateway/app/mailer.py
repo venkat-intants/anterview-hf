@@ -63,6 +63,30 @@ def absolute_url(path_or_url: str | None) -> str | None:
     return f"{settings.app_base_url.rstrip('/')}/{path_or_url.lstrip('/')}"
 
 
+_CANDIDATE_LANGUAGES = frozenset({"en", "hi", "te"})
+
+_CANDIDATE_LANGUAGE_SQL = """
+SELECT u.preferred_language
+  FROM applicants a
+  JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
+ WHERE a.id = :a
+"""
+
+
+async def candidate_language(db: AsyncSession, applicant_id: uuid.UUID | None) -> str:
+    """The language a candidate chose for their emails, English when unknown.
+
+    An applicant carries no language of its own; the account linked to it does
+    (public apply records the choice there). HR-uploaded applicants with no
+    account get English, which is a limitation, not a claim that it is right.
+    """
+    if applicant_id is None:
+        return "en"
+    lang = await db.scalar(text(_CANDIDATE_LANGUAGE_SQL), {"a": applicant_id})
+    value = str(lang or "").strip().lower()
+    return value if value in _CANDIDATE_LANGUAGES else "en"
+
+
 # ---------------------------------------------------------------------------
 # Producer API
 # ---------------------------------------------------------------------------

@@ -10,10 +10,17 @@
       2. waits for its API,
       3. installs each language runtime the platform supports.
 
-    Then set in services/data_gateway/.env:
+    Then set in services/data_gateway/.env (this script does not edit it):
       EXECUTION_PROVIDER=piston
       PISTON_API_URL=http://localhost:2000/api/v2
-    ...and restart data_gateway. (setup already wrote this env block.)
+    ...and restart data_gateway. The script says at the end whether they are set.
+
+    Docker Desktop (Windows / WSL2): the hardened sandbox below cannot create its
+    cgroups there -- the entrypoint dies on "echo 1 > isolate/cgroup.procs" and
+    the container restart-loops. For a LOCAL development runner only, re-run with
+    -AllowPrivilegedLocal, which runs Piston --privileged (still bound to
+    127.0.0.1, per-job networking still disabled). Never use it on a host that
+    holds production credentials.
 
     Tear down later with:  docker rm -f piston_api
 
@@ -26,7 +33,25 @@
     ASCII-only on purpose (Windows PowerShell 5.1 reads .ps1 as ANSI).
 #>
 
+param(
+    # Docker Desktop only: run Piston --privileged. See .DESCRIPTION.
+    [switch]$AllowPrivilegedLocal
+)
+
 $ErrorActionPreference = 'Stop'
+
+# Windows PowerShell 5.1 turns anything a native command writes to stderr into an
+# error record, and under 'Stop' that ends the script -- including docker's normal
+# "Unable to find image 'alpine:latest' locally" notice on a first pull, which is
+# how this script used to die on any machine that had not pulled alpine yet.
+# Run docker with 'Continue' and judge it by its exit code instead.
+$script:DockerExitCode = 0
+function Invoke-Docker {
+    $ErrorActionPreference = 'Continue'
+    $out = & docker @args 2>&1
+    $script:DockerExitCode = $LASTEXITCODE
+    $out | ForEach-Object { "$_" }
+}
 $Base = 'http://localhost:2000/api/v2'
 $Container = 'piston_api'
 $Image = 'ghcr.io/engineer-man/piston'
@@ -55,19 +80,19 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 # EXEC-able /piston/jobs tmpfs (compiled programs run from there). Installed
 # languages live in the named volume 'piston_packages', so recreating the
 # container is cheap and non-destructive.
-$exists = (docker ps -a --filter "name=$Container" --format '{{.Names}}') -eq $Container
+$exists = (Invoke-Docker ps -a --filter "name=$Container" --format '{{.Names}}') -eq $Container
 if ($exists) {
     Write-Host "Removing old '$Container' (languages persist in the volume)..." -ForegroundColor DarkGray
-    docker rm -f $Container | Out-Null
+    Invoke-Docker rm -f $Container | Out-Null
 }
 
 # 0. Remove the cgroup tree a previous run left in the host hierarchy. See the
 # cgroup note below the language table for why it outlives the container. This
 # helper is deliberately minimal -- no capabilities except the one rmdir needs.
 Write-Host 'Clearing any stale piston cgroup...' -ForegroundColor DarkGray
-docker run --rm --cap-drop=ALL --cap-add=DAC_OVERRIDE `
+Invoke-Docker run --rm --cap-drop=ALL --cap-add=DAC_OVERRIDE `
     -v /sys/fs/cgroup:/sys/fs/cgroup:rw --entrypoint sh alpine `
-    -c 'rmdir /sys/fs/cgroup/isolate/init 2>/dev/null; rmdir /sys/fs/cgroup/isolate 2>/dev/null; exit 0' 2>$null | Out-Null
+    -c 'rmdir /sys/fs/cgroup/isolate/init 2>/dev/null; rmdir /sys/fs/cgroup/isolate 2>/dev/null; exit 0' | Out-Null
 Write-Host "Running Piston ($Image)..." -ForegroundColor Cyan
 $tmpfs = "/piston/jobs:exec,uid=1000,gid=1000,mode=711"
 # Raise Piston's run/compile timeout ceilings to 15s so our per-question
@@ -135,7 +160,17 @@ $sandboxOpts = @(
 
 # 127.0.0.1, not 0.0.0.0: an unauthenticated arbitrary-code-execution API must
 # not be reachable from the local network.
-docker run -d --restart unless-stopped -p 127.0.0.1:2000:2000 @sandboxOpts -v piston_packages:/piston/packages --tmpfs $tmpfs @timeoutEnv --name $Container $Image | Out-Null
+$runOpts = $sandboxOpts
+if ($AllowPrivilegedLocal) {
+    Write-Host 'WARNING: -AllowPrivilegedLocal runs Piston --privileged. Local development only;' -ForegroundColor Yellow
+    Write-Host '         never on a host that holds production credentials.' -ForegroundColor Yellow
+    $runOpts = @('--privileged')
+}
+Invoke-Docker run -d --restart unless-stopped -p 127.0.0.1:2000:2000 @runOpts -v piston_packages:/piston/packages --tmpfs $tmpfs @timeoutEnv --name $Container $Image | Out-Null
+if ($script:DockerExitCode -ne 0) {
+    Write-Host "docker run failed (exit $script:DockerExitCode)." -ForegroundColor Red
+    exit 1
+}
 
 # 2. Wait for the API to answer.
 Write-Host 'Waiting for the Piston API on :2000 ...' -ForegroundColor Cyan
@@ -145,7 +180,20 @@ while ((Get-Date) -lt $deadline -and -not $ready) {
     try { Invoke-RestMethod "$Base/runtimes" -TimeoutSec 4 | Out-Null; $ready = $true }
     catch { Start-Sleep -Seconds 3 }
 }
-if (-not $ready) { Write-Host 'Piston did not come up in time.' -ForegroundColor Red; exit 1 }
+if (-not $ready) {
+    Write-Host 'Piston did not come up in time. Last log lines:' -ForegroundColor Red
+    $logs = Invoke-Docker logs --tail 15 $Container
+    $logs | ForEach-Object { Write-Host "  $_" }
+    # Stop a crash loop from restarting forever in the background.
+    Invoke-Docker update --restart=no $Container | Out-Null
+    if (-not $AllowPrivilegedLocal -and ($logs -join "`n") -match 'isolate|cgroup') {
+        Write-Host ''
+        Write-Host 'The hardened sandbox could not set up its cgroups. This is expected on' -ForegroundColor Yellow
+        Write-Host 'Docker Desktop (WSL2). For a LOCAL development runner only, re-run with:' -ForegroundColor Yellow
+        Write-Host '  .\scripts\piston-up.ps1 -AllowPrivilegedLocal' -ForegroundColor Yellow
+    }
+    exit 1
+}
 Write-Host 'Piston API is up.' -ForegroundColor Green
 
 # 3. Install each wanted language (latest available version) if not already installed.
@@ -176,5 +224,15 @@ foreach ($slug in $Wanted.Keys) {
 
 Write-Host ''
 Write-Host 'Done. Self-hosted Piston is running at http://localhost:2000/api/v2' -ForegroundColor Green
-Write-Host 'services/data_gateway/.env already points at it. Restart data_gateway to use it.'
+$envFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'services\data_gateway\.env'
+$configured = (Test-Path $envFile) -and
+    (Select-String -Path $envFile -Pattern '^EXECUTION_PROVIDER=piston\s*$' -Quiet) -and
+    (Select-String -Path $envFile -Pattern '^PISTON_API_URL=http://localhost:2000/api/v2\s*$' -Quiet)
+if ($configured) {
+    Write-Host 'services/data_gateway/.env points at it. Restart data_gateway to use it.'
+} else {
+    Write-Host 'services/data_gateway/.env does NOT point at it yet. Add these lines, then restart data_gateway:' -ForegroundColor Yellow
+    Write-Host '  EXECUTION_PROVIDER=piston'
+    Write-Host '  PISTON_API_URL=http://localhost:2000/api/v2'
+}
 Write-Host 'Tear down with:  docker rm -f piston_api'

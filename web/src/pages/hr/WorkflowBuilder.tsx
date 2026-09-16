@@ -242,6 +242,7 @@ function EmptyState({
             disabled={busy}
             onClick={() => onTemplate(t.key)}
             aria-label={`Start from the ${t.name} template`}
+            data-testid={`template-${t.key}`}
             className={cn(
               'flex flex-col rounded-[16px] border p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-[var(--ui-inset-soft)] disabled:opacity-50',
               t.recommended ? 'border-[var(--accent)]/40' : 'border-border',
@@ -368,6 +369,20 @@ export default function WorkflowBuilder(): JSX.Element {
 
   const workflow = wf.data;
   const editable = workflow?.editable ?? false;
+  // Why the header Publish button is disabled, or null when it is not. Mirrors
+  // LifecycleSteps (publishable from the validate report), plus the states in
+  // which there is no report yet to trust.
+  const publishIssues = validation.data?.errors.length ?? 0;
+  const publishBlockedReason: string | null =
+    (workflow?.rounds.length ?? 0) === 0
+      ? 'Add at least one round before publishing.'
+      : !validation.data
+        ? 'Checking whether this workflow is ready to publish…'
+        : !validation.data.publishable
+          ? publishIssues > 0
+            ? `Fix ${publishIssues} issue${publishIssues === 1 ? '' : 's'} before publishing.`
+            : 'This workflow is not ready to publish yet.'
+          : null;
 
   /** Every round mutation lands here: cache the returned workflow, recheck. */
   const applyWorkflow = (next: Workflow) => {
@@ -469,7 +484,10 @@ export default function WorkflowBuilder(): JSX.Element {
               <h1 className="truncate text-[24px] font-semibold tracking-[-0.8px] text-foreground">
                 {req.data?.title ?? 'Hiring workflow'}
               </h1>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
+              <div
+                data-testid="workflow-meta"
+                className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground"
+              >
                 {workflow ? (
                   <>
                     <StatusTag
@@ -545,7 +563,12 @@ export default function WorkflowBuilder(): JSX.Element {
                     <button
                       type="button"
                       onClick={() => setConfirmPublish(true)}
-                      disabled={publishMut.isPending || workflow.rounds.length === 0}
+                      data-testid="publish-workflow"
+                      // Same gate as the lifecycle strip's "4. Publish": the
+                      // server refuses anything validate does not call
+                      // publishable, so the button should not offer it.
+                      disabled={publishMut.isPending || publishBlockedReason !== null}
+                      title={publishBlockedReason ?? undefined}
                       className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
                     >
                       {publishMut.isPending ? (
@@ -560,6 +583,7 @@ export default function WorkflowBuilder(): JSX.Element {
                   <button
                     type="button"
                     onClick={() => cloneMut.mutate()}
+                    data-testid="edit-as-new-version"
                     disabled={cloneMut.isPending}
                     className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
                   >
@@ -597,6 +621,7 @@ export default function WorkflowBuilder(): JSX.Element {
               <button
                 type="button"
                 onClick={() => publishMut.mutate()}
+                data-testid="confirm-publish"
                 className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground hover:opacity-90"
               >
                 Publish version {workflow.version}
@@ -711,7 +736,7 @@ export default function WorkflowBuilder(): JSX.Element {
             ) : null}
 
             {!editable ? (
-              <div className="mb-4 flex items-start gap-2 rounded-[12px] border border-border bg-black/25 p-3 text-[12.5px] leading-relaxed text-muted-foreground">
+              <div className="mb-4 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3 text-[12.5px] leading-relaxed text-muted-foreground">
                 <Eye className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                 {workflow.status === 'published'
                   ? 'This version is live, so it is read-only. Editing creates version ' +

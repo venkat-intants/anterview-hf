@@ -1234,12 +1234,24 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     set_url = ctx.get("set_url")
     apps_url = ctx.get("applications_url") or settings.app_base_url
     jobe = _esc(job)
-    at_company = f" at <strong>{_esc(company)}</strong>" if company else ""
+    orge = f"<strong>{_esc(company)}</strong>" if company else ""
+
+    # The lead names the company in each language's own word order. It used to
+    # splice the English " at <strong>Company</strong>" into every language, and
+    # the same HTML went into the plain-text part.
+    def lead(lang_key: str, job_part: str, company_part: str) -> str:
+        if lang_key == "hi":
+            where = f"{company_part} में " if company_part else ""
+            return f"धन्यवाद — {where}{job_part} के लिए आपका आवेदन मिल गया है।"
+        if lang_key == "te":
+            where = f"{company_part}లో " if company_part else ""
+            return f"ధన్యవాదాలు — {where}{job_part} కోసం మీ దరఖాస్తు అందింది."
+        at = f" at {company_part}" if company_part else ""
+        return f"Thanks — your application for {job_part}{at} is in."
 
     copy = {
         "en": {
             "subject": f"We have your application for {job}",
-            "lead": f"Thanks — your application for {jobe}{at_company} is in.",
             "activate": (
                 "Set a password to track it. You will be able to see which stage "
                 "you are at and what happens next, in one place."
@@ -1252,7 +1264,6 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
         },
         "hi": {
             "subject": f"{job} के लिए आपका आवेदन मिल गया",
-            "lead": f"धन्यवाद — {jobe}{at_company} के लिए आपका आवेदन मिल गया है।",
             "activate": (
                 "इसे ट्रैक करने के लिए पासवर्ड सेट करें। आप एक ही जगह देख सकेंगे कि "
                 "आप किस चरण में हैं और आगे क्या होगा।"
@@ -1265,7 +1276,6 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
         },
         "te": {
             "subject": f"{job} కోసం మీ దరఖాస్తు అందింది",
-            "lead": f"ధన్యవాదాలు — {jobe}{at_company} కోసం మీ దరఖాస్తు అందింది.",
             "activate": (
                 "దీన్ని ట్రాక్ చేయడానికి పాస్‌వర్డ్ సెట్ చేయండి. మీరు ఏ దశలో ఉన్నారో, "
                 "తర్వాత ఏమి జరుగుతుందో ఒకే చోట చూడవచ్చు."
@@ -1277,9 +1287,12 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "expiry": "ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, 7 రోజుల్లో ముగుస్తుంది.",
         },
     }
-    c = copy.get(lang, copy["en"])
+    lang_key = lang if lang in copy else "en"
+    c = copy[lang_key]
+    lead_html = lead(lang_key, jobe, orge)
+    lead_text = lead(lang_key, job, company or "")
 
-    inner = _p(_greeting(lang, name)) + _p(c["lead"])
+    inner = _p(_greeting(lang, name)) + _p(lead_html)
     if set_url:
         inner += _p(c["activate"])
         inner += _button(set_url, c["cta_set"])
@@ -1292,13 +1305,13 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
         inner += _button(apps_url, c["cta_view"])
     inner += _p(c["outro"])
 
-    text_parts = [_greeting(lang, name), "", c["lead"]]
+    text_parts = [_greeting(lang, name), "", lead_text]
     if set_url:
         text_parts += ["", c["activate"], set_url, "", c["expiry"]]
     else:
         text_parts += ["", c["signed_in"], apps_url]
     text_parts += ["", c["outro"]]
-    return c["subject"], inner, "\n".join(text_parts), c["lead"]
+    return c["subject"], inner, "\n".join(text_parts), lead_text
 
 
 def _t_generic(lang: str, ctx: dict) -> tuple[str, str, str, str]:

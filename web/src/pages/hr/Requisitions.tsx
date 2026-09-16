@@ -81,6 +81,7 @@ function RequisitionRow({ req }: { req: Requisition }) {
     <GlassCard hover className="p-0">
       <Link
         to={`/hr/requisitions/${req.id}`}
+        data-testid="opening-row"
         className="flex items-center gap-4 p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       >
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[var(--ui-inset)]">
@@ -253,6 +254,7 @@ function NewRequisitionForm({ onDone }: { onDone: () => void }) {
         <button
           type="button"
           onClick={() => mut.mutate()}
+          data-testid="create-opening"
           disabled={mut.isPending || title.trim().length < 2}
           className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
         >
@@ -305,6 +307,7 @@ export default function Requisitions(): JSX.Element {
           <button
             type="button"
             onClick={() => setCreating((c) => !c)}
+            data-testid="new-opening"
             className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground hover:opacity-90"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />

@@ -595,7 +595,10 @@ export default function PlatformOwnerConsole() {
       <Reveal>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
+            <h1
+              data-testid="page-title"
+              className="text-[28px] font-semibold tracking-[-1px] text-foreground"
+            >
               Platform Owner
             </h1>
             <p className="mt-1 text-[14px] text-muted-foreground">

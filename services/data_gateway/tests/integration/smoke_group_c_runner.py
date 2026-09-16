@@ -54,8 +54,8 @@ async def main() -> None:
         await c.execute(text(
             "TRUNCATE companies, users, applicants, jobs, job_requisitions, enrolments,"
             " stage_transitions, workflows, workflow_rounds, round_criteria, round_results,"
-            " exams, exam_rounds, exam_assignments, interview_invites, sessions,"
-            " email_events, notifications CASCADE"))
+            " exams, exam_rounds, exam_sections, exam_questions, exam_assignments,"
+            " interview_invites, sessions, email_events, notifications CASCADE"))
 
     now = datetime.now(tz=UTC)
     cid, uid, rid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
@@ -81,6 +81,16 @@ async def main() -> None:
                 "INSERT INTO exam_rounds (id,exam_id,company_id,round_number,title,position,"
                 " status,created_at,updated_at) VALUES (:i,:e,:c,:n,:t,:p,'published',:ts,:ts)"),
                 {"i": eid, "e": exam_id, "c": cid, "n": n, "t": title, "p": n - 1, "ts": now})
+            # Publish validation refuses an exam round with no questions.
+            sec = uuid.uuid4()
+            await db.execute(text(
+                "INSERT INTO exam_sections (id,round_id,exam_id,company_id,title,kind,position)"
+                " VALUES (:s,:r,:e,:c,'Section 1','mcq',0)"),
+                {"s": sec, "r": eid, "e": exam_id, "c": cid})
+            await db.execute(text(
+                "INSERT INTO exam_questions (id,exam_id,section_id,company_id,prompt,options,"
+                " correct_index,position) VALUES (:q,:e,:s,:c,'2 + 2?',CAST(:o AS jsonb),1,0)"),
+                {"q": uuid.uuid4(), "e": exam_id, "s": sec, "c": cid, "o": '["3", "4"]'})
         await db.commit()
 
         # Build and publish a four-round workflow.

@@ -29,7 +29,6 @@ import {
   XCircle,
   Clock,
   ListChecks,
-  Languages,
   ShieldCheck,
   AlertTriangle,
   Maximize2,
@@ -462,12 +461,14 @@ export default function PublicExam() {
             },
           ]
         : []),
-      {
-        icon: Languages,
-        label: t('publicExam.factLanguage'),
-        value: 'EN · हि · తె',
-      },
     ];
+    // An auto-named round ("Round 1" for round 1) says nothing the exam title
+    // does not, and printed through roundLabel it read "Round 1: Round 1".
+    const roundTitle = exam.round_title?.trim() ?? '';
+    const isDefaultRoundTitle =
+      /^Round \d+$/.test(roundTitle) && roundTitle === `Round ${exam.round_number}`;
+    const showRoundLabel =
+      roundTitle.length > 0 && roundTitle !== exam.title && !isDefaultRoundTitle;
 
     return (
       <div className="relative flex min-h-screen flex-col items-center justify-center bg-midnight px-6 py-12 font-sans text-foreground">
@@ -493,7 +494,7 @@ export default function PublicExam() {
             <h1 className="mt-4 text-[26px] font-semibold tracking-[-0.8px] text-foreground">
               {exam.title}
             </h1>
-            {exam.round_title && exam.round_title !== exam.title && (
+            {showRoundLabel && (
               <p className="mt-0.5 text-body-sm text-muted-foreground">
                 {t('publicExam.roundLabel', { n: exam.round_number, title: exam.round_title })}
               </p>
@@ -505,7 +506,7 @@ export default function PublicExam() {
 
             {/* Fact grid */}
             <div
-              className={cn('mt-6 grid gap-3', facts.length === 3 ? 'grid-cols-3' : 'grid-cols-2')}
+              className={cn('mt-6 grid gap-3', facts.length === 2 ? 'grid-cols-2' : 'grid-cols-1')}
             >
               {facts.map((f) => {
                 const Icon = f.icon;

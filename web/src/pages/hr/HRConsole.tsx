@@ -171,7 +171,7 @@ export default function HRConsole() {
       <Reveal>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-[28px] font-semibold tracking-[-1px]">
+            <h1 data-testid="page-title" className="text-[28px] font-semibold tracking-[-1px]">
               {meLoading
                 ? 'HR Console'
                 : name

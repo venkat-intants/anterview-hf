@@ -46,7 +46,7 @@ from app.embedding_client import (
     to_pgvector_literal,
     why_match_remote,
 )
-from app.mailer import enqueue_email
+from app.mailer import candidate_language, enqueue_email
 from app.models import Applicant
 from app.requisitions import (
     ambiguous_decision_detail,
@@ -127,7 +127,7 @@ async def email_applicant_decision(
         db,
         to=applicant.email,
         template="decision",
-        lang="en",
+        lang=await candidate_language(db, applicant.id),
         ctx={
             "name": applicant.full_name,
             "job_title": job_title or applicant.target_job_title,

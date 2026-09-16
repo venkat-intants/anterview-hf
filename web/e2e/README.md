@@ -1,44 +1,92 @@
-# Browser E2E — currently empty, on purpose
+# Browser end-to-end suite
 
-`text-interview.spec.ts` was deleted (2026-08-03). It described a **text**
-interview — register → consent → five typed turns into `#candidate-input` → a
-complete screen — and that product no longer exists: `src/pages/Interview.tsx`
-is a LiveKit voice + video page rendering `InterviewIntro` + `LiveKitInterview`.
-Every selector it used had also gone stale (`#full_name` / `#email` /
-`#password` — `Register.tsx` labels its inputs by placeholder now; there is no
-`#candidate-input` anywhere in `src/`).
+Playwright specs that drive the real app — the web dev server, data_gateway and
+the local datastores — the way a person would. They complement, not replace, the
+unit tests (`services/*/tests/unit`, `web/src/__tests__`) and the database smokes
+(`services/*/tests/integration`).
 
-Nothing ran it (no workflow references Playwright; `npm run e2e` is manual), so
-it failed on its first line while reading as end-to-end coverage. A spec that
-cannot pass is worse than no spec — an engineer told to "run the E2E smoke
-before release" debugs a working app.
+## Running it
 
-## What a real rewrite needs first
+1. Start the stack: Docker (Postgres, Redis, MinIO, Mailpit), migrations at head,
+   `data_gateway` on :8002 and the web dev server on :5174. The repo-root
+   `dev-up.ps1` starts the services.
 
-1. **Stable hooks in `web/src`.** Assert on `data-testid`, not ids the styling
-   pass keeps deleting. The registration form and the LiveKit interview page
-   both need them added.
-2. **Fake media.** The interview leg needs a mic/camera:
-   `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`, plus a
-   LiveKit room the CI network can reach.
-3. **A budget decision.** One full run hits real Gemini + Sarvam + the avatar
-   provider (~₹1/run, and it burns Tavus avatar minutes). Keep it off `push`;
-   `workflow_dispatch` only, per the cost cap in CLAUDE.md.
+   **Start data_gateway with `RATE_LIMIT_LOGIN_PER_MINUTE=1000` for the run.**
+   It allows 5 sign-ins a minute per IP, and the suite signs in many times from
+   one. The specs fail with a message saying so if you forget. This is a setting
+   for the local test stack only; nothing in the code changes.
 
-Until (1)–(3) are settled, the interview path is covered by the service-level
-tests under `services/*/tests/`, not from a browser.
+   ```powershell
+   $env:RATE_LIMIT_LOGIN_PER_MINUTE = '1000'
+   cd services/data_gateway; .\.venv\Scripts\python -m uvicorn app.main:app --port 8002
+   ```
+2. A browser for Playwright, once: `npx playwright install chromium`
+   — or reuse an installed one: `E2E_BROWSER_CHANNEL=msedge` (or `chrome`).
+3. `npm run e2e` from `web/`. Pass Playwright arguments through, e.g.
+   `npm run e2e -- auth.spec.ts` or `npm run e2e -- --headed`.
 
-`web/playwright.config.ts`, the `e2e` script and the `@playwright/test`
-devDependency are still in place for that rewrite.
+`global-setup.ts` fails first, with the command to run, if data_gateway or the web
+app is not answering.
 
-## `npm run e2e` now fails instead of passing silently (FE-3)
+### Watching it run
 
-It used to run `playwright test` directly, and Playwright exits **0** when no
-spec files match — so the command reported success for a suite that asserted
-nothing, which is the exact confusion this file was written to prevent. It now
-runs `scripts/run-e2e.mjs`, which refuses with exit 1 and points back here while
-`e2e/` holds no specs, and hands off to Playwright unchanged the moment one
-lands. No edit to the script is needed to un-block it.
+| Command (from `web/`) | What you get |
+|---|---|
+| `npm run e2e -- --headed` | a real browser window doing each step |
+| `E2E_SLOWMO=500 npm run e2e -- --headed` | the same, pausing 500 ms between actions |
+| `npm run e2e -- --ui` | Playwright's UI: pick tests, step through, time-travel each action |
+| `npx playwright show-report` | the HTML report of the last run, with traces of any failure |
 
-`CLAUDE.md` still lists Playwright under the project's test stack without noting
-that the suite is empty — that file is outside `web/` and needs the same line.
+In PowerShell set variables first: `$env:E2E_SLOWMO = '500'; npm run e2e -- --headed`.
+
+| Variable | Default | What it changes |
+|---|---|---|
+| `E2E_WEB_URL` | `http://localhost:5174` | the app under test |
+| `E2E_API_URL` | `http://localhost:8002` | data_gateway, for set-up calls |
+| `E2E_BROWSER_CHANNEL` | Playwright's Chromium | e.g. `msedge`, `chrome` |
+| `E2E_PYTHON` | data_gateway's `.venv` python | runs the provisioning script |
+| `E2E_DATABASE_URL` | `DATABASE_URL` from `services/data_gateway/.env` | where accounts are provisioned |
+
+## Test data
+
+Every run provisions its own company and one account per role
+(`support/provision_tenant.py`): platform owner, company super admin, HR manager
+and candidate, each with a random password. They are written to
+`e2e/.auth/tenant.json`, which is git-ignored.
+
+The script **refuses any database that is not on this machine** and any `APP_ENV`
+other than development or test. It writes straight to the database on purpose:
+the product has no way to create a platform owner, and an account-creating
+endpoint added "for tests" would be attack surface production carries too.
+
+Specs set things up through the API (`support/fixtures.ts` — an opening, say)
+and exercise the behaviour under test through the UI. Each test creates what it
+needs rather than depending on another test having run.
+
+## Selectors
+
+Assert on `data-testid`, roles and user-visible text — never on CSS classes or
+DOM shape, which a styling pass changes without changing behaviour. When a spec
+needs a hook that does not exist, add a `data-testid` to the component in the
+same change.
+
+## Coverage
+
+| Layer | Covers | Status |
+|---|---|---|
+| 1 | Sign-in and landing for every role, access refusals, creating an opening, the workflow builder (templates, human gates, publish blocked by issues, publish and read-only) | `auth`, `opening`, `workflow` specs |
+| 2 | Candidate path: public apply with consent, shortlist, MCQ, coding, held-not-rejected, decision queue | next — needs a fake LLM mode and a test hook to trigger the background passes, so routine runs spend nothing |
+| 3 | Company hiring board, bulk upload, dashboards, candidate account | after layer 2 |
+| 4 | Live AI interview (fake media devices) | manual only — it spends real Tavus/Sarvam/LLM budget |
+
+## When it runs
+
+Manually, before a release. It needs the whole local stack, so it is not wired
+into CI on push. If that changes, run it on a schedule or `workflow_dispatch`,
+never with the interview leg.
+
+## Why `npm run e2e` refuses an empty folder
+
+Playwright exits 0 when no spec matches, which reads as "E2E passed" for a suite
+that asserted nothing. `scripts/run-e2e.mjs` refuses to run while `e2e/` holds no
+specs and hands off to Playwright otherwise.

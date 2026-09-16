@@ -436,6 +436,19 @@ async def create_from_template(
     return await apply_draft(requisition_id, payload, ctx, db)
 
 
+def _criterion_out(c: dict[str, Any]) -> dict[str, Any]:
+    """A frozen criterion in the shape the builder reads and sends back.
+
+    The builder keys a round's criteria by ``id`` / ``name`` / ``kind`` — the
+    shape of the role model it picks from and of CriterionIn. This response
+    carried only the ``competency_*`` column names, so a round's competencies
+    never showed as ticked, and ticking another sent the existing ones back
+    without an id. The column names stay for the readers that use them.
+    """
+    return {**c, "id": c["competency_id"], "name": c["competency_name"],
+            "kind": c["competency_kind"]}
+
+
 @router.get("/workflows/{workflow_id}")
 async def get_workflow(
     workflow_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
@@ -471,7 +484,7 @@ async def get_workflow(
                 if r["on_pass_next_round_id"] else None,
                 "exam_round_id": str(r["exam_round_id"]) if r["exam_round_id"] else None,
                 "needs_questions": r["kind"] in EXAM_BACKED_KINDS and not r["exam_round_id"],
-                "criteria": criteria.get(str(r["id"]), []),
+                "criteria": [_criterion_out(c) for c in criteria.get(str(r["id"]), [])],
             }
             for r in rounds
         ],

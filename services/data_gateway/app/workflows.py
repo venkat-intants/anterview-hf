@@ -179,6 +179,77 @@ def validate_chain(rounds: list[dict[str, Any]]) -> list[str]:
     return errors
 
 
+# An exam-backed round is only takeable when its exam round is published and has
+# questions: exam_take refuses a link to anything else and the candidate reads
+# "This exam link isn't valid". Checked at publish so a workflow cannot go live
+# pointing at one, and again by the runner before it mints a link, because an
+# exam round can be changed after the workflow is published.
+_EXAM_ROUND_READINESS_SQL = """
+SELECT er.id, er.exam_id, er.status,
+       (SELECT count(*) FROM exam_questions q
+          JOIN exam_sections s ON s.id = q.section_id AND s.deleted_at IS NULL
+         WHERE s.round_id = er.id AND q.deleted_at IS NULL)
+     + (SELECT count(*) FROM coding_questions c
+          JOIN exam_sections s ON s.id = c.section_id AND s.deleted_at IS NULL
+         WHERE s.round_id = er.id AND c.deleted_at IS NULL) AS questions
+  FROM exam_rounds er
+ WHERE er.id = ANY(:ids) AND er.deleted_at IS NULL
+"""
+
+
+async def exam_round_readiness(
+    db: AsyncSession, exam_round_ids: list[Any]
+) -> dict[str, dict[str, Any]]:
+    """Status and live question count of each exam round, keyed by id."""
+    ids = [uuid.UUID(str(i)) for i in exam_round_ids if i]
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(text(_EXAM_ROUND_READINESS_SQL), {"ids": ids})
+    ).mappings().all()
+    return {
+        str(r["id"]): {
+            "exam_id": r["exam_id"],
+            "status": r["status"],
+            "questions": int(r["questions"] or 0),
+        }
+        for r in rows
+    }
+
+
+def exam_round_problem(readiness: dict[str, Any] | None) -> str | None:
+    """Why a candidate could not open this exam round, or None when they can."""
+    if readiness is None:
+        return "no longer exists"
+    if readiness.get("status") != "published":
+        return "is still a draft — publish it in the exam editor"
+    if not readiness.get("questions"):
+        return "has no questions"
+    return None
+
+
+def exam_round_errors(
+    rounds: list[dict[str, Any]], readiness: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Blocking errors for exam-backed rounds a candidate could not open.
+
+    A round with nothing attached is left to validate_chain, which already says
+    it needs questions.
+    """
+    errors: list[str] = []
+    for r in rounds:
+        if r["kind"] not in EXAM_BACKED_KINDS or not r.get("exam_round_id"):
+            continue
+        problem = exam_round_problem(readiness.get(str(r["exam_round_id"])))
+        if problem is not None:
+            title = r.get("title") or "(untitled)"
+            errors.append(
+                f"{title}: the attached exam round {problem}, "
+                "so candidates' exam links would not open."
+            )
+    return errors
+
+
 def build_coverage(
     profile_competencies: list[dict[str, Any]],
     criteria_by_round: dict[str, list[dict[str, Any]]],
@@ -717,6 +788,10 @@ async def validate(
     """Everything wrong with a draft, plus the coverage report."""
     rounds = await load_rounds(db, workflow_id)
     errors = validate_chain(rounds)
+    readiness = await exam_round_readiness(
+        db, [r["exam_round_id"] for r in rounds if r["kind"] in EXAM_BACKED_KINDS]
+    )
+    errors.extend(exam_round_errors(rounds, readiness))
     report = ValidationReport(errors=errors)
 
     criteria = await load_criteria(db, [r["id"] for r in rounds])

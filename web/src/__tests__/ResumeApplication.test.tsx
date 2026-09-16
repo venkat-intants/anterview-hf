@@ -432,3 +432,75 @@ describe('ResumeApplication — localisation', () => {
     }
   });
 });
+
+// ===========================================================================
+// The seed is idempotent
+//
+// Written while chasing a flaky failure of "lets the candidate change it" — the
+// same commit passed one CI run and failed the next. I believed the cause was
+// `refetchOnWindowFocus: true` (set app-wide in main.tsx) re-running the
+// seeding effect and overwriting typed values.
+//
+// THAT WAS WRONG, and this test is what showed it: the first version passed
+// with the guard REMOVED. React Query's structural sharing returns the same
+// object reference for deeply-equal data, and DraftOut has no per-fetch
+// changing field, so the effect never re-fires on an unchanged refetch. A
+// candidate tabbing away does not lose their edits.
+//
+// Kept because the property is still worth holding: a refetch must not reset
+// the form, whatever churns the object identity. The flake itself remains
+// unexplained — it is not reproducible locally (repeated clean runs) and this
+// guard is not claimed to fix it.
+// ===========================================================================
+describe('ResumeApplication — the seed is idempotent', () => {
+  it('a refetch of unchanged data leaves typed values alone', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
+    if (!window.location.hash) window.location.hash = '#tok-123';
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/apply/draft']}>
+          <ResumeApplication />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const name = await screen.findByLabelText(/Full name/);
+    fireEvent.change(name, { target: { value: 'Priya S. Sharma' } });
+    getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
+    await client.refetchQueries({ queryKey: ['apply', 'draft'] });
+
+    await waitFor(() =>
+      expect(
+        name,
+        'a refetch overwrote the candidate’s correction',
+      ).toHaveValue('Priya S. Sharma'),
+    );
+  });
+
+  it('still takes the server’s reading when it genuinely changes', () => {
+    // The guard must not freeze the form: after a CV upload re-parses, or a
+    // save normalises a value, the new server reading still has to land. Every
+    // seeded field must appear in the signature or a change to it is ignored.
+    const source = readFileSync('src/pages/ResumeApplication.tsx', 'utf-8');
+    const effect = source.slice(source.indexOf('const seeded = useRef'));
+    expect(effect).toContain('signature === seeded.current');
+    for (const f of [
+      'full_name',
+      'phone',
+      'years_experience',
+      'current_company',
+      'current_title',
+      'linkedin_url',
+      'github_url',
+    ]) {
+      expect(
+        effect.slice(0, effect.indexOf('setForm')),
+        `${f} is seeded but not in the signature, so a server change to it is ignored`,
+      ).toContain(f);
+    }
+  });
+});

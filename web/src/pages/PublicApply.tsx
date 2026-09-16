@@ -1140,7 +1140,7 @@ export default function PublicApply(): JSX.Element {
                 <input
                   readOnly
                   aria-label="Your resume link"
-                  value={`${window.location.origin}/apply/draft/${saveLater.data.resume_token}`}
+                  value={`${window.location.origin}/apply/draft#${saveLater.data.resume_token}`}
                   onFocus={(e) => e.currentTarget.select()}
                   className="mt-2 w-full rounded-[10px] border border-border bg-transparent px-2.5 py-2 text-[12px] text-[var(--ui-soft)]"
                 />

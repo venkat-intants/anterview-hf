@@ -433,16 +433,42 @@ draft's values stay on the draft, the CV belongs to the application via
 `applied_resume_s3_key`, and the record changes only after activation proves the
 address.
 
-### Accepted as follow-ups, not merge blockers
+### The four "follow-up" items were done too, not deferred
 
-The reviewer was explicit that these need an owner and a date rather than
-holding the merge: a stranger can still mint a consent grant against a
-previously-*revoked* account (pre-existing on the one-shot path); the new
-`DELETE /apply/draft/{token}` has no UI yet, so the right exists in the API but
-not in the product; "fresh identity per save" has no cleanup for orphan guest
-users; and the draft token rides in the URL path rather than a header or
-fragment, which the reviewer correctly showed is *against* this repo's own
-precedent rather than following it.
+The reviewer accepted these as non-blocking with an owner and a date. They are
+closed instead:
+
+- **A stranger could re-grant consent somebody had withdrawn.** The idempotence
+  check filtered `revoked_at IS NULL`, so a withdrawal was only sticky against
+  people who had not withdrawn. It now matches any prior row, granted or
+  revoked; re-consenting still works, through the authenticated consent router,
+  rather than as a side effect of a stranger filling in a form.
+- **The draft-delete endpoint had no UI**, so the right existed in the API and
+  not in the product. Added to the resume page, two-step, with a confirmation of
+  what was removed.
+- **"Fresh identity per save" had no cleanup.** Every `start_draft` minted a
+  guest user and a consent row, unauthenticated and unbounded — and the consent
+  ledger is the artefact a DPDP audit reads. The retention pass now also deletes
+  orphan guest identities and submitted drafts past a 90-day window, and
+  **drains** rather than stopping at 500, which a capped single pass could not.
+- **The token rode in the URL path.** The reviewer was right that this was
+  *against* this repo's precedent, not following it: exam and interview auth use
+  `X-Exam-Token`/`X-Interview-Token` headers with the token in the URL
+  *fragment*. Now `X-Draft-Token` plus `/apply/draft#<token>`, so the credential
+  never reaches an access log, an edge log or a `Referer`.
+
+Moving those routes surfaced one more thing, caught by testing rather than
+review: `/apply/draft` was being shadowed by `/apply/{requisition_id}`, because
+FastAPI matches in declaration order. The module docstring had warned about
+exactly that for `/apply/activate` and I had ignored it. The block moved above
+the parameterised routes, with a test that asserts the ordering.
+
+Two more from the reviewer's list, also closed: the third erasure predicate was
+algebraically identical to the first — a route claimed in the comments and
+absent from the SQL — and is now a real one keyed on the linked applicant's
+address; and the executor's step ORDER (drafts before `users.email` is
+anonymised, keys before rows) now has a test, because it was load-bearing and
+unasserted.
 
 ---
 

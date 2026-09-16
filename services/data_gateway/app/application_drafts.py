@@ -50,6 +50,16 @@ log = structlog.get_logger(__name__)
 #: data does not sit indefinitely. Saving again extends it.
 DRAFT_TTL_DAYS = 30
 
+#: How long a SUBMITTED draft is kept. It is a duplicate of details that now
+#: live on the applicant, retained only so the PH3-B5 confirmation evidence
+#: survives the handover; after that it is a second copy of somebody's name,
+#: phone number and CV key with no reader.
+SUBMITTED_RETENTION_DAYS = 90
+
+#: A bound on the drain loop, so a pathological backlog cannot hold the
+#: retention transaction open all night. At 500 a pass this is 20,000 rows.
+_MAX_PURGE_PASSES = 40
+
 #: Bytes of randomness in the resume token. Same as the interview link's.
 _TOKEN_BYTES = 32
 
@@ -346,34 +356,93 @@ async def mark_submitted(
             "       token_hash = :h"
             " WHERE id = :i"
         ),
-        {"n": now, "i": draft_id, "h": hash_token(f"submitted:{draft_id}")},
+        # A random hash, not sha256("submitted:" + id). The deterministic
+        # version was harmless only because load() filters status='draft' —
+        # which is a property of a different function, and the kind of coupling
+        # that stops being true quietly.
+        {"n": now, "i": draft_id, "h": mint_token()[1]},
     )
 
 
 async def purge_expired(
     db: AsyncSession, *, now: datetime | None = None, limit: int = 500
 ) -> list[str]:
-    """Delete drafts past their expiry. Returns the S3 keys to clean up.
+    """Delete drafts past their purpose, and the identities they left behind.
 
     Called from the DPDP retention cron rather than a bespoke sweep, because an
     expired draft is personal data past its purpose and that is precisely what
-    that cron is for.
+    that cron is for. Returns the S3 keys to clean up.
+
+    THREE THINGS, not one:
+
+    1. Expired DRAFTS — abandoned part-way, still holding a name, an email, a
+       phone number and a CV.
+    2. SUBMITTED drafts past ``SUBMITTED_RETENTION_DAYS``. The row is a full
+       duplicate of details that now live on the applicant, kept only so the
+       confirmation evidence survives the handover. Nothing enforced a window on
+       it, so "kept for the length of the retention window" was a claim with no
+       code behind it.
+    3. Orphan GUEST IDENTITIES. Every ``start_draft`` mints a ``guest_candidate``
+       user and a consent row to anchor it — unauthenticated, ten a minute per
+       IP, no proof of address. Before drafts were per-save that was bounded by
+       real people; now nothing bounded it, so `users`, `user_roles` and the
+       consent ledger grew without limit, and the ledger is the artefact a DPDP
+       audit reads. A guest with no applicant and no remaining draft represents
+       nobody, so it goes with the draft that created it.
+
+    DRAINS rather than stopping at ``limit``. A single capped pass could not keep
+    up with the rate the endpoint creates rows, which turns a retention control
+    into a slowly losing race.
     """
     now = now or datetime.now(tz=UTC)
-    rows = (
-        await db.execute(
+    keys: list[str] = []
+    orphans = 0
+
+    for _ in range(_MAX_PURGE_PASSES):
+        rows = (
+            await db.execute(
+                text(
+                    "DELETE FROM application_drafts"
+                    " WHERE id IN ("
+                    "   SELECT id FROM application_drafts"
+                    "    WHERE (status = 'draft' AND expires_at <= :n)"
+                    "       OR (status = 'submitted' AND submitted_at IS NOT NULL"
+                    "           AND submitted_at <= :cutoff)"
+                    "    LIMIT :lim)"
+                    " RETURNING resume_s3_key, user_id"
+                ),
+                {"n": now, "lim": limit,
+                 "cutoff": now - timedelta(days=SUBMITTED_RETENTION_DAYS)},
+            )
+        ).mappings().all()
+        if not rows:
+            break
+        keys.extend(r["resume_s3_key"] for r in rows if r["resume_s3_key"])
+
+        # The guest identities those drafts anchored, where nothing else needs
+        # them. Scoped to guest placeholders by the reserved address suffix, so
+        # a real account can never be caught by this even if it once held a
+        # draft.
+        gone = await db.execute(
             text(
-                "DELETE FROM application_drafts"
-                " WHERE id IN ("
-                "   SELECT id FROM application_drafts"
-                "    WHERE status = 'draft' AND expires_at <= :n"
-                "    LIMIT :lim)"
-                " RETURNING resume_s3_key"
+                "DELETE FROM users u"
+                " WHERE u.id = ANY(:ids)"
+                "   AND u.email LIKE 'guest+%@applicants.invalid'"
+                "   AND NOT EXISTS (SELECT 1 FROM applicants a WHERE a.user_id = u.id)"
+                "   AND NOT EXISTS ("
+                "         SELECT 1 FROM application_drafts d WHERE d.user_id = u.id)"
+                "   AND NOT EXISTS ("
+                "         SELECT 1 FROM erasure_requests e WHERE e.user_id = u.id)"
             ),
-            {"n": now, "lim": limit},
+            {"ids": [r["user_id"] for r in rows]},
         )
-    ).mappings().all()
-    keys = [r["resume_s3_key"] for r in rows if r["resume_s3_key"]]
-    if rows:
-        log.info("application_draft.purged", drafts=len(rows), objects=len(keys))
+        orphans += getattr(gone, "rowcount", 0) or 0
+        if len(rows) < limit:
+            break
+
+    if keys or orphans:
+        log.info(
+            "application_draft.purged",
+            objects=len(keys), orphan_identities=orphans,
+        )
     return keys

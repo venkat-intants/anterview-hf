@@ -1,9 +1,14 @@
 // Pick up an application you saved — PH3-B4c, with PH3-B5's confirmation step.
 //
-// Reached from a link the candidate keeps. There is no login: the token in the
-// URL is the only credential, which is why this page shows nothing until the
-// server has said the token opens something, and why an invalid or expired one
-// gets a single uniform message rather than a diagnosis.
+// Reached from a link the candidate keeps. There is no login: the token is the
+// only credential, which is why this page shows nothing until the server has
+// said it opens something, and why an invalid or expired one gets a single
+// uniform message rather than a diagnosis.
+//
+// The token rides in the URL FRAGMENT and is sent in the X-Draft-Token header.
+// A fragment never reaches a server, so the credential stays out of access
+// logs, edge logs and cross-origin Referer headers — the same rule /exam and
+// /interview-invite follow.
 //
 // WHY CONSENT IS NOT ASKED FOR HERE
 // It was taken when the draft was created — that was the first moment this
@@ -18,10 +23,10 @@
 // itself requires.
 
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   confirmDraft,
+  deleteDraft,
   getDraft,
   saveDraft,
   submitDraft,
@@ -47,13 +52,19 @@ function parsedAnything(draft: ApplicationDraft): boolean {
 }
 
 export default function ResumeApplication(): JSX.Element {
-  const { token = '' } = useParams();
+  // SECURITY: the token comes from window.location.hash — NOT from the path.
+  // A fragment is never sent to a server, so the credential stays out of access
+  // logs, edge logs and any cross-origin Referer. Same rule PublicExam and
+  // InterviewInvite follow; read once so a later navigation cannot swap it.
+  const [token] = useState(() => window.location.hash.replace(/^#/, '').trim());
   const client = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState<DraftFields>({});
   const [fileError, setFileError] = useState('');
   const [submitted, setSubmitted] = useState<string | null>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [discarded, setDiscarded] = useState(false);
 
   const draft = useQuery({
     queryKey: ['apply', 'draft', token],
@@ -109,6 +120,15 @@ export default function ResumeApplication(): JSX.Element {
     onSuccess: (r) => setSubmitted(r.message),
   });
 
+  // DPDP gives a data principal the right to ACT, not merely to be forgotten on
+  // a schedule. Without a control here the right existed in the API and not in
+  // the product — and the guest account this draft hangs off has no password,
+  // so there is nothing to sign in to and ask from.
+  const discard = useMutation({
+    mutationFn: () => deleteDraft(token),
+    onSuccess: () => setDiscarded(true),
+  });
+
   function set<K extends keyof DraftFields>(key: K, value: DraftFields[K]): void {
     setForm((f) => ({ ...f, [key]: value }));
   }
@@ -151,6 +171,23 @@ export default function ResumeApplication(): JSX.Element {
           <p className="mt-2 text-[13.5px] text-[#b8babf]">
             Saved applications are kept for a limited time, and a link stops working once
             the application has been sent. You can start again from the job advert.
+          </p>
+        </GlassCard>
+      </Shell>
+    );
+  }
+
+  if (discarded) {
+    return (
+      <Shell>
+        <GlassCard className="p-6 text-center">
+          <CheckCircle2 size={28} aria-hidden="true" className="mx-auto text-[#6fbf8d]" />
+          <h1 className="mt-3 text-[18px] font-semibold text-white">
+            Your saved application has been deleted
+          </h1>
+          <p className="mt-2 text-[14px] text-[#b8babf]">
+            We have removed the details you entered and the CV you uploaded. This
+            link no longer works.
           </p>
         </GlassCard>
       </Shell>
@@ -387,6 +424,44 @@ export default function ResumeApplication(): JSX.Element {
           <p className="mt-2 flex items-start gap-1.5 text-[12.5px] text-[#e6714f]">
             <AlertCircle size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
             {errText(send.error, 'Could not send your application.')}
+          </p>
+        ) : null}
+      </GlassCard>
+
+      {/* Erasure, exercised by the person themselves. Two steps, because it
+          destroys their work and cannot be undone — not to discourage it. */}
+      <GlassCard className="mt-4 p-5">
+        <h2 className="text-[15px] font-semibold text-white">Delete this application</h2>
+        <p className="mt-1 text-[13px] text-[#888b91]">
+          Removes the details you entered and the CV you uploaded. This cannot be
+          undone, and the link will stop working.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => (discarding ? discard.mutate() : setDiscarding(true))}
+            disabled={discard.isPending}
+            className="rounded-[10px] border border-[#e6714f]/40 px-3.5 py-2 text-[13px] text-[#e6714f] hover:bg-[#e6714f]/[0.08] disabled:opacity-40"
+          >
+            {discard.isPending
+              ? 'Deleting…'
+              : discarding
+                ? 'Confirm — delete everything'
+                : 'Delete my saved application'}
+          </button>
+          {discarding && !discard.isPending ? (
+            <button
+              type="button"
+              onClick={() => setDiscarding(false)}
+              className="text-[12.5px] text-[#6f7379] hover:text-[#b8babf]"
+            >
+              Keep it
+            </button>
+          ) : null}
+        </div>
+        {discard.isError ? (
+          <p className="mt-2 text-[12px] text-[#e6714f]">
+            {errText(discard.error, 'Could not delete your saved application.')}
           </p>
         ) : null}
       </GlassCard>

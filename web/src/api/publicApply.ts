@@ -330,8 +330,23 @@ export async function startDraft(
   return (await res.json()) as DraftStarted;
 }
 
+/**
+ * The resume token travels in a HEADER, never in the URL.
+ *
+ * It is a live credential to the holder's name, phone, employer, screening
+ * answers and CV. In a path it lands in the server's access log, the Space and
+ * Railway edge logs, browser history and any cross-origin `Referer`. This is
+ * the pattern the exam and interview clients already use (`X-Exam-Token`,
+ * `X-Interview-Token`); the shared link carries it in the URL *fragment*,
+ * which browsers do not send to servers, and the page moves it into this
+ * header.
+ */
+function draftHeaders(token: string, extra?: Record<string, string>): HeadersInit {
+  return { 'X-Draft-Token': token, ...(extra ?? {}) };
+}
+
 export async function getDraft(token: string): Promise<ApplicationDraft> {
-  const res = await fetch(`${API_BASE}/apply/draft/${encodeURIComponent(token)}`);
+  const res = await fetch(`${API_BASE}/apply/draft`, { headers: draftHeaders(token) });
   if (!res.ok) return readError(res);
   return (await res.json()) as ApplicationDraft;
 }
@@ -340,9 +355,9 @@ export async function saveDraft(
   token: string,
   fields: DraftFields,
 ): Promise<ApplicationDraft> {
-  const res = await fetch(`${API_BASE}/apply/draft/${encodeURIComponent(token)}`, {
+  const res = await fetch(`${API_BASE}/apply/draft`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: draftHeaders(token, { 'Content-Type': 'application/json' }),
     body: JSON.stringify(fields),
   });
   if (!res.ok) return readError(res);
@@ -359,16 +374,26 @@ export async function confirmDraft(
   token: string,
   corrections: DraftFields,
 ): Promise<ApplicationDraft> {
-  const res = await fetch(
-    `${API_BASE}/apply/draft/${encodeURIComponent(token)}/confirm`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(corrections),
-    },
-  );
+  const res = await fetch(`${API_BASE}/apply/draft/confirm`, {
+    method: 'POST',
+    headers: draftHeaders(token, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(corrections),
+  });
   if (!res.ok) return readError(res);
   return (await res.json()) as ApplicationDraft;
+}
+
+/**
+ * Throw the saved application away — the data principal exercising erasure on
+ * their own draft, which DPDP gives them a right to DO rather than merely wait
+ * thirty days for. The CV object goes with the row.
+ */
+export async function deleteDraft(token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/apply/draft`, {
+    method: 'DELETE',
+    headers: draftHeaders(token),
+  });
+  if (!res.ok) return readError(res);
 }
 
 export async function uploadDraftResume(
@@ -377,20 +402,21 @@ export async function uploadDraftResume(
 ): Promise<ApplicationDraft> {
   const form = new FormData();
   form.append('resume', resume);
-  // No Content-Type header: the browser must set the multipart boundary.
-  const res = await fetch(
-    `${API_BASE}/apply/draft/${encodeURIComponent(token)}/resume-upload`,
-    { method: 'POST', body: form },
-  );
+  // No Content-Type: the browser must set the multipart boundary.
+  const res = await fetch(`${API_BASE}/apply/draft/resume-upload`, {
+    method: 'POST',
+    headers: draftHeaders(token),
+    body: form,
+  });
   if (!res.ok) return readError(res);
   return (await res.json()) as ApplicationDraft;
 }
 
 export async function submitDraft(token: string): Promise<ApplicationResult> {
-  const res = await fetch(
-    `${API_BASE}/apply/draft/${encodeURIComponent(token)}/submit`,
-    { method: 'POST' },
-  );
+  const res = await fetch(`${API_BASE}/apply/draft/submit`, {
+    method: 'POST',
+    headers: draftHeaders(token),
+  });
   if (!res.ok) return readError(res);
   return (await res.json()) as ApplicationResult;
 }

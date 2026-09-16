@@ -44,6 +44,13 @@ PASS: list[str] = []
 FAIL: list[str] = []
 
 
+def _tok(token: str) -> dict[str, str]:
+    """The resume token travels in a header now, never the URL — it is a live
+    credential to a person's name, phone, employer, answers and CV, and a path
+    puts it in every access log between here and the browser."""
+    return {"X-Draft-Token": token}
+
+
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
     mark = "PASS" if cond else "FAIL"
@@ -285,30 +292,31 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
         # ── Resume it ─────────────────────────────────────────────────
         print("\nPH3-B4c — resume from the link")
-        r = await client.get(f"/apply/draft/{token}")
+        r = await client.get("/apply/draft", headers=_tok(token))
         check("the link reopens the draft", r.status_code == 200 and
               r.json()["email"] == "priya@example.com", f"{r.status_code} {r.text[:140]}")
 
         r = await client.patch(
-            f"/apply/draft/{token}", json={"current_company": "Globex", "phone": "0000"}
+            "/apply/draft", headers=_tok(token),
+            json={"current_company": "Globex", "phone": "0000"},
         )
         check("progress saves", r.status_code == 200 and
               r.json()["current_company"] == "Globex", r.text[:140])
 
-        r = await client.get(f"/apply/draft/{token}")
+        r = await client.get("/apply/draft", headers=_tok(token))
         check("progress survives a reload", r.status_code == 200 and
               r.json()["current_company"] == "Globex", r.text[:140])
 
-        r = await client.get("/apply/draft/not-a-real-token")
+        r = await client.get("/apply/draft", headers=_tok("not-a-real-token"))
         check("a bogus token 404s", r.status_code == 404, str(r.status_code))
 
         # ── PH3-B5: the confirmation step ─────────────────────────────
         print("\nPH3-B5 — confirm what the CV said")
-        r = await client.post(f"/apply/draft/{token}/submit")
+        r = await client.post("/apply/draft/submit", headers=_tok(token))
         check("submission refused with no CV", r.status_code == 422, str(r.status_code))
 
         r = await client.post(
-            f"/apply/draft/{token}/resume-upload",
+            "/apply/draft/resume-upload", headers=_tok(token),
             files={"resume": ("priya.pdf", CV, "application/pdf")},
         )
         uploaded = r.json() if r.status_code == 200 else {}
@@ -321,16 +329,16 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               str(uploaded.get("parsed")))
         check("it is not confirmed yet", uploaded.get("confirmed") is False)
 
-        r = await client.post(f"/apply/draft/{token}/submit")
+        r = await client.post("/apply/draft/submit", headers=_tok(token))
         check("submission refused until confirmed", r.status_code == 422,
               f"{r.status_code} {r.text[:140]}")
 
-        r = await client.post(f"/apply/draft/{token}/confirm", json={"full_name": ""})
+        r = await client.post("/apply/draft/confirm", headers=_tok(token), json={"full_name": ""})
         check("confirming an empty name is refused", r.status_code == 422, str(r.status_code))
 
         # The candidate CORRECTS what the parser read. Theirs must win.
         r = await client.post(
-            f"/apply/draft/{token}/confirm",
+            "/apply/draft/confirm", headers=_tok(token),
             json={"full_name": "Priya S. Sharma", "years_experience": 7},
         )
         check("confirming with a correction succeeds", r.status_code == 200 and
@@ -338,7 +346,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
         # ── Submit ────────────────────────────────────────────────────
         print("\nPH3-B4c — the draft becomes an application")
-        r = await client.post(f"/apply/draft/{token}/submit")
+        r = await client.post("/apply/draft/submit", headers=_tok(token))
         body = r.json() if r.status_code in (200, 201) else {}
         check("the application is created", r.status_code == 201 and
               body.get("already_applied") is False, f"{r.status_code} {r.text[:200]}")
@@ -362,7 +370,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               str(row))
         check("the draft is closed", draft_status == "submitted", str(draft_status))
 
-        r = await client.get(f"/apply/draft/{token}")
+        r = await client.get("/apply/draft", headers=_tok(token))
         check("the link stops working once submitted", r.status_code == 404, str(r.status_code))
 
         # ── PH3-B4b: cooldown ─────────────────────────────────────────
@@ -424,7 +432,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         second_token = r.json()["resume_token"] if r.status_code == 201 else ""
 
         check("that draft actually opens", bool(second_token) and (
-            await client.get(f"/apply/draft/{second_token}")).status_code == 200)
+            await client.get("/apply/draft", headers=_tok(second_token))).status_code == 200)
 
         async with factory() as db:
             real = await db.scalar(text(
@@ -460,8 +468,8 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
         # The property that actually matters: neither draft can see the other.
         second_tok = r.json()["resume_token"] if r.status_code == 201 else ""
-        first = await client.get(f"/apply/draft/{second_token}")
-        second = await client.get(f"/apply/draft/{second_tok}")
+        first = await client.get("/apply/draft", headers=_tok(second_token))
+        second = await client.get("/apply/draft", headers=_tok(second_tok))
         check("and the two drafts are separate, each reachable only by its own link",
               second_token != second_tok
               and first.status_code == 200 and second.status_code == 200,
@@ -489,7 +497,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
         # They fill in real details — this is what an attacker would be after.
         await client.patch(
-            f"/apply/draft/{victim_token}",
+            "/apply/draft", headers=_tok(victim_token),
             json={"full_name": "Victim Real Name", "phone": "+91 90000 00001",
                   "current_company": "Confidential Employer Ltd"},
         )
@@ -512,23 +520,23 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the attacker's token does NOT open the victim's draft",
               attacker_token != victim_token)
         if attacker_token:
-            r = await client.get(f"/apply/draft/{attacker_token}")
+            r = await client.get("/apply/draft", headers=_tok(attacker_token))
             got = r.json() if r.status_code == 200 else {}
             check("and what it does open is empty, not theirs",
                   got.get("full_name") in (None, ""), str(got)[:160])
 
         # The victim's own link must still work — the old code rotated it away.
-        r = await client.get(f"/apply/draft/{victim_token}")
+        r = await client.get("/apply/draft", headers=_tok(victim_token))
         check("the victim's link still works (no silent denial of service)",
               r.status_code == 200 and r.json().get("full_name") == "Victim Real Name",
               f"{r.status_code} {r.text[:140]}")
 
         # ── The data principal can erase their own draft ──────────────
         print("\nDPDP — a draft-only candidate can erase their own data")
-        r = await client.delete(f"/apply/draft/{victim_token}")
+        r = await client.delete("/apply/draft", headers=_tok(victim_token))
         check("deleting a draft by its own link works", r.status_code == 204,
               str(r.status_code))
-        r = await client.get(f"/apply/draft/{victim_token}")
+        r = await client.get("/apply/draft", headers=_tok(victim_token))
         check("and it is really gone", r.status_code == 404, str(r.status_code))
 
         # ── ERASURE AFTER ACTIVATION — the case that silently failed ──

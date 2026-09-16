@@ -248,6 +248,50 @@ async def test_a_live_draft_does_open() -> None:
     assert await load(db, raw_token="whatever", now=NOW) is not None
 
 
+def test_the_draft_routes_are_declared_before_the_parameterised_ones() -> None:
+    """FastAPI matches in declaration order and `/apply/{requisition_id}`
+    happily matches the literal string "draft".
+
+    With the draft block below it, `GET /apply/draft` was served by get_posting
+    with requisition_id="draft" — a 500, and it fired get_posting's rate-limit
+    bucket. The module docstring had already warned about exactly this for
+    /apply/activate. This asserts the order so the warning is enforced rather
+    than repeated.
+    """
+    from app.routers.public_apply import router
+
+    paths = [r.path for r in router.routes]
+    first_parameterised = min(
+        i for i, p in enumerate(paths) if "{requisition_id}" in p and p.count("/") == 2
+    )
+    for i, path in enumerate(paths):
+        if path.startswith("/apply/draft"):
+            assert i < first_parameterised, (
+                f"{path} is declared after /apply/{{requisition_id}} and will be "
+                f"shadowed by it"
+            )
+
+
+def test_the_resume_token_is_never_in_the_url() -> None:
+    """A live credential to somebody's name, phone, employer, answers and CV
+    must not land in uvicorn's access log, the edge logs, browser history or a
+    cross-origin Referer. This is the pattern exam_take and interview_take
+    already use, and exam_take's docstring says "never the URL path/query".
+    """
+    from app.routers.public_apply import router
+
+    for route in router.routes:
+        assert "{token}" not in route.path, route.path
+
+
+def test_a_missing_token_header_is_indistinguishable_from_a_bad_one() -> None:
+    """Otherwise the difference is an oracle."""
+    from app.routers.public_apply import _NO_SUCH_DRAFT, _draft_token
+
+    assert _NO_SUCH_DRAFT.status_code == 404
+    assert "_NO_SUCH_DRAFT" in inspect.getsource(_draft_token)
+
+
 def test_every_draft_route_is_rate_limited() -> None:
     """256 random bits is a lot, but an unthrottled endpoint that reports
     valid-or-invalid is still a free oracle."""
@@ -298,8 +342,103 @@ async def test_purging_returns_the_objects_to_delete() -> None:
     """Deleting the row without the CV would leave the file in the bucket."""
     from app.application_drafts import purge_expired
 
-    db = _db({"resume_s3_key": "drafts/x/y.pdf"})
+    # One row on the first pass, none after — the drain loop stops when a pass
+    # comes back short, so the fake must eventually return nothing.
+    db = AsyncMock()
+    batches = [[{"resume_s3_key": "drafts/x/y.pdf", "user_id": uuid.uuid4()}]]
+
+    async def _execute(*_a: object, **_k: object) -> MagicMock:
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.all = MagicMock(return_value=batches.pop(0) if batches else [])
+        res.mappings = MagicMock(return_value=mapped)
+        res.rowcount = 0
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
     assert await purge_expired(db, now=NOW) == ["drafts/x/y.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_purging_drains_rather_than_stopping_at_the_limit() -> None:
+    """A single capped pass could not keep up with the rate start_draft creates
+    rows — which turns a retention control into a slowly losing race."""
+    from app.application_drafts import purge_expired
+
+    db = AsyncMock()
+    full = [{"resume_s3_key": f"k{i}.pdf", "user_id": uuid.uuid4()} for i in range(2)]
+    batches = [list(full), list(full), []]
+
+    # Dispatches on the statement: each pass issues TWO deletes (drafts, then
+    # the identities they anchored), and a queue shared between them would be
+    # drained twice per pass and make the loop look like it stopped early.
+    async def _execute(statement: object, *_a: object, **_k: object) -> MagicMock:
+        sql = getattr(statement, "text", str(statement))
+        # Matched on the statement HEAD: the identity cleanup also mentions
+        # application_drafts, in a NOT EXISTS subquery.
+        is_draft_delete = sql.lstrip().startswith("DELETE FROM application_drafts")
+        rows = (batches.pop(0) if batches else []) if is_draft_delete else []
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.all = MagicMock(return_value=rows)
+        res.mappings = MagicMock(return_value=mapped)
+        res.rowcount = 0
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
+    keys = await purge_expired(db, now=NOW, limit=2)
+    assert len(keys) == 4, "stopped after one pass instead of draining"
+
+
+@pytest.mark.asyncio
+async def test_purging_also_clears_the_identities_the_drafts_anchored() -> None:
+    """Every start_draft mints a guest user and a consent row, unauthenticated
+    and unbounded. A guest with no applicant and no draft represents nobody."""
+    from app.application_drafts import purge_expired
+
+    db = AsyncMock()
+    batches = [[{"resume_s3_key": None, "user_id": uuid.uuid4()}]]
+
+    async def _execute(*_a: object, **_k: object) -> MagicMock:
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.all = MagicMock(return_value=batches.pop(0) if batches else [])
+        res.mappings = MagicMock(return_value=mapped)
+        res.rowcount = 1
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
+    await purge_expired(db, now=NOW)
+    statements = [c.args[0].text for c in db.execute.await_args_list]
+    cleanup = next(s for s in statements if "DELETE FROM users" in s)
+    # Only ever a guest placeholder, and only when nothing else needs it.
+    assert "guest+%@applicants.invalid" in cleanup
+    assert "FROM applicants a WHERE a.user_id = u.id" in cleanup
+    assert "erasure_requests" in cleanup
+
+
+@pytest.mark.asyncio
+async def test_submitted_drafts_do_not_live_forever() -> None:
+    """The docstring claimed a retention window; no code enforced one, so a
+    duplicate of somebody's name, phone and CV key was kept indefinitely."""
+    from app.application_drafts import SUBMITTED_RETENTION_DAYS, purge_expired
+
+    assert SUBMITTED_RETENTION_DAYS > 0
+    db = AsyncMock()
+
+    async def _execute(*_a: object, **_k: object) -> MagicMock:
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.all = MagicMock(return_value=[])
+        res.mappings = MagicMock(return_value=mapped)
+        res.rowcount = 0
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
+    await purge_expired(db, now=NOW)
+    sql = db.execute.await_args_list[0].args[0].text
+    assert "status = 'submitted'" in sql
+    assert "submitted_at <= :cutoff" in sql
 
 
 def test_a_draft_is_erased_not_anonymised() -> None:

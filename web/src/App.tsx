@@ -134,10 +134,11 @@ export default function App() {
           <Route path="/interview-invite" element={<InterviewInvite />} />
           {/* Public job application — anyone with the link, no account. */}
           <Route path="/apply/:requisitionId" element={<PublicApply />} />
-          {/* PH3-B4c. Declared BEFORE the parameterised route above would
-              be a mistake — it is not: "draft" is a literal first segment
-              and :requisitionId is a UUID, so the two cannot collide. */}
-          <Route path="/apply/draft/:token" element={<ResumeApplication />} />
+          {/* PH3-B4c — saved application, resume token in the URL #fragment.
+              A fragment is never sent to a server, so the credential stays out
+              of access logs and Referer headers. Same shape as /exam and
+              /interview-invite above. */}
+          <Route path="/apply/draft" element={<ResumeApplication />} />
           <Route path="/activate" element={<ActivateAccount />} />
           <Route path="/careers/:companySlug" element={<Careers />} />
 

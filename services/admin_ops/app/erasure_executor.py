@@ -197,10 +197,17 @@ ERASED_TABLES: dict[str, str] = {
                            "identifying them after applicants is anonymised. "
                            "Deleted, not redacted: here the content IS the "
                            "personal data, with no structural residue to keep.",
-    "application_drafts": "step 5e — hard-deleted, matched on user_id, on the "
-                          "erased address, AND through the linked applicant, so "
-                          "a draft whose user_id was re-pointed (or not) by "
-                          "activation-linking cannot escape. A half-finished application "
+    "application_drafts": "step 5e — hard-deleted, matched three genuinely "
+                          "independent ways: the draft's user_id, the erased "
+                          "user's address, and the address of any applicant "
+                          "linked to them. So a draft whose user_id was "
+                          "re-pointed by activation-linking (or was not) cannot "
+                          "escape. MUST run before step 7, which overwrites "
+                          "users.email. NOTE the one over-match we accept: a "
+                          "genuinely shared mailbox means erasing one person "
+                          "deletes another's in-progress draft. Data loss, not "
+                          "disclosure, and the alternative is leaving personal "
+                          "data behind. A half-finished application "
                           "holds the person's name, email, phone and CV, and "
                           "unlike `applicants` there is no structural record "
                           "worth keeping: nobody applied. Keyed on user_id "
@@ -478,6 +485,9 @@ async def _execute_one_erasure(
             "  OR lower(btrim(d.email)) IN ("
             "       SELECT lower(btrim(u.email)) FROM users u"
             "        WHERE u.id = :uid AND u.email IS NOT NULL)"
+            "  OR lower(btrim(d.email)) IN ("
+            "       SELECT lower(btrim(a.email)) FROM applicants a"
+            "        WHERE a.user_id = :uid AND a.email IS NOT NULL)"
             ")"
         ),
         {"uid": uid_str},
@@ -694,13 +704,28 @@ async def _execute_one_erasure(
     drafts_result = await db.execute(
         text(
             "DELETE FROM application_drafts d"
+            # 1. The draft still points at this user.
             " WHERE d.user_id = :uid"
+            # 2. The draft carries the address this user is erasing under.
+            #    MUST run before step 7, which overwrites users.email with the
+            #    erased_{uid} sentinel — after that this route matches nothing.
+            #    test_erasure_step_order.py asserts the ordering.
             "    OR lower(btrim(d.email)) IN ("
             "         SELECT lower(btrim(u.email)) FROM users u"
             "          WHERE u.id = :uid AND u.email IS NOT NULL)"
-            "    OR d.user_id IN ("
-            "         SELECT a.user_id FROM applicants a"
-            "          WHERE a.user_id = :uid)"
+            # 3. The draft carries the address of an APPLICANT linked to this
+            #    user. Genuinely independent of 1 and 2: it catches the
+            #    returning applicant whose draft kept a throwaway guest id and
+            #    whose account was never activated, so users.email is still the
+            #    guest sentinel and route 2 cannot see them.
+            #
+            #    This predicate previously read `d.user_id IN (SELECT a.user_id
+            #    FROM applicants a WHERE a.user_id = :uid)`, which is
+            #    algebraically just route 1 — a third route in the comments and
+            #    nowhere else.
+            "    OR lower(btrim(d.email)) IN ("
+            "         SELECT lower(btrim(a.email)) FROM applicants a"
+            "          WHERE a.user_id = :uid AND a.email IS NOT NULL)"
         ),
         {"uid": uid_str},
     )

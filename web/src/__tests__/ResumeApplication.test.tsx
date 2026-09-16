@@ -7,11 +7,13 @@
 // the confirmation screen presents what the parser read as EDITABLE, never as
 // a verdict.
 
+import { readFileSync } from 'node:fs';
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 import type { ApplicationDraft } from '../api/publicApply';
 
 const getDraft = vi.fn();
@@ -19,6 +21,7 @@ const saveDraft = vi.fn();
 const confirmDraft = vi.fn();
 const submitDraft = vi.fn();
 const uploadDraftResume = vi.fn();
+const deleteDraft = vi.fn();
 
 vi.mock('../api/publicApply', async () => {
   const actual = await vi.importActual<typeof import('../api/publicApply')>(
@@ -31,10 +34,14 @@ vi.mock('../api/publicApply', async () => {
     confirmDraft: (...a: unknown[]) => confirmDraft(...a) as unknown,
     submitDraft: (...a: unknown[]) => submitDraft(...a) as unknown,
     uploadDraftResume: (...a: unknown[]) => uploadDraftResume(...a) as unknown,
+    deleteDraft: (...a: unknown[]) => deleteDraft(...a) as unknown,
   };
 });
 
 import ResumeApplication from '../pages/ResumeApplication';
+
+// Relative to the web/ root, which is vitest's cwd.
+const appSource = readFileSync('src/App.tsx', 'utf-8');
 
 function draft(over: Partial<ApplicationDraft> = {}): ApplicationDraft {
   return {
@@ -61,6 +68,10 @@ function draft(over: Partial<ApplicationDraft> = {}): ApplicationDraft {
 }
 
 function renderPage() {
+  // The token lives in the URL fragment now, not the path — jsdom's location
+  // is what the page reads, so set it rather than routing a param. A test that
+  // wants a different token sets the hash itself before calling this.
+  if (!window.location.hash) window.location.hash = '#tok-123';
   const client = new QueryClient({
     // refetchOnWindowFocus off: a jsdom focus event mid-interaction makes React
     // Query hand the component a new draft object, which re-runs the seeding
@@ -69,10 +80,8 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/apply/draft/tok-123']}>
-        <Routes>
-          <Route path="/apply/draft/:token" element={<ResumeApplication />} />
-        </Routes>
+      <MemoryRouter initialEntries={['/apply/draft']}>
+        <ResumeApplication />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -80,6 +89,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.location.hash = '';
   getDraft.mockResolvedValue(draft());
   saveDraft.mockImplementation((_t: string, f: object) =>
     Promise.resolve(draft(f as Partial<ApplicationDraft>)),
@@ -88,6 +98,7 @@ beforeEach(() => {
   uploadDraftResume.mockResolvedValue(
     draft({ has_resume: true, resume_filename: 'cv.pdf' }),
   );
+  deleteDraft.mockResolvedValue(undefined);
   submitDraft.mockResolvedValue({
     applicant_id: 'a-1',
     enrolment_id: 'e-1',
@@ -275,5 +286,79 @@ describe('saving', () => {
     getDraft.mockResolvedValue(draft({ has_resume: true, resume_filename: 'cv.pdf' }));
     renderPage();
     expect(await screen.findByText(/checking your details again/)).toBeInTheDocument();
+  });
+});
+
+
+// ===========================================================================
+// DPDP — the data principal can act, not just wait
+// ===========================================================================
+describe('deleting a saved application', () => {
+  it('is offered, and says it cannot be undone', async () => {
+    renderPage();
+    expect(
+      await screen.findByRole('button', { name: /Delete my saved application/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/cannot be undone/)).toBeInTheDocument();
+  });
+
+  it('takes two clicks — it destroys their work', async () => {
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole('button', { name: /Delete my saved application/ }),
+    );
+    expect(deleteDraft).not.toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole('button', { name: /Confirm — delete everything/ }),
+    );
+    await waitFor(() => expect(deleteDraft).toHaveBeenCalledWith('tok-123'));
+  });
+
+  it('can be backed out of', async () => {
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole('button', { name: /Delete my saved application/ }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Keep it/ }));
+    expect(
+      screen.getByRole('button', { name: /Delete my saved application/ }),
+    ).toBeInTheDocument();
+    expect(deleteDraft).not.toHaveBeenCalled();
+  });
+
+  it('confirms what was removed afterwards', async () => {
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole('button', { name: /Delete my saved application/ }),
+    );
+    await userEvent.click(
+      screen.getByRole('button', { name: /Confirm — delete everything/ }),
+    );
+    expect(await screen.findByText(/has been deleted/)).toBeInTheDocument();
+    expect(screen.getByText(/CV you uploaded/)).toBeInTheDocument();
+  });
+});
+
+// ===========================================================================
+// The token never reaches a server log
+// ===========================================================================
+describe('the resume token', () => {
+  it('is taken from the URL fragment', async () => {
+    // Behavioural, not a source grep: the page is rendered at a path carrying
+    // NO token, and the only place `tok-123` exists is window.location.hash.
+    // If the page ever went back to reading a route param, this call would be
+    // made with the wrong value or not at all.
+    window.location.hash = '#tok-from-fragment';
+    renderPage();
+    await waitFor(() => expect(getDraft).toHaveBeenCalled());
+    expect(getDraft).toHaveBeenCalledWith('tok-from-fragment');
+  });
+
+  it('is never put in a path the browser would log or send as a Referer', () => {
+    // The whole point of the fragment: it does not leave the client. Assert the
+    // route the app registers carries no token segment.
+    const routes = appSource.match(/path="\/apply\/draft[^"]*"/g) ?? [];
+    expect(routes.length).toBeGreaterThan(0);
+    for (const r of routes) expect(r).not.toContain(':token');
   });
 });

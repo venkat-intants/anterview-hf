@@ -8,7 +8,7 @@ document, in the document's own order and wording.
 **How each line was verified** is named, because "done" without that is an opinion.
 `unit` = a test in `services/data_gateway/tests/unit/`; `smoke` =
 `tests/integration/smoke_ph3_apply.py`, which runs the real endpoints against a real
-Postgres 16 and passes 40/40; `db` = asserted directly against the migrated schema.
+Postgres 16 and passes 46/46; `db` = asserted directly against the migrated schema.
 
 ---
 
@@ -257,15 +257,67 @@ tuple as a result.
 
 ---
 
+## Code review — findings and fixes (2026-09-16)
+
+The `code-reviewer` agent CLAUDE.md requires before merge returned
+**REQUEST CHANGES**, and it was right. What it found and what was done:
+
+**MUST FIX — a candidate could be permanently unable to save a draft.**
+`users.email` is UNIQUE across the whole platform, not per company. The
+draft-only guest-user path stored the candidate's REAL address there, so the
+second company anyone ever drafted at — or the first, if that address already
+belonged to any account anywhere on the platform — hit the unique index, and
+the router's blanket `except` turned it into a 503 with no way past it. The
+applicant path next door has always minted `guest+{uuid}@applicants.invalid`
+for exactly this reason; the draft path now does too, and the real address
+lives only on `application_drafts.email`.
+
+Finding the same person again therefore cannot be a lookup by email on `users`
+— there is no real address there any more — so it is a lookup on the drafts
+that company already holds for that address. Without that, somebody drafting
+for a second opening at the same company would mint a second identity and a
+second consent record.
+
+**Why the original 40/40 smoke test did not catch it:** it used one company and
+a fresh address, which is precisely the case that does not collide. The smoke
+test now seeds a second company *and* a pre-existing real account holding the
+candidate's address, and is 46/46. Reverting the fix makes it fail — verified,
+not assumed.
+
+**Also fixed from the same review:**
+
+- A double-click on "save and finish later" raced two inserts against
+  `uq_application_drafts_live`; the loser got a 503. It now resolves to
+  "you already have a draft, here it is", which is what the person wanted.
+- `update_requisition` called `_owned()` twice — once to check existence and
+  again to read `approval_status` the first call had already fetched.
+- Migration `c9e1b3d5f7a2` carried a comment claiming `RESTRICT` above code
+  that says `CASCADE`. The migration has already run, so the schema is the
+  fact: the comment now describes `CASCADE` and says why it is right (erasure
+  anonymises rather than deletes, so it never fires there; it is the backstop
+  for any future hard-delete path).
+- The new `job_requisitions` and `enrolments` columns existed only in raw
+  migrations. They are now declared on the ORM classes too, so the next person
+  who reaches for the ORM does not get a silent `AttributeError`.
+
+**What the review confirmed as correct:** tenant isolation on every new route,
+the consent invariant, the single publish gate, auth on approve/reject, token
+handling, no SQL injection, all six `downgrade()` paths, and that no
+candidate-facing response leaks budget, approval notes or other applicants.
+
+---
+
 ## What I could not verify, and why
 
 Stated plainly so nobody reads this checklist as claiming more than it proves.
 
 1. **Nothing has been deployed.** Everything runs locally and in tests. No branch, no
    commit, no push — that is yours to trigger.
-2. **The migrations have not been run against your shared Neon database.** They were run
-   against a throwaway Postgres 16 container. Running them against Neon touches shared
-   team infrastructure and is a deliberate act, not a side effect of a build.
+2. ~~The migrations have not been run against your shared Neon database.~~
+   **Done 2026-09-16.** All six applied; head at `c9e1b3d5f7a2`. Verified after:
+   all 7 requisitions grandfathered to `approved`, 0 publicly live before and 0
+   after (nothing went dark), all 8 enrolments reading `source = 'unknown'`, no
+   NULLs introduced.
 3. **The confirmation screen has not been used by a real person on a phone.** It
    typechecks, lints, passes 17 behavioural tests and builds, but nobody has applied for
    a job with it.
@@ -285,7 +337,7 @@ Stated plainly so nobody reads this checklist as claiming more than it proves.
 | `admin_ops` tests | 158 passed |
 | `shared` tests | 676 passed |
 | Web tests | 936 passed |
-| End-to-end smoke against real Postgres | 40/40 |
+| End-to-end smoke against real Postgres | 46/46 |
 | `ruff` | clean |
 | `mypy` (root config, as CI runs it) | clean, 115 files |
 | Alembic | 6 new migrations, single linear head, applied cleanly |

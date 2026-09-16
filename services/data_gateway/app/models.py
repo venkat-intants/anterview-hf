@@ -1281,6 +1281,56 @@ class JobRequisition(Base):
     # NULL for an opening that has never had a JD.
     published_jd_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
+    # ── Governance (PH3-B2) ───────────────────────────────────────────
+    # A separate axis from `status`: approved does not imply open, and closing
+    # an opening does not un-approve it. Openings that predate the approval
+    # gate were grandfathered to 'approved', so this is never empty on an old
+    # row. The state machine lives in app/requisition_approval.py.
+    approval_status: Mapped[str] = mapped_column(
+        Text, default="draft", server_default=text("'draft'"), nullable=False
+    )
+    submitted_for_approval_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    approval_decided_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    approval_decided_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True
+    )
+    approval_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Money, not headcount — target_hires above is the headcount constraint and
+    # neither replaces the other. NEVER rendered on a public surface: unlike
+    # salary_min/max there is no visibility flag, because there is no version of
+    # a careers page that should carry a hiring budget.
+    budget_amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    budget_currency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    budget_basis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    budget_period: Mapped[str | None] = mapped_column(Text, nullable=True)
+    budget_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Scheduled publishing (PH3-B4a) ────────────────────────────────
+    # publish_at is a REQUEST, not a state: the publisher turns
+    # public_apply_enabled on and clears it. published_at records when that
+    # actually happened, so the gap between the two — the real tolerance — is
+    # visible rather than inferred.
+    publish_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    publish_at_set_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True
+    )
+    published_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    # ── Reapplication (PH3-B4b) ───────────────────────────────────────
+    # NULL means nobody has set one, which is NOT the same as 0 — zero is "we
+    # considered this and decided there is no waiting period".
+    reapply_cooldown_days: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -1424,6 +1474,17 @@ class Enrolment(Base):
     # Which board, which campaign. Also where an unrecognised ?src= is kept, so
     # the closed vocabulary above loses nothing.
     source_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ── PH3-B4b: this rejection has been forgiven ─────────────────────
+    # Written on the enrolment the cooldown is measured FROM, so the grant is
+    # attached to the specific rejection it forgives rather than being a
+    # blanket exemption on the person.
+    reapply_override_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    reapply_override_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True
+    )
+    reapply_override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

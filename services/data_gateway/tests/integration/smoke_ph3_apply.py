@@ -107,6 +107,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
     cid = uuid.uuid4()
     hr_uid, admin_uid = uuid.uuid4(), uuid.uuid4()
     req = uuid.uuid4()
+    # A SECOND company with its own opening, and a real account that already
+    # owns the address our candidate drafts with. users.email is unique across
+    # the whole platform, so both of these collide with a draft-created user
+    # unless that user's stored address is synthetic.
+    other_cid, other_hr, other_req = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    taken_email = "priya@example.com"
 
     async with factory() as db:
         await db.execute(text(
@@ -137,6 +143,41 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             " reminders_enabled,hold_band,created_at,updated_at,published_at)"
             " VALUES (gen_random_uuid(),:c,:r,1,'published',true,true,true,true,10,:n,:n,:n)"),
             {"c": cid, "r": req, "n": now})
+
+        # ── The second company, already accepting applications ───────────
+        await db.execute(text(
+            "INSERT INTO companies (id,name,slug,is_active,created_at,updated_at)"
+            " VALUES (:i,'Globex','globex',true,:n,:n)"), {"i": other_cid, "n": now})
+        await db.execute(text(
+            "INSERT INTO users (id,email,full_name,password_hash,company_id,"
+            " preferred_language,is_active,notify_login_email,must_change_password,"
+            " created_at,updated_at)"
+            " VALUES (:i,'hr@globex.test','Staff','x',:c,'en',true,false,false,:n,:n)"),
+            {"i": other_hr, "c": other_cid, "n": now})
+        await db.execute(text(
+            "INSERT INTO job_requisitions (id,company_id,title,level,jd_text,status,"
+            " from_backfill,public_apply_enabled,created_by_user_id,owner_user_id,"
+            " approval_status,approval_decided_at,created_at,updated_at)"
+            " VALUES (:i,:c,'Data Engineer','mid','Move data.','open',"
+            " false,true,:u,:u,'approved',:n,:n,:n)"),
+            {"i": other_req, "c": other_cid, "u": other_hr, "n": now})
+        await db.execute(text(
+            "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
+            " auto_score_on_apply,auto_assign_first_round,auto_advance_rounds,"
+            " reminders_enabled,hold_band,created_at,updated_at,published_at)"
+            " VALUES (gen_random_uuid(),:c,:r,1,'published',true,true,true,true,10,:n,:n,:n)"),
+            {"c": other_cid, "r": other_req, "n": now})
+
+        # A REAL registered account that already holds the candidate's address.
+        # users.email is globally unique, so this is the row a draft-created
+        # user would collide with if it stored the real address.
+        await db.execute(text(
+            "INSERT INTO users (id,email,full_name,password_hash,company_id,"
+            " preferred_language,is_active,notify_login_email,must_change_password,"
+            " created_at,updated_at)"
+            " VALUES (gen_random_uuid(),:e,'Priya Elsewhere','x',NULL,'en',true,"
+            " false,false,:n,:n)"),
+            {"e": taken_email, "n": now})
         await db.commit()
 
     from app.config import settings
@@ -364,6 +405,54 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         )
         check("and they can then apply", r.status_code == 201,
               f"{r.status_code} {r.text[:160]}")
+
+        # ── REGRESSION: users.email is globally unique ────────────────
+        # Found by code review, not by the first version of this test — which
+        # passed only because it used one company and a fresh address. The
+        # draft path used to store the candidate's REAL address on the users
+        # row it mints, so the second company anyone ever drafted at (or the
+        # first, if that address already belonged to any account anywhere)
+        # hit the unique index and surfaced as an unrecoverable 503.
+        print("\nREGRESSION — a draft-created user must not collide on users.email")
+
+        r = await client.post(
+            f"/apply/{other_req}/draft",
+            json={"email": taken_email, "consent_granted": True},
+        )
+        check("can draft at a second company with the same address",
+              r.status_code == 201, f"{r.status_code} {r.text[:160]}")
+        second_token = r.json()["resume_token"] if r.status_code == 201 else ""
+
+        check("that draft actually opens", bool(second_token) and (
+            await client.get(f"/apply/draft/{second_token}")).status_code == 200)
+
+        async with factory() as db:
+            real = await db.scalar(text(
+                "SELECT count(*) FROM users WHERE email = :e"), {"e": taken_email})
+            synthetic = await db.scalar(text(
+                "SELECT count(*) FROM users WHERE email LIKE 'guest+%@applicants.invalid'"))
+        check("the pre-existing real account is untouched", real == 1, f"{real} rows")
+        check("draft users get a synthetic address instead",
+              synthetic >= 1, f"{synthetic} synthetic users")
+
+        # Drafting AGAIN at the same company must reuse the same identity
+        # rather than minting a second one — otherwise one person accumulates
+        # users and consent records.
+        async with factory() as db:
+            before = await db.scalar(text("SELECT count(*) FROM users"))
+        r = await client.post(
+            f"/apply/{other_req}/draft",
+            json={"email": taken_email, "consent_granted": True},
+        )
+        async with factory() as db:
+            after = await db.scalar(text("SELECT count(*) FROM users"))
+            consents = await db.scalar(text(
+                "SELECT count(*) FROM dpdp_consent_ledger WHERE consent_type ="
+                " 'application_data'"))
+        check("re-drafting reuses the identity rather than minting another",
+              r.status_code == 201 and after == before, f"{before} -> {after}")
+        check("and does not record a second consent for the same person",
+              consents == 2, f"{consents} ledger rows for 2 people")
 
     await eng.dispose()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

@@ -105,9 +105,20 @@ def upgrade() -> None:
             ["job_requisitions.id", "job_requisitions.company_id"],
             name="fk_application_drafts_requisition", ondelete="CASCADE",
         ),
-        # RESTRICT rather than CASCADE: the user row is the consent's anchor,
-        # and erasure anonymises it rather than deleting it. A draft must be
-        # deleted explicitly by the erasure path, not vanish as a side effect.
+        # CASCADE, and it is inert by design rather than load-bearing.
+        #
+        # Erasure never hard-deletes a users row — step 7 of the erasure
+        # executor anonymises it in place, because erasure_requests.user_id is
+        # ON DELETE RESTRICT and that row is the §12 proof the erasure
+        # happened. So this cascade does not fire on the erasure path; the
+        # draft is deleted explicitly there (step 5e), after its CV object has
+        # been collected for deletion in step 8.
+        #
+        # It is CASCADE rather than RESTRICT for the case erasure does not
+        # cover: if a users row is ever hard-deleted by some future path, a
+        # draft full of that person's name, email, phone and CV must go with
+        # it, not survive as an orphan RESTRICT would have blocked the delete
+        # over. Erasure is the strict path; this is the backstop.
         sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name="fk_application_drafts_user",
             ondelete="CASCADE",

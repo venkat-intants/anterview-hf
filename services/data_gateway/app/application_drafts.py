@@ -41,6 +41,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger(__name__)
@@ -187,6 +188,12 @@ async def start(
 
     draft_id = uuid.uuid4()
     channel, channel_detail = source
+    # A double-click is the normal way this races: two requests both miss the
+    # SELECT above and both insert. uq_application_drafts_live catches the
+    # second, and without this it would surface as a 503 on the candidate's
+    # very first action. Resolving to "you already have a draft, here it is" is
+    # what they wanted anyway.
+    savepoint = await db.begin_nested()
     await db.execute(
         text(
             "INSERT INTO application_drafts"
@@ -198,6 +205,33 @@ async def start(
          "h": token_hash, "e": address, "src": channel, "srcd": channel_detail,
          "exp": now + timedelta(days=DRAFT_TTL_DAYS), "n": now},
     )
+    try:
+        await savepoint.commit()
+    except IntegrityError:
+        await savepoint.rollback()
+        raced = (
+            await db.execute(
+                text(
+                    "SELECT * FROM application_drafts"
+                    " WHERE requisition_id = :r AND user_id = :u AND status = 'draft'"
+                ),
+                {"r": requisition_id, "u": user_id},
+            )
+        ).mappings().first()
+        if raced is None:
+            raise
+        # The winner's token stands; rotate it so THIS caller gets a link that
+        # works, exactly as the resume branch above does.
+        await db.execute(
+            text(
+                "UPDATE application_drafts"
+                "   SET token_hash = :h, expires_at = :exp, updated_at = :n"
+                " WHERE id = :i"
+            ),
+            {"h": token_hash, "exp": now + timedelta(days=DRAFT_TTL_DAYS),
+             "n": now, "i": raced["id"]},
+        )
+        return {**dict(raced), "token_hash": token_hash}, raw
     log.info(
         "application_draft.started",
         requisition_id=str(requisition_id), company_id=str(company_id),
@@ -273,7 +307,11 @@ async def save(
     assignments.extend(["updated_at = :n", "expires_at = :exp"])
     await db.execute(
         text(
-            f"UPDATE application_drafts SET {', '.join(assignments)}"
+            # SAFE: `assignments` is built from sanitise()'s output,
+            # whose keys are filtered to DRAFT_FIELDS (a module-level tuple of
+            # literal column names) before they get here. The candidate's
+            # values are bound as parameters, never interpolated.
+            f"UPDATE application_drafts SET {', '.join(assignments)}"  # nosec B608
             " WHERE id = :i AND status = 'draft'"
         ),
         params,

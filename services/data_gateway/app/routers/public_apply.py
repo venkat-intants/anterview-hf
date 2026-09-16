@@ -193,7 +193,12 @@ async def _open_posting(db: DbSessionDep, requisition_id: uuid.UUID) -> dict[str
     row = (
         await db.execute(
             text(
-                "SELECT r.id, r.company_id, r.title, r.level, r.jd_text, r.closes_at,"
+                # SAFE: the only interpolation below is visible_sql("r"), which
+                # returns a predicate assembled from module-level literals in
+                # app/publishing.py. Every value here is a bound parameter.
+                # bandit reports the first fragment of the concatenation, so
+                # the directive lives on this line rather than on the f-string.
+                "SELECT r.id, r.company_id, r.title, r.level, r.jd_text, r.closes_at,"  # nosec B608
                 "       r.owner_user_id, r.created_by_user_id, c.name AS company_name,"
                 "       r.department, r.location, r.employment_type,"
                 "       r.experience_min_years, r.experience_max_years,"
@@ -1188,18 +1193,33 @@ async def _draft_only_guest_user(
     """A ``guest_candidate`` user for somebody who has only started a draft.
 
     Needed because ``dpdp_consent_ledger.user_id`` is NOT NULL and the consent
-    is recorded now. Deliberately does NOT create an applicant row: a draft is
-    not an application, and putting somebody in HR's pipeline before they have
-    applied would be both wrong and visible.
+    is recorded at the first save. Deliberately does NOT create an applicant
+    row: a draft is not an application, and putting somebody in HR's pipeline
+    before they have applied would be both wrong and visible.
 
-    Reuses an existing user with this address at this company when there is one,
-    so drafting a second application does not mint a second identity.
+    THE ADDRESS STORED HERE IS SYNTHETIC, AND THAT IS NOT COSMETIC.
+    ``users.email`` is UNIQUE across the whole platform, not per company. An
+    earlier version of this function wrote the candidate's real address, which
+    meant the second company they ever drafted at — or any company at all, if
+    that address already belonged to a real account anywhere — hit the unique
+    index, raised, and surfaced as a 503 they could never get past. The
+    applicant path next door (``_ensure_guest_user``) has always minted
+    ``guest+{uuid}@applicants.invalid`` for exactly this reason; this follows
+    it. The real address lives on ``application_drafts.email``, and moves to
+    ``applicants.email`` when they actually apply.
+
+    FINDING THE SAME PERSON AGAIN therefore cannot be a lookup by email on
+    ``users`` — there is no real address there to match. It is a lookup on the
+    drafts this company already holds for that address, which is the row that
+    knows both. Without it, a person drafting for a second opening at the same
+    company would mint a second identity and a second consent record.
     """
+    # 1. Have they already drafted at this company? Reuse that identity.
     existing = await db.scalar(
         text(
-            "SELECT id FROM users"
-            " WHERE lower(btrim(email)) = :em AND company_id = :c"
-            "   AND deleted_at IS NULL"
+            "SELECT user_id FROM application_drafts"
+            " WHERE company_id = :c AND lower(btrim(email)) = :em"
+            " ORDER BY created_at"
             " LIMIT 1"
         ),
         {"em": email, "c": company_id},
@@ -1207,6 +1227,7 @@ async def _draft_only_guest_user(
     if existing is not None:
         return uuid.UUID(str(existing))
 
+    # 2. Otherwise mint one, with a synthetic address that cannot collide.
     user_id = uuid.uuid4()
     await db.execute(
         text(
@@ -1214,7 +1235,8 @@ async def _draft_only_guest_user(
             " preferred_language, is_active, notify_login_email, created_at, updated_at)"
             " VALUES (:i,:e,NULL,'',:c,:lang,true,false,:n,:n)"
         ),
-        {"i": user_id, "e": email, "c": company_id, "lang": language, "n": now},
+        {"i": user_id, "e": f"guest+{user_id}@applicants.invalid",
+         "c": company_id, "lang": language, "n": now},
     )
     await db.execute(
         text(

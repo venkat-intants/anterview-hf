@@ -828,7 +828,7 @@ async def update_requisition(
 ) -> RequisitionOut:
     # _hr_uid is no longer discarded: a JD version records who wrote it.
     _hr_uid, company_id = ctx
-    await _owned(db, company_id, requisition_id)
+    current = await _owned(db, company_id, requisition_id)
     fields = body.model_dump(exclude_unset=True)
     if not fields:
         return await get_requisition(requisition_id, ctx, db)
@@ -842,16 +842,20 @@ async def update_requisition(
     # anyway, so the flag would be on and the careers board empty — which is
     # exactly the confusing half-state "cannot ACCIDENTALLY become publicly
     # available" is meant to prevent, read from the other direction.
-    if fields.get("public_apply_enabled") is True:
-        current = await _owned(db, company_id, requisition_id)
-        if str(current.get("approval_status")) != APPROVED:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "This opening has not been approved yet, so it cannot be opened "
-                    "to public applications. Submit it for approval first."
-                ),
-            )
+    # `current` is the row _owned() already fetched above — it carries
+    # approval_status, so re-reading it here was a second round trip for a
+    # value we were already holding.
+    if (
+        fields.get("public_apply_enabled") is True
+        and str(current.get("approval_status")) != APPROVED
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This opening has not been approved yet, so it cannot be opened "
+                "to public applications. Submit it for approval first."
+            ),
+        )
 
     # The three list columns are jsonb. Bound as a plain Python list, asyncpg
     # sends a Postgres ARRAY and the UPDATE fails on a type it cannot cast — so

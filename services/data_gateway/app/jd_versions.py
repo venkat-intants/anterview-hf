@@ -89,7 +89,11 @@ async def _current_content(
     row = (
         await db.execute(
             text(
-                f"SELECT {', '.join(JD_FIELDS)} FROM job_requisitions"
+                # SAFE: JD_FIELDS is a module-level tuple of literal
+                # column names (see the top of this file). Nothing a caller
+                # supplies reaches this string; the two bound values are
+                # parameters.
+                f"SELECT {', '.join(JD_FIELDS)} FROM job_requisitions"  # nosec B608
                 " WHERE id = :i AND company_id = :c"
             ),
             {"i": requisition_id, "c": company_id},
@@ -260,7 +264,10 @@ async def save_draft(
         if supplied:
             await db.execute(
                 text(
-                    f"UPDATE jd_versions SET {_content_sql()},"
+                    # SAFE: _content_sql() is built from JD_FIELDS,
+                    # a module-level tuple of literal column names. Every
+                    # value is bound as a parameter.
+                    f"UPDATE jd_versions SET {_content_sql()},"  # nosec B608
                     " change_note = COALESCE(:note, change_note), updated_at = :n"
                     " WHERE id = :i"
                 ),
@@ -374,7 +381,10 @@ async def publish_version(
     # transaction. This is the copy that keeps every existing reader working.
     await db.execute(
         text(
-            f"UPDATE job_requisitions SET {_content_sql()},"
+            # SAFE: _content_sql() is built from JD_FIELDS, a
+            # module-level tuple of literal column names. Every value is
+            # bound as a parameter.
+            f"UPDATE job_requisitions SET {_content_sql()},"  # nosec B608
             " published_jd_version_id = :v, updated_at = :n"
             " WHERE id = :i AND company_id = :c"
         ),

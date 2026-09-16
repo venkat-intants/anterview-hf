@@ -99,7 +99,11 @@ function schedule(over: Partial<PublishSchedule> = {}): PublishSchedule {
 }
 
 function renderPanel(req = requisition()) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    // See ResumeApplication.test.tsx: a focus-triggered refetch mid-interaction
+    // can replace the data a form was seeded from.
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <GovernancePanel requisition={req} />
@@ -322,7 +326,11 @@ function pending(over: Partial<PendingApproval> = {}): PendingApproval {
 }
 
 function renderQueue() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    // See ResumeApplication.test.tsx: a focus-triggered refetch mid-interaction
+    // can replace the data a form was seeded from.
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>

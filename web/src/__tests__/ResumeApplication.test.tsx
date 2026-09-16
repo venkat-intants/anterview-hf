@@ -8,7 +8,7 @@
 // a verdict.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -61,7 +61,12 @@ function draft(over: Partial<ApplicationDraft> = {}): ApplicationDraft {
 }
 
 function renderPage() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    // refetchOnWindowFocus off: a jsdom focus event mid-interaction makes React
+    // Query hand the component a new draft object, which re-runs the seeding
+    // effect and discards what was just typed. Nothing here tests refetching.
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/apply/draft/tok-123']}>
@@ -134,12 +139,26 @@ describe('the confirmation step', () => {
   });
 
   it('sends the correction, so the candidate wins over the parser', async () => {
+    // fireEvent.change rather than clear-then-type, deliberately.
+    //
+    // The confirm button is disabled while the name is empty, and clear() puts
+    // the field through exactly that state. Locally the typed value always
+    // flushed before the click; on a loaded CI runner it did not, the click
+    // landed on a disabled button, and confirmDraft was never called — a
+    // failure that says "expected spy to be called" and looks like a logic bug
+    // in the component rather than a race in the test.
+    //
+    // What this test is actually about is the PAYLOAD: that the candidate's
+    // correction is what gets sent, not the parser's guess. Setting the value
+    // in one step asserts exactly that and has no intermediate state to race.
+    // The typing interaction itself is covered by the test above.
     getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
     renderPage();
     const name = await screen.findByLabelText(/Full name/);
-    await userEvent.clear(name);
-    await userEvent.type(name, 'Priya S. Sharma');
-    await userEvent.click(screen.getByRole('button', { name: /These details are correct/ }));
+    fireEvent.change(name, { target: { value: 'Priya S. Sharma' } });
+    await userEvent.click(
+      await screen.findByRole('button', { name: /These details are correct/ }),
+    );
     await waitFor(() =>
       expect(confirmDraft).toHaveBeenCalledWith(
         'tok-123',

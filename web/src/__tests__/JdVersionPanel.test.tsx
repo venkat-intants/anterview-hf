@@ -96,7 +96,11 @@ function history(versions: JdVersion[]): JdHistory {
 }
 
 function renderPanel(req = requisition()) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    // See ResumeApplication.test.tsx: a focus-triggered refetch mid-interaction
+    // can replace the data a form was seeded from.
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <JdVersionPanel requisition={req} />

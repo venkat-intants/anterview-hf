@@ -36,6 +36,17 @@ module.exports = {
     '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     'no-console': 'error',
     'react/prop-types': 'off',
+    // i18n.ts sets `interpolation: { escapeValue: false }` — t() hands React the
+    // raw string and React escapes it as a text child. That is correct, but it
+    // is correct ONLY while no innerHTML sink exists anywhere in this tree:
+    // the first dangerouslySetInnerHTML added for an unrelated reason silently
+    // turns ~2,100 t() calls into stored-XSS sinks, including ones that
+    // interpolate a name parsed out of a candidate's uploaded CV.
+    //
+    // So the invariant is enforced here rather than remembered. If you need raw
+    // HTML, sanitise it and disable this rule on that single line with a comment
+    // saying why — do not switch it off globally.
+    'react/no-danger': 'error',
   },
   overrides: [
     {

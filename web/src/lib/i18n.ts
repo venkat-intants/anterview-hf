@@ -9,6 +9,21 @@
 // NOTE: HI/TE translations are a first-pass for UI coverage.
 // They must receive native-speaker and (for ConsentModal) legal review
 // before a production/government-bid launch.
+//
+// ERASURE AND CONSENT KEYS CARRY A HIGHER BAR THAN GENERAL UI COPY.
+// A mistranslated button label is an annoyance; a mistranslated IRREVERSIBLE
+// DELETE is a data principal destroying their own application because the copy
+// read as something softer. The blanket caveat above is a whole-bundle,
+// pre-launch ask - too slow and too coarse for these. `resumeApply.delete*`,
+// `resumeApply.keepIt`, `resumeApply.deletedDesc` and the ConsentModal keys
+// want a targeted native-speaker pass, and want it BEFORE they are
+// candidate-facing rather than before launch.
+//
+// Acted on once already: te.resumeApply.deleteDesc rendered "cannot be undone"
+// with a verb reading primarily as "cannot be CANCELLED" - a weaker claim than
+// the English and Hindi, on the one control that cannot be taken back. NOTE the
+// same verb is still used by an unrelated pre-existing te key; that one is out
+// of this change's scope and is worth checking in the targeted pass.
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
@@ -2146,7 +2161,7 @@ const te = {
       errSend: 'మీ దరఖాస్తును పంపలేకపోయాం.',
       deleteTitle: 'ఈ దరఖాస్తును తొలగించండి',
       deleteDesc:
-        'మీరు నమోదు చేసిన వివరాలను మరియు అప్‌లోడ్ చేసిన CVని తొలగిస్తుంది. దీన్ని రద్దు చేయలేరు, లింక్ పని చేయడం ఆగిపోతుంది.',
+        'మీరు నమోదు చేసిన వివరాలను మరియు అప్‌లోడ్ చేసిన CVని తొలగిస్తుంది. దీన్ని వెనక్కి తీసుకోలేరు, లింక్ పని చేయడం ఆగిపోతుంది.',
       deleting: 'తొలగిస్తున్నాం…',
       deleteConfirm: 'నిర్ధారించండి — అన్నీ తొలగించండి',
       deleteCta: 'నేను భద్రపరిచిన దరఖాస్తును తొలగించండి',

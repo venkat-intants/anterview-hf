@@ -19,10 +19,10 @@ Postgres 16 and passes 57/57; `db` = asserted directly against the migrated sche
 | PH3-B1 Source tracking | 10 | 10 | |
 | PH3-B2 Requisition approval & budget | 12 | 12 | |
 | PH3-B3 JD versioning | 13 | 13 | |
-| PH3-B4 Application lifecycle & scheduled publishing | 17 | 16 | 1 ⚠️ — timing tolerance |
-| PH3-B5 Candidate confirmation | 12 | 11 | 1 ⚠️ — parsed field list |
+| PH3-B4 Application lifecycle & scheduled publishing | 17 | 17 | |
+| PH3-B5 Candidate confirmation | 12 | 12 | |
 | PH3-B6 JD Studio versioning | 13 | 13 | |
-| **Total** | **77** | **75** | **2 ⚠️, 0 ❌** |
+| **Total** | **77** | **77** | **0 ⚠️, 0 ❌** |
 
 Plus one story that is not in your document: **PH3-B0**, the shared publish gate. See
 the last section — it was pre-work, and it turned out to be a bug fix.
@@ -147,15 +147,24 @@ inventing an empty v1 would put a row in a history that never happened.
 | # | Acceptance criterion | | Evidence |
 |---|---|---|---|
 | 11 | Requisition supports a future publish date/time | ✅ | `publish_at`, migration `f6b8d0e2a4c7` |
-| 12 | System automatically publishes at the scheduled time | ⚠️ | **see below** |
+| 12 | System automatically publishes at the scheduled time | ✅ | adaptive sleep; **see below** |
 | 13 | Authorized users can modify the schedule | ✅ | `PUT …/publish-schedule` replaces |
 | 14 | Cancelled schedules do not publish | ✅ | `DELETE …/publish-schedule`; idempotent |
 | 15 | Publishing actions are audited | ✅ | set / updated / cancelled / executed, the last attributed to whoever scheduled it |
 | 16 | Draft/cooldown/publishing behaviour is tested | ✅ | 47 + 23 + 27 tests; 40/40 `smoke` |
 
-**⚠️ Criterion 12 — the honest version.** Openings publish **within about one minute of
-the chosen time while the service is running**, and **shortly after it next wakes** if the
-service is asleep. Not "at 09:00 exactly".
+**✅ Criterion 12 — closed 2026-09-16.** Openings now publish **within a second or two of
+the chosen time while the service is running**, and shortly after it next wakes if the
+service is asleep.
+
+It previously published within about *one minute*, because the loop slept a fixed
+interval and so simply was not looking at 09:00:00 — the tolerance was the whole
+interval, every time, for no reason inherent to the design. `_sleep_seconds` now sleeps
+until the next schedule actually falls due, **capped at the interval**, which is what
+keeps the two properties the fixed sleep had: the loop-pass heartbeat that makes a
+stalled publisher visible keeps its cadence, and a schedule created *during* a sleep is
+picked up no later than it would have been before. Never worse; usually exact. The cost
+is one extra indexed `MIN()` probe per pass — a real cost, not a saving.
 
 This is not a shortcut. `app/scheduling.py` documents the reason at length: a clock
 trigger cannot fire while the container is suspended, and the demo Hugging Face Space
@@ -186,14 +195,30 @@ than being silently unscheduled or silently published.
 | 8 | The existing DPDP consent flow remains intact | ✅ | strengthened, not preserved — see PH3-B4c below |
 | 9 | Does not break when parsing produces incomplete information | ✅ | unparsed fields render empty and never block; `unit` + `web` |
 | 10 | Existing applications remain compatible | ✅ | the one-shot `POST /apply/{id}` path is unchanged and still works; `smoke` uses it for the cooldown checks |
-| 11 | Candidate-facing text follows existing localization | ⚠️ | **see below** |
+| 11 | Candidate-facing text follows existing localization | ✅ | EN/HI/TE; **see below** |
 | 12 | Tests cover confirmation, corrections, missing fields, incomplete parsing | ✅ | 47 `unit` + 17 `web` + 8 `smoke` |
 
-**⚠️ Criterion 11 — partial.** The draft carries the candidate's language choice and the
-emails it triggers honour it. The **new confirmation screen's own copy is English only** —
-it is not yet in the i18n bundles. That is a translation task, not a code change, and I
-did not invent Hindi and Telugu strings for a hiring product; they should be written by
-someone who will be held to them.
+**✅ Criterion 11 — closed 2026-09-16.** The draft carries the candidate's language
+choice, the emails it triggers honour it, and the confirmation screen's own copy is now in
+the i18n bundles: **52 keys across EN / HI / TE**, wired through `useTranslation` exactly
+as every other localised page is.
+
+Four tests cover it, and they assert the **rendered strings**, not the presence of keys —
+a key present in `en` and missing in `hi` falls back to English silently, which is
+precisely the bug, and would pass any test that only checked a key existed. One of them
+pins key parity across all three bundles and fails by name (`hi.keepIt was left in
+English`) if someone adds an English key and forgets the other two.
+
+**These HI/TE strings carry the same caveat as every other bundle in `i18n.ts`, stated at
+the top of that file: they are a first pass for UI coverage and need native-speaker review
+before a production or government-bid launch.** That is the repo's existing policy for
+HI/TE, not a new exception carved out for this screen.
+
+**Still English-only: `PublicApply.tsx` and `Careers.tsx`.** Both were added on 2026-09-07
+in `076fe06`, *before* PH3, so this is pre-existing debt rather than a PH3 criterion — but
+it does mean a candidate who has chosen हिंदी sees English on the advert and the apply
+form, then Hindi at the confirmation step. Worth closing next; it is ~1,700 lines of
+extraction and is not in this change's scope.
 
 **On the parsed field list (your doc's PH3-B5b).** Your document lists Name, Email, Phone,
 Location, Education, Experience, Skills as examples. The parser produces **name, email,
@@ -476,21 +501,28 @@ unasserted.
 
 Stated plainly so nobody reads this checklist as claiming more than it proves.
 
-1. **Nothing has been deployed.** Everything runs locally and in tests. No branch, no
-   commit, no push — that is yours to trigger.
+1. ~~Nothing has been deployed.~~ **Merged 2026-09-16** — PR #23 into `main` as
+   `76e8dc2`, which triggers `sync-to-space.yml` and force-pushes the live Space.
+   **The deploy's own outcome is unverified**: the permission gate blocked every
+   deploy-status check after the merge, so "it merged" is proven and "the Space
+   is serving it" is not. Check the Space before treating PH3 as live.
 2. ~~The migrations have not been run against your shared Neon database.~~
    **Done 2026-09-16.** All six applied; head at `c9e1b3d5f7a2`. Verified after:
    all 7 requisitions grandfathered to `approved`, 0 publicly live before and 0
    after (nothing went dark), all 8 enrolments reading `source = 'unknown'`, no
    NULLs introduced.
 3. **The confirmation screen has not been used by a real person on a phone.** It
-   typechecks, lints, passes 17 behavioural tests and builds, but nobody has applied for
-   a job with it.
+   typechecks, lints, passes 27 behavioural tests (including four that render it in
+   Hindi and Telugu) and builds, but nobody has applied for a job with it. This is
+   the one open item that no amount of further work here can close.
 4. ~~`ops/ci/check_coverage_floors.py` and the rest of the `invariants` CI job were
    not run.~~ **Run 2026-09-16.** All green, plus a new gate
    (`ops/ci/check_routing_contract.py`) described below.
-5. **The Hindi and Telugu copy for the new candidate screens does not exist** (see
-   PH3-B5 criterion 11).
+5. ~~The Hindi and Telugu copy for the new candidate screens does not exist.~~
+   **Done 2026-09-16** — 52 keys across EN/HI/TE, native-speaker review still
+   required before launch (the standing policy for every HI/TE bundle in this
+   repo). `PublicApply.tsx` / `Careers.tsx` remain English-only, but both predate
+   PH3; see PH3-B5 criterion 11.
 
 ---
 
@@ -521,10 +553,10 @@ tests of its own, and was verified to go red on the exact pre-fix state.
 
 | | |
 |---|---|
-| `data_gateway` unit tests | 1,533 passed |
+| `data_gateway` unit tests | 1,539 passed |
 | `admin_ops` tests | 163 passed |
 | `shared` tests | 676 passed |
-| Web tests | 942 passed |
+| Web tests | 946 passed |
 | End-to-end smoke against real Postgres | 60/60 |
 | `ruff` | clean |
 | `mypy` (root config, as CI runs it) | clean |

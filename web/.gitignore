@@ -9,6 +9,8 @@ vite.err
 vite.log
 
 # E2E test artifacts
+# Per-run tenant: passwords for throwaway local accounts. Never commit.
+e2e/.auth/
 e2e-results/
 playwright-report/
 test-results/

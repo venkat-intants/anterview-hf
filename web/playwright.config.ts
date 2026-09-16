@@ -1,29 +1,43 @@
-// Playwright configuration for AntHire web E2E smoke tests.
-// Targets the locally running Vite dev server (http://localhost:5174).
-// Run: npm run e2e
-// Prerequisites: data_gateway on :8002, interview_core on :8001, Vite on :5174, Postgres.
+// Playwright configuration for the AntHire browser end-to-end suite.
 //
-// NOTE (FE-3): `./e2e` currently contains a README and NO specs. This config is
-// retained for the rewrite described in e2e/README.md, not because a suite runs.
-// `npm run e2e` goes through scripts/run-e2e.mjs, which fails loudly rather than
-// letting Playwright's exit-0-on-no-specs read as a passing suite.
+// Run: npm run e2e   (see e2e/README.md for prerequisites)
+//
+// The suite drives the real stack: the Vite dev server, data_gateway and the
+// local Postgres/Redis/Mailpit containers. global-setup provisions a throwaway
+// company and one account per role for each run, against the LOCAL database
+// only.
 
 import { defineConfig, devices } from '@playwright/test';
 
+const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5174';
+
+// Playwright downloads its own Chromium (`npx playwright install chromium`).
+// Where that download is not wanted, point it at an installed browser instead,
+// e.g. E2E_BROWSER_CHANNEL=msedge or chrome.
+const channel = process.env.E2E_BROWSER_CHANNEL;
+
 export default defineConfig({
   testDir: './e2e',
+  globalSetup: './e2e/global-setup.ts',
   timeout: 60_000,
+  expect: { timeout: 15_000 },
+  // One worker: the specs share one local stack, and the background loops in
+  // data_gateway are not built to be raced by parallel browsers.
+  workers: 1,
+  fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
-  reporter: 'list',
+  reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
+  outputDir: 'test-results',
   use: {
-    baseURL: 'http://localhost:5174',
+    baseURL: WEB_URL,
     headless: true,
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: { ...devices['Desktop Chrome'], ...(channel ? { channel } : {}) },
     },
   ],
 });

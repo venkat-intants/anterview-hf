@@ -37,7 +37,7 @@ from app.dependencies import HrCtxDep
 from app.exam_ai_client import ExamGenerationError, generate_exam_questions_remote
 from app.exam_grading import GradeInput, GradeQuestion, grade_breakdown
 from app.exam_link import hash_exam_token, mint_exam_token
-from app.mailer import enqueue_email
+from app.mailer import candidate_language, enqueue_email
 from app.models import (
     Applicant,
     CodingQuestion,
@@ -1098,7 +1098,7 @@ async def assign_exam(
             db,
             to=applicant.email,
             template="exam_link",
-            lang="en",
+            lang=await candidate_language(db, applicant.id),
             ctx={
                 "name": applicant.full_name,
                 "exam_title": exam.title,

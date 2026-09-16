@@ -34,7 +34,7 @@ import { AlertCircle, Lock, Plus, Trash2 } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 
 const INPUT =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13.5px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none disabled:opacity-50';
+  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-50';
 
 const KIND_ORDER: QuestionKind[] = [
   'short_text',
@@ -90,7 +90,7 @@ function QuestionRow({
           />
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <StatusTag tone="neutral">{QUESTION_KIND_LABELS[question.kind]}</StatusTag>
-            <label className="flex cursor-pointer items-center gap-1.5 text-[12.5px] text-[#b8babf]">
+            <label className="flex cursor-pointer items-center gap-1.5 text-[12.5px] text-[var(--ui-soft)]">
               <input
                 type="checkbox"
                 checked={question.required}
@@ -100,7 +100,7 @@ function QuestionRow({
               Required
             </label>
             {question.options.length > 0 ? (
-              <span className="text-[12px] text-[#70757c]">
+              <span className="text-[12px] text-[var(--ui-faint)]">
                 {question.options.join(' · ')}
               </span>
             ) : null}
@@ -111,7 +111,7 @@ function QuestionRow({
           type="button"
           onClick={() => retire.mutate()}
           aria-label={`Retire question: ${question.prompt}`}
-          className="shrink-0 rounded-[8px] p-1.5 text-[#888b91] hover:text-[#e6714f] focus:outline-none focus-visible:text-[#e6714f]"
+          className="shrink-0 rounded-[8px] p-1.5 text-muted-foreground hover:text-[var(--ui-danger)] focus:outline-none focus-visible:text-[var(--ui-danger)]"
         >
           <Trash2 size={15} aria-hidden="true" />
         </button>
@@ -119,7 +119,7 @@ function QuestionRow({
 
       {/* Said before anyone types, not after they press save. */}
       {frozen ? (
-        <p className="mt-3 flex items-start gap-2 rounded-[10px] border border-white/[0.07] bg-white/[0.02] p-2.5 text-[12px] leading-relaxed text-[#888b91]">
+        <p className="mt-3 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-2.5 text-[12px] leading-relaxed text-muted-foreground">
           <Lock size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span>
             {question.answer_count}{' '}
@@ -175,7 +175,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex w-full items-center justify-center gap-1.5 rounded-[14px] border border-dashed border-white/15 py-3 text-[13px] text-[#b8babf] hover:text-white focus:outline-none focus-visible:border-[var(--accent)]"
+        className="flex w-full items-center justify-center gap-1.5 rounded-[14px] border border-dashed border-[var(--ui-line-strong)] py-3 text-[13px] text-[var(--ui-soft)] hover:text-foreground focus:outline-none focus-visible:border-[var(--accent)]"
       >
         <Plus size={14} aria-hidden="true" />
         Add a question
@@ -189,7 +189,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
         <div>
           <label
             htmlFor="new-question-prompt"
-            className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]"
+            className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
           >
             What do you want to ask?
           </label>
@@ -205,7 +205,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
         <div>
           <label
             htmlFor="new-question-kind"
-            className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]"
+            className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
           >
             Answer type
           </label>
@@ -224,7 +224,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
           {/* The type cannot be changed later, answered or not — changing it
               would reinterpret every answer given. Said here, where it is
               still a free choice. */}
-          <p className="mt-1 text-[11.5px] text-[#70757c]">
+          <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
             This cannot be changed later, so pick the one that fits.
           </p>
         </div>
@@ -233,7 +233,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
           <div>
             <label
               htmlFor="new-question-options"
-              className="mb-1.5 block text-[12.5px] font-medium text-[#b8babf]"
+              className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
             >
               Options, one per line
             </label>
@@ -246,7 +246,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
               className={INPUT}
             />
             {!optionsOk ? (
-              <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-[#e6714f]">
+              <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-danger)]">
                 <AlertCircle size={12} aria-hidden="true" />
                 A choice needs at least two options.
               </p>
@@ -254,7 +254,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
           </div>
         ) : null}
 
-        <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-[#b8babf]">
+        <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
           <input
             type="checkbox"
             checked={required}
@@ -275,7 +275,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
           <button
             type="button"
             onClick={() => setOpen(false)}
-            className="text-[12.5px] text-[#888b91] hover:text-white"
+            className="text-[12.5px] text-muted-foreground hover:text-foreground"
           >
             Cancel
           </button>
@@ -298,17 +298,17 @@ export default function QuestionEditor({ requisitionId }: { requisitionId: strin
   return (
     <section aria-labelledby="questions-heading" className="flex flex-col gap-3">
       <div>
-        <h2 id="questions-heading" className="text-[16px] font-semibold text-white">
+        <h2 id="questions-heading" className="text-[16px] font-semibold text-foreground">
           Application questions
         </h2>
-        <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-[#888b91]">
+        <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-muted-foreground">
           Asked on the application form, after the CV. Leave this empty and the form
           simply does not have a questions step.
         </p>
       </div>
 
       {questions.isError ? (
-        <p className="text-[13px] text-[#888b91]">
+        <p className="text-[13px] text-muted-foreground">
           Could not load the questions. Refresh to try again.
         </p>
       ) : null}
@@ -320,7 +320,7 @@ export default function QuestionEditor({ requisitionId }: { requisitionId: strin
       <NewQuestion requisitionId={requisitionId} />
 
       {items.length > 0 ? (
-        <p className={cn('text-[12px] text-[#70757c]')}>
+        <p className={cn('text-[12px] text-[var(--ui-faint)]')}>
           {items.filter((q) => q.required).length} of {items.length} required.
         </p>
       ) : null}

@@ -55,10 +55,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.exam_link import hash_exam_token, mint_exam_token
-from app.mailer import enqueue_email
+from app.mailer import candidate_language, enqueue_email
 from app.notifications_util import create_notification
 from app.requisitions import record_round_move, record_transition
-from app.workflows import AI_GRADED_KINDS, EXAM_BACKED_KINDS, load_criteria, published_workflow
+from app.workflows import (
+    AI_GRADED_KINDS,
+    EXAM_BACKED_KINDS,
+    exam_round_problem,
+    exam_round_readiness,
+    load_criteria,
+    published_workflow,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -361,13 +368,36 @@ async def _assign_round(
                 round_id=str(round_["id"]), kind=kind,
             )
             return
-        exam_id = await db.scalar(
-            text("SELECT exam_id FROM exam_rounds WHERE id = :r"),
-            {"r": round_["exam_round_id"]},
-        )
-        if exam_id is None:
-            log.warning("runner.assign.exam_missing", round_id=str(round_["id"]))
+        readiness = (
+            await exam_round_readiness(db, [round_["exam_round_id"]])
+        ).get(str(round_["exam_round_id"]))
+        problem = exam_round_problem(readiness)
+        if problem is not None or readiness is None:
+            # exam_take refuses a link to a draft or empty exam round, so minting
+            # one would email the candidate a link that reads "not valid".
+            # Publish validation blocks this; this catches an exam round changed
+            # after the workflow went live. The candidate keeps their place and
+            # the owner is told what to fix.
+            log.warning(
+                "runner.assign.exam_round_not_live",
+                round_id=str(round_["id"]),
+                exam_round_id=str(round_["exam_round_id"]),
+                problem=problem,
+            )
+            if workflow.get("created_by_user_id"):
+                await create_notification(
+                    db,
+                    user_id=workflow["created_by_user_id"],
+                    kind="round_not_ready",
+                    title=f"{enrolment['full_name']} could not start {round_['title']}",
+                    body=(
+                        f"The exam round attached to {round_['title']} {problem}. "
+                        "Fix it, then assign the exam to them from the exam editor."
+                    ),
+                    link="/hr/exams",
+                )
             return
+        exam_id = readiness["exam_id"]
         # One live link per (round, applicant): rotate any prior active one so
         # the candidate is never holding two working links for the same round.
         await db.execute(
@@ -401,7 +431,7 @@ async def _assign_round(
             db,
             to=enrolment["email"],
             template="exam_link",
-            lang="en",
+            lang=await candidate_language(db, enrolment["applicant_id"]),
             ctx={
                 "name": enrolment["full_name"],
                 "exam_title": round_["title"],
@@ -434,6 +464,7 @@ async def _assign_round(
             db,
             company_id=company_id,
             applicant=applicant,
+            language=await candidate_language(db, applicant.id),
             created_by_user_id=workflow.get("created_by_user_id"),
             notify_user_id=workflow.get("created_by_user_id"),
             # Created linked to this application, and grounded in its role.

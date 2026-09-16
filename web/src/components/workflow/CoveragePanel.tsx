@@ -24,9 +24,9 @@ interface Props {
 
 /** 0 is a gap, 1–2 is healthy, 3+ is probably an accident. Mirrors build_coverage. */
 function coverageTone(times: number): { cls: string; label: string } {
-  if (times === 0) return { cls: 'text-[#ffb764]', label: 'not assessed' };
-  if (times > 2) return { cls: 'text-[#ffb764]', label: `${times} rounds` };
-  return { cls: 'text-[#27c93f]', label: times === 1 ? '1 round' : `${times} rounds` };
+  if (times === 0) return { cls: 'text-[var(--ui-warn)]', label: 'not assessed' };
+  if (times > 2) return { cls: 'text-[var(--ui-warn)]', label: `${times} rounds` };
+  return { cls: 'text-[var(--ui-ok)]', label: times === 1 ? '1 round' : `${times} rounds` };
 }
 
 function CoverageBar({ row }: { row: CoverageRow }) {
@@ -34,11 +34,11 @@ function CoverageBar({ row }: { row: CoverageRow }) {
   return (
     <li className="flex items-center gap-3 py-1.5">
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[12.5px] text-[#d5d7da]">
+        <span className="block truncate text-[12.5px] text-foreground">
           {row.competency_name}
         </span>
         {row.assessed_in.length > 0 ? (
-          <span className="block truncate text-[11px] text-[#70757c]">
+          <span className="block truncate text-[11px] text-[var(--ui-faint)]">
             {row.assessed_in.join(', ')}
           </span>
         ) : null}
@@ -46,11 +46,11 @@ function CoverageBar({ row }: { row: CoverageRow }) {
       {/* Role weight, so a gap in something that barely matters reads
           differently from a gap in the main thing the job is. */}
       <span
-        className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-white/[0.08]"
+        className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-[var(--ui-inset-strong)]"
         title={`Weight in this role: ${Math.round(row.profile_weight * 100)}%`}
       >
         <span
-          className="block h-full rounded-full bg-white/35"
+          className="block h-full rounded-full bg-muted-foreground"
           style={{ width: `${Math.min(100, Math.round(row.profile_weight * 100))}%` }}
         />
       </span>
@@ -64,7 +64,7 @@ function CoverageBar({ row }: { row: CoverageRow }) {
 export default function CoveragePanel({ report, loading }: Props): JSX.Element {
   if (loading && !report) {
     return (
-      <div className="flex items-center gap-2 text-[12.5px] text-[#888b91]">
+      <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
         Checking…
       </div>
@@ -72,7 +72,7 @@ export default function CoveragePanel({ report, loading }: Props): JSX.Element {
   }
   if (!report) {
     return (
-      <p className="text-[12.5px] text-[#888b91]">
+      <p className="text-[12.5px] text-muted-foreground">
         Add a round to see what this process measures.
       </p>
     );
@@ -86,14 +86,14 @@ export default function CoveragePanel({ report, loading }: Props): JSX.Element {
         className={cn(
           'flex items-start gap-2 rounded-[12px] border p-3 text-[12.5px] leading-relaxed',
           report.publishable
-            ? 'border-[#27c93f]/25 bg-[#27c93f]/[0.06] text-[#d5d7da]'
-            : 'border-[#e6714f]/30 bg-[#e6714f]/[0.07] text-[#d5d7da]',
+            ? 'border-border bg-[var(--ui-ok-wash)] text-foreground'
+            : 'border-border bg-[var(--ui-danger-wash)] text-foreground',
         )}
       >
         {report.publishable ? (
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#27c93f]" aria-hidden="true" />
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-ok)]" aria-hidden="true" />
         ) : (
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#e6714f]" aria-hidden="true" />
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]" aria-hidden="true" />
         )}
         <span>
           {report.publishable
@@ -105,7 +105,7 @@ export default function CoveragePanel({ report, loading }: Props): JSX.Element {
       {report.errors.length > 0 ? (
         <ul className="flex list-none flex-col gap-1.5">
           {report.errors.map((e) => (
-            <li key={e} className="flex items-start gap-1.5 text-[12px] leading-relaxed text-[#e6714f]">
+            <li key={e} className="flex items-start gap-1.5 text-[12px] leading-relaxed text-[var(--ui-danger)]">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               {e}
             </li>
@@ -116,7 +116,7 @@ export default function CoveragePanel({ report, loading }: Props): JSX.Element {
       {report.warnings.length > 0 ? (
         <ul className="flex list-none flex-col gap-1.5">
           {report.warnings.map((w) => (
-            <li key={w} className="flex items-start gap-1.5 text-[12px] leading-relaxed text-[#ffb764]">
+            <li key={w} className="flex items-start gap-1.5 text-[12px] leading-relaxed text-[var(--ui-warn)]">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               {w}
             </li>
@@ -127,22 +127,22 @@ export default function CoveragePanel({ report, loading }: Props): JSX.Element {
       {report.coverage.length > 0 ? (
         <div>
           <div className="mb-1 flex items-baseline justify-between">
-            <h3 className="text-[12.5px] font-medium text-white">What this process measures</h3>
+            <h3 className="text-[12.5px] font-medium text-foreground">What this process measures</h3>
             {gaps > 0 ? (
-              <span className="text-[11.5px] text-[#ffb764]">{gaps} not covered</span>
+              <span className="text-[11.5px] text-[var(--ui-warn)]">{gaps} not covered</span>
             ) : (
-              <span className="text-[11.5px] text-[#27c93f]">all covered</span>
+              <span className="text-[11.5px] text-[var(--ui-ok)]">all covered</span>
             )}
           </div>
           {coverageVerdict(report.weighted_coverage) ? (
             <p
-              className="mb-2 text-[12px] leading-relaxed text-[#b8babf]"
+              className="mb-2 text-[12px] leading-relaxed text-[var(--ui-soft)]"
               data-testid="coverage-verdict"
             >
               {coverageVerdict(report.weighted_coverage)}
             </p>
           ) : null}
-          <ul className="flex list-none flex-col divide-y divide-white/[0.05]">
+          <ul className="flex list-none flex-col divide-y divide-border">
             {report.coverage.map((row) => (
               <CoverageBar key={row.competency_id} row={row} />
             ))}

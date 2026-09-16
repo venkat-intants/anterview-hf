@@ -67,22 +67,22 @@ function GhostRound({ round, index }: { round: DraftedRound; index: number }) {
   return (
     <li className="flex flex-col">
       {index > 0 ? (
-        <span className="ml-[26px] h-5 w-px bg-[var(--accent)]/30" aria-hidden="true" />
+        <span className="ml-[26px] h-5 w-px bg-electric/30" aria-hidden="true" />
       ) : null}
-      <div className="flex items-center gap-3 rounded-[16px] border border-dashed border-[var(--accent)]/50 bg-[var(--accent)]/[0.05] p-3.5">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white/[0.06]">
+      <div className="flex items-center gap-3 rounded-[16px] border border-dashed border-electric/50 bg-electric/[0.05] p-3.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
           {Icon ? (
-            <Icon className="h-[18px] w-[18px] text-[#d5d7da]" aria-hidden="true" />
+            <Icon className="h-[18px] w-[18px] text-foreground" aria-hidden="true" />
           ) : null}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
-            <span className="truncate text-[14px] font-medium text-white">
+            <span className="truncate text-[14px] font-medium text-foreground">
               {round.title ?? 'Untitled round'}
             </span>
             {meta ? <StatusTag tone={meta.tone}>{meta.label}</StatusTag> : null}
           </span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 text-[11.5px] text-[#70757c]">
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 text-[11.5px] text-[var(--ui-faint)]">
             {round.pass_threshold !== null && round.pass_threshold !== undefined ? (
               <span>advance at {round.pass_threshold}%</span>
             ) : null}
@@ -109,9 +109,9 @@ function SettingsDiff({ body }: { body: Record<string, unknown> }) {
   return (
     <ul className="flex list-none flex-col gap-1.5">
       {Object.entries(body).map(([key, value]) => (
-        <li key={key} className="flex items-center gap-2 text-[12.5px] text-[#d5d7da]">
+        <li key={key} className="flex items-center gap-2 text-[12.5px] text-foreground">
           <span className="flex-1">{LABELS[key] ?? key}</span>
-          <span className="font-medium text-white">
+          <span className="font-medium text-foreground">
             {value === true ? 'on' : value === false ? 'off' : String(value)}
           </span>
         </li>
@@ -151,19 +151,19 @@ export default function ProposalPreview({
   return (
     <section
       aria-label="Assistant preview"
-      className="mb-5 rounded-[18px] border border-[var(--accent)]/35 bg-[var(--accent)]/[0.04] p-4"
+      className="mb-5 rounded-[18px] border border-electric/35 bg-electric/[0.04] p-4"
     >
       <header className="mb-3 flex flex-wrap items-center gap-2">
         <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />
-        <span className="text-[13px] font-medium text-white">{proposal.title}</span>
+        <span className="text-[13px] font-medium text-foreground">{proposal.title}</span>
         <StatusTag tone="neutral">preview</StatusTag>
-        <span className="ml-auto text-[11.5px] text-[#888b91]">
+        <span className="ml-auto text-[11.5px] text-muted-foreground">
           {appends ? `would be added after round ${existingRounds}` : 'nothing has changed yet'}
         </span>
       </header>
 
       {proposal.rationale ? (
-        <p className="mb-3 border-l-2 border-[var(--accent)]/50 pl-3 text-[12.5px] leading-relaxed text-[#b8babf]">
+        <p className="mb-3 border-l-2 border-electric/50 pl-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
           {proposal.rationale}
         </p>
       ) : null}
@@ -180,7 +180,7 @@ export default function ProposalPreview({
         // A shape this preview does not know how to draw. Falling back to the
         // raw request is better than rendering nothing and asking for approval
         // of something invisible.
-        <pre className="overflow-x-auto rounded-[10px] bg-black/25 p-2 text-[11px] text-[#b8babf]">
+        <pre className="overflow-x-auto rounded-[10px] bg-[var(--ui-inset)] p-2 text-[11px] text-[var(--ui-soft)]">
           {proposal.commit.method} {proposal.commit.path}
           {'\n'}
           {JSON.stringify(proposal.commit.body, null, 2)}
@@ -188,13 +188,13 @@ export default function ProposalPreview({
       )}
 
       {/* The single most important sentence on this screen. */}
-      <p className="mt-3 text-[11.5px] leading-relaxed text-[#888b91]">
+      <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
         Accepting puts this on your canvas as a draft. No candidate sees a draft — you
         still review it and press publish yourself.
       </p>
 
       {state === 'failed' ? (
-        <p className="mt-2 text-[12px] text-[#e6714f]" role="alert">
+        <p className="mt-2 text-[12px] text-[var(--ui-danger)]" role="alert">
           {error}
         </p>
       ) : null}
@@ -205,7 +205,7 @@ export default function ProposalPreview({
           onClick={() => void apply()}
           disabled={state === 'applying'}
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-[10px] bg-[var(--accent)] px-4 py-2 text-[12.5px] font-medium text-black transition-opacity hover:opacity-90',
+            'inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90',
             state === 'applying' && 'opacity-50',
           )}
         >
@@ -219,14 +219,14 @@ export default function ProposalPreview({
         <button
           type="button"
           onClick={onDismiss}
-          className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.12] px-4 py-2 text-[12.5px] text-[#d5d7da] hover:text-white"
+          className="inline-flex items-center gap-1.5 rounded-[10px] border border-border px-4 py-2 text-[12.5px] text-foreground hover:text-foreground"
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />
           Discard
         </button>
-        <details className="ml-auto text-[11px] text-[#70757c]">
+        <details className="ml-auto text-[11px] text-[var(--ui-faint)]">
           <summary className="cursor-pointer select-none">What this sends</summary>
-          <pre className="mt-2 max-w-[420px] overflow-x-auto rounded bg-black/25 p-2">
+          <pre className="mt-2 max-w-[420px] overflow-x-auto rounded bg-[var(--ui-inset)] p-2">
             {proposal.commit.method} {proposal.commit.path}
             {'\n'}
             {JSON.stringify(proposal.commit.body, null, 2)}

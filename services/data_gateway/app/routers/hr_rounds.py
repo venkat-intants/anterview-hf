@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import DbSessionDep
@@ -310,6 +310,31 @@ async def update_round(
     exam = await _get_owned_exam(db, company_id, exam_id)
     rnd = await _get_owned_round(db, company_id, exam_id, round_id)
 
+    if body.status == "draft" and rnd.status == "published":
+        # A live workflow sends candidates links to this round, and exam_take
+        # refuses a link to a draft round — unpublishing it would strand every
+        # candidate the workflow assigns it to next.
+        in_use = await db.scalar(
+            text(
+                "SELECT r.title FROM workflow_rounds wr"
+                "  JOIN workflows w ON w.id = wr.workflow_id"
+                "   AND w.status = 'published' AND w.deleted_at IS NULL"
+                "  JOIN job_requisitions r ON r.id = w.requisition_id"
+                " WHERE wr.exam_round_id = :er AND wr.company_id = :c"
+                "   AND wr.deleted_at IS NULL"
+                " LIMIT 1"
+            ),
+            {"er": rnd.id, "c": company_id},
+        )
+        if in_use is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"This round is used by the live workflow for {in_use}. "
+                    "Publish a workflow version that no longer uses it first."
+                ),
+            )
+
     if body.status == "published":
         if await _section_count(db, rnd) < 1:
             raise HTTPException(
@@ -332,9 +357,10 @@ async def update_round(
         rnd.advances_to_interview = body.advances_to_interview
     if body.status is not None:
         rnd.status = body.status
-        # Publishing ANY round makes the exam takeable: the candidate take path
-        # gates on exam.status='published'. There is no separate exam-level publish
-        # in the round model, so auto-publish the parent exam here.
+        # The candidate take path gates on the ROUND being published (and the
+        # exam not being closed). Publishing a round also marks its exam
+        # published, so the exam lists and pickers that filter on exam status
+        # show it.
         if body.status == "published" and exam.status != "published":
             exam.status = "published"
             exam.updated_at = now

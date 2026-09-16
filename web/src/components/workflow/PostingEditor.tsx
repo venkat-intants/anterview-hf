@@ -27,12 +27,13 @@ import {
   type Requisition,
 } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
+import { cn } from '@/lib/utils';
 import { GlassCard, Pill } from '@/design/components/primitives';
 import { AlertCircle, Plus, X } from '@/design/components/icons';
 
 const INPUT =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13.5px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none';
-const LABEL = 'mb-1.5 block text-[12.5px] font-medium text-[#b8babf]';
+  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
+const LABEL = 'mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]';
 
 /** A repeatable list of short strings — responsibilities, skills. */
 function ListField({
@@ -75,14 +76,14 @@ function ListField({
           {list.map((item, i) => (
             <li
               key={`${item}-${i}`}
-              className="flex items-start justify-between gap-2 rounded-[10px] border border-white/[0.07] bg-white/[0.02] px-3 py-1.5"
+              className="flex items-start justify-between gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-1.5"
             >
-              <span className="text-[13px] text-[#d5d7da]">{item}</span>
+              <span className="text-[13px] text-foreground">{item}</span>
               <button
                 type="button"
                 aria-label={`Remove ${item}`}
                 onClick={() => onChange(list.filter((_, j) => j !== i))}
-                className="shrink-0 text-[#888b91] hover:text-[#e6714f]"
+                className="shrink-0 text-muted-foreground hover:text-[var(--ui-danger)]"
               >
                 <X size={13} aria-hidden="true" />
               </button>
@@ -109,7 +110,7 @@ function ListField({
           type="button"
           onClick={add}
           disabled={full || !draft.trim()}
-          className="shrink-0 rounded-[10px] border border-white/[0.1] px-3 text-[#b8babf] hover:text-white disabled:opacity-40"
+          className="shrink-0 rounded-[10px] border border-border px-3 text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
           aria-label={`Add to ${label}`}
         >
           <Plus size={14} aria-hidden="true" />
@@ -166,10 +167,10 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
   return (
     <section aria-labelledby="posting-heading" className="flex flex-col gap-4">
       <div>
-        <h2 id="posting-heading" className="text-[16px] font-semibold text-white">
+        <h2 id="posting-heading" className="text-[16px] font-semibold text-foreground">
           The posting
         </h2>
-        <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-[#888b91]">
+        <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-muted-foreground">
           What a candidate sees on the job board and before applying. Everything here
           is optional — leave a field blank and it simply is not shown.
         </p>
@@ -233,7 +234,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
                 onChange={(e) => set('experience_min_years', num(e.target.value))}
                 className={INPUT}
               />
-              <span className="text-[#5a5f66]">to</span>
+              <span className="text-[var(--ui-faint)]">to</span>
               <input
                 aria-label="Maximum experience in years"
                 type="number"
@@ -245,7 +246,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
               />
             </div>
             {experienceError ? (
-              <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-[#e6714f]">
+              <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-danger)]">
                 <AlertCircle size={12} aria-hidden="true" />
                 {experienceError}
               </p>
@@ -253,15 +254,18 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
           </div>
         </div>
 
-        <div className="mt-4 rounded-[12px] border border-white/[0.07] p-3">
+        <div className="mt-4 rounded-[12px] border border-border p-3">
           <span className={LABEL}>Salary range</span>
-          <div className="flex flex-wrap items-center gap-2">
+          {/* One row like the experience row above. INPUT carries w-full, so
+              the widths go through cn (tailwind-merge) — concatenated, w-full
+              won and every field took its own line. */}
+          <div className="flex flex-wrap items-center gap-2" data-testid="salary-row">
             <input
               aria-label="Salary currency"
               value={form.salary_currency ?? ''}
               onChange={(e) => set('salary_currency', e.target.value || null)}
               placeholder="INR"
-              className={`${INPUT} w-20`}
+              className={cn(INPUT, 'w-20 shrink-0')}
             />
             <input
               aria-label="Minimum salary"
@@ -269,20 +273,20 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
               min={0}
               value={form.salary_min ?? ''}
               onChange={(e) => set('salary_min', num(e.target.value))}
-              className={`${INPUT} w-36`}
+              className={cn(INPUT, 'w-auto min-w-[6rem] flex-1')}
             />
-            <span className="text-[#5a5f66]">to</span>
+            <span className="shrink-0 text-[var(--ui-faint)]">to</span>
             <input
               aria-label="Maximum salary"
               type="number"
               min={0}
               value={form.salary_max ?? ''}
               onChange={(e) => set('salary_max', num(e.target.value))}
-              className={`${INPUT} w-36`}
+              className={cn(INPUT, 'w-auto min-w-[6rem] flex-1')}
             />
           </div>
           {salaryError ? (
-            <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-[#e6714f]">
+            <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-danger)]">
               <AlertCircle size={12} aria-hidden="true" />
               {salaryError}
             </p>
@@ -290,7 +294,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
           {/* Recording a band and advertising it are different decisions, and
               the switch sits beside the fields so that is obvious here rather
               than discovered on the job board. */}
-          <label className="mt-3 flex cursor-pointer items-start gap-2 text-[12.5px] leading-relaxed text-[#b8babf]">
+          <label className="mt-3 flex cursor-pointer items-start gap-2 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
             <input
               type="checkbox"
               checked={form.salary_visible}
@@ -300,7 +304,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
             <span>
               Show this range to candidates.
               {form.salary_visible ? null : (
-                <span className="text-[#70757c]">
+                <span className="text-[var(--ui-faint)]">
                   {' '}
                   Off — the range is kept for your planning and never sent to the job
                   board.
@@ -345,7 +349,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
             {save.isPending ? 'Saving…' : 'Save posting'}
           </Pill>
           {experienceError || salaryError ? (
-            <span className="text-[12px] text-[#888b91]">
+            <span className="text-[12px] text-muted-foreground">
               Fix the range above to save.
             </span>
           ) : null}

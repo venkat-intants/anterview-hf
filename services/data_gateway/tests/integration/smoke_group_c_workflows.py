@@ -79,7 +79,7 @@ async def main() -> None:
         await c.execute(text(
             "TRUNCATE companies, users, applicants, job_requisitions, enrolments,"
             " stage_transitions, workflows, workflow_rounds, round_criteria,"
-            " round_results CASCADE"))
+            " round_results, exams, exam_rounds, exam_sections, exam_questions CASCADE"))
     async with f() as db:
         cid, uid, rid = await _fixture(db)
 
@@ -100,7 +100,25 @@ async def main() -> None:
             await db.rollback()
             check("a second draft is refused", "already has a draft" in str(exc), str(exc))
 
-        exam_ref = uuid.uuid4()
+        # A real, published exam round with a question: publish validation
+        # refuses one a candidate could not open (it used to accept any id).
+        exam_ref, exam_id, sec = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        await db.execute(text(
+            "INSERT INTO exams (id,company_id,title,created_by_user_id,created_at,updated_at)"
+            " VALUES (:i,:c,'Screen',:u,now(),now())"), {"i": exam_id, "c": cid, "u": uid})
+        await db.execute(text(
+            "INSERT INTO exam_rounds (id,exam_id,company_id,round_number,title,position,"
+            " status) VALUES (:i,:e,:c,1,'Round 1',0,'published')"),
+            {"i": exam_ref, "e": exam_id, "c": cid})
+        await db.execute(text(
+            "INSERT INTO exam_sections (id,round_id,exam_id,company_id,title,kind,position)"
+            " VALUES (:s,:r,:e,:c,'Section 1','mcq',0)"),
+            {"s": sec, "r": exam_ref, "e": exam_id, "c": cid})
+        await db.execute(text(
+            "INSERT INTO exam_questions (id,exam_id,section_id,company_id,prompt,options,"
+            " correct_index,position) VALUES (:q,:e,:s,:c,'2 + 2?',CAST(:o AS jsonb),1,0)"),
+            {"q": uuid.uuid4(), "e": exam_id, "s": sec, "c": cid, "o": '["3", "4"]'})
+        await db.commit()
         r1 = await add_round(db, company_id=cid, workflow_id=wf, title="Aptitude",
                              kind="mcq", pass_threshold=60, exam_round_id=exam_ref,
                              criteria=[PROFILE[1]])

@@ -262,11 +262,13 @@ export type TagTone = 'neutral' | 'electric' | 'lavender' | 'amber' | 'forest' |
 const TAG_TONES: Record<TagTone, string> = {
   neutral: 'bg-[var(--ui-inset-strong)] text-[var(--ui-soft)]',
   electric: 'bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]',
-  lavender: 'bg-[rgba(168,135,220,0.18)] text-[#c89ce8]',
+  lavender: 'bg-[var(--ui-lavender-wash)] text-[var(--ui-lavender)]',
   amber: 'bg-[rgba(255,183,100,0.16)] text-[var(--ui-warn)]',
   forest: 'bg-[rgba(39,201,63,0.16)] text-[var(--ui-ok)]',
   ember: 'bg-[rgba(230,113,79,0.16)] text-[var(--ui-danger)]',
-  pink: 'bg-[rgba(221,85,231,0.16)] text-[#dd55e7]',
+  // Pink has no dedicated status token; the platform-role pink is the
+  // theme-aware pink (darkened in light mode so the chip text holds contrast).
+  pink: 'bg-[rgba(221,85,231,0.16)] text-[var(--ui-role-platform)]',
 };
 
 interface StatusTagProps {
@@ -333,11 +335,23 @@ export function ToggleSwitch({ checked, onChange, label }: ToggleSwitchProps): J
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative h-6 w-11 flex-none rounded-pill transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-        checked ? 'bg-[var(--accent)]' : 'bg-white/15',
+        'relative h-6 w-11 flex-none rounded-pill border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+        // Off: a recessed track with a hairline, so it reads on white cards as
+        // well as on black. On: the signal accent.
+        checked
+          ? 'border-[var(--accent)] bg-[var(--accent)]'
+          : 'border-[var(--ui-line-strong)] bg-[var(--ui-inset-strong)]',
       )}
     >
-      <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-primary transition-all', checked ? 'left-[22px]' : 'left-0.5')} />
+      {/* The 1px border leaves a 42x22 inner box; the 20px thumb sits 1px in
+          from each edge (top-px, left-px / left-[21px]). */}
+      <span
+        data-testid="toggle-thumb"
+        className={cn(
+          'absolute top-px h-5 w-5 rounded-full transition-all',
+          checked ? 'left-[21px] bg-primary' : 'left-px bg-muted-foreground',
+        )}
+      />
     </button>
   );
 }

@@ -69,7 +69,12 @@ function ExamPicker({
 }) {
   const [examId, setExamId] = useState<string>('');
 
-  const exams = useQuery({ queryKey: ['hr', 'exams', 'published'], queryFn: () => listExams() });
+  const exams = useQuery({
+    queryKey: ['hr', 'exams', 'published'],
+    // Only published exams: candidates cannot open a draft exam's link, and the
+    // server refuses to publish a workflow that points at one.
+    queryFn: () => listExams('published'),
+  });
   const structure = useQuery({
     queryKey: ['hr', 'exam-structure', examId],
     queryFn: () => getStructure(examId),
@@ -84,7 +89,7 @@ function ExamPicker({
   return (
     <div className="flex flex-col gap-2.5">
       {value ? (
-        <div className="flex items-center gap-2 rounded-[10px] border border-[#27c93f]/25 bg-[#27c93f]/[0.06] px-3 py-2 text-[12.5px] text-[#d5d7da]">
+        <div className="flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-ok-wash)] px-3 py-2 text-[12.5px] text-foreground">
           <span className="truncate">
             Questions attached{chosen ? `: ${chosen.title}` : ''}
           </span>
@@ -92,7 +97,7 @@ function ExamPicker({
             <button
               type="button"
               onClick={() => onChange(null)}
-              className="ml-auto shrink-0 text-[12px] text-[#888b91] hover:text-white"
+              className="ml-auto shrink-0 text-[12px] text-muted-foreground hover:text-foreground"
             >
               Change
             </button>
@@ -100,20 +105,20 @@ function ExamPicker({
         </div>
       ) : (
         <>
-          <div className="flex items-start gap-1.5 text-[12px] text-[#ffb764]">
+          <div className="flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             This round has no questions yet. It cannot be published until it does.
           </div>
           {editable ? (
             <>
-              <label className="text-[12px] font-medium text-[#b8babf]" htmlFor="exam-select">
+              <label className="text-[12px] font-medium text-[var(--ui-soft)]" htmlFor="exam-select">
                 Take questions from
               </label>
               <select
                 id="exam-select"
                 value={examId}
                 onChange={(e) => setExamId(e.target.value)}
-                className="rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13px] text-white focus:border-[var(--accent)] focus:outline-none"
+                className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
               >
                 <option value="">Choose an exam…</option>
                 {(exams.data ?? []).map((e) => (
@@ -125,12 +130,12 @@ function ExamPicker({
 
               {examId ? (
                 structure.isLoading ? (
-                  <span className="flex items-center gap-1.5 text-[12px] text-[#888b91]">
+                  <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                     Loading rounds…
                   </span>
                 ) : (structure.data?.rounds ?? []).length === 0 ? (
-                  <span className="text-[12px] text-[#888b91]">
+                  <span className="text-[12px] text-muted-foreground">
                     That exam has no rounds yet.{' '}
                     <Link
                       to={`/hr/exams/${examId}`}
@@ -142,19 +147,63 @@ function ExamPicker({
                   </span>
                 ) : (
                   <div className="flex flex-col gap-1.5">
-                    {(structure.data?.rounds ?? []).map((r) => (
-                      <button
-                        key={r.id}
-                        type="button"
-                        onClick={() => onChange(r.id)}
-                        className="flex items-center justify-between rounded-[10px] border border-white/[0.08] px-3 py-2 text-left text-[12.5px] text-[#d5d7da] hover:border-[var(--accent)]/50 hover:text-white"
-                      >
-                        <span className="truncate">{r.title}</span>
-                        <span className="ml-2 shrink-0 text-[11px] text-[#70757c]">
-                          {r.sections.reduce((n, s) => n + s.question_count, 0)} questions
-                        </span>
-                      </button>
-                    ))}
+                    {(structure.data?.rounds ?? []).map((r) => {
+                      const questions = r.sections.reduce((n, sec) => n + sec.question_count, 0);
+                      // A draft round's link does not open for candidates, and
+                      // an empty one has nothing to ask — the server refuses to
+                      // publish a workflow pointing at either, so do not offer it.
+                      const unusable =
+                        r.status !== 'published'
+                          ? 'Publish this round in the exam editor first.'
+                          : questions === 0
+                            ? 'Add questions to this round in the exam editor first.'
+                            : null;
+                      return (
+                        <div key={r.id} className="flex flex-col gap-1">
+                          <button
+                            type="button"
+                            onClick={() => onChange(r.id)}
+                            disabled={unusable !== null}
+                            title={unusable ?? undefined}
+                            className="flex items-center justify-between gap-2 rounded-[10px] border border-border px-3 py-2 text-left text-[12.5px] text-foreground hover:border-electric/50 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border"
+                          >
+                            <span className="truncate">{r.title}</span>
+                            <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px]">
+                              <span
+                                className={
+                                  r.status === 'published'
+                                    ? 'text-[var(--ui-ok)]'
+                                    : 'text-[var(--ui-warn)]'
+                                }
+                              >
+                                {r.status === 'published' ? 'Published' : 'Draft'}
+                              </span>
+                              <span
+                                className={
+                                  questions === 0
+                                    ? 'text-[var(--ui-warn)]'
+                                    : 'text-[var(--ui-faint)]'
+                                }
+                              >
+                                {questions} question{questions === 1 ? '' : 's'}
+                              </span>
+                            </span>
+                          </button>
+                          {unusable ? (
+                            <span className="pl-1 text-[11.5px] text-muted-foreground">
+                              {unusable}{' '}
+                              <Link
+                                to={`/hr/exams/${examId}`}
+                                className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline"
+                              >
+                                Open the exam editor
+                                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                              </Link>
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 )
               ) : null}
@@ -227,7 +276,7 @@ function CriteriaPicker({
 
   if (!roleModel) {
     return (
-      <span className="flex items-center gap-1.5 text-[12px] text-[#888b91]">
+      <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
         Loading the role model…
       </span>
@@ -238,7 +287,7 @@ function CriteriaPicker({
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="flex items-start gap-1.5 text-[11.5px] leading-relaxed text-[#888b91]">
+      <p className="flex items-start gap-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         {round.kind === 'ai_interview'
           ? 'The interview probes these and nothing else. Picking one copies its rating scale onto this round, so the same standard applies to everyone who sits it — even if the role model changes later.'
@@ -246,7 +295,7 @@ function CriteriaPicker({
       </p>
 
       {atCap ? (
-        <span className="text-[11.5px] text-[#ffb764]">
+        <span className="text-[11.5px] text-[var(--ui-warn)]">
           A round assesses at most {MAX_CRITERIA_PER_ROUND} competencies — deselect one to
           swap.
         </span>
@@ -261,7 +310,7 @@ function CriteriaPicker({
               key={comp.id}
               className={cn(
                 'rounded-[10px] border px-2.5 py-2',
-                chosen ? 'border-[var(--accent)]/45 bg-[var(--accent)]/[0.06]' : 'border-white/[0.07]',
+                chosen ? 'border-electric/45 bg-electric/[0.06]' : 'border-border',
               )}
             >
               <div className="flex items-center gap-2.5">
@@ -275,12 +324,12 @@ function CriteriaPicker({
                 />
                 <label
                   htmlFor={`crit-${round.id}-${comp.id}`}
-                  className="min-w-0 flex-1 cursor-pointer truncate text-[13px] text-white"
+                  className="min-w-0 flex-1 cursor-pointer truncate text-[13px] text-foreground"
                 >
                   {comp.name}
                 </label>
                 {chosen ? (
-                  <span className="shrink-0 text-[11px] tabular-nums text-[#b8babf]">
+                  <span className="shrink-0 text-[11px] tabular-nums text-[var(--ui-soft)]">
                     {Math.round((chosen.weight / total) * 100)}%
                   </span>
                 ) : null}
@@ -289,7 +338,7 @@ function CriteriaPicker({
                   onClick={() => setExpanded(open ? null : comp.id)}
                   aria-label={`${open ? 'Hide' : 'Show'} rating scale for ${comp.name}`}
                   aria-expanded={open}
-                  className="shrink-0 rounded p-1 text-[#70757c] hover:text-white"
+                  className="shrink-0 rounded p-1 text-[var(--ui-faint)] hover:text-foreground"
                 >
                   <ChevronDown
                     className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')}
@@ -302,7 +351,7 @@ function CriteriaPicker({
                 <div className="mt-2 flex items-center gap-2 pl-[26px]">
                   <label
                     htmlFor={`w-${round.id}-${comp.id}`}
-                    className="text-[11px] text-[#70757c]"
+                    className="text-[11px] text-[var(--ui-faint)]"
                   >
                     Emphasis
                   </label>
@@ -320,11 +369,11 @@ function CriteriaPicker({
               ) : null}
 
               {open ? (
-                <dl className="mt-2 flex flex-col gap-1 border-t border-white/[0.06] pt-2 pl-[26px] text-[11.5px]">
+                <dl className="mt-2 flex flex-col gap-1 border-t border-border pt-2 pl-[26px] text-[11.5px]">
                   {(['low', 'mid', 'high'] as const).map((band) => (
                     <div key={band} className="flex gap-2">
-                      <dt className="w-10 shrink-0 capitalize text-[#70757c]">{band}</dt>
-                      <dd className="text-[#b8babf]">{comp.anchors[band]}</dd>
+                      <dt className="w-10 shrink-0 capitalize text-[var(--ui-faint)]">{band}</dt>
+                      <dd className="text-[var(--ui-soft)]">{comp.anchors[band]}</dd>
                     </div>
                   ))}
                 </dl>
@@ -360,13 +409,13 @@ export default function RoundInspector({
   }
 
   const field =
-    'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13px] text-white focus:border-[var(--accent)] focus:outline-none disabled:opacity-60';
+    'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60';
 
   return (
     <div className="flex flex-col gap-5">
       <header className="flex items-center gap-2.5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-white/[0.06]">
-          <Icon className="h-4 w-4 text-[#d5d7da]" aria-hidden="true" />
+        <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[var(--ui-inset)]">
+          <Icon className="h-4 w-4 text-foreground" aria-hidden="true" />
         </span>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -375,7 +424,7 @@ export default function RoundInspector({
                 aria-label="Round type"
                 value={round.kind}
                 onChange={(e) => onPatch({ kind: e.target.value as RoundKind })}
-                className="rounded-[8px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-2 py-1 text-[12px] text-white focus:border-[var(--accent)] focus:outline-none"
+                className="rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none"
               >
                 {ROUND_KIND_ORDER.map((k) => (
                   <option key={k} value={k}>
@@ -387,12 +436,12 @@ export default function RoundInspector({
               <StatusTag tone={meta.tone}>{meta.label}</StatusTag>
             )}
             {saving ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#70757c]" aria-hidden="true" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--ui-faint)]" aria-hidden="true" />
             ) : null}
           </div>
-          <p className="mt-1 text-[11.5px] leading-snug text-[#888b91]">{meta.blurb}</p>
+          <p className="mt-1 text-[11.5px] leading-snug text-muted-foreground">{meta.blurb}</p>
           {editable ? (
-            <p className="mt-1 text-[11px] leading-snug text-[#70757c]">
+            <p className="mt-1 text-[11px] leading-snug text-[var(--ui-faint)]">
               Changing the type clears what no longer applies — questions, threshold or time
               limit — and keeps the rest.
             </p>
@@ -402,7 +451,7 @@ export default function RoundInspector({
 
       {/* 1. What it is */}
       <section className="flex flex-col gap-2.5">
-        <label htmlFor="round-title" className="text-[12px] font-medium text-[#b8babf]">
+        <label htmlFor="round-title" className="text-[12px] font-medium text-[var(--ui-soft)]">
           Round name
         </label>
         <input
@@ -419,7 +468,7 @@ export default function RoundInspector({
 
         <div className="grid grid-cols-2 gap-2.5">
           <div>
-            <label htmlFor="deadline" className="mb-1.5 block text-[12px] font-medium text-[#b8babf]">
+            <label htmlFor="deadline" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
               Days to complete
             </label>
             <input
@@ -437,7 +486,7 @@ export default function RoundInspector({
             />
           </div>
           <div>
-            <label htmlFor="timelimit" className="mb-1.5 block text-[12px] font-medium text-[#b8babf]">
+            <label htmlFor="timelimit" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
               Time limit (min)
             </label>
             <input
@@ -462,7 +511,7 @@ export default function RoundInspector({
       {/* 2. What it asks */}
       {meta.needsExam ? (
         <section className="flex flex-col gap-2">
-          <h3 className="text-[12px] font-medium text-[#b8babf]">Questions</h3>
+          <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">Questions</h3>
           <ExamPicker
             value={round.exam_round_id}
             editable={editable}
@@ -473,7 +522,7 @@ export default function RoundInspector({
 
       {meta.supportsCriteria ? (
         <section className="flex flex-col gap-2">
-          <h3 className="text-[12px] font-medium text-[#b8babf]">
+          <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">
             {round.kind === 'human_review'
               ? `Reviewer’s checklist (${round.criteria.length})`
               : `What this round assesses (${round.criteria.length})`}
@@ -490,7 +539,7 @@ export default function RoundInspector({
       {/* 3. What it means */}
       {meta.needsThreshold ? (
         <section>
-          <label htmlFor="threshold" className="mb-1.5 block text-[12px] font-medium text-[#b8babf]">
+          <label htmlFor="threshold" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
             Advance at or above
           </label>
           <div className="flex items-center gap-2">
@@ -508,9 +557,9 @@ export default function RoundInspector({
               }}
               className={cn(field, 'w-24')}
             />
-            <span className="text-[13px] text-[#888b91]">%</span>
+            <span className="text-[13px] text-muted-foreground">%</span>
           </div>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-[#888b91]">
+          <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
             {/* Said plainly because it is the single most common thing people
                 assume a threshold does, and it does not. */}
             Scoring below this does not reject anyone. It puts the candidate in your
@@ -518,7 +567,7 @@ export default function RoundInspector({
           </p>
         </section>
       ) : (
-        <section className="rounded-[10px] border border-white/[0.07] p-3 text-[11.5px] leading-relaxed text-[#888b91]">
+        <section className="rounded-[10px] border border-border p-3 text-[11.5px] leading-relaxed text-muted-foreground">
           A human review round has no threshold — nothing here is scored. Candidates
           who reach it appear in your decision queue with the checklist above; someone
           passes them on or holds them for a decision. Nobody is rejected automatically.

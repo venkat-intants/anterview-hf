@@ -551,12 +551,18 @@ tests of its own, and was verified to go red on the exact pre-fix state.
 
 ## Verification totals
 
+Measured against `main` **as merged into this branch**, not against the branch's
+original fork point. The first run of these numbers was taken on a base that
+predated `96b51bf` and so silently omitted `test_phase2_pipeline_defects.py` and
+two web suites — the counts were real but were not "current main + this change",
+which is the only number worth quoting before a deploy.
+
 | | |
 |---|---|
-| `data_gateway` unit tests | 1,539 passed |
+| `data_gateway` unit tests | 1,570 passed |
 | `admin_ops` tests | 163 passed |
 | `shared` tests | 676 passed |
-| Web tests | 946 passed |
+| Web tests | 955 passed |
 | End-to-end smoke against real Postgres | 60/60 |
 | `ruff` | clean |
 | `mypy` (root config, as CI runs it) | clean |

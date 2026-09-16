@@ -206,12 +206,29 @@ async def _sleep_seconds(
     Still capped at ``interval``, which is what keeps the two properties the
     fixed sleep had: the loop-pass heartbeat that makes a stalled publisher
     visible keeps its cadence, and a schedule created DURING a sleep is picked
-    up no later than it would have been before. So this is never worse than the
-    fixed interval, and usually much better.
+    up no later than it would have been before.
 
-    The cost is one extra indexed MIN() probe per pass. It is paid on every
-    pass, including quiet ones — that is a real cost and not a saving, and it
-    buys the difference between "at 09:00" and "some time in the 09:00 minute".
+    NEVER WORSE ON LATENESS. NOT ON LOAD - be precise about which.
+    The cap bounds how LATE a publish can be; it does not bound how OFTEN this
+    loop runs. The old loop had a hard ceiling of one pass per ``interval``
+    (about three database sessions a minute); this one's ceiling is one pass per
+    SECOND, reached if upcoming schedules are ever clustered about a second
+    apart. That is a ~60x rise in the worst-case load ceiling, and an earlier
+    draft of this docstring said "never worse than the fixed interval" without
+    qualifying it - true of the only dimension that draft was considering.
+
+    It is not a practical denial of service: it needs an authenticated
+    hr_manager to create and get approved many requisitions scheduled seconds
+    apart, each costing more work than the pass it triggers, and
+    uq_job_requisitions_company_title forces unique titles. The 1.0s floor below
+    is what bounds it; raising that floor to ~5s would buy a tighter ceiling and
+    still sit inside the "a few seconds" promise in tolerance_note().
+
+    The steady-state cost is one extra indexed MIN() probe per pass, paid on
+    every pass including quiet ones - a real cost, not a saving. It rides
+    ix_job_requisitions_publish_due (partial on publish_at where it is not null
+    and the row is live); EXPLAIN reports an Index Only Scan, checked rather
+    than assumed.
 
     A failure here must not stop the publisher: the interval is the fallback,
     which is exactly the behaviour before this existed.

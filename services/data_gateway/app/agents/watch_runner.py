@@ -124,6 +124,7 @@ OPENING_HEALTH_SQL = text(
            -- that says it is sends somebody to fix the wrong thing.
            r.status,
            r.closes_at,
+           r.approval_status,
            COUNT(e.id) FILTER (WHERE e.deleted_at IS NULL) AS live_enrolments,
            COUNT(e.id) FILTER (
                WHERE e.deleted_at IS NULL
@@ -168,7 +169,8 @@ OPENING_HEALTH_SQL = text(
        -- A closed opening is finished, not neglected. Paused still counts:
        -- candidates already inside it are still waiting on somebody.
        AND r.status IN ('open', 'paused')
-     GROUP BY r.id, r.title, r.public_apply_enabled, r.status, r.closes_at, wf.thr
+     GROUP BY r.id, r.title, r.public_apply_enabled, r.status, r.closes_at,
+              r.approval_status, wf.thr
      LIMIT :limit
     """
 )
@@ -367,6 +369,7 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
                 accepting_public_applications=public_gate_open(
                     status=r.status,
                     public_apply_enabled=r.public_apply_enabled,
+                    approval_status=r.approval_status,
                     closes_at=r.closes_at,
                 ),
                 shortlist_threshold=(

@@ -153,7 +153,7 @@ def hiring_health(h: HealthInput) -> dict[str, Any]:
 # database definition the decision queue uses.
 _BOARD_SQL = """
 SELECT r.id, r.title, r.location, r.status, r.target_hires, r.closes_at, r.created_at,
-       r.public_apply_enabled,
+       r.public_apply_enabled, r.approval_status,
        pub.version AS published_version,
        (SELECT max(w.version) FROM workflows w
          WHERE w.requisition_id = r.id AND w.company_id = r.company_id
@@ -213,6 +213,7 @@ async def hiring_board(db: AsyncSession, *, company_id: uuid.UUID) -> dict[str, 
         accepting = public_gate_open(
             status=r["status"],
             public_apply_enabled=r["public_apply_enabled"],
+            approval_status=r["approval_status"],
             closes_at=r["closes_at"],
             now=now,
         )

@@ -89,6 +89,70 @@ def test_the_display_surfaces_use_the_shared_gate_too() -> None:
         assert "public_gate_open" in source, module
 
 
+def test_every_call_site_passes_every_required_argument() -> None:
+    """The test above greps for a NAME, and a name cannot tell you whether the
+    call still type-checks. It did not: making ``approval_status`` required
+    broke three live call sites — the HR company board, the requisition
+    dashboard and the nightly watcher — into a TypeError, which is a 500 on two
+    of the main HR screens and a crashing loop on the third. 1,509 unit tests
+    passed and ``mypy`` reported success, because nothing invoked them and the
+    root mypy config cannot see missing arguments across ``app.*``.
+
+    So this binds each call site's actual keywords against the real signature.
+    It catches the whole class — any call site, any future parameter — rather
+    than the one instance, and it fails at test time instead of at request time.
+    """
+    import ast
+    import inspect as _inspect
+
+    from app.publishing import public_gate_open
+
+    signature = _inspect.signature(public_gate_open)
+    required = {
+        name
+        for name, param in signature.parameters.items()
+        if param.default is _inspect.Parameter.empty
+    }
+    assert required, "the gate has no required arguments — has it gone fail-open again?"
+
+    seen = 0
+    for path in APP.rglob("*.py"):
+        if "__pycache__" in path.parts or path == _HOME:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", None)
+            if name != "public_gate_open":
+                continue
+            seen += 1
+            passed = {kw.arg for kw in node.keywords if kw.arg is not None}
+            missing = required - passed
+            assert not missing, (
+                f"{path.relative_to(APP)}:{node.lineno} calls public_gate_open "
+                f"without {sorted(missing)} — this is a TypeError at runtime, "
+                f"not a type error at build time."
+            )
+    # If the call sites are ever renamed away, this test must not silently pass.
+    assert seen >= 3, f"expected at least 3 call sites, found {seen}"
+
+
+def test_the_display_queries_actually_select_what_they_pass() -> None:
+    """Passing ``approval_status=row["approval_status"]`` is only correct if the
+    query selected it. All three of these read the column out of a row, so all
+    three SQL statements must contain it — otherwise the call succeeds and then
+    raises a KeyError on the row instead."""
+    for module in (
+        "company_board.py",
+        "requisition_dashboard.py",
+        "agents/watch_runner.py",
+    ):
+        source = (APP / module).read_text(encoding="utf-8")
+        assert "approval_status" in source, module
+
+
 # ===========================================================================
 # The predicate itself
 # ===========================================================================

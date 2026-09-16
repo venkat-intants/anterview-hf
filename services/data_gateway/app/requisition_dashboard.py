@@ -468,6 +468,7 @@ async def gather_dashboard(
         accepting_public=public_gate_open(
             status=req.get("status"),
             public_apply_enabled=req.get("public_apply_enabled"),
+            approval_status=req.get("approval_status"),
             closes_at=closes_at if isinstance(closes_at, datetime) else None,
             now=now,
         ),

@@ -475,11 +475,35 @@ def test_a_confirmed_name_is_authored_and_the_reconciler_must_not_overwrite_it()
     assert 'full_name_source="candidate"' in inspect.getsource(submit_draft)
 
 
-def test_a_returning_candidates_details_are_filled_never_overwritten() -> None:
+def test_a_returning_applicants_record_is_not_touched_at_all() -> None:
+    """The submission is unauthenticated: the only thing tying it to this
+    person is an address anybody can type.
+
+    This path used to UPDATE their applicants row — overwriting full_name and
+    stamping full_name_source='candidate' plus details_confirmed_at, which
+    assert to the reconciler and to HR that the real person confirmed those
+    values. So a stranger could rename somebody in a company's ATS, back-fill
+    their empty fields and give it false provenance.
+
+    The one-shot path refuses this and its own comment records it as a fixed
+    bug; the draft path had re-introduced it. Now neither writes.
+    """
     from app.routers.public_apply import submit_draft
 
     src = inspect.getsource(submit_draft)
-    assert "COALESCE(phone, :ph)" in src
+    assert "UPDATE applicants" not in src
+
+
+def test_only_a_brand_new_applicant_row_is_ever_written() -> None:
+    """The one INSERT is guarded by is_new_person, so there is no branch in
+    which an existing person's record is modified."""
+    from app.routers.public_apply import submit_draft
+
+    src = inspect.getsource(submit_draft)
+    assert "if is_new_person:" in src
+    # The confirmed provenance is only ever set on a row this submission
+    # created, never applied to one that already existed.
+    assert src.index("if is_new_person:") < src.index('full_name_source="candidate"')
 
 
 # ===========================================================================

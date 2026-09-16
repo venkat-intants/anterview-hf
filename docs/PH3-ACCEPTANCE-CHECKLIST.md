@@ -371,7 +371,9 @@ the input is 32 KB or 2 MB.
   one-shot path's own comment names: the email to the address on file is how the
   real owner hears about an application they did not make. Added.
 - `public_gate_open` defaulted `approval_status` to approved — a fail-open
-  default in the module that decides public visibility. Now required.
+  default in the module that decides public visibility. Now required, **and
+  all three call sites updated** — see the re-review below, because the first
+  attempt at this broke them.
 - `start_draft` shared a rate-limit bucket with the PATCH routes.
 - The mailer now refuses `@applicants.invalid` recipients.
 
@@ -386,6 +388,61 @@ types this email?". The review found in one pass what those tests were
 structurally incapable of seeing — the same shape as the earlier `users.email`
 bug, one level up. Both are now covered by tests that fail if the behaviour
 returns.
+
+---
+
+## Security re-review (2026-09-16) — two more, one of them mine
+
+The re-review confirmed the CRITICAL, the erasure gap and the ReDoS were
+genuinely fixed (it re-measured the regex timings rather than taking the claim).
+It returned **STILL BLOCKED** on two HIGHs.
+
+### HIGH — my own fix broke three live call sites
+
+Making `approval_status` required on `public_gate_open` was correct. Updating
+only one of the four call sites was not. `company_board.py`, `requisition_dashboard.py`
+and `agents/watch_runner.py` still passed the old argument list, so every one of
+them raised `TypeError` — a **500 on the HR company board and the requisition
+dashboard, and a crashing nightly watcher**, on deploy. None of those modules
+even selected the column, so the repair was query *and* call site.
+
+**Why nothing caught it.** 1,509 unit tests passed and `mypy` reported success.
+My own test for this asserted `"public_gate_open" in source` — it grepped for a
+*name*, and a name cannot tell you whether the call still type-checks. The root
+`mypy.ini` CI uses cannot see missing arguments across `app.*` either.
+
+Replaced with a test that parses every call site with `ast` and binds its
+keywords against the real signature. It names the file and line, catches the
+whole class rather than this instance, and was verified to go red when the fix
+is reverted.
+
+### HIGH — the draft path rewrote a returning applicant's record
+
+`submit_draft` updated an existing applicant's row when the submitted address
+matched: overwriting `full_name` unconditionally and stamping
+`full_name_source='candidate'` and `details_confirmed_at`, which assert to the
+reconciler and to HR that the real person confirmed those values. An anonymous
+caller with the apply link and somebody's address could rename them in a
+company's ATS, back-fill their empty fields and give it false provenance.
+
+The one-shot path refuses exactly this, and its comment records it as a
+previously-fixed bug: *"this form replaced their CV, target role, contact
+details and scores for anyone who typed their email address, with no proof of
+who they were."* The draft path had re-introduced it. Now neither writes: the
+draft's values stay on the draft, the CV belongs to the application via
+`applied_resume_s3_key`, and the record changes only after activation proves the
+address.
+
+### Accepted as follow-ups, not merge blockers
+
+The reviewer was explicit that these need an owner and a date rather than
+holding the merge: a stranger can still mint a consent grant against a
+previously-*revoked* account (pre-existing on the one-shot path); the new
+`DELETE /apply/draft/{token}` has no UI yet, so the right exists in the API but
+not in the product; "fresh identity per save" has no cleanup for orphan guest
+users; and the draft token rides in the URL path rather than a header or
+fragment, which the reviewer correctly showed is *against* this repo's own
+precedent rather than following it.
 
 ---
 

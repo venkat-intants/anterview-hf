@@ -1490,28 +1490,25 @@ async def submit_draft(
                     updated_at=now,
                 )
             )
-        else:
-            # Fill gaps, never overwrite: a returning candidate's earlier
-            # answers are theirs, and a blank field this time is not a deletion.
-            await db.execute(
-                text(
-                    "UPDATE applicants SET"
-                    "  full_name = :n, full_name_source = 'candidate',"
-                    "  details_confirmed_at = :conf,"
-                    "  phone = COALESCE(phone, :ph),"
-                    "  years_experience = COALESCE(years_experience, :ye),"
-                    "  current_company = COALESCE(current_company, :cc),"
-                    "  current_title = COALESCE(current_title, :ct),"
-                    "  linkedin_url = COALESCE(linkedin_url, :li),"
-                    "  github_url = COALESCE(github_url, :gh),"
-                    "  updated_at = :now"
-                    " WHERE id = :i"
-                ),
-                {"n": name, "conf": row["confirmed_at"], "ph": row.get("phone"),
-                 "ye": row.get("years_experience"), "cc": row.get("current_company"),
-                 "ct": row.get("current_title"), "li": row.get("linkedin_url"),
-                 "gh": row.get("github_url"), "now": now, "i": applicant_id},
-            )
+        # A RETURNING applicant's record is NOT touched, exactly as the one-shot
+        # path refuses to touch it, and for the same reason its comment gives:
+        # "this form replaced their CV, target role, contact details and scores
+        # for anyone who typed their email address, with no proof of who they
+        # were."
+        #
+        # This path had re-introduced precisely that. It overwrote `full_name`
+        # unconditionally and stamped `full_name_source='candidate'` plus
+        # `details_confirmed_at` — which assert to the reconciler and to HR that
+        # the real person personally confirmed those values. An anonymous caller
+        # with a public apply link and somebody's address could therefore rename
+        # them in a company's ATS, back-fill empty fields with chosen values and
+        # give it all false provenance.
+        #
+        # The draft's details are not lost: they live on the draft row, the CV
+        # belongs to this application alone via applied_resume_s3_key below, and
+        # the confirmation email goes to the address on file — so the real owner
+        # hears about an application they did not make. The record itself may
+        # change only after activation has proved the address.
         await db.flush()
 
         outcome = await enrol_applicant(

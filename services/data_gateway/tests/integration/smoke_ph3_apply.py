@@ -44,6 +44,34 @@ PASS: list[str] = []
 FAIL: list[str] = []
 
 
+def _executor_draft_predicate() -> str:
+    """The erasure executor's own draft-matching WHERE clause, lifted from its
+    source rather than re-typed here.
+
+    Re-typing it is how this test came to validate a predicate that production
+    had already replaced: the copy kept the old third route, which was
+    algebraically a duplicate of the first, and would have gone on passing
+    while the real query regressed.
+    """
+    executor = (
+        pathlib.Path(__file__).resolve().parents[4]
+        / "services" / "admin_ops" / "app" / "erasure_executor.py"
+    ).read_text(encoding="utf-8")
+    start = executor.index('"DELETE FROM application_drafts d"')
+    end = executor.index("),", start)
+    fragment = executor[start:end]
+    # The statement is assembled from adjacent string literals with comments
+    # between them; join the literals and drop the DELETE head.
+    import ast as _ast
+    parts = [
+        _ast.literal_eval(line.strip().rstrip(","))
+        for line in fragment.splitlines()
+        if line.strip().startswith('"')
+    ]
+    sql = "".join(parts)
+    return sql.split(" WHERE ", 1)[1]
+
+
 def _tok(token: str) -> dict[str, str]:
     """The resume token travels in a header now, never the URL — it is a live
     credential to a person's name, phone, employer, answers and CV, and a path
@@ -533,11 +561,42 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
         # ── The data principal can erase their own draft ──────────────
         print("\nDPDP — a draft-only candidate can erase their own data")
+        # Resolved by the victim's OWN token, not by their address. Both the
+        # victim and the attacker hold a draft carrying this email — that is the
+        # whole point of the section above — so "the most recent draft with this
+        # address" is the ATTACKER's, whose identity is quite correctly left
+        # alone. Asking by address made this assertion check the wrong user and
+        # report a failure that was not there.
+        async with factory() as db:
+            from app import application_drafts as _drafts
+
+            victim_row = await _drafts.load(db, raw_token=victim_token)
+            victim_uid = victim_row["user_id"] if victim_row else None
+        check("the victim's draft is resolvable before deletion",
+              victim_uid is not None)
         r = await client.delete("/apply/draft", headers=_tok(victim_token))
         check("deleting a draft by its own link works", r.status_code == 204,
               str(r.status_code))
         r = await client.get("/apply/draft", headers=_tok(victim_token))
         check("and it is really gone", r.status_code == 404, str(r.status_code))
+
+        # The guest identity goes with it. The self-serve delete removed the
+        # draft and left behind the users row, its user_roles grant and its
+        # dpdp_consent_ledger entry — the exact unbounded growth the retention
+        # pass exists to stop, on the one path a person takes deliberately.
+        # Asserted here rather than in a unit test because the DELETE's three
+        # NOT EXISTS guards are only real against a real Postgres.
+        async with factory() as db:
+            left = await db.scalar(
+                text("SELECT count(*) FROM users WHERE id = :u"), {"u": victim_uid}
+            )
+            roles = await db.scalar(
+                text("SELECT count(*) FROM user_roles WHERE user_id = :u"),
+                {"u": victim_uid},
+            )
+        check("and the guest identity it anchored goes with it",
+              left == 0, f"users rows left: {left}")
+        check("and its role grant with it", roles == 0, f"user_roles left: {roles}")
 
         # ── ERASURE AFTER ACTIVATION — the case that silently failed ──
         # A guest drafts, submits, then activates into an account they already
@@ -594,24 +653,25 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               str(moved) == str(real_uid), f"{moved} != {real_uid}")
 
         # Now the executor's own matching, run verbatim against these rows.
+        # The predicate is READ OUT OF THE EXECUTOR rather than copied here.
+        # The copy that used to live in this file still carried the old third
+        # route — the one that was algebraically a duplicate of the first — so
+        # it would have kept passing while the real query regressed. A test
+        # that validates a stale copy of the thing it is testing is worse than
+        # no test.
+        where = _executor_draft_predicate()
         async with factory() as db:
-            reachable = await db.scalar(text(
-                "SELECT count(*) FROM application_drafts d"
-                " WHERE d.user_id = :uid"
-                "    OR lower(btrim(d.email)) IN ("
-                "         SELECT lower(btrim(u.email)) FROM users u"
-                "          WHERE u.id = :uid AND u.email IS NOT NULL)"
-                "    OR d.user_id IN ("
-                "         SELECT a.user_id FROM applicants a"
-                "          WHERE a.user_id = :uid)"), {"uid": real_uid})
-            keys = (await db.execute(text(
-                "SELECT d.resume_s3_key FROM application_drafts d"
-                " WHERE d.resume_s3_key IS NOT NULL AND ("
-                "  d.user_id = :uid"
-                "  OR lower(btrim(d.email)) IN ("
-                "       SELECT lower(btrim(u.email)) FROM users u"
-                "        WHERE u.id = :uid AND u.email IS NOT NULL))"),
-                {"uid": real_uid})).scalars().all()
+            reachable = await db.scalar(
+                text(f"SELECT count(*) FROM application_drafts d WHERE {where}"),
+                {"uid": real_uid},
+            )
+            keys = (await db.execute(
+                text(
+                    "SELECT d.resume_s3_key FROM application_drafts d"
+                    f" WHERE d.resume_s3_key IS NOT NULL AND ({where})"
+                ),
+                {"uid": real_uid},
+            )).scalars().all()
         check("erasure reaches the draft after activation", reachable == 1,
               f"{reachable} drafts matched")
         check("and collects its CV for deletion", list(keys) == ["drafts/x/y.pdf"],
@@ -625,12 +685,10 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 "UPDATE application_drafts SET user_id = :g WHERE id = :i"),
                 {"g": guest_uid, "i": drafted})
             await db.commit()
-            still = await db.scalar(text(
-                "SELECT count(*) FROM application_drafts d"
-                " WHERE d.user_id = :uid"
-                "    OR lower(btrim(d.email)) IN ("
-                "         SELECT lower(btrim(u.email)) FROM users u"
-                "          WHERE u.id = :uid AND u.email IS NOT NULL)"), {"uid": real_uid})
+            still = await db.scalar(
+                text(f"SELECT count(*) FROM application_drafts d WHERE {where}"),
+                {"uid": real_uid},
+            )
         check("and still reaches it even if the re-point never happened",
               still == 1, f"{still} drafts matched by address alone")
 

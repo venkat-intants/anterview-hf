@@ -374,8 +374,21 @@ app.add_middleware(
     # CSRF pattern on /auth/refresh — it MUST appear here so the preflight passes.
     # X-Exam-Token: the applicant's magic-link token, sent by the public exam
     # take page (no login) on /exam calls.
+    # X-Draft-Token: the same pattern for Save & Resume (PH3-B5). It was missed
+    # here when the draft routes moved the token out of the URL, which is the
+    # failure the comment above predicts: every draft call — including the DPDP
+    # self-serve delete — is blocked at preflight on any split-origin deploy
+    # (render.yaml, the Oracle/Vercel split, and local Vite on :5173). The Space
+    # is same-origin, so it would have shipped green there and dead everywhere
+    # else. Anything added to _CUSTOM_TOKEN_HEADERS must appear here; a test
+    # asserts it rather than a reviewer.
     allow_headers=[
-        "Authorization", "Content-Type", "X-CSRF-Token", "X-Exam-Token", "X-Interview-Token"
+        "Authorization",
+        "Content-Type",
+        "X-CSRF-Token",
+        "X-Exam-Token",
+        "X-Interview-Token",
+        "X-Draft-Token",
     ],
 )
 

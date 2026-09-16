@@ -769,6 +769,25 @@ async def delete_draft(db: DbSessionDep, token: DraftTokenDep) -> Response:
     await db.execute(
         text("DELETE FROM application_drafts WHERE id = :i"), {"i": row["id"]}
     )
+    # And the guest identity it anchored, on exactly the terms purge_expired
+    # uses. Without this, the self-serve erasure path — added for the DPDP
+    # right to ACT — left behind the users row, its role grant and its consent
+    # ledger entry, which is the unbounded growth the retention pass exists to
+    # stop. Scoped to the synthetic address, and guarded on everything that
+    # could still need the row, so a real account can never be caught.
+    await db.execute(
+        text(
+            "DELETE FROM users u"
+            " WHERE u.id = :uid"
+            "   AND u.email LIKE 'guest+%@applicants.invalid'"
+            "   AND NOT EXISTS (SELECT 1 FROM applicants a WHERE a.user_id = u.id)"
+            "   AND NOT EXISTS ("
+            "         SELECT 1 FROM application_drafts d WHERE d.user_id = u.id)"
+            "   AND NOT EXISTS ("
+            "         SELECT 1 FROM erasure_requests e WHERE e.user_id = u.id)"
+        ),
+        {"uid": row["user_id"]},
+    )
     await db.commit()
     if key:
         try:
@@ -922,8 +941,25 @@ async def submit_draft(
     ).mappings().first()
 
     if existing is not None and existing["enrolment_id"] is not None:
-        await draft_store.mark_submitted(db, draft_id=row["id"])
+        # Nothing adopts the uploaded CV on this branch: no Applicant is created
+        # and no enrolment is made, so neither applicants.resume_s3_key nor
+        # enrolments.applied_resume_s3_key ever comes to reference it. Every
+        # other path deliberately KEEPS the object because those columns are
+        # this very key — but here it is referenced by nobody, and the purge
+        # (rightly) refuses to delete a submitted draft's object, so without
+        # this it would have no deletion path at all and sit in the bucket for
+        # ever, past its purpose. Released the same way delete_draft does it:
+        # pointer cleared inside the transaction, object deleted after commit.
+        orphaned_cv = row.get("resume_s3_key")
+        await draft_store.mark_submitted(db, draft_id=row["id"], release_resume=True)
         await db.commit()
+        if orphaned_cv:
+            try:
+                await _delete_from_s3(str(orphaned_cv))
+            except Exception:  # noqa: BLE001 — the pointer is already cleared
+                log.warning(
+                    "public_apply.draft_object_orphaned", draft_id=str(row["id"])
+                )
         return ApplicationOut(
             applicant_id="", enrolment_id=None, full_name=name, already_applied=True,
             message="You have already applied for this role. We have your application.",
@@ -1619,9 +1655,22 @@ async def _record_apply_consent(
     # processing on exactly `granted AND revoked_at IS NULL`. A withdrawal has
     # to be sticky against anyone but its owner, or it is not a withdrawal.
     #
-    # Re-consenting is still possible; it just cannot happen as a side effect of
-    # somebody else filling in a form. It goes through the consent router, which
-    # is authenticated.
+    # Be precise about what that costs, because this comment used to claim a
+    # remedy that does not exist: "it goes through the consent router, which is
+    # authenticated". It does not. consent.py accepts only
+    # consent_type in {interview_voice_recording, video_capture} with
+    # _VALID_PURPOSES == {"interview"}, so NO endpoint anywhere can re-grant
+    # application_data/recruitment. This function is its only writer.
+    #
+    # It is still not a lock-out, for a different reason: the only path that
+    # revokes this row is a completed DPDP erasure, and the executor also NULLs
+    # applicants.email and applicants.user_id — so a later application finds no
+    # existing person, mints a fresh guest identity, and consents against that.
+    # The withdrawn row belongs to an identity nobody can reach again.
+    #
+    # If a self-serve withdrawal is ever added WITHOUT erasure, that stops being
+    # true and this becomes a real lock-out. Add the re-grant route in the same
+    # change.
     existing = await db.scalar(
         text(
             "SELECT revoked_at IS NOT NULL AS was_revoked"

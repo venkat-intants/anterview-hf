@@ -139,18 +139,56 @@ def test_every_call_site_passes_every_required_argument() -> None:
     assert seen >= 3, f"expected at least 3 call sites, found {seen}"
 
 
+# Each call site, mapped to the module that actually BUILDS the row it reads.
+# requisition_dashboard.py has no SQL of its own: it is handed a row by
+# hr_requisitions._owned, so asserting against the dashboard would assert
+# nothing about where the column comes from.
+_ROW_PROVIDERS = {
+    "company_board.py": "company_board.py",
+    "requisition_dashboard.py": "routers/hr_requisitions.py",
+    "agents/watch_runner.py": "agents/watch_runner.py",
+}
+
+
+def _selected_in_sql(source: str, column: str) -> bool:
+    """Is ``column`` named inside a SQL fragment, as opposed to being used as a
+    dict key?
+
+    The distinction is the whole point. The previous version of this test
+    asserted ``"approval_status" in source``, which the call site
+    ``approval_status=row["approval_status"]`` satisfies all by itself — so the
+    test could not fail, in either direction, and was reported as tautological
+    in review. A SQL fragment is a literal like ``" r.approval_status,"``; a
+    dict key is the bare name and nothing else.
+    """
+    import ast as _ast
+
+    for node in _ast.walk(_ast.parse(source)):
+        if isinstance(node, _ast.Constant) and isinstance(node.value, str):
+            value = node.value
+            if column in value and value.strip().strip(",") != column:
+                return True
+    return False
+
+
 def test_the_display_queries_actually_select_what_they_pass() -> None:
     """Passing ``approval_status=row["approval_status"]`` is only correct if the
-    query selected it. All three of these read the column out of a row, so all
-    three SQL statements must contain it — otherwise the call succeeds and then
-    raises a KeyError on the row instead."""
-    for module in (
-        "company_board.py",
-        "requisition_dashboard.py",
-        "agents/watch_runner.py",
-    ):
-        source = (APP / module).read_text(encoding="utf-8")
-        assert "approval_status" in source, module
+    query selected it. Otherwise the call type-checks, the gate looks wired up,
+    and the row raises a KeyError at request time instead."""
+    for consumer, provider in _ROW_PROVIDERS.items():
+        source = (APP / provider).read_text(encoding="utf-8")
+        assert _selected_in_sql(source, "approval_status"), (
+            f"{consumer} passes approval_status from a row built in {provider}, "
+            f"whose SQL does not select it"
+        )
+
+
+def test_that_helper_can_tell_a_dict_key_from_a_select_list() -> None:
+    """A detector that always returns True would make the test above as
+    vacuous as the one it replaced."""
+    assert not _selected_in_sql('x = row["approval_status"]', "approval_status")
+    assert _selected_in_sql('q = "SELECT r.approval_status FROM r"', "approval_status")
+    assert not _selected_in_sql("x = 1", "approval_status")
 
 
 # ===========================================================================

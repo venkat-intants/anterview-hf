@@ -129,7 +129,7 @@ inventing an empty v1 would put a row in a history that never happened.
 | 1 | Candidate application drafts can be saved | ✅ | `application_drafts`, migration `c9e1b3d5f7a2`; `smoke` |
 | 2 | Candidate can leave and return later | ✅ | resume link; `smoke` proves a reload keeps progress |
 | 3 | Draft data is preserved | ✅ | `smoke` |
-| 4 | Candidate can continue from where they left off | ✅ | `/apply/draft/:token`; `smoke` |
+| 4 | Candidate can continue from where they left off | ✅ | `/apply/draft#<token>` + `X-Draft-Token`; `smoke` |
 | 5 | Draft expiration behavior is defined | ✅ | 30 days, extended on each save, stored not computed |
 
 ### Reapplication Rules
@@ -486,11 +486,34 @@ Stated plainly so nobody reads this checklist as claiming more than it proves.
 3. **The confirmation screen has not been used by a real person on a phone.** It
    typechecks, lints, passes 17 behavioural tests and builds, but nobody has applied for
    a job with it.
-4. **`ops/ci/check_coverage_floors.py` and the rest of the `invariants` CI job were not
-   run** — they need the full CI environment. The floors themselves hold:
-   `data_gateway` measured 65% against a floor of 62%.
+4. ~~`ops/ci/check_coverage_floors.py` and the rest of the `invariants` CI job were
+   not run.~~ **Run 2026-09-16.** All green, plus a new gate
+   (`ops/ci/check_routing_contract.py`) described below.
 5. **The Hindi and Telugu copy for the new candidate screens does not exist** (see
    PH3-B5 criterion 11).
+
+---
+
+## The deploy path (added after the final security pass)
+
+The security audit's blocking findings were not in the feature code — they were
+in the two config files that decide whether the feature is reachable at all, and
+none of them is visible to a test that runs a service:
+
+| | Was | Now |
+|---|---|---|
+| `/apply*`, `/careers*` in `Caddyfile` + `space/Caddyfile` | **absent since the routers landed** — on the Space an XHR fell through to `try_files {path} /index.html` and returned index.html with **HTTP 200**, so the whole public candidate surface shipped dead *and reported success* | proxied to `data_gateway:8002` in both; browser navigation still the SPA's via the pre-existing `@spa_nav` rewrite |
+| `X-Draft-Token` in both Caddy log filters | absent — a live 30-day credential to a named candidate's name, phone, employer, screening answers and CV written verbatim into a persistent access log (CWE-532), undoing the `#fragment` design | redacted in both |
+| `X-Draft-Token` in `allow_headers` | absent — every draft call, including the DPDP self-serve delete, blocked at CORS preflight on every split-origin deploy (`render.yaml`, Oracle/Vercel, local Vite). Same-origin Space would have stayed green | allowed |
+| 90-day purge of submitted drafts | queued the CV object for deletion, but `submit_draft` hands that same key to `applicants.resume_s3_key` and `enrolments.applied_resume_s3_key` — so every Save & Resume applicant lost their CV 90 days after applying | only `status = 'draft'` objects are deleted; pinned by 5 tests |
+| The "already applied" branch | nothing adopts the uploaded CV, so once the purge stopped deleting it, it had no deletion path at all | released and deleted inline, pointer cleared before the object |
+
+Both Caddyfiles and the CORS list were hand-maintained and had now lagged the
+code twice (precedent: 09483b5, *"the agent layer was dead on the Space"*). That
+class is now a build failure: `ops/ci/check_routing_contract.py` asserts every
+`APIRouter(prefix=...)` is matched by a `handle` block in **both** Caddyfiles and
+that every `Header(alias="X-…")` is both redacted and CORS-allowed. It has 16
+tests of its own, and was verified to go red on the exact pre-fix state.
 
 ---
 
@@ -498,13 +521,16 @@ Stated plainly so nobody reads this checklist as claiming more than it proves.
 
 | | |
 |---|---|
-| `data_gateway` unit tests | 1,504 passed |
-| `admin_ops` tests | 158 passed |
+| `data_gateway` unit tests | 1,533 passed |
+| `admin_ops` tests | 163 passed |
 | `shared` tests | 676 passed |
-| Web tests | 936 passed |
-| End-to-end smoke against real Postgres | 57/57 |
+| Web tests | 942 passed |
+| End-to-end smoke against real Postgres | 60/60 |
 | `ruff` | clean |
-| `mypy` (root config, as CI runs it) | clean, 115 files |
+| `mypy` (root config, as CI runs it) | clean |
+| `bandit` SAST (MEDIUM+) vs baseline | 0 new findings |
+| `ops/ci` gate tests | 41 passed |
+| Routing / header contract gate | OK — 24 prefixes, 4 headers |
 | Alembic | 6 new migrations, single linear head, applied cleanly |
 | Erasure inventory (table + column) | both satisfied |
 | Web build | succeeds |

@@ -345,7 +345,8 @@ async def test_purging_returns_the_objects_to_delete() -> None:
     # One row on the first pass, none after — the drain loop stops when a pass
     # comes back short, so the fake must eventually return nothing.
     db = AsyncMock()
-    batches = [[{"resume_s3_key": "drafts/x/y.pdf", "user_id": uuid.uuid4()}]]
+    batches = [[{"resume_s3_key": "drafts/x/y.pdf", "user_id": uuid.uuid4(),
+                 "status": "draft"}]]
 
     async def _execute(*_a: object, **_k: object) -> MagicMock:
         res = MagicMock()
@@ -366,7 +367,10 @@ async def test_purging_drains_rather_than_stopping_at_the_limit() -> None:
     from app.application_drafts import purge_expired
 
     db = AsyncMock()
-    full = [{"resume_s3_key": f"k{i}.pdf", "user_id": uuid.uuid4()} for i in range(2)]
+    full = [
+        {"resume_s3_key": f"k{i}.pdf", "user_id": uuid.uuid4(), "status": "draft"}
+        for i in range(2)
+    ]
     batches = [list(full), list(full), []]
 
     # Dispatches on the statement: each pass issues TWO deletes (drafts, then
@@ -397,7 +401,7 @@ async def test_purging_also_clears_the_identities_the_drafts_anchored() -> None:
     from app.application_drafts import purge_expired
 
     db = AsyncMock()
-    batches = [[{"resume_s3_key": None, "user_id": uuid.uuid4()}]]
+    batches = [[{"resume_s3_key": None, "user_id": uuid.uuid4(), "status": "draft"}]]
 
     async def _execute(*_a: object, **_k: object) -> MagicMock:
         res = MagicMock()
@@ -735,3 +739,243 @@ def test_the_confirmation_screen_only_offers_fields_the_parser_produces() -> Non
     from app.routers.public_apply import ParsedDetails
 
     assert set(ParsedDetails.model_fields) == {"full_name", "email"}
+
+
+# ===========================================================================
+# The retention pass must not delete a LIVE applicant's CV
+#
+# submit_draft does not copy the uploaded file: it points
+# applicants.resume_s3_key and enrolments.applied_resume_s3_key at the draft's
+# own key. So once a draft is submitted that object IS the application's CV.
+# The 90-day purge of submitted draft ROWS was queuing that object for hard
+# deletion too, which silently destroyed the CV of everybody who used Save &
+# Resume, ninety days after they applied, while both rows still pointed at it.
+# ===========================================================================
+def _purge_db(rows: list[dict]) -> AsyncMock:
+    db = AsyncMock()
+    batches = [rows]
+
+    async def _execute(statement: object, *_a: object, **_k: object) -> MagicMock:
+        sql = getattr(statement, "text", str(statement))
+        is_draft_delete = sql.lstrip().startswith("DELETE FROM application_drafts")
+        out = (batches.pop(0) if batches else []) if is_draft_delete else []
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.all = MagicMock(return_value=out)
+        res.mappings = MagicMock(return_value=mapped)
+        res.rowcount = 0
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_an_abandoned_drafts_cv_is_deleted() -> None:
+    from app.application_drafts import purge_expired
+
+    db = _purge_db([
+        {"resume_s3_key": "drafts/c/abandoned.pdf", "user_id": uuid.uuid4(),
+         "status": "draft"},
+    ])
+    assert await purge_expired(db, now=NOW) == ["drafts/c/abandoned.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_a_submitted_applications_cv_is_never_deleted() -> None:
+    """The row is a duplicate. The object is the applicant's live CV."""
+    from app.application_drafts import purge_expired
+
+    db = _purge_db([
+        {"resume_s3_key": "drafts/c/submitted.pdf", "user_id": uuid.uuid4(),
+         "status": "submitted"},
+    ])
+    assert await purge_expired(db, now=NOW) == []
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_batch_deletes_only_the_abandoned_objects() -> None:
+    from app.application_drafts import purge_expired
+
+    db = _purge_db([
+        {"resume_s3_key": "keep.pdf", "user_id": uuid.uuid4(), "status": "submitted"},
+        {"resume_s3_key": "drop.pdf", "user_id": uuid.uuid4(), "status": "draft"},
+    ])
+    assert await purge_expired(db, now=NOW) == ["drop.pdf"]
+
+
+def test_the_purge_asks_for_the_status_it_filters_on() -> None:
+    """If RETURNING ever loses `status`, the filter silently keeps nothing —
+    or, worse, a later edit drops the filter and restores the data loss."""
+    from app.application_drafts import purge_expired
+
+    src = inspect.getsource(purge_expired)
+    assert "RETURNING resume_s3_key, user_id, status" in src
+
+
+def test_submit_reuses_the_drafts_key_rather_than_copying_it() -> None:
+    """This is WHY the filter above has to exist. If submission ever starts
+    copying the object instead, the filter becomes unnecessary — but until
+    then, removing it destroys live CVs."""
+    from app.routers.public_apply import submit_draft
+
+    src = inspect.getsource(submit_draft)
+    assert src.count('resume_s3_key=row["resume_s3_key"]') == 2
+
+
+# ===========================================================================
+# A withdrawal is sticky against everyone but its owner
+# ===========================================================================
+def _consent_db(prior: bool | None) -> AsyncMock:
+    """prior: None = no row ever, True = withdrawn, False = active grant."""
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=prior)
+    db.execute = AsyncMock()
+    return db
+
+
+@pytest.mark.asyncio
+async def test_a_first_time_consent_is_recorded() -> None:
+    from app.routers.public_apply import _record_apply_consent
+
+    db = _consent_db(None)
+    await _record_apply_consent(
+        db, request=MagicMock(headers={}, client=None), user_id=USER,
+        applicant_id=uuid.uuid4(), company_id=COMPANY, requisition_id=REQ, now=NOW,
+    )
+    assert any(
+        "INSERT INTO dpdp_consent_ledger" in c.args[0].text
+        for c in db.execute.await_args_list
+    ), "a first grant was not written"
+
+
+@pytest.mark.asyncio
+async def test_an_active_consent_is_not_recorded_twice() -> None:
+    from app.routers.public_apply import _record_apply_consent
+
+    db = _consent_db(False)
+    await _record_apply_consent(
+        db, request=MagicMock(headers={}, client=None), user_id=USER,
+        applicant_id=uuid.uuid4(), company_id=COMPANY, requisition_id=REQ, now=NOW,
+    )
+    assert db.execute.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_withdrawn_consent_is_not_re_granted_by_a_stranger() -> None:
+    """The predicate used to filter `revoked_at IS NULL`, so a withdrawal was
+    only sticky against people who had not withdrawn. Anyone could type the
+    address into the public form and mint a fresh `granted = TRUE` row — and
+    reconciliation gates processing on exactly `granted AND revoked_at IS NULL`.
+    """
+    from app.routers.public_apply import _record_apply_consent
+
+    db = _consent_db(True)
+    await _record_apply_consent(
+        db, request=MagicMock(headers={}, client=None), user_id=USER,
+        applicant_id=uuid.uuid4(), company_id=COMPANY, requisition_id=REQ, now=NOW,
+    )
+    assert db.execute.await_count == 0, "a withdrawal was overridden"
+
+
+@pytest.mark.asyncio
+async def test_the_lookup_does_not_filter_out_withdrawn_rows() -> None:
+    """The bug was in the WHERE clause, so assert on the WHERE clause."""
+    from app.routers.public_apply import _record_apply_consent
+
+    db = _consent_db(None)
+    await _record_apply_consent(
+        db, request=MagicMock(headers={}, client=None), user_id=USER,
+        applicant_id=uuid.uuid4(), company_id=COMPANY, requisition_id=REQ, now=NOW,
+    )
+    lookup = db.scalar.await_args.args[0].text
+    assert "revoked_at IS NULL" not in lookup
+    assert "revoked_at IS NOT NULL" in lookup  # it reads the flag, not filters on it
+
+
+# ===========================================================================
+# The one submission that adopts nothing must release what it uploaded
+#
+# Every other path deliberately KEEPS the draft's CV object, because
+# applicants.resume_s3_key and enrolments.applied_resume_s3_key are that same
+# key. The "you have already applied" branch creates neither, so nothing ever
+# references the file — and once the purge correctly stopped deleting submitted
+# drafts' objects, it had no deletion path at all. A CV in the bucket for ever,
+# past its purpose, referenced by nobody, is a DPDP §8(7) storage-limitation
+# problem, not merely untidy.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_the_already_applied_branch_clears_the_pointer() -> None:
+    from app.application_drafts import mark_submitted
+
+    db = AsyncMock()
+    await mark_submitted(db, draft_id=uuid.uuid4(), release_resume=True)
+    sql = db.execute.await_args.args[0].text
+    assert "resume_s3_key = NULL" in sql
+
+
+@pytest.mark.asyncio
+async def test_every_other_submission_keeps_the_pointer() -> None:
+    """Clearing it here would strand applicants.resume_s3_key on a key whose
+    draft row no longer admits to owning it."""
+    from app.application_drafts import mark_submitted
+
+    db = AsyncMock()
+    await mark_submitted(db, draft_id=uuid.uuid4())
+    assert "resume_s3_key" not in db.execute.await_args.args[0].text
+
+
+def test_the_already_applied_branch_deletes_the_object_it_released() -> None:
+    """Clearing the pointer without deleting the object just makes the orphan
+    unfindable, which is worse than leaving it addressable."""
+    from app.routers.public_apply import submit_draft
+
+    src = inspect.getsource(submit_draft)
+    branch = src[src.index('existing["enrolment_id"] is not None'):]
+    branch = branch[: branch.index("return ApplicationOut")]
+    assert "release_resume=True" in branch
+    assert "_delete_from_s3" in branch
+    # Order matters: commit the cleared pointer BEFORE deleting the object, so a
+    # failed delete leaves an orphan rather than a dangling reference.
+    assert branch.index("db.commit") < branch.index("_delete_from_s3")
+
+
+# ===========================================================================
+# The drain bounds the transaction, not just the work
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_each_purge_pass_commits() -> None:
+    """_MAX_PURGE_PASSES caps the WORK. Without a commit per pass, 40 x 500
+    draft deletes plus their cascading user/user_roles/ledger deletes sit in one
+    open transaction against Neon all night, and a failure in the last pass
+    rolls back the other thirty-nine — a single bad row losing a whole night's
+    retention."""
+    from app.application_drafts import purge_expired
+
+    full = [{"resume_s3_key": f"k{i}.pdf", "user_id": uuid.uuid4(), "status": "draft"}
+            for i in range(2)]
+    db = AsyncMock()
+    batches = [full, full[:1]]
+
+    async def _execute(statement: object, *_a: object, **_k: object) -> MagicMock:
+        sql = getattr(statement, "text", str(statement))
+        out = (batches.pop(0) if batches else []) \
+            if sql.lstrip().startswith("DELETE FROM application_drafts") else []
+        res = MagicMock()
+        res.mappings = MagicMock(return_value=MagicMock(all=MagicMock(return_value=out)))
+        res.rowcount = 0
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
+    await purge_expired(db, now=NOW, limit=2)
+    assert db.commit.await_count == 2, "the drain committed once, not per pass"
+
+
+def test_the_purge_log_still_carries_the_row_count() -> None:
+    """`drafts` is the retention evidence a DPDP audit reads — how many records
+    past their purpose were actually deleted. `objects` is a subset (submitted
+    rows keep their CV), so it cannot stand in for it."""
+    from app.application_drafts import purge_expired
+
+    src = inspect.getsource(purge_expired)
+    assert "drafts=purged" in src

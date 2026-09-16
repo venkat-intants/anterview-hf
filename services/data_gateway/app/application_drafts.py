@@ -338,24 +338,41 @@ async def confirm(
 
 
 async def mark_submitted(
-    db: AsyncSession, *, draft_id: uuid.UUID, now: datetime | None = None
+    db: AsyncSession, *, draft_id: uuid.UUID, now: datetime | None = None,
+    release_resume: bool = False,
 ) -> None:
     """The draft became an application. Caller commits.
 
     Kept rather than deleted, for the length of the retention window: it is the
     record that the candidate confirmed their details, and deleting it at the
     moment of submission would destroy that at exactly the wrong time.
+
+    ``release_resume`` is for the one path where the submission adopts NOTHING:
+    the candidate had already applied, so no applicant row and no enrolment ever
+    comes to point at the uploaded CV. Everywhere else the object is deliberately
+    kept, because ``applicants.resume_s3_key`` and
+    ``enrolments.applied_resume_s3_key`` are that same key. Here it is adopted by
+    nobody and, now that the purge correctly refuses to delete a submitted
+    draft's object, it would otherwise have no deletion path at all — a CV
+    sitting in the bucket for ever, past its purpose, with no row referencing it.
+    The caller deletes the object; this clears the pointer first so a failed
+    delete leaves an orphan rather than a dangling reference.
     """
     now = now or datetime.now(tz=UTC)
+    # Assembled rather than written inline because of the optional clause; the
+    # fragments are literals, so nothing here is interpolated from a caller.
+    sql = (
+        "UPDATE application_drafts"
+        "   SET status = 'submitted', submitted_at = :n, updated_at = :n,"
+        # The token stops working the moment the draft becomes an application.
+        # Nothing here is resumable any more.
+        "       token_hash = :h"
+    )
+    if release_resume:
+        sql += ", resume_s3_key = NULL"
+    sql += " WHERE id = :i"
     await db.execute(
-        text(
-            "UPDATE application_drafts"
-            "   SET status = 'submitted', submitted_at = :n, updated_at = :n,"
-            # The token stops working the moment the draft becomes an
-            # application. Nothing here is resumable any more.
-            "       token_hash = :h"
-            " WHERE id = :i"
-        ),
+        text(sql),
         # A random hash, not sha256("submitted:" + id). The deterministic
         # version was harmless only because load() filters status='draft' —
         # which is a property of a different function, and the kind of coupling
@@ -382,6 +399,12 @@ async def purge_expired(
        confirmation evidence survives the handover. Nothing enforced a window on
        it, so "kept for the length of the retention window" was a claim with no
        code behind it.
+
+       THE ROW GOES; THE OBJECT STAYS. ``submit_draft`` does not copy the CV —
+       it points ``applicants.resume_s3_key`` and
+       ``enrolments.applied_resume_s3_key`` at the draft's own key — so that
+       file is the application's CV and deleting it would take a live
+       applicant's CV with the duplicate row.
     3. Orphan GUEST IDENTITIES. Every ``start_draft`` mints a ``guest_candidate``
        user and a consent row to anchor it — unauthenticated, ten a minute per
        IP, no proof of address. Before drafts were per-save that was bounded by
@@ -392,11 +415,13 @@ async def purge_expired(
 
     DRAINS rather than stopping at ``limit``. A single capped pass could not keep
     up with the rate the endpoint creates rows, which turns a retention control
-    into a slowly losing race.
+    into a slowly losing race. Each pass COMMITS, so the bound is on the open
+    transaction as well as on the work.
     """
     now = now or datetime.now(tz=UTC)
     keys: list[str] = []
     orphans = 0
+    purged = 0
 
     for _ in range(_MAX_PURGE_PASSES):
         rows = (
@@ -409,7 +434,7 @@ async def purge_expired(
                     "       OR (status = 'submitted' AND submitted_at IS NOT NULL"
                     "           AND submitted_at <= :cutoff)"
                     "    LIMIT :lim)"
-                    " RETURNING resume_s3_key, user_id"
+                    " RETURNING resume_s3_key, user_id, status"
                 ),
                 {"n": now, "lim": limit,
                  "cutoff": now - timedelta(days=SUBMITTED_RETENTION_DAYS)},
@@ -417,12 +442,45 @@ async def purge_expired(
         ).mappings().all()
         if not rows:
             break
-        keys.extend(r["resume_s3_key"] for r in rows if r["resume_s3_key"])
+        # ONLY an abandoned draft's object is deleted.
+        #
+        # A SUBMITTED draft's row is a duplicate; its OBJECT is not. submit_draft
+        # hands the same key straight to applicants.resume_s3_key and
+        # enrolments.applied_resume_s3_key rather than copying the file, so that
+        # object IS the application's CV. Queuing it here deleted a live
+        # applicant's CV from storage ninety days after they applied, while both
+        # rows still pointed at it — an unconditional, silent data loss for
+        # everybody who used Save & Resume.
+        #
+        # hr_applicants.py already models the careful version of this: it checks
+        # enrolments for a reference before deleting a superseded CV. The check
+        # below is the structural version — the object is only ever ours to
+        # delete while nothing has adopted it.
+        keys.extend(
+            r["resume_s3_key"]
+            for r in rows
+            if r["resume_s3_key"] and r["status"] == "draft"
+        )
 
         # The guest identities those drafts anchored, where nothing else needs
         # them. Scoped to guest placeholders by the reserved address suffix, so
         # a real account can never be caught by this even if it once held a
         # draft.
+        #
+        # THIS CASCADES INTO dpdp_consent_ledger, and that is a deliberate
+        # decision rather than an oversight — erasure_executor.EXCLUDED_TABLES
+        # protects the ledger even under a §7 erasure, precisely so the record
+        # of what was consented to outlives the data. The reasoning for the
+        # exception: a ledger entry exists to demonstrate the lawful basis on
+        # which some personal data was processed, and here that data is being
+        # deleted in the same statement. What survives would be an entry whose
+        # subject is a synthetic address that identified nobody, consenting to
+        # the processing of a record that no longer exists — a row that can
+        # demonstrate nothing to anybody, accumulating without bound (ten a
+        # minute per IP, unauthenticated). Retaining it is not the safer choice;
+        # it is storage of personal data past its purpose, which is what §8(7)
+        # forbids. A REAL person's ledger entry cannot reach this path: their
+        # account has a real address, which the LIKE below excludes.
         gone = await db.execute(
             text(
                 "DELETE FROM users u"
@@ -437,12 +495,24 @@ async def purge_expired(
             {"ids": [r["user_id"] for r in rows]},
         )
         orphans += getattr(gone, "rowcount", 0) or 0
+        purged += len(rows)
+        # COMMITTED PER PASS, not once at the end. _MAX_PURGE_PASSES bounds the
+        # WORK; without this it does not bound the TRANSACTION, and 40 x 500
+        # draft deletes plus their cascading user/user_roles/ledger deletes
+        # accumulate in one open transaction against Neon all night. A failure in
+        # the last pass would then roll back the other thirty-nine, so a single
+        # bad row loses a whole night's retention — the shape of failure a
+        # compliance control least wants.
+        await db.commit()
         if len(rows) < limit:
             break
 
-    if keys or orphans:
+    if purged or orphans:
         log.info(
             "application_draft.purged",
-            objects=len(keys), orphan_identities=orphans,
+            # `drafts` is the retention EVIDENCE a DPDP audit reads — "how many
+            # records past their purpose did you actually delete". `objects` is
+            # a subset (submitted rows keep their CV), so it cannot stand in.
+            drafts=purged, objects=len(keys), orphan_identities=orphans,
         )
     return keys

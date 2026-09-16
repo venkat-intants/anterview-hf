@@ -33,6 +33,7 @@ failure for this particular endpoint.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import UTC, datetime
@@ -40,7 +41,16 @@ from typing import Annotated, Any, Literal
 
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -77,6 +87,11 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/apply", tags=["public-apply"])
 
 _MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB — same ceiling as the HR upload path.
+
+# How long the CV detail parser may take before we give up and show the
+# candidate empty fields instead. Generous: the parser is linear and capped,
+# so reaching this means something is wrong rather than merely large.
+_PARSE_TIMEOUT_SECONDS = 5.0
 
 # One uniform refusal. Closed, paused, not-public, deleted, another tenant's,
 # or simply not a real id all answer identically: an opening that is not taking
@@ -1025,7 +1040,7 @@ async def _draft_or_404(db: DbSessionDep, token: str) -> dict[str, Any]:
     "/{requisition_id}/draft",
     response_model=DraftStartOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[rate_limit("public_apply_draft", 10)],
+    dependencies=[rate_limit("public_apply_draft_start", 10)],
 )
 async def start_draft(
     requisition_id: uuid.UUID,
@@ -1038,6 +1053,28 @@ async def start_draft(
     CONSENT IS TAKEN HERE. This is the first moment a person's email is stored,
     so it is the moment their permission is recorded — in the same transaction,
     exactly as the submitted-application path does it.
+
+    THIS ROUTE CREATES. IT NEVER RESUMES, AND THAT IS A SECURITY PROPERTY.
+
+    An earlier version resolved the email in the request body to an existing
+    identity and, if that person already had a live draft, rotated its token
+    and returned its contents. The email was therefore an authenticator — and
+    it is not one. Anyone holding the apply link (which the module docstring
+    above is explicit is not a secret) plus a candidate's address could read
+    their name, phone, employer, job title, profile links, every screening
+    answer and their CV filename, receive a working token for their draft,
+    alter it, replace their CV and submit an application in their name — in one
+    unauthenticated request, with the victim's own link silently killed.
+
+    So identity is no longer derived from anything the caller says. Every call
+    mints a FRESH draft with a FRESH guest identity, and the returned token is
+    the only way back to it. Two saves make two drafts, each reachable only by
+    its own link; that is the cost, and it is much cheaper than the alternative.
+
+    The consequence worth naming: somebody who loses their link cannot recover
+    it here, by design — recovering it would mean proving ownership of the
+    address, and this endpoint cannot do that. The draft expires in
+    DRAFT_TTL_DAYS and they start again.
     """
     req = await _open_posting(db, requisition_id)
     company_id = req["company_id"]
@@ -1056,31 +1093,14 @@ async def start_draft(
     address = str(body.email).strip().lower()[:320]
     now = datetime.now(tz=UTC)
 
-    # The applicant may already exist — they may have applied to another
-    # opening at this company — in which case their guest user already does too.
-    applicant_id = await db.scalar(
-        text(
-            "SELECT id FROM applicants"
-            " WHERE company_id = :c AND deleted_at IS NULL"
-            "   AND lower(btrim(email)) = :em"
-            " ORDER BY created_at LIMIT 1"
-        ),
-        {"c": company_id, "em": address},
-    )
-
     try:
-        if applicant_id is not None:
-            user_id = await _ensure_guest_user(
-                db, applicant_id=uuid.UUID(str(applicant_id)), company_id=company_id,
-                name="", email=address, resume_text="", now=now, language=body.language,
-            )
-        else:
-            # No applicant row yet — and deliberately none created. A draft is
-            # not an application, and minting an applicant here would put
-            # somebody in HR's pipeline who has not applied to anything.
-            user_id = await _draft_only_guest_user(
-                db, company_id=company_id, email=address, now=now, language=body.language,
-            )
+        # A FRESH identity, every time. Deliberately no lookup by the address
+        # the caller supplied: see the docstring. No applicant row is created
+        # either — a draft is not an application, and putting somebody in HR's
+        # pipeline before they have applied would be both wrong and visible.
+        user_id = await _draft_only_guest_user(
+            db, company_id=company_id, now=now, language=body.language,
+        )
 
         draft, raw_token = await draft_store.start(
             db,
@@ -1092,10 +1112,16 @@ async def start_draft(
             source=normalise_source(body.src, default=DIRECT),
             now=now,
         )
-        # SAME TRANSACTION as the draft row. This is the invariant.
+        # SAME TRANSACTION as the draft row. This is the invariant that
+        # CLAUDE.md hard constraint 3 requires, and it is why the consent
+        # checkbox moved to the first save rather than to submission.
+        #
+        # The ledger row hangs off the fresh guest identity. When this draft is
+        # submitted, submit_draft records consent against the identity that
+        # ends up OWNING the application too, so an audit that looks the person
+        # up by their real user id finds it.
         await _record_apply_consent(
-            db, request=request, user_id=user_id,
-            applicant_id=uuid.UUID(str(applicant_id)) if applicant_id else uuid.uuid4(),
+            db, request=request, user_id=user_id, applicant_id=uuid.uuid4(),
             company_id=company_id, requisition_id=requisition_id, now=now,
         )
         await db.commit()
@@ -1186,48 +1212,29 @@ async def _draft_only_guest_user(
     db: DbSessionDep,
     *,
     company_id: uuid.UUID,
-    email: str,
     now: datetime,
     language: str,
 ) -> uuid.UUID:
-    """A ``guest_candidate`` user for somebody who has only started a draft.
+    """A fresh ``guest_candidate`` user to anchor one draft's consent record.
 
     Needed because ``dpdp_consent_ledger.user_id`` is NOT NULL and the consent
-    is recorded at the first save. Deliberately does NOT create an applicant
-    row: a draft is not an application, and putting somebody in HR's pipeline
-    before they have applied would be both wrong and visible.
+    is recorded at the first save.
 
-    THE ADDRESS STORED HERE IS SYNTHETIC, AND THAT IS NOT COSMETIC.
-    ``users.email`` is UNIQUE across the whole platform, not per company. An
-    earlier version of this function wrote the candidate's real address, which
-    meant the second company they ever drafted at — or any company at all, if
-    that address already belonged to a real account anywhere — hit the unique
-    index, raised, and surfaced as a 503 they could never get past. The
-    applicant path next door (``_ensure_guest_user``) has always minted
-    ``guest+{uuid}@applicants.invalid`` for exactly this reason; this follows
-    it. The real address lives on ``application_drafts.email``, and moves to
-    ``applicants.email`` when they actually apply.
+    TAKES NO EMAIL, AND LOOKS NOTHING UP. An earlier version reused an existing
+    identity found by matching the address the caller supplied, which is what
+    let an anonymous request reach somebody else's draft. Resolving identity
+    from unverified input is the vulnerability; not doing it is the fix.
 
-    FINDING THE SAME PERSON AGAIN therefore cannot be a lookup by email on
-    ``users`` — there is no real address there to match. It is a lookup on the
-    drafts this company already holds for that address, which is the row that
-    knows both. Without it, a person drafting for a second opening at the same
-    company would mint a second identity and a second consent record.
+    THE ADDRESS STORED HERE IS SYNTHETIC. ``users.email`` is UNIQUE across the
+    whole platform, not per company, so writing a candidate's real address here
+    would collide with any account that already held it — which was a separate
+    bug, fixed separately. The real address lives on
+    ``application_drafts.email``, and moves to ``applicants.email`` if and when
+    the person actually applies.
+
+    Deliberately does NOT create an applicant row: a draft is not an
+    application.
     """
-    # 1. Have they already drafted at this company? Reuse that identity.
-    existing = await db.scalar(
-        text(
-            "SELECT user_id FROM application_drafts"
-            " WHERE company_id = :c AND lower(btrim(email)) = :em"
-            " ORDER BY created_at"
-            " LIMIT 1"
-        ),
-        {"em": email, "c": company_id},
-    )
-    if existing is not None:
-        return uuid.UUID(str(existing))
-
-    # 2. Otherwise mint one, with a synthetic address that cannot collide.
     user_id = uuid.uuid4()
     await db.execute(
         text(
@@ -1247,6 +1254,40 @@ async def _draft_only_guest_user(
         {"u": user_id, "n": now},
     )
     return user_id
+
+
+@router.delete(
+    "/draft/{token}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[rate_limit("public_apply_draft", 30)],
+)
+async def delete_draft(token: str, db: DbSessionDep) -> Response:
+    """Throw this saved application away, now.
+
+    DPDP gives a data principal the right to ACT, not merely to be forgotten on
+    a schedule. Without this, somebody who started a draft and changed their
+    mind had no route at all: the guest account has no password, so there is
+    nothing to sign in to and nothing to ask from. The 30-day expiry is a
+    backstop, not an answer.
+
+    Token-authenticated, so it is neither an oracle nor available to anyone but
+    the person holding the link. The CV object goes with the row — deleting the
+    record and leaving the file is the failure mode this whole area keeps
+    having, so it is done here explicitly rather than left to the cron.
+    """
+    row = await _draft_or_404(db, token)
+    key = row.get("resume_s3_key")
+    await db.execute(
+        text("DELETE FROM application_drafts WHERE id = :i"), {"i": row["id"]}
+    )
+    await db.commit()
+    if key:
+        try:
+            await _delete_from_s3(str(key))
+        except Exception:  # noqa: BLE001 — the row is already gone
+            log.warning("public_apply.draft_object_orphaned", draft_id=str(row["id"]))
+    log.info("application_draft.deleted_by_candidate", draft_id=str(row["id"]))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -1292,9 +1333,25 @@ async def upload_draft_resume(
             status_code=503, detail="We could not store your CV just now. Please try again."
         ) from exc
 
-    # What the candidate will be asked to confirm (PH3-B5). Extracted with the
-    # same heuristics the reconciler uses on a submitted CV, so the two agree.
-    parsed = extract_contact_details(resume_text)
+    # What the candidate will be asked to confirm (PH3-B5).
+    #
+    # OFF THE EVENT LOOP, with a wall-clock bound — the same treatment
+    # _extract_pdf_text gets two calls up, and for the same reason. The
+    # patterns are bounded and the input is truncated, so this is linear and
+    # capped; running it inline would still put a stranger's upload on the
+    # thread that serves every other request, health probe included.
+    #
+    # A timeout here is not a failure worth refusing the upload over: the
+    # candidate is about to be shown these fields to correct anyway, so an
+    # empty set of suggestions is a slightly worse form, not a lost applicant.
+    try:
+        parsed = await asyncio.wait_for(
+            asyncio.to_thread(extract_contact_details, resume_text),
+            timeout=_PARSE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        log.warning("public_apply.draft_parse_timeout", draft_id=str(row["id"]))
+        parsed = {}
     await draft_store.attach_resume(
         db, draft_id=row["id"], s3_key=s3_key,
         filename=resume.filename, parsed=parsed,
@@ -1476,6 +1533,20 @@ async def submit_draft(
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 answers=checked_answers,
             )
+        # The draft's consent row hangs off the throwaway guest identity that
+        # created it. Record it against the identity that owns the application
+        # too, so an audit that looks this person up by their real user id
+        # finds their consent rather than missing it. Idempotent per user, so
+        # a returning applicant is not double-recorded.
+        owner_user_id = await db.scalar(
+            text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
+        )
+        if owner_user_id is not None:
+            await _record_apply_consent(
+                db, request=request, user_id=uuid.UUID(str(owner_user_id)),
+                applicant_id=applicant_id, company_id=company_id,
+                requisition_id=requisition_id, now=now,
+            )
         await draft_store.mark_submitted(db, draft_id=row["id"], now=now)
         await db.commit()
     except IntegrityError:
@@ -1490,6 +1561,42 @@ async def submit_draft(
         raise HTTPException(
             status_code=503, detail="We could not submit your application just now."
         ) from None
+
+    # Confirmation email, with a link to activate the account this application
+    # just created. The one-shot path has always sent this and its own comment
+    # names why it matters: "the confirmation email goes to the address on file
+    # — so the real owner of that address hears about an application they did
+    # not make." The draft path shipped without it, which removed that control
+    # from the very flow this branch adds, and left draft-path applicants with
+    # no way to claim their account.
+    #
+    # AFTER the commit and in its own transaction, for the reason spelled out
+    # on the one-shot path: a SQL failure while staging the email would abort
+    # the transaction and take the application down with it. The application is
+    # already safe; only the email is at risk.
+    guest_user_id = await db.scalar(
+        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
+    )
+    if guest_user_id is not None:
+        try:
+            await stage_activation_email(
+                db,
+                user_id=uuid.UUID(str(guest_user_id)),
+                applicant_email=address,
+                applicant_name=name,
+                job_title=req["title"],
+                company_id=company_id,
+                company_name=req.get("company_name"),
+                now=now,
+            )
+            await db.commit()
+        except Exception:  # noqa: BLE001 — see above
+            await db.rollback()
+            log.warning(
+                "public.apply.draft_activation_email_failed",
+                requisition_id=str(requisition_id),
+                applicant_id=str(applicant_id),
+            )
 
     log.info(
         "public.apply.received_from_draft",

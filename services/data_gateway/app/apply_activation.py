@@ -336,7 +336,7 @@ async def _link_to_existing(
     target_user_id: uuid.UUID,
     now: datetime,
 ) -> None:
-    """Hand this guest's applicant rows and consent history to a real account.
+    """Hand this guest's applicant rows, drafts and consent history to a real account.
 
     The consent rows move rather than being re-created: their ``granted_at``
     and hashed request evidence are the record of a decision the person made at
@@ -350,6 +350,21 @@ async def _link_to_existing(
         text(
             "UPDATE applicants SET user_id = :new, updated_at = :now"
             " WHERE user_id = :old AND deleted_at IS NULL"
+        ),
+        {"new": target_user_id, "old": guest_user_id, "now": now},
+    )
+    # Drafts move too (PH3-B4c). They were missed when the table was added, and
+    # the consequence was not cosmetic: BOTH erasure hooks key on user_id, so a
+    # draft left pointing at the tombstoned guest survived a completed erasure
+    # with the person's name, phone, employer and CV still in it — and its CV
+    # object was never collected for deletion either. An erasure that reports
+    # success while leaving personal data behind is the worst failure this
+    # system has, so the repair belongs here, next to the two rows that were
+    # already being moved.
+    await db.execute(
+        text(
+            "UPDATE application_drafts SET user_id = :new, updated_at = :now"
+            " WHERE user_id = :old"
         ),
         {"new": target_user_id, "old": guest_user_id, "now": now},
     )

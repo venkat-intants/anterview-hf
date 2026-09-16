@@ -79,7 +79,9 @@ def test_the_endpoint_refuses_before_it_touches_the_database() -> None:
 
     src = inspect.getsource(start_draft)
     assert "body.consent_granted" in src
-    assert src.index("consent_granted") < src.index("_ensure_guest_user")
+    # The refusal comes before any identity is minted and before any row is
+    # written. _draft_only_guest_user is now the first write in the handler.
+    assert src.index("consent_granted") < src.index("_draft_only_guest_user")
 
 
 def test_the_ledger_entry_is_written_in_the_same_transaction_as_the_draft() -> None:
@@ -95,15 +97,23 @@ def test_the_ledger_entry_is_written_in_the_same_transaction_as_the_draft() -> N
     assert consent_i < commit_i
 
 
-def test_consent_is_not_asked_for_twice_at_submission() -> None:
-    """It was recorded when the draft was created and the ledger entry is
-    idempotent per person. Asking again would imply the first answer had not
-    counted."""
+def test_the_candidate_is_not_asked_for_consent_twice() -> None:
+    """It was recorded at the first save and the ledger entry is idempotent per
+    person. Asking again would imply the first answer had not counted."""
+    from app.routers.public_apply import submit_draft
+
+    assert "consent_granted" not in inspect.getsource(submit_draft)
+
+
+def test_consent_is_also_recorded_against_the_identity_that_owns_the_application() -> None:
+    """The draft's ledger row hangs off the throwaway guest identity that
+    created it. Without this, an audit that looks a person up by their real
+    user id would not find their consent."""
     from app.routers.public_apply import submit_draft
 
     src = inspect.getsource(submit_draft)
-    assert "consent_granted" not in src
-    assert "_record_apply_consent" not in src
+    assert "_record_apply_consent" in src
+    assert "owner_user_id" in src
 
 
 def test_a_draft_does_not_create_an_applicant() -> None:
@@ -137,23 +147,74 @@ def test_the_token_carries_real_entropy() -> None:
     assert len({mint_token()[0] for _ in range(50)}) == 50
 
 
+# ===========================================================================
+# An email is NOT an authenticator — the security fix
+#
+# start_draft used to resolve the email in an unauthenticated request body to
+# an existing identity, and if that person had a live draft it rotated the
+# token and returned the contents. Anyone with the apply link (not a secret)
+# and a candidate's address could read their name, phone, employer, answers and
+# CV filename, get a working token, alter the draft, replace the CV and submit
+# in their name — one request, and the victim's own link died silently.
+#
+# These assert the shape that makes that impossible, not the symptom.
+# ===========================================================================
 @pytest.mark.asyncio
-async def test_resuming_rotates_the_token_so_the_old_link_dies() -> None:
-    """A draft has exactly one live credential."""
+async def test_starting_a_draft_never_reads_an_existing_one() -> None:
+    """No SELECT against application_drafts at all — there is nothing to find,
+    and no code path that could return somebody else's row."""
     from app.application_drafts import start
 
-    existing = {"id": uuid.uuid4(), "token_hash": "old", "email": "a@b.test"}
-    db = _db(existing)
-    draft, raw = await start(
+    db = _db(None)
+    await start(
         db, requisition_id=REQ, company_id=COMPANY, email="a@b.test",
         consent_granted=True, user_id=USER, now=NOW,
     )
-    assert draft["token_hash"] != "old"
-    update = next(
-        c.args[0].text for c in db.execute.await_args_list
-        if c.args[0].text.lstrip().startswith("UPDATE")
+    for call in db.execute.await_args_list:
+        sql = call.args[0].text
+        assert "SELECT" not in sql.upper(), sql
+
+
+@pytest.mark.asyncio
+async def test_starting_a_draft_never_rotates_an_existing_token() -> None:
+    """Rotating on an unverified request was both the takeover and a denial of
+    service against the real owner's link."""
+    from app.application_drafts import start
+
+    db = _db(None)
+    await start(
+        db, requisition_id=REQ, company_id=COMPANY, email="a@b.test",
+        consent_granted=True, user_id=USER, now=NOW,
     )
-    assert "token_hash = :h" in update
+    for call in db.execute.await_args_list:
+        assert "UPDATE application_drafts" not in call.args[0].text
+
+
+def test_identity_is_never_resolved_from_the_request_body() -> None:
+    """The handler must not look anybody up by the address it was handed."""
+    from app.routers.public_apply import _draft_only_guest_user, start_draft
+
+    handler = inspect.getsource(start_draft)
+    assert "SELECT id FROM applicants" not in handler
+    assert "_ensure_guest_user" not in handler
+
+    minter = inspect.getsource(_draft_only_guest_user)
+    # It does not even accept an email any more, so there is nothing to match on.
+    assert "email" not in inspect.signature(_draft_only_guest_user).parameters
+    # No read of any table an identity could be recovered from. (It does SELECT
+    # from `roles` to grant guest_candidate — reference data, keyed by a literal
+    # role name, with nothing of anyone's in it.)
+    for table in ("applicants", "application_drafts"):
+        assert f"FROM {table}" not in minter, table
+    assert "FROM users" not in minter
+
+
+def test_every_draft_gets_a_fresh_identity() -> None:
+    from app.routers.public_apply import _draft_only_guest_user
+
+    src = inspect.getsource(_draft_only_guest_user)
+    assert "user_id = uuid.uuid4()" in src
+    assert "INSERT INTO users" in src
 
 
 @pytest.mark.asyncio
@@ -248,19 +309,31 @@ def test_a_draft_is_erased_not_anonymised() -> None:
         Path(__file__).resolve().parents[4]
         / "services" / "admin_ops" / "app" / "erasure_executor.py"
     ).read_text(encoding="utf-8")
-    assert "DELETE FROM application_drafts WHERE user_id = :uid" in executor
+    assert "DELETE FROM application_drafts" in executor
 
 
-def test_erasure_reaches_a_draft_without_going_through_applicants() -> None:
-    """A draft that was never submitted has no applicant row to be reached
-    through, and reaching for one is precisely how this table would be missed."""
+def test_erasure_reaches_a_draft_by_more_than_one_route() -> None:
+    """user_id alone was not enough. When a guest activates into an account
+    they already had, apply_activation re-points the draft — and a draft
+    written before that repair existed, or one whose re-point failed, would be
+    invisible to an executor that matched on user_id only, survive a completed
+    erasure, and keep its CV in the bucket."""
     executor = (
         Path(__file__).resolve().parents[4]
         / "services" / "admin_ops" / "app" / "erasure_executor.py"
     ).read_text(encoding="utf-8")
-    assert "FROM application_drafts \nWHERE" in executor or (
-        "application_drafts " in executor and "WHERE user_id = :uid" in executor
-    )
+    delete = executor[executor.index("DELETE FROM application_drafts"):][:800]
+    assert "d.user_id = :uid" in delete
+    assert "lower(btrim(d.email))" in delete
+
+
+def test_activation_repoints_the_draft_to_the_real_account() -> None:
+    """The other half: the repair itself, so the executor's user_id route also
+    keeps working."""
+    src = (
+        Path(__file__).resolve().parents[2] / "app" / "apply_activation.py"
+    ).read_text(encoding="utf-8")
+    assert "UPDATE application_drafts SET user_id = :new" in src
 
 
 def test_erasure_collects_the_draft_cv_before_deleting_the_row() -> None:
@@ -268,7 +341,7 @@ def test_erasure_collects_the_draft_cv_before_deleting_the_row() -> None:
         Path(__file__).resolve().parents[4]
         / "services" / "admin_ops" / "app" / "erasure_executor.py"
     ).read_text(encoding="utf-8")
-    collect = executor.index("SELECT resume_s3_key FROM application_drafts")
+    collect = executor.index("SELECT d.resume_s3_key FROM application_drafts")
     delete = executor.index("DELETE FROM application_drafts")
     assert collect < delete
 

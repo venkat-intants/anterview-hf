@@ -44,6 +44,9 @@ from app.notifications_util import create_notification
 
 log = structlog.get_logger(__name__)
 
+#: The reserved suffix used for placeholder identities that have no mailbox.
+GUEST_EMAIL_DOMAIN = "@applicants.invalid"
+
 # A row stuck in 'sending' longer than this (worker crashed mid-send) is reclaimed.
 _VISIBILITY_TIMEOUT_SECONDS = 120
 # Retry backoff: base * 2^(attempt-1), capped. 30s, 1m, 2m, 4m, 8m, … (≤ 1h).
@@ -84,6 +87,15 @@ async def enqueue_email(
     """
     if not to or "@" not in to:
         log.warning("email.enqueue.skip_invalid_recipient", template=template)
+        return None
+
+    # Never enqueue to a synthetic guest address. `guest+{uuid}@applicants.invalid`
+    # is minted to anchor a consent record for somebody who has only started a
+    # draft (PH3-B4c) — there is no mailbox behind it, and .invalid is reserved
+    # by RFC 2606 precisely so it cannot resolve. Bouncing these would cost
+    # sender reputation on a shared Resend domain for mail nobody asked to send.
+    if to.strip().lower().endswith(GUEST_EMAIL_DOMAIN):
+        log.debug("email.enqueue.skip_guest_placeholder", template=template)
         return None
 
     if dedupe_key is not None:

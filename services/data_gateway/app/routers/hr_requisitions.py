@@ -872,7 +872,10 @@ async def update_requisition(
     try:
         await db.execute(
             text(
-                f"UPDATE job_requisitions SET {sets}, updated_at = :n"
+                # SAFE: `sets` is built from RequisitionPatch field names via
+                # model_dump(exclude_unset=True) — Pydantic model attributes,
+                # never caller-supplied text. Every value is bound.
+                f"UPDATE job_requisitions SET {sets}, updated_at = :n"  # nosec B608
                 " WHERE id = :i AND company_id = :c"
             ),
             params,

@@ -14,6 +14,13 @@ The scorer still runs afterwards, in the reconciler, for ATS scoring. This does
 not replace it and does not compete with it: this is what the candidate is asked
 to confirm, and the candidate's answer wins over both.
 
+WHAT IT COSTS
+Every pattern is bounded and the input is truncated to ``_MAX_SCAN_CHARS``, so
+the work is linear and capped regardless of what is uploaded. The caller runs it
+off the event loop (``asyncio.to_thread``) as well — belt and braces, because
+this is reachable by an anonymous request and the alternative is one upload
+stalling every other request on the worker.
+
 WHAT IT WILL NOT DO
 Guess. Every extractor here returns None rather than a low-confidence value,
 because a wrong pre-filled field is worse than an empty one: a person skimming a
@@ -30,7 +37,13 @@ from typing import Any
 # A pragmatic address pattern. Not RFC 5322 — that matches things no CV
 # contains and is famously unreadable. Anything this finds is validated by
 # pydantic before it is used.
-_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+#
+# Bounded repetition, not open-ended. The `X+@Y+\.Z` shape backtracks linearly
+# per start offset, so searching it over a whole CV is O(n^2): measured at 0.72s
+# on 32 KB of 'a', 1.6s for the profile patterns, and a CV can be hundreds of KB.
+# Since this runs on the request path for an anonymous upload, that was a denial
+# of service. Explicit upper bounds make the failure path finite.
+_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63}){1,4}")
 
 # Indian mobile numbers with or without +91, and generic 10-15 digit runs with
 # common separators. Deliberately anchored on a word boundary so it does not
@@ -39,8 +52,10 @@ _PHONE = re.compile(
     r"(?<![\d])(?:\+?91[\s\-]?)?(?:\d[\s\-]?){9,14}\d(?![\d])"
 )
 
-_LINKEDIN = re.compile(r"(?:https?://)?(?:[\w.]*\.)?linkedin\.com/in/[\w\-%]+/?", re.I)
-_GITHUB = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[\w\-.]+/?", re.I)
+_LINKEDIN = re.compile(
+    r"(?:https?://)?(?:[\w\-]{1,63}\.){0,3}linkedin\.com/in/[\w\-%]{1,100}/?", re.I
+)
+_GITHUB = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[\w\-.]{1,100}/?", re.I)
 
 # Lines that are obviously not a person's name, however early they appear.
 _NOT_A_NAME = re.compile(
@@ -52,6 +67,15 @@ _NOT_A_NAME = re.compile(
 #: How much of the document to look at for the header fields. A name and a
 #: phone number are at the top; scanning further finds a referee's.
 _HEADER_CHARS = 1200
+
+#: The hard ceiling on how much text is examined AT ALL.
+#:
+#: Every pattern here is now bounded, but bounded is not free — and this runs on
+#: an anonymous upload. A 5 MB PDF (the accepted ceiling) can yield megabytes of
+#: text, and there is no answer worth finding in the last megabyte of a CV: the
+#: email, the phone number and the profile links are in the first page. So the
+#: work is capped rather than merely made cheaper.
+_MAX_SCAN_CHARS = 20_000
 
 
 def _first_email(text: str) -> str | None:
@@ -113,7 +137,9 @@ def extract_contact_details(resume_text: str | None) -> dict[str, Any]:
     """
     if not resume_text:
         return {}
-    text = resume_text.replace("\r\n", "\n")
+    # Truncate FIRST. Everything below is linear in this length, and the caller
+    # hands us whatever pypdf extracted from a file a stranger uploaded.
+    text = resume_text[:_MAX_SCAN_CHARS].replace("\r\n", "\n")
     found: dict[str, Any] = {
         "full_name": _name(text),
         "email": _first_email(text),

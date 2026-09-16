@@ -8,7 +8,7 @@ document, in the document's own order and wording.
 **How each line was verified** is named, because "done" without that is an opinion.
 `unit` = a test in `services/data_gateway/tests/unit/`; `smoke` =
 `tests/integration/smoke_ph3_apply.py`, which runs the real endpoints against a real
-Postgres 16 and passes 46/46; `db` = asserted directly against the migrated schema.
+Postgres 16 and passes 53/53; `db` = asserted directly against the migrated schema.
 
 ---
 
@@ -307,6 +307,88 @@ candidate-facing response leaks budget, approval notes or other applicants.
 
 ---
 
+## Security audit — findings and fixes (2026-09-16)
+
+Merging deploys to the live Space, so CLAUDE.md hard constraint 4 applied and
+`security-auditor` ran before merge. It returned **BLOCKED** with one CRITICAL,
+and it was right.
+
+### CRITICAL — unauthenticated takeover of a candidate's in-progress application
+
+`POST /apply/{id}/draft` treated the **email in the request body as proof of
+identity**. It resolved that address to an existing `user_id`, and if that person
+had a live draft, `start()` rotated the token and returned the row. One
+unauthenticated request — with the apply link, which is not a secret, plus a
+candidate's address — yielded their name, phone, current employer, job title,
+profile links, every screening answer and their CV filename, **plus a working
+token** to alter the draft, replace the CV and submit an application in their
+name. The victim's own link died silently. Rate limiting was no defence: one
+request sufficed.
+
+**Fixed by removing the class of bug, not the symptom.** Identity is no longer
+derived from anything the caller says. Every call mints a fresh draft with a
+fresh guest identity; the returned token is the only way back to it. The reuse
+branch in `application_drafts.start()` is deleted rather than guarded, and
+`_draft_only_guest_user` no longer accepts an email at all, so there is nothing
+left to match on.
+
+The cost, stated plainly: saving twice makes two drafts, each reachable only by
+its own link, and somebody who loses their link cannot recover it here — that
+would mean proving ownership of an address, which this endpoint cannot do. The
+draft expires in 30 days. That is a worse experience than the vulnerable
+version, and it is the correct trade.
+
+### HIGH — right to erasure silently failed
+
+`apply_activation._link_to_existing` re-pointed `applicants.user_id` and the
+consent ledger when a guest activated into an account they already had, but not
+`application_drafts.user_id`. Both erasure hooks keyed on `user_id`, so the
+draft — name, phone, employer, CV — survived a **completed** erasure and its CV
+object was never collected for deletion. Fixed on both sides: activation now
+re-points the draft, and the executor matches on `user_id`, the erased address
+*and* the linked applicant, so it no longer depends on that repair being correct.
+
+### HIGH — unauthenticated CPU exhaustion
+
+`resume_details.py` ran quadratic regexes over the entire CV text, synchronously
+on the event loop, from an anonymous upload. Measured 720ms for the email pattern
+alone on 32 KB and 1.6s for the profile patterns, unbounded above that — one
+upload could stall every request on the worker, health probe included. Fixed
+three ways: bounded repetition in every pattern, input truncated to 20,000
+characters, and the call moved to `asyncio.to_thread` with a wall-clock timeout
+(the same treatment `_extract_pdf_text` already gets). Now flat at ~9ms whether
+the input is 32 KB or 2 MB.
+
+### Also fixed
+
+- **Consent could be recorded against an unverified identity** — resolved by the
+  CRITICAL fix. Submission now additionally records consent against the identity
+  that ends up *owning* the application, so an audit finds it by real user id.
+- **A draft-only data principal had no way to act.** DPDP gives a right to erase,
+  not merely to be forgotten on a schedule. `DELETE /apply/draft/{token}` added —
+  token-authenticated, deletes the CV object with the row.
+- **The draft submit path sent no confirmation email**, dropping a control the
+  one-shot path's own comment names: the email to the address on file is how the
+  real owner hears about an application they did not make. Added.
+- `public_gate_open` defaulted `approval_status` to approved — a fail-open
+  default in the module that decides public visibility. Now required.
+- `start_draft` shared a rate-limit bucket with the PATCH routes.
+- The mailer now refuses `@applicants.invalid` recipients.
+
+**Verified by walking the actual attack** through the real endpoints against real
+Postgres: a stranger who knows the victim's email learns nothing, gets a token
+that opens only an empty draft of their own, and the victim's link keeps working.
+
+### What this says about the testing
+
+The 46/46 smoke test drove the happy path and never asked "what if someone else
+types this email?". The review found in one pass what those tests were
+structurally incapable of seeing — the same shape as the earlier `users.email`
+bug, one level up. Both are now covered by tests that fail if the behaviour
+returns.
+
+---
+
 ## What I could not verify, and why
 
 Stated plainly so nobody reads this checklist as claiming more than it proves.
@@ -337,7 +419,7 @@ Stated plainly so nobody reads this checklist as claiming more than it proves.
 | `admin_ops` tests | 158 passed |
 | `shared` tests | 676 passed |
 | Web tests | 936 passed |
-| End-to-end smoke against real Postgres | 46/46 |
+| End-to-end smoke against real Postgres | 53/53 |
 | `ruff` | clean |
 | `mypy` (root config, as CI runs it) | clean, 115 files |
 | Alembic | 6 new migrations, single linear head, applied cleanly |

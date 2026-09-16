@@ -435,9 +435,18 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("draft users get a synthetic address instead",
               synthetic >= 1, f"{synthetic} synthetic users")
 
-        # Drafting AGAIN at the same company must reuse the same identity
-        # rather than minting a second one — otherwise one person accumulates
-        # users and consent records.
+        # Drafting AGAIN mints a SEPARATE identity, and that is the fix rather
+        # than a regression. This test used to assert the opposite — that the
+        # same identity was reused, found by matching the supplied address —
+        # and that reuse was exactly the hole a security review found: it is
+        # what let an unauthenticated caller reach somebody else's draft.
+        #
+        # The cost is real and worth stating: one person who saves twice ends
+        # up with two guest rows, two drafts and two consent records. Each
+        # records a genuine consent act by whoever pressed the button, each
+        # draft is reachable only by its own link, and all of them expire on
+        # the same 30-day clock. That is a tidiness price for an access-control
+        # property, and it is the right way round.
         async with factory() as db:
             before = await db.scalar(text("SELECT count(*) FROM users"))
         r = await client.post(
@@ -446,13 +455,81 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         )
         async with factory() as db:
             after = await db.scalar(text("SELECT count(*) FROM users"))
-            consents = await db.scalar(text(
-                "SELECT count(*) FROM dpdp_consent_ledger WHERE consent_type ="
-                " 'application_data'"))
-        check("re-drafting reuses the identity rather than minting another",
-              r.status_code == 201 and after == before, f"{before} -> {after}")
-        check("and does not record a second consent for the same person",
-              consents == 2, f"{consents} ledger rows for 2 people")
+        check("re-drafting mints a fresh identity rather than reusing one",
+              r.status_code == 201 and after == before + 1, f"{before} -> {after}")
+
+        # The property that actually matters: neither draft can see the other.
+        second_tok = r.json()["resume_token"] if r.status_code == 201 else ""
+        first = await client.get(f"/apply/draft/{second_token}")
+        second = await client.get(f"/apply/draft/{second_tok}")
+        check("and the two drafts are separate, each reachable only by its own link",
+              second_token != second_tok
+              and first.status_code == 200 and second.status_code == 200,
+              f"{first.status_code}/{second.status_code}")
+
+        # ── SECURITY REGRESSION: the email is not an authenticator ────
+        # Found by security review, not by the tests. start_draft used to
+        # resolve the email in an unauthenticated request body to an existing
+        # identity and, if that person had a live draft, rotate its token and
+        # return its contents. Anyone with the apply link (not a secret) plus a
+        # candidate's address could read their details, get a working token,
+        # alter the draft, replace the CV and submit in their name — and the
+        # victim's own link died silently.
+        #
+        # This walks the actual attack, through the real endpoints.
+        print("\nSECURITY — a stranger who knows the email gets nothing")
+
+        victim_email = "victim@example.com"
+        r = await client.post(
+            f"/apply/{other_req}/draft",
+            json={"email": victim_email, "consent_granted": True},
+        )
+        victim_token = r.json()["resume_token"] if r.status_code == 201 else ""
+        check("the victim starts a draft", r.status_code == 201, r.text[:140])
+
+        # They fill in real details — this is what an attacker would be after.
+        await client.patch(
+            f"/apply/draft/{victim_token}",
+            json={"full_name": "Victim Real Name", "phone": "+91 90000 00001",
+                  "current_company": "Confidential Employer Ltd"},
+        )
+
+        # THE ATTACK: same opening, same email, no token, no login.
+        r = await client.post(
+            f"/apply/{other_req}/draft",
+            json={"email": victim_email, "consent_granted": True},
+        )
+        attacker = r.json() if r.status_code == 201 else {}
+        attacker_token = attacker.get("resume_token", "")
+        leaked = str(attacker.get("draft", {}))
+
+        check("the attacker learns NOTHING about the victim",
+              "Victim Real Name" not in leaked
+              and "+91 90000 00001" not in leaked
+              and "Confidential Employer" not in leaked,
+              leaked[:200])
+
+        check("the attacker's token does NOT open the victim's draft",
+              attacker_token != victim_token)
+        if attacker_token:
+            r = await client.get(f"/apply/draft/{attacker_token}")
+            got = r.json() if r.status_code == 200 else {}
+            check("and what it does open is empty, not theirs",
+                  got.get("full_name") in (None, ""), str(got)[:160])
+
+        # The victim's own link must still work — the old code rotated it away.
+        r = await client.get(f"/apply/draft/{victim_token}")
+        check("the victim's link still works (no silent denial of service)",
+              r.status_code == 200 and r.json().get("full_name") == "Victim Real Name",
+              f"{r.status_code} {r.text[:140]}")
+
+        # ── The data principal can erase their own draft ──────────────
+        print("\nDPDP — a draft-only candidate can erase their own data")
+        r = await client.delete(f"/apply/draft/{victim_token}")
+        check("deleting a draft by its own link works", r.status_code == 204,
+              str(r.status_code))
+        r = await client.get(f"/apply/draft/{victim_token}")
+        check("and it is really gone", r.status_code == 404, str(r.status_code))
 
     await eng.dispose()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

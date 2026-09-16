@@ -197,7 +197,10 @@ ERASED_TABLES: dict[str, str] = {
                            "identifying them after applicants is anonymised. "
                            "Deleted, not redacted: here the content IS the "
                            "personal data, with no structural residue to keep.",
-    "application_drafts": "step 5e — hard-deleted. A half-finished application "
+    "application_drafts": "step 5e — hard-deleted, matched on user_id, on the "
+                          "erased address, AND through the linked applicant, so "
+                          "a draft whose user_id was re-pointed (or not) by "
+                          "activation-linking cannot escape. A half-finished application "
                           "holds the person's name, email, phone and CV, and "
                           "unlike `applicants` there is no structural record "
                           "worth keeping: nobody applied. Keyed on user_id "
@@ -469,8 +472,13 @@ async def _execute_one_erasure(
     # stamps the request 'completed'. Collected before step 5e deletes the row.
     draft_keys_result = await db.execute(
         text(
-            "SELECT resume_s3_key FROM application_drafts "
-            "WHERE user_id = :uid AND resume_s3_key IS NOT NULL"
+            "SELECT d.resume_s3_key FROM application_drafts d "
+            "WHERE d.resume_s3_key IS NOT NULL AND ("
+            "  d.user_id = :uid"
+            "  OR lower(btrim(d.email)) IN ("
+            "       SELECT lower(btrim(u.email)) FROM users u"
+            "        WHERE u.id = :uid AND u.email IS NOT NULL)"
+            ")"
         ),
         {"uid": uid_str},
     )
@@ -677,8 +685,23 @@ async def _execute_one_erasure(
     # is precisely how this table would have been missed.
     #
     # The CV object itself was collected in step 1c-iii and is deleted in step 8.
+    # Matched THREE ways, not one. user_id alone was not enough: when a guest
+    # activates into an account they already had, apply_activation re-points the
+    # draft — and a draft written before that repair existed, or one whose
+    # re-point failed, would be invisible here and survive a completed erasure.
+    # The address and the linked applicants are independent routes to the same
+    # row, so the executor no longer depends on a repair elsewhere being correct.
     drafts_result = await db.execute(
-        text("DELETE FROM application_drafts WHERE user_id = :uid"),
+        text(
+            "DELETE FROM application_drafts d"
+            " WHERE d.user_id = :uid"
+            "    OR lower(btrim(d.email)) IN ("
+            "         SELECT lower(btrim(u.email)) FROM users u"
+            "          WHERE u.id = :uid AND u.email IS NOT NULL)"
+            "    OR d.user_id IN ("
+            "         SELECT a.user_id FROM applicants a"
+            "          WHERE a.user_id = :uid)"
+        ),
         {"uid": uid_str},
     )
     application_drafts_deleted: int = getattr(drafts_result, "rowcount", 0) or 0

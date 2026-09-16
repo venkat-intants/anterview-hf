@@ -108,7 +108,7 @@ def public_gate_open(
     *,
     status: str | None,
     public_apply_enabled: bool | None,
-    approval_status: str | None = APPROVED,
+    approval_status: str | None,
     closes_at: datetime | None = None,
     deleted_at: datetime | None = None,
     now: datetime | None = None,
@@ -120,9 +120,12 @@ def public_gate_open(
     report "accepting applications" and "has a published workflow" as two
     separate facts.
 
-    ``approval_status`` defaults to approved so a caller that has not yet been
-    taught about PH3-B2 reads as it did before rather than reporting every
-    opening as closed. Every real call site passes the column.
+    ``approval_status`` is REQUIRED, deliberately. It defaulted to approved so
+    that a caller which had not yet been taught about PH3-B2 kept working — a
+    fail-open default in the one module that exists to decide what the public
+    may see. Nothing was exposed by it (the public surfaces use ``visible_sql``,
+    which has no such escape), but a required argument means the next caller has
+    to say what it means rather than inherit an answer.
     """
     if deleted_at is not None:
         return False
@@ -140,7 +143,7 @@ def is_publicly_live(
     status: str | None,
     public_apply_enabled: bool | None,
     has_published_workflow: bool,
-    approval_status: str | None = APPROVED,
+    approval_status: str | None,
     closes_at: datetime | None = None,
     deleted_at: datetime | None = None,
     now: datetime | None = None,

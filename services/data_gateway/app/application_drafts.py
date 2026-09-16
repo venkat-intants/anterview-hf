@@ -41,7 +41,6 @@ from typing import Any
 
 import structlog
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger(__name__)
@@ -139,7 +138,7 @@ async def start(
     source: tuple[str, str | None] = ("direct", None),
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Create (or resume) this person's draft for this opening. Caller commits.
+    """Create a draft for this opening. Caller commits.
 
     ``source`` is the acquisition channel the tracked link carried (PH3-B1),
     already normalised by the caller. Stored on the draft so a link opened three
@@ -149,6 +148,9 @@ async def start(
     because this function is the last place before a row carrying a person's
     email is written. Returns ``(draft, raw_token)``; the raw token is returned
     once and never stored.
+
+    ALWAYS CREATES. ``user_id`` must be an identity the caller has just minted,
+    never one resolved from user input — see the comment in the body.
 
     The caller is responsible for having minted ``user_id`` and written the
     consent ledger entry in this same transaction — see the module docstring.
@@ -161,39 +163,18 @@ async def start(
     now = now or datetime.now(tz=UTC)
     address = email.strip().lower()[:320]
 
-    existing = (
-        await db.execute(
-            text(
-                "SELECT * FROM application_drafts"
-                " WHERE requisition_id = :r AND user_id = :u AND status = 'draft'"
-            ),
-            {"r": requisition_id, "u": user_id},
-        )
-    ).mappings().first()
-
+    # NO LOOKUP, NO REUSE. This function used to find a live draft for
+    # (requisition, user) and hand back its contents with a freshly rotated
+    # token. Its caller resolved `user_id` from an email in an unauthenticated
+    # request body, so that branch let anyone holding the apply link and a
+    # candidate's address read and take over that candidate's application.
+    #
+    # The caller now mints a fresh identity per call, so there is never an
+    # existing draft to find — and this function no longer offers a way to
+    # reach one even if there were.
     raw, token_hash = mint_token()
-    if existing is not None:
-        # Resuming from a fresh device: the token is rotated so the old link
-        # stops working. A draft has exactly one live credential.
-        await db.execute(
-            text(
-                "UPDATE application_drafts"
-                "   SET token_hash = :h, expires_at = :exp, updated_at = :n"
-                " WHERE id = :i"
-            ),
-            {"h": token_hash, "exp": now + timedelta(days=DRAFT_TTL_DAYS),
-             "n": now, "i": existing["id"]},
-        )
-        return {**dict(existing), "token_hash": token_hash}, raw
-
     draft_id = uuid.uuid4()
     channel, channel_detail = source
-    # A double-click is the normal way this races: two requests both miss the
-    # SELECT above and both insert. uq_application_drafts_live catches the
-    # second, and without this it would surface as a 503 on the candidate's
-    # very first action. Resolving to "you already have a draft, here it is" is
-    # what they wanted anyway.
-    savepoint = await db.begin_nested()
     await db.execute(
         text(
             "INSERT INTO application_drafts"
@@ -205,33 +186,6 @@ async def start(
          "h": token_hash, "e": address, "src": channel, "srcd": channel_detail,
          "exp": now + timedelta(days=DRAFT_TTL_DAYS), "n": now},
     )
-    try:
-        await savepoint.commit()
-    except IntegrityError:
-        await savepoint.rollback()
-        raced = (
-            await db.execute(
-                text(
-                    "SELECT * FROM application_drafts"
-                    " WHERE requisition_id = :r AND user_id = :u AND status = 'draft'"
-                ),
-                {"r": requisition_id, "u": user_id},
-            )
-        ).mappings().first()
-        if raced is None:
-            raise
-        # The winner's token stands; rotate it so THIS caller gets a link that
-        # works, exactly as the resume branch above does.
-        await db.execute(
-            text(
-                "UPDATE application_drafts"
-                "   SET token_hash = :h, expires_at = :exp, updated_at = :n"
-                " WHERE id = :i"
-            ),
-            {"h": token_hash, "exp": now + timedelta(days=DRAFT_TTL_DAYS),
-             "n": now, "i": raced["id"]},
-        )
-        return {**dict(raced), "token_hash": token_hash}, raw
     log.info(
         "application_draft.started",
         requisition_id=str(requisition_id), company_id=str(company_id),

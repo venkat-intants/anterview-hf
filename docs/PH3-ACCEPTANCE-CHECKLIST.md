@@ -212,7 +212,26 @@ English`) if someone adds an English key and forgets the other two.
 **These HI/TE strings carry the same caveat as every other bundle in `i18n.ts`, stated at
 the top of that file: they are a first pass for UI coverage and need native-speaker review
 before a production or government-bid launch.** That is the repo's existing policy for
-HI/TE, not a new exception carved out for this screen.
+HI/TE, not a new exception carved out for this screen. The erasure keys additionally carry
+a higher bar — see the `i18n.ts` header — because a mistranslated irreversible delete is a
+different kind of mistake from a mistranslated button label. One was already found and
+fixed on that basis: the Telugu `deleteDesc` said "cannot be **cancelled**" where the
+English and Hindi say "cannot be undone".
+
+**What criterion 11 does NOT cover, stated so this ✅ is not read as more than it is.**
+The screen's own copy is fully localised. **Server error text is not.** `errText()` prefers
+an `Error.message` over its fallback, and `ApiError.message` is always set — to the
+backend's `detail` string, or failing that to a literal `HTTP {status}` — so in every
+realistic API failure the English `detail` from `data_gateway` wins over the localised
+fallback. Only the two purely client-side validation messages (`errTooBig`, `errNotPdf`,
+set without a round trip) are reliably translated.
+
+That is deliberate rather than an oversight, and there is an existing test
+(`ResumeApplication.test.tsx:254-266`) that depends on it: showing the server's specific
+reason — "you applied before, try again after 2026-12-05" — beats a translated but useless
+"could not send your application". Localising every `HTTPException(detail=...)` across
+`data_gateway` for EN/HI/TE is real cross-cutting work and is tracked separately rather
+than smuggled into this criterion.
 
 **Still English-only: `PublicApply.tsx` and `Careers.tsx`.** Both were added on 2026-09-07
 in `076fe06`, *before* PH3, so this is pre-existing debt rather than a PH3 criterion — but

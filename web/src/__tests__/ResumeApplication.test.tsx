@@ -408,9 +408,15 @@ describe('ResumeApplication — localisation', () => {
     // The real failure mode is not a bad translation — it is the NEXT person
     // adding an English key and forgetting the other two, which falls back to
     // English silently. This makes that a red test rather than a live defect.
-    const bundles = ['en', 'hi', 'te'].map(
-      (l) => i18n.getResourceBundle(l, 'translation').resumeApply as Record<string, string>,
-    );
+    // getResourceBundle is typed `any`, so the cast happens BEFORE the member
+    // access — reaching through an `any` trips no-unsafe-member-access, which
+    // the web lint runs with --max-warnings 0.
+    const bundles = ['en', 'hi', 'te'].map((l) => {
+      const bundle = i18n.getResourceBundle(l, 'translation') as {
+        resumeApply: Record<string, string>;
+      };
+      return bundle.resumeApply;
+    });
     const [en, hi, te] = bundles;
     expect(Object.keys(en).length).toBeGreaterThan(40);
     expect(Object.keys(hi).sort()).toEqual(Object.keys(en).sort());

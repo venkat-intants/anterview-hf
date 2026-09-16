@@ -9,6 +9,21 @@
 // NOTE: HI/TE translations are a first-pass for UI coverage.
 // They must receive native-speaker and (for ConsentModal) legal review
 // before a production/government-bid launch.
+//
+// ERASURE AND CONSENT KEYS CARRY A HIGHER BAR THAN GENERAL UI COPY.
+// A mistranslated button label is an annoyance; a mistranslated IRREVERSIBLE
+// DELETE is a data principal destroying their own application because the copy
+// read as something softer. The blanket caveat above is a whole-bundle,
+// pre-launch ask - too slow and too coarse for these. `resumeApply.delete*`,
+// `resumeApply.keepIt`, `resumeApply.deletedDesc` and the ConsentModal keys
+// want a targeted native-speaker pass, and want it BEFORE they are
+// candidate-facing rather than before launch.
+//
+// Acted on once already: te.resumeApply.deleteDesc rendered "cannot be undone"
+// with a verb reading primarily as "cannot be CANCELLED" - a weaker claim than
+// the English and Hindi, on the one control that cannot be taken back. NOTE the
+// same verb is still used by an unrelated pre-existing te key; that one is out
+// of this change's scope and is worth checking in the targeted pass.
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
@@ -709,6 +724,67 @@ const en = {
       errorBoundaryDesc: 'An unexpected error occurred. Reload the page to try again.',
       reload: 'Reload page',
     },
+    // ── PH3-B5: Save & Resume + the confirmation step ──────────────────
+    // Candidate-facing, reached with no login. Every string a candidate can
+    // see on /apply/draft lives here.
+    resumeApply: {
+      loading: 'Finding your application…',
+      deadLinkTitle: 'This link no longer works',
+      deadLinkDesc:
+        'Saved applications are kept for a limited time, and a link stops working once the application has been sent. You can start again from the job advert.',
+      deletedTitle: 'Your saved application has been deleted',
+      deletedDesc:
+        'We have removed the details you entered and the CV you uploaded. This link no longer works.',
+      applyingAs: '{{company}} · applying as {{email}}',
+      progressSaved: 'Your progress is saved. This link works until {{date}}.',
+      itExpires: 'it expires',
+      cvTitle: 'Your CV',
+      cvUploaded: 'Uploaded',
+      cvPrompt: 'Upload your CV as a PDF, up to 5 MB.',
+      cvUploadAria: 'Upload your CV',
+      cvReading: 'Reading your CV…',
+      cvReplace: 'Replace CV',
+      cvUpload: 'Upload CV',
+      cvReplaceNote: 'Replacing your CV means checking your details again.',
+      errTooBig: 'That file is over 5 MB. Please upload a smaller PDF.',
+      errNotPdf: 'Please upload your CV as a PDF.',
+      errUpload: 'Could not upload that file.',
+      checkTitle: 'Check your details',
+      checkFromCv:
+        'We read these from your CV. Please correct anything that is wrong — what you enter here is what we use.',
+      checkFillIn: 'Please fill these in. What you enter here is what we use.',
+      fullName: 'Full name',
+      optional: '(optional)',
+      phone: 'Phone',
+      years: 'Years of experience',
+      employer: 'Current employer',
+      role: 'Current role',
+      linkedin: 'LinkedIn',
+      github: 'GitHub',
+      cvSays: 'Your CV says “{{value}}”.',
+      saving: 'Saving…',
+      saveLater: 'Save and finish later',
+      confirming: 'Confirming…',
+      confirmedUpdate: 'Confirmed — update',
+      detailsCorrect: 'These details are correct',
+      confirmed: 'Confirmed',
+      errConfirm: 'Could not confirm those details.',
+      sendTitle: 'Send your application',
+      reqCv: 'CV uploaded',
+      reqDetails: 'Details confirmed',
+      stillNeeded: ' — still needed',
+      sending: 'Sending…',
+      submit: 'Submit application',
+      errSend: 'Could not send your application.',
+      deleteTitle: 'Delete this application',
+      deleteDesc:
+        'Removes the details you entered and the CV you uploaded. This cannot be undone, and the link will stop working.',
+      deleting: 'Deleting…',
+      deleteConfirm: 'Confirm — delete everything',
+      deleteCta: 'Delete my saved application',
+      keepIt: 'Keep it',
+      errDelete: 'Could not delete your saved application.',
+    },
   },
 };
 
@@ -1341,6 +1417,64 @@ const hi = {
       errorBoundaryDesc: 'एक अप्रत्याशित error आई। पृष्ठ reload करके पुनः प्रयास करें।',
       reload: 'पृष्ठ reload करें',
     },
+    resumeApply: {
+      loading: 'आपका आवेदन खोजा जा रहा है…',
+      deadLinkTitle: 'यह लिंक अब काम नहीं करता',
+      deadLinkDesc:
+        'सहेजे गए आवेदन सीमित समय तक ही रखे जाते हैं, और आवेदन भेजे जाने के बाद लिंक काम करना बंद कर देता है। आप नौकरी के विज्ञापन से दोबारा शुरू कर सकते हैं।',
+      deletedTitle: 'आपका सहेजा गया आवेदन हटा दिया गया है',
+      deletedDesc:
+        'आपके द्वारा दर्ज किए गए विवरण और अपलोड किया गया CV हमने हटा दिया है। यह लिंक अब काम नहीं करता।',
+      applyingAs: '{{company}} · {{email}} के रूप में आवेदन',
+      progressSaved: 'आपकी प्रगति सहेज ली गई है। यह लिंक {{date}} तक काम करेगा।',
+      itExpires: 'इसकी समय-सीमा समाप्त होने',
+      cvTitle: 'आपका CV',
+      cvUploaded: 'अपलोड हो गया',
+      cvPrompt: 'अपना CV PDF के रूप में अपलोड करें, अधिकतम 5 MB।',
+      cvUploadAria: 'अपना CV अपलोड करें',
+      cvReading: 'आपका CV पढ़ा जा रहा है…',
+      cvReplace: 'CV बदलें',
+      cvUpload: 'CV अपलोड करें',
+      cvReplaceNote: 'CV बदलने पर आपको अपने विवरण दोबारा जाँचने होंगे।',
+      errTooBig: 'यह फ़ाइल 5 MB से बड़ी है। कृपया छोटी PDF अपलोड करें।',
+      errNotPdf: 'कृपया अपना CV PDF के रूप में अपलोड करें।',
+      errUpload: 'वह फ़ाइल अपलोड नहीं हो सकी।',
+      checkTitle: 'अपने विवरण जाँचें',
+      checkFromCv:
+        'ये हमने आपके CV से पढ़े हैं। जो कुछ ग़लत हो कृपया उसे सुधारें — आप यहाँ जो दर्ज करेंगे, हम वही उपयोग करेंगे।',
+      checkFillIn: 'कृपया ये भरें। आप यहाँ जो दर्ज करेंगे, हम वही उपयोग करेंगे।',
+      fullName: 'पूरा नाम',
+      optional: '(वैकल्पिक)',
+      phone: 'फ़ोन',
+      years: 'अनुभव के वर्ष',
+      employer: 'वर्तमान नियोक्ता',
+      role: 'वर्तमान पद',
+      linkedin: 'LinkedIn',
+      github: 'GitHub',
+      cvSays: 'आपके CV में “{{value}}” लिखा है।',
+      saving: 'सहेजा जा रहा है…',
+      saveLater: 'सहेजें और बाद में पूरा करें',
+      confirming: 'पुष्टि की जा रही है…',
+      confirmedUpdate: 'पुष्ट — अपडेट करें',
+      detailsCorrect: 'ये विवरण सही हैं',
+      confirmed: 'पुष्ट',
+      errConfirm: 'उन विवरणों की पुष्टि नहीं हो सकी।',
+      sendTitle: 'अपना आवेदन भेजें',
+      reqCv: 'CV अपलोड हो गया',
+      reqDetails: 'विवरण पुष्ट हो गए',
+      stillNeeded: ' — अभी बाक़ी है',
+      sending: 'भेजा जा रहा है…',
+      submit: 'आवेदन जमा करें',
+      errSend: 'आपका आवेदन नहीं भेजा जा सका।',
+      deleteTitle: 'यह आवेदन हटाएँ',
+      deleteDesc:
+        'आपके द्वारा दर्ज विवरण और अपलोड किया गया CV हटा देता है। इसे पूर्ववत नहीं किया जा सकता, और लिंक काम करना बंद कर देगा।',
+      deleting: 'हटाया जा रहा है…',
+      deleteConfirm: 'पुष्टि करें — सब कुछ हटाएँ',
+      deleteCta: 'मेरा सहेजा गया आवेदन हटाएँ',
+      keepIt: 'रहने दें',
+      errDelete: 'आपका सहेजा गया आवेदन हटाया नहीं जा सका।',
+    },
   },
 };
 
@@ -1972,6 +2106,64 @@ const te = {
       errorBoundaryTitle: 'ఏదో తప్పు జరిగింది',
       errorBoundaryDesc: 'అనూహ్యమైన error వచ్చింది. పేజీ reload చేసి మళ్ళీ ప్రయత్నించండి.',
       reload: 'పేజీ reload చేయండి',
+    },
+    resumeApply: {
+      loading: 'మీ దరఖాస్తును వెతుకుతున్నాం…',
+      deadLinkTitle: 'ఈ లింక్ ఇక పని చేయదు',
+      deadLinkDesc:
+        'భద్రపరిచిన దరఖాస్తులు పరిమిత కాలం మాత్రమే ఉంచబడతాయి, దరఖాస్తు పంపిన తర్వాత లింక్ పని చేయడం ఆగిపోతుంది. మీరు ఉద్యోగ ప్రకటన నుండి మళ్ళీ ప్రారంభించవచ్చు.',
+      deletedTitle: 'మీరు భద్రపరిచిన దరఖాస్తు తొలగించబడింది',
+      deletedDesc:
+        'మీరు నమోదు చేసిన వివరాలను మరియు అప్‌లోడ్ చేసిన CVని మేము తొలగించాం. ఈ లింక్ ఇక పని చేయదు.',
+      applyingAs: '{{company}} · {{email}} గా దరఖాస్తు',
+      progressSaved: 'మీ పురోగతి భద్రపరచబడింది. ఈ లింక్ {{date}} వరకు పని చేస్తుంది.',
+      itExpires: 'గడువు ముగిసే',
+      cvTitle: 'మీ CV',
+      cvUploaded: 'అప్‌లోడ్ అయింది',
+      cvPrompt: 'మీ CVని PDF రూపంలో అప్‌లోడ్ చేయండి, గరిష్ఠంగా 5 MB.',
+      cvUploadAria: 'మీ CVని అప్‌లోడ్ చేయండి',
+      cvReading: 'మీ CVని చదువుతున్నాం…',
+      cvReplace: 'CV మార్చండి',
+      cvUpload: 'CV అప్‌లోడ్ చేయండి',
+      cvReplaceNote: 'CV మార్చితే మీ వివరాలను మళ్ళీ సరిచూడాలి.',
+      errTooBig: 'ఈ ఫైల్ 5 MB కంటే పెద్దది. దయచేసి చిన్న PDF అప్‌లోడ్ చేయండి.',
+      errNotPdf: 'దయచేసి మీ CVని PDF రూపంలో అప్‌లోడ్ చేయండి.',
+      errUpload: 'ఆ ఫైల్‌ను అప్‌లోడ్ చేయలేకపోయాం.',
+      checkTitle: 'మీ వివరాలను సరిచూడండి',
+      checkFromCv:
+        'వీటిని మేము మీ CV నుండి చదివాం. తప్పుగా ఉన్నవాటిని దయచేసి సరిచేయండి — మీరు ఇక్కడ నమోదు చేసినదే మేము ఉపయోగిస్తాం.',
+      checkFillIn: 'దయచేసి వీటిని పూరించండి. మీరు ఇక్కడ నమోదు చేసినదే మేము ఉపయోగిస్తాం.',
+      fullName: 'పూర్తి పేరు',
+      optional: '(ఐచ్ఛికం)',
+      phone: 'ఫోన్',
+      years: 'అనుభవం (సంవత్సరాలు)',
+      employer: 'ప్రస్తుత సంస్థ',
+      role: 'ప్రస్తుత హోదా',
+      linkedin: 'LinkedIn',
+      github: 'GitHub',
+      cvSays: 'మీ CVలో “{{value}}” అని ఉంది.',
+      saving: 'భద్రపరుస్తున్నాం…',
+      saveLater: 'భద్రపరిచి తర్వాత పూర్తి చేయండి',
+      confirming: 'నిర్ధారిస్తున్నాం…',
+      confirmedUpdate: 'నిర్ధారించబడింది — నవీకరించండి',
+      detailsCorrect: 'ఈ వివరాలు సరైనవి',
+      confirmed: 'నిర్ధారించబడింది',
+      errConfirm: 'ఆ వివరాలను నిర్ధారించలేకపోయాం.',
+      sendTitle: 'మీ దరఖాస్తును పంపండి',
+      reqCv: 'CV అప్‌లోడ్ అయింది',
+      reqDetails: 'వివరాలు నిర్ధారించబడ్డాయి',
+      stillNeeded: ' — ఇంకా అవసరం',
+      sending: 'పంపుతున్నాం…',
+      submit: 'దరఖాస్తు సమర్పించండి',
+      errSend: 'మీ దరఖాస్తును పంపలేకపోయాం.',
+      deleteTitle: 'ఈ దరఖాస్తును తొలగించండి',
+      deleteDesc:
+        'మీరు నమోదు చేసిన వివరాలను మరియు అప్‌లోడ్ చేసిన CVని తొలగిస్తుంది. దీన్ని వెనక్కి తీసుకోలేరు, లింక్ పని చేయడం ఆగిపోతుంది.',
+      deleting: 'తొలగిస్తున్నాం…',
+      deleteConfirm: 'నిర్ధారించండి — అన్నీ తొలగించండి',
+      deleteCta: 'నేను భద్రపరిచిన దరఖాస్తును తొలగించండి',
+      keepIt: 'ఉంచండి',
+      errDelete: 'మీరు భద్రపరిచిన దరఖాస్తును తొలగించలేకపోయాం.',
     },
   },
 };

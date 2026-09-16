@@ -7,10 +7,13 @@ is not delayed by a sleeping container — it is *skipped*. An interval loop wak
 and finds the work still waiting.
 
 THE TOLERANCE, STATED
-"Publishes at the scheduled time" means *within one interval of it, on a running
-instance*. On a cold Space it means "shortly after the Space next wakes". That
-is written into the API docstring and the console copy rather than left to be
-discovered during a demo.
+"Publishes at the scheduled time" means *within a second or two of it, on a
+running instance*: the loop sleeps until the next schedule falls due rather than
+polling on a fixed cadence, so the interval is a CEILING on lateness and not the
+tolerance anybody normally experiences. On a cold Space it still means "shortly
+after the Space next wakes" — no loop can fire inside a suspended container, and
+that is written into the API docstring and the console copy rather than left to
+be discovered during a demo.
 
 THE GATE IS RE-CHECKED AT FIRE TIME
 A requisition scheduled while approved and rejected an hour later must not
@@ -169,6 +172,85 @@ async def publish_due(factory: async_sessionmaker[AsyncSession]) -> dict[str, in
     return {"published": published, "skipped": skipped}
 
 
+async def next_due_at(factory: async_sessionmaker[AsyncSession]) -> datetime | None:
+    """When the earliest not-yet-due schedule falls due, if any.
+
+    Deliberately NOT filtered by approval state. This decides when to WAKE, and
+    the gate is re-derived at fire time anyway (see the module docstring); a row
+    that turns out to be blocked costs one pass that logs why. Waking late
+    because the approval arrived after this query would be the worse error.
+    """
+    async with factory() as db:
+        return await db.scalar(
+            text(
+                "SELECT MIN(publish_at) FROM job_requisitions"
+                " WHERE publish_at IS NOT NULL"
+                "   AND publish_at > :now"
+                "   AND deleted_at IS NULL"
+            ),
+            {"now": datetime.now(tz=UTC)},
+        )
+
+
+async def _sleep_seconds(
+    factory: async_sessionmaker[AsyncSession], interval: int
+) -> float:
+    """How long to wait before the next pass.
+
+    A FIXED interval makes the tolerance the whole interval every single time,
+    for no better reason than that the loop was not looking: an opening set for
+    09:00:00 published at up to 09:00:59, and "publishes at the scheduled time"
+    then meant "within a minute of it". Sleeping until the next schedule
+    actually falls due makes the common case exact to about a second.
+
+    Still capped at ``interval``, which is what keeps the two properties the
+    fixed sleep had: the loop-pass heartbeat that makes a stalled publisher
+    visible keeps its cadence, and a schedule created DURING a sleep is picked
+    up no later than it would have been before.
+
+    NEVER WORSE ON LATENESS. NOT ON LOAD - be precise about which.
+    The cap bounds how LATE a publish can be; it does not bound how OFTEN this
+    loop runs. The old loop had a hard ceiling of one pass per ``interval``
+    (about three database sessions a minute); this one's ceiling is one pass per
+    SECOND, reached if upcoming schedules are ever clustered about a second
+    apart. That is a ~60x rise in the worst-case load ceiling, and an earlier
+    draft of this docstring said "never worse than the fixed interval" without
+    qualifying it - true of the only dimension that draft was considering.
+
+    It is not a practical denial of service: it needs an authenticated
+    hr_manager to create and get approved many requisitions scheduled seconds
+    apart, each costing more work than the pass it triggers, and
+    uq_job_requisitions_company_title forces unique titles. The 1.0s floor below
+    is what bounds it; raising that floor to ~5s would buy a tighter ceiling and
+    still sit inside the "a few seconds" promise in tolerance_note().
+
+    The steady-state cost is one extra indexed MIN() probe per pass, paid on
+    every pass including quiet ones - a real cost, not a saving. It rides
+    ix_job_requisitions_publish_due (partial on publish_at where it is not null
+    and the row is live); EXPLAIN reports an Index Only Scan, checked rather
+    than assumed.
+
+    A failure here must not stop the publisher: the interval is the fallback,
+    which is exactly the behaviour before this existed.
+    """
+    try:
+        upcoming = await next_due_at(factory)
+    except Exception as exc:  # noqa: BLE001 — the loop must outlive one probe
+        log.warning(
+            "publish.scheduled.next_due_probe_failed",
+            exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+        return float(interval)
+    if upcoming is None:
+        return float(interval)
+    if upcoming.tzinfo is None:  # a naive column value is UTC by convention
+        upcoming = upcoming.replace(tzinfo=UTC)
+    remaining = (upcoming - datetime.now(tz=UTC)).total_seconds()
+    # Floored at one second so a row that moves under us — or a clock that
+    # steps backwards — can never turn this into a hot loop.
+    return max(1.0, min(float(interval), remaining))
+
+
 async def _loop(factory: async_sessionmaker[AsyncSession]) -> None:
     interval = interval_seconds()
     # A short delay before the first pass so boot is not competing with
@@ -191,7 +273,7 @@ async def _loop(factory: async_sessionmaker[AsyncSession]) -> None:
         # Every pass leaves a record, so a publisher that has silently stopped
         # is visible in the same place a missed retention purge is (A6).
         await record_loop_pass(factory, LOOP_JOB_ID, started_at=started, error=error)
-        await asyncio.sleep(interval)
+        await asyncio.sleep(await _sleep_seconds(factory, interval))
 
 
 def start(factory: async_sessionmaker[AsyncSession]) -> None:
@@ -214,11 +296,19 @@ async def stop() -> None:
 
 
 def tolerance_note() -> str:
-    """The honest promise, in one sentence, for API docs and console copy."""
+    """The honest promise, in one sentence, for API docs and console copy.
+
+    Kept in step with what the loop actually does. It used to say "within about
+    one minute" because the loop slept a fixed interval; it now wakes at the due
+    time, so the promise is seconds — but the cold-Space caveat is unchanged and
+    still has to be said, because that is the case a console would otherwise
+    quietly misrepresent.
+    """
     return (
-        f"Scheduled openings go live within about {interval_seconds() // 60 or 1} "
-        "minute(s) of the chosen time while the service is running; if the "
-        "service is asleep, shortly after it next wakes."
+        "Scheduled openings go live within a few seconds of the chosen time "
+        "while the service is running; if the service is asleep, shortly after "
+        f"it next wakes, and never more than about {interval_seconds() // 60 or 1} "
+        "minute(s) late."
     )
 
 
@@ -226,6 +316,7 @@ __all__ = [
     "LOOP_JOB_ID",
     "due_requisitions",
     "interval_seconds",
+    "next_due_at",
     "publish_due",
     "start",
     "stop",

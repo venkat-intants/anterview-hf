@@ -53,6 +53,7 @@ from shared.intelligence import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application_source import SOURCES, UNTRACKED, normalise_detail
 from app.config import settings
 from app.exam_link import hash_exam_token, mint_exam_token
 from app.mailer import enqueue_email
@@ -106,6 +107,8 @@ async def enrol_applicant(
     actor_user_id: uuid.UUID | None = None,
     reason: str = "enrolled on application",
     resume_s3_key: str | None = None,
+    source: str = UNTRACKED,
+    source_detail: str | None = None,
 ) -> RunnerOutcome:
     """Place an applicant into the requisition's published workflow. Caller commits.
 
@@ -123,6 +126,13 @@ async def enrol_applicant(
     ``resume_s3_key`` is the CV submitted with THIS application. It is pinned
     on the enrolment so the application is scored against it even if the
     person uploads a newer CV before the reconciler gets to it.
+
+    ``source`` is the acquisition channel (PH3-B1), written here because this is
+    the only place an enrolment is created. It defaults to ``unknown`` rather
+    than to the caller's most likely channel: a caller that does not say where
+    an application came from has not tracked it, and guessing on its behalf
+    would put invented attribution into PH5-C1's funnel. The two real callers
+    both pass one.
     """
     existing = await db.scalar(
         text(
@@ -142,12 +152,18 @@ async def enrol_applicant(
         text(
             "INSERT INTO enrolments (id, company_id, requisition_id, applicant_id, status,"
             " target_job_title, target_level, target_jd_text, workflow_id,"
-            " applied_resume_s3_key, created_at, updated_at)"
-            " VALUES (:i,:c,:r,:a,'new',:tt,:tl,:jd,:w,:k,:n,:n)"
+            " applied_resume_s3_key, source, source_detail, created_at, updated_at)"
+            " VALUES (:i,:c,:r,:a,'new',:tt,:tl,:jd,:w,:k,:src,:srcd,:n,:n)"
         ),
         {"i": enrolment_id, "c": company_id, "r": requisition_id, "a": applicant_id,
          "tt": target_job_title, "tl": target_level, "jd": target_jd_text,
          "k": resume_s3_key,
+         # Normalised again here rather than trusted. This is the only writer,
+         # so a caller that passes a value the CHECK constraint would reject
+         # should fail as an attribution of 'unknown', not as a 500 that loses
+         # the application.
+         "src": source if source in SOURCES else UNTRACKED,
+         "srcd": normalise_detail(source_detail),
          # NULL when nothing is published yet: the candidate is still a real
          # applicant and must not be lost. They join a workflow when one goes
          # live, rather than being rejected for arriving early.

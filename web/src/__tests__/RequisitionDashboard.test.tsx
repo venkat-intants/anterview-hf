@@ -50,6 +50,7 @@ function dash(over: Partial<RequisitionDashboard> = {}): RequisitionDashboard {
       id: 'req-1', title: 'Python Developer', level: 'mid', status: 'open', jd_text: null,
       target_hires: 4, closes_at: null, owner_user_id: null, from_backfill: false,
       public_apply_enabled: true, created_at: new Date().toISOString(), total_enrolments: 12,
+      approval_status: 'approved',
       hired: 1, awaiting_decision: 3, funnel: [], department: 'Engineering',
       location: 'Hyderabad', employment_type: null, experience_min_years: null,
       experience_max_years: null, salary_min: null, salary_max: null, salary_currency: null,

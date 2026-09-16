@@ -35,6 +35,7 @@ from app.applicant_enrichment import (
     store_embedding,
     valid_email_or_none,
 )
+from app.application_source import INTERNAL
 from app.bulk_ingest import StagedFile, batch_progress, create_batch, recent_batches
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep, get_hr_company
@@ -317,6 +318,9 @@ async def _file_under(
         # The CV just stored for this upload — pinned so the application is
         # scored against it even after a newer one replaces it on the person.
         resume_s3_key=applicant.resume_s3_key,
+        # HR put this person in; the candidate did not arrive through a channel
+        # (PH3-B1). Distinct from 'unknown', which means nobody was tracking.
+        source=INTERNAL,
     )
     return uuid.UUID(outcome.enrolment_id) if outcome.enrolment_id else None
 

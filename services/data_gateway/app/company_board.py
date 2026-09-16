@@ -49,6 +49,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.publishing import public_gate_open
+
 WINDOW_DAYS = 30
 MIN_DAYS_OPEN = 7
 MIN_DECISIONS = 5
@@ -202,9 +204,21 @@ async def hiring_board(db: AsyncSession, *, company_id: uuid.UUID) -> dict[str, 
     openings: list[dict[str, Any]] = []
     for r in rows:
         published = r["published_version"] is not None
+        # ONE definition of "the public may apply", shared with the board, the
+        # feed and the apply endpoint (PH3-B0). This used to be two different
+        # expressions four lines apart: the health input checked the status and
+        # the displayed field did not, so an opening that was paused reported
+        # itself as accepting applications on the board while the health band
+        # knew better.
+        accepting = public_gate_open(
+            status=r["status"],
+            public_apply_enabled=r["public_apply_enabled"],
+            closes_at=r["closes_at"],
+            now=now,
+        )
         health = hiring_health(HealthInput(
             has_published_workflow=published,
-            accepting_applications=bool(r["public_apply_enabled"]) and r["status"] == "open",
+            accepting_applications=accepting,
             target_hires=r["target_hires"],
             hired=int(r["hired"] or 0),
             rejected=int(r["rejected"] or 0),
@@ -224,7 +238,7 @@ async def hiring_board(db: AsyncSession, *, company_id: uuid.UUID) -> dict[str, 
             else ("draft" if r["draft_version"] is not None else "none"),
             "published_version": r["published_version"],
             "draft_version": r["draft_version"],
-            "accepting_applications": bool(r["public_apply_enabled"]),
+            "accepting_applications": accepting,
             "applied": int(r["applied"] or 0),
             "in_play": int(r["in_play"] or 0),
             "target_hires": r["target_hires"],

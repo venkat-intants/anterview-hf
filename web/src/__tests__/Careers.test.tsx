@@ -101,9 +101,11 @@ describe('Careers board', () => {
     expect(await screen.findByText('Platform Engineer')).toBeInTheDocument();
     expect(screen.getByText('Hyderabad · Full-time · Engineering')).toBeInTheDocument();
     expect(screen.getByText('Kubernetes')).toBeInTheDocument();
+    // Tagged with the channel (PH3-B1): an application arriving from the
+    // company's own board is attributable without a hand-built tracked link.
     expect(screen.getByRole('link', { name: /Platform Engineer/ })).toHaveAttribute(
       'href',
-      '/apply/req-1',
+      '/apply/req-1?src=careers_site',
     );
   });
 

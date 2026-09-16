@@ -234,6 +234,50 @@ async def get_hr_company(
 HrCtxDep = Annotated[tuple[uuid.UUID, uuid.UUID], Depends(get_hr_company)]
 
 
+async def get_super_admin_company(
+    user: Annotated[User, Depends(require_role_password_ok("super_admin"))],
+    db: DbSessionDep,
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Return (super_admin_user_id, company_id). 403 if not assigned to one.
+
+    The approval side of PH3-B2: a company's super admin approves requisitions
+    its own HR managers raised. The company comes from the AUTHENTICATED SESSION
+    and never from the request, which is what makes cross-tenant approval
+    unreachable rather than merely refused.
+
+    ``admin_hr.get_company_admin_ctx`` does the same lookup and is deliberately
+    left alone: its tests install ``dependency_overrides`` keyed on that exact
+    function object, and re-pointing it here would silently disarm them.
+    """
+    try:
+        uid = uuid.UUID(user.user_id)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user identity."
+        ) from exc
+    # Joined to companies so the super admin of a soft-deleted tenant reads as
+    # unassigned rather than as an approver with nothing to approve.
+    company_id = await db.scalar(
+        sa_text(
+            "SELECT u.company_id FROM users u"
+            "  JOIN companies c ON c.id = u.company_id AND c.deleted_at IS NULL"
+            " WHERE u.id = :uid AND u.deleted_at IS NULL"
+        ),
+        {"uid": uid},
+    )
+    if company_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your super-admin account is not assigned to an active company.",
+        )
+    return uid, company_id
+
+
+SuperAdminCtxDep = Annotated[
+    tuple[uuid.UUID, uuid.UUID], Depends(get_super_admin_company)
+]
+
+
 async def _must_change_password(user_id: str) -> bool:
     """One indexed read of the caller's bootstrap-password flag."""
     from app.database import get_session_factory  # noqa: PLC0415 — avoid cycle

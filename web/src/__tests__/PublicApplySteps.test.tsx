@@ -39,6 +39,9 @@ const POSTING: Posting = {
   salary_currency: null,
   // Most openings ask nothing; the questions step is not rendered at all.
   questions: [],
+  // PH3-B1: the channel the server attributed this view to.
+  source: 'direct',
+  source_detail: null,
 };
 
 const getPosting = vi.fn();

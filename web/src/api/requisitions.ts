@@ -8,7 +8,7 @@
 // Field names match the data_gateway contract in
 // services/data_gateway/app/routers/hr_requisitions.py EXACTLY.
 
-import { apiGet, apiPost, apiPatch } from './client';
+import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './client';
 
 /** Lifecycle of an opening. Closing one does NOT reject the people in it. */
 export type RequisitionStatus = 'open' | 'paused' | 'closed';
@@ -118,6 +118,24 @@ export interface Requisition extends PostingFields {
    * nothing rather than as "on track".
    */
   delivery_risk?: 'on_track' | 'at_risk' | 'off_track' | null;
+  // ── Approval (PH3-B2) ────────────────────────────────────────────────
+  // A separate axis from `status`: approved does not imply open, and closing
+  // an opening does not un-approve it. Openings that predate the approval gate
+  // were grandfathered as approved, so this is never empty on an old row.
+  approval_status: ApprovalStatus;
+  submitted_for_approval_at?: string | null;
+  submitted_by_name?: string | null;
+  approval_decided_at?: string | null;
+  approval_decided_by_name?: string | null;
+  approval_note?: string | null;
+  // ── Budget (PH3-B2) ──────────────────────────────────────────────────
+  // HR-facing only. Never rendered on a careers page or an application form —
+  // there is no visibility flag because there is no case for showing it.
+  budget_amount?: number | null;
+  budget_currency?: string | null;
+  budget_basis?: BudgetBasis | null;
+  budget_period?: BudgetPeriod | null;
+  budget_notes?: string | null;
 }
 
 export interface Enrolment {
@@ -143,6 +161,13 @@ export interface RequisitionInput extends Partial<PostingFields> {
    *  company; defaults to whoever creates it. Null clears it (update only). */
   owner_user_id?: string | null;
   public_apply_enabled?: boolean;
+  // PH3-B2. An amount needs all three of the others or the server refuses it
+  // with a 422 — an amount alone is a number nobody can act on.
+  budget_amount?: number | null;
+  budget_currency?: string | null;
+  budget_basis?: BudgetBasis | null;
+  budget_period?: BudgetPeriod | null;
+  budget_notes?: string | null;
 }
 
 /** An HR user at this company — who an opening can be assigned to. */
@@ -533,4 +558,164 @@ export interface RequisitionDashboard {
 
 export function getRequisitionDashboard(id: string): Promise<RequisitionDashboard> {
   return apiGet<RequisitionDashboard>(`/hr/requisitions/${id}/dashboard`);
+}
+
+
+// ---------------------------------------------------------------------------
+// Requisition approval — PH3-B2
+//
+// Two audiences. HR submits; the company's super admin decides. The split is
+// enforced on the server by the dependency each route declares, so these
+// functions are convenience rather than control — a console that called the
+// wrong one would get a 403, not a surprise.
+// ---------------------------------------------------------------------------
+export type ApprovalStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected';
+
+/** One row of the super admin's approval queue. */
+export interface PendingApproval {
+  id: string;
+  title: string;
+  level: string;
+  department: string | null;
+  location: string | null;
+  target_hires: number | null;
+  budget_amount: number | null;
+  budget_currency: string | null;
+  budget_basis: BudgetBasis | null;
+  budget_period: BudgetPeriod | null;
+  budget_notes: string | null;
+  submitted_at: string | null;
+  submitted_by_name: string | null;
+  note: string | null;
+}
+
+export type BudgetBasis = 'per_hire' | 'total';
+export type BudgetPeriod = 'annual' | 'monthly' | 'one_time';
+
+export function submitRequisitionForApproval(
+  id: string,
+  note?: string,
+): Promise<Requisition> {
+  return apiPost<Requisition>(`/hr/requisitions/${id}/approval/submit`, { note: note ?? null });
+}
+
+export function listPendingApprovals(): Promise<PendingApproval[]> {
+  return apiGet<PendingApproval[]>('/hr/requisitions/approvals/pending');
+}
+
+export function approveRequisition(id: string, note?: string): Promise<Requisition> {
+  return apiPost<Requisition>(`/hr/requisitions/${id}/approval/approve`, {
+    note: note ?? null,
+  });
+}
+
+export function rejectRequisition(id: string, note?: string): Promise<Requisition> {
+  return apiPost<Requisition>(`/hr/requisitions/${id}/approval/reject`, {
+    note: note ?? null,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// JD versions — PH3-B3 / PH3-B6
+//
+// The requisition's own jd_text stays the LIVE advert; these are its history
+// and its drafting surface. A draft is invisible to candidates precisely
+// because it does not touch the requisition.
+// ---------------------------------------------------------------------------
+export interface JdVersion {
+  id: string;
+  version: number;
+  status: 'draft' | 'published' | 'archived';
+  jd_text: string | null;
+  responsibilities: string[];
+  required_skills: string[];
+  nice_to_have_skills: string[];
+  change_note: string | null;
+  created_by_user_id: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  /** When this version went live. Null for a draft. */
+  published_at: string | null;
+  /** When it stopped being live. With published_at this bounds the window in
+   *  which this wording was the one candidates saw. */
+  superseded_at: string | null;
+}
+
+export interface JdHistory {
+  requisition_id: string;
+  published_version_id: string | null;
+  versions: JdVersion[];
+}
+
+export interface JdDraftInput {
+  jd_text?: string | null;
+  responsibilities?: string[];
+  required_skills?: string[];
+  nice_to_have_skills?: string[];
+  change_note?: string | null;
+}
+
+export function getJdHistory(requisitionId: string): Promise<JdHistory> {
+  return apiGet<JdHistory>(`/hr/requisitions/${requisitionId}/jd/versions`);
+}
+
+export function getJdDraft(requisitionId: string): Promise<JdVersion | null> {
+  return apiGet<JdVersion | null>(`/hr/requisitions/${requisitionId}/jd/draft`);
+}
+
+export function saveJdDraft(
+  requisitionId: string,
+  input: JdDraftInput,
+): Promise<JdVersion> {
+  return apiPut<JdVersion>(`/hr/requisitions/${requisitionId}/jd/draft`, input);
+}
+
+export function discardJdDraft(requisitionId: string): Promise<void> {
+  return apiDelete<void>(`/hr/requisitions/${requisitionId}/jd/draft`);
+}
+
+export function publishJdVersion(
+  requisitionId: string,
+  versionId: string,
+): Promise<JdVersion> {
+  return apiPost<JdVersion>(
+    `/hr/requisitions/${requisitionId}/jd/versions/${versionId}/publish`,
+    {},
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled publishing — PH3-B4a
+// ---------------------------------------------------------------------------
+export interface PublishSchedule {
+  requisition_id: string;
+  /** When it is asked to go live. Null when nothing is scheduled. */
+  publish_at: string | null;
+  /** When it actually went live automatically. Null if it never did. */
+  published_at: string | null;
+  public_apply_enabled: boolean;
+  /**
+   * The server's own sentence about how precise the timing is. RENDER IT next
+   * to any scheduled time: the publisher is an interval loop, so "09:00" is
+   * approximately rather than exactly when this happens, and a UI that shows
+   * only the time is making a promise the architecture does not offer.
+   */
+  tolerance: string;
+}
+
+export function getPublishSchedule(requisitionId: string): Promise<PublishSchedule> {
+  return apiGet<PublishSchedule>(`/hr/requisitions/${requisitionId}/publish-schedule`);
+}
+
+export function setPublishSchedule(
+  requisitionId: string,
+  publishAt: string,
+): Promise<PublishSchedule> {
+  return apiPut<PublishSchedule>(`/hr/requisitions/${requisitionId}/publish-schedule`, {
+    publish_at: publishAt,
+  });
+}
+
+export function cancelPublishSchedule(requisitionId: string): Promise<PublishSchedule> {
+  return apiDelete<PublishSchedule>(`/hr/requisitions/${requisitionId}/publish-schedule`);
 }

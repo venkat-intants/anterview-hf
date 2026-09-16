@@ -77,6 +77,8 @@ import CoveragePanel from '@/components/workflow/CoveragePanel';
 import CandidatePreview from '@/components/workflow/CandidatePreview';
 import LifecycleSteps from '@/components/workflow/LifecycleSteps';
 import { applicationsWarning, publishImpact } from '@/lib/workflowLifecycle';
+import GovernancePanel from '@/components/workflow/GovernancePanel';
+import JdVersionPanel from '@/components/workflow/JdVersionPanel';
 import PostingEditor from '@/components/workflow/PostingEditor';
 import QuestionEditor from '@/components/workflow/QuestionEditor';
 import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
@@ -854,8 +856,19 @@ export default function WorkflowBuilder(): JSX.Element {
           question somebody has answered cannot be reworded. */}
       {req.data ? (
         <div className="mt-8 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <PostingEditor requisition={req.data} />
-          <QuestionEditor requisitionId={requisitionId} />
+          <div>
+            <PostingEditor requisition={req.data} />
+            {/* PH3-B6. Beneath the editor rather than replacing it: the story's
+                own Task 7 asks for version information to be added to the
+                existing surface, not for a second one. */}
+            <JdVersionPanel requisition={req.data} />
+          </div>
+          <div>
+            <QuestionEditor requisitionId={requisitionId} />
+            {/* PH3-B2 + PH3-B4a. Budget, approval and go-live are one
+                decision, so they are one panel. */}
+            <GovernancePanel requisition={req.data} />
+          </div>
         </div>
       ) : null}
     </div>

@@ -251,6 +251,14 @@ class Applicant(Base):
     # propose the merge. Personal data: erasure nulls it.
     parsed_email: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # When the candidate reviewed what the CV parser read and said it was right
+    # (PH3-B5). On the applicant rather than only on the draft, because the
+    # draft is closed at submission and "did this person confirm their details?"
+    # is a question about the application that outlives it.
+    details_confirmed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
     # Details the multi-step application collects. On the applicant rather than
     # the enrolment because they describe the person: applying to a second role
     # at the same company should not mean retyping where you work.
@@ -1269,9 +1277,68 @@ class JobRequisition(Base):
         JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
     )
 
+    # Which jd_versions row the live advert above was published from (PH3-B3).
+    # NULL for an opening that has never had a JD.
+    published_jd_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class JdVersion(Base):
+    """One recorded state of a requisition's job description (PH3-B3).
+
+    The requisition keeps the LIVE advert in its own columns — every existing
+    reader still finds it there — and this table is the history plus the
+    drafting surface. Publishing copies a version onto the requisition and
+    points ``published_jd_version_id`` back here, inside one transaction.
+
+    Two partial unique indexes carry the real invariants: at most one
+    ``published`` row and at most one ``draft`` row per requisition. They are in
+    the migration rather than here because SQLAlchemy cannot express a partial
+    unique constraint in ``__table_args__`` without an Index object, and a
+    half-stated invariant in the model is worse than one stated wholly in the
+    place that enforces it.
+
+    Deliberately NOT connected to ``round_criteria``. A published workflow froze
+    its competencies at authoring time; editing the advert must not re-grade
+    anyone who already sat a round.
+    """
+
+    __tablename__ = "jd_versions"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_jd_versions_id_company"),
+        UniqueConstraint("requisition_id", "version", name="uq_jd_versions_number"),
+        CheckConstraint(
+            "status IN ('draft','published','archived')", name="ck_jd_versions_status"
+        ),
+        CheckConstraint("version > 0", name="ck_jd_versions_version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    requisition_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, default="draft", nullable=False)
+    jd_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    responsibilities: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    required_skills: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    nice_to_have_skills: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    change_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
 
 class Enrolment(Base):
@@ -1310,6 +1377,11 @@ class Enrolment(Base):
             name="ck_enrolments_status",
         ),
     )
+    # NOTE: the two source CHECK constraints (PH3-B1) live in the migration
+    # rather than here. The vocabulary's source of truth is
+    # ``app.application_source.SOURCES`` and a test asserts the migration
+    # matches it; restating the list a third time in the model would be a third
+    # place to forget.
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
@@ -1341,6 +1413,17 @@ class Enrolment(Base):
     # end. Only a person ends a candidacy (D-05).
     held_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     held_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ── PH3-B1: acquisition channel ───────────────────────────────────
+    # Written once, at creation, and never rewritten — which is what makes it
+    # survive every workflow transition without anything carrying it forward.
+    # 'unknown' rather than NULL so PH5-C1 can GROUP BY it without a COALESCE.
+    # Vocabulary and normalisation: app/application_source.py.
+    source: Mapped[str] = mapped_column(
+        Text, default="unknown", server_default=text("'unknown'"), nullable=False
+    )
+    # Which board, which campaign. Also where an unrecognised ?src= is kept, so
+    # the closed vocabulary above loses nothing.
+    source_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

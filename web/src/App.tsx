@@ -29,6 +29,7 @@ const PublicExam = lazy(() => import('./pages/PublicExam'));
 const InterviewInvite = lazy(() => import('./pages/InterviewInvite'));
 // Public job application — no login, no shell (Group E, E4).
 const PublicApply = lazy(() => import('./pages/PublicApply'));
+const ResumeApplication = lazy(() => import('./pages/ResumeApplication'));
 // Public because the emailed token IS the credential — the applicant has no
 // session yet, which is the whole point of the page.
 const ActivateAccount = lazy(() => import('./pages/ActivateAccount'));
@@ -63,6 +64,7 @@ const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const PlatformOwnerConsole = lazy(() => import('./pages/superadmin/PlatformOwnerConsole'));
 const CompanyAdminConsole = lazy(() => import('./pages/superadmin/CompanyAdminConsole'));
 const HiringBoard = lazy(() => import('./pages/superadmin/HiringBoard'));
+const ApprovalQueue = lazy(() => import('./pages/superadmin/ApprovalQueue'));
 const HRConsole = lazy(() => import('./pages/hr/HRConsole'));
 const Applicants = lazy(() => import('./pages/hr/Applicants'));
 const Exams = lazy(() => import('./pages/hr/Exams'));
@@ -132,6 +134,10 @@ export default function App() {
           <Route path="/interview-invite" element={<InterviewInvite />} />
           {/* Public job application — anyone with the link, no account. */}
           <Route path="/apply/:requisitionId" element={<PublicApply />} />
+          {/* PH3-B4c. Declared BEFORE the parameterised route above would
+              be a mistake — it is not: "draft" is a literal first segment
+              and :requisitionId is a UUID, so the two cannot collide. */}
+          <Route path="/apply/draft/:token" element={<ResumeApplication />} />
           <Route path="/activate" element={<ActivateAccount />} />
           <Route path="/careers/:companySlug" element={<Careers />} />
 
@@ -188,6 +194,9 @@ export default function App() {
               <Route path="/superadmin" element={<CompanyAdminConsole />} />
               {/* E3: every open opening's health, and each opening read-only. */}
               <Route path="/superadmin/board" element={<HiringBoard />} />
+              {/* PH3-B2: the approval queue. Only reachable by a super admin,
+                  which is also what the endpoint behind it requires. */}
+              <Route path="/superadmin/approvals" element={<ApprovalQueue />} />
               <Route
                 path="/superadmin/requisitions/:requisitionId"
                 element={<RequisitionDashboard readOnly />}

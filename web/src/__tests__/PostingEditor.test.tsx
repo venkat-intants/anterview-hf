@@ -63,6 +63,9 @@ function requisition(over: Partial<Requisition> = {}): Requisition {
     responsibilities: [],
     required_skills: [],
     nice_to_have_skills: [],
+    // PH3-B2. Openings that predate the approval gate were
+    // grandfathered as approved, so this is never empty on a real row.
+    approval_status: 'approved',
     ...over,
   };
 }

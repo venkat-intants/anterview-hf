@@ -273,6 +273,7 @@ async def _create_applicant(
     reconciler scores it, embeds it and replaces the placeholder name with the
     one in the CV. The CV key is pinned on the enrolment (E-foundations).
     """
+    from app.application_source import INTERNAL  # noqa: PLC0415
     from app.models import Applicant  # noqa: PLC0415
     from app.routers.hr_applicants import _name_from_filename  # noqa: PLC0415
     from app.workflow_runner import enrol_applicant  # noqa: PLC0415
@@ -313,6 +314,7 @@ async def _create_applicant(
         actor_user_id=uploader,
         reason="added by HR bulk upload",
         resume_s3_key=it["s3_key"],
+        source=INTERNAL,
     )
     if uploader is not None:
         await record_hr_collected_basis(

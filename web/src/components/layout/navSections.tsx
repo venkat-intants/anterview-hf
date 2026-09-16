@@ -22,6 +22,7 @@ import {
   BarChart2,
   Briefcase,
   Building2,
+  ClipboardCheck,
   ClipboardList,
   Kanban,
   FileCheck2,
@@ -97,6 +98,10 @@ const PLATFORM_NAV: NavItem[] = [
 // super_admin — a company's super admin: its HR managers.
 const SUPER_NAV: NavItem[] = [
   { to: '/superadmin/board', label: 'Hiring board', icon: <Kanban className={ICON} aria-hidden="true" /> },
+  // PH3-B2. Second, not last: an opening waiting on approval is blocking
+  // somebody's hiring, and burying it under "HR Managers" would make the queue
+  // a thing you remember to check rather than a thing you see.
+  { to: '/superadmin/approvals', label: 'Approvals', icon: <ClipboardCheck className={ICON} aria-hidden="true" /> },
   { to: '/superadmin', label: 'HR Managers', icon: <Users className={ICON} aria-hidden="true" /> },
 ];
 

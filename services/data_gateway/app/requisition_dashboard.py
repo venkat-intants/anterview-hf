@@ -39,6 +39,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.watch_runner import gather_round_stalls
+from app.publishing import public_gate_open
 
 HELD_POOL_LIMIT = 25
 ACTIVITY_LIMIT = 25
@@ -456,12 +457,22 @@ async def gather_dashboard(
     ]
 
     closes_at = req.get("closes_at")
+    now = datetime.now(tz=UTC)
     facts = DashboardFacts(
         requisition_id=str(requisition_id),
         status=str(req.get("status")),
-        accepting_public=bool(req.get("public_apply_enabled")),
+        # The shared gate, not the flag (PH3-B0). Reading the column alone told
+        # HR an opening was accepting applications when its status was paused or
+        # its closing date had passed — while the public surfaces, which applied
+        # the whole predicate, had already stopped showing it.
+        accepting_public=public_gate_open(
+            status=req.get("status"),
+            public_apply_enabled=req.get("public_apply_enabled"),
+            closes_at=closes_at if isinstance(closes_at, datetime) else None,
+            now=now,
+        ),
         has_published_workflow=bool(round_dicts),
-        now=datetime.now(tz=UTC),
+        now=now,
         published_version=wf.get("published_version"),
         draft_version=wf.get("draft_version"),
         awaiting=int(p.get("awaiting") or 0),

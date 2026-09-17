@@ -400,6 +400,11 @@ app.add_middleware(
         "X-Exam-Token",
         "X-Interview-Token",
         "X-Draft-Token",
+        # Only ever sent by the local browser-test runner. Inert in a
+        # deployment: the router that reads it is mounted only under
+        # TEST_HOOKS_ENABLED, which config refuses outside a local env, and
+        # both Caddyfiles answer /test-hooks* 404 at the edge regardless.
+        "X-Test-Hooks-Token",
     ],
 )
 

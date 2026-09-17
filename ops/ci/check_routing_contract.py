@@ -49,7 +49,12 @@ CORS_FILE = ROOT / "services" / "data_gateway" / "app" / "main.py"
 # Prefixes that must NOT be proxied. Both Caddyfiles answer these 403 on
 # purpose: /internal is service-to-service only and /metrics is scraped from
 # inside the network, so exposing either at the edge is the bug.
-BLOCKED_BY_DESIGN = {"/internal", "/metrics"}
+# /test-hooks is the local browser tests' way to run data_gateway's background
+# passes on demand instead of waiting for their timers. Its router is mounted
+# only when TEST_HOOKS_ENABLED, which config refuses outside a local env; the
+# edge refusal is the second, independent lock, so a mis-set env on a deployed
+# box still cannot expose it.
+BLOCKED_BY_DESIGN = {"/internal", "/metrics", "/test-hooks"}
 
 # /health is proxied through a rewrite to /health/live rather than a plain
 # handle, and is deliberately excluded from the SPA rewrite. Checked by hand in

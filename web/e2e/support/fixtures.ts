@@ -274,6 +274,69 @@ export async function createLiveReviewOpening(
   return { ...opening, workflowId: draft.id, roundId, examId: '' };
 }
 
+/**
+ * An opening whose round is a CODING test, with generated problems.
+ *
+ * Needs a code runner: data_gateway executes submissions through
+ * EXECUTION_PROVIDER (self-hosted Piston locally — scripts/piston-up.ps1).
+ * In AI_FAKE_MODE the generated problem is "read two integers and print their
+ * sum", with sample and hidden tests, so a spec can solve it deterministically.
+ */
+export async function createLiveCodingOpening(
+  api: Api,
+  approver: Api,
+  prefix: string,
+): Promise<LiveOpening> {
+  const opening = await createOpening(api, prefix);
+  await api.post(`/hr/requisitions/${opening.id}/approval/submit`, { note: null });
+  await approver.post(`/hr/requisitions/${opening.id}/approval/approve`, { note: null });
+
+  const exam = await api.post<{ id: string }>('/hr/exams', {
+    title: `Coding — ${opening.title}`,
+    kind: 'coding',
+    pass_threshold: 60,
+    time_limit_seconds: 1800,
+    target_job_title: opening.title,
+  });
+  const generated = await api.post<{ questions: Record<string, unknown>[] }>(
+    `/hr/exams/${exam.id}/coding-questions/generate`,
+    {
+      topic: opening.title,
+      num_questions: 1,
+      difficulty: 'medium',
+      language: 'en',
+      allowed_languages: ['python'],
+    },
+  );
+  // Generated problems come back for PREVIEW; HR saves the ones they want.
+  for (const question of generated.questions) {
+    await api.post(`/hr/exams/${exam.id}/coding-questions`, question);
+  }
+
+  const structure = await api.get<ExamStructure>(`/hr/exams/${exam.id}/structure`);
+  const examRoundId = structure.rounds[0].id;
+  await api.patch(`/hr/exams/${exam.id}/rounds/${examRoundId}`, { status: 'published' });
+
+  const draft = await api.post<WorkflowDetail>(`/hr/requisitions/${opening.id}/workflows`, {});
+  await api.patch(`/hr/workflows/${draft.id}`, {
+    auto_score_on_apply: true,
+    auto_assign_first_round: true,
+    auto_advance_rounds: true,
+  });
+  const withRound = await api.post<WorkflowDetail>(`/hr/workflows/${draft.id}/rounds`, {
+    title: 'Coding',
+    kind: 'coding',
+    pass_threshold: 60,
+    deadline_days: 5,
+    exam_round_id: examRoundId,
+  });
+  await api.post(`/hr/workflows/${draft.id}/publish`);
+  await api.patch(`/hr/requisitions/${opening.id}`, { public_apply_enabled: true });
+
+  const roundId = withRound.rounds.find((r) => r.kind === 'coding')!.id;
+  return { ...opening, workflowId: draft.id, roundId, examId: exam.id };
+}
+
 /** The review round's title, shared by the helper and the spec that reads it. */
 export const REVIEW_ROUND_TITLE = 'Panel review';
 

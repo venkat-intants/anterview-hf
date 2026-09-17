@@ -360,6 +360,9 @@ class EnrolmentOut(BaseModel):
 class StatusIn(BaseModel):
     status: str
     reason: str | None = Field(default=None, max_length=1000)
+    # PH4-O4. Required when the move is a final decision (hired/rejected);
+    # ignored otherwise.
+    reason_code: str | None = Field(default=None, max_length=64)
 
     @field_validator("status")
     @classmethod
@@ -376,6 +379,8 @@ class FinalDecisionIn(BaseModel):
     # Required, unlike a status move: this ends a candidacy, and the reason is
     # what the ledger and the audit log keep against the person who decided.
     reason: str = Field(min_length=3, max_length=2000)
+    # PH4-O4 — the structured category beside the free text. Required.
+    reason_code: str = Field(min_length=1, max_length=64)
 
     @field_validator("decision")
     @classmethod
@@ -1131,7 +1136,8 @@ async def set_enrolment_status(
         try:
             await record_final_decision(
                 db, company_id=company_id, enrolment_id=enrolment_id,
-                decision=body.status, reason=body.reason, actor_user_id=hr_uid,
+                decision=body.status, reason=body.reason,
+                reason_code=body.reason_code, actor_user_id=hr_uid,
                 ip_address=extract_client_ip(request),
                 user_agent=extract_user_agent(request),
             )
@@ -1218,7 +1224,8 @@ async def record_decision(
     try:
         out = await record_final_decision(
             db, company_id=company_id, enrolment_id=enrolment_id,
-            decision=body.decision, reason=body.reason, actor_user_id=hr_uid,
+            decision=body.decision, reason=body.reason,
+            reason_code=body.reason_code, actor_user_id=hr_uid,
             ip_address=extract_client_ip(request),
             user_agent=extract_user_agent(request),
         )
@@ -1251,6 +1258,7 @@ async def get_enrolment_history(
         await db.execute(
             text(
                 "SELECT t.occurred_at, t.from_status, t.to_status, t.automated, t.reason,"
+                "       t.reason_code, t.reason_label,"
                 "       fr.title AS from_round, tr.title AS to_round, u.full_name AS actor"
                 "  FROM stage_transitions t"
                 "  LEFT JOIN workflow_rounds fr ON fr.id = t.from_round_id"
@@ -1272,6 +1280,10 @@ async def get_enrolment_history(
             "automated": bool(r["automated"]),
             "actor": None if r["automated"] else r["actor"],
             "reason": r["reason"],
+            # PH4-O4 — NULL on decisions recorded before reason codes existed,
+            # and on every non-decision move; the UI shows the label when present.
+            "reason_code": r["reason_code"],
+            "reason_label": r["reason_label"],
         }
         for r in rows
     ]

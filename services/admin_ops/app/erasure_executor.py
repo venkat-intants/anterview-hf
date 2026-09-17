@@ -350,6 +350,13 @@ EXCLUDED_TABLES: dict[str, str] = {
                               "(summary=NULL, redacted_at set), because prose an "
                               "interviewer writes can quote or name the candidate "
                               "and re-identify an anonymised applicant.",
+    "interview_kits": "PH4-A5 — per-round interviewer guidance written by HR "
+                      "(instructions, what to evaluate, probes). Company "
+                      "configuration keyed by round; holds no candidate data.",
+    "decision_reasons": "PH4-O4 — a company's decision-reason taxonomy (code, "
+                        "label, applies_to). Configuration; the decision itself "
+                        "lives in stage_transitions, which carries only the code "
+                        "and a label snapshot, never candidate data.",
     "interviewer_scorecard_scores": "PH4-A1 — per-criterion 1-5 scores against frozen "
                                     "competency ids for an anonymised applicant, kept "
                                     "like round_results.criterion_scores. The "

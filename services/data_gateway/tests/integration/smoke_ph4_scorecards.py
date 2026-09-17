@@ -95,6 +95,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             " (gen_random_uuid(),:c,:r,'problem_solving','Problem Solving',0.6,:n),"
             " (gen_random_uuid(),:c,:r,'system_design','System Design',0.4,:n)"),
             {"c": cid, "r": rnd, "n": now})
+        # Frozen probes and anchors, so the no-kit fallback has something real to show.
+        await db.execute(text(
+            "UPDATE round_criteria SET probes = CAST(:pr AS jsonb), anchors = CAST(:an AS jsonb)"
+            " WHERE round_id = :r AND competency_id = 'problem_solving'"),
+            {"r": rnd, "pr": '["Why this approach?"]',
+             "an": '{"low": "guesses", "mid": "reasons", "high": "weighs trade-offs"}'})
         await db.execute(text(
             "UPDATE workflows SET status='published', published_at=:n WHERE id=:w"),
             {"w": wf, "n": now})
@@ -111,7 +117,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         await db.commit()
 
     from app.database import get_db_session
-    from app.dependencies import get_auth_provider_dep, get_hr_company, get_interviewer_company
+    from app.dependencies import (
+        get_auth_provider_dep,
+        get_hr_company,
+        get_interviewer_company,
+        get_super_admin_company,
+    )
     from app.main import app
     from app.routers.admin_hr import get_company_admin_ctx
 
@@ -123,6 +134,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
     app.dependency_overrides[get_db_session] = _db
     app.dependency_overrides[get_hr_company] = lambda: (hr_uid, cid)
     app.dependency_overrides[get_company_admin_ctx] = lambda: (admin_uid, cid)
+    app.dependency_overrides[get_super_admin_company] = lambda: (admin_uid, cid)
     app.dependency_overrides[get_interviewer_company] = lambda: (
         acting["interviewer"], acting["company"]
     )
@@ -338,6 +350,150 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 " AND status IN ('assigned','in_progress')"), {"u": iv2})
         check("their unsubmitted assignments were withdrawn with them", live == 0, str(live))
         check("and their sessions were revoked", str(iv2) in auth_stub.revoked)
+
+        print("\nPH4-A5 — interview kits")
+        r = await client.get(f"/hr/rounds/{rnd}/kit")
+        kit = r.json() if r.status_code == 200 else {}
+        check("HR reads a round with no kit yet", r.status_code == 200, r.text[:160])
+        check("no kit is a working fallback, not an error", kit.get("has_custom_kit") is False)
+        ps = next((c for c in kit.get("criteria", []) if c["competency_id"] == "problem_solving"), {})
+        check("the fallback still shows the frozen criteria, probes and anchors",
+              ps.get("frozen_probes") == ["Why this approach?"]
+              and (ps.get("anchors") or {}).get("high") == "weighs trade-offs",
+              str(ps)[:160])
+
+        r = await client.put(f"/hr/rounds/{rnd}/kit", json={"criteria": [
+            {"competency_id": "invented_skill", "probes": ["x"]}]})
+        check("a kit cannot introduce a criterion", r.status_code == 422, str(r.status_code))
+
+        body = {
+            "instructions": "45 minutes. Start with the system design question.",
+            "interviewer_notes_from_hr": "Candidate asked for a whiteboard.",
+            "criteria": [{"competency_id": "system_design",
+                          "what_to_evaluate": ["Trade-off analysis"],
+                          "look_for": ["Clear assumptions"],
+                          "probes": ["What would change your decision?"]}],
+        }
+        r = await client.put(f"/hr/rounds/{rnd}/kit", json=body)
+        check("HR writes a kit on a PUBLISHED workflow", r.status_code == 200, r.text[:160])
+        r = await client.put(f"/hr/rounds/{rnd}/kit", json=body)
+        check("re-saving an unchanged kit succeeds", r.status_code == 200)
+        async with factory() as db:
+            kit_audits = (await db.execute(text(
+                "SELECT details FROM audit_log WHERE action='interview_kit.updated'"
+                " AND resource_id=:r ORDER BY event_ts"), {"r": rnd})).scalars().all()
+        check("the kit change is audited once, naming what changed",
+              len(kit_audits) == 1 and "System Design guidance" in kit_audits[0]["changed"],
+              str(kit_audits)[:200])
+        async with factory() as db:
+            still_frozen = await db.scalar(text(
+                "SELECT count(*) FROM round_criteria WHERE round_id=:r"), {"r": rnd})
+        check("writing a kit did not touch the frozen criteria", still_frozen == 2)
+
+        act_as(iv1)
+        r = await client.get(f"/interviewer/scorecards/{card1b}/kit")
+        ivkit = r.json() if r.status_code == 200 else {}
+        sd = next((c for c in ivkit.get("criteria", []) if c["competency_id"] == "system_design"), {})
+        check("the assigned interviewer sees the kit", r.status_code == 200, r.text[:160])
+        check("with HR's guidance and probes",
+              sd.get("probes") == ["What would change your decision?"]
+              and (ivkit.get("instructions") or "").startswith("45 minutes"))
+        act_as(outsider, other_cid)
+        r = await client.get(f"/interviewer/scorecards/{card1b}/kit")
+        check("nobody else can read it through that scorecard", r.status_code == 404, str(r.status_code))
+
+        print("\nPH4-A5 — private interviewer notes")
+        act_as(iv1)
+        r = await client.put(f"/interviewer/scorecards/{card1b}/notes",
+                             json={"notes": "Mentioned leading a migration at a fintech."})
+        check("an interviewer saves private notes", r.status_code == 200, r.text[:120])
+        r = await client.get(f"/interviewer/scorecards/{card1b}/notes")
+        check("and reads them back", r.status_code == 200 and "migration" in r.json()["notes"])
+        r = await client.get(f"/hr/enrolments/{enrolment}/scorecards")
+        check("HR's evidence view never contains the notes", "migration" not in r.text)
+
+        print("\nPH4-A5 — kits survive a new workflow version")
+        from app.workflows import clone_for_edit
+        async with factory() as db:
+            draft = await clone_for_edit(db, company_id=cid, workflow_id=wf, created_by=hr_uid)
+            await db.commit()
+            copied = (await db.execute(text(
+                "SELECT k.instructions FROM interview_kits k JOIN workflow_rounds wr"
+                " ON wr.id = k.round_id WHERE wr.workflow_id = :d"), {"d": draft})).scalars().all()
+        check("cloning the workflow carries the kit to the new round",
+              len(copied) == 1 and (copied[0] or "").startswith("45 minutes"), str(copied))
+
+        print("\nPH4-O4 — decision reason codes")
+        r = await client.get("/hr/decision-reasons")
+        codes = [x["code"] for x in r.json()] if r.status_code == 200 else []
+        check("HR gets the default categories on first use",
+              r.status_code == 200 and {"skills_fit", "position_closed", "other"} <= set(codes),
+              r.text[:200])
+        r = await client.get("/hr/decision-reasons")
+        check("seeding is idempotent", r.status_code == 200 and len(r.json()) == len(codes))
+
+        r = await client.post("/admin/decision-reasons",
+                              json={"label": "Failed background check", "applies_to": "rejected"})
+        new_code = r.json().get("code") if r.status_code == 201 else None
+        check("super admin adds a company category", r.status_code == 201 and bool(new_code),
+              r.text[:160])
+        r = await client.post("/admin/decision-reasons",
+                              json={"label": "failed  background check", "applies_to": "rejected"})
+        check("a duplicate label is refused", r.status_code == 409, str(r.status_code))
+        r = await client.patch("/admin/decision-reasons/other", json={"active": False})
+        check("'Other' cannot be retired", r.status_code == 409, str(r.status_code))
+
+        async with factory() as db:
+            ledger_before = await db.scalar(text(
+                "SELECT count(*) FROM stage_transitions WHERE enrolment_id=:e"), {"e": enrolment})
+        dec = f"/hr/enrolments/{enrolment}/decision"
+        r = await client.post(dec, json={"decision": "rejected", "reason": "Not a fit"})
+        check("a decision WITHOUT a category is refused", r.status_code == 422, str(r.status_code))
+        r = await client.post(dec, json={"decision": "rejected", "reason": "Not a fit",
+                                         "reason_code": "made_up"})
+        check("an unknown category is refused", r.status_code == 422, str(r.status_code))
+        r = await client.post(dec, json={"decision": "rejected", "reason": "Misc",
+                                         "reason_code": "other"})
+        check("'Other' needs a real explanation",
+              r.status_code == 422 and "explanation" in r.text, r.text[:160])
+        async with factory() as db:
+            ledger_mid = await db.scalar(text(
+                "SELECT count(*) FROM stage_transitions WHERE enrolment_id=:e"), {"e": enrolment})
+        check("none of the refused attempts wrote to the ledger", ledger_mid == ledger_before,
+              f"{ledger_before} -> {ledger_mid}")
+
+        r = await client.post(dec, json={"decision": "rejected",
+                                         "reason": "System design depth below the bar for senior",
+                                         "reason_code": new_code})
+        check("a decision with a valid category is recorded", r.status_code == 200, r.text[:200])
+        async with factory() as db:
+            row = (await db.execute(text(
+                "SELECT reason, reason_code, reason_label FROM stage_transitions"
+                " WHERE enrolment_id=:e AND to_status='rejected'"
+                " ORDER BY occurred_at DESC LIMIT 1"), {"e": enrolment})).mappings().first()
+        check("the ledger holds the code, the label snapshot AND the free text",
+              row is not None and row["reason_code"] == new_code
+              and row["reason_label"] == "Failed background check"
+              and (row["reason"] or "").startswith("System design"), str(row))
+
+        r = await client.patch(f"/admin/decision-reasons/{new_code}",
+                               json={"label": "Background verification failed", "active": False})
+        check("the category is renamed and retired", r.status_code == 200, r.text[:160])
+        r = await client.get(f"/hr/enrolments/{enrolment}/history")
+        labels = [h.get("reason_label") for h in r.json()] if r.status_code == 200 else []
+        check("history still shows the label AS CHOSEN, not the rename",
+              "Failed background check" in labels
+              and "Background verification failed" not in labels, str(labels))
+        r = await client.get("/hr/decision-reasons")
+        check("a retired category is no longer offered",
+              new_code not in [x["code"] for x in r.json()])
+        async with factory() as db:
+            reason_audits = set((await db.execute(text(
+                "SELECT action FROM audit_log WHERE resource_type='decision_reason'"
+                " AND details->>'company_id' = :c"), {"c": str(cid)})).scalars().all())
+        check("taxonomy changes are audited",
+              {"decision_reason.created", "decision_reason.updated"} <= reason_audits,
+              str(reason_audits))
 
         print("\nPH4-A1 — no session, no access")
         app.dependency_overrides.pop(get_interviewer_company, None)

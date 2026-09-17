@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from app.database import DbSessionDep
 from app.dependencies import InterviewerCtxDep
+from app.interview_kits import get_notes, kit_for_scorecard, save_notes
 from app.interviewer_scorecards import (
     RequestMeta,
     ScorecardError,
@@ -141,6 +142,55 @@ async def correct_scorecard(
         out = await open_correction(
             db, scorecard_id=scorecard_id, interviewer_user_id=uid, company_id=company_id,
             reason=body.reason, meta=_meta(request),
+        )
+    except ScorecardError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    await db.commit()
+    return out
+
+
+class NotesIn(BaseModel):
+    notes: str = Field(default="", max_length=20000)
+
+
+@router.get("/scorecards/{scorecard_id}/kit")
+async def get_interview_kit(
+    scorecard_id: uuid.UUID, ctx: InterviewerCtxDep, db: DbSessionDep
+) -> dict[str, Any]:
+    """The kit for an interview assigned to the caller (PH4-A5)."""
+    uid, company_id = ctx
+    try:
+        return await kit_for_scorecard(
+            db, scorecard_id=scorecard_id, interviewer_user_id=uid, company_id=company_id
+        )
+    except ScorecardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.get("/scorecards/{scorecard_id}/notes")
+async def get_private_notes(
+    scorecard_id: uuid.UUID, ctx: InterviewerCtxDep, db: DbSessionDep
+) -> dict[str, Any]:
+    """The caller's private notes. Never shown to HR, never part of the submission."""
+    uid, company_id = ctx
+    try:
+        return await get_notes(
+            db, scorecard_id=scorecard_id, interviewer_user_id=uid, company_id=company_id
+        )
+    except ScorecardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.put("/scorecards/{scorecard_id}/notes")
+async def put_private_notes(
+    scorecard_id: uuid.UUID, body: NotesIn, ctx: InterviewerCtxDep, db: DbSessionDep
+) -> dict[str, Any]:
+    uid, company_id = ctx
+    try:
+        out = await save_notes(
+            db, scorecard_id=scorecard_id, interviewer_user_id=uid, company_id=company_id,
+            notes=body.notes,
         )
     except ScorecardError as exc:
         await db.rollback()

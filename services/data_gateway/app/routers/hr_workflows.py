@@ -41,6 +41,7 @@ from sqlalchemy import text
 
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
+from app.interviewer_scorecards import summary_for_enrolments
 from app.workflow_runner import decision_queue, on_shortlisted, record_result, release_hold
 from app.workflow_templates import TEMPLATES, build_template, template_summaries
 from app.workflows import (
@@ -744,7 +745,17 @@ async def get_decision_queue(
     """
     _hr_uid, company_id = ctx
     await _owned_requisition(db, company_id, requisition_id)
-    return await decision_queue(db, company_id=company_id, requisition_id=requisition_id)
+    rows = await decision_queue(db, company_id=company_id, requisition_id=requisition_id)
+    # PH4-A1: how much human interview evidence is in for each candidate.
+    # Informational only — the queue's order and eligibility are unchanged, and
+    # nothing here makes a decision wait on (or follow from) scorecards.
+    counts = await summary_for_enrolments(
+        db, company_id=company_id,
+        enrolment_ids=[uuid.UUID(str(r["enrolment_id"])) for r in rows if r.get("enrolment_id")],
+    )
+    for r in rows:
+        r["scorecards"] = counts.get(str(r.get("enrolment_id")))
+    return rows
 
 
 class RoundReviewIn(BaseModel):

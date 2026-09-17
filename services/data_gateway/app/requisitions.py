@@ -82,6 +82,8 @@ async def record_transition(
     automated: bool,
     reason: str | None = None,
     sync_applicant: bool = True,
+    reason_code: str | None = None,
+    reason_label: str | None = None,
 ) -> str | None:
     """Move an enrolment to ``to_status`` and record the move. Caller commits.
 
@@ -121,11 +123,14 @@ async def record_transition(
     await db.execute(
         text(
             "INSERT INTO stage_transitions (company_id, enrolment_id, from_status, to_status,"
-            " actor_user_id, automated, reason, occurred_at)"
-            " VALUES (:c, :e, :f, :t, :a, :auto, :r, :n)"
+            " actor_user_id, automated, reason, reason_code, reason_label, occurred_at)"
+            " VALUES (:c, :e, :f, :t, :a, :auto, :r, :rc, :rl, :n)"
         ),
+        # PH4-O4: the code AND the label as chosen — the label is a snapshot so a
+        # later rename or retirement cannot rewrite what this decision says.
         {"c": company_id, "e": enrolment_id, "f": previous, "t": to_status,
-         "a": actor_user_id, "auto": automated, "r": reason, "n": now},
+         "a": actor_user_id, "auto": automated, "r": reason,
+         "rc": reason_code, "rl": reason_label, "n": now},
     )
 
     if sync_applicant:

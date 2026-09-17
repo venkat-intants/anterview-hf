@@ -137,15 +137,28 @@ async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
     monkeypatch.setattr(hrp, "choose_application", _one)
     monkeypatch.setattr(hrp, "record_transition", _transition)
     monkeypatch.setattr(hrp, "email_applicant_decision", _no_email)
+
+    from app.decision_reasons import ResolvedReason
+
+    async def _resolve(_db: object, **kw: object) -> ResolvedReason:
+        assert kw["code"] == "skills_fit" and kw["decision"] == "hired"
+        return ResolvedReason(code="skills_fit", label="Skills / competency fit",
+                              requires_explanation=False)
+
+    monkeypatch.setattr(hrp, "resolve_reason", _resolve)
     db = _db()
     db.add = MagicMock()
     await hrp.decide_applicant(uuid.uuid4(),
-                               hrp.DecisionIn(decision="hired", rationale="strong panel"),
+                               hrp.DecisionIn(decision="hired", rationale="strong panel",
+                                              reason_code="skills_fit"),
                                MagicMock(), (hr, uuid.uuid4()), db)
 
     assert moves[0]["enrolment_id"] == eid and moves[0]["to_status"] == "hired"
     assert moves[0]["automated"] is False and moves[0]["actor_user_id"] == hr
     assert moves[0]["reason"] == "strong panel"
+    # PH4-O4: the category AND its label snapshot reach the ledger.
+    assert moves[0]["reason_code"] == "skills_fit"
+    assert moves[0]["reason_label"] == "Skills / competency fit"
 
 
 @pytest.mark.asyncio

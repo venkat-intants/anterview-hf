@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
+from app.interview_kits import KitCriterionIn, get_kit, update_kit
 from app.interviewer_scorecards import (
     RequestMeta,
     ScorecardError,
@@ -117,3 +118,57 @@ async def withdraw_assignment(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class KitCriterionBody(BaseModel):
+    competency_id: str = Field(min_length=1, max_length=200)
+    what_to_evaluate: list[str] = Field(default_factory=list, max_length=10)
+    look_for: list[str] = Field(default_factory=list, max_length=10)
+    probes: list[str] = Field(default_factory=list, max_length=10)
+
+
+class KitIn(BaseModel):
+    instructions: str | None = Field(default=None, max_length=8000)
+    interviewer_notes_from_hr: str | None = Field(default=None, max_length=8000)
+    criteria: list[KitCriterionBody] = Field(default_factory=list, max_length=50)
+
+
+@router.get("/rounds/{round_id}/kit")
+async def get_round_kit(round_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep) -> dict[str, Any]:
+    """A human interview round's kit (PH4-A5). Returns criteria even with no kit."""
+    _uid, company_id = ctx
+    try:
+        return await get_kit(db, company_id=company_id, round_id=round_id)
+    except ScorecardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.put("/rounds/{round_id}/kit")
+async def put_round_kit(
+    round_id: uuid.UUID,
+    body: KitIn,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> dict[str, Any]:
+    """Replace a round's kit. Guidance only — criteria are frozen and not editable here."""
+    uid, company_id = ctx
+    try:
+        out = await update_kit(
+            db, company_id=company_id, round_id=round_id, actor=uid,
+            instructions=body.instructions,
+            interviewer_notes=body.interviewer_notes_from_hr,
+            criteria=[
+                KitCriterionIn(
+                    competency_id=c.competency_id, what_to_evaluate=c.what_to_evaluate,
+                    look_for=c.look_for, probes=c.probes,
+                )
+                for c in body.criteria
+            ],
+            meta=_meta(request),
+        )
+    except ScorecardError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    await db.commit()
+    return out

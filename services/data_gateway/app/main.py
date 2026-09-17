@@ -54,6 +54,8 @@ from app.routers.candidate_applications import router as candidate_applications_
 from app.routers.careers import router as careers_router
 from app.routers.company_board import router as company_board_router
 from app.routers.consent import router as consent_router
+from app.routers.decision_reasons import admin_router as decision_reasons_admin_router
+from app.routers.decision_reasons import hr_router as decision_reasons_hr_router
 from app.routers.exam_take import router as exam_take_router
 from app.routers.hr_applicants import router as hr_applicants_router
 from app.routers.hr_attention import router as hr_attention_router
@@ -438,6 +440,9 @@ app.include_router(hr_workflows_router)
 # their own assignments.
 app.include_router(hr_scorecards_router)
 app.include_router(interviewer_router)
+# PH4-O4: decision reason categories (HR reads, super admin configures).
+app.include_router(decision_reasons_hr_router)
+app.include_router(decision_reasons_admin_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)
 app.include_router(careers_router)

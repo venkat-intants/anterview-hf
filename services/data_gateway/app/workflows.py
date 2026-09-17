@@ -1004,7 +1004,13 @@ async def clone_for_edit(
                  "pr": json.dumps(c["probes"]) if c.get("probes") else None,
                  "n": now},
             )
-    log.info("workflow.cloned", source=str(workflow_id), draft=str(new_id))
+    # PH4-A5: kits are keyed by round id, and a new version has new round ids.
+    # Without this every kit HR wrote would vanish the first time anyone edited
+    # the workflow. Imported here: interview_kits imports this module.
+    from app.interview_kits import copy_kits  # noqa: PLC0415
+
+    kits = await copy_kits(db, company_id=company_id, id_map=id_map)
+    log.info("workflow.cloned", source=str(workflow_id), draft=str(new_id), kits=kits)
     return new_id
 
 

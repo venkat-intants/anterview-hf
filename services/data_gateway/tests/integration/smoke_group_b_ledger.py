@@ -52,9 +52,13 @@ async def seed(f) -> dict:
                 "INSERT INTO job_requisitions (id,company_id,title,level,status,created_at,updated_at)"
                 " VALUES (:i,:c,:t,'mid','open',:n,:n)"), {"i": rid, "c": s["company"], "t": title,
                                                            "n": now})
+        # Draft first, rounds, then publish — the order the app itself uses.
+        # Group C made a published workflow immutable with a database trigger,
+        # so seeding it as published and then adding rounds (what this did) is
+        # now refused outright, and took the whole smoke down with it.
         await db.execute(text(
             "INSERT INTO workflows (id,company_id,requisition_id,version,status,created_by_user_id,"
-            " published_at,created_at,updated_at) VALUES (:i,:c,:r,1,'published',:u,:n,:n,:n)"),
+            " created_at,updated_at) VALUES (:i,:c,:r,1,'draft',:u,:n,:n)"),
             {"i": s["wf"], "c": s["company"], "r": s["req"], "u": s["hr"], "n": now})
         for rid, pos, title, nxt in [(s["r2"], 1, "Panel review", None),
                                      (s["r1"], 0, "Screening review", s["r2"])]:
@@ -64,6 +68,9 @@ async def seed(f) -> dict:
                 " VALUES (:i,:c,:w,:p,:t,'human_review',:nx,:n,:n)"),
                 {"i": rid, "c": s["company"], "w": s["wf"], "p": pos, "t": title, "nx": nxt,
                  "n": now})
+        await db.execute(text(
+            "UPDATE workflows SET status='published', published_at=:n WHERE id=:i"),
+            {"i": s["wf"], "n": now})
         for aid, name in [(s["asha"], "Asha"), (s["bharat"], "Bharat")]:
             await db.execute(text(
                 "INSERT INTO applicants (id,company_id,created_by_user_id,full_name,email,"

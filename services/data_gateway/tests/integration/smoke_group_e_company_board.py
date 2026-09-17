@@ -57,9 +57,17 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
                           company: uuid.UUID = cid, public: bool = False,
                           location: str | None = None) -> None:
             await db.execute(text(
+        # approval_status: PH3-B2 put an approval gate in front of the
+        # public surface, and an opening seeded straight into the table
+        # defaults to draft — so every public-apply check here failed with
+        # "not accepting applications". Seeded approved: what this smoke is
+        # about is not the approval gate, which has its own tests. The
+# decided-at goes with it: a CHECK constraint holds that a decided
+# opening records when.
                 "INSERT INTO job_requisitions (id,company_id,title,level,status,from_backfill,"
-                " public_apply_enabled,target_hires,closes_at,location,created_at,updated_at)"
-                " VALUES (:i,:c,:t,'mid',:s,false,:p,:th,:cl,:loc,:ca,:n)"),
+                " public_apply_enabled,approval_status,approval_decided_at,target_hires,"
+                " closes_at,location,created_at,updated_at)"
+                " VALUES (:i,:c,:t,'mid',:s,false,:p,'approved',:n,:th,:cl,:loc,:ca,:n)"),
                 {"i": ids[key], "c": company, "t": title, "s": status, "p": public, "th": target,
                  "cl": now + timedelta(days=closes_in) if closes_in is not None else None,
                  "loc": location, "ca": now - timedelta(days=age), "n": now})

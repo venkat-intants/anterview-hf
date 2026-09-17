@@ -145,11 +145,19 @@ async def main() -> None:
         for rid, c_id, title, st, public, closes in rows:
             await db.execute(
                 text(
+            # approval_status: PH3-B2 put an approval gate in front of the
+            # public surface, and an opening seeded straight into the table
+            # defaults to draft — so every public-apply check here failed with
+            # "not accepting applications". Seeded approved: what this smoke is
+            # about is not the approval gate, which has its own tests. The
+# decided-at goes with it: a CHECK constraint holds that a decided
+# opening records when.
                     "INSERT INTO job_requisitions (id,company_id,title,level,jd_text,"
                     " owner_user_id,created_by_user_id,status,public_apply_enabled,"
-                    " closes_at,from_backfill,created_at,updated_at)"
-                    " VALUES (:i,:c,:t,'mid','Build and maintain APIs.',:u,:u,:s,:p,:cl,"
-                    " false,:n,:n)"
+                    " approval_status,approval_decided_at,closes_at,from_backfill,"
+                    " created_at,updated_at)"
+                    " VALUES (:i,:c,:t,'mid','Build and maintain APIs.',:u,:u,:s,:p,"
+                    " 'approved',:n,:cl,false,:n,:n)"
                 ),
                 {"i": rid, "c": c_id, "t": title, "u": hr_uid if c_id == cid else None,
                  "s": st, "p": public, "cl": closes, "n": now},

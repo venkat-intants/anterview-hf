@@ -116,10 +116,32 @@ async def main() -> None:
             check("human move recorded as NOT automated", led == 1, f"count={led}")
 
         # ── closing must not touch candidates (D-05) ─────────────────────
+        # Group E (AC-12) turned "close and report a count nobody read" into a
+        # refusal: an opening with people still in it cannot be closed until
+        # whoever is closing it has seen them. This smoke predates that and was
+        # asserting the old 200, which is why it failed on main.
         r = await c.post(f"/hr/requisitions/{py['id']}/status", json={"status": "closed"})
+        check("closing with people still in it is refused", r.status_code == 409,
+              f"{r.status_code} {r.text[:200]}")
+        refusal = r.json()["detail"]
+        check("the refusal says how many and where to decide",
+              refusal["unresolved"] > 0 and refusal["decision_queue"].endswith("/decisions"),
+              str(refusal))
+        async with factory() as db:
+            still_open = await db.scalar(text(
+                "SELECT status FROM job_requisitions WHERE id=:i"), {"i": py["id"]})
+            check("a refused close leaves the opening open", still_open != "closed",
+                  str(still_open))
+
+        # Closing anyway is allowed — the candidates stay exactly where they are.
+        r = await c.post(f"/hr/requisitions/{py['id']}/status",
+                         json={"status": "closed", "acknowledge_unresolved": True})
         check("POST requisition status -> 200", r.status_code == 200, r.text[:200])
+        # `unresolved`, not `awaiting_decision`: the two are different numbers on
+        # purpose (see _to_out). Everyone left in a closed opening is unresolved;
+        # a candidate sitting on a round is not waiting on a person yet.
         check("closing reports unresolved candidates rather than rejecting them",
-              r.json()["awaiting_decision"] > 0, str(r.json()["awaiting_decision"]))
+              r.json()["unresolved"] > 0, str(r.json()))
         async with factory() as db:
             rejected = await db.scalar(text(
                 "SELECT count(*) FROM enrolments WHERE requisition_id=:r AND status='rejected'"),

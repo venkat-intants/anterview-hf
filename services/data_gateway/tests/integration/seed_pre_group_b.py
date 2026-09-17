@@ -8,6 +8,22 @@ Deliberately messy, because the real data will be:
     backfill must NOT resolve on its own
   * a second company with a colliding title — must stay separate
   * a soft-deleted applicant — must be ignored
+
+WHEN THIS RUNS, AND WHY IT MATTERS
+----------------------------------
+Against a database migrated to the revision BEFORE Group B (c5e7a9b1d3f6), not
+to head:
+
+    alembic upgrade c5e7a9b1d3f6
+    python tests/integration/seed_pre_group_b.py
+    alembic upgrade head          # the Group B backfill reads what was seeded
+
+Seeded after head instead, the backfill has already run, there is nothing for it
+to collapse, and smoke_group_b_requisitions / smoke_group_b_api fail with empty
+results that look like broken code. Two later rules make the order load-bearing
+rather than merely conventional: B4's unique index on (company_id, lower(email))
+refuses the duplicate Gita above, and it is created only when no duplicates
+exist — which is exactly true at the pre-Group-B revision and not at head.
 """
 from __future__ import annotations
 

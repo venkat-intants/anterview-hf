@@ -36,3 +36,29 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
   globalThis.IntersectionObserver =
     IntersectionObserverStub as unknown as typeof IntersectionObserver;
 }
+
+// No unit test may touch the network.
+//
+// Nothing stopped one. jsdom's fetch reaches whatever is actually listening, so
+// a component whose API module was not mocked called the real data_gateway —
+// and the result depended on the machine. On CI nothing listens on :8002, the
+// call is refused, and the test passes. On a developer's box with the dev stack
+// up, the same call answered 401 for the test's fake token, the API client did
+// what it should (refresh, fail, clear the session, redirect to /login), and
+// the component under test was signed out mid-assertion. Two files failed that
+// way, locally only, for anyone running the app while running the tests.
+//
+// A plain function, not vi.fn(): a test file's `vi.resetAllMocks()` would strip
+// a mock's implementation and leave fetch returning undefined, which fails as
+// something unrecognisable instead of as this message. A test that needs fetch
+// still overrides it for itself.
+globalThis.fetch = ((input: RequestInfo | URL): Promise<Response> => {
+  const url =
+    typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  return Promise.reject(
+    new Error(
+      `Unmocked network call in a unit test: ${url}\n` +
+        'Mock the src/api/ module this comes from (vi.mock), or stub fetch in the test itself.',
+    ),
+  );
+}) as typeof fetch;

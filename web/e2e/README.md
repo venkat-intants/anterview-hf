@@ -127,6 +127,24 @@ reads Mailpit, which catches every email the local stack sends; nothing leaves
 the machine. `support/pdf.ts` builds the CV a candidate uploads, with the score
 the fake scorer will read out of it.
 
+## Give it the machine
+
+The suite drives ONE data_gateway process (one uvicorn worker, one event loop),
+one Vite dev server and one set of containers. Anything else you run against
+them is not background noise — it is a queue in front of every assertion.
+
+Running the vitest suite, a smoke run or a profiler alongside it took these
+three journeys from 2.6 minutes and green to 9 minutes with two failures, at a
+different step each run: the exam verdict one run, the activation the next, the
+invitation email the next. Nothing was broken; each step was simply slower than
+the assertion waiting on it. `py-spy dump` is worse than it looks here, because
+it pauses the process it samples.
+
+So: run it on its own, and be suspicious of a "flaky" result that arrived while
+something else was using the stack. If you need to know whether a slow step is
+the server or the test, time the endpoint directly — the API answers these
+journeys' calls in tens of milliseconds when nothing else is asking.
+
 ## When it runs
 
 Manually, before a release. It needs the whole local stack, so it is not wired

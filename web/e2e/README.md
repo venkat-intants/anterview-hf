@@ -99,10 +99,33 @@ The full map — every Phase 2 item, where it is tested at each level, and the g
 
 | Layer | Covers | Status |
 |---|---|---|
-| 1 | Sign-in and landing for every role, access refusals, creating an opening, the workflow builder (templates, human gates, publish blocked by issues, publish and read-only) | `auth`, `opening`, `workflow` specs |
-| 2 | Candidate path: public apply with consent, shortlist, MCQ, coding, held-not-rejected, decision queue | next — needs a fake LLM mode and a test hook to trigger the background passes, so routine runs spend nothing |
-| 3 | Company hiring board, bulk upload, dashboards, candidate account | after layer 2 |
+| 1 | Sign-in and landing for every role, access refusals, creating an opening, the workflow builder (templates, human gates, publish blocked by issues, publish and read-only) | done — `auth`, `opening`, `workflow` specs |
+| 2 | The main journeys: public apply with consent → scored → shortlist → MCQ from the emailed link → decision queue → hire or reject with a reason; held-not-rejected; what the candidate is shown about themselves | done — the three `journey-*` specs |
+| 3 | Company hiring board, bulk upload, dashboards, coding rounds, duplicate applications | next |
 | 4 | Live AI interview (fake media devices) | manual only — it spends real Tavus/Sarvam/LLM budget |
+
+### The main journeys
+
+Three specs, each a whole story with two people in it. They are the reason
+`AI_FAKE_MODE` and `TEST_HOOKS_ENABLED` exist: scoring and question generation
+cost nothing and return the same answer every run, and the background passes run
+on demand instead of on a ten-minute timer.
+
+| Spec | The story | What it pins down |
+|---|---|---|
+| `journey-hire.spec.ts` | A candidate applies from the public page, is scored, is shortlisted, sits the exam that arrives by email, passes, and is hired | scoring moves nobody; the workflow starts at the human shortlist gate; the runner advances a candidate on a real result; hiring is refused until a reason is written, and the ledger names the person who decided |
+| `journey-held.spec.ts` | The same, but they fail the exam | a threshold holds, it never rejects — nothing automated writes a rejection; the queue shows them with the reason they stopped and offers "Let them continue"; the rejection that does come is a person's, with their reason |
+| `journey-candidate-view.spec.ts` | That held candidate claims the account their confirmation email offered, and reads their own application | their stage reads "Under review" in words, and no score, percentage or threshold appears anywhere on the page |
+
+They take about two minutes together. Run just them with
+`npm run e2e -- journey-`.
+
+Steps two people share — applying through the public form, sitting an exam from
+an emailed link, shortlisting from the applicant board — live in
+`support/journeys.ts`, so a spec reads as what someone did. `support/mail.ts`
+reads Mailpit, which catches every email the local stack sends; nothing leaves
+the machine. `support/pdf.ts` builds the CV a candidate uploads, with the score
+the fake scorer will read out of it.
 
 ## When it runs
 

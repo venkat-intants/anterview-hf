@@ -542,11 +542,12 @@ async def test_execute_one_erasure_stamps_completed() -> None:
         "No UPDATE erasure_requests statement with status+completed_at was executed"
     )
     assert "completed_at" in artifacts
-    # 1.2 since step 5b (notifications) joined the erasure — DPDP-7. The version
+    # 1.2 since step 5b (notifications) joined the erasure — DPDP-7 — and 1.3
+    # since step 5f (human interview evidence, PH4-A1/A5). The version
     # is asserted rather than ignored because the artifacts blob is the auditor's
     # record of WHAT a completion covered, so widening coverage without moving
     # the version leaves two incomparable records claiming the same one.
-    assert artifacts["executor_version"] == "1.2"
+    assert artifacts["executor_version"] == "1.3"
 
 
 # ---------------------------------------------------------------------------

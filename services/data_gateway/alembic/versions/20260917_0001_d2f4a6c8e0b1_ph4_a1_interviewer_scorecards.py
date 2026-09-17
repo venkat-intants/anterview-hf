@@ -41,13 +41,17 @@ two changes are permitted after submission, and both are explicit:
    (once, irreversibly) and a new draft is opened that points back at it. The
    original scores are never overwritten; both versions stay readable.
 2. REDACTION — DPDP erasure. Free-text ``summary`` and per-criterion ``evidence``
-   may be set to NULL, and only together with ``redacted_at``. Scores and
+   may be set to NULL, and ``correction_reason`` / ``withdrawn_reason`` to the
+   fixed marker '[redacted]', and only together with ``redacted_at``. Scores and
    competency ids are kept, on the ``round_results`` precedent: numbers against
-   an anonymised applicant are the company's evaluation record, whereas prose an
-   interviewer wrote can quote the candidate and re-identify them.
+   an anonymised applicant are the company's evaluation record, whereas prose a
+   person wrote can quote the candidate and re-identify them. Once a scorecard
+   is redacted — in ANY state — none of its text can be written again.
 
-Anything else — a changed score, a revived withdrawal, a rewritten summary — is
-refused with an exception that names the scorecard.
+Anything else — a changed score, a score moved to another scorecard, a revived
+withdrawal, a rewritten summary — is refused with an exception that names the
+scorecard. Submitted scorecards and withdrawn assignments cannot be deleted on
+their own either; they leave only with their application.
 """
 
 from __future__ import annotations
@@ -65,22 +69,53 @@ depends_on: str | None = None
 SCORECARD_TRIGGER = """
 CREATE OR REPLACE FUNCTION interviewer_scorecards_protect() RETURNS trigger AS $$
 DECLARE
-    locked_keys text[] := ARRAY['superseded_at', 'superseded_by_id',
-                                'summary', 'redacted_at', 'updated_at'];
+    -- The ONLY columns that may differ on a submitted or withdrawn scorecard.
+    -- Every other column is frozen; the checks below then narrow how each of
+    -- these may change.
+    mutable_after_submit text[] := ARRAY['superseded_at', 'superseded_by_id',
+                                         'summary', 'correction_reason',
+                                         'withdrawn_reason', 'redacted_at',
+                                         'updated_at'];
 BEGIN
     IF TG_OP = 'DELETE' THEN
-        -- A submitted scorecard is only removed by the cascade that follows its
-        -- application out of existence, never on its own.
+        -- Evidence, and the record that an assignment was withdrawn, leave only
+        -- with their application or their company: the cascades, which run once
+        -- the parent row is already gone. Both parents are checked because a
+        -- company delete cascades to scorecards directly as well as through
+        -- enrolments, and Postgres does not promise which arrives first.
         IF OLD.status = 'submitted'
-           AND EXISTS (SELECT 1 FROM enrolments e WHERE e.id = OLD.enrolment_id) THEN
+           AND EXISTS (SELECT 1 FROM enrolments e WHERE e.id = OLD.enrolment_id)
+           AND EXISTS (SELECT 1 FROM companies c WHERE c.id = OLD.company_id) THEN
             RAISE EXCEPTION
                 'scorecard % is submitted decision evidence and cannot be deleted', OLD.id;
+        END IF;
+        IF OLD.status = 'withdrawn'
+           AND EXISTS (SELECT 1 FROM enrolments e WHERE e.id = OLD.enrolment_id)
+           AND EXISTS (SELECT 1 FROM companies c WHERE c.id = OLD.company_id) THEN
+            RAISE EXCEPTION
+                'scorecard % is a withdrawn assignment kept on record and cannot be deleted',
+                OLD.id;
         END IF;
         RETURN OLD;
     END IF;
 
+    -- Redaction, in every state: irreversible, and the text stays gone.
+    IF OLD.redacted_at IS NOT NULL THEN
+        IF NEW.redacted_at IS DISTINCT FROM OLD.redacted_at THEN
+            RAISE EXCEPTION 'scorecard % redaction cannot be reversed', OLD.id;
+        END IF;
+        IF NEW.summary IS NOT NULL
+           OR NEW.correction_reason IS DISTINCT FROM OLD.correction_reason
+           OR (NEW.withdrawn_reason IS DISTINCT FROM OLD.withdrawn_reason
+               AND NEW.withdrawn_reason IS NOT NULL) THEN
+            RAISE EXCEPTION
+                'scorecard % was redacted; its text cannot be written again', OLD.id;
+        END IF;
+    END IF;
+
     IF OLD.status IN ('submitted', 'withdrawn') THEN
-        IF (to_jsonb(NEW) - locked_keys) IS DISTINCT FROM (to_jsonb(OLD) - locked_keys) THEN
+        IF (to_jsonb(NEW) - mutable_after_submit)
+           IS DISTINCT FROM (to_jsonb(OLD) - mutable_after_submit) THEN
             RAISE EXCEPTION
                 'scorecard % is % and cannot be edited; open a correction instead',
                 OLD.id, OLD.status;
@@ -95,14 +130,21 @@ BEGIN
             RAISE EXCEPTION 'only a submitted scorecard can be superseded (% is %)',
                 OLD.id, OLD.status;
         END IF;
-        -- The summary may only ever be erased, and erasure is marked.
+        -- Text may only ever be erased, and erasure is marked.
         IF NEW.summary IS DISTINCT FROM OLD.summary
            AND NOT (NEW.summary IS NULL AND NEW.redacted_at IS NOT NULL) THEN
             RAISE EXCEPTION
                 'scorecard % summary can only be redacted, not rewritten', OLD.id;
         END IF;
-        IF OLD.redacted_at IS NOT NULL AND NEW.redacted_at IS DISTINCT FROM OLD.redacted_at THEN
-            RAISE EXCEPTION 'scorecard % redaction cannot be reversed', OLD.id;
+        IF NEW.correction_reason IS DISTINCT FROM OLD.correction_reason
+           AND NOT (NEW.correction_reason = '[redacted]' AND NEW.redacted_at IS NOT NULL) THEN
+            RAISE EXCEPTION
+                'scorecard % correction reason can only be redacted, not rewritten', OLD.id;
+        END IF;
+        IF NEW.withdrawn_reason IS DISTINCT FROM OLD.withdrawn_reason
+           AND NOT (NEW.withdrawn_reason = '[redacted]' AND NEW.redacted_at IS NOT NULL) THEN
+            RAISE EXCEPTION
+                'scorecard % withdrawal reason can only be redacted, not rewritten', OLD.id;
         END IF;
     END IF;
     RETURN NEW;
@@ -120,9 +162,30 @@ SCORES_TRIGGER = """
 CREATE OR REPLACE FUNCTION interviewer_scorecard_scores_protect() RETURNS trigger AS $$
 DECLARE
     parent_status text;
+    parent_redacted timestamptz;
 BEGIN
-    SELECT s.status INTO parent_status FROM interviewer_scorecards s
+    -- A score belongs to one scorecard, criterion, round and company for life.
+    -- Checked first and in every state: moving a score off a submitted
+    -- scorecard onto a draft would otherwise only consult the NEW parent.
+    IF TG_OP = 'UPDATE'
+       AND (NEW.scorecard_id, NEW.competency_id, NEW.round_id, NEW.company_id)
+           IS DISTINCT FROM
+           (OLD.scorecard_id, OLD.competency_id, OLD.round_id, OLD.company_id) THEN
+        RAISE EXCEPTION
+            'a score on scorecard % cannot be moved to another scorecard or criterion',
+            OLD.scorecard_id;
+    END IF;
+
+    SELECT s.status, s.redacted_at INTO parent_status, parent_redacted
+      FROM interviewer_scorecards s
      WHERE s.id = COALESCE(NEW.scorecard_id, OLD.scorecard_id);
+
+    -- A redacted scorecard takes no new evidence text, whatever its state.
+    IF TG_OP IN ('INSERT', 'UPDATE') AND parent_redacted IS NOT NULL
+       AND NEW.evidence IS NOT NULL THEN
+        RAISE EXCEPTION
+            'scorecard % was redacted; its text cannot be written again', NEW.scorecard_id;
+    END IF;
 
     -- No parent: this is the cascade after the scorecard itself went.
     IF parent_status IS NULL OR parent_status NOT IN ('submitted', 'withdrawn') THEN
@@ -189,6 +252,15 @@ def upgrade() -> None:
         sa.Column("superseded_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("superseded_by_id", sa.Uuid(), nullable=True),
         sa.Column("redacted_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        # Set on a correction opened by someone who could, at that moment, read
+        # other interviewers' submitted scorecards for the same round (an HR
+        # manager on the panel). Not refused — a genuine mistake still needs
+        # correcting — but stored, so HR reading the evidence sees that this
+        # version may not be independent. Frozen once submitted.
+        sa.Column(
+            "corrected_after_peers_visible", sa.Boolean(), nullable=False,
+            server_default=sa.false(),
+        ),
         sa.Column(
             "created_at", sa.TIMESTAMP(timezone=True), nullable=False,
             server_default=sa.text("now()"),

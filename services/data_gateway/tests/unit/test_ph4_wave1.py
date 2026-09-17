@@ -324,7 +324,7 @@ def kit_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             {"competency_id": "sd", "competency_name": "System Design", "weight": 0.4},
         ]}
 
-    async def _load_kit(_db: object, _rid: uuid.UUID) -> dict[str, Any] | None:
+    async def _load_kit(_db: object, _rid: uuid.UUID, _cid: uuid.UUID) -> dict[str, Any] | None:
         return state["kit"]
 
     monkeypatch.setattr(ik, "_round", _round)
@@ -535,6 +535,7 @@ async def test_a_rename_is_audited_with_before_and_after() -> None:
     from app.decision_reasons import update_reason
 
     db = _reason_db(_reason())
+    db.scalar = AsyncMock(return_value=0)  # never used in a decision yet
     out = await update_reason(db, company_id=uuid.uuid4(), actor=uuid.uuid4(),
                               code="skills_fit", active=None, label="Skills match")
     assert out["label"] == "Skills match"

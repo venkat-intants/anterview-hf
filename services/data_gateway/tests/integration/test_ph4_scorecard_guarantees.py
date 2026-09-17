@@ -363,3 +363,266 @@ async def test_the_cascade_still_removes_evidence_when_the_application_goes(
     assert await db.scalar(
         text("SELECT count(*) FROM interviewer_scorecards WHERE id = :card"), {"card": f.card}
     ) == 0
+
+
+# ===========================================================================
+# Review hardening — withdrawn rows, moved scores, every text column redacted
+# ===========================================================================
+async def _withdraw_card(db: AsyncSession, f: Fixture, reason: str | None) -> None:
+    await db.execute(
+        text(
+            "UPDATE interviewer_scorecards SET status = 'withdrawn', withdrawn_at = now(),"
+            " withdrawn_reason = :why WHERE id = :card"
+        ),
+        {"card": f.card, "why": reason},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_withdrawn_assignment_cannot_be_deleted_on_its_own(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _withdraw_card(db, f, "Conflict of interest")
+    await _refused(
+        db, "DELETE FROM interviewer_scorecards WHERE id = :card", {"card": f.card},
+        "withdrawn assignment kept on record and cannot be deleted",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_score_cannot_be_moved_off_a_submitted_scorecard(db: AsyncSession) -> None:
+    """L1: the trigger used to consult only the NEW parent, so moving a score
+    from submitted evidence onto a draft passed."""
+    f = await _build(db)
+    other = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO interviewer_scorecards (id, company_id, enrolment_id, round_id,"
+            " interviewer_user_id, status) VALUES (:o, :c, :e, :rd, :i2, 'in_progress')"
+        ),
+        {"o": other, "c": f.company, "e": f.enrolment, "rd": f.round, "i2": f.iv2},
+    )
+    await _submit(db, f)
+    await _refused(
+        db,
+        "UPDATE interviewer_scorecard_scores SET scorecard_id = :o WHERE scorecard_id = :card",
+        {"o": other, "card": f.card},
+        "cannot be moved to another scorecard or criterion",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_draft_score_cannot_change_criterion_either(db: AsyncSession) -> None:
+    f = await _build(db)
+    await db.execute(
+        text(
+            "INSERT INTO interviewer_scorecard_scores (scorecard_id, company_id, round_id,"
+            " competency_id, score) VALUES (:card, :c, :rd, 'problem_solving', 3)"
+        ),
+        {"card": f.card, "c": f.company, "rd": f.round},
+    )
+    await _refused(
+        db,
+        "UPDATE interviewer_scorecard_scores SET competency_id = 'communication'"
+        " WHERE scorecard_id = :card",
+        {"card": f.card},
+        "cannot be moved to another scorecard or criterion",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_withdrawal_reason_can_be_redacted_and_only_redacted(db: AsyncSession) -> None:
+    """M4(a): the trigger used to refuse erasure touching the reason at all."""
+    f = await _build(db)
+    await _withdraw_card(db, f, "Knows the candidate from a previous job")
+    await _refused(
+        db, "UPDATE interviewer_scorecards SET withdrawn_reason = 'other words' WHERE id = :card",
+        {"card": f.card}, "withdrawal reason can only be redacted",
+    )
+    await _allowed(
+        db,
+        "UPDATE interviewer_scorecards SET withdrawn_reason = '[redacted]', summary = NULL,"
+        " redacted_at = now() WHERE id = :card",
+        {"card": f.card},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_correction_reason_can_be_redacted_and_only_redacted(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _submit(db, f)
+    new_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "UPDATE interviewer_scorecards SET superseded_at = now(), superseded_by_id = :n"
+            " WHERE id = :card"
+        ),
+        {"n": new_id, "card": f.card},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO interviewer_scorecards (id, company_id, enrolment_id, round_id,"
+            " interviewer_user_id, status, submitted_at, corrects_id, correction_reason)"
+            " VALUES (:n, :c, :e, :rd, :i1, 'submitted', now(), :card,"
+            " 'The candidate named their employer, I misheard')"
+        ),
+        {"n": new_id, "c": f.company, "e": f.enrolment, "rd": f.round, "i1": f.iv1,
+         "card": f.card},
+    )
+    await _refused(
+        db,
+        "UPDATE interviewer_scorecards SET correction_reason = 'Rewritten reason' WHERE id = :n",
+        {"n": new_id}, "correction reason can only be redacted",
+    )
+    await _allowed(
+        db,
+        "UPDATE interviewer_scorecards SET correction_reason = '[redacted]', summary = NULL,"
+        " redacted_at = now() WHERE id = :n",
+        {"n": new_id},
+    )
+
+
+@pytest.mark.asyncio
+async def test_once_redacted_no_text_can_be_written_again_in_any_state(db: AsyncSession) -> None:
+    """M4(c): an editable row with redacted_at set used to accept a new summary."""
+    f = await _build(db)
+    await _allowed(
+        db, "UPDATE interviewer_scorecards SET redacted_at = now() WHERE id = :card",
+        {"card": f.card},
+    )
+    await _refused(
+        db, "UPDATE interviewer_scorecards SET summary = 'about them' WHERE id = :card",
+        {"card": f.card}, "its text cannot be written again",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_redacted_open_scorecard_takes_no_new_evidence(db: AsyncSession) -> None:
+    """Re-audit L1: the scores trigger only guarded submitted/withdrawn parents,
+    so evidence could still be inserted onto a redacted draft."""
+    f = await _build(db)
+    await _allowed(
+        db, "UPDATE interviewer_scorecards SET redacted_at = now() WHERE id = :card",
+        {"card": f.card},
+    )
+    await _refused(
+        db,
+        "INSERT INTO interviewer_scorecard_scores (scorecard_id, company_id, round_id,"
+        " competency_id, score, evidence) VALUES (:card, :c, :rd, 'communication', 3,"
+        " 'about them')",
+        {"card": f.card, "c": f.company, "rd": f.round},
+        "its text cannot be written again",
+    )
+    # A score with no text is still just a number.
+    await _allowed(
+        db,
+        "INSERT INTO interviewer_scorecard_scores (scorecard_id, company_id, round_id,"
+        " competency_id, score) VALUES (:card, :c, :rd, 'communication', 3)",
+        {"card": f.card, "c": f.company, "rd": f.round},
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_erasure_order_withdraw_then_redact_is_accepted(db: AsyncSession) -> None:
+    """The statements erasure step 5f runs, in its order, on an open assignment
+    with a draft: the triggers must let every one of them through."""
+    f = await _build(db)
+    await db.execute(
+        text(
+            "INSERT INTO interviewer_scorecard_scores (scorecard_id, company_id, round_id,"
+            " competency_id, score, evidence) VALUES (:card, :c, :rd, 'communication', 3, 'e')"
+        ),
+        {"card": f.card, "c": f.company, "rd": f.round},
+    )
+    await db.execute(
+        text("UPDATE interviewer_scorecards SET summary = 'draft prose' WHERE id = :card"),
+        {"card": f.card},
+    )
+    for sql in (
+        "UPDATE interviewer_scorecards SET status = 'withdrawn', withdrawn_at = now(),"
+        " withdrawn_reason = NULL, updated_at = now()"
+        " WHERE status IN ('assigned', 'in_progress') AND enrolment_id = :e",
+        "UPDATE interviewer_scorecard_scores SET evidence = NULL, updated_at = now()"
+        " WHERE evidence IS NOT NULL AND scorecard_id = :card",
+        "UPDATE interviewer_scorecards SET summary = NULL,"
+        " correction_reason = CASE WHEN correction_reason IS NULL THEN NULL"
+        "                          ELSE '[redacted]' END,"
+        " withdrawn_reason = CASE WHEN withdrawn_reason IS NULL THEN NULL"
+        "                         ELSE '[redacted]' END,"
+        " redacted_at = now(), updated_at = now()"
+        " WHERE redacted_at IS NULL AND enrolment_id = :e",
+    ):
+        await _allowed(db, sql, {"e": f.enrolment, "card": f.card})
+    row = (
+        await db.execute(
+            text(
+                "SELECT status, summary, redacted_at FROM interviewer_scorecards WHERE id = :card"
+            ),
+            {"card": f.card},
+        )
+    ).mappings().one()
+    assert row["status"] == "withdrawn" and row["summary"] is None and row["redacted_at"]
+
+
+@pytest.mark.asyncio
+async def test_a_company_with_interview_evidence_can_still_be_deleted(db: AsyncSession) -> None:
+    """The delete guards key on the enrolment still existing. A company delete
+    cascades to scorecards directly AND through enrolments; whichever order
+    Postgres takes, the tenant must still be removable."""
+    f = await _build(db)
+    other = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO interviewer_scorecards (id, company_id, enrolment_id, round_id,"
+            " interviewer_user_id, status, withdrawn_at) VALUES"
+            " (:o, :c, :e, :rd, :i2, 'withdrawn', now())"
+        ),
+        {"o": other, "c": f.company, "e": f.enrolment, "rd": f.round, "i2": f.iv2},
+    )
+    await _submit(db, f)
+    await _allowed(db, "DELETE FROM companies WHERE id = :c", {"c": f.company})
+    assert await db.scalar(
+        text("SELECT count(*) FROM interviewer_scorecards WHERE company_id = :c"),
+        {"c": f.company},
+    ) == 0
+
+
+# ===========================================================================
+# PH4-O4 — the ledger refuses a final decision with no reason code
+# ===========================================================================
+_LEDGER_INSERT = (
+    "INSERT INTO stage_transitions (company_id, enrolment_id, from_status, to_status,"
+    " actor_user_id, automated, reason, occurred_at, reason_code, reason_label)"
+    " VALUES (:c, :e, :frm, :to, NULL, false, 'test', now(), :code, :label)"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("to_status", ["hired", "rejected"])
+async def test_a_decision_without_a_reason_code_is_refused_by_the_ledger(
+    db: AsyncSession, to_status: str
+) -> None:
+    f = await _build(db)
+    await _refused(
+        db, _LEDGER_INSERT,
+        {"c": f.company, "e": f.enrolment, "frm": "held", "to": to_status, "code": None,
+         "label": None},
+        "needs a reason_code",
+    )
+    await _allowed(
+        db, _LEDGER_INSERT,
+        {"c": f.company, "e": f.enrolment, "frm": "held", "to": to_status,
+         "code": "skills_fit", "label": "Skills / competency fit"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_ledger_still_takes_moves_and_notes_that_are_not_decisions(
+    db: AsyncSession,
+) -> None:
+    f = await _build(db)
+    for frm, to in (("new", "shortlisted"), ("shortlisted", "held"), ("rejected", "rejected")):
+        await _allowed(
+            db, _LEDGER_INSERT,
+            {"c": f.company, "e": f.enrolment, "frm": frm, "to": to, "code": None,
+             "label": None},
+        )

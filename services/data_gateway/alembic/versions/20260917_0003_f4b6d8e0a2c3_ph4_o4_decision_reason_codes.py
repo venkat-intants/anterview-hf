@@ -29,6 +29,21 @@ CHECK makes them travel together.
 Adding nullable columns to ``stage_transitions`` is compatible with its
 append-only trigger: that trigger refuses UPDATE and DELETE of rows, not schema
 change, and every existing row simply reads NULL.
+
+A NEW FINAL DECISION CANNOT BE WRITTEN WITHOUT A CODE
+Requiring the code in the application is not enough: the security review found
+an endpoint that wrote 'rejected' as an ordinary status change, and the next one
+would be found the same way — after it shipped. So the ledger refuses it.
+``stage_transitions_require_reason_code`` rejects an INSERT that moves an
+application INTO hired or rejected without a ``reason_code``, whichever code
+path attempts it.
+
+It is a BEFORE INSERT trigger rather than a CHECK, deliberately. A CHECK — even
+NOT VALID — is re-evaluated whenever an existing row is updated, and historical
+decisions (every one recorded before today) have no code; the ledger's
+``actor_user_id`` is set to NULL when a user is deleted, which would then fail.
+New rows are the ones this is about. A note on an application already in a
+terminal status (``from_status = to_status``) is not a decision and is allowed.
 """
 
 from __future__ import annotations
@@ -97,9 +112,38 @@ def upgrade() -> None:
         ["company_id", "reason_code", "occurred_at"],
         postgresql_where=sa.text("reason_code IS NOT NULL"),
     )
+    op.execute(
+        """
+        CREATE FUNCTION stage_transitions_require_reason_code() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.to_status IN ('hired', 'rejected')
+               AND NEW.from_status IS DISTINCT FROM NEW.to_status
+               AND NEW.reason_code IS NULL THEN
+                RAISE EXCEPTION
+                    'stage_transitions: a move into % needs a reason_code (PH4-O4)',
+                    NEW.to_status
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER stage_transitions_require_reason_code
+        BEFORE INSERT ON stage_transitions
+        FOR EACH ROW EXECUTE FUNCTION stage_transitions_require_reason_code()
+        """
+    )
 
 
 def downgrade() -> None:
+    op.execute(
+        "DROP TRIGGER IF EXISTS stage_transitions_require_reason_code ON stage_transitions"
+    )
+    op.execute("DROP FUNCTION IF EXISTS stage_transitions_require_reason_code()")
     op.drop_index("ix_stage_transitions_reason_code", table_name="stage_transitions")
     op.drop_constraint("ck_stage_transitions_reason_pair", "stage_transitions", type_="check")
     op.drop_column("stage_transitions", "reason_label")

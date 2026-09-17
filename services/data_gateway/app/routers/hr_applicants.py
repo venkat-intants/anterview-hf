@@ -11,7 +11,8 @@ all reads/writes filter by company_id, so a cross-company id returns 404.
   POST   /hr/applicants                 — upload + auto-score an applicant
   GET    /hr/applicants[?status=]       — ranked list (by ATS score), paged
   GET    /hr/applicants/{id}            — detail
-  PATCH  /hr/applicants/{id}            — set status (new|shortlisted|rejected)
+  PATCH  /hr/applicants/{id}            — set status; a hire or reject needs a
+                                          reason and a reason code (PH4-O4)
   POST   /hr/applicants/{id}/rescore    — re-run ATS scoring
 """
 
@@ -23,7 +24,7 @@ from typing import Annotated, Any
 
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, BeforeValidator, EmailStr, Field
 from sqlalchemy import column, exists, or_, select, table, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +39,8 @@ from app.applicant_enrichment import (
 from app.application_source import INTERNAL
 from app.bulk_ingest import StagedFile, batch_progress, create_batch, recent_batches
 from app.database import DbSessionDep
+from app.decision_reasons import ReasonError
+from app.decision_reasons import resolve as resolve_reason
 from app.dependencies import HrCtxDep, get_hr_company
 from app.embedding_client import (
     EmbeddingError,
@@ -46,8 +49,15 @@ from app.embedding_client import (
     to_pgvector_literal,
     why_match_remote,
 )
+from app.final_decision import (
+    DECISIONS,
+    MIN_REASON_CHARS,
+    DecisionRefusedError,
+    record_final_decision,
+    refusal,
+)
 from app.mailer import candidate_language, enqueue_email
-from app.models import Applicant
+from app.models import Applicant, AuditLog
 from app.requisitions import (
     ambiguous_decision_detail,
     applicant_by_email,
@@ -58,6 +68,7 @@ from app.requisitions import (
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
 from app.scoring_client import ResumeScoreError, score_resume_remote
 from app.utils.ownership import get_owned
+from app.utils.request_ip import extract_client_ip, extract_user_agent
 from app.utils.sql_like import LIKE_ESCAPE, like_literal
 from app.workflow_runner import enrol_applicant, on_shortlisted
 from app.workflows import scoring_on_apply_enabled
@@ -240,6 +251,11 @@ class StatusUpdate(BaseModel):
     # The application this change is about (B5). Optional: with one
     # application it is implied.
     enrolment_id: uuid.UUID | None = None
+    # Required for a hire or a reject, ignored otherwise (PH4-O4). A final
+    # decision recorded from this board used to carry neither, so it was the
+    # one way to end a candidacy without saying why.
+    reason: str | None = Field(default=None, max_length=2000)
+    reason_code: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class BulkUploadResult(BaseModel):
@@ -1453,7 +1469,11 @@ async def list_applicant_round_results(
 
 @router.patch("/applicants/{applicant_id}", response_model=ApplicantOut)
 async def update_applicant_status(
-    applicant_id: uuid.UUID, body: StatusUpdate, ctx: HrCtxDep, db: DbSessionDep
+    applicant_id: uuid.UUID,
+    body: StatusUpdate,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
 ) -> ApplicantOut:
     _hr_uid, company_id = ctx
     if body.status not in _VALID_STATUSES:
@@ -1479,6 +1499,35 @@ async def update_applicant_status(
             status_code=409, detail=ambiguous_decision_detail(a.full_name, len(app_.live))
         )
     only = app_.enrolment_id
+
+    # A hire or a reject ends a candidacy. It goes through the one decision
+    # writer — its guards, its reason and reason code, its audit row and its
+    # email — exactly as the decision queue and the enrolment mover do. This
+    # board used to write 'rejected' as an ordinary status change with no
+    # reason, which made it the one path around PH4-O4.
+    if body.status in DECISIONS:
+        if only is not None:
+            try:
+                await record_final_decision(
+                    db, company_id=company_id, enrolment_id=only,
+                    decision=body.status, reason=body.reason,
+                    reason_code=body.reason_code, actor_user_id=_hr_uid,
+                    ip_address=extract_client_ip(request),
+                    user_agent=extract_user_agent(request),
+                )
+            except DecisionRefusedError as exc:
+                await db.rollback()
+                raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+            await db.commit()
+            # record_transition moved the person-level mirror in SQL.
+            await db.refresh(a)
+            return _to_out(a)
+        await _decide_without_application(
+            db, applicant=a, company_id=company_id, body=body, actor_user_id=_hr_uid,
+            request=request,
+        )
+        await db.commit()
+        return _to_out(a)
 
     prev_status = app_.status if only is not None else a.status
     # The person-level mirror describes their latest application; an older
@@ -1528,6 +1577,68 @@ async def update_applicant_status(
         )
     await db.commit()
     return _to_out(a)
+
+
+async def _decide_without_application(
+    db: AsyncSession,
+    *,
+    applicant: Applicant,
+    company_id: uuid.UUID,
+    body: StatusUpdate,
+    actor_user_id: uuid.UUID,
+    request: Request,
+) -> None:
+    """A hire or reject on a person with no application at all. Caller commits.
+
+    Only rows that predate openings reach this: there is no enrolment, so no
+    ledger entry, but the decision keeps every other guarantee — the same
+    refusal rules (as an application on no workflow), a reason, a valid reason
+    code, an audit row with both, and the candidate's email.
+    """
+    why = (body.reason or "").strip()
+    if len(why) < MIN_REASON_CHARS:
+        raise HTTPException(
+            status_code=422, detail="Say why. A final decision is recorded against your name."
+        )
+    refused = refusal(body.status, applicant.status, False, None)
+    if refused is not None:
+        raise HTTPException(status_code=refused[0], detail=refused[1])
+    try:
+        chosen = await resolve_reason(
+            db, company_id=company_id, code=body.reason_code, decision=body.status,
+            reason=why,
+        )
+    except ReasonError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    previous = applicant.status
+    now = datetime.now(tz=UTC)
+    applicant.status = body.status
+    applicant.updated_at = now
+    db.add(
+        AuditLog(
+            actor_id=actor_user_id,
+            actor_type="user",
+            action=f"applicant.decision.{body.status}",
+            resource_type="applicant",
+            resource_id=applicant.id,
+            details={
+                "company_id": str(company_id),
+                "enrolment_id": None,
+                "decision": body.status,
+                "previous_status": previous,
+                "rationale": why,
+                "reason_code": chosen.code,
+                "reason_label": chosen.label,
+                "reversal": previous == "hired",
+            },
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+            event_ts=now,
+        )
+    )
+    await email_applicant_decision(
+        db, applicant=applicant, decision=body.status, company_id=company_id,
+    )
 
 
 @router.post("/applicants/{applicant_id}/rescore", response_model=ApplicantOut)

@@ -44,6 +44,7 @@ from app.config import settings
 from app.database import dispose_engine, get_db_session, get_session_factory, init_engine
 from app.dependencies import set_auth_provider
 from app.health import router as health_router
+from app.interview_kits import purge_expired_notes
 from app.mailer import purge_old_email_events, start_email_worker, stop_email_worker
 from app.redis_client import close_redis, get_redis, init_redis
 from app.retention import purge_expired_sessions
@@ -182,6 +183,25 @@ async def _run_retention_job() -> None:
     except Exception as exc:  # broad — never let email cleanup kill the scheduler
         log.error(
             "email.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc)
+        )
+
+    # Same tick: interviewers' private notes whose interview has ended (PH4-A5).
+    # Working notes about a named candidate, kept only while they serve the
+    # interview — see interview_kits.purge_expired_notes for when that ends.
+    # Honours RETENTION_DRY_RUN like the session purge above.
+    try:
+        async with factory() as session:
+            notes = await purge_expired_notes(
+                session, retention_days=settings.retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("interviewer_notes.retention.purged", rows=notes,
+                 dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let notes cleanup kill the scheduler
+        log.error(
+            "interviewer_notes.retention.error", exc_type=type(exc).__name__,
+            exc_msg=str(exc),
         )
 
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft

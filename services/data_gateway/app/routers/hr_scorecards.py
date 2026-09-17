@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -21,7 +21,13 @@ from pydantic import BaseModel, Field
 
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
-from app.interview_kits import KitCriterionIn, get_kit, update_kit
+from app.interview_kits import (
+    MAX_ITEM_CHARS,
+    MAX_ITEMS,
+    KitCriterionIn,
+    get_kit,
+    update_kit,
+)
 from app.interviewer_scorecards import (
     RequestMeta,
     ScorecardError,
@@ -120,11 +126,16 @@ async def withdraw_assignment(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+# Bounded here as well as in interview_kits._clean_list, so an oversized item
+# is refused while the body is parsed rather than after all of it is in memory.
+KitItem = Annotated[str, Field(max_length=MAX_ITEM_CHARS)]
+
+
 class KitCriterionBody(BaseModel):
     competency_id: str = Field(min_length=1, max_length=200)
-    what_to_evaluate: list[str] = Field(default_factory=list, max_length=10)
-    look_for: list[str] = Field(default_factory=list, max_length=10)
-    probes: list[str] = Field(default_factory=list, max_length=10)
+    what_to_evaluate: list[KitItem] = Field(default_factory=list, max_length=MAX_ITEMS)
+    look_for: list[KitItem] = Field(default_factory=list, max_length=MAX_ITEMS)
+    probes: list[KitItem] = Field(default_factory=list, max_length=MAX_ITEMS)
 
 
 class KitIn(BaseModel):

@@ -42,6 +42,7 @@ from app.auth_tokens import hash_token, mint_token, ttl_hours_for
 from app.config import settings
 from app.database import get_db_session, get_session_factory
 from app.dependencies import get_auth_provider_dep, require_role_password_ok
+from app.interviewer_scorecards import RequestMeta, withdraw_open_for_interviewer
 from app.mailer import enqueue_email
 from app.scheduling import job_status
 
@@ -835,10 +836,17 @@ async def delete_my_hr_manager(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="HR manager not found in your company.",
         )
+    # HR managers interview too. Their unsubmitted assignments go with them,
+    # for the same reason as an interviewer's (delete_my_interviewer).
+    withdrawn = await withdraw_open_for_interviewer(
+        db, company_id=company_id, interviewer_user_id=user_id, actor=caller_uid,
+        reason="Removed from the company", meta=RequestMeta(),
+    )
     await _soft_delete_user(db, user_id)
     await _audit(
         db, actor_id=caller_uid, action="delete_hr_manager",
         resource_type="user", resource_id=user_id,
+        details={"assignments_withdrawn": withdrawn},
     )
     await db.commit()
 
@@ -940,8 +948,10 @@ async def delete_my_interviewer(
     Their UNSUBMITTED assignments are withdrawn in the same transaction. Left
     alone, each would sit "late" for ever against somebody who can no longer
     sign in to finish it, and HR would see a panel waiting on a person who is
-    gone. SUBMITTED scorecards are untouched — they are evidence, and the
-    database would refuse to change them anyway.
+    gone. Each goes through ``withdraw`` — its own audit row, and the people
+    who assigned it are told their panel shrank. SUBMITTED scorecards are
+    untouched — they are evidence, and the database would refuse to change them
+    anyway.
     """
     caller_uid, company_id = ctx
     target = await db.scalar(
@@ -958,20 +968,15 @@ async def delete_my_interviewer(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Interviewer not found in your company.",
         )
-    withdrawn = await db.execute(
-        text(
-            "UPDATE interviewer_scorecards SET status = 'withdrawn', withdrawn_at = now(),"
-            " withdrawn_reason = 'Interviewer removed from the company', updated_at = now()"
-            " WHERE interviewer_user_id = :uid AND company_id = :cid"
-            "   AND status IN ('assigned', 'in_progress') AND superseded_at IS NULL"
-        ),
-        {"uid": user_id, "cid": company_id},
+    withdrawn = await withdraw_open_for_interviewer(
+        db, company_id=company_id, interviewer_user_id=user_id, actor=caller_uid,
+        reason="Interviewer removed from the company", meta=RequestMeta(),
     )
     await _soft_delete_user(db, user_id)
     await _audit(
         db, actor_id=caller_uid, action="delete_interviewer",
         resource_type="user", resource_id=user_id,
-        details={"assignments_withdrawn": getattr(withdrawn, "rowcount", 0) or 0},
+        details={"assignments_withdrawn": withdrawn},
     )
     await db.commit()
 

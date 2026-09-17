@@ -24,6 +24,7 @@ reason later cannot rewrite what a historical decision says.
 from __future__ import annotations
 
 import re
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -31,6 +32,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditLog
@@ -152,10 +154,31 @@ async def resolve(
 
 
 def _code_from_label(label: str) -> str:
+    """A stable machine key for a label, always valid for the code CHECK.
+
+    ``^[a-z][a-z0-9_]{1,63}$`` — so at least two characters, starting with a
+    letter. A label with too little ASCII in it ("C++" → "c", "éé" → "") gets a
+    generated code instead of crashing the insert: people read the label, and
+    the code only has to be unique and stable.
+    """
     base = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
-    if not base or not base[0].isalpha():
-        base = f"r_{base}".strip("_")
-    return base[:48] or "reason"
+    if base and not base[0].isalpha():
+        base = f"r_{base}"
+    base = base[:48].rstrip("_")
+    if len(base) < 2:
+        base = f"reason_{uuid.uuid4().hex[:8]}"
+    return base
+
+
+def _meaning(label: str) -> str:
+    """A label with only its case and spacing normalised — what it SAYS.
+
+    Deliberately narrower than "ignore punctuation": stripping symbols makes
+    "C++ skills" and "C# skills" the same label, and an ASCII-only filter
+    reduces every Hindi or Telugu label to the empty string, so any rename of
+    one would pass. NFKC folds look-alike forms of the same characters.
+    """
+    return " ".join(unicodedata.normalize("NFKC", label).casefold().split())
 
 
 async def create_reason(
@@ -201,15 +224,27 @@ async def create_reason(
         code = f"{base[:44]}_{suffix}"
         suffix += 1
 
-    await db.execute(
-        text(
-            "INSERT INTO decision_reasons (id, company_id, code, label, applies_to,"
-            " requires_explanation, is_default, active, position, created_at, updated_at)"
-            " VALUES (:id, :c, :code, :label, :applies, :explain, false, true, 80, now(), now())"
-        ),
-        {"id": uuid.uuid4(), "c": company_id, "code": code, "label": clean,
-         "applies": applies_to, "explain": requires_explanation},
-    )
+    # A savepoint, so a lost race (two people adding the same reason at once)
+    # is a 409 that leaves the transaction usable, not an unhandled 500.
+    savepoint = await db.begin_nested()
+    try:
+        await db.execute(
+            text(
+                "INSERT INTO decision_reasons (id, company_id, code, label, applies_to,"
+                " requires_explanation, is_default, active, position, created_at, updated_at)"
+                " VALUES (:id, :c, :code, :label, :applies, :explain, false, true, 80,"
+                " now(), now())"
+            ),
+            {"id": uuid.uuid4(), "c": company_id, "code": code, "label": clean,
+             "applies": applies_to, "explain": requires_explanation},
+        )
+        await savepoint.commit()
+    except IntegrityError as exc:
+        await savepoint.rollback()
+        raise ReasonError(
+            409, f"A reason like '{clean}' was added at the same moment. Refresh and check "
+                 "the list before adding it again."
+        ) from exc
     _audit(db, actor=actor, company_id=company_id, action="decision_reason.created",
            details={"code": code, "label": clean, "applies_to": applies_to,
                     "requires_explanation": requires_explanation})
@@ -249,6 +284,33 @@ async def update_reason(
         new_label = " ".join(label.split())
         if not 2 <= len(new_label) <= 120:
             raise ReasonError(422, "A reason label is 2 to 120 characters.")
+    # Once a reason has been used, its label may be tidied (case, spacing)
+    # but not changed in meaning. Analytics group decisions by
+    # CODE, so renaming "Compensation" to "Relocation" would silently file
+    # every past compensation decision under relocation. A different meaning is
+    # a different reason: retire this one and add that one.
+    if _meaning(new_label) != _meaning(row["label"]):
+        # Both places a decision records its code: the ledger, and — for a
+        # person with no application to put on a ledger — the audit row.
+        used = await db.scalar(
+            text(
+                "SELECT (SELECT count(*) FROM stage_transitions"
+                "         WHERE company_id = :c AND reason_code = :code)"
+                "     + (SELECT count(*) FROM audit_log"
+                "         WHERE action IN ('applicant.decision.hired',"
+                "                          'applicant.decision.rejected')"
+                "           AND details->>'company_id' = CAST(:c AS text)"
+                "           AND details->>'enrolment_id' IS NULL"
+                "           AND details->>'reason_code' = :code)"
+            ),
+            {"c": company_id, "code": code},
+        )
+        if used:
+            raise ReasonError(
+                409, f"'{row['label']}' has already been given as the reason for {int(used)} "
+                     "decision(s), so renaming it would change what those decisions are "
+                     "counted as. Retire it and add a new reason instead."
+            )
     new_active = row["active"] if active is None else active
     if new_active is False and row["code"] == "other":
         # Without a catch-all, a decision that fits no category has nowhere to go

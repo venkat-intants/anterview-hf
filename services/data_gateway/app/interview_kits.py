@@ -22,10 +22,17 @@ Every read returns the criteria and their frozen probes whether or not HR has
 written a kit. A round without one must still be interviewable — that is the
 "existing scorecards keep working" criterion.
 
-NOTES ARE PRIVATE
+NOTES ARE PRIVATE, AND THEY END
 ``interviewer_notes`` belong to the interviewer: never shown to HR, never part
 of the submission, erased under DPDP. They are keyed on the interview rather
 than the scorecard, so opening a correction does not strand them.
+
+They are working notes for an interview, so they stop being writable when the
+interview is over for that person — a withdrawn assignment (404, like any
+scorecard that is not theirs), a final decision, or an erased candidate — and
+they are purged by the nightly retention job ``NOTES_RETENTION_DAYS`` after the
+final decision, or after the interviewer's assignment was withdrawn
+(``purge_expired_notes``). Nothing keeps them past their purpose.
 """
 
 from __future__ import annotations
@@ -33,7 +40,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -47,6 +54,7 @@ from app.interviewer_scorecards import (
     _load_owned,
 )
 from app.models import AuditLog
+from app.requisitions import TERMINAL_STATUSES
 from app.workflows import load_criteria
 
 log = structlog.get_logger(__name__)
@@ -56,6 +64,11 @@ MAX_ITEMS = 10
 MAX_ITEM_CHARS = 300
 MAX_LONG_TEXT = 8000
 MAX_NOTES = 20000
+#: Days private notes are kept after the interview ends for their author. The
+#: same window as the session-recording purge (settings.retention_days default).
+NOTES_RETENTION_DAYS = 90
+#: Rows one nightly run deletes; the rest wait for the next run.
+NOTES_PURGE_BATCH = 5000
 
 
 @dataclass(frozen=True)
@@ -130,14 +143,18 @@ def _shape(
     }
 
 
-async def _load_kit(db: AsyncSession, round_id: uuid.UUID) -> dict[str, Any] | None:
+async def _load_kit(
+    db: AsyncSession, round_id: uuid.UUID, company_id: uuid.UUID
+) -> dict[str, Any] | None:
+    # Every caller has already proved the round is this company's; the filter
+    # is here anyway, like every other query in this module.
     row = (
         await db.execute(
             text(
                 "SELECT instructions, interviewer_notes, guidance, updated_at"
-                "  FROM interview_kits WHERE round_id = :r"
+                "  FROM interview_kits WHERE round_id = :r AND company_id = :c"
             ),
-            {"r": round_id},
+            {"r": round_id, "c": company_id},
         )
     ).mappings().first()
     return dict(row) if row else None
@@ -154,7 +171,7 @@ async def get_kit(
                  "human interview rounds."
         )
     criteria = (await load_criteria(db, [round_id])).get(str(round_id), [])
-    return _shape(round_["title"], await _load_kit(db, round_id), criteria)
+    return _shape(round_["title"], await _load_kit(db, round_id, company_id), criteria)
 
 
 async def update_kit(
@@ -211,7 +228,7 @@ async def update_kit(
     new_instructions = _clean_text(instructions, label="Instructions")
     new_notes = _clean_text(interviewer_notes, label="Notes for interviewers")
 
-    current = await _load_kit(db, round_id)
+    current = await _load_kit(db, round_id, company_id)
     old_guidance: dict[str, Any] = (current or {}).get("guidance") or {}
     changed: list[str] = []
     if (current or {}).get("instructions") != new_instructions:
@@ -256,7 +273,7 @@ async def update_kit(
     )
     await db.flush()
     log.info("interview_kit.updated", round_id=str(round_id), changed=changed)
-    return _shape(round_["title"], await _load_kit(db, round_id), frozen)
+    return _shape(round_["title"], await _load_kit(db, round_id, company_id), frozen)
 
 
 async def kit_for_scorecard(
@@ -273,7 +290,7 @@ async def kit_for_scorecard(
     )
     round_id = uuid.UUID(str(card["round_id"]))
     criteria = (await load_criteria(db, [round_id])).get(str(round_id), [])
-    return _shape(card["round_title"], await _load_kit(db, round_id), criteria)
+    return _shape(card["round_title"], await _load_kit(db, round_id, company_id), criteria)
 
 
 async def get_notes(
@@ -319,10 +336,21 @@ async def save_notes(
     """
     if len(notes) > MAX_NOTES:
         raise ScorecardError(422, f"Notes are limited to {MAX_NOTES} characters.")
+    # A withdrawn assignment is already a 404 here (_load_owned).
     card = await _load_owned(
         db, scorecard_id=scorecard_id, interviewer_user_id=interviewer_user_id,
-        company_id=company_id,
+        company_id=company_id, for_update=True,
     )
+    if card["enrolment_status"] in TERMINAL_STATUSES:
+        raise ScorecardError(
+            409, "A final decision has been recorded for this candidate, so the interview "
+                 "notes are closed."
+        )
+    if card.get("candidate_erased"):
+        raise ScorecardError(
+            409, "This candidate's personal data has been erased or is being erased, so "
+                 "nothing more can be recorded about them."
+        )
     now = datetime.now(tz=UTC)
     await db.execute(
         text(
@@ -362,3 +390,53 @@ async def copy_kits(
         )
         copied += getattr(result, "rowcount", 0) or 0
     return copied
+
+
+async def purge_expired_notes(
+    db: AsyncSession, *, retention_days: int = NOTES_RETENTION_DAYS, dry_run: bool = False
+) -> int:
+    """Delete private notes whose interview ended long enough ago. Caller commits.
+
+    A note's interview has ended for its author when EITHER
+      * the application reached a final decision (hired / rejected) more than
+        ``retention_days`` ago — dated by the stage ledger, not by
+        ``enrolments.updated_at``, which a rescore can move; or
+      * the author holds no remaining assignment for that interview (every one
+        withdrawn), and the notes have not been touched for ``retention_days``.
+        They are unreadable to their author already, so there is nobody left
+        they serve.
+
+    Notes on an application still in progress are never touched. Bounded to
+    ``NOTES_PURGE_BATCH`` rows a run. Returns how many rows were (or, in dry
+    run, would be) deleted.
+    """
+    cutoff = datetime.now(tz=UTC) - timedelta(days=retention_days)
+    ids = (
+        await db.execute(
+            text(
+                "SELECT n.id FROM interviewer_notes n"
+                "  JOIN enrolments e ON e.id = n.enrolment_id"
+                " WHERE (e.status IN ('hired', 'rejected')"
+                "        AND (SELECT max(t.occurred_at) FROM stage_transitions t"
+                "              WHERE t.enrolment_id = e.id"
+                "                AND t.to_status IN ('hired', 'rejected')) < :cutoff)"
+                "    OR (n.updated_at < :cutoff"
+                "        AND NOT EXISTS (SELECT 1 FROM interviewer_scorecards s"
+                "                         WHERE s.round_id = n.round_id"
+                "                           AND s.enrolment_id = n.enrolment_id"
+                "                           AND s.interviewer_user_id = n.interviewer_user_id"
+                "                           AND s.status <> 'withdrawn'))"
+                " LIMIT :lim"
+            ),
+            {"cutoff": cutoff, "lim": NOTES_PURGE_BATCH},
+        )
+    ).scalars().all()
+    if dry_run or not ids:
+        log.info("interviewer_notes.retention", candidates=len(ids), dry_run=dry_run)
+        return len(ids)
+    result = await db.execute(
+        text("DELETE FROM interviewer_notes WHERE id = ANY(:ids)"), {"ids": list(ids)}
+    )
+    deleted = getattr(result, "rowcount", 0) or 0
+    log.info("interviewer_notes.retention", deleted=deleted, dry_run=False)
+    return deleted

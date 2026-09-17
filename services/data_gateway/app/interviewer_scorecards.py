@@ -16,10 +16,27 @@ evidence is gathered by many, decided by a person.
 INDEPENDENCE
 Interviewers never see each other's scorecards — there is no interviewer-facing
 read of anybody else's. An HR manager can ALSO be assigned as an interviewer,
-and HR can read submitted scorecards; so an HR reader who still owes their own
-scorecard for a round sees the others' CONTENT hidden until they submit. Without
-that, "interviewers submit independently" holds for interviewers and quietly
-fails for the HR managers who interview.
+and HR can read submitted scorecards, so the HR manager who interviews is the
+one reader the rule has to be built for:
+
+* while they owe their own scorecard for a round, the others' content for that
+  round — scores, summary, and the correction reasons that can quote them — is
+  hidden from them;
+* they cannot withdraw themselves (read, then get re-assigned): another HR
+  manager has to withdraw them;
+* they cannot be assigned to a round where somebody else has already submitted,
+  because they may already have read it;
+* a correction they open once others' scorecards are readable is allowed — a
+  real mistake still needs fixing — but is stamped
+  ``corrected_after_peers_visible`` and shown to HR as such.
+
+A withdrawn assignment is gone for the interviewer: its scorecard, kit and
+notes answer 404, exactly like somebody else's.
+
+ERASURE
+Nothing new is written about a candidate who has been anonymised or has a
+pending erasure request — no assignment, draft, submission, correction or note.
+Erasure step 5f withdraws open assignments and redacts the prose that exists.
 
 WHERE THE GUARANTEES LIVE
 The database enforces the ones that must never bend (migration d2f4a6c8e0b1):
@@ -94,6 +111,27 @@ def derived_state(status: str, due_at: datetime | None, now: datetime | None = N
     return status
 
 
+# ``candidate_erased`` — computed in each query that loads an applicant for a
+# write — is true when nothing more may be written about them: anonymised by
+# erasure step 6 (full_name '[redacted]', email NULL), or with an erasure
+# request on file. Written out in full in each query rather than interpolated
+# (B608); test_ph4_wave1 checks every write path carries it.
+_ERASED_DETAIL = (
+    "This candidate's personal data has been erased or is being erased, so nothing "
+    "more can be recorded about them."
+)
+
+
+def _reason_facts(reason: str | None) -> dict[str, Any]:
+    """What an audit row keeps about free text: that it exists, and its size.
+
+    Never the text. The audit log is append-only and is not redacted by erasure,
+    and a correction or withdrawal reason is prose that can quote or name the
+    candidate. The text itself lives on the scorecard, where step 5f redacts it.
+    """
+    return {"has_reason": bool(reason), "reason_chars": len(reason or "")}
+
+
 def _audit(
     db: AsyncSession,
     *,
@@ -127,21 +165,26 @@ async def list_assignable_interviewers(
     rows = (
         await db.execute(
             text(
-                "SELECT DISTINCT ON (u.id) u.id, u.full_name, u.email, r.name AS role"
+                "SELECT u.id, u.full_name, u.email,"
+                # Labelled interviewer when they hold it, so a person holding
+                # both is labelled by the role they were created for.
+                "       CASE WHEN bool_or(r.name = 'interviewer') THEN 'interviewer'"
+                "            ELSE 'hr_manager' END AS role,"
+                # Whoever holds hr_manager can read every submitted scorecard.
+                "       bool_or(r.name = 'hr_manager') AS reads_scorecards"
                 "  FROM users u"
                 "  JOIN user_roles ur ON ur.user_id = u.id"
                 "  JOIN roles r ON r.id = ur.role_id AND r.name = ANY(:roles)"
                 " WHERE u.company_id = :c AND u.deleted_at IS NULL AND u.is_active"
-                # interviewer before hr_manager, so a person holding both is
-                # labelled by the role they were created for.
-                " ORDER BY u.id, (r.name = 'interviewer') DESC"
+                " GROUP BY u.id, u.full_name, u.email"
             ),
             {"c": company_id, "roles": list(INTERVIEWER_ROLES)},
         )
     ).mappings().all()
     people = [
         {"user_id": str(r["id"]), "full_name": r["full_name"] or r["email"],
-         "email": r["email"], "role": r["role"]}
+         "email": r["email"], "role": r["role"],
+         "reads_scorecards": bool(r["reads_scorecards"])}
         for r in rows
     ]
     return sorted(people, key=lambda p: p["full_name"].lower())
@@ -175,21 +218,30 @@ async def assign(
             422, f"Assign at most {MAX_INTERVIEWERS_PER_CALL} interviewers at once."
         )
 
+    # FOR SHARE OF e: a final decision takes FOR UPDATE on the enrolment, so an
+    # assignment cannot commit on top of a decision recorded a moment earlier.
     enrolment = (
         await db.execute(
             text(
                 "SELECT e.id, e.workflow_id, e.status, e.requisition_id, a.full_name,"
-                "       COALESCE(jr.title, e.target_job_title) AS job_title"
+                "       a.user_id AS applicant_user_id, a.email AS applicant_email,"
+                "       COALESCE(jr.title, e.target_job_title) AS job_title,"
+                "       ((a.full_name = '[redacted]' AND a.email IS NULL)"
+                "        OR EXISTS (SELECT 1 FROM erasure_requests er"
+                "                    WHERE er.user_id = a.user_id)) AS candidate_erased"
                 "  FROM enrolments e"
                 "  JOIN applicants a ON a.id = e.applicant_id"
                 "  LEFT JOIN job_requisitions jr ON jr.id = e.requisition_id"
                 " WHERE e.id = :e AND e.company_id = :c AND e.deleted_at IS NULL"
+                " FOR SHARE OF e"
             ),
             {"e": enrolment_id, "c": company_id},
         )
     ).mappings().first()
     if enrolment is None:
         raise ScorecardError(404, "Application not found.")
+    if enrolment.get("candidate_erased"):
+        raise ScorecardError(409, _ERASED_DETAIL)
     if enrolment["status"] in TERMINAL_STATUSES:
         raise ScorecardError(
             409, f"A final decision ({enrolment['status']}) is already recorded for this "
@@ -237,6 +289,52 @@ async def assign(
             422, "Only active interviewers and HR managers in your company can be "
                  f"assigned ({len(unknown)} not eligible)."
         )
+
+    # Nobody interviews themselves. An internal candidate can be company staff,
+    # matched by account or, for an application made by email, by address.
+    applicant_email = (enrolment.get("applicant_email") or "").strip().lower()
+    for interviewer_id in ids:
+        person = eligible[str(interviewer_id)]
+        if (
+            interviewer_id == enrolment.get("applicant_user_id")
+            or (applicant_email and (person["email"] or "").strip().lower() == applicant_email)
+        ):
+            raise ScorecardError(
+                409, f"{person['full_name']} is the candidate on this application and "
+                     "cannot interview themselves."
+            )
+
+    # Independence for the interviewers who can read scorecards (HR managers).
+    # Once anyone else has submitted for this candidate and round, such a person
+    # may already have read it, so their scorecard would not be independent.
+    # Somebody who already holds a live scorecard is exempt — re-sending the
+    # same panel stays harmless, and their card predates what they could see.
+    readers = [i for i in ids if eligible[str(i)]["reads_scorecards"]]
+    if readers:
+        existing = (
+            await db.execute(
+                text(
+                    "SELECT interviewer_user_id, status, superseded_at"
+                    "  FROM interviewer_scorecards"
+                    " WHERE enrolment_id = :e AND round_id = :r AND company_id = :c"
+                ),
+                {"e": enrolment_id, "r": round_id, "c": company_id},
+            )
+        ).mappings().all()
+        live = {
+            r["interviewer_user_id"] for r in existing
+            if r["status"] != "withdrawn" and r["superseded_at"] is None
+        }
+        submitted_by = {r["interviewer_user_id"] for r in existing if r["status"] == "submitted"}
+        for interviewer_id in readers:
+            if interviewer_id in live:
+                continue
+            if submitted_by - {interviewer_id}:
+                raise ScorecardError(
+                    409, f"{eligible[str(interviewer_id)]['full_name']} can already read the "
+                         f"scorecards submitted for {round_['title']}, so a scorecard from them "
+                         "now would not be independent. Assign someone who has not seen them."
+                )
 
     created: list[dict[str, Any]] = []
     already: list[str] = []
@@ -310,18 +408,42 @@ async def withdraw(
     actor: uuid.UUID,
     reason: str | None,
     meta: RequestMeta,
+    removing_interviewer: bool = False,
 ) -> None:
     """Take an assignment back before it is submitted. Caller commits.
 
     A submitted scorecard is evidence and cannot be withdrawn — the database
     refuses it as well; this says so in words first.
+
+    Two further refusals, both about the scorecards that remain meaning what
+    they say:
+
+    * the assigned interviewer cannot withdraw themselves. An HR manager on the
+      panel could otherwise withdraw, read the others, and be re-assigned —
+      another HR manager has to do it;
+    * an open CORRECTION cannot be withdrawn. Its original is already
+      superseded, so withdrawing the correction would leave that interviewer
+      with no live scorecard and drop them from every count. Finish or resubmit
+      it instead. ``removing_interviewer`` lifts this for the one caller that
+      must close everything: removing the person from the company.
     """
     row = (
         await db.execute(
             text(
-                "SELECT id, status, superseded_at, interviewer_user_id, enrolment_id"
-                "  FROM interviewer_scorecards"
-                " WHERE id = :s AND company_id = :c FOR UPDATE"
+                "SELECT s.id, s.status, s.superseded_at, s.interviewer_user_id,"
+                "       s.enrolment_id, s.corrects_id, s.assigned_by_user_id,"
+                "       e.requisition_id, a.full_name AS candidate_name,"
+                "       COALESCE(jr.title, e.target_job_title) AS job_title,"
+                "       jr.owner_user_id AS requisition_owner, wr.title AS round_title,"
+                "       ((a.full_name = '[redacted]' AND a.email IS NULL)"
+                "        OR EXISTS (SELECT 1 FROM erasure_requests er"
+                "                    WHERE er.user_id = a.user_id)) AS candidate_erased"
+                "  FROM interviewer_scorecards s"
+                "  JOIN enrolments e ON e.id = s.enrolment_id"
+                "  JOIN applicants a ON a.id = e.applicant_id"
+                "  JOIN workflow_rounds wr ON wr.id = s.round_id"
+                "  LEFT JOIN job_requisitions jr ON jr.id = e.requisition_id"
+                " WHERE s.id = :s AND s.company_id = :c FOR UPDATE OF s"
             ),
             {"s": scorecard_id, "c": company_id},
         )
@@ -332,7 +454,34 @@ async def withdraw(
         raise ScorecardError(
             409, "Only an assignment that has not been submitted can be withdrawn."
         )
-    why = (reason or "").strip()[:1000] or None
+    if row["interviewer_user_id"] == actor:
+        # Refused where someone else can do it. A company with a single HR
+        # manager has nobody else, and a dead end there would leave them on a
+        # panel for ever; allowing it is safe because assign() refuses their
+        # re-assignment once anyone else's scorecard is readable, which is what
+        # withdraw-read-reassign needed.
+        others = await db.scalar(
+            text(
+                "SELECT count(*) FROM users u"
+                "  JOIN user_roles ur ON ur.user_id = u.id"
+                "  JOIN roles r ON r.id = ur.role_id AND r.name = 'hr_manager'"
+                " WHERE u.company_id = :c AND u.id <> :me"
+                "   AND u.deleted_at IS NULL AND u.is_active"
+            ),
+            {"c": company_id, "me": actor},
+        )
+        if others:
+            raise ScorecardError(
+                409, "You can't withdraw yourself from an interview panel. Ask another HR "
+                     "manager to withdraw you, so the scorecards stay independent."
+            )
+    if row["corrects_id"] is not None and not removing_interviewer:
+        raise ScorecardError(
+            409, "This is an open correction of a submitted scorecard. Withdrawing it would "
+                 "leave no current scorecard from this interviewer; ask them to resubmit it."
+        )
+    # Nothing new is written about an erased candidate — not even HR's reason.
+    why = None if row["candidate_erased"] else ((reason or "").strip()[:1000] or None)
     await db.execute(
         text(
             "UPDATE interviewer_scorecards SET status = 'withdrawn', withdrawn_at = now(),"
@@ -343,26 +492,77 @@ async def withdraw(
     _audit(
         db, actor_id=actor, action="scorecard.withdrawn", scorecard_id=scorecard_id,
         details={"company_id": str(company_id), "enrolment_id": str(row["enrolment_id"]),
-                 "interviewer_user_id": str(row["interviewer_user_id"]), "reason": why},
+                 "interviewer_user_id": str(row["interviewer_user_id"]),
+                 "removing_interviewer": removing_interviewer, **_reason_facts(why)},
         meta=meta,
     )
+    # The reason is not repeated here: a notification outlives an erasure, and
+    # the reason is readable where it can be redacted — on the scorecard.
     await create_notification(
         db, user_id=row["interviewer_user_id"], kind="interview_unassigned",
         title="An interview assignment was withdrawn",
-        body=why, link="/interviewer",
+        body=f"{row['round_title']} · {row['job_title']}", link="/interviewer",
     )
+    # Whoever assigned it, and the opening's owner, learn their panel shrank —
+    # unless they are the one who shrank it.
+    await _notify_hr(
+        db, card=dict(row), title="An interviewer was withdrawn from a panel",
+        exclude={actor},
+    )
+
+
+async def withdraw_open_for_interviewer(
+    db: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    interviewer_user_id: uuid.UUID,
+    actor: uuid.UUID,
+    reason: str,
+    meta: RequestMeta,
+) -> int:
+    """Withdraw every unsubmitted assignment a person holds. Caller commits.
+
+    For removing somebody from the company — an interviewer or an HR manager
+    who interviews. Left alone, each assignment would sit "late" for ever
+    against someone who can no longer sign in. Goes through ``withdraw`` one
+    scorecard at a time, so each gets its own audit row and notifications.
+    """
+    ids = (
+        await db.execute(
+            text(
+                "SELECT id FROM interviewer_scorecards"
+                " WHERE interviewer_user_id = :iv AND company_id = :c"
+                "   AND status IN ('assigned', 'in_progress') AND superseded_at IS NULL"
+            ),
+            {"iv": interviewer_user_id, "c": company_id},
+        )
+    ).scalars().all()
+    for scorecard_id in ids:
+        await withdraw(
+            db, company_id=company_id, scorecard_id=scorecard_id, actor=actor,
+            reason=reason, meta=meta, removing_interviewer=True,
+        )
+    return len(ids)
 
 
 # ---------------------------------------------------------------------------
 # The interviewer's side
 # ---------------------------------------------------------------------------
+# A WITHDRAWN assignment is not the interviewer's any more: it answers 404 like
+# somebody else's, and so do its kit and notes. Withdrawal is how HR removes a
+# person over a conflict of interest, and access that outlived it would make
+# "sees only the interviews assigned to them" untrue.
 _OWNED_SQL = """
 SELECT s.id, s.company_id, s.enrolment_id, s.round_id, s.interviewer_user_id,
        s.assigned_by_user_id, s.status, s.due_at, s.summary, s.started_at,
        s.submitted_at, s.corrects_id, s.correction_reason, s.superseded_at,
        s.superseded_by_id, s.redacted_at, s.created_at,
+       s.corrected_after_peers_visible,
        e.status AS enrolment_status, e.requisition_id,
        a.full_name AS candidate_name,
+       ((a.full_name = '[redacted]' AND a.email IS NULL)
+        OR EXISTS (SELECT 1 FROM erasure_requests er
+                    WHERE er.user_id = a.user_id)) AS candidate_erased,
        COALESCE(jr.title, e.target_job_title) AS job_title,
        jr.owner_user_id AS requisition_owner,
        wr.title AS round_title, wr.kind AS round_kind
@@ -372,7 +572,13 @@ SELECT s.id, s.company_id, s.enrolment_id, s.round_id, s.interviewer_user_id,
   JOIN workflow_rounds wr ON wr.id = s.round_id
   LEFT JOIN job_requisitions jr ON jr.id = e.requisition_id
  WHERE s.id = :s AND s.company_id = :c AND s.interviewer_user_id = :iv
+   AND s.status <> 'withdrawn'
 """
+# Writes lock the scorecard AND share-lock the enrolment. A final decision takes
+# FOR UPDATE on the enrolment, so a submission or correction can no longer
+# commit on top of a decision recorded a moment before it; whichever is second
+# waits, then sees the other.
+_OWNED_FOR_WRITE_SUFFIX = " FOR UPDATE OF s FOR SHARE OF e"
 
 
 async def _load_owned(
@@ -389,7 +595,7 @@ async def _load_owned(
     learn which ones exist. Ownership is in the WHERE clause, so there is no
     code path that loads a scorecard and then forgets to check whose it is.
     """
-    sql = _OWNED_SQL + (" FOR UPDATE OF s" if for_update else "")
+    sql = _OWNED_SQL + (_OWNED_FOR_WRITE_SUFFIX if for_update else "")
     row = (
         await db.execute(
             text(sql), {"s": scorecard_id, "c": company_id, "iv": interviewer_user_id}
@@ -474,7 +680,7 @@ async def get_for_interviewer(
     )
     criteria = (await load_criteria(db, [card["round_id"]])).get(str(card["round_id"]), [])
     scores = await _scores_for(db, scorecard_id)
-    decided = card["enrolment_status"] in TERMINAL_STATUSES
+    decided = card["enrolment_status"] in TERMINAL_STATUSES or bool(card.get("candidate_erased"))
     live = card["superseded_at"] is None
     return {
         "scorecard_id": str(card["id"]),
@@ -565,6 +771,8 @@ async def save_draft(
             409, "A final decision has been recorded for this candidate, so the scorecard "
                  "is locked."
         )
+    if card.get("candidate_erased"):
+        raise ScorecardError(409, _ERASED_DETAIL)
 
     criteria = (await load_criteria(db, [card["round_id"]])).get(str(card["round_id"]), [])
     _validate_payload({c["competency_id"] for c in criteria}, scores, summary)
@@ -723,6 +931,26 @@ async def open_correction(
             409, "A final decision has been recorded for this candidate, so the evidence it "
                  "rested on is locked."
         )
+    if card.get("candidate_erased"):
+        raise ScorecardError(409, _ERASED_DETAIL)
+
+    # Could the person correcting read the others' scorecards right now? Only
+    # an HR manager can, and only once somebody else has submitted. Allowed —
+    # a real mistake still needs correcting — but stored on the correction, so
+    # HR weighing the evidence can see this version may not be independent.
+    peers_visible = bool(
+        await db.scalar(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id"
+                "                WHERE ur.user_id = :iv AND r.name = 'hr_manager')"
+                "   AND EXISTS (SELECT 1 FROM interviewer_scorecards o"
+                "                WHERE o.enrolment_id = :e AND o.round_id = :r"
+                "                  AND o.interviewer_user_id <> :iv"
+                "                  AND o.status = 'submitted')"
+            ),
+            {"iv": interviewer_user_id, "e": card["enrolment_id"], "r": card["round_id"]},
+        )
+    )
 
     new_id = uuid.uuid4()
     now = datetime.now(tz=UTC)
@@ -740,12 +968,14 @@ async def open_correction(
         text(
             "INSERT INTO interviewer_scorecards (id, company_id, enrolment_id, round_id,"
             " interviewer_user_id, assigned_by_user_id, status, due_at, summary, started_at,"
-            " corrects_id, correction_reason, created_at, updated_at)"
+            " corrects_id, correction_reason, corrected_after_peers_visible, created_at,"
+            " updated_at)"
             " SELECT :new, company_id, enrolment_id, round_id, interviewer_user_id,"
-            "        assigned_by_user_id, 'in_progress', due_at, summary, :n, id, :why, :n, :n"
+            "        assigned_by_user_id, 'in_progress', due_at, summary, :n, id, :why,"
+            "        :peers, :n, :n"
             "   FROM interviewer_scorecards WHERE id = :old"
         ),
-        {"new": new_id, "old": scorecard_id, "why": why, "n": now},
+        {"new": new_id, "old": scorecard_id, "why": why, "peers": peers_visible, "n": now},
     )
     await db.execute(
         text(
@@ -761,15 +991,18 @@ async def open_correction(
         db, actor_id=interviewer_user_id, action="scorecard.correction_opened",
         scorecard_id=new_id,
         details={"company_id": str(company_id), "enrolment_id": str(card["enrolment_id"]),
-                 "corrects": str(scorecard_id), "reason": why},
+                 "corrects": str(scorecard_id),
+                 "corrected_after_peers_visible": peers_visible, **_reason_facts(why)},
         meta=meta,
     )
+    # The reason is read on the scorecard, where erasure can redact it — not
+    # copied into a notification that would outlive that.
     await _notify_hr(
         db, card=card, title=f"A scorecard for {card['candidate_name']} is being corrected",
-        body=why,
     )
     log.info("scorecard.correction_opened", corrects=str(scorecard_id), new=str(new_id))
-    return {"scorecard_id": str(new_id), "corrects": str(scorecard_id)}
+    return {"scorecard_id": str(new_id), "corrects": str(scorecard_id),
+            "corrected_after_peers_visible": peers_visible}
 
 
 async def _notify_hr(
@@ -779,11 +1012,12 @@ async def _notify_hr(
     title: str,
     body: str | None = None,
     dedupe: str | None = None,
+    exclude: set[uuid.UUID] | None = None,
 ) -> None:
     """Tell the people who can act: whoever assigned it, and the opening's owner."""
     recipients = {
         uid for uid in (card.get("assigned_by_user_id"), card.get("requisition_owner"))
-        if uid is not None
+        if uid is not None and uid not in (exclude or set())
     }
     for uid in recipients:
         await create_notification(
@@ -827,6 +1061,7 @@ async def scorecards_for_enrolment(
                 "SELECT s.id, s.round_id, s.interviewer_user_id, s.status, s.due_at, s.summary,"
                 "       s.submitted_at, s.withdrawn_at, s.withdrawn_reason, s.corrects_id,"
                 "       s.correction_reason, s.superseded_at, s.redacted_at, s.created_at,"
+                "       s.corrected_after_peers_visible,"
                 "       u.full_name AS interviewer_name, u.email AS interviewer_email,"
                 "       wr.title AS round_title, wr.position"
                 "  FROM interviewer_scorecards s"
@@ -890,14 +1125,20 @@ async def scorecards_for_enrolment(
             "submitted_at": r["submitted_at"].isoformat() if r["submitted_at"] else None,
             "superseded": r["superseded_at"] is not None,
             "is_correction": r["corrects_id"] is not None,
-            "correction_reason": r["correction_reason"],
+            "corrected_after_peers_visible": bool(r["corrected_after_peers_visible"]),
+            # Hidden while blinded, like the scores: "I scored Design 2, should
+            # have been 4" is a score.
+            "correction_reason": None,
             "withdrawn_reason": r["withdrawn_reason"],
             "redacted": r["redacted_at"] is not None,
             "summary": None,
             "scores": None,
         }
         own = r["interviewer_user_id"] == viewer_user_id
-        if r["status"] == "submitted" and (own or r["round_id"] not in blinded):
+        readable = own or r["round_id"] not in blinded
+        if readable:
+            entry["correction_reason"] = r["correction_reason"]
+        if r["status"] == "submitted" and readable:
             entry["summary"] = r["summary"]
             entry["scores"] = scores.get(r["id"], {})
         bucket["scorecards"].append(entry)
@@ -911,18 +1152,23 @@ async def summary_for_enrolments(
     """Counts for list views — how many assigned, submitted, late."""
     if not enrolment_ids:
         return {}
+    # Each interviewer's CURRENT scorecard: the live one, or — when a correction
+    # was withdrawn with its interviewer's removal — the submitted original it
+    # superseded, which is still that person's last word.
     rows = (
         await db.execute(
             text(
-                "SELECT enrolment_id,"
+                "SELECT s.enrolment_id,"
                 "       count(*) AS assigned,"
-                "       count(*) FILTER (WHERE status = 'submitted') AS submitted,"
-                "       count(*) FILTER (WHERE status IN ('assigned', 'in_progress')"
-                "                          AND due_at < now()) AS late"
-                "  FROM interviewer_scorecards"
-                " WHERE company_id = :c AND enrolment_id = ANY(:ids)"
-                "   AND superseded_at IS NULL AND status <> 'withdrawn'"
-                " GROUP BY enrolment_id"
+                "       count(*) FILTER (WHERE s.status = 'submitted') AS submitted,"
+                "       count(*) FILTER (WHERE s.status IN ('assigned', 'in_progress')"
+                "                          AND s.due_at < now()) AS late"
+                "  FROM interviewer_scorecards s"
+                "  LEFT JOIN interviewer_scorecards nxt ON nxt.id = s.superseded_by_id"
+                " WHERE s.company_id = :c AND s.enrolment_id = ANY(:ids)"
+                "   AND s.status <> 'withdrawn'"
+                "   AND (s.superseded_at IS NULL OR nxt.status = 'withdrawn')"
+                " GROUP BY s.enrolment_id"
             ),
             {"c": company_id, "ids": enrolment_ids},
         )

@@ -44,7 +44,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
     tag = uuid.uuid4().hex[:8]
 
     cid, other_cid = uuid.uuid4(), uuid.uuid4()
-    hr_uid, admin_uid = uuid.uuid4(), uuid.uuid4()
+    hr_uid, hr2_uid, admin_uid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     iv1, iv2, outsider = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     req, wf, rnd = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     applicant, enrolment = uuid.uuid4(), uuid.uuid4()
@@ -56,6 +56,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 " VALUES (:i,:s,:s,true,:n,:n)"), {"i": company, "s": slug, "n": now})
         people = (
             (hr_uid, cid, "hr_manager", "Hema HR"),
+            (hr2_uid, cid, "hr_manager", "Harish HR"),
             (admin_uid, cid, "super_admin", "Sam Admin"),
             (iv1, cid, "interviewer", "Amit Interviewer"),
             (iv2, cid, "interviewer", "Priya Interviewer"),
@@ -130,9 +131,9 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         async with factory() as session:
             yield session
 
-    acting: dict[str, uuid.UUID] = {"interviewer": iv1, "company": cid}
+    acting: dict[str, uuid.UUID] = {"interviewer": iv1, "company": cid, "hr": hr_uid}
     app.dependency_overrides[get_db_session] = _db
-    app.dependency_overrides[get_hr_company] = lambda: (hr_uid, cid)
+    app.dependency_overrides[get_hr_company] = lambda: (acting["hr"], cid)
     app.dependency_overrides[get_company_admin_ctx] = lambda: (admin_uid, cid)
     app.dependency_overrides[get_super_admin_company] = lambda: (admin_uid, cid)
     app.dependency_overrides[get_interviewer_company] = lambda: (
@@ -185,6 +186,14 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await client.post(f"/hr/enrolments/{enrolment}/scorecards",
                               json={"round_id": str(uuid.uuid4()), "interviewer_user_ids": [str(iv1)]})
         check("a round from nowhere is refused", r.status_code == 404, str(r.status_code))
+
+        # HR joins the panel while nobody has submitted — allowed, and blinded later.
+        r = await client.post(f"/hr/enrolments/{enrolment}/scorecards",
+                              json={"round_id": str(rnd), "interviewer_user_ids": [str(hr_uid)]})
+        check("HR can assign themself before anyone has submitted", r.status_code == 201,
+              r.text[:120])
+        hr_card = (r.json().get("created") or [{}])[0].get("scorecard_id", "") \
+            if r.status_code == 201 else ""
 
         print("\nPH4-A1 — interviewers see only their own")
         act_as(iv1)
@@ -255,25 +264,38 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the candidate is still on the same round", row["current_round_id"] == rnd)
 
         print("\nPH4-A1 — HR reads the evidence")
+        # Read by the HR manager who is NOT on the panel; the one who is, is blinded below.
+        acting["hr"] = hr2_uid
         r = await client.get(f"/hr/enrolments/{enrolment}/scorecards")
+        acting["hr"] = hr_uid
         rounds = r.json().get("rounds", []) if r.status_code == 200 else []
         cards = {c["scorecard_id"]: c for c in (rounds[0]["scorecards"] if rounds else [])}
-        check("HR sees the round with both scorecards", len(cards) == 2, r.text[:200])
+        check("HR sees the round with all three scorecards", len(cards) == 3, r.text[:200])
         check("the submitted scorecard's scores are visible",
               bool(cards.get(card1, {}).get("scores", {}).get("problem_solving")))
         check("the unsubmitted draft's content is NOT shown",
               cards.get(card2, {}).get("scores") is None and cards.get(card2, {}).get("summary") is None)
 
-        # HR assigns themself as a third interviewer — and is then blinded.
-        r = await client.post(f"/hr/enrolments/{enrolment}/scorecards",
-                              json={"round_id": str(rnd), "interviewer_user_ids": [str(hr_uid)]})
-        check("HR can assign themself as an interviewer", r.status_code == 201, r.text[:120])
         r = await client.get(f"/hr/enrolments/{enrolment}/scorecards")
         rnd0 = r.json()["rounds"][0] if r.status_code == 200 else {}
         c1 = next((c for c in rnd0.get("scorecards", []) if c["scorecard_id"] == card1), {})
         check("an HR reader who still owes a scorecard is blinded to the others",
               rnd0.get("hidden_until_you_submit") is True and c1.get("scores") is None,
               str(rnd0.get("hidden_until_you_submit")))
+
+        print("\nPH4-A1 — independence for the HR managers who interview (M2)")
+        r = await client.post(f"/hr/scorecards/{hr_card}/withdraw", json={"reason": "busy"})
+        check("an HR manager cannot withdraw themselves from the panel",
+              r.status_code == 409 and "another HR manager" in r.text, f"{r.status_code} {r.text[:120]}")
+        r = await client.post(f"/hr/enrolments/{enrolment}/scorecards",
+                              json={"round_id": str(rnd), "interviewer_user_ids": [str(hr2_uid)]})
+        check("an HR manager who could already read a submitted scorecard cannot join late",
+              r.status_code == 409 and "independent" in r.text, f"{r.status_code} {r.text[:160]}")
+        r = await client.post(f"/hr/enrolments/{enrolment}/scorecards",
+                              json={"round_id": str(rnd), "interviewer_user_ids": [str(hr_uid)]})
+        check("re-sending an HR manager already on the panel is still harmless",
+              r.status_code == 201 and r.json().get("already_assigned") == [str(hr_uid)],
+              r.text[:160])
 
         print("\nPH4-A1 — the audited correction path")
         act_as(iv1)
@@ -283,6 +305,14 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                               json={"reason": "I scored system design as not assessed by mistake."})
         check("a correction opens", r.status_code == 200, r.text[:160])
         card1b = r.json().get("scorecard_id", "") if r.status_code == 200 else ""
+        check("an interviewer who cannot read others is not flagged",
+              r.status_code == 200 and r.json().get("corrected_after_peers_visible") is False)
+        r = await client.get(f"/hr/enrolments/{enrolment}/scorecards")
+        c1b = next((c for c in r.json()["rounds"][0]["scorecards"]
+                    if c["scorecard_id"] == card1b), {}) if r.status_code == 200 else {}
+        check("a blinded HR reader cannot read the correction's reason either",
+              bool(c1b) and c1b.get("is_correction") is True and c1b.get("correction_reason") is None,
+              str(c1b)[:200])
         r = await client.get(f"/interviewer/scorecards/{card1b}")
         check("the correction starts as a copy of the original",
               r.status_code == 200 and r.json()["criteria"][0]["score"] == 4
@@ -306,6 +336,41 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 "SELECT not_assessed FROM interviewer_scorecard_scores"
                 " WHERE scorecard_id=:s AND competency_id='system_design'"), {"s": uuid.UUID(card1)})
         check("the ORIGINAL scores are still on record", orig == 4 and orig_sd is True)
+        async with factory() as db:
+            opened = (await db.execute(text(
+                "SELECT details FROM audit_log WHERE action='scorecard.correction_opened'"
+                " AND resource_id=:s"), {"s": uuid.UUID(card1b)})).scalars().first()
+        check("the audit row records that a reason was given, never its text",
+              opened is not None and opened.get("has_reason") is True
+              and "reason" not in opened and "mistake" not in str(opened), str(opened)[:200])
+
+        # The HR manager on the panel submits, then corrects after the others were readable.
+        act_as(hr_uid)
+        r = await client.post(f"/interviewer/scorecards/{hr_card}/submit", json={
+            "summary": "Solid.", "scores": [
+                {"competency_id": "problem_solving", "score": 3},
+                {"competency_id": "system_design", "score": 3}]})
+        check("the HR manager on the panel submits their own scorecard", r.status_code == 200,
+              r.text[:160])
+        r = await client.post(f"/interviewer/scorecards/{hr_card}/correction",
+                              json={"reason": "Rereading my notes, design deserved a 4."})
+        hr_card_b = r.json().get("scorecard_id", "") if r.status_code == 200 else ""
+        check("their correction is allowed, and stamped: peers were readable",
+              r.status_code == 200 and r.json().get("corrected_after_peers_visible") is True,
+              r.text[:160])
+        r = await client.get(f"/hr/enrolments/{enrolment}/scorecards")
+        flagged = next((c for c in r.json()["rounds"][0]["scorecards"]
+                        if c["scorecard_id"] == hr_card_b), {}) if r.status_code == 200 else {}
+        check("HR reading the evidence sees that flag",
+              flagged.get("corrected_after_peers_visible") is True, str(flagged)[:160])
+        r = await client.post(f"/hr/scorecards/{hr_card_b}/withdraw", json={})
+        check("an open correction cannot be withdrawn (it would drop them from the counts)",
+              r.status_code == 409, f"{r.status_code} {r.text[:120]}")
+        r = await client.post(f"/interviewer/scorecards/{hr_card_b}/submit", json={
+            "summary": "Solid.", "scores": [
+                {"competency_id": "problem_solving", "score": 3},
+                {"competency_id": "system_design", "score": 4}]})
+        check("and it resubmits", r.status_code == 200, r.text[:120])
 
         print("\nPH4-A1 — withdrawal")
         r = await client.post(f"/hr/scorecards/{card2}/withdraw", json={"reason": "Travelling"})
@@ -313,6 +378,25 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         act_as(iv2)
         r = await client.get("/interviewer/assignments")
         check("it disappears from that interviewer's list", r.status_code == 200 and r.json() == [])
+        r = await client.get(f"/interviewer/scorecards/{card2}")
+        check("the withdrawn scorecard is no longer theirs to open (M3)", r.status_code == 404,
+              str(r.status_code))
+        r = await client.get(f"/interviewer/scorecards/{card2}/kit")
+        check("nor its kit", r.status_code == 404, str(r.status_code))
+        r = await client.put(f"/interviewer/scorecards/{card2}/notes", json={"notes": "more"})
+        check("nor can they keep writing notes on it", r.status_code == 404, str(r.status_code))
+        async with factory() as db:
+            wd = (await db.execute(text(
+                "SELECT details FROM audit_log WHERE action='scorecard.withdrawn'"
+                " AND resource_id=:s"), {"s": uuid.UUID(card2)})).scalars().first()
+            note = (await db.execute(text(
+                "SELECT body FROM notifications WHERE user_id=:u AND kind='interview_unassigned'"
+                " ORDER BY created_at DESC LIMIT 1"), {"u": iv2})).scalars().first()
+        check("the withdrawal is audited without its reason text",
+              wd is not None and wd.get("has_reason") is True and "Travelling" not in str(wd),
+              str(wd)[:160])
+        check("and the interviewer's notification does not repeat it",
+              note is not None and "Travelling" not in note, str(note))
         r = await client.post(f"/hr/scorecards/{card1b}/withdraw", json={})
         check("a SUBMITTED scorecard cannot be withdrawn", r.status_code == 409, str(r.status_code))
 
@@ -324,6 +408,9 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await client.post(f"/interviewer/scorecards/{card1b}/correction",
                               json={"reason": "Trying to change it after the decision."})
         check("no correction once a final decision exists", r.status_code == 409, str(r.status_code))
+        r = await client.put(f"/interviewer/scorecards/{card1b}/notes", json={"notes": "late"})
+        check("no private notes once a final decision exists (M3)", r.status_code == 409,
+              str(r.status_code))
 
         print("\nPH4-A1 — audit trail")
         async with factory() as db:
@@ -349,6 +436,13 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 "SELECT count(*) FROM interviewer_scorecards WHERE interviewer_user_id=:u"
                 " AND status IN ('assigned','in_progress')"), {"u": iv2})
         check("their unsubmitted assignments were withdrawn with them", live == 0, str(live))
+        async with factory() as db:
+            per_card = await db.scalar(text(
+                "SELECT count(*) FROM audit_log WHERE action='scorecard.withdrawn'"
+                " AND details->>'interviewer_user_id' = :u"
+                " AND (details->>'removing_interviewer')::boolean"), {"u": str(iv2)})
+        check("each one withdrawn through withdraw(), with its own audit row", per_card == 1,
+              str(per_card))
         check("and their sessions were revoked", str(iv2) in auth_stub.revoked)
 
         print("\nPH4-A5 — interview kits")
@@ -449,6 +543,30 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         dec = f"/hr/enrolments/{enrolment}/decision"
         r = await client.post(dec, json={"decision": "rejected", "reason": "Not a fit"})
         check("a decision WITHOUT a category is refused", r.status_code == 422, str(r.status_code))
+        r = await client.patch(f"/hr/applicants/{applicant}", json={"status": "rejected"})
+        check("the applicant board can no longer reject with no reason (M1)",
+              r.status_code == 422, f"{r.status_code} {r.text[:120]}")
+        r = await client.patch(f"/hr/applicants/{applicant}",
+                               json={"status": "rejected", "reason": "Not a fit"})
+        check("...or with a reason but no category", r.status_code == 422,
+              f"{r.status_code} {r.text[:120]}")
+        r = await client.post(f"/hr/enrolments/{enrolment}/release-hold",
+                              json={"to_status": "hired", "reason": "go"})
+        check("a hold release cannot be used to hire (M1)", r.status_code == 422,
+              str(r.status_code))
+        async with factory() as db:
+            try:
+                await db.execute(text(
+                    "INSERT INTO stage_transitions (company_id, enrolment_id, from_status,"
+                    " to_status, automated, occurred_at) VALUES (:c, :e, 'shortlisted',"
+                    " 'rejected', false, now())"), {"c": cid, "e": enrolment})
+                await db.commit()
+                trigger_refused = False
+            except Exception as exc:  # noqa: BLE001 — the refusal is the point
+                await db.rollback()
+                trigger_refused = "needs a reason_code" in str(exc)
+        check("and the ledger itself refuses a code-less decision, whatever the path",
+              trigger_refused)
         r = await client.post(dec, json={"decision": "rejected", "reason": "Not a fit",
                                          "reason_code": "made_up"})
         check("an unknown category is refused", r.status_code == 422, str(r.status_code))
@@ -477,13 +595,23 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               and (row["reason"] or "").startswith("System design"), str(row))
 
         r = await client.patch(f"/admin/decision-reasons/{new_code}",
-                               json={"label": "Background verification failed", "active": False})
-        check("the category is renamed and retired", r.status_code == 200, r.text[:160])
+                               json={"label": "Relocation not possible"})
+        check("a reason already used cannot be renamed to mean something else (L4)",
+              r.status_code == 409 and "Retire it" in r.text, f"{r.status_code} {r.text[:160]}")
+        r = await client.patch(f"/admin/decision-reasons/{new_code}",
+                               json={"label": "Failed Background Check", "active": False})
+        check("but it can be tidied (case, spacing), and retired", r.status_code == 200,
+              r.text[:160])
         r = await client.get(f"/hr/enrolments/{enrolment}/history")
         labels = [h.get("reason_label") for h in r.json()] if r.status_code == 200 else []
-        check("history still shows the label AS CHOSEN, not the rename",
+        check("history still shows the label AS CHOSEN, not the edit",
               "Failed background check" in labels
-              and "Background verification failed" not in labels, str(labels))
+              and "Failed Background Check" not in labels, str(labels))
+        r = await client.post("/admin/decision-reasons",
+                              json={"label": "C++", "applies_to": "rejected"})
+        check("a label with too little ASCII still gets a valid code, not a 500 (L5)",
+              r.status_code == 201 and len(r.json().get("code", "")) >= 2,
+              f"{r.status_code} {r.text[:160]}")
         r = await client.get("/hr/decision-reasons")
         check("a retired category is no longer offered",
               new_code not in [x["code"] for x in r.json()])
@@ -494,6 +622,30 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("taxonomy changes are audited",
               {"decision_reason.created", "decision_reason.updated"} <= reason_audits,
               str(reason_audits))
+
+        print("\nPH4-A1 — nothing new about an erased candidate (M4)")
+        async with factory() as db:
+            await db.execute(text(
+                "UPDATE enrolments SET status='shortlisted' WHERE id=:e"), {"e": enrolment})
+            await db.execute(text(
+                "UPDATE applicants SET full_name='[redacted]', email=NULL WHERE id=:a"),
+                {"a": applicant})
+            await db.commit()
+        r = await client.post(f"/hr/enrolments/{enrolment}/scorecards",
+                              json={"round_id": str(rnd), "interviewer_user_ids": [str(iv1)]})
+        check("no new assignment", r.status_code == 409 and "erased" in r.text,
+              f"{r.status_code} {r.text[:120]}")
+        act_as(iv1)
+        r = await client.post(f"/interviewer/scorecards/{card1b}/correction",
+                              json={"reason": "Adding detail about the candidate."})
+        check("no correction", r.status_code == 409 and "erased" in r.text,
+              f"{r.status_code} {r.text[:120]}")
+        r = await client.put(f"/interviewer/scorecards/{card1b}/notes", json={"notes": "x"})
+        check("no private notes", r.status_code == 409 and "erased" in r.text,
+              f"{r.status_code} {r.text[:120]}")
+        r = await client.get(f"/interviewer/scorecards/{card1b}")
+        check("and the scorecard shows as locked",
+              r.status_code == 200 and r.json()["can_correct"] is False, r.text[:120])
 
         print("\nPH4-A1 — no session, no access")
         app.dependency_overrides.pop(get_interviewer_company, None)

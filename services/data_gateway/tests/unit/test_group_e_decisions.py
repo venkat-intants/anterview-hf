@@ -175,7 +175,7 @@ async def test_no_reason_no_decision(captured: dict[str, list], reason: str | No
         await record_final_decision(
             db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="rejected",
             reason=reason,
-        reason_code="skills_fit", actor_user_id=uuid.uuid4(),
+            reason_code="skills_fit", actor_user_id=uuid.uuid4(),
         )
     assert exc.value.status_code == 422
     assert captured["moves"] == [] and not db.add.called
@@ -190,7 +190,7 @@ async def test_a_refused_decision_writes_nothing(captured: dict[str, list]) -> N
         await record_final_decision(
             db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="hired",
             reason="Looks great so far",
-        reason_code="skills_fit", actor_user_id=uuid.uuid4(),
+            reason_code="skills_fit", actor_user_id=uuid.uuid4(),
         )
     assert exc.value.status_code == 409
     assert captured["moves"] == [] and captured["rounds"] == [] and not db.add.called
@@ -205,7 +205,7 @@ async def test_another_companys_application_is_not_found(captured: dict[str, lis
         await record_final_decision(
             db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="rejected",
             reason="Not a fit for the role",
-        reason_code="skills_fit", actor_user_id=uuid.uuid4(),
+            reason_code="skills_fit", actor_user_id=uuid.uuid4(),
         )
     assert exc.value.status_code == 404
     sql = str(db.execute.call_args.args[0])

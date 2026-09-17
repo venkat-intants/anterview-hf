@@ -31,7 +31,7 @@ re-checked against it, so a valid id from another tenant reads as 404.
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -165,7 +165,9 @@ class ApplyDraftIn(BaseModel):
 
 
 class ReleaseIn(BaseModel):
-    to_status: str = "shortlisted"
+    # Continuing only. A hire or reject goes through the decision endpoint,
+    # which requires a reason code (PH4-O4); release_hold refuses it as well.
+    to_status: Literal["shortlisted", "interviewed"] = "shortlisted"
     reason: str | None = Field(default=None, max_length=1000)
 
 

@@ -65,9 +65,17 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
         for key, title in (("a", "Python Developer"), ("b", "Data Analyst"),
                            ("c", "QA Engineer"), ("d", "Support Lead")):
             await db.execute(text(
+        # approval_status: PH3-B2 put an approval gate in front of the
+        # public surface, and an opening seeded straight into the table
+        # defaults to draft — so every public-apply check here failed with
+        # "not accepting applications". Seeded approved: what this smoke is
+        # about is not the approval gate, which has its own tests. The
+# decided-at goes with it: a CHECK constraint holds that a decided
+# opening records when.
                 "INSERT INTO job_requisitions (id,company_id,title,level,status,from_backfill,"
-                " public_apply_enabled,owner_user_id,created_by_user_id,created_at,updated_at)"
-                " VALUES (:i,:c,:t,'mid','open',false,true,:u,:u,:n,:n)"),
+                " public_apply_enabled,approval_status,approval_decided_at,"
+                " owner_user_id,created_by_user_id,created_at,updated_at)"
+                " VALUES (:i,:c,:t,'mid','open',false,true,'approved',:n,:u,:u,:n,:n)"),
                 {"i": req[key], "c": cid, "t": title, "u": hr, "n": now})
 
         # Opening A: AI interview -> human review, built as a draft then published.

@@ -39,6 +39,8 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.decision_reasons import ReasonError
+from app.decision_reasons import resolve as resolve_reason
 from app.models import Applicant, AuditLog
 from app.requisitions import record_round_move, record_transition
 
@@ -108,6 +110,7 @@ async def record_final_decision(
     enrolment_id: uuid.UUID,
     decision: str,
     reason: str | None,
+    reason_code: str | None,
     actor_user_id: uuid.UUID,
     ip_address: str | None = None,
     user_agent: str | None = None,
@@ -134,6 +137,19 @@ async def record_final_decision(
     if refused is not None:
         raise DecisionRefusedError(*refused)
 
+    # PH4-O4. Checked AFTER the decision itself is known to be allowed, and
+    # BEFORE anything is written: a decision refused for its own reasons should
+    # say so, not complain about a dropdown; and a decision with an invalid
+    # reason category must write nothing at all. Required, with no default, so
+    # a caller that forgets it fails at the call rather than recording a
+    # decision analytics can never categorise.
+    try:
+        chosen = await resolve_reason(
+            db, company_id=company_id, code=reason_code, decision=decision, reason=why
+        )
+    except ReasonError as exc:
+        raise DecisionRefusedError(exc.status_code, exc.detail) from exc
+
     if row["current_round_id"] is not None:
         await record_round_move(
             db,
@@ -152,6 +168,8 @@ async def record_final_decision(
         actor_user_id=actor_user_id,
         automated=False,
         reason=why,
+        reason_code=chosen.code,
+        reason_label=chosen.label,
     )
     if previous == "held":
         await db.execute(
@@ -175,6 +193,8 @@ async def record_final_decision(
                 ),
                 "previous_status": previous,
                 "reason": why,
+                "reason_code": chosen.code,
+                "reason_label": chosen.label,
                 "reversal": reversal,
             },
             ip_address=ip_address,
@@ -208,4 +228,6 @@ async def record_final_decision(
         "decided_by": str(actor_user_id),
         "decided_at": now.isoformat(),
         "reversal": reversal,
+        "reason_code": chosen.code,
+        "reason_label": chosen.label,
     }

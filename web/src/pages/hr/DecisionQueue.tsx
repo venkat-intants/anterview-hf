@@ -48,8 +48,8 @@ import {
   releaseHold,
   type DecisionQueueRow,
 } from '@/api/workflows';
-
-const MIN_REASON = 3;
+import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
+import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -79,8 +79,17 @@ function QueueCard({
 }) {
   const qc = useQueryClient();
   const [rationale, setRationale] = useState('');
+  const [reasonCode, setReasonCode] = useState('');
   const [pending, setPending] = useState<'hired' | 'rejected' | null>(null);
-  const reasonReady = rationale.trim().length >= MIN_REASON;
+
+  const reasonsQuery = useDecisionReasons();
+  const reasonOptions = reasonsFor(reasonsQuery.data, pending);
+  const chosenReason = reasonOptions.find((r) => r.code === reasonCode) ?? null;
+  const minReason = minReasonLength(chosenReason);
+  const reasonReady = rationale.trim().length >= minReason;
+  // Hire/reject additionally need a chosen reason code (O4); releasing a hold
+  // does not go through this gate at all.
+  const canConfirm = reasonReady && Boolean(reasonCode);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['hr', 'decision-queue', requisitionId] });
@@ -91,7 +100,7 @@ function QueueCard({
 
   const decideMut = useMutation({
     mutationFn: (decision: 'hired' | 'rejected') =>
-      recordFinalDecision(row.enrolment_id, { decision, reason: rationale }),
+      recordFinalDecision(row.enrolment_id, { decision, reason: rationale, reason_code: reasonCode }),
     onSuccess: (_r, decision) => {
       toast.success(decision === 'hired' ? `${row.full_name} hired` : `${row.full_name} rejected`);
       setPending(null);
@@ -167,6 +176,14 @@ function QueueCard({
               <span>
                 resume match {row.ats_overall}
                 {row.ats_recommendation ? ` (${row.ats_recommendation})` : ''}
+              </span>
+            ) : null}
+            {row.scorecards ? (
+              <span>
+                {row.scorecards.submitted}/{row.scorecards.assigned} scorecards in
+                {row.scorecards.late > 0 ? (
+                  <span className="text-[var(--ui-warn)]"> ({row.scorecards.late} late)</span>
+                ) : null}
               </span>
             ) : null}
           </div>
@@ -293,19 +310,29 @@ function QueueCard({
 
         {pending ? (
           <div className="flex w-full flex-wrap items-center gap-2 rounded-[12px] border border-border bg-black/25 p-3">
+            <div className="w-full">
+              <DecisionReasonSelect
+                id={`reason-code-${row.enrolment_id}`}
+                reasons={reasonOptions}
+                value={reasonCode}
+                onChange={setReasonCode}
+              />
+            </div>
             <span className="flex-1 text-[12.5px] text-[var(--ui-soft)]">
               {pending === 'hired' ? 'Mark hired' : 'Reject'} — {row.full_name}. This ends their
               candidacy for this opening and is recorded.
-              {!reasonReady ? (
+              {!canConfirm ? (
                 <span className="mt-1 block text-[11.5px] text-[var(--ui-warn)]">
-                  Write why above first.
+                  {!reasonCode
+                    ? 'Choose a reason above first.'
+                    : `Write at least ${minReason} characters above first.`}
                 </span>
               ) : null}
             </span>
             <button
               type="button"
               onClick={() => decideMut.mutate(pending)}
-              disabled={decideMut.isPending || !reasonReady}
+              disabled={decideMut.isPending || !canConfirm}
               className={cn(
                 'rounded-[10px] px-4 py-2 text-[12.5px] font-medium text-foreground disabled:opacity-40',
                 pending === 'hired' ? 'bg-[var(--ui-ok)]' : 'bg-[var(--ui-danger)]',
@@ -315,7 +342,7 @@ function QueueCard({
             </button>
             <button
               type="button"
-              onClick={() => setPending(null)}
+              onClick={() => { setPending(null); setReasonCode(''); }}
               className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground"
             >
               Cancel
@@ -325,7 +352,7 @@ function QueueCard({
           <>
             <button
               type="button"
-              onClick={() => setPending('hired')}
+              onClick={() => { setPending('hired'); setReasonCode(''); }}
               className="inline-flex items-center gap-1.5 rounded-[12px] border border-[var(--ui-ok)]/35 px-4 py-2 text-[13px] font-medium text-[var(--ui-ok)] hover:bg-[var(--ui-ok)]/10"
             >
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
@@ -333,7 +360,7 @@ function QueueCard({
             </button>
             <button
               type="button"
-              onClick={() => setPending('rejected')}
+              onClick={() => { setPending('rejected'); setReasonCode(''); }}
               className="inline-flex items-center gap-1.5 rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-muted-foreground hover:border-[var(--ui-danger)]/40 hover:text-[var(--ui-danger)]"
             >
               <XCircle className="h-4 w-4" aria-hidden="true" />

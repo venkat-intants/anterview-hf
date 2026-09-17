@@ -5,7 +5,8 @@
 //                     /admin/companies endpoints)
 //   super_admin     → HR managers in its OWN company (/admin/hr-managers)
 
-import { apiGet, apiPost, apiPut, apiDelete } from './client';
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from './client';
+import type { DecisionOutcome, DecisionReason } from './scorecards';
 
 export interface Company {
   id: string;
@@ -105,6 +106,56 @@ export function createMyHrManager(
 /** Soft-delete an HR manager in the caller's own company. */
 export function deleteMyHrManager(userId: string): Promise<void> {
   return apiDelete<void>(`/admin/hr-managers/${userId}`);
+}
+
+// ── Company super admin — interviewers in the caller's own company (D4-1) ───
+// Same shape as an HR manager row; a separate roster because the role is
+// separate. Removing one also withdraws their unsubmitted scorecard
+// assignments server-side — say so wherever this is offered as a destructive
+// action.
+
+export function listMyInterviewers(): Promise<HrManager[]> {
+  return apiGet<HrManager[]>('/admin/interviewers');
+}
+
+export function createMyInterviewer(
+  body: { email: string; full_name: string },
+): Promise<HrManager> {
+  return apiPost<HrManager>('/admin/interviewers', body);
+}
+
+/** Also withdraws this interviewer's unsubmitted scorecard assignments. */
+export function deleteMyInterviewer(userId: string): Promise<void> {
+  return apiDelete<void>(`/admin/interviewers/${userId}`);
+}
+
+// ── Decision-reason taxonomy (O4) — the company's own hire/reject reasons ──
+// Configured by the super admin; read (active only) by HR's decision
+// dropdowns via listDecisionReasons in api/scorecards.ts. Retiring a reason
+// never touches a decision already recorded with it.
+
+export interface CompanyDecisionReason extends DecisionReason {
+  active: boolean;
+  is_default: boolean;
+}
+
+export function listCompanyDecisionReasons(): Promise<CompanyDecisionReason[]> {
+  return apiGet<CompanyDecisionReason[]>('/admin/decision-reasons');
+}
+
+export function createDecisionReason(body: {
+  label: string;
+  applies_to: DecisionOutcome;
+  requires_explanation: boolean;
+}): Promise<CompanyDecisionReason> {
+  return apiPost<CompanyDecisionReason>('/admin/decision-reasons', body);
+}
+
+export function updateDecisionReason(
+  code: string,
+  fields: Partial<{ active: boolean; label: string }>,
+): Promise<CompanyDecisionReason> {
+  return apiPatch<CompanyDecisionReason>(`/admin/decision-reasons/${encodeURIComponent(code)}`, fields);
 }
 
 // ── DPDP audit log (platform owner) ─────────────────────────────────────────

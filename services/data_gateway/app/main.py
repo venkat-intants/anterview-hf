@@ -44,6 +44,7 @@ from app.config import settings
 from app.database import dispose_engine, get_db_session, get_session_factory, init_engine
 from app.dependencies import set_auth_provider
 from app.health import router as health_router
+from app.interview_kits import purge_expired_notes
 from app.mailer import purge_old_email_events, start_email_worker, stop_email_worker
 from app.redis_client import close_redis, get_redis, init_redis
 from app.retention import purge_expired_sessions
@@ -54,6 +55,8 @@ from app.routers.candidate_applications import router as candidate_applications_
 from app.routers.careers import router as careers_router
 from app.routers.company_board import router as company_board_router
 from app.routers.consent import router as consent_router
+from app.routers.decision_reasons import admin_router as decision_reasons_admin_router
+from app.routers.decision_reasons import hr_router as decision_reasons_hr_router
 from app.routers.exam_take import router as exam_take_router
 from app.routers.hr_applicants import router as hr_applicants_router
 from app.routers.hr_attention import router as hr_attention_router
@@ -64,8 +67,10 @@ from app.routers.hr_pipeline import router as hr_pipeline_router
 from app.routers.hr_questions import router as hr_questions_router
 from app.routers.hr_requisitions import router as hr_requisitions_router
 from app.routers.hr_rounds import router as hr_rounds_router
+from app.routers.hr_scorecards import router as hr_scorecards_router
 from app.routers.hr_workflows import router as hr_workflows_router
 from app.routers.interview_take import router as interview_take_router
+from app.routers.interviewer import router as interviewer_router
 from app.routers.jd import router as jd_router
 from app.routers.jobs import router as jobs_router
 from app.routers.notifications import router as notifications_router
@@ -178,6 +183,25 @@ async def _run_retention_job() -> None:
     except Exception as exc:  # broad — never let email cleanup kill the scheduler
         log.error(
             "email.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc)
+        )
+
+    # Same tick: interviewers' private notes whose interview has ended (PH4-A5).
+    # Working notes about a named candidate, kept only while they serve the
+    # interview — see interview_kits.purge_expired_notes for when that ends.
+    # Honours RETENTION_DRY_RUN like the session purge above.
+    try:
+        async with factory() as session:
+            notes = await purge_expired_notes(
+                session, retention_days=settings.retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("interviewer_notes.retention.purged", rows=notes,
+                 dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let notes cleanup kill the scheduler
+        log.error(
+            "interviewer_notes.retention.error", exc_type=type(exc).__name__,
+            exc_msg=str(exc),
         )
 
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft
@@ -432,6 +456,13 @@ app.include_router(hr_attention_router)
 app.include_router(hr_questions_router)
 app.include_router(hr_requisitions_router)
 app.include_router(hr_workflows_router)
+# PH4-A1: HR assigns interviewers and reads scorecards; interviewers see only
+# their own assignments.
+app.include_router(hr_scorecards_router)
+app.include_router(interviewer_router)
+# PH4-O4: decision reason categories (HR reads, super admin configures).
+app.include_router(decision_reasons_hr_router)
+app.include_router(decision_reasons_admin_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)
 app.include_router(careers_router)

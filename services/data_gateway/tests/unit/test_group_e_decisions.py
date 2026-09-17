@@ -106,6 +106,15 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
     monkeypatch.setattr(fd, "record_transition", _transition)
     monkeypatch.setattr(fd, "record_round_move", _round)
     monkeypatch.setattr(hra, "email_applicant_decision", _email)
+
+    from app.decision_reasons import ResolvedReason
+
+    async def _resolve(_db: object, **kw: object) -> ResolvedReason:
+        seen.setdefault("reasons", []).append(kw)
+        return ResolvedReason(code=str(kw["code"]), label="Skills / competency fit",
+                              requires_explanation=False)
+
+    monkeypatch.setattr(fd, "resolve_reason", _resolve)
     return seen
 
 
@@ -118,7 +127,8 @@ async def test_a_decision_is_recorded_against_the_person(captured: dict[str, lis
     db = _db(_row())
     out = await record_final_decision(
         db, company_id=company, enrolment_id=enrolment, decision="hired",
-        reason="  Strong technical round  ", actor_user_id=hr, ip_address="1.2.3.4",
+        reason="  Strong technical round  ",
+        reason_code="skills_fit", actor_user_id=hr, ip_address="1.2.3.4",
     )
 
     move = captured["moves"][0]
@@ -147,7 +157,8 @@ async def test_reversing_a_hire_is_recorded_as_one(captured: dict[str, list]) ->
     db = _db(_row(status="hired", current_round_id=None, awaits_human=False))
     out = await record_final_decision(
         db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="rejected",
-        reason="Offer withdrawn after references", actor_user_id=uuid.uuid4(),
+        reason="Offer withdrawn after references",
+        reason_code="skills_fit", actor_user_id=uuid.uuid4(),
     )
     assert out["reversal"] is True
     assert db.add.call_args.args[0].details["reversal"] is True
@@ -163,7 +174,8 @@ async def test_no_reason_no_decision(captured: dict[str, list], reason: str | No
     with pytest.raises(DecisionRefusedError) as exc:
         await record_final_decision(
             db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="rejected",
-            reason=reason, actor_user_id=uuid.uuid4(),
+            reason=reason,
+            reason_code="skills_fit", actor_user_id=uuid.uuid4(),
         )
     assert exc.value.status_code == 422
     assert captured["moves"] == [] and not db.add.called
@@ -177,7 +189,8 @@ async def test_a_refused_decision_writes_nothing(captured: dict[str, list]) -> N
     with pytest.raises(DecisionRefusedError) as exc:
         await record_final_decision(
             db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="hired",
-            reason="Looks great so far", actor_user_id=uuid.uuid4(),
+            reason="Looks great so far",
+            reason_code="skills_fit", actor_user_id=uuid.uuid4(),
         )
     assert exc.value.status_code == 409
     assert captured["moves"] == [] and captured["rounds"] == [] and not db.add.called
@@ -191,7 +204,8 @@ async def test_another_companys_application_is_not_found(captured: dict[str, lis
     with pytest.raises(DecisionRefusedError) as exc:
         await record_final_decision(
             db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="rejected",
-            reason="Not a fit for the role", actor_user_id=uuid.uuid4(),
+            reason="Not a fit for the role",
+            reason_code="skills_fit", actor_user_id=uuid.uuid4(),
         )
     assert exc.value.status_code == 404
     sql = str(db.execute.call_args.args[0])
@@ -206,10 +220,13 @@ def test_the_decision_body_needs_a_real_decision_and_a_reason() -> None:
 
     from app.routers.hr_requisitions import FinalDecisionIn
 
-    assert FinalDecisionIn(decision="hired", reason="Strong panel").decision == "hired"
-    for bad in ({"decision": "maybe", "reason": "Strong panel"},
-                {"decision": "hired", "reason": "ok"},
-                {"decision": "hired"}):
+    ok = FinalDecisionIn(decision="hired", reason="Strong panel", reason_code="skills_fit")
+    assert ok.decision == "hired" and ok.reason_code == "skills_fit"
+    for bad in ({"decision": "maybe", "reason": "Strong panel", "reason_code": "skills_fit"},
+                {"decision": "hired", "reason": "ok", "reason_code": "skills_fit"},
+                {"decision": "hired", "reason_code": "skills_fit"},
+                # PH4-O4: a final decision without a category is refused.
+                {"decision": "hired", "reason": "Strong panel"}):
         with pytest.raises(ValidationError):
             FinalDecisionIn(**bad)
 
@@ -261,3 +278,76 @@ def test_the_close_confirmation_the_console_sends_is_accepted() -> None:
     body = typing.get_type_hints(set_requisition_status)["body"]
     sent = {"status": "closed", "acknowledge_unresolved": True}
     assert TypeAdapter(body).validate_python(sent) == sent
+
+
+# ===========================================================================
+# PH4-O4 — the structured reason travels with the decision
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_the_category_and_its_label_reach_the_ledger_and_the_audit(
+    captured: dict[str, list],
+) -> None:
+    from app.final_decision import record_final_decision
+
+    db = _db(_row())
+    out = await record_final_decision(
+        db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="rejected",
+        reason="Not enough distributed-systems depth", reason_code="skills_fit",
+        actor_user_id=uuid.uuid4(),
+    )
+    move = captured["moves"][0]
+    assert move["reason_code"] == "skills_fit"
+    assert move["reason_label"] == "Skills / competency fit"
+    audit = db.add.call_args.args[0]
+    assert audit.details["reason_code"] == "skills_fit"
+    assert audit.details["reason_label"] == "Skills / competency fit"
+    # The free text is kept beside the category, not replaced by it.
+    assert audit.details["reason"] == "Not enough distributed-systems depth"
+    assert out["reason_code"] == "skills_fit"
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_category_writes_nothing(
+    captured: dict[str, list], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.final_decision as fd
+    from app.decision_reasons import ReasonError
+
+    async def _refuse(_db: object, **_kw: object) -> None:
+        raise ReasonError(422, "That reason category is not available.")
+
+    monkeypatch.setattr(fd, "resolve_reason", _refuse)
+    db = _db(_row())
+    with pytest.raises(fd.DecisionRefusedError) as exc:
+        await fd.record_final_decision(
+            db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="rejected",
+            reason="Some reason text", reason_code="made_up", actor_user_id=uuid.uuid4(),
+        )
+    assert exc.value.status_code == 422
+    assert captured["moves"] == [] and captured["rounds"] == [] and not db.add.called
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_decision_says_why_before_asking_for_a_category(
+    captured: dict[str, list],
+) -> None:
+    """Order matters: 'not ready to hire' is the useful refusal, not 'pick a reason'."""
+    from app.final_decision import DecisionRefusedError, record_final_decision
+
+    db = _db(_row(status="shortlisted", awaits_human=False))
+    with pytest.raises(DecisionRefusedError) as exc:
+        await record_final_decision(
+            db, company_id=uuid.uuid4(), enrolment_id=uuid.uuid4(), decision="hired",
+            reason="Looks great", reason_code=None, actor_user_id=uuid.uuid4(),
+        )
+    assert exc.value.status_code == 409
+    assert "reasons" not in captured, "the category was checked before the decision itself"
+
+
+def test_record_final_decision_has_no_default_for_the_category() -> None:
+    """A default would let a caller forget it silently — the Phase 3 lesson,
+    where a new required argument broke call sites nobody had grepped for."""
+    from app.final_decision import record_final_decision
+
+    param = inspect.signature(record_final_decision).parameters["reason_code"]
+    assert param.default is inspect.Parameter.empty

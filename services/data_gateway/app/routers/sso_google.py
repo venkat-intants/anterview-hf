@@ -53,6 +53,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from shared.auth.jwt import issue_access_token
 from shared.auth.local import mint_refresh_session
+from sqlalchemy import bindparam as sa_bindparam
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +62,7 @@ from app.config import settings
 from app.database import get_db_session
 from app.models import User
 from app.redis_client import get_redis
+from app.roles import CANDIDATE_ROLES
 
 # Reuse the canonical, tested DPDP helpers (PII-safe IP/UA hashing with the
 # trusted-proxy gate) so a Google-signin consent row is recorded identically to
@@ -548,16 +550,20 @@ async def callback(
     # silently escalating past the candidate-only boundary. Reject outright so no
     # access token, refresh token, or cookie is ever issued to a privileged email.
     # ------------------------------------------------------------------
+    # FAIL CLOSED: refuse any role that is not a candidate role, rather than a
+    # list of staff roles. The staff list missed `interviewer` the day it was
+    # added, which let a matching Google account into the interviewer console
+    # with no password (see app/roles.py).
     privileged_row = await db.execute(
         text(
             "SELECT 1 FROM users u "
             "JOIN user_roles ur ON ur.user_id = u.id "
             "JOIN roles r ON r.id = ur.role_id "
             "WHERE u.email = :email AND u.deleted_at IS NULL "
-            "AND r.name IN ('hr_manager', 'super_admin', 'platform_owner', 'admin') "
+            "AND r.name NOT IN :candidate_roles "
             "LIMIT 1"
-        ),
-        {"email": email},
+        ).bindparams(sa_bindparam("candidate_roles", expanding=True)),
+        {"email": email, "candidate_roles": sorted(CANDIDATE_ROLES)},
     )
     if privileged_row.fetchone() is not None:
         log.warning("google.sso.callback.privileged_account_rejected")
@@ -630,10 +636,10 @@ async def callback(
             "WHERE NOT EXISTS ("
             "  SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
             "  WHERE ur.user_id = :uid "
-            "  AND r.name IN ('hr_manager', 'super_admin', 'platform_owner', 'admin')"
+            "  AND r.name NOT IN :candidate_roles"
             ") ON CONFLICT DO NOTHING"
-        ),
-        {"uid": final_user_id},
+        ).bindparams(sa_bindparam("candidate_roles", expanding=True)),
+        {"uid": final_user_id, "candidate_roles": sorted(CANDIDATE_ROLES)},
     )
 
     # DPDP §7: record the candidate's consent ATOMICALLY with the PII-storing

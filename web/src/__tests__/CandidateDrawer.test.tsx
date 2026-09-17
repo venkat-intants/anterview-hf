@@ -13,7 +13,7 @@
 // through the enrolment endpoint, which records who moved them and why.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Applicant } from '../api/applicants';
@@ -56,6 +56,47 @@ describe('CandidateDrawer — opened from one application (B5)', () => {
 const listAnswers = vi.fn();
 vi.mock('../api/questions', () => ({
   listAnswers: (...a: unknown[]) => listAnswers(...a) as unknown,
+}));
+
+const getEnrolmentHistory = vi.fn();
+vi.mock('../api/requisitions', () => ({
+  getEnrolmentHistory: (...a: unknown[]) => getEnrolmentHistory(...a) as unknown,
+}));
+
+// D4-1 — the human interview section. Mocked so every drawer test stays
+// deterministic even though this section fires its own queries whenever an
+// enrolmentId is present.
+const scorecardsApi = {
+  getEnrolmentScorecards: vi.fn(),
+  assignInterviewers: vi.fn(),
+  withdrawScorecard: vi.fn(),
+  listInterviewers: vi.fn(),
+};
+vi.mock('../api/scorecards', () => ({
+  getEnrolmentScorecards: (...a: unknown[]) => scorecardsApi.getEnrolmentScorecards(...a) as unknown,
+  assignInterviewers: (...a: unknown[]) => scorecardsApi.assignInterviewers(...a) as unknown,
+  withdrawScorecard: (...a: unknown[]) => scorecardsApi.withdrawScorecard(...a) as unknown,
+  listInterviewers: (...a: unknown[]) => scorecardsApi.listInterviewers(...a) as unknown,
+}));
+
+const workflowsApi = {
+  listWorkflows: vi.fn(),
+  getWorkflow: vi.fn(),
+};
+vi.mock('../api/workflows', () => ({
+  listWorkflows: (...a: unknown[]) => workflowsApi.listWorkflows(...a) as unknown,
+  getWorkflow: (...a: unknown[]) => workflowsApi.getWorkflow(...a) as unknown,
+}));
+
+const toastError = vi.fn();
+const toastSuccess = vi.fn();
+vi.mock('../lib/toast', () => ({
+  toast: {
+    error: (...a: unknown[]) => toastError(...a) as unknown,
+    success: (...a: unknown[]) => toastSuccess(...a) as unknown,
+    info: vi.fn(),
+    warning: vi.fn(),
+  },
 }));
 
 import CandidateDrawer from '../components/CandidateDrawer';
@@ -102,6 +143,11 @@ beforeEach(() => {
   getApplicant.mockResolvedValue(applicant());
   listAnswers.mockResolvedValue([]);
   listRoundResults.mockResolvedValue([]);
+  getEnrolmentHistory.mockResolvedValue([]);
+  scorecardsApi.getEnrolmentScorecards.mockResolvedValue({ rounds: [] });
+  scorecardsApi.listInterviewers.mockResolvedValue([]);
+  workflowsApi.listWorkflows.mockResolvedValue([]);
+  workflowsApi.getWorkflow.mockResolvedValue(undefined);
 });
 
 describe('CandidateDrawer', () => {
@@ -321,6 +367,331 @@ describe('CandidateDrawer', () => {
       listRoundResults.mockRejectedValue(new Error('boom'));
       renderDrawer();
       expect(await screen.findByText(/Scores could not be loaded/)).toBeInTheDocument();
+    });
+  });
+
+  // ── Human interview (D4-1) ──────────────────────────────────────────────
+  describe('human interview', () => {
+    it('is not shown at all without an enrolment to scope it to', async () => {
+      renderDrawer({ enrolmentId: null });
+      await screen.findByText('Nadia Newbie');
+      expect(scorecardsApi.getEnrolmentScorecards).not.toHaveBeenCalled();
+      expect(screen.queryByText('Human interview')).not.toBeInTheDocument();
+    });
+
+    it('shows each interviewer and their state for the round', async () => {
+      scorecardsApi.getEnrolmentScorecards.mockResolvedValue({
+        rounds: [
+          {
+            round_id: 'r-panel',
+            round_title: 'Panel interview',
+            position: 1,
+            hidden_until_you_submit: false,
+            criteria: [{ competency_id: 'c-sysdesign', competency_name: 'System design', weight: 0.6 }],
+            scorecards: [
+              {
+                scorecard_id: 'sc-1',
+                interviewer_user_id: 'u-iv-1',
+                interviewer_name: 'Farah Khan',
+                state: 'submitted',
+                due_at: null,
+                submitted_at: '2026-09-05T00:00:00.000Z',
+                superseded: false,
+                is_correction: false,
+                correction_reason: null,
+                withdrawn_reason: null,
+                redacted: false,
+                summary: 'Strong on system design.',
+                scores: { 'c-sysdesign': { score: 4, not_assessed: false, evidence: 'Handled the tradeoffs well.' } },
+              },
+              {
+                scorecard_id: 'sc-2',
+                interviewer_user_id: 'u-iv-2',
+                interviewer_name: 'Girish Rao',
+                state: 'assigned',
+                due_at: '2026-09-20T00:00:00.000Z',
+                submitted_at: null,
+                superseded: false,
+                is_correction: false,
+                correction_reason: null,
+                withdrawn_reason: null,
+                redacted: false,
+                summary: null,
+                scores: null,
+              },
+            ],
+          },
+        ],
+      });
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      expect(await screen.findByText('Panel interview')).toBeInTheDocument();
+      expect(screen.getByText('Farah Khan')).toBeInTheDocument();
+      expect(screen.getByText('submitted')).toBeInTheDocument();
+      expect(screen.getByText('Girish Rao')).toBeInTheDocument();
+      expect(screen.getByText('assigned')).toBeInTheDocument();
+      expect(screen.getByText('Strong on system design.')).toBeInTheDocument();
+      expect(screen.getByText(/Handled the tradeoffs well/)).toBeInTheDocument();
+      expect(screen.getByText('Not submitted yet.')).toBeInTheDocument();
+    });
+
+    it('says scores are hidden until you submit your own, rather than showing nothing', async () => {
+      scorecardsApi.getEnrolmentScorecards.mockResolvedValue({
+        rounds: [
+          {
+            round_id: 'r-panel',
+            round_title: 'Panel interview',
+            position: 1,
+            hidden_until_you_submit: true,
+            criteria: [],
+            scorecards: [
+              {
+                scorecard_id: 'sc-1',
+                interviewer_user_id: 'u-iv-1',
+                interviewer_name: 'Farah Khan',
+                state: 'submitted',
+                due_at: null,
+                submitted_at: '2026-09-05T00:00:00.000Z',
+                superseded: false,
+                is_correction: false,
+                correction_reason: null,
+                corrected_after_peers_visible: false,
+                withdrawn_reason: null,
+                redacted: false,
+                summary: null,
+                scores: null,
+              },
+            ],
+          },
+        ],
+      });
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      expect(await screen.findByText('Panel interview')).toBeInTheDocument();
+      // Once for the round, once on the peer's submitted card — never "Not submitted yet".
+      expect(screen.getAllByText(/Hidden until you submit your own scorecard/)).toHaveLength(2);
+      expect(screen.queryByText('Not submitted yet.')).toBeNull();
+      expect(screen.getByText(/^Submitted /)).toBeInTheDocument();
+    });
+
+    it('shows the scores of a scorecard redacted by a data erasure, and says what was removed', async () => {
+      scorecardsApi.getEnrolmentScorecards.mockResolvedValue({
+        rounds: [
+          {
+            round_id: 'r-panel',
+            round_title: 'Panel interview',
+            position: 1,
+            hidden_until_you_submit: false,
+            criteria: [{ competency_id: 'c-sysdesign', competency_name: 'System design', weight: 1 }],
+            scorecards: [
+              {
+                scorecard_id: 'sc-1',
+                interviewer_user_id: 'u-iv-1',
+                interviewer_name: 'Farah Khan',
+                state: 'submitted',
+                due_at: null,
+                submitted_at: '2026-09-05T00:00:00.000Z',
+                superseded: false,
+                is_correction: false,
+                correction_reason: null,
+                corrected_after_peers_visible: false,
+                withdrawn_reason: null,
+                redacted: true,
+                summary: null,
+                scores: { 'c-sysdesign': { score: 4, not_assessed: false, evidence: null } },
+              },
+            ],
+          },
+        ],
+      });
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      expect(await screen.findByText(/Written evidence removed after a data-erasure request/)).toBeInTheDocument();
+      expect(screen.getByText('4')).toBeInTheDocument();
+      expect(screen.queryByText(/Hidden until you submit/)).toBeNull();
+    });
+
+    it('shows a superseded scorecard collapsed, with the correction reason on the replacement', async () => {
+      scorecardsApi.getEnrolmentScorecards.mockResolvedValue({
+        rounds: [
+          {
+            round_id: 'r-panel',
+            round_title: 'Panel interview',
+            position: 1,
+            hidden_until_you_submit: false,
+            criteria: [],
+            scorecards: [
+              {
+                scorecard_id: 'sc-2',
+                interviewer_user_id: 'u-iv-1',
+                interviewer_name: 'Farah Khan',
+                state: 'submitted',
+                due_at: null,
+                submitted_at: '2026-09-06T00:00:00.000Z',
+                superseded: false,
+                is_correction: true,
+                correction_reason: 'Realised the wrong evidence was recorded.',
+                corrected_after_peers_visible: true,
+                withdrawn_reason: null,
+                redacted: false,
+                summary: null,
+                scores: {},
+              },
+              {
+                scorecard_id: 'sc-1',
+                interviewer_user_id: 'u-iv-1',
+                interviewer_name: 'Farah Khan',
+                state: 'submitted',
+                due_at: null,
+                submitted_at: '2026-09-05T00:00:00.000Z',
+                superseded: true,
+                is_correction: false,
+                correction_reason: null,
+                corrected_after_peers_visible: false,
+                withdrawn_reason: null,
+                redacted: false,
+                summary: null,
+                scores: {},
+              },
+            ],
+          },
+        ],
+      });
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      await screen.findByText('Panel interview');
+      expect(screen.getByText(/Realised the wrong evidence was recorded/)).toBeInTheDocument();
+      // Flagged neutrally — worth knowing, not implying anything improper.
+      expect(screen.getByText(/Corrected after other scorecards were visible/)).toBeInTheDocument();
+      // The superseded one is collapsed under a <details>, not shown open.
+      const summary = screen.getByText(/1 corrected scorecard/);
+      expect(summary.closest('details')?.open).toBe(false);
+    });
+
+    it('assigns interviewers to a human_review round and refetches', async () => {
+      workflowsApi.listWorkflows.mockResolvedValue([{ id: 'wf-1', version: 1, status: 'published', name: null, rounds: 1, enrolled_candidates: 1, published_at: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' }]);
+      workflowsApi.getWorkflow.mockResolvedValue({
+        id: 'wf-1',
+        requisition_id: 'req-1',
+        version: 1,
+        status: 'published',
+        name: null,
+        editable: false,
+        role_profile_id: null,
+        settings: {} as never,
+        published_at: '2026-01-01T00:00:00Z',
+        rounds: [
+          { id: 'r-panel', position: 0, title: 'Panel interview', kind: 'human_review', pass_threshold: null, time_limit_seconds: null, deadline_days: 5, on_pass_next_round_id: null, exam_round_id: null, needs_questions: false, criteria: [] },
+          { id: 'r-mcq', position: 1, title: 'Aptitude', kind: 'mcq', pass_threshold: 60, time_limit_seconds: null, deadline_days: 5, on_pass_next_round_id: null, exam_round_id: null, needs_questions: false, criteria: [] },
+        ],
+      });
+      scorecardsApi.listInterviewers.mockResolvedValue([
+        { user_id: 'u-iv-1', full_name: 'Farah Khan', email: 'farah@acme.edu', role: 'interviewer' },
+      ]);
+      scorecardsApi.assignInterviewers.mockResolvedValue({
+        created: [{ scorecard_id: 'sc-1', interviewer_user_id: 'u-iv-1' }],
+        already_assigned: [],
+        due_at: '2026-09-20T00:00:00.000Z',
+      });
+      // The round picker needs the workflow, which needs the requisition id —
+      // read off this application (B5), the same way the drawer already does
+      // for the resume-match section.
+      listApplications.mockResolvedValue([
+        { enrolment_id: 'en-1', requisition_id: 'req-1', opening_title: 'Backend Engineer' },
+      ]);
+
+      const user = userEvent.setup();
+      renderDrawer({ applicantId: 'ap-1', enrolmentId: 'en-1' });
+      await screen.findByText('Nadia Newbie');
+
+      await user.click(screen.getByRole('button', { name: /assign interviewers/i }));
+      // Only the human_review round is offered — not the MCQ round.
+      const roundSelect = await screen.findByLabelText('Round');
+      expect(within(roundSelect).getByText('Panel interview')).toBeInTheDocument();
+      expect(within(roundSelect).queryByText('Aptitude')).not.toBeInTheDocument();
+
+      await user.selectOptions(roundSelect, 'r-panel');
+      await user.click(await screen.findByLabelText(/Farah Khan/));
+      await user.click(screen.getByRole('button', { name: /^assign$/i }));
+
+      await waitFor(() =>
+        expect(scorecardsApi.assignInterviewers).toHaveBeenCalledWith('en-1', {
+          round_id: 'r-panel',
+          interviewer_user_ids: ['u-iv-1'],
+        }),
+      );
+      expect(toastSuccess).toHaveBeenCalledWith('Assigned 1 interviewer');
+    });
+
+    it('explains when there is no interview round to assign, instead of an empty form', async () => {
+      workflowsApi.listWorkflows.mockResolvedValue([]);
+      listApplications.mockResolvedValue([
+        { enrolment_id: 'en-1', requisition_id: 'req-1', opening_title: 'Backend Engineer' },
+      ]);
+      renderDrawer({ applicantId: 'ap-1', enrolmentId: 'en-1' });
+      await screen.findByText('Nadia Newbie');
+
+      expect(await screen.findByText(/has no human interview round/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /assign interviewers/i })).toBeDisabled();
+    });
+
+    it('says the rounds could not be loaded, rather than showing none', async () => {
+      workflowsApi.listWorkflows.mockRejectedValue(new Error('boom'));
+      listApplications.mockResolvedValue([
+        { enrolment_id: 'en-1', requisition_id: 'req-1', opening_title: 'Backend Engineer' },
+      ]);
+      renderDrawer({ applicantId: 'ap-1', enrolmentId: 'en-1' });
+      await screen.findByText('Nadia Newbie');
+
+      expect(await screen.findByText(/could not load this opening.s interview rounds/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /assign interviewers/i })).toBeDisabled();
+    });
+
+    it('withdraws an unsubmitted assignment after a confirm click', async () => {
+      scorecardsApi.getEnrolmentScorecards.mockResolvedValue({
+        rounds: [
+          {
+            round_id: 'r-panel',
+            round_title: 'Panel interview',
+            position: 1,
+            hidden_until_you_submit: false,
+            criteria: [],
+            scorecards: [
+              {
+                scorecard_id: 'sc-1',
+                interviewer_user_id: 'u-iv-1',
+                interviewer_name: 'Farah Khan',
+                state: 'assigned',
+                due_at: '2026-09-20T00:00:00.000Z',
+                submitted_at: null,
+                superseded: false,
+                is_correction: false,
+                correction_reason: null,
+                withdrawn_reason: null,
+                redacted: false,
+                summary: null,
+                scores: null,
+              },
+            ],
+          },
+        ],
+      });
+      scorecardsApi.withdrawScorecard.mockResolvedValue(undefined);
+
+      const user = userEvent.setup();
+      renderDrawer({ enrolmentId: 'en-1' });
+      await screen.findByText('Farah Khan');
+
+      await user.click(screen.getByRole('button', { name: /withdraw/i }));
+      await user.click(
+        within(screen.getByRole('group', { name: /confirm deletion/i })).getByRole('button', {
+          name: /^delete$/i,
+        }),
+      );
+
+      await waitFor(() =>
+        expect(scorecardsApi.withdrawScorecard).toHaveBeenCalledWith('sc-1', undefined),
+      );
     });
   });
 });

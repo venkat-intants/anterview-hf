@@ -278,6 +278,51 @@ SuperAdminCtxDep = Annotated[
 ]
 
 
+async def get_interviewer_company(
+    user: Annotated[
+        User, Depends(require_role_password_ok("interviewer", "hr_manager"))
+    ],
+    db: DbSessionDep,
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Return (interviewer_user_id, company_id) for someone who can be assigned to
+    interview — an ``interviewer`` or an ``hr_manager`` (PH4-A1).
+
+    THIS IS NOT THE ACCESS CHECK FOR A SCORECARD. Holding the role only admits
+    the caller to the interviewer console; every scorecard is then loaded with
+    ``interviewer_user_id = <caller>`` in its WHERE clause, so an interviewer can
+    reach their own assignments and nothing else. The role gate keeps candidates
+    and super admins out; the ownership filter keeps interviewers apart.
+
+    Company comes from the session, joined to companies, exactly as the HR and
+    super-admin contexts do.
+    """
+    try:
+        uid = uuid.UUID(user.user_id)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user identity."
+        ) from exc
+    company_id = await db.scalar(
+        sa_text(
+            "SELECT u.company_id FROM users u"
+            "  JOIN companies c ON c.id = u.company_id AND c.deleted_at IS NULL"
+            " WHERE u.id = :uid AND u.deleted_at IS NULL"
+        ),
+        {"uid": uid},
+    )
+    if company_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is not assigned to an active company.",
+        )
+    return uid, company_id
+
+
+InterviewerCtxDep = Annotated[
+    tuple[uuid.UUID, uuid.UUID], Depends(get_interviewer_company)
+]
+
+
 async def _must_change_password(user_id: str) -> bool:
     """One indexed read of the caller's bootstrap-password flag."""
     from app.database import get_session_factory  # noqa: PLC0415 — avoid cycle

@@ -19,10 +19,10 @@ Postgres 16 and passes 57/57; `db` = asserted directly against the migrated sche
 | PH3-B1 Source tracking | 10 | 10 | |
 | PH3-B2 Requisition approval & budget | 12 | 12 | |
 | PH3-B3 JD versioning | 13 | 13 | |
-| PH3-B4 Application lifecycle & scheduled publishing | 17 | 17 | |
+| PH3-B4 Application lifecycle & scheduled publishing | 17 | 15 | 2 ⚠️ — cooldown has no screen |
 | PH3-B5 Candidate confirmation | 12 | 12 | |
 | PH3-B6 JD Studio versioning | 13 | 13 | |
-| **Total** | **77** | **77** | **0 ⚠️, 0 ❌** |
+| **Total** | **77** | **75** | **2 ⚠️, 0 ❌** |
 
 Plus one story that is not in your document: **PH3-B0**, the shared publish gate. See
 the last section — it was pre-work, and it turned out to be a bug fix.
@@ -137,9 +137,9 @@ inventing an empty v1 would put a row in a history that never happened.
 | # | Acceptance criterion | | Evidence |
 |---|---|---|---|
 | 6 | Requisition supports configurable reapplication rules | ✅ | `reapply_cooldown_days` |
-| 7 | Organizations can define cooldown periods | ✅ | 0–1095 days; NULL means none |
+| 7 | Organizations can define cooldown periods | ⚠️ | **API only** — `reapply_cooldown_days` (0–1095, NULL = none) on the requisition API; **no screen sets it**. See below. |
 | 8 | Cooldown validation occurs during application | ✅ | `smoke` — a rejected candidate is refused and told the date |
-| 9 | Authorized users can override cooldown restrictions | ✅ | `POST /hr/enrolments/{id}/reapply-override`, audited; `smoke` |
+| 9 | Authorized users can override cooldown restrictions | ⚠️ | **API only** — `POST /hr/enrolments/{id}/reapply-override`, audited; `smoke`; **no button in the HR console**. See below. |
 | 10 | Existing applications remain unaffected | ✅ | no cooldown configured ⇒ no query is even issued; `unit` |
 
 ### Scheduled Publishing
@@ -178,6 +178,17 @@ a UI that showed only "09:00" would be making a promise the architecture does no
 **The gate is re-checked when it fires.** A requisition approved on Monday and rejected on
 Tuesday does not publish on Wednesday. It keeps its schedule and logs a warning rather
 than being silently unscheduled or silently published.
+
+---
+
+**⚠️ Criteria 7 and 9 — corrected 2026-09-17, previously marked ✅.** Both were
+marked done on the strength of an API field and an API endpoint. The criteria say
+*"Organizations can define"* and *"Authorized users can override"* — and an HR manager
+can do neither from the product: no screen sets `reapply_cooldown_days`, and no control
+calls `reapply-override`. The backend, its validation, its audit trail and its tests are
+real; the capability the criteria describe is not reachable by the people they name.
+Found while mapping where each Phase 3 change is visible. Closing it needs a cooldown
+field in the requisition editor and an override action on a rejected applicant.
 
 ---
 

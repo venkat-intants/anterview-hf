@@ -8,6 +8,7 @@ import AdminRoute from './components/AdminRoute';
 import PlatformOwnerRoute from './components/PlatformOwnerRoute';
 import SuperAdminRoute from './components/SuperAdminRoute';
 import HRRoute from './components/HRRoute';
+import InterviewerRoute from './components/InterviewerRoute';
 import InterviewSessionRoute from './components/InterviewSessionRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 import ThemeModeGate from './components/ThemeModeGate';
@@ -65,6 +66,11 @@ const PlatformOwnerConsole = lazy(() => import('./pages/superadmin/PlatformOwner
 const CompanyAdminConsole = lazy(() => import('./pages/superadmin/CompanyAdminConsole'));
 const HiringBoard = lazy(() => import('./pages/superadmin/HiringBoard'));
 const ApprovalQueue = lazy(() => import('./pages/superadmin/ApprovalQueue'));
+// O4 — the company's structured decision-reason taxonomy.
+const DecisionReasons = lazy(() => import('./pages/superadmin/DecisionReasons'));
+// D4-1 — the interviewer console: assignments and one scorecard at a time.
+const InterviewerConsole = lazy(() => import('./pages/interviewer/InterviewerConsole'));
+const InterviewerScorecard = lazy(() => import('./pages/interviewer/InterviewerScorecard'));
 const HRConsole = lazy(() => import('./pages/hr/HRConsole'));
 const Applicants = lazy(() => import('./pages/hr/Applicants'));
 const Exams = lazy(() => import('./pages/hr/Exams'));
@@ -201,6 +207,20 @@ export default function App() {
               <Route
                 path="/superadmin/requisitions/:requisitionId"
                 element={<RequisitionDashboard readOnly />}
+              />
+              {/* O4 — the company's own hire/reject reason taxonomy. */}
+              <Route path="/superadmin/decision-reasons" element={<DecisionReasons />} />
+            </Route>
+          </Route>
+
+          {/* Interviewer console — company staff (or an HR manager acting as
+              one, D4-1) who see ONLY interviews assigned to them. */}
+          <Route element={<InterviewerRoute />}>
+            <Route element={<ShellLayout />}>
+              <Route path="/interviewer" element={<InterviewerConsole />} />
+              <Route
+                path="/interviewer/scorecards/:scorecardId"
+                element={<InterviewerScorecard />}
               />
             </Route>
           </Route>

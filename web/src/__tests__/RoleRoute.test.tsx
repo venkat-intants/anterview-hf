@@ -24,6 +24,7 @@ import AdminRoute from '../components/AdminRoute';
 import HRRoute from '../components/HRRoute';
 import SuperAdminRoute from '../components/SuperAdminRoute';
 import PlatformOwnerRoute from '../components/PlatformOwnerRoute';
+import InterviewerRoute from '../components/InterviewerRoute';
 import { homePathFor } from '../components/layout/navSections';
 
 const GUARDED_TEXT = 'guarded content';
@@ -64,6 +65,7 @@ function renderGuard(Guard: ComponentType): void {
         <Route path="/platform" element={<div>home:/platform</div>} />
         <Route path="/superadmin" element={<div>home:/superadmin</div>} />
         <Route path="/admin/overview" element={<div>home:/admin/overview</div>} />
+        <Route path="/interviewer" element={<div>home:/interviewer</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -108,6 +110,7 @@ const ROLE_GUARDS: ReadonlyArray<{
 const ALL_GUARDS: ReadonlyArray<{ name: string; Guard: ComponentType }> = [
   { name: 'ProtectedRoute', Guard: ProtectedRoute },
   ...ROLE_GUARDS.map(({ name, Guard }) => ({ name, Guard })),
+  { name: 'InterviewerRoute', Guard: InterviewerRoute },
 ];
 
 beforeEach(() => {
@@ -201,4 +204,40 @@ describe('role guards — denied role set', () => {
     expect(screen.getByText(DASHBOARD_TEXT)).toBeInTheDocument();
     expect(screen.queryByText(GUARDED_TEXT)).not.toBeInTheDocument();
   });
+});
+
+// InterviewerRoute admits TWO roles (interviewer OR hr_manager, D4-1), so it
+// does not fit the single-`allowed`-role shape of ROLE_GUARDS above and gets
+// its own block.
+describe('InterviewerRoute — admits interviewer OR hr_manager', () => {
+  it.each(['interviewer', 'hr_manager'])('admits a user holding %s alone', (role) => {
+    setSession({ isAuthenticated: true, isInitializing: false, user: makeUser([role]) });
+    renderGuard(InterviewerRoute);
+
+    expect(screen.getByText(GUARDED_TEXT)).toBeInTheDocument();
+  });
+
+  it('admits an HR manager who is ALSO an interviewer', () => {
+    setSession({
+      isAuthenticated: true,
+      isInitializing: false,
+      user: makeUser(['hr_manager', 'interviewer']),
+    });
+    renderGuard(InterviewerRoute);
+
+    expect(screen.getByText(GUARDED_TEXT)).toBeInTheDocument();
+  });
+
+  it.each(['platform_owner', 'super_admin', 'admin', 'candidate'])(
+    'returns a denied %s to their own home',
+    (role) => {
+      setSession({ isAuthenticated: true, isInitializing: false, user: makeUser([role]) });
+      renderGuard(InterviewerRoute);
+
+      const home = homePathFor([role]);
+      const expected = home === '/dashboard' ? DASHBOARD_TEXT : `home:${home}`;
+      expect(screen.getByText(expected)).toBeInTheDocument();
+      expect(screen.queryByText(GUARDED_TEXT)).not.toBeInTheDocument();
+    },
+  );
 });

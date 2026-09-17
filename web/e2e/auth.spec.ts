@@ -7,6 +7,8 @@ const CONSOLES: { role: Role; path: string; title: string | RegExp }[] = [
   { role: 'platform_owner', path: '/platform', title: 'Platform Owner' },
   { role: 'super_admin', path: '/superadmin', title: 'Super Admin' },
   { role: 'hr_manager', path: '/hr', title: /Welcome|HR Console/ },
+  // PH4-A1: an interviewer's whole console is their own assignments.
+  { role: 'interviewer', path: '/interviewer', title: 'My interviews' },
 ];
 
 test.describe('signing in', () => {

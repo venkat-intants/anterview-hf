@@ -72,6 +72,15 @@ vi.mock('../api/requisitions', () => ({
   listRequisitions: (...a: unknown[]) => listRequisitions(...a) as unknown,
 }));
 
+// O4 — the reject flow now needs a structured reason before it can fire.
+const REJECT_REASONS = [
+  { code: 'weak-fit', label: 'Not a fit for the role', applies_to: 'rejected' as const, requires_explanation: false },
+];
+const listDecisionReasons = vi.fn();
+vi.mock('../api/scorecards', () => ({
+  listDecisionReasons: (...a: unknown[]) => listDecisionReasons(...a) as unknown,
+}));
+
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 vi.mock('../lib/toast', () => ({
@@ -120,6 +129,7 @@ beforeEach(() => {
     Promise.resolve({ ...SCORED, id, status }),
   );
   rescoreApplicant.mockResolvedValue({ ...SCORED, ats_overall: 90 });
+  listDecisionReasons.mockResolvedValue(REJECT_REASONS);
   // One application each unless a test says otherwise (B5).
   listApplications.mockImplementation((id: string) =>
     Promise.resolve([
@@ -419,9 +429,51 @@ describe('Applicants — per-applicant actions', () => {
     await user.click(
       await screen.findByRole('button', { name: /open details for bhavya nair/i }),
     );
+    // Rejecting now always needs a structured reason AND free text (O4).
     await user.click(await screen.findByRole('button', { name: /^reject$/i }));
+    await user.selectOptions(await screen.findByLabelText('Reason'), 'weak-fit');
+    await user.type(screen.getByLabelText(/^why/i), 'Not a fit.');
+    await user.click(screen.getByRole('button', { name: /confirm reject/i }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Applicant already decided'));
+  });
+
+  it('will not reject without a structured reason chosen', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole('button', { name: /open details for bhavya nair/i }),
+    );
+    await user.click(await screen.findByRole('button', { name: /^reject$/i }));
+
+    const confirm = await screen.findByRole('button', { name: /confirm reject/i });
+    expect(confirm).toBeDisabled();
+    expect(screen.getByText('Choose a reason first.')).toBeInTheDocument();
+    expect(updateApplicantStatus).not.toHaveBeenCalled();
+  });
+
+  it('sends the chosen reason code and free-text reason with the reject write', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole('button', { name: /open details for bhavya nair/i }),
+    );
+    await user.click(await screen.findByRole('button', { name: /^reject$/i }));
+    await user.selectOptions(await screen.findByLabelText('Reason'), 'weak-fit');
+    await user.type(screen.getByLabelText(/^why/i), 'Did not meet the bar in screening.');
+    await user.click(screen.getByRole('button', { name: /confirm reject/i }));
+
+    await waitFor(() =>
+      expect(updateApplicantStatus).toHaveBeenCalledWith(
+        'ap-1',
+        'rejected',
+        'en-ap-1',
+        'Did not meet the bar in screening.',
+        'weak-fit',
+      ),
+    );
   });
 });
 

@@ -106,10 +106,15 @@ export function getHrAnalytics(): Promise<HrAnalytics> {
  * `enrolmentId` names the application decided on. Send it whenever the row has
  * one: for someone with several applications the server refuses a decision
  * that does not say which.
+ *
+ * `reasonCode` is required (O4): it names one of the company's structured
+ * decision reasons (api/scorecards.ts listDecisionReasons), recorded
+ * alongside the free-text rationale.
  */
 export function setApplicantDecision(
   applicantId: string,
   decision: ApplicantDecision,
+  reasonCode: string,
   rationale?: string,
   enrolmentId?: string | null,
 ): Promise<{ id: string; status: PipelineStatus }> {
@@ -118,6 +123,7 @@ export function setApplicantDecision(
     {
       decision,
       rationale: rationale?.trim() || null,
+      reason_code: reasonCode,
       ...(enrolmentId ? { enrolment_id: enrolmentId } : {}),
     },
   );

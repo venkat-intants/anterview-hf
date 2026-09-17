@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import { test as base, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { API_URL, TENANT_FILE, TEST_HOOKS_TOKEN } from './env';
 
-export type Role = 'platform_owner' | 'super_admin' | 'hr_manager' | 'candidate';
+export type Role = 'platform_owner' | 'super_admin' | 'hr_manager' | 'interviewer' | 'candidate';
 
 export interface Account {
   email: string;
@@ -95,6 +95,12 @@ export class Api {
   async post<T>(route: string, data?: unknown): Promise<T> {
     const res = await this.request.post(`${API_URL}${route}`, { headers: this.headers(), data });
     expect(res.ok(), `POST ${route} returned ${res.status()}: ${await res.text()}`).toBeTruthy();
+    return (await res.json()) as T;
+  }
+
+  async put<T>(route: string, data: unknown): Promise<T> {
+    const res = await this.request.put(`${API_URL}${route}`, { headers: this.headers(), data });
+    expect(res.ok(), `PUT ${route} returned ${res.status()}: ${await res.text()}`).toBeTruthy();
     return (await res.json()) as T;
   }
 
@@ -394,6 +400,9 @@ export interface StageMove {
   automated: boolean;
   actor: string | null;
   reason: string | null;
+  /** PH4-O4: the category chosen with a final decision, and its label as chosen. */
+  reason_code: string | null;
+  reason_label: string | null;
 }
 
 /**

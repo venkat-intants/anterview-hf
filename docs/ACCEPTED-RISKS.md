@@ -229,6 +229,47 @@ was raised about.
 
 ---
 
+## AR-5 — Final-decision rationale in the audit log is not redacted on erasure
+
+| | |
+|---|---|
+| **Source finding** | PH4 Wave 1 security audit, M4(b), 2026-09-17 |
+| **Status** | **ACCEPTED — documented, not redacted** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` reviews when a trigger fires. An agent cannot act on a trigger by itself, so the accountable owner is a person. |
+| **Trigger to revisit** | Any of: (a) a data principal's erasure request or grievance that names text in a decision rationale; (b) any feature that displays audit-log `details` to someone other than the platform owner; (c) the Tier-2 migration, when the audit log's retention is set |
+
+**The decision.** When HR records a hire or a reject, the free-text reason they
+typed is written in two places: the stage ledger (`stage_transitions.reason`)
+and the append-only audit log (`details.reason` on `enrolment.decision.*`, or
+`details.rationale` on `applicant.decision.*`). Both are kept because they are
+the D-05 evidence that a **person** decided and why — the record the platform
+must be able to produce if an automated-decision complaint is made. DPDP erasure
+anonymises the applicant row (step 6), so the rationale then describes an
+applicant who is named nowhere else. It does not rewrite the rationale itself.
+
+The interview scorecards added in PH4-A1 do **not** follow this pattern: their
+audit rows record only whether a correction or withdrawal reason was given and
+how long it was, and the text lives on the scorecard, where erasure step 5f
+redacts it. The decision rationale was left as it was because it predates this
+wave, sits in two append-only stores, and redacting it would need an explicit
+exception to the audit log's append-only trigger — a change to weigh on its own,
+not to slip into a feature.
+
+**What is NOT true.** It is not true that erasure leaves no candidate-describing
+prose in the database. A rationale such as "Priya's notice period at Acme is six
+months" survives, attached to an anonymised applicant. The erasure executor's
+inventory (`EXCLUDED_TABLES["audit_log"]`) says so; it used to claim the audit
+log held "action names only", which was wrong before this wave.
+
+**Path to closure.** Either (1) stop copying the rationale into audit `details`
+(keep has-reason and length, as scorecards now do) and add a redaction path for
+`stage_transitions.reason` that the ledger's append-only trigger permits only
+together with an erasure marker — the scorecard trigger is the pattern; or
+(2) guide HR at the point of entry that the rationale must not contain personal
+details, and accept the residue. (1) is the fix; (2) only reduces it.
+
+---
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -237,3 +278,4 @@ was raised about.
 | **AR-2** | One shared HS256 secret across five processes | SEC-2 / SEC-1 | `security-auditor` | Fifth verifier, secret exposure, or Tier-2 |
 | **AR-3** | Candidate code executes on JDoodle | AG-05 | `platform_owner` | Residency bid, confidential-IP customer, or free-tier exhaustion |
 | **AR-4** | No production avatar gate; `custom` unimplemented | AG-06 residue | `cto-architect` | Production `APP_ENV`, residency bid, or 2026-11-28 sunset review |
+| **AR-5** | Decision rationale in audit log / ledger not redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | Erasure grievance naming it, audit details shown to others, or Tier-2 |

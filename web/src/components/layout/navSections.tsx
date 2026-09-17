@@ -30,6 +30,7 @@ import {
   FileText,
   History,
   LayoutDashboard,
+  ListChecks,
   TrendingUp,
   Upload,
   Users,
@@ -56,7 +57,7 @@ export interface NavSection {
 
 const ICON = 'h-[18px] w-[18px]';
 
-export const PRIVILEGED_ROLES = ['platform_owner', 'super_admin', 'admin', 'hr_manager'];
+export const PRIVILEGED_ROLES = ['platform_owner', 'super_admin', 'admin', 'hr_manager', 'interviewer'];
 
 /** True when the user holds no privileged role (plain candidate). */
 export function isCandidateOnly(roles: string[]): boolean {
@@ -81,6 +82,12 @@ const HR_NAV: NavItem[] = [
   { to: '/hr/interviews', label: 'Interviews', icon: <Video className={ICON} aria-hidden="true" /> },
   { to: '/hr/pipeline', label: 'Pipeline', icon: <TrendingUp className={ICON} aria-hidden="true" /> },
   { to: '/hr/analytics', label: 'Analytics', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
+  // D4-1: an HR manager can ALSO be assigned as an interviewer. Kept as an item
+  // in THIS section (not a new one) so idsFor(['hr_manager']) still resolves to
+  // exactly ['hr'] — see navRoleScoping.test.ts. The route itself lives outside
+  // /hr (InterviewerRoute admits hr_manager too), which is the one deliberate
+  // exception the "every item stays under its section's prefix" test allows.
+  { to: '/interviewer', label: 'My interviews', icon: <ClipboardCheck className={ICON} aria-hidden="true" /> },
 ];
 
 const ADMIN_NAV: NavItem[] = [
@@ -95,14 +102,23 @@ const PLATFORM_NAV: NavItem[] = [
   { to: '/platform', label: 'Companies', icon: <Building2 className={ICON} aria-hidden="true" /> },
 ];
 
-// super_admin — a company's super admin: its HR managers.
+// super_admin — a company's super admin: its HR managers and interviewers.
 const SUPER_NAV: NavItem[] = [
   { to: '/superadmin/board', label: 'Hiring board', icon: <Kanban className={ICON} aria-hidden="true" /> },
   // PH3-B2. Second, not last: an opening waiting on approval is blocking
-  // somebody's hiring, and burying it under "HR Managers" would make the queue
+  // somebody's hiring, and burying it under "Team" would make the queue
   // a thing you remember to check rather than a thing you see.
   { to: '/superadmin/approvals', label: 'Approvals', icon: <ClipboardCheck className={ICON} aria-hidden="true" /> },
-  { to: '/superadmin', label: 'HR Managers', icon: <Users className={ICON} aria-hidden="true" /> },
+  // Renamed from "HR Managers": the console at this route now also manages
+  // interviewers, so the nav label describes the page rather than one section
+  // of it.
+  { to: '/superadmin', label: 'Team', icon: <Users className={ICON} aria-hidden="true" /> },
+  { to: '/superadmin/decision-reasons', label: 'Decision reasons', icon: <ListChecks className={ICON} aria-hidden="true" /> },
+];
+
+// interviewer — company staff who see ONLY interviews assigned to them (D4-1).
+const INTERVIEWER_NAV: NavItem[] = [
+  { to: '/interviewer', label: 'My interviews', icon: <ClipboardCheck className={ICON} aria-hidden="true" /> },
 ];
 
 const hasRole = (role: string) => (roles: string[]): boolean => roles.includes(role);
@@ -128,6 +144,15 @@ export const NAV_SECTIONS: NavSection[] = [
   { id: 'admin', label: 'Admin', items: ADMIN_NAV, visibleTo: hasRole('admin') },
   { id: 'platform', label: 'Platform', items: PLATFORM_NAV, visibleTo: hasRole('platform_owner') },
   { id: 'company', label: 'Company', items: SUPER_NAV, visibleTo: hasRole('super_admin') },
+  // A pure interviewer (not also an hr_manager) has no other section — this is
+  // their whole console. Hidden when the account is ALSO an HR manager: HR_NAV
+  // already carries "My interviews", and showing both would list it twice.
+  {
+    id: 'interviewer',
+    label: 'Interviews',
+    items: INTERVIEWER_NAV,
+    visibleTo: (roles: string[]) => roles.includes('interviewer') && !roles.includes('hr_manager'),
+  },
 ];
 
 /** The nav sections a given role set may see, in render order. */
@@ -169,6 +194,9 @@ const HOME_BY_ROLE: ReadonlyArray<readonly [string, string]> = [
   ['platform_owner', '/platform'],
   ['super_admin', '/superadmin'],
   ['hr_manager', '/hr'],
+  // After hr_manager: an HR manager who is ALSO an interviewer still lands on
+  // /hr, their primary console. A pure interviewer has no earlier match.
+  ['interviewer', '/interviewer'],
   ['admin', '/admin/overview'],
 ];
 

@@ -59,7 +59,8 @@ async def test_update_status_rejects_invalid_value() -> None:
     db = AsyncMock()
     with pytest.raises(HTTPException) as exc:
         await update_applicant_status(
-            uuid.uuid4(), StatusUpdate(status="bogus"), (uuid.uuid4(), uuid.uuid4()), db
+            uuid.uuid4(), StatusUpdate(status="bogus"), MagicMock(),
+            (uuid.uuid4(), uuid.uuid4()), db,
         )
     assert exc.value.status_code == 400
 

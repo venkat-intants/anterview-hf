@@ -9,7 +9,16 @@
 // The in-memory access token is mirrored from tokenStore so that non-React
 // code (apiClient, interview-ws) can read it synchronously.
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { QueryClientContext } from '@tanstack/react-query';
 import type { AuthUser } from '../types/auth';
 import { getToken, setToken, clearToken, subscribeToken } from '../api/tokenStore';
 import { attemptRefresh } from '../api/client';
@@ -54,6 +63,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [accessToken, setAccessToken] = useState<string | null>(getToken);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
+  // Optional, so the provider still works where no QueryClientProvider wraps it.
+  const queryClient = useContext(QueryClientContext);
+  // The last account this tab was signed in as. Deliberately NOT reset on
+  // logout: a session can end without passing through clearAuth (a failed
+  // refresh only nulls the token), and the next sign-in must still know the
+  // cache belongs to somebody else.
+  const lastUserIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (user) lastUserIdRef.current = user.user_id;
+  }, [user]);
 
   // Keep React state in sync when the store changes from outside React
   // (e.g. the 401-refresh path in apiClient writes directly to tokenStore).
@@ -121,11 +140,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // called from React event handlers and must not depend on the subscribe()
   // effect having committed yet. The subscriber exists only to mirror EXTERNAL
   // store writes (e.g. the apiClient 401-refresh path) back into React state.
-  const setAuth = useCallback((token: string, authUser: AuthUser) => {
-    setToken(token);
-    setAccessToken(token);
-    setUser(authUser);
-  }, []);
+  const setAuth = useCallback(
+    (token: string, authUser: AuthUser) => {
+      // Query keys are not scoped by user (['interviewer', 'assignments'],
+      // ['hr', ...]), so a different account signing in on the same tab would
+      // otherwise be shown the previous one's cached data until it refetched.
+      // Only on a SWITCH between two accounts: the first sign-in in a tab has
+      // nobody's data to hide, and clearing then would pull queries out from
+      // under pages already mounted. Only queries are dropped: the mutation
+      // that is signing in is still running, and clearing the mutation cache
+      // would pull it out from under its own onSuccess.
+      if (lastUserIdRef.current !== null && lastUserIdRef.current !== authUser.user_id) {
+        queryClient?.getQueryCache().clear();
+      }
+      lastUserIdRef.current = authUser.user_id;
+      setToken(token);
+      setAccessToken(token);
+      setUser(authUser);
+    },
+    [queryClient],
+  );
 
   const updateUser = useCallback((patch: Partial<AuthUser>) => {
     setUser((prev) => (prev ? { ...prev, ...patch } : prev));

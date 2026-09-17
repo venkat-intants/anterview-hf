@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.database import DbSessionDep
+from app.decision_reasons import ReasonError
+from app.decision_reasons import resolve as resolve_reason
 from app.dependencies import HrCtxDep
 from app.models import AuditLog
 from app.requisitions import ambiguous_decision_detail, choose_application, record_transition
@@ -193,6 +195,10 @@ class HrAnalytics(BaseModel):
 class DecisionIn(BaseModel):
     decision: str
     rationale: str | None = Field(default=None, max_length=2000)
+    # PH4-O4 — required: the pipeline board records final decisions too, and a
+    # category captured on one decision path but not the other would make every
+    # "why do we reject?" figure quietly incomplete.
+    reason_code: str | None = Field(default=None, max_length=64)
     # The application decided on — the board sends the row's enrolment_id.
     # Optional so an older client still works for someone with one application.
     enrolment_id: uuid.UUID | None = None
@@ -507,6 +513,7 @@ async def decide_applicant(
     # Guarded on the application's own status — the person's row describes
     # only their latest application, which may not be this one.
     current = app_.status if app_.enrolment_id is not None else a.status
+
     if body.decision == "hired":
         if current == "hired":
             raise HTTPException(status_code=409, detail="Applicant is already hired.")
@@ -517,6 +524,17 @@ async def decide_applicant(
             )
     # 'rejected' is reachable from any non-terminal state AND from 'hired'
     # (an audited reversal — details.reversal=true).
+
+    # PH4-O4. After the guards above, before anything is written: a decision
+    # blocked for its own reasons should say why ("already hired"), not complain
+    # about a missing category — the order record_final_decision uses.
+    try:
+        chosen = await resolve_reason(
+            db, company_id=company_id, code=body.reason_code, decision=body.decision,
+            reason=body.rationale or "",
+        )
+    except ReasonError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     now = datetime.now(tz=UTC)
     prev = current
@@ -534,6 +552,8 @@ async def decide_applicant(
             actor_user_id=hr_uid,
             automated=False,
             reason=body.rationale or f"{body.decision} from the pipeline board",
+            reason_code=chosen.code,
+            reason_label=chosen.label,
         )
 
     db.add(
@@ -549,6 +569,8 @@ async def decide_applicant(
                 "decision": body.decision,
                 "previous_status": prev,
                 "rationale": body.rationale,
+                "reason_code": chosen.code,
+                "reason_label": chosen.label,
                 "reversal": prev == "hired",
             },
             ip_address=extract_client_ip(request),

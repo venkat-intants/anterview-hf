@@ -78,6 +78,11 @@ log = structlog.get_logger(__name__)
 # the edge, is the only version of this that cannot be misread.
 INTERVIEW_SCORE_MAX = 10.0
 
+#: Where a released hold may send a candidate. Continuing is the only thing a
+#: release means; a final decision goes through app.final_decision, which
+#: needs a reason and a reason code this path never collects.
+RELEASE_TO_STATUSES: frozenset[str] = frozenset({"shortlisted", "interviewed"})
+
 
 @dataclass
 class RunnerOutcome:
@@ -889,6 +894,11 @@ async def release_hold(
     below-threshold candidate should proceed is exactly the judgement D-05
     reserves for a person.
     """
+    if to_status not in RELEASE_TO_STATUSES:
+        return RunnerOutcome(
+            action="noop", enrolment_id=str(enrolment_id),
+            reason="a release continues the candidate; record a final decision instead",
+        )
     enrolment = await _load_enrolment(db, enrolment_id)
     if enrolment is None:
         return RunnerOutcome(action="noop", reason="enrolment not found")

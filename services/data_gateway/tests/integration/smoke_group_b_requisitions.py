@@ -137,9 +137,11 @@ async def main() -> None:
         # Both rows are still separate applicants here, so each has one
         # enrolment and the legacy column does still sync. The real test of the
         # guard comes after the merge, below.
+        # PH4-O4: a move into 'hired' needs a reason_code (and its paired label).
         await record_transition(
             db, enrolment_id=gita[0][0], company_id=acme, to_status="hired",
-            actor_user_id=hr, automated=False)
+            actor_user_id=hr, automated=False, reason_code="skills_fit",
+            reason_label="Skills / competency fit")
         await db.commit()
         check("independent enrolments move independently",
               (await db.scalar(text("SELECT status FROM enrolments WHERE id=:e"),
@@ -220,9 +222,11 @@ async def main() -> None:
         legacy_before = await db.scalar(text(
             "SELECT status FROM applicants WHERE id=:a"), {"a": survivor})
         target = next(e for e in both if e[1] != "rejected")
+        # PH4-O4: a move into 'rejected' needs a reason_code (and its paired label).
         await record_transition(
             db, enrolment_id=target[0], company_id=acme, to_status="rejected",
-            actor_user_id=hr, automated=False)
+            actor_user_id=hr, automated=False, reason_code="skills_fit",
+            reason_label="Skills / competency fit")
         await db.commit()
         legacy_after = await db.scalar(text(
             "SELECT status FROM applicants WHERE id=:a"), {"a": survivor})

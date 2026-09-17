@@ -1,7 +1,9 @@
 """Provision a throwaway tenant for one Playwright run. LOCAL DATABASES ONLY.
 
 Creates a company and one account per role the suite signs in as:
-platform_owner, super_admin (company super admin), hr_manager and candidate.
+platform_owner, super_admin (company super admin), hr_manager, interviewer
+(PH4-A1: company staff who see only the interviews assigned to them) and
+candidate.
 Every account gets a random password and is ready to sign in (no forced
 password change, email verified). Nothing is shared between runs: each run
 gets its own company, so specs never collide with each other or with data
@@ -75,6 +77,7 @@ async def _provision(url: str) -> dict[str, object]:
         ("platform_owner", "Platform Owner", None),
         ("super_admin", "Company Super Admin", company_id),
         ("hr_manager", "HR Manager", company_id),
+        ("interviewer", "Interviewer", company_id),
         ("candidate", "Candidate", None),
     ]
     accounts: dict[str, dict[str, str]] = {}

@@ -358,6 +358,7 @@ async def test_delete_my_hr_manager_happy_path() -> None:
     directory = _HrDirectory({hr_uid: company_id})  # HR belongs to the caller's company
     db = AsyncMock()
     db.scalar = directory.scalar
+    db.execute = AsyncMock(return_value=MagicMock())  # no open interview assignments
     auth = _mock_auth()
 
     from app.routers.admin_hr import delete_my_hr_manager
@@ -402,11 +403,44 @@ async def test_delete_my_hr_manager_revocation_failure_does_not_block_204() -> N
     caller_uid, company_id = uuid.uuid4(), uuid.uuid4()
     db = AsyncMock()
     db.scalar = AsyncMock(return_value=1)
+    db.execute = AsyncMock(return_value=MagicMock())  # no open interview assignments
     auth = _mock_auth()
     auth.logout_all = AsyncMock(side_effect=RuntimeError("Redis down"))
     # Should NOT raise — best-effort revocation
     await delete_my_hr_manager(uuid.uuid4(), (caller_uid, company_id), db, auth)
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_removing_an_hr_manager_withdraws_their_open_interviews(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HR managers interview too (PH4-A1). Removing one must close their open
+    assignments, or each sits "late" for ever against someone who cannot sign
+    in — and it must do so through withdraw(), one audited scorecard at a time,
+    with the removal recorded as the actor's."""
+    import app.routers.admin_hr as admin_hr
+
+    calls: list[dict[str, object]] = []
+
+    async def _withdraw_open(_db: object, **kw: object) -> int:
+        calls.append(kw)
+        return 2
+
+    monkeypatch.setattr(admin_hr, "withdraw_open_for_interviewer", _withdraw_open)
+    caller_uid, company_id, hr_uid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    db = AsyncMock()
+    db.scalar = _HrDirectory({hr_uid: company_id}).scalar
+    audits: list[dict[str, object]] = []
+
+    async def _audit(_db: object, **kw: object) -> None:
+        audits.append(kw)
+
+    monkeypatch.setattr(admin_hr, "_audit", _audit)
+    await admin_hr.delete_my_hr_manager(hr_uid, (caller_uid, company_id), db, _mock_auth())
+    assert calls and calls[0]["interviewer_user_id"] == hr_uid
+    assert calls[0]["company_id"] == company_id and calls[0]["actor"] == caller_uid
+    assert audits[0]["details"] == {"assignments_withdrawn": 2}
 
 
 # ---------------------------------------------------------------------------

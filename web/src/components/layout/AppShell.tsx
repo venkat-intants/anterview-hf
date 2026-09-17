@@ -58,7 +58,7 @@ const SIDEBAR_COLLAPSED_KEY = 'intants:sidebar-collapsed';
 
 // ── Role label helper ─────────────────────────────────────────────────────────
 
-const ROLE_PRIORITY = ['platform_owner', 'super_admin', 'admin', 'hr_manager'] as const;
+const ROLE_PRIORITY = ['platform_owner', 'super_admin', 'admin', 'hr_manager', 'interviewer'] as const;
 
 /** Returns the most-privileged display label for the user's role set. */
 function getRoleLabel(roles: string[]): string {
@@ -69,6 +69,7 @@ function getRoleLabel(roles: string[]): string {
         case 'super_admin': return 'Super Admin';
         case 'admin': return 'Platform Admin';
         case 'hr_manager': return 'HR Manager';
+        case 'interviewer': return 'Interviewer';
       }
     }
   }
@@ -88,6 +89,10 @@ function getRoleAccent(roles: string[]): string {
   if (roles.includes('super_admin')) return 'var(--ui-role-super)';
   if (roles.includes('admin')) return 'var(--ui-role-admin)';
   if (roles.includes('hr_manager')) return 'var(--ui-role-hr)';
+  // No dedicated token exists for this role yet — reusing the HR green rather
+  // than inventing one: an interviewer is company staff on the same tier as an
+  // HR manager, just narrower in scope.
+  if (roles.includes('interviewer')) return 'var(--ui-role-hr)';
   return 'var(--ui-faint)';
 }
 

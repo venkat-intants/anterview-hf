@@ -9,19 +9,12 @@ import { useTranslation } from 'react-i18next';
 import { useMutation } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { changePassword } from '@/api/auth';
+import { homePathFor } from '@/components/layout/navSections';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from '@/lib/toast';
 import { AuroraField } from '@/design/components/AuroraField';
 import { Field, Pill } from '@/design/components/primitives';
 import { ShieldCheck, Lock } from '@/design/components/icons';
-
-function landingForRoles(roles: string[]): string {
-  if (roles.includes('platform_owner')) return '/platform';
-  if (roles.includes('super_admin')) return '/superadmin';
-  if (roles.includes('hr_manager')) return '/hr';
-  if (roles.includes('admin')) return '/admin/overview';
-  return '/dashboard';
-}
 
 /** 0–4 password-strength score (presentation only). */
 function strengthOf(pw: string): number {
@@ -51,7 +44,7 @@ export default function ChangePassword() {
         setAuth(accessToken, { ...user, must_change_password: false });
       }
       toast.success(t('changePassword.successToast'));
-      void navigate(landingForRoles(user?.roles ?? []), { replace: true });
+      void navigate(homePathFor(user?.roles ?? []), { replace: true });
     },
     onError: (err: unknown) => {
       setError(err instanceof Error ? err.message : t('changePassword.errGeneric'));

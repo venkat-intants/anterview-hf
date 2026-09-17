@@ -88,9 +88,14 @@ test.describe('a candidate below the bar', () => {
     ).toBeVisible();
 
     await page.getByRole('button', { name: 'Reject', exact: true }).click();
-    await expect(page.getByText('Write why above first.')).toBeVisible();
+    await expect(page.getByText('Choose a reason above first.')).toBeVisible();
     const confirm = page.getByRole('button', { name: 'Confirm' });
     await expect(confirm, 'rejecting without a reason is refused too').toBeDisabled();
+
+    // Only reasons that apply to a rejection are offered.
+    const reason = page.getByLabel('Reason', { exact: true });
+    await expect(reason.locator('option', { hasText: 'Position closed' })).toHaveCount(1);
+    await reason.selectOption({ label: 'Skills / competency fit' });
 
     await page
       .getByLabel('Why (recorded against your name)')
@@ -111,5 +116,6 @@ test.describe('a candidate below the bar', () => {
     expect(rejections[0].automated).toBe(false);
     expect(rejections[0].actor, 'the ledger names who decided').toBeTruthy();
     expect(rejections[0].reason).toContain('below the bar');
+    expect(rejections[0].reason_code).toBe('skills_fit');
   });
 });

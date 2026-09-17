@@ -102,3 +102,49 @@ def test_the_three_draft_routes_are_genuinely_different() -> None:
     assert "FROM applicants a" in delete
     # The tell-tale no-op shape must not come back.
     assert "SELECT a.user_id FROM applicants" not in delete
+
+
+# ===========================================================================
+# 3. Human interview evidence (step 5f, PH4-A1 / PH4-A5)
+# ===========================================================================
+def test_open_interview_assignments_are_closed_before_prose_is_redacted() -> None:
+    """Withdraw first: an open scorecard is a place new prose about the person
+    could be written after the erasure reports "completed"."""
+    body = _body()
+    withdraw = _at("SET status = 'withdrawn'", where=body)
+    redact = _at("UPDATE interviewer_scorecards SET summary = NULL", where=body)
+    assert withdraw < redact
+
+
+def test_interview_evidence_is_reached_before_applicants_lose_their_user_id() -> None:
+    """Every 5f join goes through applicants.user_id, which step 6 nulls."""
+    body = _body()
+    anonymise = _at("UPDATE applicants", where=body)
+    for needle in ("SET status = 'withdrawn'",
+                   "UPDATE interviewer_scorecard_scores SET evidence = NULL",
+                   "UPDATE interviewer_scorecards SET summary = NULL",
+                   "DELETE FROM interviewer_notes"):
+        assert _at(needle, where=body) < anonymise, needle
+
+
+def test_every_free_text_column_on_a_scorecard_is_redacted() -> None:
+    body = _body()
+    redact = body[_at("UPDATE interviewer_scorecards SET summary = NULL", where=body):][:700]
+    assert "correction_reason = CASE" in redact and "withdrawn_reason = CASE" in redact
+    assert "'[redacted]'" in redact
+
+
+def test_the_steps_read_in_order() -> None:
+    """Code review: 5f used to sit between 5c and 5d."""
+    body = _body()
+    positions = [_at(f"# Step {step}:", where=body)
+                 for step in ("5b", "5c", "5d", "5e", "5f", "6")]
+    assert positions == sorted(positions)
+
+
+def test_step_5f_counts_reach_the_completion_record() -> None:
+    body = _body()
+    for key in ("interview_assignments_withdrawn", "interview_evidence_redacted",
+                "interview_scorecards_redacted", "interviewer_notes_deleted"):
+        assert body.count(f'"{key}": {key}') == 2, key  # artifacts AND audit row
+

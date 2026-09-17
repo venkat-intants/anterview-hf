@@ -8,13 +8,13 @@ after CI, a code review and a security sign-off.
 
 | Wave | Stories | State |
 |---|---|---|
-| 1 | A1 Human interview scorecards · A5 Interview kits · O4 Decision reason codes | **Built and verified.** See the deployment line below. |
+| 1 | A1 Human interview scorecards · A5 Interview kits · O4 Decision reason codes | **Live.** See the deployment line below. |
 | 2 | O6 Workflow review & approval · O3 Branching workflows · O2 Workflow simulation & dry run · O1 Stage owners, SLAs & exceptions | Not started |
 | 3 | A2 Interview scheduling & loops · O5 Panel workload & calibration | Not started |
 | 4 | A3 Offer lifecycle · A4 Documents & preboarding | Not started |
 | 5 | D1 Question banks · D2 Accommodations · D3 Code quality & similarity · D4 Job simulations & portfolio | Not started |
 
-**Deployment:** Wave 1 is not yet live. This line is updated when it is.
+**Deployment:** Wave 1 is **live** since 2026-09-17: PR #27 merged as `c3fb463`, its three migrations applied to shared Neon (`f4b6d8e0a2c3`), and the Space verified serving it (the interviewer and decision-reason routes answer, and the web bundle carries the new screens).
 
 **Key:** ✅ done and verified · ⚠️ done, with something you should know · ❌ not done · ⏳ not started (a later wave)
 
@@ -26,6 +26,7 @@ only through the API. Phase 3 was marked against a looser bar and had to be corr
 - `db`: `tests/integration/test_ph4_scorecard_guarantees.py`. It runs against a real migrated Postgres, and every refusal is checked for its *reason*, not just for failing.
 - `smoke`: `tests/integration/smoke_ph4_scorecards.py`, 109/109 against real Postgres through the real endpoints.
 - `ui`: the web test suite, 1065 tests, and the screen named on the line.
+- `e2e`: the Playwright browser suite against a local stack, 23 passed — including `interview-scorecard.spec.ts`, which walks the whole A1/A5 flow, and the two decision journeys choosing a reason category (O4).
 
 ---
 

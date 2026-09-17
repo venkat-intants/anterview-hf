@@ -73,12 +73,17 @@ test.describe('a candidate is hired', () => {
     await page.goto(`/hr/requisitions/${opening.id}/decisions`);
     await expect(page.getByText(candidate.name).first()).toBeVisible();
 
-    // Hiring is refused until a reason is written: the panel says so, and the
-    // confirm button stays dead.
+    // Hiring is refused until a reason category is chosen AND a reason is
+    // written (PH4-O4): the panel says which is missing, and the confirm
+    // button stays dead until both are there.
     await page.getByRole('button', { name: 'Hire', exact: true }).click();
-    await expect(page.getByText('Write why above first.')).toBeVisible();
+    await expect(page.getByText('Choose a reason above first.')).toBeVisible();
     const confirm = page.getByRole('button', { name: 'Confirm' });
     await expect(confirm).toBeDisabled();
+
+    await page.getByLabel('Reason', { exact: true }).selectOption({ label: 'Skills / competency fit' });
+    await expect(page.getByText(/Write at least \d+ characters above first\./)).toBeVisible();
+    await expect(confirm, 'a category alone is not a reason').toBeDisabled();
 
     await page.getByLabel('Why (recorded against your name)').fill('Strong aptitude result');
     await expect(confirm).toBeEnabled();
@@ -100,5 +105,7 @@ test.describe('a candidate is hired', () => {
     expect(hire!.automated, 'a hire is a person’s act, never the system’s').toBe(false);
     expect(hire!.actor, 'the ledger names who decided').toBeTruthy();
     expect(hire!.reason).toContain('Strong aptitude');
+    expect(hire!.reason_code, 'the category is on the ledger, for analytics').toBe('skills_fit');
+    expect(hire!.reason_label, 'with its label as chosen').toBe('Skills / competency fit');
   });
 });

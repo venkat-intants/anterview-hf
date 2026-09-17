@@ -80,7 +80,7 @@ export default function InterviewerConsole(): JSX.Element {
     <div className="mx-auto w-full max-w-[900px] px-4 py-8">
       <Reveal>
         <header className="mb-6">
-          <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
+          <h1 data-testid="page-title" className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
             My interviews
           </h1>
           <p className="mt-1.5 max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">

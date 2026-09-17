@@ -73,8 +73,8 @@ $env:E2E_TEST_HOOKS_TOKEN = '<the same string>'
 ## Test data
 
 Every run provisions its own company and one account per role
-(`support/provision_tenant.py`): platform owner, company super admin, HR manager
-and candidate, each with a random password. They are written to
+(`support/provision_tenant.py`): platform owner, company super admin, HR manager,
+interviewer and candidate, each with a random password. They are written to
 `e2e/.auth/tenant.json`, which is git-ignored.
 
 The script **refuses any database that is not on this machine** and any `APP_ENV`
@@ -103,6 +103,7 @@ The full map — every Phase 2 item, where it is tested at each level, and the g
 | 2 | The main journeys: public apply with consent → scored → shortlist → MCQ from the emailed link → decision queue → hire or reject with a reason; held-not-rejected; what the candidate is shown about themselves | done — the three `journey-*` specs |
 | 3 | Bulk upload, the human-review round, the company hiring board, one person applying twice, an opening dashboard with real candidates | done — `bulk-upload`, `review-round`, `company-board`, `same-person-two-openings`, `opening-dashboard` |
 | 3b | Coding rounds | done — `coding-round`. Needs a code runner: `scripts/piston-up.ps1`, then `EXECUTION_PROVIDER=piston`. The spec skips with that instruction when none is answering |
+| 3c | PH4 Wave 1: a human interview scored by a named interviewer — HR assigns from the candidate drawer, the interviewer reads the kit, keeps private notes, scores (by mouse and keyboard) and submits, HR reads the evidence, and nothing moves; decisions choose a reason category | done — `interview-scorecard`, and the reason category in the two decision journeys |
 | 4 | Live AI interview (fake media devices) | manual only — it spends real Tavus/Sarvam/LLM budget |
 
 ### The main journeys

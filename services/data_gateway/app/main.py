@@ -330,6 +330,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         auth_provider=settings.auth_provider,
         port=settings.port,
     )
+    # Loud on purpose: either switch makes this process unfit for real users.
+    if settings.ai_fake_mode:
+        log.warning("ai_fake_mode.enabled",
+                    detail="model calls return deterministic stand-ins — local testing only")
+    if settings.test_hooks_enabled:
+        log.warning("test_hooks.enabled", detail="/test-hooks is mounted — local testing only")
     log.info(
         "retention.scheduler.started",
         retention_days=settings.retention_days,
@@ -435,6 +441,13 @@ app.include_router(resume_router)
 app.include_router(jd_router)
 app.include_router(sso_naipunyam_router)
 app.include_router(sso_google_router)
+# Local end-to-end testing only: mounted when TEST_HOOKS_ENABLED is true, which
+# Settings refuses in production and staging. Otherwise every /test-hooks path is
+# a plain 404. See app/routers/test_hooks.py.
+if settings.test_hooks_enabled:
+    from app.routers.test_hooks import router as test_hooks_router  # noqa: PLC0415
+
+    app.include_router(test_hooks_router)
 
 
 @app.get("/")

@@ -4,7 +4,7 @@ from typing import Literal
 import structlog
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from shared.security import assert_strong_secrets, normalise_app_env
+from shared.security import ENFORCED_ENVS, assert_strong_secrets, normalise_app_env
 from shared.security import validate_cors_origins as _validate_cors_origins
 from shared.security import validate_database_ssl as _validate_database_ssl
 
@@ -467,6 +467,38 @@ class Settings(BaseSettings):
     # so JS can read and re-send the value).
     # ---------------------------------------------------------------------------
     auth_csrf_cookie_name: str = "csrf_token"
+
+    # --- Local testing only (see app/fake_ai.py and app/routers/test_hooks.py) ---
+    # AI_FAKE_MODE: resume scoring, question generation, embeddings and match
+    # reasons return deterministic stand-ins instead of calling feedback_billing.
+    ai_fake_mode: bool = False
+    # TEST_HOOKS_ENABLED mounts /test-hooks (run a background pass on request);
+    # every call must carry X-Test-Hooks-Token equal to TEST_HOOKS_TOKEN.
+    test_hooks_enabled: bool = False
+    test_hooks_token: str = ""
+
+    @model_validator(mode="after")
+    def validate_test_only_switches(self) -> "Settings":
+        """Refuse to start with a testing switch on where real users are.
+
+        Either one in production would be quiet and serious: fake scores and
+        questions instead of real assessments, or an endpoint that drives the
+        background passes. A boot failure is the only safe answer to a stray
+        environment variable.
+        """
+        if self.app_env in ENFORCED_ENVS:
+            on = [name for name, flag in (("AI_FAKE_MODE", self.ai_fake_mode),
+                                          ("TEST_HOOKS_ENABLED", self.test_hooks_enabled)) if flag]
+            if on:
+                raise ValueError(
+                    f"{' and '.join(on)} cannot be enabled when APP_ENV={self.app_env!r}. "
+                    "They exist for local end-to-end testing only."
+                )
+        if self.test_hooks_enabled and len(self.test_hooks_token) < 32:
+            raise ValueError(
+                "TEST_HOOKS_ENABLED=true requires TEST_HOOKS_TOKEN of at least 32 characters."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_cookie_samesite_secure(self) -> "Settings":

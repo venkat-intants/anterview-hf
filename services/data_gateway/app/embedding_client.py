@@ -17,6 +17,7 @@ import structlog
 from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
 
 from app.config import settings
+from app.fake_ai import fake_embeddings, fake_why_match
 from app.remote import describe_unreachable
 
 log = structlog.get_logger(__name__)
@@ -75,6 +76,8 @@ async def embed_texts_remote(
     """
     if not texts:
         return []
+    if settings.ai_fake_mode:
+        return fake_embeddings(texts)
     url = f"{settings.feedback_billing_url}/internal/embed"
     token = _internal_token(acting_user_id)
     try:
@@ -104,6 +107,8 @@ async def embed_one_remote(*, text: str, task_type: str, acting_user_id: str) ->
 
 async def why_match_remote(*, resume_text: str, query: str, acting_user_id: str) -> str:
     """One-sentence 'why this candidate matched' via feedback_billing."""
+    if settings.ai_fake_mode:
+        return fake_why_match(query=query)
     url = f"{settings.feedback_billing_url}/internal/why-match"
     token = _internal_token(acting_user_id)
     try:

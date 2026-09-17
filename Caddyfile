@@ -46,6 +46,14 @@
 	handle /metrics* {
 		respond "Forbidden" 403
 	}
+	# /test-hooks/* runs data_gateway's background passes on demand for the
+	# local browser tests. The router is only mounted when TEST_HOOKS_ENABLED,
+	# and config refuses that flag outside a local env — this is the second,
+	# independent lock: even a mis-set env cannot make it reachable from
+	# outside. 404, not 403: a deployment has no test surface to admit to.
+	handle /test-hooks* {
+		respond "Not Found" 404
+	}
 
 	# ==================================================================
 	# admin_ops  :8004  — analytics + ops dashboard + DPDP erasure.
@@ -197,6 +205,7 @@
 				request>headers>X-Exam-Token delete
 				request>headers>X-Interview-Token delete
 				request>headers>X-Draft-Token delete
+				request>headers>X-Test-Hooks-Token delete
 				request>uri query {
 					replace code REDACTED
 					replace state REDACTED

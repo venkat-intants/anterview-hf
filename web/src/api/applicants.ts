@@ -175,15 +175,29 @@ export function listUploads(requisitionId?: string): Promise<UploadProgress[]> {
  * Set a status. `enrolmentId` names the application it is about (B5) — the
  * server refuses a change for someone with several applications that does not
  * say which.
+ *
+ * `reason` and `reasonCode` (O4) are REQUIRED by the server when `status` is
+ * 'rejected' (the only terminal status this endpoint can set — 'hired' is not
+ * a member of ApplicantStatus, so it never reaches this call): reason needs
+ * at least 3 characters, or 10 when the chosen reason has
+ * requires_explanation. A non-terminal status (e.g. 'shortlisted') needs
+ * neither and the server does not ask for them.
  */
 export function updateApplicantStatus(
   id: string,
   status: ApplicantStatus,
   enrolmentId?: string | null,
+  reason?: string,
+  reasonCode?: string,
 ): Promise<Applicant> {
   return clientFetch<Applicant>(`${API_BASE}/hr/applicants/${id}`, {
     method: 'PATCH',
-    body: JSON.stringify(enrolmentId ? { status, enrolment_id: enrolmentId } : { status }),
+    body: JSON.stringify({
+      status,
+      ...(enrolmentId ? { enrolment_id: enrolmentId } : {}),
+      ...(reason ? { reason } : {}),
+      ...(reasonCode ? { reason_code: reasonCode } : {}),
+    }),
   });
 }
 

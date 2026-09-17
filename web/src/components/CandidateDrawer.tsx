@@ -19,14 +19,25 @@
 // enrolment endpoint, which records who moved them and why; a shortcut on a
 // read surface is how that ledger acquires gaps.
 
-import { useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getApplicant, listApplications } from '@/api/applicants';
 import { listAnswers, type ApplicationAnswer } from '@/api/questions';
 import { listRoundResults, type RoundResult } from '@/api/applicants';
 import { getEnrolmentHistory } from '@/api/requisitions';
+import { getWorkflow, listWorkflows } from '@/api/workflows';
+import {
+  assignInterviewers,
+  getEnrolmentScorecards,
+  listInterviewers,
+  withdrawScorecard,
+  type EnrolmentScorecard,
+} from '@/api/scorecards';
+import { formatDate } from '@/lib/formatters';
 import { describeMove } from '@/lib/stageHistory';
+import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { AlertTriangle, Info, User, X } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 
@@ -185,6 +196,392 @@ function RoundScores({
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/* ── Human interview (D4-1) ──────────────────────────────────────────────
+ *
+ * Everything about the human-review round(s) on this application: who is
+ * assigned, their state, and — once submitted — their scores. Scorecards
+ * never decide anything (D-05); this is a read plus an assignment control,
+ * never a hire/reject shortcut.
+ */
+
+const SCORECARD_TONE: Record<EnrolmentScorecard['state'], TagTone> = {
+  assigned: 'electric',
+  in_progress: 'amber',
+  late: 'ember',
+  submitted: 'forest',
+  withdrawn: 'neutral',
+};
+
+function AssignInterviewersForm({
+  enrolmentId,
+  rounds,
+  onAssigned,
+}: {
+  enrolmentId: string;
+  rounds: { id: string; title: string }[];
+  onAssigned: () => void;
+}) {
+  const [roundId, setRoundId] = useState('');
+  const [selected, setSelected] = useState<string[]>([]);
+  const [dueAt, setDueAt] = useState('');
+
+  const interviewers = useQuery({
+    queryKey: ['hr', 'interviewers'],
+    queryFn: listInterviewers,
+  });
+
+  const assignMut = useMutation({
+    mutationFn: () =>
+      assignInterviewers(enrolmentId, {
+        round_id: roundId,
+        interviewer_user_ids: selected,
+        ...(dueAt ? { due_at: new Date(dueAt).toISOString() } : {}),
+      }),
+    onSuccess: (res) => {
+      // already_assigned is information, not an error — say so rather than
+      // silently dropping it.
+      toast.success(
+        res.already_assigned.length > 0
+          ? `Assigned ${res.created.length} — ${res.already_assigned.length} already had this round`
+          : `Assigned ${res.created.length} interviewer${res.created.length === 1 ? '' : 's'}`,
+      );
+      setSelected([]);
+      onAssigned();
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : 'Could not assign interviewers'),
+  });
+
+  return (
+    <div className="mt-3 flex flex-col gap-2.5 rounded-[12px] border border-border p-3">
+      <div>
+        <label htmlFor="assign-round" className="text-[12px] font-medium text-[var(--ui-soft)]">
+          Round
+        </label>
+        <select
+          id="assign-round"
+          value={roundId}
+          onChange={(e) => setRoundId(e.target.value)}
+          className="mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+        >
+          <option value="">Choose a round…</option>
+          {rounds.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.title}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <fieldset className="flex flex-col gap-1.5">
+        <legend className="text-[12px] font-medium text-[var(--ui-soft)]">Interviewers</legend>
+        {interviewers.isLoading ? (
+          <span className="text-[12px] text-muted-foreground">Loading…</span>
+        ) : (interviewers.data ?? []).length === 0 ? (
+          <span className="text-[12px] text-muted-foreground">No interviewers set up yet.</span>
+        ) : (
+          (interviewers.data ?? []).map((iv) => (
+            <label key={iv.user_id} className="flex items-center gap-2 text-[12.5px] text-foreground">
+              <input
+                type="checkbox"
+                checked={selected.includes(iv.user_id)}
+                onChange={(e) =>
+                  setSelected((prev) =>
+                    e.target.checked
+                      ? [...prev, iv.user_id]
+                      : prev.filter((id) => id !== iv.user_id),
+                  )
+                }
+                className="h-4 w-4 accent-[var(--accent)]"
+              />
+              {iv.full_name} <span className="text-[var(--ui-faint)]">({iv.email})</span>
+            </label>
+          ))
+        )}
+      </fieldset>
+
+      <div>
+        <label htmlFor="assign-due" className="text-[12px] font-medium text-[var(--ui-soft)]">
+          Due date (optional)
+        </label>
+        <input
+          id="assign-due"
+          type="datetime-local"
+          value={dueAt}
+          onChange={(e) => setDueAt(e.target.value)}
+          className="mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+        />
+      </div>
+
+      <button
+        type="button"
+        disabled={!roundId || selected.length === 0 || assignMut.isPending}
+        onClick={() => assignMut.mutate()}
+        className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+      >
+        {assignMut.isPending ? 'Assigning…' : 'Assign'}
+      </button>
+    </div>
+  );
+}
+
+function HumanInterviewSection({
+  enrolmentId,
+  requisitionId,
+}: {
+  enrolmentId: string;
+  requisitionId: string | null;
+}) {
+  const qc = useQueryClient();
+  const [assigning, setAssigning] = useState(false);
+  const [withdrawReasons, setWithdrawReasons] = useState<Record<string, string>>({});
+
+  const scorecards = useQuery({
+    queryKey: ['hr', 'enrolment', enrolmentId, 'scorecards'],
+    queryFn: () => getEnrolmentScorecards(enrolmentId),
+    retry: false,
+  });
+
+  // The round PICKER needs each round's `kind`, which the scorecards endpoint
+  // does not carry — only the published workflow does. Fetched the same way
+  // WorkflowBuilder does: list versions, then the published one in full.
+  const workflows = useQuery({
+    queryKey: ['hr', 'workflows', requisitionId],
+    queryFn: () => listWorkflows(requisitionId as string),
+    enabled: Boolean(requisitionId),
+  });
+  const publishedId = workflows.data?.find((w) => w.status === 'published')?.id ?? null;
+  const workflow = useQuery({
+    queryKey: ['hr', 'workflow', publishedId],
+    queryFn: () => getWorkflow(publishedId as string),
+    enabled: Boolean(publishedId),
+  });
+  const humanReviewRounds = (workflow.data?.rounds ?? [])
+    .filter((r) => r.kind === 'human_review')
+    .map((r) => ({ id: r.id, title: r.title }));
+  // Why assigning is not possible right now, or null when it is. Kept apart
+  // from "no rounds": a failed fetch and a workflow with no interview round
+  // used to render the same empty dropdown.
+  const roundsLoading = workflows.isLoading || (Boolean(publishedId) && workflow.isLoading);
+  const assignBlocked: string | null = !requisitionId
+    ? 'This application is not on an opening with a workflow, so there is no interview round to assign.'
+    : workflows.isError || workflow.isError
+      ? "Could not load this opening's interview rounds. Try again in a moment."
+      : roundsLoading
+        ? null
+        : humanReviewRounds.length === 0
+          ? "This opening's published workflow has no human interview round. Add one in the workflow builder to assign interviewers."
+          : null;
+
+  const invalidate = () =>
+    void qc.invalidateQueries({ queryKey: ['hr', 'enrolment', enrolmentId, 'scorecards'] });
+
+  const withdrawMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) => withdrawScorecard(id, reason),
+    onSuccess: () => {
+      toast.success('Assignment withdrawn');
+      invalidate();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not withdraw this assignment'),
+  });
+
+  const rounds = scorecards.data?.rounds ?? [];
+
+  return (
+    <div className="mt-5">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-[13px] font-medium text-foreground">Human interview</h3>
+        <button
+          type="button"
+          onClick={() => setAssigning((v) => !v)}
+          disabled={!assigning && (roundsLoading || assignBlocked !== null)}
+          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline disabled:cursor-not-allowed disabled:text-[var(--ui-faint)] disabled:no-underline"
+        >
+          {assigning ? 'Close' : 'Assign interviewers'}
+        </button>
+      </div>
+      {assignBlocked ? (
+        <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">{assignBlocked}</p>
+      ) : null}
+
+      {assigning && assignBlocked === null ? (
+        <AssignInterviewersForm
+          enrolmentId={enrolmentId}
+          rounds={humanReviewRounds}
+          onAssigned={() => {
+            setAssigning(false);
+            invalidate();
+          }}
+        />
+      ) : null}
+
+      {scorecards.isLoading ? (
+        <p className="mt-2 text-[12.5px] text-muted-foreground">Loading…</p>
+      ) : scorecards.isError ? (
+        <p className="mt-2 text-[12.5px] text-muted-foreground">
+          Could not load interview scorecards.
+        </p>
+      ) : rounds.length === 0 ? (
+        <p className="mt-2 text-[12.5px] text-muted-foreground">
+          No human interview round for this application yet.
+        </p>
+      ) : (
+        <div className="mt-2 flex flex-col gap-3">
+          {rounds.map((round) => {
+            const live = round.scorecards.filter((s) => !s.superseded);
+            const superseded = round.scorecards.filter((s) => s.superseded);
+            return (
+              <div key={round.round_id} className="rounded-[12px] border border-border p-3">
+                <p className="text-[12.5px] font-medium text-foreground">{round.round_title}</p>
+                {round.hidden_until_you_submit ? (
+                  <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+                    Hidden until you submit your own scorecard.
+                  </p>
+                ) : null}
+                <ul className="mt-2 flex flex-col gap-2">
+                  {live.map((sc) => (
+                    <li key={sc.scorecard_id} className="rounded-[10px] border border-border p-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[12.5px] text-foreground">{sc.interviewer_name}</span>
+                        <StatusTag tone={SCORECARD_TONE[sc.state]}>{sc.state}</StatusTag>
+                      </div>
+                      {sc.submitted_at ? (
+                        <p className="mt-0.5 text-[11px] text-[var(--ui-faint)]">
+                          Submitted {formatDate(sc.submitted_at)}
+                        </p>
+                      ) : sc.due_at && sc.state !== 'withdrawn' ? (
+                        <p className="mt-0.5 text-[11px] text-[var(--ui-faint)]">
+                          Due {formatDate(sc.due_at)}
+                        </p>
+                      ) : null}
+                      {sc.is_correction && sc.correction_reason ? (
+                        <p className="mt-1 text-[11.5px] text-[var(--ui-lavender)]">
+                          Corrected: {sc.correction_reason}
+                        </p>
+                      ) : null}
+                      {sc.is_correction && sc.corrected_after_peers_visible ? (
+                        <p className="mt-1 flex items-center gap-1 text-[11px] text-[var(--ui-faint)]">
+                          <Info size={11} aria-hidden="true" />
+                          Corrected after other scorecards were visible
+                        </p>
+                      ) : null}
+                      {sc.withdrawn_reason ? (
+                        <p className="mt-1 text-[11.5px] text-muted-foreground">
+                          Withdrawn: {sc.withdrawn_reason}
+                        </p>
+                      ) : null}
+                      {sc.redacted ? (
+                        <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+                          Written evidence removed after a data-erasure request. The scores
+                          are kept.
+                        </p>
+                      ) : null}
+                      {sc.scores ? (
+                        <div className="mt-1.5 flex flex-col gap-1">
+                          {round.criteria.map((c) => {
+                            const s = sc.scores?.[c.competency_id];
+                            if (!s) return null;
+                            return (
+                              <div
+                                key={c.competency_id}
+                                className="flex items-baseline justify-between gap-2 text-[11.5px]"
+                              >
+                                <span className="text-[var(--ui-soft)]">{c.competency_name}</span>
+                                <span className="text-foreground">
+                                  {s.not_assessed ? 'not assessed' : (s.score ?? '—')}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {round.criteria.some((c) => sc.scores?.[c.competency_id]?.evidence) ? (
+                            <ul className="mt-1 flex flex-col gap-1">
+                              {round.criteria
+                                .filter((c) => sc.scores?.[c.competency_id]?.evidence)
+                                .map((c) => (
+                                  <li key={c.competency_id} className="text-[11px] text-[var(--ui-faint)]">
+                                    {c.competency_name}: {sc.scores?.[c.competency_id]?.evidence}
+                                  </li>
+                                ))}
+                            </ul>
+                          ) : null}
+                          {sc.summary ? (
+                            <p className="mt-1 text-[11.5px] leading-relaxed text-muted-foreground">
+                              {sc.summary}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : sc.state === 'submitted' ? (
+                        // Submitted, but not readable by this viewer yet: they owe
+                        // their own scorecard for the round. Saying "not submitted"
+                        // here would be false.
+                        <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+                          {round.hidden_until_you_submit
+                            ? 'Hidden until you submit your own scorecard.'
+                            : 'Submitted.'}
+                        </p>
+                      ) : sc.state !== 'withdrawn' ? (
+                        <p className="mt-1 text-[11.5px] text-muted-foreground">Not submitted yet.</p>
+                      ) : null}
+                      {/* Not on an open correction: the server refuses, because it would
+                          leave that interviewer with no current scorecard. */}
+                      {sc.state !== 'submitted' && sc.state !== 'withdrawn' && !sc.is_correction ? (
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={withdrawReasons[sc.scorecard_id] ?? ''}
+                            onChange={(e) =>
+                              setWithdrawReasons((prev) => ({
+                                ...prev,
+                                [sc.scorecard_id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Reason (optional)"
+                            aria-label={`Withdraw reason for ${sc.interviewer_name}`}
+                            className="w-full max-w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+                          />
+                          <ConfirmDeleteButton
+                            label="Withdraw"
+                            pending={
+                              withdrawMut.isPending &&
+                              withdrawMut.variables?.id === sc.scorecard_id
+                            }
+                            onConfirm={() =>
+                              withdrawMut.mutate({
+                                id: sc.scorecard_id,
+                                reason: withdrawReasons[sc.scorecard_id],
+                              })
+                            }
+                          />
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                {superseded.length > 0 ? (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-[11.5px] text-muted-foreground">
+                      {superseded.length} corrected{' '}
+                      {superseded.length === 1 ? 'scorecard' : 'scorecards'}
+                    </summary>
+                    <ul className="mt-1.5 flex flex-col gap-1.5 pl-2">
+                      {superseded.map((sc) => (
+                        <li key={sc.scorecard_id} className="text-[11.5px] text-[var(--ui-faint)]">
+                          {sc.interviewer_name} — corrected
+                          {sc.correction_reason ? `: ${sc.correction_reason}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -420,6 +817,10 @@ export default function CandidateDrawer({
             scores never loaded. */}
         <RoundScores applicantId={applicantId} enrolmentId={enrolmentId} />
 
+        {enrolmentId ? (
+          <HumanInterviewSection enrolmentId={enrolmentId} requisitionId={app?.requisition_id ?? null} />
+        ) : null}
+
         <div className="mt-5">
           <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">
             <User size={13} aria-hidden="true" />
@@ -489,7 +890,11 @@ export default function CandidateDrawer({
                   <p className="text-[var(--ui-soft)]">{describeMove(h)}</p>
                   <p className="text-[11.5px] text-[var(--ui-faint)]">
                     {new Date(h.occurred_at).toLocaleString()}
-                    {h.reason ? ` — ${h.reason}` : ''}
+                    {/* O4: the structured reason label, when this move recorded
+                        one, alongside the free-text reason. Historical rows
+                        have neither and render exactly as before. */}
+                    {h.reason_label ? ` — ${h.reason_label}` : ''}
+                    {h.reason ? `${h.reason_label ? ': ' : ' — '}${h.reason}` : ''}
                   </p>
                 </li>
               ))}

@@ -13,6 +13,8 @@ const base: StageHistoryEntry = {
   automated: false,
   actor: 'Priya HR',
   reason: null,
+  reason_code: null,
+  reason_label: null,
 };
 
 describe('describeMove', () => {

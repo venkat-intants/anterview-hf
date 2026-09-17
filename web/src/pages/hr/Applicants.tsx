@@ -37,6 +37,8 @@ import {
   type ApplicantStatus,
 } from '@/api/applicants';
 import { listRequisitions, type Requisition } from '@/api/requisitions';
+import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
+import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -176,6 +178,96 @@ const inputCls =
   'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none ' +
   'focus:border-[var(--accent)] transition-colors';
 
+// ── Reject, with a required structured reason (O4) ──────────────────────────
+//
+// Rejecting is a terminal decision — the server now refuses a reject with
+// neither `reason` nor `reason_code`. The button therefore expands into a
+// small inline form rather than firing immediately, the same requirement
+// DecisionQueue and HRPipeline gate hire/reject on; this reuses their shared
+// DecisionReasonSelect rather than a third copy of the filtering/validation.
+function RejectAction({
+  idSuffix,
+  onConfirm,
+  disabled,
+  ariaLabel = 'Reject',
+}: {
+  /** Makes every id/label on the page unique when several rows render this. */
+  idSuffix: string;
+  onConfirm: (reasonCode: string, reason: string) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reasonCode, setReasonCode] = useState('');
+  const [reason, setReason] = useState('');
+  const reasonsQuery = useDecisionReasons();
+  const reasons = reasonsFor(reasonsQuery.data, 'rejected');
+  const chosen = reasons.find((r) => r.code === reasonCode) ?? null;
+  const minLen = minReasonLength(chosen);
+  const canConfirm = Boolean(reasonCode) && reason.trim().length >= minLen;
+
+  if (!open) {
+    return (
+      <Pill
+        variant="danger"
+        onClick={() => setOpen(true)}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        className="gap-1.5"
+      >
+        <XCircle size={15} aria-hidden="true" />
+        Reject
+      </Pill>
+    );
+  }
+
+  return (
+    <div className="w-full space-y-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3">
+      <DecisionReasonSelect
+        id={`reject-reason-${idSuffix}`}
+        reasons={reasons}
+        value={reasonCode}
+        onChange={setReasonCode}
+      />
+      <div>
+        <label htmlFor={`reject-why-${idSuffix}`} className="block text-[12px] text-[var(--ui-soft)]">
+          Why{chosen?.requires_explanation ? ` (at least ${minLen} characters)` : ''}
+        </label>
+        <textarea
+          id={`reject-why-${idSuffix}`}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={2}
+          className={inputCls}
+        />
+      </div>
+      {!canConfirm ? (
+        <p className="text-[11px] text-[var(--ui-warn)]">
+          {!reasonCode ? 'Choose a reason first.' : `Write at least ${minLen} characters.`}
+        </p>
+      ) : null}
+      <div className="flex gap-2">
+        <Pill
+          variant="danger"
+          disabled={!canConfirm}
+          onClick={() => {
+            onConfirm(reasonCode, reason.trim());
+            setOpen(false);
+            setReasonCode('');
+            setReason('');
+          }}
+          aria-label={`Confirm ${ariaLabel.toLowerCase()}`}
+        >
+          Confirm reject
+        </Pill>
+        <Pill variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Pill>
+      </div>
+    </div>
+  );
+}
+
 // ── Slide-in drawer ───────────────────────────────────────────────────────────
 
 interface DrawerProps {
@@ -183,7 +275,9 @@ interface DrawerProps {
   onClose: () => void;
   /** `enrolmentId` names the application (B5); always sent when known. */
   onShortlist: (id: string, enrolmentId?: string | null) => void;
-  onReject: (id: string, enrolmentId?: string | null) => void;
+  /** Rejecting is terminal (O4) — always carries the chosen reason code and
+   *  the free-text reason behind it. */
+  onReject: (id: string, enrolmentId: string | null | undefined, reasonCode: string, reason: string) => void;
   onRescore: (id: string) => void;
   statusPending: boolean;
   rescorePending: boolean;
@@ -428,7 +522,7 @@ function ApplicantDrawer({
                           {app.is_latest ? ' · latest' : ''}
                         </p>
                       </div>
-                      <div className="flex gap-1.5">
+                      <div className="flex w-full flex-wrap items-center justify-end gap-1.5 sm:w-auto">
                         <Pill
                           variant="ghost"
                           onClick={() => onShortlist(a.id, app.enrolment_id)}
@@ -437,14 +531,14 @@ function ApplicantDrawer({
                         >
                           Shortlist
                         </Pill>
-                        <Pill
-                          variant="danger"
-                          onClick={() => onReject(a.id, app.enrolment_id)}
+                        <RejectAction
+                          idSuffix={app.enrolment_id}
+                          ariaLabel={`Reject for ${app.opening_title ?? 'this opening'}`}
                           disabled={statusPending || app.stored_status === 'rejected'}
-                          aria-label={`Reject for ${app.opening_title ?? 'this opening'}`}
-                        >
-                          Reject
-                        </Pill>
+                          onConfirm={(reasonCode, reason) =>
+                            onReject(a.id, app.enrolment_id, reasonCode, reason)
+                          }
+                        />
                       </div>
                     </li>
                   ))}
@@ -517,16 +611,13 @@ function ApplicantDrawer({
                 <CheckCircle2 size={15} aria-hidden="true" />
                 Shortlist
               </Pill>
-              <Pill
-                variant="danger"
-                onClick={() => onReject(a.id, only?.enrolment_id)}
+              <RejectAction
+                idSuffix={only?.enrolment_id ?? a.id}
                 disabled={statusPending || a.status === 'rejected'}
-                aria-label="Reject"
-                className="gap-1.5"
-              >
-                <XCircle size={15} aria-hidden="true" />
-                Reject
-              </Pill>
+                onConfirm={(reasonCode, reason) =>
+                  onReject(a.id, only?.enrolment_id, reasonCode, reason)
+                }
+              />
             </>
           )}
         </div>
@@ -951,11 +1042,20 @@ export default function Applicants() {
       id,
       status,
       enrolmentId,
+      reason,
+      reasonCode,
     }: {
       id: string;
       status: ApplicantStatus;
       enrolmentId?: string | null;
-    }) => updateApplicantStatus(id, status, enrolmentId),
+      reason?: string;
+      reasonCode?: string;
+    }) =>
+      // Only a reject carries a reason/reason_code (O4) — shortlisting stays a
+      // plain 3-argument call rather than two always-undefined trailing ones.
+      reason !== undefined || reasonCode !== undefined
+        ? updateApplicantStatus(id, status, enrolmentId, reason, reasonCode)
+        : updateApplicantStatus(id, status, enrolmentId),
     onSuccess: (updated) => {
       setSelected((prev) => (prev?.id === updated.id ? updated : prev));
       void qc.invalidateQueries({ queryKey: ['hr', 'applicants'] });
@@ -1177,8 +1277,8 @@ export default function Applicants() {
             onShortlist={(id, enrolmentId) =>
               statusMut.mutate({ id, status: 'shortlisted', enrolmentId })
             }
-            onReject={(id, enrolmentId) =>
-              statusMut.mutate({ id, status: 'rejected', enrolmentId })
+            onReject={(id, enrolmentId, reasonCode, reason) =>
+              statusMut.mutate({ id, status: 'rejected', enrolmentId, reason, reasonCode })
             }
             onRescore={(id) => rescoreMut.mutate(id)}
             statusPending={statusMut.isPending}

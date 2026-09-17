@@ -19,7 +19,7 @@
 // must add to 100 here.
 
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -29,8 +29,10 @@ import {
   Loader2,
 } from '@/design/components/icons';
 import { StatusTag } from '@/design/components/primitives';
+import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { listExams, getStructure } from '@/api/exams';
+import { getRoundKit, updateRoundKit } from '@/api/scorecards';
 import type {
   RoundKind,
   Criterion,
@@ -386,6 +388,205 @@ function CriteriaPicker({
   );
 }
 
+/* ── Interview kit editor (human_review only) ───────────────────────────────
+ *
+ * Criteria are frozen (set above, in CriteriaPicker) — this only edits the
+ * instructions, HR's notes for interviewers, and per-criterion guidance
+ * (what to evaluate / look for / suggested probes). The interviewer console
+ * reads this back read-only, plus the frozen probes the rubric already
+ * carries.
+ */
+
+function LinesEditor({
+  label,
+  value,
+  editable,
+  onChange,
+}: {
+  label: string;
+  value: string[];
+  editable: boolean;
+  onChange: (next: string[]) => void;
+}) {
+  return (
+    <div>
+      <label className="text-[11px] font-medium text-[var(--ui-faint)]">{label}</label>
+      <textarea
+        value={value.join('\n')}
+        disabled={!editable}
+        onChange={(e) => onChange(e.target.value.split('\n'))}
+        rows={3}
+        placeholder="One per line"
+        className="mt-1 w-full resize-y rounded-[8px] border border-border bg-secondary px-2.5 py-1.5 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+      />
+    </div>
+  );
+}
+
+type KitRows = Record<string, { what_to_evaluate: string[]; look_for: string[]; probes: string[] }>;
+
+const EMPTY_KIT_ROW: KitRows[string] = { what_to_evaluate: [], look_for: [], probes: [] };
+
+function KitEditor({
+  roundId,
+  criteria,
+  editable,
+}: {
+  roundId: string;
+  criteria: Criterion[];
+  editable: boolean;
+}) {
+  const qc = useQueryClient();
+  const kit = useQuery({
+    queryKey: ['hr', 'round-kit', roundId],
+    queryFn: () => getRoundKit(roundId),
+  });
+
+  const [instructions, setInstructions] = useState('');
+  const [notes, setNotes] = useState('');
+  const [rows, setRows] = useState<KitRows>({});
+  // Hydrate local editable state once per round/fetch, the same pattern the
+  // title field above uses — keyed so switching rounds resets it.
+  const [hydratedFor, setHydratedFor] = useState<string | null>(null);
+  if (kit.data && hydratedFor !== roundId) {
+    setHydratedFor(roundId);
+    setInstructions(kit.data.instructions ?? '');
+    setNotes(kit.data.interviewer_notes_from_hr ?? '');
+    const next: KitRows = {};
+    for (const c of kit.data.criteria) {
+      next[c.competency_id] = {
+        what_to_evaluate: c.what_to_evaluate,
+        look_for: c.look_for,
+        probes: c.probes,
+      };
+    }
+    setRows(next);
+  }
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      updateRoundKit(roundId, {
+        instructions: instructions.trim() || null,
+        interviewer_notes_from_hr: notes.trim() || null,
+        criteria: criteria.map((c) => ({
+          competency_id: c.id,
+          what_to_evaluate: (rows[c.id]?.what_to_evaluate ?? []).map((x) => x.trim()).filter(Boolean),
+          look_for: (rows[c.id]?.look_for ?? []).map((x) => x.trim()).filter(Boolean),
+          probes: (rows[c.id]?.probes ?? []).map((x) => x.trim()).filter(Boolean),
+        })),
+      }),
+    onSuccess: () => {
+      toast.success('Interview kit saved');
+      void qc.invalidateQueries({ queryKey: ['hr', 'round-kit', roundId] });
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : 'Could not save the interview kit'),
+  });
+
+  if (kit.isLoading) {
+    return (
+      <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        Loading the interview kit…
+      </span>
+    );
+  }
+  if (kit.isError) {
+    return <p className="text-[12px] text-[var(--ui-danger)]">Could not load the interview kit.</p>;
+  }
+
+  const frozenFor = (id: string): string[] =>
+    kit.data?.criteria.find((k) => k.competency_id === id)?.frozen_probes ?? [];
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <label htmlFor="kit-instructions" className="text-[12px] font-medium text-[var(--ui-soft)]">
+          Instructions for interviewers
+        </label>
+        <textarea
+          id="kit-instructions"
+          value={instructions}
+          disabled={!editable}
+          onChange={(e) => setInstructions(e.target.value)}
+          rows={2}
+          className="mt-1 w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+        />
+      </div>
+      <div>
+        <label htmlFor="kit-notes" className="text-[12px] font-medium text-[var(--ui-soft)]">
+          Notes for interviewers
+        </label>
+        <textarea
+          id="kit-notes"
+          value={notes}
+          disabled={!editable}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={2}
+          className="mt-1 w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+        />
+      </div>
+
+      {criteria.map((c) => (
+        <div key={c.id} className="rounded-[10px] border border-border p-2.5">
+          <p className="text-[12.5px] font-medium text-foreground">{c.name}</p>
+          {frozenFor(c.id).length > 0 ? (
+            <p className="mt-1 text-[11px] text-[var(--ui-faint)]">
+              Frozen probes (from the rubric): {frozenFor(c.id).join('; ')}
+            </p>
+          ) : null}
+          <div className="mt-2 flex flex-col gap-2">
+            <LinesEditor
+              label="What to evaluate"
+              value={rows[c.id]?.what_to_evaluate ?? []}
+              editable={editable}
+              onChange={(v) =>
+                setRows((prev) => ({
+                  ...prev,
+                  [c.id]: { ...(prev[c.id] ?? EMPTY_KIT_ROW), what_to_evaluate: v },
+                }))
+              }
+            />
+            <LinesEditor
+              label="Look for"
+              value={rows[c.id]?.look_for ?? []}
+              editable={editable}
+              onChange={(v) =>
+                setRows((prev) => ({
+                  ...prev,
+                  [c.id]: { ...(prev[c.id] ?? EMPTY_KIT_ROW), look_for: v },
+                }))
+              }
+            />
+            <LinesEditor
+              label="Suggested probes (guidance, not mandatory questions)"
+              value={rows[c.id]?.probes ?? []}
+              editable={editable}
+              onChange={(v) =>
+                setRows((prev) => ({
+                  ...prev,
+                  [c.id]: { ...(prev[c.id] ?? EMPTY_KIT_ROW), probes: v },
+                }))
+              }
+            />
+          </div>
+        </div>
+      ))}
+
+      {editable ? (
+        <button
+          type="button"
+          onClick={() => saveMut.mutate()}
+          disabled={saveMut.isPending}
+          className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+        >
+          {saveMut.isPending ? 'Saving…' : 'Save interview kit'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 /* ── Panel ──────────────────────────────────────────────────────────────── */
 
 export default function RoundInspector({
@@ -533,6 +734,24 @@ export default function RoundInspector({
             editable={editable}
             onCriteria={onCriteria}
           />
+        </section>
+      ) : null}
+
+      {/* Interview kit — human_review only. Criteria are frozen above; this
+          edits the guidance an interviewer sees for each one. */}
+      {round.kind === 'human_review' ? (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">Interview kit</h3>
+          <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+            What the interviewer sees alongside the checklist above: instructions, your notes,
+            and per-criterion guidance. Criteria themselves are frozen — set them above.
+          </p>
+          {/* Editable on a PUBLISHED workflow too, deliberately. The kit is
+              guidance, not the rubric — the criteria above stay frozen — and the
+              candidates already on this version are the ones it is for. Locking
+              it with the workflow would force a new version to fix a typo in a
+              probe, and leave everyone on the live version with the old kit. */}
+          <KitEditor key={round.id} roundId={round.id} criteria={round.criteria} editable />
         </section>
       ) : null}
 

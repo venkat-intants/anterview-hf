@@ -299,15 +299,25 @@ export function listEnrolments(
   return apiGet<Enrolment[]>(`/hr/requisitions/${requisitionId}/enrolments${q ? `?${q}` : ''}`);
 }
 
-/** Move one candidate. Recorded against the signed-in human, never automated. */
+/**
+ * Move one candidate. Recorded against the signed-in human, never automated.
+ *
+ * `reasonCode` (O4) is required by the server when `status` is 'hired' or
+ * 'rejected' — no caller in this codebase currently targets either status
+ * through this endpoint (both terminal decisions go through
+ * recordFinalDecision / setApplicantDecision instead), so this is wired for
+ * contract completeness rather than exercised today.
+ */
 export function setEnrolmentStatus(
   enrolmentId: string,
   status: EnrolmentStatus,
   reason?: string,
+  reasonCode?: string,
 ): Promise<Enrolment> {
   return apiPost<Enrolment>(`/hr/enrolments/${enrolmentId}/status`, {
     status,
     reason: reason?.trim() || null,
+    ...(reasonCode ? { reason_code: reasonCode } : {}),
   });
 }
 
@@ -326,6 +336,12 @@ export interface StageHistoryEntry {
   automated: boolean;
   actor: string | null;
   reason: string | null;
+  /** O4 — set only on a hire/reject move made under the structured taxonomy.
+   *  Historical rows predate it and carry null; render fine without it. */
+  reason_code: string | null;
+  /** Display label for reason_code at the time it was recorded — retiring the
+   *  reason later does not change what a past decision shows here. */
+  reason_label: string | null;
 }
 
 export function getEnrolmentHistory(enrolmentId: string): Promise<StageHistoryEntry[]> {

@@ -24,6 +24,8 @@ import {
   type PipelineStage,
   type ApplicantDecision,
 } from '@/api/pipeline';
+import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
+import { MIN_REASON_EXPLAINED, useDecisionReasons } from '@/lib/decisionReasons';
 import { toast } from '@/lib/toast';
 import CandidateDrawer from '@/components/CandidateDrawer';
 import { applicationKey } from '@/lib/applicationKey';
@@ -166,11 +168,26 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
   const [open, setOpen] = useState(false);
   const [rationale, setRationale] = useState('');
 
+  const [reasonCode, setReasonCode] = useState('');
+  const reasonsQuery = useDecisionReasons();
+  // Both outcomes are offered from the same control here (there is no
+  // separate "which decision am I about to make" step, unlike the decision
+  // queue) — so every active reason is shown rather than filtering by
+  // applies_to. Unlike the decision queue, the free-text rationale here is
+  // OPTIONAL unless the chosen reason itself demands an explanation — that
+  // policy is this screen's own, so it is not folded into minReasonLength.
+  const chosenReason = (reasonsQuery.data ?? []).find((r) => r.code === reasonCode) ?? null;
+  const rationaleReady = !chosenReason?.requires_explanation || rationale.trim().length >= MIN_REASON_EXPLAINED;
+  // O4: a reason code is now required for every hire/reject write.
+  const canDecide = Boolean(reasonCode) && rationaleReady;
+
   const decideMut = useMutation({
     mutationFn: (decision: ApplicantDecision) =>
-      setApplicantDecision(a.applicant_id, decision, rationale, a.enrolment_id),
+      setApplicantDecision(a.applicant_id, decision, reasonCode, rationale, a.enrolment_id),
     onSuccess: (_res, decision) => {
       toast.success(decision === 'hired' ? 'Applicant hired' : 'Applicant rejected');
+      setReasonCode('');
+      setRationale('');
       void qc.invalidateQueries({ queryKey: ['hr', 'pipeline'] });
       void qc.invalidateQueries({ queryKey: ['hr', 'analytics'] });
     },
@@ -276,34 +293,11 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
           </StatusTag>
         </div>
 
-        {/* Decision quick buttons */}
+        {/* A hire/reject decision now always needs a reason code (O4), so the
+            one-click quick actions that used to live here are gone — Expand
+            details is the one way in, and the reason + rationale + Hire/Reject
+            controls live in the panel below. */}
         <div className="flex shrink-0 items-center gap-1">
-          {canHire && (
-            <button
-              type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[var(--ui-ok)] hover:bg-[rgba(39,201,63,0.14)] transition-colors disabled:opacity-40"
-              disabled={decideMut.isPending}
-              onClick={() => decideMut.mutate('hired')}
-              aria-label="Hire"
-            >
-              {decideMut.isPending && decideMut.variables === 'hired' ? (
-                <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-              ) : (
-                <CheckCircle2 size={16} aria-hidden="true" />
-              )}
-            </button>
-          )}
-          {canReject && (
-            <button
-              type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[var(--ui-danger)] hover:bg-[rgba(230,113,79,0.14)] transition-colors disabled:opacity-40"
-              disabled={decideMut.isPending}
-              onClick={() => decideMut.mutate('rejected')}
-              aria-label="Reject"
-            >
-              <XCircle size={16} aria-hidden="true" />
-            </button>
-          )}
           <button
             type="button"
             className="flex h-8 w-8 items-center justify-center rounded-[9px] text-muted-foreground hover:bg-[var(--ui-inset)] transition-colors"
@@ -397,13 +391,22 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
             </div>
           </div>
 
-          {/* Rationale + decision buttons (persisted — audit trail) */}
+          {/* Reason + rationale + decision buttons (persisted — audit trail) */}
           {(canHire || canReject) && (
             <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.4)] p-3.5">
-              <label className="mb-2 block text-[12px] font-semibold text-foreground">
+              <DecisionReasonSelect
+                id={`reason-code-${a.applicant_id}`}
+                reasons={reasonsQuery.data ?? []}
+                value={reasonCode}
+                onChange={setReasonCode}
+              />
+
+              <label className="mb-2 mt-3 block text-[12px] font-semibold text-foreground">
                 Hire decision{' '}
                 <span className="font-normal text-[var(--ui-faint)]">
-                  — rationale is optional but logged for audit
+                  {chosenReason?.requires_explanation
+                    ? '— this reason needs at least 10 characters of explanation'
+                    : '— rationale is optional but logged for audit'}
                 </span>
               </label>
               <textarea
@@ -413,12 +416,12 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                 onChange={(e) => setRationale(e.target.value)}
                 aria-label="Decision rationale"
               />
-              <div className="mt-2.5 flex gap-2">
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 {canHire && (
                   <button
                     type="button"
                     className="inline-flex items-center gap-1.5 rounded-[9999px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                    disabled={decideMut.isPending}
+                    disabled={decideMut.isPending || !canDecide}
                     onClick={() => decideMut.mutate('hired')}
                     aria-busy={decideMut.isPending && decideMut.variables === 'hired'}
                   >
@@ -434,7 +437,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                   <button
                     type="button"
                     className="inline-flex items-center gap-1.5 rounded-[9999px] bg-[rgba(230,113,79,0.14)] border border-[rgba(230,113,79,0.35)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-danger)] hover:bg-[rgba(230,113,79,0.22)] disabled:opacity-50 transition-colors"
-                    disabled={decideMut.isPending}
+                    disabled={decideMut.isPending || !canDecide}
                     onClick={() => decideMut.mutate('rejected')}
                     aria-busy={decideMut.isPending && decideMut.variables === 'rejected'}
                   >
@@ -446,6 +449,11 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                     Reject
                   </button>
                 )}
+                {!canDecide ? (
+                  <span className="text-[11.5px] text-[var(--ui-warn)]">
+                    {!reasonCode ? 'Choose a reason first.' : 'Write at least 10 characters explaining why.'}
+                  </span>
+                ) : null}
               </div>
             </div>
           )}

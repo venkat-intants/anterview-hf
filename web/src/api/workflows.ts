@@ -386,6 +386,9 @@ export interface DecisionQueueRow {
   /** Mean of their scored rounds — a summary, never the decision. */
   composite_percent?: number | null;
   round_results?: QueueRoundResult[];
+  /** Human-interview scorecard progress for this application; null when the
+   *  candidate has no human_review round in their workflow. */
+  scorecards: { assigned: number; submitted: number; late: number } | null;
 }
 
 /** One completed round, as the queue summarises it. Criteria and evidence are in the drawer. */
@@ -432,16 +435,18 @@ export interface FinalDecisionResult {
 /**
  * Record the final human decision on one application (E2).
  *
- * The reason is required: a hire or reject ends a candidacy, and the reason is
- * kept against the person deciding, on the ledger and in the audit log.
+ * The reason and reason_code are both required: a hire or reject ends a
+ * candidacy, and both are kept against the person deciding, on the ledger and
+ * in the audit log (O4).
  */
 export function recordFinalDecision(
   enrolmentId: string,
-  body: { decision: 'hired' | 'rejected'; reason: string },
+  body: { decision: 'hired' | 'rejected'; reason: string; reason_code: string },
 ): Promise<FinalDecisionResult> {
   return apiPost<FinalDecisionResult>(`/hr/enrolments/${enrolmentId}/decision`, {
     decision: body.decision,
     reason: body.reason.trim(),
+    reason_code: body.reason_code,
   });
 }
 

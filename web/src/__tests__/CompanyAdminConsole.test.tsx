@@ -47,6 +47,17 @@ const HRS: HrManager[] = [
   },
 ];
 
+const INTERVIEWERS: HrManager[] = [
+  {
+    user_id: 'u-iv-1',
+    email: 'iv1@acme.edu',
+    full_name: 'Farah Khan',
+    company_id: 'c-acme',
+    must_change_password: false,
+    created_at: '2026-08-10T10:00:00.000Z',
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -55,11 +66,17 @@ const api = {
   listMyHrManagers: vi.fn(),
   createMyHrManager: vi.fn(),
   deleteMyHrManager: vi.fn(),
+  listMyInterviewers: vi.fn(),
+  createMyInterviewer: vi.fn(),
+  deleteMyInterviewer: vi.fn(),
 };
 vi.mock('../api/hr', () => ({
   listMyHrManagers: (...a: unknown[]) => api.listMyHrManagers(...a) as unknown,
   createMyHrManager: (...a: unknown[]) => api.createMyHrManager(...a) as unknown,
   deleteMyHrManager: (...a: unknown[]) => api.deleteMyHrManager(...a) as unknown,
+  listMyInterviewers: (...a: unknown[]) => api.listMyInterviewers(...a) as unknown,
+  createMyInterviewer: (...a: unknown[]) => api.createMyInterviewer(...a) as unknown,
+  deleteMyInterviewer: (...a: unknown[]) => api.deleteMyInterviewer(...a) as unknown,
 }));
 
 const getMe = vi.fn();
@@ -141,6 +158,9 @@ beforeEach(() => {
   api.listMyHrManagers.mockResolvedValue(HRS);
   api.createMyHrManager.mockResolvedValue(HRS[0]);
   api.deleteMyHrManager.mockResolvedValue(undefined);
+  api.listMyInterviewers.mockResolvedValue(INTERVIEWERS);
+  api.createMyInterviewer.mockResolvedValue(INTERVIEWERS[0]);
+  api.deleteMyInterviewer.mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -188,8 +208,8 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
     renderConsole();
 
     await screen.findByRole('heading', { name: /super admin/i });
-    await user.type(screen.getByLabelText(/^email$/i), '  new.hr@acme.edu  ');
-    await user.type(screen.getByLabelText(/full name/i), '  Deepa Menon  ');
+    await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), '  new.hr@acme.edu  ');
+    await user.type(screen.getByLabelText(/full name/i, { selector: '#hr-name' }), '  Deepa Menon  ');
     await user.click(screen.getByRole('button', { name: /^add hr$/i }));
 
     await waitFor(() =>
@@ -209,7 +229,8 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
 
     await screen.findByRole('heading', { name: /super admin/i });
     expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/set your password.*link is emailed/i)).toBeInTheDocument();
+    // Once for HR managers, once for interviewers — both rosters say it.
+    expect(screen.getAllByText(/set your password.*link is emailed/i).length).toBe(2);
   });
 
   it('refuses a half-filled form instead of creating a nameless account', async () => {
@@ -217,7 +238,7 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
     renderConsole();
 
     await screen.findByRole('heading', { name: /super admin/i });
-    await user.type(screen.getByLabelText(/^email$/i), 'only.email@acme.edu');
+    await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'only.email@acme.edu');
     await user.click(screen.getByRole('button', { name: /^add hr$/i }));
 
     expect(api.createMyHrManager).not.toHaveBeenCalled();
@@ -230,8 +251,8 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
     renderConsole();
 
     await screen.findByRole('heading', { name: /super admin/i });
-    await user.type(screen.getByLabelText(/^email$/i), 'dupe@acme.edu');
-    await user.type(screen.getByLabelText(/full name/i), 'Dupe');
+    await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'dupe@acme.edu');
+    await user.type(screen.getByLabelText(/full name/i, { selector: '#hr-name' }), 'Dupe');
     await user.click(screen.getByRole('button', { name: /^add hr$/i }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Email already registered'));
@@ -253,6 +274,67 @@ describe('CompanyAdminConsole — removing an HR manager', () => {
       }),
     );
     await waitFor(() => expect(api.deleteMyHrManager).toHaveBeenCalledWith('u-hr-2'));
+  });
+});
+
+describe('CompanyAdminConsole — interviewers (D4-1)', () => {
+  it('lists the interviewers the server scoped to this company, separately from HR managers', async () => {
+    renderConsole();
+
+    const list = await screen.findByRole('list', { name: /^interviewers$/i });
+    expect(within(list).getByText('Farah Khan')).toBeInTheDocument();
+    // The HR list is a different list — an interviewer must not show up there.
+    const hrList = await screen.findByRole('list', { name: /^hr managers$/i });
+    expect(within(hrList).queryByText('Farah Khan')).not.toBeInTheDocument();
+  });
+
+  it('prompts rather than showing an empty box when there are no interviewers', async () => {
+    api.listMyInterviewers.mockResolvedValue([]);
+    renderConsole();
+
+    expect(await screen.findByText(/no interviewers yet/i)).toBeInTheDocument();
+  });
+
+  it('creates an interviewer from its own form, distinct from the HR one', async () => {
+    const user = userEvent.setup();
+    renderConsole();
+
+    await screen.findByText('Farah Khan');
+    await user.type(screen.getByLabelText(/^email$/i, { selector: '#interviewer-email' }), 'new.iv@acme.edu');
+    await user.type(screen.getByLabelText(/full name/i, { selector: '#interviewer-name' }), 'New Interviewer');
+    await user.click(screen.getByRole('button', { name: /^add interviewer$/i }));
+
+    await waitFor(() =>
+      expect(api.createMyInterviewer).toHaveBeenCalledWith({
+        email: 'new.iv@acme.edu',
+        full_name: 'New Interviewer',
+      }),
+    );
+    expect(api.createMyHrManager).not.toHaveBeenCalled();
+  });
+
+  it('warns that removing an interviewer also withdraws their unsubmitted assignments', async () => {
+    renderConsole();
+    await screen.findByText('Farah Khan');
+    expect(
+      screen.getByText(/removing an interviewer also withdraws their unsubmitted interview assignments/i),
+    ).toBeInTheDocument();
+  });
+
+  it('needs a confirm click and removes the interviewer that was clicked', async () => {
+    const user = userEvent.setup();
+    renderConsole();
+
+    await screen.findByText('Farah Khan');
+    await user.click(screen.getByRole('button', { name: /remove farah khan/i }));
+    expect(api.deleteMyInterviewer).not.toHaveBeenCalled();
+
+    await user.click(
+      within(screen.getByRole('group', { name: /confirm deletion/i })).getByRole('button', {
+        name: /^delete$/i,
+      }),
+    );
+    await waitFor(() => expect(api.deleteMyInterviewer).toHaveBeenCalledWith('u-iv-1'));
   });
 });
 

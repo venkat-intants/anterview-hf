@@ -38,6 +38,7 @@ const HELD: DecisionQueueRow = {
     { round_id: 'r1', title: 'Fundamentals', position: 0, kind: 'mcq', percent: 54,
       passed: false, graded_by: 'auto' },
   ],
+  scorecards: null,
 };
 
 const FINISHED: DecisionQueueRow = {
@@ -53,7 +54,14 @@ const FINISHED: DecisionQueueRow = {
   best_percent: 82,
   workflow_version: 2,
   composite_percent: 79.3,
+  scorecards: { assigned: 3, submitted: 2, late: 1 },
 };
+
+const REASONS = [
+  { code: 'strong-fit', label: 'Strong fit', applies_to: 'hired' as const, requires_explanation: false },
+  { code: 'not-enough-exp', label: 'Not enough experience', applies_to: 'rejected' as const, requires_explanation: false },
+  { code: 'other', label: 'Other', applies_to: 'both' as const, requires_explanation: true },
+];
 
 const getDecisionQueue = vi.fn();
 const releaseHold = vi.fn();
@@ -63,6 +71,11 @@ vi.mock('../api/workflows', () => ({
   releaseHold: (...a: unknown[]) => releaseHold(...a) as unknown,
   recordFinalDecision: (...a: unknown[]) => recordFinalDecision(...a) as unknown,
   recordRoundReview: vi.fn(),
+}));
+
+const listDecisionReasons = vi.fn();
+vi.mock('../api/scorecards', () => ({
+  listDecisionReasons: (...a: unknown[]) => listDecisionReasons(...a) as unknown,
 }));
 
 const getRequisition = vi.fn();
@@ -117,6 +130,7 @@ beforeEach(() => {
   getDecisionQueue.mockResolvedValue([HELD, FINISHED]);
   recordFinalDecision.mockResolvedValue({ enrolment_id: 'en-done', status: 'hired' });
   releaseHold.mockResolvedValue({ action: 'released', enrolment_id: 'en-held' });
+  listDecisionReasons.mockResolvedValue(REASONS);
 });
 
 describe('DecisionQueue — one list', () => {
@@ -157,6 +171,17 @@ describe('DecisionQueue — one list', () => {
     );
     expect(within(cardFor('Bhavya Nair')).getByText(/Finished every round/)).toBeTruthy();
   });
+
+  it('shows human-interview scorecard progress when the candidate has any', async () => {
+    renderQueue();
+    await screen.findByText('Bhavya Nair');
+
+    const finished = cardFor('Bhavya Nair');
+    expect(within(finished).getByText(/2\/3 scorecards in/)).toBeTruthy();
+    expect(within(finished).getByText(/1 late/)).toBeTruthy();
+    // Asha has no human_review round on her workflow — nothing to show.
+    expect(within(cardFor('Asha Rao')).queryByText(/scorecards in/)).toBeNull();
+  });
 });
 
 describe('DecisionQueue — the decision itself', () => {
@@ -171,7 +196,7 @@ describe('DecisionQueue — the decision itself', () => {
     expect(within(cardFor('Bhavya Nair')).getByText(/ends their candidacy/)).toBeTruthy();
   });
 
-  it('will not record a hire or reject without a reason', async () => {
+  it('will not record a hire or reject without a reason code chosen', async () => {
     const user = userEvent.setup();
     renderQueue();
     await screen.findByText('Bhavya Nair');
@@ -180,12 +205,25 @@ describe('DecisionQueue — the decision itself', () => {
     await user.click(within(card).getByText('Reject'));
     const confirm = within(card).getByText('Confirm').closest('button') as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
-    expect(within(card).getByText('Write why above first.')).toBeTruthy();
+    expect(within(card).getByText('Choose a reason above first.')).toBeTruthy();
     await user.click(confirm);
     expect(recordFinalDecision).not.toHaveBeenCalled();
   });
 
-  it('sends the decision and its reason to the enrolment whose card it was pressed on', async () => {
+  it('will not record a hire or reject without free-text why, even with a reason chosen', async () => {
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText('Bhavya Nair');
+
+    const card = cardFor('Bhavya Nair');
+    await user.click(within(card).getByText('Hire'));
+    await user.selectOptions(within(card).getByLabelText('Reason'), 'strong-fit');
+    const confirm = within(card).getByText('Confirm').closest('button') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(within(card).getByText(/Write at least 3 characters above first\./)).toBeTruthy();
+  });
+
+  it('sends the decision, its reason code and its free-text reason to the enrolment whose card it was pressed on', async () => {
     const user = userEvent.setup();
     renderQueue();
     await screen.findByText('Bhavya Nair');
@@ -193,13 +231,47 @@ describe('DecisionQueue — the decision itself', () => {
     const card = cardFor('Bhavya Nair');
     await user.type(within(card).getByLabelText(/Why/), 'Strong across all three rounds');
     await user.click(within(card).getByText('Hire'));
+    await user.selectOptions(within(card).getByLabelText('Reason'), 'strong-fit');
     await user.click(within(card).getByText('Confirm'));
 
     await waitFor(() => expect(recordFinalDecision).toHaveBeenCalledTimes(1));
     expect(recordFinalDecision).toHaveBeenCalledWith('en-done', {
       decision: 'hired',
       reason: 'Strong across all three rounds',
+      reason_code: 'strong-fit',
     });
+  });
+
+  it('only offers reasons that apply to the decision in progress', async () => {
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText('Bhavya Nair');
+
+    const card = cardFor('Bhavya Nair');
+    await user.click(within(card).getByText('Hire'));
+    const options = within(card)
+      .getByLabelText('Reason')
+      .querySelectorAll('option');
+    const labels = Array.from(options).map((o) => o.textContent);
+    // "Not enough experience" applies to rejected only — must not be offered
+    // for a hire.
+    expect(labels).toContain('Strong fit');
+    expect(labels).toContain('Other');
+    expect(labels).not.toContain('Not enough experience');
+  });
+
+  it('needs at least 10 characters of why when the chosen reason requires an explanation', async () => {
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText('Bhavya Nair');
+
+    const card = cardFor('Bhavya Nair');
+    await user.click(within(card).getByText('Hire'));
+    await user.selectOptions(within(card).getByLabelText('Reason'), 'other');
+    await user.type(within(card).getByLabelText(/Why/), 'short');
+    const confirm = within(card).getByText('Confirm').closest('button') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(within(card).getByText(/Write at least 10 characters above first\./)).toBeTruthy();
   });
 
   it('releases the hold for the right person', async () => {

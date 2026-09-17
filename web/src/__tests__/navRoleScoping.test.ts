@@ -36,7 +36,7 @@ describe('nav role scoping', () => {
   it('exposes every section through the table, so none can bypass scoping', () => {
     // If a section is rendered from JSX rather than NAV_SECTIONS it escapes both
     // visibleNavSections and this test — which is the failure mode being pinned.
-    expect(ALL_SECTION_IDS).toEqual(['candidate', 'hr', 'admin', 'platform', 'company']);
+    expect(ALL_SECTION_IDS).toEqual(['candidate', 'hr', 'admin', 'platform', 'company', 'interviewer']);
     for (const section of NAV_SECTIONS) {
       expect(typeof section.visibleTo).toBe('function');
       expect(section.items.length).toBeGreaterThan(0);
@@ -70,6 +70,26 @@ describe('nav role scoping', () => {
     expect(idsFor(['admin'])).toEqual(['admin']);
   });
 
+  it('lists "My interviews" once for an HR manager who also holds the interviewer role', () => {
+    const links = visibleNavSections(['hr_manager', 'interviewer'])
+      .flatMap((s: NavSection) => s.items.map((i) => i.to))
+      .filter((to) => to === '/interviewer');
+    expect(links).toHaveLength(1);
+  });
+
+  it('gives a pure interviewer the interviewer section only', () => {
+    // D4-1: company staff who see ONLY interviews assigned to them.
+    expect(idsFor(['interviewer'])).toEqual(['interviewer']);
+  });
+
+  it('lets an HR manager reach their own interview assignments without the interviewer role', () => {
+    // HR managers can ALSO be assigned as interviewers (D4-1) — InterviewerRoute
+    // admits hr_manager directly, so this is a link inside their existing
+    // section, not a second role or a second section.
+    const hr = visibleNavSections(['hr_manager']).flatMap((s: NavSection) => s.items.map((i) => i.to));
+    expect(hr).toContain('/interviewer');
+  });
+
   it('gives a platform owner who also holds admin BOTH sections, in table order', () => {
     // CLAUDE.md: the platform owner also holds `admin` for analytics. Both are
     // legitimate, so both render — role scoping is additive, not exclusive.
@@ -80,14 +100,14 @@ describe('nav role scoping', () => {
     // The reason the predicate is isCandidateOnly and not roles.includes(
     // 'candidate'): a staff account that also carries `candidate` would
     // otherwise reproduce the original bug exactly.
-    for (const staff of ['hr_manager', 'super_admin', 'platform_owner', 'admin']) {
+    for (const staff of ['hr_manager', 'super_admin', 'platform_owner', 'admin', 'interviewer']) {
       expect(idsFor(['candidate', staff])).not.toContain('candidate');
     }
   });
 
   it('never shows a staff section to a plain candidate', () => {
     const ids = idsFor(['candidate']);
-    for (const staffSection of ['hr', 'admin', 'platform', 'company']) {
+    for (const staffSection of ['hr', 'admin', 'platform', 'company', 'interviewer']) {
       expect(ids).not.toContain(staffSection);
     }
   });
@@ -104,6 +124,7 @@ describe('nav role scoping', () => {
       [['super_admin'], '/superadmin'],
       [['platform_owner'], '/platform'],
       [['admin'], '/admin/overview'],
+      [['interviewer'], '/interviewer'],
     ];
     for (const [roles, expected] of cases) {
       expect(homePathFor(roles)).toBe(expected);
@@ -129,7 +150,7 @@ describe('nav role scoping', () => {
     // The property that makes the two fixes consistent: whatever homePathFor
     // returns must be reachable from that role's own nav, or we have simply
     // moved the stranding somewhere new.
-    for (const role of ['hr_manager', 'super_admin', 'platform_owner', 'admin']) {
+    for (const role of ['hr_manager', 'super_admin', 'platform_owner', 'admin', 'interviewer']) {
       const home = homePathFor([role]);
       const reachable = visibleNavSections([role]).flatMap((s: NavSection) =>
         s.items.map((i) => i.to),
@@ -146,11 +167,17 @@ describe('nav role scoping', () => {
       admin: '/admin',
       platform: '/platform',
       company: '/superadmin',
+      interviewer: '/interviewer',
     };
+    // The one deliberate exception: HR_NAV's own "My interviews" link, because
+    // InterviewerRoute admits hr_manager directly (D4-1) — an HR manager reaches
+    // it without holding the interviewer role or a second nav section.
+    const crossSectionExceptions = ['/interviewer'];
     for (const section of NAV_SECTIONS) {
       const prefix = prefixes[section.id];
       if (!prefix) continue;
       for (const item of section.items) {
+        if (crossSectionExceptions.includes(item.to)) continue;
         expect(item.to.startsWith(prefix)).toBe(true);
       }
     }

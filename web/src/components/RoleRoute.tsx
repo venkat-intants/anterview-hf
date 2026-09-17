@@ -25,7 +25,13 @@ import { useAuth } from '../context/AuthContext';
  * `admin` is the platform analytics role and sits OUTSIDE the
  * platform_owner → super_admin → hr_manager → candidate hierarchy.
  */
-export type AppRole = 'platform_owner' | 'super_admin' | 'hr_manager' | 'admin' | 'candidate';
+export type AppRole =
+  | 'platform_owner'
+  | 'super_admin'
+  | 'hr_manager'
+  | 'interviewer'
+  | 'admin'
+  | 'candidate';
 
 export interface RoleRouteProps {
   /**

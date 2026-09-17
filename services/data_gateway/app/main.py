@@ -64,8 +64,10 @@ from app.routers.hr_pipeline import router as hr_pipeline_router
 from app.routers.hr_questions import router as hr_questions_router
 from app.routers.hr_requisitions import router as hr_requisitions_router
 from app.routers.hr_rounds import router as hr_rounds_router
+from app.routers.hr_scorecards import router as hr_scorecards_router
 from app.routers.hr_workflows import router as hr_workflows_router
 from app.routers.interview_take import router as interview_take_router
+from app.routers.interviewer import router as interviewer_router
 from app.routers.jd import router as jd_router
 from app.routers.jobs import router as jobs_router
 from app.routers.notifications import router as notifications_router
@@ -432,6 +434,10 @@ app.include_router(hr_attention_router)
 app.include_router(hr_questions_router)
 app.include_router(hr_requisitions_router)
 app.include_router(hr_workflows_router)
+# PH4-A1: HR assigns interviewers and reads scorecards; interviewers see only
+# their own assignments.
+app.include_router(hr_scorecards_router)
+app.include_router(interviewer_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)
 app.include_router(careers_router)

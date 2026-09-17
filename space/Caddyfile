@@ -124,6 +124,11 @@
 	handle /agent/* {
 		reverse_proxy 127.0.0.1:8002
 	}
+	# /interviewer/* — PH4-A1's interviewer console API. Browser navigation to
+	# the /interviewer SPA route is still the SPA's via @spa_nav above.
+	handle /interviewer/* {
+		reverse_proxy 127.0.0.1:8002
+	}
 	handle /auth/* {
 		reverse_proxy 127.0.0.1:8002
 	}

@@ -218,6 +218,10 @@ ERASED_TABLES: dict[str, str] = {
                     "became this person's applicant rows. HR names CVs after the "
                     "candidate, so the original filename is personal data; the "
                     "object itself is the applicant's resume_s3_key (step 1c).",
+    "interviewer_notes": "step 5f — hard-deleted. An interviewer's private working "
+                         "notes about the candidate: prose, never shown to HR, never "
+                         "part of the submitted evidence (PH4-A5), so there is no "
+                         "structural residue worth keeping.",
 }
 
 #: Tables deliberately left standing, each with the reason it is defensible.
@@ -339,6 +343,19 @@ EXCLUDED_TABLES: dict[str, str] = {
                              "background passes (job id, trigger, status, "
                              "error text). Operational telemetry; no user "
                              "column, pruned after 90 days.",
+    "interviewer_scorecards": "PH4-A1 — the company's structured interview record: "
+                              "who assessed the candidate, when, and whether it was "
+                              "submitted. Kept on the round_results precedent, but "
+                              "its free-text `summary` is REDACTED in step 5f "
+                              "(summary=NULL, redacted_at set), because prose an "
+                              "interviewer writes can quote or name the candidate "
+                              "and re-identify an anonymised applicant.",
+    "interviewer_scorecard_scores": "PH4-A1 — per-criterion 1-5 scores against frozen "
+                                    "competency ids for an anonymised applicant, kept "
+                                    "like round_results.criterion_scores. The "
+                                    "free-text `evidence` column is REDACTED to NULL "
+                                    "in step 5f for the same re-identification reason "
+                                    "as the scorecard summary.",
 }
 
 
@@ -655,6 +672,67 @@ async def _execute_one_erasure(
         user_id=uid_str,
         request_id=str(request.request_id),
         count=application_answers_deleted,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5f: Human interview evidence (PH4-A1 / PH4-A5)
+    # ------------------------------------------------------------------
+    # Scores are kept, prose is not. A 1-5 score against a competency id is the
+    # company's evaluation record and identifies nobody once the applicant is
+    # anonymised — the round_results precedent. An interviewer's written
+    # evidence and summary are different: they routinely say "Priya described
+    # her time at <employer>", which re-identifies the person the rest of this
+    # executor is anonymising.
+    #
+    # Submitted scorecards are protected by a trigger that permits exactly this:
+    # text set to NULL, marked by redacted_at. Nothing else about the evidence
+    # changes, so an erasure cannot be used to rewrite a hiring record.
+    #
+    # Private interviewer notes are prose with no structural value and are
+    # deleted outright.
+    #
+    # MUST run before step 6: every join here reaches the rows through
+    # applicants.user_id, which step 6 sets to NULL.
+    # Written out in full rather than interpolated: an f-string building SQL is
+    # a B608 finding even when the fragment is a constant, and a nosec is a
+    # standing exception somebody later copies onto a string that is not.
+    await db.execute(
+        text(
+            "UPDATE interviewer_scorecard_scores SET evidence = NULL, updated_at = now()"
+            " WHERE evidence IS NOT NULL AND scorecard_id IN ("
+            "   SELECT s.id FROM interviewer_scorecards s"
+            "     JOIN enrolments e ON e.id = s.enrolment_id"
+            "     JOIN applicants a ON a.id = e.applicant_id"
+            "    WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    redacted = await db.execute(
+        text(
+            "UPDATE interviewer_scorecards SET summary = NULL,"
+            " redacted_at = now(), updated_at = now()"
+            " WHERE redacted_at IS NULL AND enrolment_id IN ("
+            "   SELECT e.id FROM enrolments e"
+            "     JOIN applicants a ON a.id = e.applicant_id"
+            "    WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    notes = await db.execute(
+        text(
+            "DELETE FROM interviewer_notes WHERE enrolment_id IN ("
+            "   SELECT e.id FROM enrolments e"
+            "     JOIN applicants a ON a.id = e.applicant_id"
+            "    WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    log.info(
+        "erasure.executor.interview_evidence_redacted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        scorecards=getattr(redacted, "rowcount", 0) or 0,
+        notes_deleted=getattr(notes, "rowcount", 0) or 0,
     )
 
     # ------------------------------------------------------------------

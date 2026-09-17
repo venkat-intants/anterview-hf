@@ -235,7 +235,11 @@ async def _create_company_user(
 
 
 # Human-readable role labels for the account-created email.
-_ROLE_LABELS = {"super_admin": "company admin", "hr_manager": "HR manager"}
+_ROLE_LABELS = {
+    "super_admin": "company admin",
+    "hr_manager": "HR manager",
+    "interviewer": "interviewer",
+}
 
 
 async def _send_credentials_email(
@@ -849,6 +853,136 @@ async def delete_my_hr_manager(
         )
 
     log.info("admin_hr.hr_deleted", user_id=str(user_id), company_id=str(company_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# COMPANY SUPER ADMIN — interviewers (PH4-A1, decision D4-1)
+#
+# Mirrors HR managers deliberately: same creation path, same set-password email,
+# same tenant scoping. An interviewer is company staff who sees ONLY the
+# interviews assigned to them — the role admits them to /interviewer, and every
+# scorecard query there filters on the caller.
+# ===========================================================================
+
+
+class InterviewerResponse(HrManagerResponse):
+    """Same shape as an HR manager; a separate name so the API says what it is."""
+
+
+async def _query_interviewers(
+    db: AsyncSession, company_id: uuid.UUID
+) -> list[InterviewerResponse]:
+    rows = (
+        await db.execute(
+            text(
+                "SELECT u.id, u.email, u.full_name, u.must_change_password, u.created_at "
+                "FROM users u "
+                "JOIN user_roles ur ON ur.user_id = u.id "
+                "JOIN roles r ON r.id = ur.role_id AND r.name = 'interviewer' "
+                "WHERE u.company_id = :cid AND u.deleted_at IS NULL "
+                "ORDER BY u.created_at DESC"
+            ),
+            {"cid": company_id},
+        )
+    ).fetchall()
+    return [
+        InterviewerResponse(
+            user_id=str(r[0]), email=r[1], full_name=r[2] or "",
+            company_id=str(company_id), must_change_password=r[3],
+            created_at=r[4].isoformat(),
+        )
+        for r in rows
+    ]
+
+
+@router.get("/interviewers", response_model=list[InterviewerResponse])
+async def list_my_interviewers(
+    ctx: CompanyAdminCtxDep, db: DbSessionDep
+) -> list[InterviewerResponse]:
+    """Interviewers in the caller's own company (super_admin only)."""
+    _, company_id = ctx
+    return await _query_interviewers(db, company_id)
+
+
+@router.post(
+    "/interviewers", status_code=status.HTTP_201_CREATED, response_model=InterviewerResponse
+)
+async def create_my_interviewer(
+    body: CreateUserBody, ctx: CompanyAdminCtxDep, db: DbSessionDep
+) -> InterviewerResponse:
+    """Create an interviewer in the caller's own company (super_admin only)."""
+    caller_uid, company_id = ctx
+    user_id, now = await _create_company_user(
+        db, company_id=company_id, body=body, role="interviewer"
+    )
+    await _audit(
+        db, actor_id=caller_uid, action="create_interviewer",
+        resource_type="user", resource_id=user_id,
+    )
+    await db.commit()
+    log.info("admin_hr.interviewer_created", user_id=str(user_id), company_id=str(company_id))
+    return InterviewerResponse(
+        user_id=str(user_id), email=str(body.email), full_name=body.full_name,
+        company_id=str(company_id), must_change_password=True, created_at=now.isoformat(),
+    )
+
+
+@router.delete("/interviewers/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_interviewer(
+    user_id: uuid.UUID,
+    ctx: CompanyAdminCtxDep,
+    db: DbSessionDep,
+    auth: AuthProviderDep,
+) -> Response:
+    """Remove an interviewer from the caller's OWN company (super_admin only).
+
+    Their UNSUBMITTED assignments are withdrawn in the same transaction. Left
+    alone, each would sit "late" for ever against somebody who can no longer
+    sign in to finish it, and HR would see a panel waiting on a person who is
+    gone. SUBMITTED scorecards are untouched — they are evidence, and the
+    database would refuse to change them anyway.
+    """
+    caller_uid, company_id = ctx
+    target = await db.scalar(
+        text(
+            "SELECT 1 FROM users u "
+            "JOIN user_roles ur ON ur.user_id = u.id "
+            "JOIN roles r ON r.id = ur.role_id AND r.name = 'interviewer' "
+            "WHERE u.id = :uid AND u.company_id = :cid AND u.deleted_at IS NULL"
+        ),
+        {"uid": user_id, "cid": company_id},
+    )
+    if not target:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interviewer not found in your company.",
+        )
+    withdrawn = await db.execute(
+        text(
+            "UPDATE interviewer_scorecards SET status = 'withdrawn', withdrawn_at = now(),"
+            " withdrawn_reason = 'Interviewer removed from the company', updated_at = now()"
+            " WHERE interviewer_user_id = :uid AND company_id = :cid"
+            "   AND status IN ('assigned', 'in_progress') AND superseded_at IS NULL"
+        ),
+        {"uid": user_id, "cid": company_id},
+    )
+    await _soft_delete_user(db, user_id)
+    await _audit(
+        db, actor_id=caller_uid, action="delete_interviewer",
+        resource_type="user", resource_id=user_id,
+        details={"assignments_withdrawn": getattr(withdrawn, "rowcount", 0) or 0},
+    )
+    await db.commit()
+
+    try:
+        await auth.logout_all(str(user_id))
+    except Exception as exc:  # noqa: BLE001 — best-effort revocation
+        log.warning(
+            "admin_hr.interviewer_deleted.session_revoke_failed",
+            user_id=str(user_id), error_type=type(exc).__name__,
+        )
+    log.info("admin_hr.interviewer_deleted", user_id=str(user_id), company_id=str(company_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

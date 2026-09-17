@@ -237,12 +237,64 @@ export async function createLiveMcqOpening(
   return { ...opening, workflowId: draft.id, roundId, examId: exam.id };
 }
 
+/**
+ * An opening whose only round is a human review, with a checklist.
+ *
+ * The counterpart to createLiveMcqOpening: nothing here is scored by machine,
+ * so the round advances only when a person says it does (C3/C4).
+ */
+export async function createLiveReviewOpening(
+  api: Api,
+  approver: Api,
+  prefix: string,
+): Promise<LiveOpening> {
+  const opening = await createOpening(api, prefix);
+  await api.post(`/hr/requisitions/${opening.id}/approval/submit`, { note: null });
+  await approver.post(`/hr/requisitions/${opening.id}/approval/approve`, { note: null });
+
+  const draft = await api.post<WorkflowDetail>(`/hr/requisitions/${opening.id}/workflows`, {});
+  await api.patch(`/hr/workflows/${draft.id}`, {
+    auto_score_on_apply: true,
+    auto_assign_first_round: true,
+    auto_advance_rounds: true,
+  });
+  const withRound = await api.post<WorkflowDetail>(`/hr/workflows/${draft.id}/rounds`, {
+    title: REVIEW_ROUND_TITLE,
+    kind: 'human_review',
+    deadline_days: 5,
+    criteria: [
+      { id: 'communication', name: 'Communication', kind: 'behavioural', weight: 0.6 },
+      { id: 'ownership', name: 'Ownership', kind: 'behavioural', weight: 0.4 },
+    ],
+  });
+  await api.post(`/hr/workflows/${draft.id}/publish`);
+  await api.patch(`/hr/requisitions/${opening.id}`, { public_apply_enabled: true });
+
+  const roundId = withRound.rounds.find((r) => r.kind === 'human_review')!.id;
+  return { ...opening, workflowId: draft.id, roundId, examId: '' };
+}
+
+/** The review round's title, shared by the helper and the spec that reads it. */
+export const REVIEW_ROUND_TITLE = 'Panel review';
+
+export interface RoundResult {
+  title: string;
+  percent: number | null;
+  passed: boolean | null;
+  /** 'human' when a person graded the round, otherwise the system did. */
+  graded_by: string;
+}
+
 export interface QueueRow {
   enrolment_id: string;
   full_name: string;
   status: string;
   held: boolean;
   held_reason: string | null;
+  /** Parked on a human_review round, waiting for someone's verdict. */
+  awaiting_review: boolean;
+  review_round_title: string | null;
+  round_results: RoundResult[];
 }
 
 /** The opening's decision queue, as HR's page reads it. */
@@ -252,8 +304,10 @@ export function decisionQueue(api: Api, openingId: string): Promise<QueueRow[]> 
 
 export interface Enrolment {
   id: string;
+  applicant_id: string;
   full_name: string;
   status: string;
+  current_round_id: string | null;
 }
 
 /** One named candidate's application to this opening. Fails if it is not there. */

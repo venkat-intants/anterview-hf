@@ -64,7 +64,12 @@ export async function sitTheExam(
   candidate: Candidate,
   opts: { answerCorrectly: boolean },
 ): Promise<string> {
-  const invite = await waitForMail(candidate.email, /assessment|exam/i);
+  // 60s. The invitation is not sent when the shortlist button returns: a person
+  // shortlists, the runner assigns the round and queues the email, and the
+  // outbox worker delivers it on its own poll. That is about 5s on a quiet local
+  // stack and comfortably more on a busy one, where the default 30s expired just
+  // short of the email arriving — a failure that reads as a broken invitation.
+  const invite = await waitForMail(candidate.email, /assessment|exam/i, 60_000);
   const token = linkIn(invite, /\/exam#([A-Za-z0-9_-]{16,})/);
 
   await page.goto(`/exam#${token}`);

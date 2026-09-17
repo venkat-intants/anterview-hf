@@ -91,13 +91,27 @@ test.describe('what a candidate sees about themselves', () => {
     await candidatePage.getByRole('button', { name: 'Show history' }).click();
     await expect(candidatePage.getByText('Application received').first()).toBeVisible();
 
-    const shown = (await applications.innerText()).toLowerCase();
+    // The opening title and company name carry this run's random id, and a date
+    // is digits too. Searching the raw text for the score matched those instead:
+    // the run that caught it was looking for "73" in "E2E Candidate View
+    // mu573g8a". Take the names the page is entitled to show out first, then
+    // look for the number on its own.
+    const shown = (await applications.innerText())
+      .toLowerCase()
+      .split(opening.title.toLowerCase())
+      .join(' ')
+      .split(tenant.company.name.toLowerCase())
+      .join(' ')
+      .replace(/\d{1,2} \w+ \d{4}/g, ' '); // "17 Sept 2026"
+
     expect(shown, 'no percentage anywhere on the page').not.toMatch(/\d\s?%/);
-    expect(shown, 'not the resume score the hiring side holds').not.toContain(
-      String(candidate.resumeScore),
+    expect(shown, 'not the resume score the hiring side holds').not.toMatch(
+      new RegExp(`\\b${candidate.resumeScore}\\b`),
     );
     for (const word of ['score', 'threshold', 'rank', 'percentile', 'points']) {
-      expect(shown, `the page must not talk about a ${word}`).not.toContain(word);
+      expect(shown, `the page must not talk about a ${word}`).not.toMatch(
+        new RegExp(`\\b${word}`),
+      );
     }
   });
 });

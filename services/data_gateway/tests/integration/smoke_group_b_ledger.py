@@ -94,7 +94,8 @@ async def ledger(f, enrolment_id) -> list[dict]:
     async with f() as db:
         return [dict(r) for r in (await db.execute(text(
             "SELECT from_status, to_status, from_round_id, to_round_id, automated, actor_user_id,"
-            "       reason FROM stage_transitions WHERE enrolment_id = :e ORDER BY occurred_at, id"),
+            "       reason, reason_code, reason_label FROM stage_transitions"
+            " WHERE enrolment_id = :e ORDER BY occurred_at, id"),
             {"e": enrolment_id})).mappings().all()]
 
 
@@ -160,8 +161,10 @@ async def main() -> None:
           any(m["to_status"] == "interviewed" for m in moves))
 
     # ── Hired from the pipeline board: through the ledger now ─────────────────
+    # PH4-O4: reason_code is required for a final decision.
     r = await ac.post(f"/hr/applicants/{s['asha']}/decision",
-                      json={"decision": "hired", "rationale": "strong panel"})
+                      json={"decision": "hired", "rationale": "strong panel",
+                            "reason_code": "skills_fit"})
     check("pipeline hire succeeds", r.status_code == 200, r.text[:200])
     async with f() as db:
         st = (await db.execute(text(
@@ -173,6 +176,9 @@ async def main() -> None:
     check("and is recorded as a person's decision, with their rationale",
           any(m["to_status"] == "hired" and not m["automated"] and m["actor_user_id"] == s["hr"]
               and m["reason"] == "strong panel" for m in moves), str(moves[-1:]))
+    check("…and its structured reason code and label (PH4-O4)",
+          any(m["to_status"] == "hired" and m["reason_code"] == "skills_fit"
+              and m["reason_label"] == "Skills / competency fit" for m in moves), str(moves[-1:]))
 
     # ── Someone who applied to two openings ───────────────────────────────────
     r1 = await ac.post(f"/hr/applicants/{s['bharat']}/decision", json={"decision": "rejected"})

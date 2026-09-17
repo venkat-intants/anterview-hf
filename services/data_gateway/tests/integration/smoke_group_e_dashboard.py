@@ -130,13 +130,17 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
 
         async def move(eid: uuid.UUID, frm: str, to: str, days_after: float, applied: float, *,
                        to_round: uuid.UUID | None = None, automated: bool = True) -> None:
+            # PH4-O4: a move INTO hired/rejected needs a reason_code (and its
+            # paired label) — the ledger trigger refuses one without.
+            terminal = to in ("hired", "rejected") and frm != to
             await db.execute(text(
                 "INSERT INTO stage_transitions (company_id,enrolment_id,from_status,to_status,"
-                " actor_user_id,automated,reason,occurred_at,to_round_id)"
-                " VALUES (:c,:e,:f,:t,:a,:auto,:r,:at,:tr)"),
+                " actor_user_id,automated,reason,reason_code,reason_label,occurred_at,to_round_id)"
+                " VALUES (:c,:e,:f,:t,:a,:auto,:r,:rc,:rl,:at,:tr)"),
                 {"c": cid, "e": eid, "f": frm, "t": to, "a": None if automated else hr,
-                 "auto": automated, "r": "smoke", "tr": to_round,
-                 "at": now - timedelta(days=applied - days_after)})
+                 "auto": automated, "r": "smoke",
+                 "rc": "other" if terminal else None, "rl": "Other" if terminal else None,
+                 "tr": to_round, "at": now - timedelta(days=applied - days_after)})
 
         e = {}
         e["held"] = await enrol(await person("held"), "held", r_test, applied_days_ago=10, ats=70)

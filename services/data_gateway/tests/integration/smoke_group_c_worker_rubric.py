@@ -21,6 +21,7 @@ import asyncio
 import importlib.util
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -32,7 +33,13 @@ from app.workflows import add_round, create_draft, publish
 # imports nothing from its own `app` package (only shared.intelligence and
 # sqlalchemy), so loading it straight off disk runs the real module without
 # the collision.
-_WORKER_MODULE = 'd:\\anterview-hf-main\\anterview-hf-main\\services\\interview_core\\app\\worker\\frozen_rubric.py'
+# Resolved from this file, not written out: it used to be an absolute path to
+# one developer's checkout, so the smoke failed with FileNotFoundError on every
+# other machine before testing anything.
+_WORKER_MODULE = (
+    Path(__file__).resolve().parents[3]
+    / "interview_core" / "app" / "worker" / "frozen_rubric.py"
+)
 _spec = importlib.util.spec_from_file_location('worker_frozen_rubric', _WORKER_MODULE)
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)

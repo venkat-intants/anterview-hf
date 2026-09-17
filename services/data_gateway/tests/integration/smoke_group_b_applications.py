@@ -199,17 +199,20 @@ async def main() -> None:
                        json={"decision": "hired", "enrolment_id": str(s["priya_nurse"])})
     check("hiring from an application still 'new' is refused — whatever the person's row says",
           d1.status_code == 409, d1.text[:160])
+    # PH4-O4: reason_code is required for a final decision.
     d2 = await ac.post(f"/hr/applicants/{s['priya']}/decision",
-                       json={"decision": "hired", "enrolment_id": str(s["priya_python"])})
+                       json={"decision": "hired", "enrolment_id": str(s["priya_python"]),
+                             "reason_code": "skills_fit"})
     async with f() as db:
         st = {r[0]: r[1] for r in (await db.execute(text(
             "SELECT id, status FROM enrolments WHERE applicant_id = :a"),
             {"a": s["priya"]})).all()}
         mirror = await db.scalar(text("SELECT status FROM applicants WHERE id = :a"),
                                  {"a": s["priya"]})
-        ledger = await db.scalar(text(
-            "SELECT count(*) FROM stage_transitions WHERE enrolment_id = :e AND to_status='hired'"),
-            {"e": s["priya_python"]})
+        ledger_row = (await db.execute(text(
+            "SELECT reason_code, reason_label FROM stage_transitions"
+            " WHERE enrolment_id = :e AND to_status='hired'"),
+            {"e": s["priya_python"]})).mappings().first()
         mail = await db.scalar(text(
             "SELECT count(*) FROM email_events WHERE template = 'decision'"
             "   AND (body_text LIKE '%Python Developer%' OR subject LIKE '%Python Developer%')"))
@@ -217,13 +220,24 @@ async def main() -> None:
           d2.text[:200])
     check("only the Python application moved, on the ledger",
           st.get(s["priya_python"]) == "hired" and st.get(s["priya_nurse"]) == "new"
-          and ledger == 1, str(st))
+          and ledger_row is not None, str(st))
+    check("the ledger keeps the reason code and its label (PH4-O4)",
+          ledger_row is not None and ledger_row["reason_code"] == "skills_fit"
+          and ledger_row["reason_label"] == "Skills / competency fit", str(ledger_row))
     check("the person-level row still mirrors her latest application (Nurse: new)",
           mirror == "new", str(mirror))
     check("the decision email names the opening decided on", mail == 1, f"mail={mail}")
 
+    # PH4-O4: a hire/reject from the applicant board with no reason is refused —
+    # this board used to write 'rejected' as an ordinary status change with none.
+    d3_no_reason = await ac.patch(f"/hr/applicants/{s['priya']}",
+                                  json={"status": "rejected",
+                                        "enrolment_id": str(s["priya_nurse"])})
+    check("a reject from the applicant board with no reason is now refused",
+          d3_no_reason.status_code == 422, str(d3_no_reason.status_code))
     d3 = await ac.patch(f"/hr/applicants/{s['priya']}",
-                        json={"status": "rejected", "enrolment_id": str(s["priya_nurse"])})
+                        json={"status": "rejected", "enrolment_id": str(s["priya_nurse"]),
+                              "reason": "Not a fit for Staff Nurse", "reason_code": "skills_fit"})
     async with f() as db:
         mirror = await db.scalar(text("SELECT status FROM applicants WHERE id = :a"),
                                  {"a": s["priya"]})

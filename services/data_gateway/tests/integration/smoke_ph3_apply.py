@@ -410,9 +410,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 {"r": req})
             await db.execute(text("UPDATE enrolments SET deleted_at = :n WHERE id = :e"),
                              {"n": now, "e": enr})
+            # PH4-O4: a move into 'rejected' needs a reason_code (and its
+            # paired label) — the ledger trigger refuses one without.
             await db.execute(text(
                 "INSERT INTO stage_transitions (company_id,enrolment_id,from_status,"
-                " to_status,automated,occurred_at) VALUES (:c,:e,'new','rejected',false,:n)"),
+                " to_status,automated,reason_code,reason_label,occurred_at)"
+                " VALUES (:c,:e,'new','rejected',false,'other','Other',:n)"),
                 {"c": cid, "e": enr, "n": datetime.now(tz=UTC) - timedelta(days=10)})
             await db.commit()
 

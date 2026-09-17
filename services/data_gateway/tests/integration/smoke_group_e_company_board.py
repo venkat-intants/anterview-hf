@@ -106,11 +106,16 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
                 {"i": eid, "c": company, "r": ids[key], "a": aid, "s": status,
                  "n": now - timedelta(days=25)})
             for frm, to, days_ago in moves:
+                # PH4-O4: a move INTO hired/rejected needs a reason_code (and
+                # its paired label) — the ledger trigger refuses one without.
+                terminal = to in ("hired", "rejected") and frm != to
                 await db.execute(text(
                     "INSERT INTO stage_transitions (company_id,enrolment_id,from_status,"
-                    " to_status,actor_user_id,automated,reason,occurred_at)"
-                    " VALUES (:c,:e,:f,:t,NULL,true,'smoke',:at)"),
+                    " to_status,actor_user_id,automated,reason,reason_code,reason_label,"
+                    " occurred_at)"
+                    " VALUES (:c,:e,:f,:t,NULL,true,'smoke',:rc,:rl,:at)"),
                     {"c": company, "e": eid, "f": frm, "t": to,
+                     "rc": "other" if terminal else None, "rl": "Other" if terminal else None,
                      "at": now - timedelta(days=days_ago)})
 
         # Python Developer: six reached a decision in 20 days; 1 hire, 4 rejections

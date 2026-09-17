@@ -166,8 +166,17 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
         rows = (await ac.get(f"/hr/requisitions/{req}/decision-queue")).json()
         return {r["full_name"]: r for r in rows}
 
-    async def decide(key: str, decision: str, reason: str | None) -> tuple[int, dict]:
-        body = {"decision": decision} | ({"reason": reason} if reason is not None else {})
+    async def decide(
+        key: str, decision: str, reason: str | None, reason_code: str | None = "skills_fit"
+    ) -> tuple[int, dict]:
+        # PH4-O4: reason_code is required on FinalDecisionIn. Defaulted to a
+        # valid code here so every call below is refused (or not) for the rule
+        # it is testing, not for a missing dropdown value.
+        body: dict[str, str] = {"decision": decision}
+        if reason is not None:
+            body["reason"] = reason
+        if reason_code is not None:
+            body["reason_code"] = reason_code
         r = await ac.post(f"/hr/enrolments/{ids[key]}/decision", json=body)
         return r.status_code, r.json()
 
@@ -211,8 +220,8 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
             "SELECT id, status, current_round_id, held_at FROM enrolments WHERE id = ANY(:i)"),
             {"i": [ids["held"], ids["review"]]})).mappings().all()}
         last = (await db.execute(text(
-            "SELECT to_status, automated, actor_user_id, reason FROM stage_transitions"
-            " WHERE enrolment_id = :e AND to_status = 'hired'"),
+            "SELECT to_status, automated, actor_user_id, reason, reason_code, reason_label"
+            " FROM stage_transitions WHERE enrolment_id = :e AND to_status = 'hired'"),
             {"e": ids["held"]})).mappings().first()
         left_round = await db.scalar(text(
             "SELECT count(*) FROM stage_transitions WHERE enrolment_id = :e"
@@ -224,6 +233,9 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
     check("the ledger says a person decided, who, and why",
           last is not None and last["automated"] is False and last["actor_user_id"] == hr
           and last["reason"] == "Near miss on the test, excellent in person", str(last))
+    check("…and its structured reason code and label (PH4-O4)",
+          last is not None and last["reason_code"] == "skills_fit"
+          and last["reason_label"] == "Skills / competency fit", str(last))
     check("the audit log records the same decision against the same person",
           audit is not None and audit["actor_id"] == hr
           and audit["details"]["previous_status"] == "held", str(audit))
@@ -248,13 +260,20 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
     r = await ac.post(f"/hr/enrolments/{ids['finished']}/status", json={"status": "hired"})
     check("the generic mover no longer records a hire without a reason", r.status_code == 422,
           str(r.status_code))
+    # PH4-O4: a reason_code is required too, even with a valid free-text reason.
     r = await ac.post(f"/hr/enrolments/{ids['finished']}/status",
                       json={"status": "hired", "reason": "Top of the cohort"})
-    check("…and records one with a reason through the same writer",
+    check("…and a reason with no reason_code is also refused", r.status_code == 422,
+          str(r.status_code))
+    r = await ac.post(f"/hr/enrolments/{ids['finished']}/status",
+                      json={"status": "hired", "reason": "Top of the cohort",
+                            "reason_code": "skills_fit"})
+    check("…and records one with a reason and a reason_code through the same writer",
           r.status_code == 200 and r.json().get("status") == "hired", f"{r.status_code} {r.text[:120]}")
 
     r = await ac.post(f"/hr/enrolments/{ids['foreign']}/decision",
-                      json={"decision": "rejected", "reason": "Not ours to decide"})
+                      json={"decision": "rejected", "reason": "Not ours to decide",
+                            "reason_code": "skills_fit"})
     check("another company's application is not found", r.status_code == 404, str(r.status_code))
 
     # ── 4. Round results for one application ───────────────────────────────

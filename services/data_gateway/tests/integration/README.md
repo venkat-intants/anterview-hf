@@ -54,10 +54,41 @@ to collapse, and both fail with empty results.
 
 ## The two that need more than a database
 
-| Smoke | Needs | Why it is not routine |
-|---|---|---|
-| `smoke_group_a_scorecard_retry.py` | `feedback_billing` on :8013, MinIO reachable (`S3_ENDPOINT_URL` and keys), and a real model | Scoring an interview here calls a live model, so a routine run would spend money. Run it deliberately. |
-| `smoke_ph3_apply.py` | its own database (`SMOKE_DATABASE_URL`, default `ph3:ph3@…/ph3_smoke`) | Phase 3, and it seeds a whole tenant of its own. |
+`run_all.py` handles both. Neither is skipped silently — each prints the reason
+it did not run, so a green "32/34" can never be mistaken for health.
+
+**`smoke_ph3_apply`** needs a database of its own (it seeds a whole tenant).
+`run_all.py` creates the `ph3` role and the `ph3_smoke` database, migrates it and
+runs the smoke. Nothing to set up.
+
+**`smoke_group_a_scorecard_retry`** drives a REAL `feedback_billing`: it scores
+one interview with whatever `LLM_PROVIDER` names and uploads a real PDF. It runs
+only when that service is answering and object storage is configured, so start
+both and it joins the run:
+
+```powershell
+# a bucket for the scorecards, once
+docker exec intants-minio mc mb -p local/intants-interview-scorecards
+
+# feedback_billing against the SAME database the smokes use
+cd services/feedback_billing
+$env:DATABASE_URL = 'postgresql+asyncpg://postgres:postgres@127.0.0.1:55432/intants_smoke'
+$env:S3_ENDPOINT_URL = 'http://127.0.0.1:9000'
+$env:S3_ACCESS_KEY_ID = 'intants-dev'; $env:S3_SECRET_ACCESS_KEY = 'intants-dev-secret'
+$env:S3_REGION = 'us-east-1'
+.\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8013
+
+# then, in the data_gateway shell, the same storage settings plus the bucket
+$env:S3_SCORECARD_BUCKET = 'intants-interview-scorecards'
+$env:FEEDBACK_BILLING_URL = 'http://127.0.0.1:8013'
+.\.venv\Scripts\python tests/integration/run_all.py
+```
+
+It makes one model call per run — locally that is whatever `LLM_PROVIDER` is set
+to in `services/feedback_billing/.env` (Groq at the time of writing), not a
+hosted Gemini key. One interview's worth, so the cost is negligible, but it is a
+real call: it is the only check that proves the retry path actually scores
+against the round's frozen rubric rather than generic axes.
 
 ## Why a smoke breaks when the code is fine
 

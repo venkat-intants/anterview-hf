@@ -22,6 +22,14 @@ Two stages, because there are two incompatible starting states:
   2. Every other smoke seeds (and often TRUNCATEs) what it needs, and collides
      with the Group B seed's companies. They get a clean database at head.
 
+Two of them need more than a database, and are handled after the rest:
+``smoke_ph3_apply`` gets its own database, created here; and
+``smoke_group_a_scorecard_retry`` runs only when a real feedback_billing is
+answering and object storage is configured, because it scores an interview with
+a live model and uploads a real PDF (README.md has the command). Neither is
+skipped silently — a skip prints its reason, so a run that covers less than the
+whole set says so rather than reporting a healthy-looking total.
+
 Exits non-zero if any smoke fails, and prints the failed checks of each.
 """
 
@@ -31,6 +39,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -43,10 +52,26 @@ if not Path(PY_EXE).exists():  # POSIX layout
 PRE_GROUP_B = "c5e7a9b1d3f6"
 BACKFILL_PAIR = ["smoke_group_b_api.py", "smoke_group_b_requisitions.py"]
 
-# Not run here, for reasons that are about money and scope, not health:
-#   scorecard_retry — needs feedback_billing, MinIO and a real model
-#   ph3_apply       — Phase 3, and it wants a database of its own
-SKIP = {"smoke_group_a_scorecard_retry.py", "smoke_ph3_apply.py"}
+# These two do not run on the shared database, so the main loop leaves them
+# alone; each is handled by its own stage below, and each is skipped with a
+# reason rather than silently, so "32/34" can never be mistaken for health.
+SPECIAL = {"smoke_group_a_scorecard_retry.py", "smoke_ph3_apply.py"}
+
+# smoke_ph3_apply seeds a whole tenant of its own and wants its own database.
+PH3_DB = os.environ.get("SMOKE_PH3_DB", "ph3_smoke")
+PH3_URL = f"postgresql+asyncpg://ph3:ph3@127.0.0.1:55432/{PH3_DB}"
+
+# smoke_group_a_scorecard_retry drives a REAL feedback_billing: it scores one
+# interview with whatever LLM_PROVIDER names and uploads a real PDF. So it runs
+# only when that service is up and object storage is configured — start them
+# and it joins the run (README.md has the command).
+FEEDBACK_BILLING_URL = os.environ.get("FEEDBACK_BILLING_URL", "http://127.0.0.1:8013")
+S3_FOR_SCORECARDS = {
+    "S3_ENDPOINT_URL": os.environ.get("S3_ENDPOINT_URL", ""),
+    "S3_ACCESS_KEY_ID": os.environ.get("S3_ACCESS_KEY_ID", ""),
+    "S3_SECRET_ACCESS_KEY": os.environ.get("S3_SECRET_ACCESS_KEY", ""),
+    "S3_SCORECARD_BUCKET": os.environ.get("S3_SCORECARD_BUCKET", ""),
+}
 
 DB_NAME = os.environ.get("SMOKE_DB_NAME", "intants_smoke")
 DB_URL = os.environ.get(
@@ -92,16 +117,75 @@ def _seeded_at_head() -> None:
     _setup([PY_EXE, "-m", "alembic", "upgrade", "head"], "upgrade to head")
 
 
-def _run(names: list[str]) -> None:
+def _run(names: list[str], env: dict[str, str] | None = None) -> None:
     for name in names:
         started = time.time()
         proc = subprocess.run(
             [PY_EXE, f"tests/integration/{name}"],
-            cwd=SERVICE_ROOT, env=ENV, capture_output=True, text=True, timeout=900,
+            cwd=SERVICE_ROOT, env=env or ENV, capture_output=True, text=True, timeout=900,
         )
         ok = proc.returncode == 0
         results.append((name, ok, proc.stdout, proc.stderr))
         print(f"{'PASS' if ok else 'FAIL'}  {name}  ({time.time() - started:.0f}s)", flush=True)
+
+
+skipped: list[str] = []
+
+
+def _run_ph3() -> None:
+    """Phase 3's apply smoke, on its own database, created here."""
+    try:
+        subprocess.run(
+            ["docker", "exec", PG_CONTAINER, "psql", "-U", "postgres",
+             "-c", f"DROP DATABASE IF EXISTS {PH3_DB} WITH (FORCE);",
+             "-c", "DROP ROLE IF EXISTS ph3;",
+             "-c", "CREATE ROLE ph3 LOGIN PASSWORD 'ph3';",
+             "-c", f"CREATE DATABASE {PH3_DB} OWNER ph3;"],
+            capture_output=True, text=True, check=True, timeout=120,
+        )
+        subprocess.run(
+            ["docker", "exec", PG_CONTAINER, "psql", "-U", "postgres", "-d", PH3_DB,
+             "-c", "CREATE EXTENSION IF NOT EXISTS vector;",
+             "-c", "GRANT ALL ON SCHEMA public TO ph3;"],
+            capture_output=True, text=True, check=True, timeout=120,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        skipped.append(f"smoke_ph3_apply.py — could not create {PH3_DB}: {exc}")
+        return
+
+    env = {**ENV, "DATABASE_URL": PH3_URL, "SMOKE_DATABASE_URL": PH3_URL, "DATABASE_SSL": ""}
+    proc = subprocess.run(
+        [PY_EXE, "-m", "alembic", "upgrade", "head"],
+        cwd=SERVICE_ROOT, env=env, capture_output=True, text=True, timeout=900,
+    )
+    if proc.returncode != 0:
+        skipped.append(f"smoke_ph3_apply.py — migrating {PH3_DB} failed:\n{proc.stderr[-600:]}")
+        return
+    print(f"— {PH3_DB}, created and migrated to head", flush=True)
+    _run(["smoke_ph3_apply.py"], env)
+
+
+def _run_scorecard_retry() -> None:
+    """The one smoke that needs a second service and object storage."""
+    missing = [k for k, v in S3_FOR_SCORECARDS.items() if not v]
+    if missing:
+        skipped.append(
+            "smoke_group_a_scorecard_retry.py — object storage is not configured "
+            f"({', '.join(missing)} unset). See README.md."
+        )
+        return
+    try:
+        with urllib.request.urlopen(f"{FEEDBACK_BILLING_URL}/health/live", timeout=5) as r:
+            r.read()
+    except OSError as exc:
+        skipped.append(
+            f"smoke_group_a_scorecard_retry.py — no feedback_billing at "
+            f"{FEEDBACK_BILLING_URL} ({exc}). See README.md."
+        )
+        return
+    print(f"— feedback_billing answering at {FEEDBACK_BILLING_URL}", flush=True)
+    _run(["smoke_group_a_scorecard_retry.py"],
+         {**ENV, "FEEDBACK_BILLING_URL": FEEDBACK_BILLING_URL, **S3_FOR_SCORECARDS})
 
 
 def main() -> int:
@@ -115,8 +199,12 @@ def main() -> int:
     print("— clean database at head", flush=True)
     _run(sorted(
         p.name for p in HERE.glob("smoke_*.py")
-        if p.name not in SKIP and p.name not in BACKFILL_PAIR
+        if p.name not in SPECIAL and p.name not in BACKFILL_PAIR
     ))
+    # The scorecard smoke shares this database with feedback_billing, so it goes
+    # after the rest rather than on a database of its own.
+    _run_scorecard_retry()
+    _run_ph3()
 
     failed = [r for r in results if not r[1]]
     if failed:
@@ -128,10 +216,14 @@ def main() -> int:
             for line in err.strip().splitlines()[-6:]:
                 print("  !", line)
 
-    print(
-        f"\n{len(results) - len(failed)}/{len(results)} smokes passed"
-        f"  (not run here: {', '.join(sorted(SKIP))})"
-    )
+    if skipped:
+        print("\n================ not run ================")
+        for reason in skipped:
+            print(f"  - {reason}")
+
+    total = len(results) + len(skipped)
+    print(f"\n{len(results) - len(failed)}/{total} smokes passed"
+          f"{f', {len(skipped)} not run' if skipped else ''}")
     return 1 if failed else 0
 
 

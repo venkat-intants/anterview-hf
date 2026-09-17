@@ -69,6 +69,7 @@ from app.models import User
 from app.naipunyam.circuit_breaker import CircuitOpenError
 from app.naipunyam.client import NaipunyamClient, NaipunyamError
 from app.redis_client import get_redis
+from app.roles import CANDIDATE_ROLES
 from app.utils.cookies import delete_cookie_headers
 
 log = structlog.get_logger(__name__)
@@ -120,9 +121,10 @@ _STATE_KEY_PREFIX = "oauth:naipunyam:state:"
 # which is exactly the login-CSRF this module used to be open to.
 _STATE_COOKIE_NAME = "naipunyam_oauth_state"
 
-# Roles that must never receive a session from this flow. Naipunyam SSO signs in
-# CANDIDATES; staff accounts are provisioned internally and use a password.
-_PRIVILEGED_ROLES = ("hr_manager", "super_admin", "platform_owner", "admin")
+# Naipunyam SSO signs in CANDIDATES; staff accounts are provisioned internally
+# and use a password. The gate below refuses any account holding a role that is
+# not a candidate role — fail closed, so a staff role added later is refused by
+# default. The previous list of staff roles missed `interviewer` (app/roles.py).
 
 
 def _state_redis_key(state_token: str) -> str:
@@ -530,10 +532,10 @@ async def callback(
                 "JOIN user_roles ur ON ur.user_id = u.id "
                 "JOIN roles r ON r.id = ur.role_id "
                 "WHERE u.email = :email AND u.deleted_at IS NULL "
-                "AND r.name IN :roles "
+                "AND r.name NOT IN :candidate_roles "
                 "LIMIT 1"
-            ).bindparams(sa_bindparam("roles", expanding=True)),
-            {"email": email, "roles": list(_PRIVILEGED_ROLES)},
+            ).bindparams(sa_bindparam("candidate_roles", expanding=True)),
+            {"email": email, "candidate_roles": sorted(CANDIDATE_ROLES)},
         )
         if privileged_row.fetchone() is not None:
             log.warning("naipunyam.sso.callback.privileged_account_rejected")

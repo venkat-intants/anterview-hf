@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
 from app.dependencies import get_current_user
+from app.roles import is_candidate_only
 
 log = structlog.get_logger(__name__)
 
@@ -72,13 +73,11 @@ GOALS: frozenset[str] = frozenset(
 LEVELS: frozenset[str] = frozenset({"entry", "mid", "senior"})
 LANGUAGES: frozenset[str] = frozenset({"en", "hi", "te"})
 
-# Roles that never see the wizard. HR managers and admins have their own
-# consoles; interrupting them with "what job are you practising for?" would be
-# nonsense. Checked against the user's role set, not their company, because a
-# platform owner has no company_id.
-_PRIVILEGED_ROLES: frozenset[str] = frozenset(
-    {"hr_manager", "super_admin", "platform_owner", "admin"}
-)
+# Only candidates see the wizard. Staff have their own consoles, and
+# interrupting them with "what job are you practising for?" is nonsense. Decided
+# by "holds only candidate roles" rather than by a list of staff roles, which
+# missed `interviewer` when it was added (app/roles.py). Checked against the
+# role set, not the company, because a platform owner has no company_id.
 
 # How many past mock interviews feed the per-competency scores. The MOST
 # RECENT this many — enough to show a trend without an unbounded scan for a
@@ -89,7 +88,7 @@ _MAX_SESSIONS_SCANNED: int = 50
 
 def _is_self_serve(user: User) -> bool:
     """True when this user should be offered the wizard."""
-    return not (set(getattr(user, "roles", []) or []) & _PRIVILEGED_ROLES)
+    return is_candidate_only(getattr(user, "roles", []) or [])
 
 
 # ---------------------------------------------------------------------------

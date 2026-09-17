@@ -102,7 +102,7 @@ The full map — every Phase 2 item, where it is tested at each level, and the g
 | 1 | Sign-in and landing for every role, access refusals, creating an opening, the workflow builder (templates, human gates, publish blocked by issues, publish and read-only) | done — `auth`, `opening`, `workflow` specs |
 | 2 | The main journeys: public apply with consent → scored → shortlist → MCQ from the emailed link → decision queue → hire or reject with a reason; held-not-rejected; what the candidate is shown about themselves | done — the three `journey-*` specs |
 | 3 | Bulk upload, the human-review round, the company hiring board, one person applying twice, an opening dashboard with real candidates | done — `bulk-upload`, `review-round`, `company-board`, `same-person-two-openings`, `opening-dashboard` |
-| 3b | Coding rounds | needs a code runner: `scripts/piston-up.ps1`, then `EXECUTION_PROVIDER=piston` |
+| 3b | Coding rounds | done — `coding-round`. Needs a code runner: `scripts/piston-up.ps1`, then `EXECUTION_PROVIDER=piston`. The spec skips with that instruction when none is answering |
 | 4 | Live AI interview (fake media devices) | manual only — it spends real Tavus/Sarvam/LLM budget |
 
 ### The main journeys

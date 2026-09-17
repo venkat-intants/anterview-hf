@@ -10,6 +10,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5174';
 export const API_URL = process.env.E2E_API_URL ?? 'http://localhost:8002';
 
+/** Mailpit catches everything the local stack sends; specs read candidate links from it. */
+export const MAILPIT_URL = process.env.E2E_MAILPIT_URL ?? 'http://localhost:8025';
+
 /**
  * data_gateway's TEST_HOOKS_TOKEN. Without it, specs that need a background
  * pass to run now (scoring, interview results) cannot drive one.

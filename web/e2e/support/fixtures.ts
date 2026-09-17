@@ -35,8 +35,16 @@ const RATE_LIMITED =
   'Sign-in was rate limited (429). data_gateway allows 5 sign-ins a minute per IP; start it for the ' +
   'e2e run with RATE_LIMIT_LOGIN_PER_MINUTE=1000 (see e2e/README.md).';
 
-/** Sign in through the real login form and wait to leave it. */
-export async function signIn(page: Page, account: Account): Promise<void> {
+/**
+ * Sign in through the real login form and wait to leave it.
+ *
+ * Takes credentials rather than an Account, so a spec can sign in as a
+ * candidate whose account the journey itself created.
+ */
+export async function signIn(
+  page: Page,
+  account: { email: string; password: string },
+): Promise<void> {
   await page.goto('/login');
   await page.getByTestId('login-email').fill(account.email);
   await page.getByTestId('login-password').fill(account.password);
@@ -90,6 +98,12 @@ export class Api {
     return (await res.json()) as T;
   }
 
+  async patch<T>(route: string, data: unknown): Promise<T> {
+    const res = await this.request.patch(`${API_URL}${route}`, { headers: this.headers(), data });
+    expect(res.ok(), `PATCH ${route} returned ${res.status()}: ${await res.text()}`).toBeTruthy();
+    return (await res.json()) as T;
+  }
+
   /** For asserting refusals: returns the raw status and body instead of failing. */
   async patchRaw(route: string, data: unknown): Promise<{ status: number; body: string }> {
     const res = await this.request.patch(`${API_URL}${route}`, { headers: this.headers(), data });
@@ -138,6 +152,142 @@ export async function createOpening(api: Api, prefix: string): Promise<Opening> 
     target_hires: 1,
   });
   return { id: body.id, title: body.title };
+}
+
+interface ExamStructure {
+  rounds: { id: string; title: string; sections: { question_count: number }[] }[];
+}
+
+interface WorkflowDetail {
+  id: string;
+  version: number;
+  status: string;
+  rounds: { id: string; title: string; kind: string }[];
+}
+
+export interface LiveOpening extends Opening {
+  /** The workflow a candidate who applies will join. */
+  workflowId: string;
+  /** Its single MCQ round, so a spec can talk about "the Aptitude round". */
+  roundId: string;
+  examId: string;
+}
+
+/**
+ * An opening a candidate can actually apply to and be assessed by: one MCQ
+ * round of generated questions, published, taking public applications.
+ *
+ * Takes both accounts it needs: ``api`` is the HR manager who owns the
+ * opening, ``approver`` the super admin who approves it.
+ *
+ * All of it through the API — this is the starting position for a journey, not
+ * the behaviour under test. Question generation is free and repeatable because
+ * data_gateway runs with AI_FAKE_MODE (see README).
+ */
+export async function createLiveMcqOpening(
+  api: Api,
+  approver: Api,
+  prefix: string,
+  opts: { passThreshold?: number; questions?: number } = {},
+): Promise<LiveOpening> {
+  const passThreshold = opts.passThreshold ?? 60;
+  const questions = opts.questions ?? 4;
+  const opening = await createOpening(api, prefix);
+
+  // An opening cannot take public applications until it is approved, and HR
+  // cannot approve their own: the super admin does. Two accounts, as in life.
+  await api.post(`/hr/requisitions/${opening.id}/approval/submit`, { note: null });
+  await approver.post(`/hr/requisitions/${opening.id}/approval/approve`, { note: null });
+
+  const exam = await api.post<{ id: string }>('/hr/exams', {
+    title: `Aptitude — ${opening.title}`,
+    kind: 'mcq',
+    pass_threshold: passThreshold,
+    time_limit_seconds: 1800,
+    target_job_title: opening.title,
+  });
+  const generated = await api.post<{ questions: unknown[] }>(
+    `/hr/exams/${exam.id}/questions/generate`,
+    { topic: opening.title, num_questions: questions, difficulty: 'medium', language: 'en' },
+  );
+  await api.post(`/hr/exams/${exam.id}/questions/bulk`, { questions: generated.questions });
+  const structure = await api.get<ExamStructure>(`/hr/exams/${exam.id}/structure`);
+  const examRoundId = structure.rounds[0].id;
+  // A draft exam round mints links candidates cannot open — publish it, as the
+  // exam editor does.
+  await api.patch(`/hr/exams/${exam.id}/rounds/${examRoundId}`, { status: 'published' });
+
+  const draft = await api.post<WorkflowDetail>(`/hr/requisitions/${opening.id}/workflows`, {});
+  await api.patch(`/hr/workflows/${draft.id}`, {
+    auto_score_on_apply: true,
+    auto_assign_first_round: true,
+    auto_advance_rounds: true,
+  });
+  const withRound = await api.post<WorkflowDetail>(`/hr/workflows/${draft.id}/rounds`, {
+    title: 'Aptitude',
+    kind: 'mcq',
+    pass_threshold: passThreshold,
+    deadline_days: 5,
+    exam_round_id: examRoundId,
+  });
+  await api.post(`/hr/workflows/${draft.id}/publish`);
+  await api.patch(`/hr/requisitions/${opening.id}`, { public_apply_enabled: true });
+
+  const roundId = withRound.rounds.find((r) => r.kind === 'mcq')!.id;
+  return { ...opening, workflowId: draft.id, roundId, examId: exam.id };
+}
+
+export interface QueueRow {
+  enrolment_id: string;
+  full_name: string;
+  status: string;
+  held: boolean;
+  held_reason: string | null;
+}
+
+/** The opening's decision queue, as HR's page reads it. */
+export function decisionQueue(api: Api, openingId: string): Promise<QueueRow[]> {
+  return api.get<QueueRow[]>(`/hr/requisitions/${openingId}/decision-queue`);
+}
+
+export interface Enrolment {
+  id: string;
+  full_name: string;
+  status: string;
+}
+
+/** One named candidate's application to this opening. Fails if it is not there. */
+export async function enrolmentFor(
+  api: Api,
+  openingId: string,
+  fullName: string,
+): Promise<Enrolment> {
+  const rows = await api.get<Enrolment[]>(`/hr/requisitions/${openingId}/enrolments`);
+  const mine = rows.find((r) => r.full_name === fullName);
+  expect(
+    mine,
+    `no application for ${fullName} on this opening — found: ${rows.map((r) => r.full_name).join(', ') || '(none)'}`,
+  ).toBeTruthy();
+  return mine!;
+}
+
+export interface StageMove {
+  from_status: string | null;
+  to_status: string;
+  automated: boolean;
+  actor: string | null;
+  reason: string | null;
+}
+
+/**
+ * The append-only stage ledger for one application.
+ *
+ * The specs assert against this as well as the screen because it is where
+ * "a person decided this, and here is why" is actually recorded — the screen
+ * can only show what a person typed.
+ */
+export function stageHistory(api: Api, enrolmentId: string): Promise<StageMove[]> {
+  return api.get<StageMove[]>(`/hr/enrolments/${enrolmentId}/history`);
 }
 
 export const test = base.extend<{ tenant: Tenant }>({

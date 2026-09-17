@@ -100,6 +100,26 @@ jobs:
             echo "::error::HF_TOKEN is not set — cannot deploy."
             exit 1
           fi
+          # Every LFS object in the HISTORY, not just the ones in this tree.
+          #
+          # `lfs: true` on the checkout above fetches objects for the checked-out
+          # COMMIT. But the push below sends the whole history, and git-lfs's
+          # pre-push hook walks every commit in it and refuses the push if any
+          # referenced object is absent locally. So a file added in an earlier
+          # commit and REMOVED again before this one is exactly the case that
+          # breaks: not in the tree, so never fetched; in the history, so
+          # required.
+          #
+          # Not hypothetical - it is how this deploy first failed. Eight .docx
+          # files were committed by accident, removed in the very next commit,
+          # and the Space push then died on "(missing) docs/... missing or
+          # corrupt local objects" while CI was fully green, because CI never
+          # pushes anywhere. Uploading the objects to GitHub did not fix it
+          # either; the runner still had no reason to fetch them.
+          #
+          # .gitattributes puts *.docx/*.pdf/*.png and friends under LFS, so any
+          # binary that ever lands in any commit joins this set permanently.
+          git lfs fetch --all origin
           # HEAD, not a branch name: the checkout above is a detached commit.
           git push --force \
             "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" \

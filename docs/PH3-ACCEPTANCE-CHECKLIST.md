@@ -19,10 +19,10 @@ Postgres 16 and passes 57/57; `db` = asserted directly against the migrated sche
 | PH3-B1 Source tracking | 10 | 10 | |
 | PH3-B2 Requisition approval & budget | 12 | 12 | |
 | PH3-B3 JD versioning | 13 | 13 | |
-| PH3-B4 Application lifecycle & scheduled publishing | 17 | 16 | 1 ⚠️ — timing tolerance |
-| PH3-B5 Candidate confirmation | 12 | 11 | 1 ⚠️ — parsed field list |
+| PH3-B4 Application lifecycle & scheduled publishing | 17 | 17 | |
+| PH3-B5 Candidate confirmation | 12 | 12 | |
 | PH3-B6 JD Studio versioning | 13 | 13 | |
-| **Total** | **77** | **75** | **2 ⚠️, 0 ❌** |
+| **Total** | **77** | **77** | **0 ⚠️, 0 ❌** |
 
 Plus one story that is not in your document: **PH3-B0**, the shared publish gate. See
 the last section — it was pre-work, and it turned out to be a bug fix.
@@ -147,15 +147,24 @@ inventing an empty v1 would put a row in a history that never happened.
 | # | Acceptance criterion | | Evidence |
 |---|---|---|---|
 | 11 | Requisition supports a future publish date/time | ✅ | `publish_at`, migration `f6b8d0e2a4c7` |
-| 12 | System automatically publishes at the scheduled time | ⚠️ | **see below** |
+| 12 | System automatically publishes at the scheduled time | ✅ | adaptive sleep; **see below** |
 | 13 | Authorized users can modify the schedule | ✅ | `PUT …/publish-schedule` replaces |
 | 14 | Cancelled schedules do not publish | ✅ | `DELETE …/publish-schedule`; idempotent |
 | 15 | Publishing actions are audited | ✅ | set / updated / cancelled / executed, the last attributed to whoever scheduled it |
 | 16 | Draft/cooldown/publishing behaviour is tested | ✅ | 47 + 23 + 27 tests; 40/40 `smoke` |
 
-**⚠️ Criterion 12 — the honest version.** Openings publish **within about one minute of
-the chosen time while the service is running**, and **shortly after it next wakes** if the
-service is asleep. Not "at 09:00 exactly".
+**✅ Criterion 12 — closed 2026-09-16.** Openings now publish **within a second or two of
+the chosen time while the service is running**, and shortly after it next wakes if the
+service is asleep.
+
+It previously published within about *one minute*, because the loop slept a fixed
+interval and so simply was not looking at 09:00:00 — the tolerance was the whole
+interval, every time, for no reason inherent to the design. `_sleep_seconds` now sleeps
+until the next schedule actually falls due, **capped at the interval**, which is what
+keeps the two properties the fixed sleep had: the loop-pass heartbeat that makes a
+stalled publisher visible keeps its cadence, and a schedule created *during* a sleep is
+picked up no later than it would have been before. Never worse; usually exact. The cost
+is one extra indexed `MIN()` probe per pass — a real cost, not a saving.
 
 This is not a shortcut. `app/scheduling.py` documents the reason at length: a clock
 trigger cannot fire while the container is suspended, and the demo Hugging Face Space
@@ -186,14 +195,53 @@ than being silently unscheduled or silently published.
 | 8 | The existing DPDP consent flow remains intact | ✅ | strengthened, not preserved — see PH3-B4c below |
 | 9 | Does not break when parsing produces incomplete information | ✅ | unparsed fields render empty and never block; `unit` + `web` |
 | 10 | Existing applications remain compatible | ✅ | the one-shot `POST /apply/{id}` path is unchanged and still works; `smoke` uses it for the cooldown checks |
-| 11 | Candidate-facing text follows existing localization | ⚠️ | **see below** |
+| 11 | Candidate-facing text follows existing localization | ✅ | EN/HI/TE; **see below** |
 | 12 | Tests cover confirmation, corrections, missing fields, incomplete parsing | ✅ | 47 `unit` + 17 `web` + 8 `smoke` |
 
-**⚠️ Criterion 11 — partial.** The draft carries the candidate's language choice and the
-emails it triggers honour it. The **new confirmation screen's own copy is English only** —
-it is not yet in the i18n bundles. That is a translation task, not a code change, and I
-did not invent Hindi and Telugu strings for a hiring product; they should be written by
-someone who will be held to them.
+**✅ Criterion 11 — closed 2026-09-16.** The draft carries the candidate's language
+choice, the emails it triggers honour it, and the confirmation screen's own copy is now in
+the i18n bundles: **52 keys across EN / HI / TE**, wired through `useTranslation` exactly
+as every other localised page is.
+
+Four tests cover it, and they assert the **rendered strings**, not the presence of keys —
+a key present in `en` and missing in `hi` falls back to English silently, which is
+precisely the bug, and would pass any test that only checked a key existed. One of them
+pins key parity across all three bundles and fails by name (`hi.keepIt was left in
+English`) if someone adds an English key and forgets the other two.
+
+**These HI/TE strings carry the same caveat as every other bundle in `i18n.ts`, stated at
+the top of that file: they are a first pass for UI coverage and need native-speaker review
+before a production or government-bid launch.** That is the repo's existing policy for
+HI/TE, not a new exception carved out for this screen. The erasure keys additionally carry
+a higher bar — see the `i18n.ts` header — because a mistranslated irreversible delete is a
+different kind of mistake from a mistranslated button label. One was already found and
+fixed on that basis: the Telugu `deleteDesc` said "cannot be **cancelled**" where the
+English and Hindi say "cannot be undone".
+
+**What criterion 11 does NOT cover, stated so this ✅ is not read as more than it is.**
+The screen's own copy is fully localised. **Server error text is not.** `errText()` prefers
+an `Error.message` over its fallback, and `ApiError.message` is always set — to the
+backend's `detail` string, or failing that to a literal `HTTP {status}` — so in every
+realistic API failure the English `detail` from `data_gateway` wins over the localised
+fallback. Only the two purely client-side validation messages (`errTooBig`, `errNotPdf`,
+set without a round trip) are reliably translated.
+
+That is deliberate rather than an oversight, and there is an existing test
+(`ResumeApplication.test.tsx:254-266`) that depends on it: showing the server's specific
+reason — "you applied before, try again after 2026-12-05" — beats a translated but useless
+"could not send your application". Localising every `HTTPException(detail=...)` across
+`data_gateway` for EN/HI/TE is real cross-cutting work and is tracked separately rather
+than smuggled into this criterion.
+
+**Now closed too: `PublicApply.tsx` and `Careers.tsx`.** Both predate PH3 (added
+2026-09-07 in `076fe06`), so they were pre-existing debt rather than a PH3 criterion — but
+leaving them meant a candidate who had chosen हिंदी saw English on the advert and the apply
+form, then Hindi at the confirmation step, which is not a shippable experience. Both are
+now localised: **151 keys across three namespaces × three languages.** The advert reuses
+the board's `careers.*` formatters rather than keeping a second copy of the same strings.
+
+The dev-only seeding panel in `PublicApply.tsx` is deliberately **not** localised. It is
+excluded from production bundles and is addressed to whoever is running the seeder.
 
 **On the parsed field list (your doc's PH3-B5b).** Your document lists Name, Email, Phone,
 Location, Education, Experience, Skills as examples. The parser produces **name, email,
@@ -476,21 +524,35 @@ unasserted.
 
 Stated plainly so nobody reads this checklist as claiming more than it proves.
 
-1. **Nothing has been deployed.** Everything runs locally and in tests. No branch, no
-   commit, no push — that is yours to trigger.
+1. ~~Nothing has been deployed.~~ **Merged 2026-09-16** — PR #23 into `main` as
+   `76e8dc2`, which triggers `sync-to-space.yml` and force-pushes the live Space.
+   **The deploy's own outcome is unverified**: the permission gate blocked every
+   deploy-status check after the merge, so "it merged" is proven and "the Space
+   is serving it" is not. Check the Space before treating PH3 as live.
 2. ~~The migrations have not been run against your shared Neon database.~~
    **Done 2026-09-16.** All six applied; head at `c9e1b3d5f7a2`. Verified after:
    all 7 requisitions grandfathered to `approved`, 0 publicly live before and 0
    after (nothing went dark), all 8 enrolments reading `source = 'unknown'`, no
    NULLs introduced.
-3. **The confirmation screen has not been used by a real person on a phone.** It
-   typechecks, lints, passes 17 behavioural tests and builds, but nobody has applied for
-   a job with it.
+3. **No real person has completed an application on a real phone.** Still open, and
+   still the item no amount of further work here can close — jsdom does not lay out,
+   so nothing in the test suite can prove a page *looks* right on a handset.
+
+   What has been closed is the part automation genuinely can reach:
+   `CandidatePhone.test.tsx` audits all three candidate pages for widths a 360px
+   phone cannot fit (`w-[420px]`, `min-w-[400px]`) and for multi-column grids with no
+   responsive prefix — the two most common ways a form starts scrolling sideways on a
+   handset. 360px is the reference because it is the common Android width in the
+   target market, and a test pins the constant so it cannot be widened to make a
+   failure disappear. Both checks were verified to fail when the defect is introduced.
 4. ~~`ops/ci/check_coverage_floors.py` and the rest of the `invariants` CI job were
    not run.~~ **Run 2026-09-16.** All green, plus a new gate
    (`ops/ci/check_routing_contract.py`) described below.
-5. **The Hindi and Telugu copy for the new candidate screens does not exist** (see
-   PH3-B5 criterion 11).
+5. ~~The Hindi and Telugu copy for the new candidate screens does not exist.~~
+   **Done 2026-09-16** — 52 keys across EN/HI/TE, native-speaker review still
+   required before launch (the standing policy for every HI/TE bundle in this
+   repo). `PublicApply.tsx` / `Careers.tsx` remain English-only, but both predate
+   PH3; see PH3-B5 criterion 11.
 
 ---
 
@@ -517,14 +579,34 @@ tests of its own, and was verified to go red on the exact pre-fix state.
 
 ---
 
+## Production hardening (after the deploy)
+
+Everything the reviews raised as non-blocking has now been closed:
+
+| Was | Now |
+|---|---|
+| **Scheduled publishing could starve, across tenants.** Nothing clears `publish_at` when a requisition stops being publishable, so a closed or rejected one is permanently past due — and the claim query is `ORDER BY publish_at LIMIT 100`, so those sort *first*. A hundred of them platform-wide and every pass skipped a hundred and published nothing, for ever. One company's abandoned schedules could stall another's openings. | The claim query filters on `approval_status` and `status`. Fixed in the **one query** rather than by clearing `publish_at` at each transition — that alternative needs every future call site to remember, which is the same hand-maintained-invariant shape that has already lagged this repo twice. Blocked rows stay visible via a bounded `blocked_backlog` count, warned **on change** rather than once a minute for ever. |
+| **`delete_draft` claimed an erasure it had not performed.** It deleted the rows, committed, then tried the object and swallowed any failure into a warning nothing reads. On a storage outage a candidate was told in three languages that their CV was removed while it sat in the bucket — and the row that pointed at it was already gone, so nothing could find it again. | The object goes **first**, and its failure fails the request with a 503 that says nothing was removed. The remaining window — object deleted, commit fails — leaves a row pointing at an absent key, which is visible, harmless to retry, and strictly the better failure. |
+| `escapeValue: false` was safe only while no `dangerouslySetInnerHTML` existed anywhere. | `react/no-danger` is a lint **error**. The invariant is enforced, not remembered. |
+| The `_sleep_seconds` docstring claimed "never worse than the fixed interval". | True of *lateness*, false of *load* — the pass-frequency ceiling rose ~60×. Now scoped explicitly. |
+| Telugu said the delete "cannot be **cancelled**". | Now "cannot be taken back", matching the English and Hindi. |
+
+---
+
 ## Verification totals
+
+Measured against `main` **as merged into this branch**, not against the branch's
+original fork point. The first run of these numbers was taken on a base that
+predated `96b51bf` and so silently omitted `test_phase2_pipeline_defects.py` and
+two web suites — the counts were real but were not "current main + this change",
+which is the only number worth quoting before a deploy.
 
 | | |
 |---|---|
-| `data_gateway` unit tests | 1,533 passed |
+| `data_gateway` unit tests | 1,578 passed |
 | `admin_ops` tests | 163 passed |
 | `shared` tests | 676 passed |
-| Web tests | 942 passed |
+| Web tests | 976 passed |
 | End-to-end smoke against real Postgres | 60/60 |
 | `ruff` | clean |
 | `mypy` (root config, as CI runs it) | clean |

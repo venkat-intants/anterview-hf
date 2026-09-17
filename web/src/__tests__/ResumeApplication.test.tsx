@@ -9,12 +9,13 @@
 
 import { readFileSync } from 'node:fs';
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { ApplicationDraft } from '../api/publicApply';
+import i18n from '../lib/i18n';
 
 const getDraft = vi.fn();
 const saveDraft = vi.fn();
@@ -360,5 +361,146 @@ describe('the resume token', () => {
     const routes = appSource.match(/path="\/apply\/draft[^"]*"/g) ?? [];
     expect(routes.length).toBeGreaterThan(0);
     for (const r of routes) expect(r).not.toContain(':token');
+  });
+});
+
+// ===========================================================================
+// PH3-B5 criterion 11 — candidate-facing text follows existing localization
+//
+// The confirmation screen was English-only: its copy never reached the i18n
+// bundles, so a candidate who had chosen हिंदी or తెలుగు everywhere else hit
+// English at the one screen that decides what gets stored about them.
+//
+// Asserting the STRINGS render, not merely that keys exist: a key present in
+// `en` and missing in `hi` silently falls back to English, which is exactly
+// the bug, and would pass any test that only checked for a key's presence.
+// ===========================================================================
+describe('ResumeApplication — localisation', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('en');
+  });
+
+  it.each([
+    ['hi', 'अपने विवरण जाँचें', 'आपका CV'],
+    ['te', 'మీ వివరాలను సరిచూడండి', 'మీ CV'],
+  ])('renders the confirmation screen in %s', async (lng, checkTitle, cvTitle) => {
+    getDraft.mockResolvedValue(draft({ has_resume: true }));
+    await i18n.changeLanguage(lng);
+    renderPage();
+
+    expect(await screen.findByText(checkTitle)).toBeInTheDocument();
+    expect(screen.getByText(cvTitle)).toBeInTheDocument();
+    // And the English it replaced is genuinely gone — a fallback would leave it.
+    expect(screen.queryByText('Check your details')).not.toBeInTheDocument();
+  });
+
+  it('translates the delete control, which is the DPDP right to act', async () => {
+    getDraft.mockResolvedValue(draft({ has_resume: true }));
+    await i18n.changeLanguage('hi');
+    renderPage();
+
+    expect(
+      await screen.findByRole('button', { name: 'मेरा सहेजा गया आवेदन हटाएँ' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps every bundle in step, key for key', () => {
+    // The real failure mode is not a bad translation — it is the NEXT person
+    // adding an English key and forgetting the other two, which falls back to
+    // English silently. This makes that a red test rather than a live defect.
+    // getResourceBundle is typed `any`, so the cast happens BEFORE the member
+    // access — reaching through an `any` trips no-unsafe-member-access, which
+    // the web lint runs with --max-warnings 0.
+    const bundles = ['en', 'hi', 'te'].map((l) => {
+      const bundle = i18n.getResourceBundle(l, 'translation') as {
+        resumeApply: Record<string, string>;
+      };
+      return bundle.resumeApply;
+    });
+    const [en, hi, te] = bundles;
+    expect(Object.keys(en).length).toBeGreaterThan(40);
+    expect(Object.keys(hi).sort()).toEqual(Object.keys(en).sort());
+    expect(Object.keys(te).sort()).toEqual(Object.keys(en).sort());
+
+    // Every value actually differs from English, except the proper nouns that
+    // are deliberately left alone across all locales.
+    const PROPER_NOUNS = new Set(['linkedin', 'github']);
+    for (const key of Object.keys(en)) {
+      if (PROPER_NOUNS.has(key)) continue;
+      expect(hi[key], `hi.${key} was left in English`).not.toBe(en[key]);
+      expect(te[key], `te.${key} was left in English`).not.toBe(en[key]);
+    }
+  });
+});
+
+// ===========================================================================
+// The seed is idempotent
+//
+// Written while chasing a flaky failure of "lets the candidate change it" — the
+// same commit passed one CI run and failed the next. I believed the cause was
+// `refetchOnWindowFocus: true` (set app-wide in main.tsx) re-running the
+// seeding effect and overwriting typed values.
+//
+// THAT WAS WRONG, and this test is what showed it: the first version passed
+// with the guard REMOVED. React Query's structural sharing returns the same
+// object reference for deeply-equal data, and DraftOut has no per-fetch
+// changing field, so the effect never re-fires on an unchanged refetch. A
+// candidate tabbing away does not lose their edits.
+//
+// Kept because the property is still worth holding: a refetch must not reset
+// the form, whatever churns the object identity. The flake itself remains
+// unexplained — it is not reproducible locally (repeated clean runs) and this
+// guard is not claimed to fix it.
+// ===========================================================================
+describe('ResumeApplication — the seed is idempotent', () => {
+  it('a refetch of unchanged data leaves typed values alone', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
+    if (!window.location.hash) window.location.hash = '#tok-123';
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/apply/draft']}>
+          <ResumeApplication />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const name = await screen.findByLabelText(/Full name/);
+    fireEvent.change(name, { target: { value: 'Priya S. Sharma' } });
+    getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
+    await client.refetchQueries({ queryKey: ['apply', 'draft'] });
+
+    await waitFor(() =>
+      expect(
+        name,
+        'a refetch overwrote the candidate’s correction',
+      ).toHaveValue('Priya S. Sharma'),
+    );
+  });
+
+  it('still takes the server’s reading when it genuinely changes', () => {
+    // The guard must not freeze the form: after a CV upload re-parses, or a
+    // save normalises a value, the new server reading still has to land. Every
+    // seeded field must appear in the signature or a change to it is ignored.
+    const source = readFileSync('src/pages/ResumeApplication.tsx', 'utf-8');
+    const effect = source.slice(source.indexOf('const seeded = useRef'));
+    expect(effect).toContain('signature === seeded.current');
+    for (const f of [
+      'full_name',
+      'phone',
+      'years_experience',
+      'current_company',
+      'current_title',
+      'linkedin_url',
+      'github_url',
+    ]) {
+      expect(
+        effect.slice(0, effect.indexOf('setForm')),
+        `${f} is seeded but not in the signature, so a server change to it is ignored`,
+      ).toContain(f);
+    }
   });
 });

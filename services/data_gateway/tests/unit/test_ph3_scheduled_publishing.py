@@ -13,7 +13,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -59,6 +59,9 @@ def _factory(rows: list[dict]) -> tuple[object, AsyncMock]:
     db.execute = AsyncMock(side_effect=_execute)
     db.add = MagicMock()
     db.commit = AsyncMock()
+    # blocked_backlog's count. Zero unless a test says otherwise — these older
+    # cases are about the publish decision, not the backlog report.
+    db.scalar = AsyncMock(return_value=0)
 
     @asynccontextmanager
     async def factory():  # noqa: ANN202
@@ -76,7 +79,7 @@ async def test_an_approved_opening_publishes() -> None:
 
     factory, db = _factory([_due()])
     result = await publish_due(factory)
-    assert result == {"published": 1, "skipped": 0}
+    assert (result["published"], result["skipped"]) == (1, 0)
     assert any(
         "public_apply_enabled = true" in c.args[0].text
         for c in db.execute.await_args_list
@@ -100,7 +103,7 @@ async def test_a_no_longer_eligible_opening_does_not_publish(override: dict) -> 
 
     factory, db = _factory([_due(**override)])
     result = await publish_due(factory)
-    assert result == {"published": 0, "skipped": 1}
+    assert (result["published"], result["skipped"]) == (0, 1)
     assert not any(
         "public_apply_enabled = true" in c.args[0].text
         for c in db.execute.await_args_list
@@ -185,7 +188,11 @@ def test_the_publisher_is_an_interval_loop_not_a_cron_job() -> None:
     # used, so the assertion is against the code below the docstring.
     body = src.split(TRIPLE_QUOTE, 2)[2]
     assert "CronTrigger" not in body
-    assert "asyncio.sleep(interval)" in body
+    # It sleeps and re-polls; it does not arm a clock. The exact sleep is now
+    # computed (see _sleep_seconds), so asserting the literal `sleep(interval)`
+    # would be asserting an implementation detail that has already changed once.
+    assert "asyncio.sleep(" in body
+    assert "while True:" in body
 
 
 def test_the_api_states_the_tolerance_rather_than_implying_a_guarantee() -> None:
@@ -323,3 +330,186 @@ def test_the_publisher_is_started_and_stopped_with_the_app() -> None:
     )
     assert "scheduled_publishing.start(_factory)" in main
     assert "await scheduled_publishing.stop()" in main
+
+
+# ===========================================================================
+# PH3-B4 criterion 12 — publish AT the scheduled time
+#
+# A fixed sleep made the interval the tolerance every time: an opening set for
+# 09:00:00 published at up to 09:00:59, because the loop simply was not looking.
+# The loop now sleeps until the next schedule actually falls due, capped at the
+# interval so the heartbeat cadence and the worst case are both unchanged.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_it_sleeps_until_the_next_schedule_is_due() -> None:
+    from app.scheduled_publishing import _sleep_seconds
+
+    soon = datetime.now(tz=UTC) + timedelta(seconds=5)
+    factory = _factory_returning(soon)
+    delay = await _sleep_seconds(factory, 60)
+    assert 1.0 <= delay <= 6.0, f"slept {delay}s for a schedule 5s away"
+
+
+@pytest.mark.asyncio
+async def test_it_never_sleeps_longer_than_the_interval() -> None:
+    """The cap is what preserves the old guarantees: the loop-pass heartbeat
+    keeps its cadence, and a schedule created DURING a sleep is still picked up
+    no later than it would have been before."""
+    from app.scheduled_publishing import _sleep_seconds
+
+    far = datetime.now(tz=UTC) + timedelta(days=30)
+    assert await _sleep_seconds(_factory_returning(far), 60) == 60.0
+
+
+@pytest.mark.asyncio
+async def test_nothing_scheduled_falls_back_to_the_interval() -> None:
+    from app.scheduled_publishing import _sleep_seconds
+
+    assert await _sleep_seconds(_factory_returning(None), 60) == 60.0
+
+
+@pytest.mark.asyncio
+async def test_it_never_becomes_a_hot_loop() -> None:
+    """A row that moves under us, or a clock that steps backwards, must not
+    turn this into a spin against the database."""
+    from app.scheduled_publishing import _sleep_seconds
+
+    past = datetime.now(tz=UTC) - timedelta(hours=3)
+    assert await _sleep_seconds(_factory_returning(past), 60) == 1.0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_probe_falls_back_rather_than_stopping_the_publisher() -> None:
+    """The publisher surviving is worth more than the extra precision."""
+    from app.scheduled_publishing import _sleep_seconds
+
+    factory = MagicMock(side_effect=RuntimeError("database gone"))
+    assert await _sleep_seconds(factory, 60) == 60.0
+
+
+@pytest.mark.asyncio
+async def test_a_naive_timestamp_is_read_as_utc_not_local() -> None:
+    """asyncpg can hand back a naive datetime. Treating it as local time would
+    shift every wake-up by the host's offset — hours, on an IST box."""
+    from app.scheduled_publishing import _sleep_seconds
+
+    naive = (datetime.now(tz=UTC) + timedelta(seconds=5)).replace(tzinfo=None)
+    delay = await _sleep_seconds(_factory_returning(naive), 60)
+    assert 1.0 <= delay <= 6.0, f"naive value mis-read: slept {delay}s"
+
+
+def _factory_returning(value: object) -> MagicMock:
+    """A session factory whose scalar() answers the next-due lookup."""
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=value)
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=db)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    return MagicMock(return_value=ctx)
+
+
+# ===========================================================================
+# Blocked rows must not starve the batch
+#
+# Nothing clears publish_at when a requisition stops being publishable —
+# closing it and rejecting it both leave the schedule intact, on purpose, so the
+# request is not silently lost. Such a row is permanently past due, and
+# due_requisitions is ORDER BY publish_at LIMIT 100, so past-due rows sort
+# FIRST. A hundred of them and every pass claims the same hundred, skips all
+# hundred, and publishes nothing, for ever — across tenants, because one
+# scheduler serves the platform.
+# ===========================================================================
+def test_the_claim_query_refuses_rows_that_cannot_publish() -> None:
+    """The filter is the fix. Without it the batch fills with corpses."""
+    from app.scheduled_publishing import due_requisitions
+
+    src = inspect.getsource(due_requisitions)
+    # From the SQL onwards, not from the start: the docstring explains the
+    # FOR UPDATE choice, so searching the whole source for it lands in the prose
+    # and slices an empty string that trivially "contains" nothing.
+    start = src.index('"SELECT id')
+    sql = src[start:src.index("FOR UPDATE", start)]
+    assert "approval_status = :approved" in sql
+    assert "status = 'open'" in sql
+
+
+@pytest.mark.asyncio
+async def test_the_claim_query_binds_the_approved_constant() -> None:
+    """A literal 'approved' here and a different APPROVED in publishing.py would
+    silently stop every scheduled publish."""
+    from app.publishing import APPROVED
+    from app.scheduled_publishing import due_requisitions
+
+    db = AsyncMock()
+    res = MagicMock()
+    res.mappings = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    db.execute = AsyncMock(return_value=res)
+    await due_requisitions(db, now=NOW)
+    assert db.execute.await_args.args[1]["approved"] == APPROVED
+
+
+@pytest.mark.asyncio
+async def test_a_stuck_backlog_is_counted_not_silently_dropped() -> None:
+    """Filtering them out must not make them invisible — an opening somebody
+    scheduled and never got approved is a real thing an operator wants to see."""
+    from app.scheduled_publishing import blocked_backlog
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=7)
+    res = MagicMock()
+    res.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[REQ])))
+    db.execute = AsyncMock(return_value=res)
+
+    count, sample = await blocked_backlog(db, now=NOW)
+    assert count == 7
+    assert sample == [str(REQ)]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_backlog_costs_no_second_query() -> None:
+    """The common case is zero; it should not pay for a sample it will not use."""
+    from app.scheduled_publishing import blocked_backlog
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=0)
+    db.execute = AsyncMock()
+    assert await blocked_backlog(db, now=NOW) == (0, [])
+    assert db.execute.await_count == 0
+
+
+def test_the_backlog_query_is_the_complement_of_the_claim_query() -> None:
+    """If these two ever disagree, a row is either counted twice or lost — the
+    backlog exists precisely to account for what the claim query refuses."""
+    from app.scheduled_publishing import blocked_backlog, due_requisitions
+
+    claim = inspect.getsource(due_requisitions)
+    back = inspect.getsource(blocked_backlog)
+    # Claim takes approved AND open; backlog takes NOT(approved AND open).
+    assert "approval_status = :approved" in claim
+    assert "approval_status <> :approved OR status <> 'open'" in back
+    for shared in ("publish_at IS NOT NULL", "publish_at <= :now", "deleted_at IS NULL"):
+        assert shared in claim, shared
+        assert shared in back, shared
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_stuck_backlog_does_not_warn_every_pass() -> None:
+    """The previous code logged a warning per blocked row per pass — a warning a
+    minute, for ever, which is a log nobody reads."""
+    from app import scheduled_publishing as sp
+
+    sp._last_blocked = -1
+    factory, db = _factory([])
+    db.scalar = AsyncMock(return_value=3)
+    res = MagicMock()
+    res.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    db.execute = AsyncMock(return_value=res)
+
+    with patch.object(sp.log, "warning") as warn:
+        await sp.publish_due(factory)
+        first = warn.call_count
+        await sp.publish_due(factory)
+        await sp.publish_due(factory)
+        assert warn.call_count == first, "an unchanged backlog warned again"
+    assert first == 1, "the first sighting of a backlog must warn once"
+    sp._last_blocked = -1

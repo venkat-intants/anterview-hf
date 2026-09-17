@@ -7,10 +7,13 @@ is not delayed by a sleeping container — it is *skipped*. An interval loop wak
 and finds the work still waiting.
 
 THE TOLERANCE, STATED
-"Publishes at the scheduled time" means *within one interval of it, on a running
-instance*. On a cold Space it means "shortly after the Space next wakes". That
-is written into the API docstring and the console copy rather than left to be
-discovered during a demo.
+"Publishes at the scheduled time" means *within a second or two of it, on a
+running instance*: the loop sleeps until the next schedule falls due rather than
+polling on a fixed cadence, so the interval is a CEILING on lateness and not the
+tolerance anybody normally experiences. On a cold Space it still means "shortly
+after the Space next wakes" — no loop can fire inside a suspended container, and
+that is written into the API docstring and the console copy rather than left to
+be discovered during a demo.
 
 THE GATE IS RE-CHECKED AT FIRE TIME
 A requisition scheduled while approved and rejected an hour later must not
@@ -62,6 +65,9 @@ _BATCH = 100
 
 _task: asyncio.Task[None] | None = None
 
+#: Last reported blocked backlog, so a stuck count is logged on change only.
+_last_blocked: int = -1
+
 
 def interval_seconds() -> int:
     configured = getattr(settings, "scheduled_publish_interval_seconds", 60)
@@ -69,11 +75,36 @@ def interval_seconds() -> int:
 
 
 async def due_requisitions(db: AsyncSession, *, now: datetime) -> list[dict[str, Any]]:
-    """Everything whose publish time has arrived and which is not already live.
+    """Everything whose publish time has arrived and which can actually publish.
 
     ``FOR UPDATE SKIP LOCKED`` so two instances sharing a database never publish
     the same opening twice — the same "claim, don't coordinate" approach the
     erasure executor and the scheduler take.
+
+    THE APPROVAL AND STATUS FILTERS ARE LOAD-BEARING, NOT AN OPTIMISATION.
+    Without them this query starves. Nothing ever clears ``publish_at`` when a
+    requisition stops being publishable: closing it
+    (``hr_requisitions``: ``SET status = :s``) and rejecting it
+    (``requisition_approval``) both leave the schedule intact, deliberately, so
+    the request is not silently lost. Such a row is then permanently past due —
+    and because this query is ``ORDER BY publish_at LIMIT 100``, past-due rows
+    sort FIRST. Accumulate a hundred of them and every pass claims the same
+    hundred, skips all hundred, and publishes nothing, for ever.
+
+    It is worse than it first looks: this query is deliberately NOT tenant
+    scoped, because one scheduler serves the platform. So one company's
+    abandoned schedules would stall every other company's openings. It fails
+    closed — nothing publishes early — but scheduled publishing simply stops.
+
+    Fixed here, in the one query, rather than by clearing ``publish_at`` at each
+    transition that makes a requisition unpublishable. That alternative needs
+    every current AND FUTURE call site to remember, which is the same
+    hand-maintained-invariant shape as the routing lists that have already
+    lagged this repo twice. A filter cannot be forgotten by code that has not
+    been written yet.
+
+    Blocked rows stay visible — ``blocked_backlog`` reports them — they just no
+    longer occupy the batch.
     """
     rows = (
         await db.execute(
@@ -84,14 +115,58 @@ async def due_requisitions(db: AsyncSession, *, now: datetime) -> list[dict[str,
                 " WHERE publish_at IS NOT NULL"
                 "   AND publish_at <= :now"
                 "   AND deleted_at IS NULL"
+                "   AND approval_status = :approved"
+                "   AND status = 'open'"
                 " ORDER BY publish_at"
                 " LIMIT :lim"
                 " FOR UPDATE SKIP LOCKED"
             ),
-            {"now": now, "lim": _BATCH},
+            {"now": now, "lim": _BATCH, "approved": APPROVED},
         )
     ).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def blocked_backlog(
+    db: AsyncSession, *, now: datetime, sample: int = 5
+) -> tuple[int, list[str]]:
+    """How many past-due rows cannot publish, and a few of their ids.
+
+    The filter above is what stops these starving the batch; this is what stops
+    them becoming invisible. A requisition somebody scheduled and never got
+    approved is a real thing an operator wants to know about — the previous code
+    surfaced it by logging a warning for every blocked row on every pass, which
+    is a warning a minute per row, for ever, and therefore a log nobody reads.
+
+    Counted rather than claimed: no ``FOR UPDATE``, no locks, no interference
+    with a concurrent publisher.
+    """
+    count = await db.scalar(
+        text(
+            "SELECT count(*) FROM job_requisitions"
+            " WHERE publish_at IS NOT NULL"
+            "   AND publish_at <= :now"
+            "   AND deleted_at IS NULL"
+            "   AND (approval_status <> :approved OR status <> 'open')"
+        ),
+        {"now": now, "approved": APPROVED},
+    )
+    if not count:
+        return 0, []
+    ids = (
+        await db.execute(
+            text(
+                "SELECT id FROM job_requisitions"
+                " WHERE publish_at IS NOT NULL"
+                "   AND publish_at <= :now"
+                "   AND deleted_at IS NULL"
+                "   AND (approval_status <> :approved OR status <> 'open')"
+                " ORDER BY publish_at LIMIT :lim"
+            ),
+            {"now": now, "approved": APPROVED, "lim": sample},
+        )
+    ).scalars().all()
+    return int(count), [str(i) for i in ids]
 
 
 def _blocked_reason(row: dict[str, Any]) -> str | None:
@@ -115,14 +190,16 @@ async def publish_due(factory: async_sessionmaker[AsyncSession]) -> dict[str, in
             requisition_id = row["id"]
             reason = _blocked_reason(row)
             if reason is not None:
-                # Left scheduled on purpose. Somebody asked for this to go live;
-                # if the block is cleared (the requisition is approved, or
-                # reopened) the next pass publishes it. Silently unscheduling
-                # would lose the request, and silently publishing would defeat
-                # the gate.
+                # Belt and braces. due_requisitions now filters these out, so
+                # reaching here means the query and this function disagree —
+                # which is exactly when you want the louder signal, not the
+                # quieter one. Kept as defence in depth against future drift in
+                # either place, and left scheduled either way: somebody asked
+                # for this opening to go live, and silently unscheduling would
+                # lose the request.
                 skipped += 1
                 log.warning(
-                    "publish.scheduled.blocked",
+                    "publish.scheduled.blocked_unexpectedly",
                     requisition_id=str(requisition_id), reason=reason,
                 )
                 continue
@@ -166,7 +243,100 @@ async def publish_due(factory: async_sessionmaker[AsyncSession]) -> dict[str, in
                 requisition_id=str(requisition_id), company_id=str(row["company_id"]),
             )
         await db.commit()
-    return {"published": published, "skipped": skipped}
+
+        # Blocked rows are no longer claimed, so they would otherwise vanish
+        # from the record entirely. Reported once per pass as a COUNT, and
+        # escalated to a warning only when that count CHANGES — a permanently
+        # stuck backlog should not write the same warning every minute until it
+        # is drowned out.
+        global _last_blocked
+        blocked, sample = await blocked_backlog(db, now=now)
+        if blocked != _last_blocked:
+            (log.warning if blocked else log.info)(
+                "publish.scheduled.backlog_changed",
+                blocked=blocked, was=_last_blocked, sample=sample,
+            )
+            _last_blocked = blocked
+    return {"published": published, "skipped": skipped, "blocked": blocked}
+
+
+async def next_due_at(factory: async_sessionmaker[AsyncSession]) -> datetime | None:
+    """When the earliest not-yet-due schedule falls due, if any.
+
+    Deliberately NOT filtered by approval state. This decides when to WAKE, and
+    the gate is re-derived at fire time anyway (see the module docstring); a row
+    that turns out to be blocked costs one pass that logs why. Waking late
+    because the approval arrived after this query would be the worse error.
+    """
+    async with factory() as db:
+        return await db.scalar(
+            text(
+                "SELECT MIN(publish_at) FROM job_requisitions"
+                " WHERE publish_at IS NOT NULL"
+                "   AND publish_at > :now"
+                "   AND deleted_at IS NULL"
+            ),
+            {"now": datetime.now(tz=UTC)},
+        )
+
+
+async def _sleep_seconds(
+    factory: async_sessionmaker[AsyncSession], interval: int
+) -> float:
+    """How long to wait before the next pass.
+
+    A FIXED interval makes the tolerance the whole interval every single time,
+    for no better reason than that the loop was not looking: an opening set for
+    09:00:00 published at up to 09:00:59, and "publishes at the scheduled time"
+    then meant "within a minute of it". Sleeping until the next schedule
+    actually falls due makes the common case exact to about a second.
+
+    Still capped at ``interval``, which is what keeps the two properties the
+    fixed sleep had: the loop-pass heartbeat that makes a stalled publisher
+    visible keeps its cadence, and a schedule created DURING a sleep is picked
+    up no later than it would have been before.
+
+    NEVER WORSE ON LATENESS. NOT ON LOAD - be precise about which.
+    The cap bounds how LATE a publish can be; it does not bound how OFTEN this
+    loop runs. The old loop had a hard ceiling of one pass per ``interval``
+    (about three database sessions a minute); this one's ceiling is one pass per
+    SECOND, reached if upcoming schedules are ever clustered about a second
+    apart. That is a ~60x rise in the worst-case load ceiling, and an earlier
+    draft of this docstring said "never worse than the fixed interval" without
+    qualifying it - true of the only dimension that draft was considering.
+
+    It is not a practical denial of service: it needs an authenticated
+    hr_manager to create and get approved many requisitions scheduled seconds
+    apart, each costing more work than the pass it triggers, and
+    uq_job_requisitions_company_title forces unique titles. The 1.0s floor below
+    is what bounds it; raising that floor to ~5s would buy a tighter ceiling and
+    still sit inside the "a few seconds" promise in tolerance_note().
+
+    The steady-state cost is one extra indexed MIN() probe per pass, paid on
+    every pass including quiet ones - a real cost, not a saving. It rides
+    ix_job_requisitions_publish_due (partial on publish_at where it is not null
+    and the row is live); EXPLAIN reports an Index Only Scan, checked rather
+    than assumed.
+
+    A failure here must not stop the publisher: the interval is the fallback,
+    which is exactly the behaviour before this existed.
+    """
+    try:
+        upcoming = await next_due_at(factory)
+    except Exception as exc:  # noqa: BLE001 — the loop must outlive one probe
+        log.warning(
+            "publish.scheduled.next_due_probe_failed",
+            exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+        return float(interval)
+    if upcoming is None:
+        return float(interval)
+    if upcoming.tzinfo is None:  # a naive column value is UTC by convention
+        upcoming = upcoming.replace(tzinfo=UTC)
+    remaining = (upcoming - datetime.now(tz=UTC)).total_seconds()
+    # Floored at one second so a row that moves under us — or a clock that
+    # steps backwards — can never turn this into a hot loop.
+    return max(1.0, min(float(interval), remaining))
 
 
 async def _loop(factory: async_sessionmaker[AsyncSession]) -> None:
@@ -191,7 +361,7 @@ async def _loop(factory: async_sessionmaker[AsyncSession]) -> None:
         # Every pass leaves a record, so a publisher that has silently stopped
         # is visible in the same place a missed retention purge is (A6).
         await record_loop_pass(factory, LOOP_JOB_ID, started_at=started, error=error)
-        await asyncio.sleep(interval)
+        await asyncio.sleep(await _sleep_seconds(factory, interval))
 
 
 def start(factory: async_sessionmaker[AsyncSession]) -> None:
@@ -214,18 +384,28 @@ async def stop() -> None:
 
 
 def tolerance_note() -> str:
-    """The honest promise, in one sentence, for API docs and console copy."""
+    """The honest promise, in one sentence, for API docs and console copy.
+
+    Kept in step with what the loop actually does. It used to say "within about
+    one minute" because the loop slept a fixed interval; it now wakes at the due
+    time, so the promise is seconds — but the cold-Space caveat is unchanged and
+    still has to be said, because that is the case a console would otherwise
+    quietly misrepresent.
+    """
     return (
-        f"Scheduled openings go live within about {interval_seconds() // 60 or 1} "
-        "minute(s) of the chosen time while the service is running; if the "
-        "service is asleep, shortly after it next wakes."
+        "Scheduled openings go live within a few seconds of the chosen time "
+        "while the service is running; if the service is asleep, shortly after "
+        f"it next wakes, and never more than about {interval_seconds() // 60 or 1} "
+        "minute(s) late."
     )
 
 
 __all__ = [
     "LOOP_JOB_ID",
+    "blocked_backlog",
     "due_requisitions",
     "interval_seconds",
+    "next_due_at",
     "publish_due",
     "start",
     "stop",

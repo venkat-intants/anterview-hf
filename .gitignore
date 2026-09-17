@@ -210,3 +210,21 @@ space.env
 # the repo still works.
 .local-cvs/
 
+# Office documents dropped into docs/ are NOT tracked by default.
+#
+# This has now gone wrong three times, and the third time broke a production
+# deploy. `git add -A` sweeps in whatever .docx happens to be sitting in docs/;
+# .gitattributes puts *.docx under LFS; and the HF Space push sends the whole
+# history, so git-lfs then refuses the push over objects the runner never had a
+# reason to fetch. CI was green throughout, because nothing in CI pushes.
+#
+# One of the files swept in also belonged to the business-OS product that was
+# deliberately split out to venkat-intants/intants-work-os, so tracking it here
+# quietly reversed that decision.
+#
+# Already-tracked documents (docs/EXPANSION_PLAN.docx and the two PDFs) are
+# unaffected — .gitignore does not apply to tracked files. Adding a NEW one is
+# still possible and now has to be deliberate: `git add -f docs/whatever.docx`.
+docs/*.docx
+docs/*.xlsx
+docs/*.pptx

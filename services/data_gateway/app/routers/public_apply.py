@@ -766,6 +766,38 @@ async def delete_draft(db: DbSessionDep, token: DraftTokenDep) -> Response:
     """
     row = await _draft_or_404(db, token)
     key = row.get("resume_s3_key")
+
+    # THE OBJECT GOES FIRST, AND ITS FAILURE IS FATAL TO THE REQUEST.
+    #
+    # This used to delete the rows, commit, and THEN try the object, swallowing
+    # any error into a warning nothing consumes. On a storage outage the
+    # candidate was told — in three languages, on a screen headed "Your saved
+    # application has been deleted" — that their CV had been removed, while the
+    # object was still sitting in the bucket. And the row that pointed at it was
+    # already gone, so no sweeper could ever find it again: not a delayed
+    # deletion, a permanent orphan plus a false statement to a data principal.
+    #
+    # Ordering it this way makes the claim true or makes the request fail. The
+    # remaining window is object-deleted-then-commit-fails, which leaves a draft
+    # row pointing at a key that no longer exists — visible, recoverable, and
+    # harmless to retry, because S3/R2 DELETE of an absent key is a no-op. That
+    # is strictly the better failure to have.
+    if key:
+        try:
+            await _delete_from_s3(str(key))
+        except Exception as exc:  # noqa: BLE001 — surfaced, not swallowed
+            log.error(
+                "public_apply.draft_delete_storage_failed",
+                draft_id=str(row["id"]), exc_type=type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "We could not delete your CV just now, so nothing has been "
+                    "removed. Please try again in a few minutes."
+                ),
+            ) from exc
+
     await db.execute(
         text("DELETE FROM application_drafts WHERE id = :i"), {"i": row["id"]}
     )
@@ -789,11 +821,6 @@ async def delete_draft(db: DbSessionDep, token: DraftTokenDep) -> Response:
         {"uid": row["user_id"]},
     )
     await db.commit()
-    if key:
-        try:
-            await _delete_from_s3(str(key))
-        except Exception:  # noqa: BLE001 — the row is already gone
-            log.warning("public_apply.draft_object_orphaned", draft_id=str(row["id"]))
     log.info("application_draft.deleted_by_candidate", draft_id=str(row["id"]))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

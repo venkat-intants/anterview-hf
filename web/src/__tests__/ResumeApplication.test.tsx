@@ -145,6 +145,11 @@ describe('the confirmation step', () => {
     getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
     renderPage();
     const name = await screen.findByLabelText(/Full name/);
+    // The field renders empty and is seeded from the parsed CV by an effect.
+    // Wait for the seed before editing: on a loaded runner the effect could
+    // otherwise land between clear() and type() and overwrite what was typed —
+    // the cause of this test's intermittent CI failure.
+    await waitFor(() => expect(name).toHaveValue('Priya Sharma'));
     await userEvent.clear(name);
     await userEvent.type(name, 'Priya S. Sharma');
     expect(name).toHaveValue('Priya S. Sharma');
@@ -451,6 +456,11 @@ describe('ResumeApplication — localisation', () => {
 // the form, whatever churns the object identity. The flake itself remains
 // unexplained — it is not reproducible locally (repeated clean runs) and this
 // guard is not claimed to fix it.
+//
+// UPDATE (PH4 Wave 2): the flake was the test typing before the seeding
+// effect had run — the field renders empty first, and an effect landing
+// between clear() and type() overwrote the typed text. The test now waits for
+// the seeded value before editing.
 // ===========================================================================
 describe('ResumeApplication — the seed is idempotent', () => {
   it('a refetch of unchanged data leaves typed values alone', async () => {

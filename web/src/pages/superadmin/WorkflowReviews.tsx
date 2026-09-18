@@ -211,7 +211,13 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
             {simulation.scenarios.map((s) => (
               <li key={s.id} className="rounded-[10px] border border-border p-2.5 text-[12px] text-[var(--ui-soft)]">
                 <span className="font-medium text-foreground">{s.id}</span> — {s.description} —{' '}
-                {s.end === 'decision' ? 'reaches a decision' : s.end === 'held' ? 'is held' : 'could not finish'}
+                {s.end === 'decision'
+                  ? 'reaches a decision'
+                  : s.end === 'held'
+                    ? 'is held'
+                    : s.end === 'waiting'
+                      ? 'waits for a person to move them on'
+                      : 'could not finish'}
               </li>
             ))}
           </ol>

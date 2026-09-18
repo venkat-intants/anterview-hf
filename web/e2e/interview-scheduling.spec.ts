@@ -8,6 +8,7 @@
 //
 // One run, in the order it happens.
 
+import { randomUUID } from 'node:crypto';
 import {
   Api,
   createLiveReviewOpening,
@@ -21,7 +22,9 @@ import {
 import { aCandidate, applyThroughPublicForm, shortlistFromApplicants } from './support/journeys';
 import { linkIn, waitForMail } from './support/mail';
 
-const PASSWORD = 'E2e-Scheduling-Cand-9';
+// Made per run: the account lives only on a disposable local stack, and a
+// fixed literal is exactly what the secret scan is there to catch.
+const PASSWORD = `Sched-${randomUUID()}`;
 const LOOP_TITLE = 'Panel interviews';
 
 /** A `datetime-local` value, in the browser's (this machine's) own zone. */

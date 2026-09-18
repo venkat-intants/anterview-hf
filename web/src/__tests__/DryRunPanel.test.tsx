@@ -108,6 +108,26 @@ describe('DryRunPanel — a recorded result', () => {
     expect(screen.getByText(/Conversation/)).toBeTruthy();
   });
 
+  it('says a candidate waits for a person when rounds do not advance automatically', async () => {
+    const user = userEvent.setup();
+    getSimulation.mockResolvedValue({
+      ...RESULT,
+      scenarios: [
+        {
+          ...RESULT.scenarios[0],
+          end: 'waiting',
+          steps: [{ ...RESULT.scenarios[0].steps[0], next: { kind: 'person' } }],
+        },
+      ],
+    });
+    renderPanel();
+    await screen.findByText('Needs attention');
+    await user.click(screen.getByRole('button', { name: /show 1 scenario/i }));
+    expect(screen.getByText('waits for a person to move them on')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: /SIM-001/ }));
+    expect(screen.getByText(/stays until a person moves them/)).toBeTruthy();
+  });
+
   it('runs again and shows the new result, making clear nothing else is published by it', async () => {
     const user = userEvent.setup();
     getSimulation.mockResolvedValue(RESULT);

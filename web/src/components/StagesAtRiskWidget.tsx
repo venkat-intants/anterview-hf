@@ -1,19 +1,23 @@
 // StagesAtRiskWidget — PH4-O1. A compact list of applications overdue or due
 // soon against their stage SLA, so a manager sees who to chase without
-// opening every opening's decision queue in turn. Informational only: nothing
-// here moves a candidate or changes a status — it links to the decision queue
-// where a person acts.
+// opening every opening in turn. Informational only: nothing here moves a
+// candidate or changes a status. Each row opens the candidate's drawer — where
+// a person acts on any stage, not only the final decision — and the whole list
+// is one click away on the Stages at risk page.
 
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { GlassCard } from '@/design/components/primitives';
-import { AlertTriangle, CheckCircle2 } from '@/design/components/icons';
-import { cn } from '@/lib/utils';
-import { getSlaBoard } from '@/api/stageSla';
+import { CheckCircle2 } from '@/design/components/icons';
+import { getSlaBoard, type SlaBoardRow } from '@/api/stageSla';
+import AtRiskRow from '@/components/AtRiskRow';
+import CandidateDrawer from '@/components/CandidateDrawer';
 
 const VISIBLE = 6;
 
 export default function StagesAtRiskWidget(): JSX.Element {
+  const [open, setOpen] = useState<SlaBoardRow | null>(null);
   const board = useQuery({
     queryKey: ['hr', 'stage-sla', 'at-risk'],
     queryFn: () => getSlaBoard({ state: ['overdue', 'due_soon'] }),
@@ -38,9 +42,7 @@ export default function StagesAtRiskWidget(): JSX.Element {
       ) : null}
 
       {board.isError ? (
-        <p className="text-[13px] text-muted-foreground">
-          Could not check stage SLAs just now.
-        </p>
+        <p className="text-[13px] text-muted-foreground">Could not check stage SLAs just now.</p>
       ) : null}
 
       {!board.isLoading && !board.isError && rows.length === 0 ? (
@@ -54,36 +56,26 @@ export default function StagesAtRiskWidget(): JSX.Element {
         <ul className="flex flex-col gap-2">
           {rows.slice(0, VISIBLE).map((r) => (
             <li key={r.enrolment_id}>
-              <Link
-                to={`/hr/requisitions/${r.requisition_id}/decisions`}
-                className="flex items-start gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3 text-left transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
-              >
-                <AlertTriangle
-                  className={cn(
-                    'mt-0.5 h-4 w-4 shrink-0',
-                    r.state === 'overdue' ? 'text-[var(--ui-danger)]' : 'text-[var(--ui-warn)]',
-                  )}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium text-foreground">
-                    {r.full_name} &mdash; {r.stage}
-                  </span>
-                  <span className="block truncate text-[11.5px] text-muted-foreground">
-                    {r.opening_title} &middot; {r.state === 'overdue' ? 'overdue' : 'due soon'}
-                    {r.owner_name ? ` · ${r.owner_name}` : ''}
-                  </span>
-                </span>
-              </Link>
+              <AtRiskRow row={r} onOpen={setOpen} />
             </li>
           ))}
-          {rows.length > VISIBLE ? (
-            <li className="pl-1 text-[11.5px] text-muted-foreground">
-              +{rows.length - VISIBLE} more
-            </li>
-          ) : null}
         </ul>
       ) : null}
+
+      {rows.length > 0 ? (
+        <Link
+          to="/hr/stages-at-risk"
+          className="mt-3 inline-block text-[12px] text-[var(--ui-info)] hover:underline"
+        >
+          {rows.length > VISIBLE ? `View all ${rows.length}` : 'View the full list'}
+        </Link>
+      ) : null}
+
+      <CandidateDrawer
+        applicantId={open?.applicant_id ?? null}
+        enrolmentId={open?.enrolment_id ?? null}
+        onClose={() => setOpen(null)}
+      />
     </GlassCard>
   );
 }

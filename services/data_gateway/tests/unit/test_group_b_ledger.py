@@ -146,6 +146,15 @@ async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
                               requires_explanation=False)
 
     monkeypatch.setattr(hrp, "resolve_reason", _resolve)
+    import app.interview_scheduling as sch
+
+    closed: list[dict] = []
+
+    async def _close(_db: object, **kw: object) -> int:
+        closed.append(kw)
+        return 0
+
+    monkeypatch.setattr(sch, "close_for_decision", _close)
     db = _db()
     db.add = MagicMock()
     await hrp.decide_applicant(uuid.uuid4(),
@@ -153,6 +162,8 @@ async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
                                               reason_code="skills_fit"),
                                MagicMock(), (hr, uuid.uuid4()), db)
 
+    # PH4-A2: the pipeline board's decision frees the panel too.
+    assert closed and closed[0]["enrolment_id"] == eid and closed[0]["decision"] == "hired"
     assert moves[0]["enrolment_id"] == eid and moves[0]["to_status"] == "hired"
     assert moves[0]["automated"] is False and moves[0]["actor_user_id"] == hr
     assert moves[0]["reason"] == "strong panel"

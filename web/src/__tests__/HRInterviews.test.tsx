@@ -15,6 +15,7 @@ import type {
   InterviewInvite,
   InviteResult,
 } from '../api/interviewInvites';
+import { toLocalInputValue } from '../lib/localDatetime';
 
 const ELIGIBLE: EligibleApplicant[] = [
   {
@@ -69,6 +70,21 @@ const COMPLETED: InterviewInvite = {
   created_at: '2026-08-01T10:00:00.000Z',
   composite_score: 8.42,
   scorecard_id: 'sc-9',
+};
+
+// A live invite with a scheduled time — for the reschedule pre-fill bug.
+const SCHEDULED: InterviewInvite = {
+  invite_id: 'inv-4',
+  applicant_id: 'ap-4',
+  applicant_name: 'Esha Kapoor',
+  job_title: 'Backend Engineer',
+  language: 'en',
+  status: 'invited',
+  scheduled_at: '2026-09-20T04:15:00.000Z',
+  expires_at: '2026-10-20T10:00:00.000Z',
+  created_at: '2026-09-01T10:00:00.000Z',
+  composite_score: null,
+  scorecard_id: null,
 };
 
 const MINTED: InviteResult = {
@@ -280,6 +296,39 @@ describe('HRInterviews — invite list', () => {
     expect(
       screen.queryByRole('button', { name: /reschedule interview for deepa menon/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it('pre-fills the reschedule time as LOCAL wall time, not a UTC time shown as if it were local', async () => {
+    // The bug: `new Date(iso).toISOString().slice(0, 16)` is always UTC — shown
+    // in a datetime-local input, it silently displays a UTC clock reading as
+    // though it were the reader's own, off by their UTC offset. Forcing a
+    // non-UTC zone makes the two disagree, so this fails against the old code
+    // in any timezone, including a CI runner that happens to run in UTC.
+    const originalTz = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      listInvites.mockResolvedValue([SCHEDULED]);
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click(
+        await screen.findByRole('button', { name: /reschedule interview for esha kapoor/i }),
+      );
+      const input = screen.getByLabelText<HTMLInputElement>('New scheduled time');
+
+      expect(input.value).toBe(toLocalInputValue(SCHEDULED.scheduled_at));
+      expect(input.value).not.toBe(
+        new Date(SCHEDULED.scheduled_at as string).toISOString().slice(0, 16),
+      );
+    } finally {
+      // Assigning `undefined` to process.env.TZ sets the literal string
+      // "undefined" (Node coerces env values to strings) rather than
+      // unsetting it — which then broke every later Intl.DateTimeFormat call
+      // in this worker for the rest of the run. Delete when there was
+      // nothing to restore.
+      if (originalTz === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTz;
+    }
   });
 
   it('revokes the link for the row that was acted on', async () => {

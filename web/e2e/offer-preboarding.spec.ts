@@ -49,7 +49,8 @@ test.describe('an offer moves from creation to preboarding complete', () => {
     request,
     tenant,
   }) => {
-    test.slow(); // three people, an approval gate and two round trips through email
+    // Three people, an exam, an approval gate and three round trips through email.
+    test.setTimeout(360_000);
     const api = await Api.as(request, tenant.accounts.hr_manager);
     const admin = await Api.as(request, tenant.accounts.super_admin);
     const opening = await createLiveMcqOpening(api, admin, 'E2E Offer');
@@ -101,12 +102,12 @@ test.describe('an offer moves from creation to preboarding complete', () => {
     await drawer.getByRole('button', { name: 'Create offer' }).click();
     await drawer.getByLabel('Base salary').fill('1200000');
     await drawer.getByRole('button', { name: 'Create offer' }).click();
-    await expect(drawer.getByText('draft')).toBeVisible();
+    await expect(drawer.getByText('draft', { exact: true }).first()).toBeVisible();
 
     await drawer.getByRole('link', { name: new RegExp(opening.title) }).click();
     await expect(page.getByRole('heading', { name: new RegExp(candidate.name) })).toBeVisible();
     await page.getByRole('button', { name: 'Submit for approval' }).click();
-    await expect(page.getByText('pending approval')).toBeVisible();
+    await expect(page.getByText('pending approval', { exact: true })).toBeVisible();
     const offerDetailUrl = page.url();
 
     // ── 3. The super admin approves it — a different account from HR's ──────
@@ -115,14 +116,17 @@ test.describe('an offer moves from creation to preboarding complete', () => {
     await signIn(adminPage, tenant.accounts.super_admin);
     await adminPage.goto('/superadmin/offer-approvals');
     await adminPage.getByRole('link', { name: new RegExp(candidate.name) }).click();
-    await adminPage.getByRole('button', { name: 'Approve' }).click();
-    await adminPage.getByRole('button', { name: 'Confirm approval' }).click();
+    // Exact: a substring match can take another button whose name merely
+    // contains the word. The note field appearing proves the click landed.
+    await adminPage.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect(adminPage.getByLabel('Note (optional)')).toBeVisible();
+    await adminPage.getByRole('button', { name: 'Confirm approval', exact: true }).click();
     await expect(adminPage.getByText(/nothing for you to decide/)).toBeVisible();
     await adminContext.close();
 
     // ── 4. HR sends the approved offer ───────────────────────────────────────
     await page.goto(offerDetailUrl);
-    await expect(page.getByText('approved')).toBeVisible();
+    await expect(page.getByText('approved', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Send to candidate' }).click();
     await expect(page.getByText('sent', { exact: true })).toBeVisible();
 
@@ -168,6 +172,9 @@ test.describe('an offer moves from creation to preboarding complete', () => {
     //      first time the page loaded (security review: never linger in
     //      browser history), and the documents session lives only in memory
     //      for the life of one page load. ─────────────────────────────────
+    // A hash change alone is not a new page load (the app reads the token once),
+    // so come back the way a candidate does from the email: a fresh load.
+    await candidatePage.goto('about:blank');
     await candidatePage.goto(`/offer#${offerToken}`);
     await expect(candidatePage.getByText('Offer accepted')).toBeVisible();
     await candidatePage.getByRole('button', { name: 'Get a code' }).click();
@@ -193,19 +200,28 @@ test.describe('an offer moves from creation to preboarding complete', () => {
     await expect(page.getByText(/submitted/i).first()).toBeVisible();
     await page.getByRole('button', { name: 'Verify' }).click();
     await page.getByRole('button', { name: /Confirm — Verify/ }).click();
-    await expect(page.getByText('Verified')).toBeVisible();
+    await expect(page.getByText('Verified', { exact: true }).first()).toBeVisible();
     await page.getByRole('button', { name: 'Mark preboarding complete' }).click();
-    await expect(page.getByText(/Preboarding completed on/)).toBeVisible();
+    await expect(page.getByText(/Preboarding completed on/).first()).toBeVisible();
 
     // ── 10. HR prepares the signed HRMS export ──────────────────────────────
     await page.getByRole('button', { name: 'Prepare HRMS export' }).click();
-    await expect(page.getByText(/key_id/)).toBeVisible();
-    await expect(page.getByText(/"schema"/)).toBeVisible();
+    await expect(page.getByText(/key_id/).first()).toBeVisible();
+    await expect(page.getByText(/"schema"/).first()).toBeVisible();
 
     // The offer's own outcome is recorded beside the decision, never in place
     // of it — the hire itself is untouched by anything the offer flow did.
     const decided = await enrolmentFor(api, opening.id, candidate.name);
     expect(decided.status).toBe('hired');
+
+    // …and HR sees it there, beside the hire (PH4-A3 #29).
+    await page.goto('/hr/pipeline');
+    // The tags sit beside the card's button, not in it; this journey makes the
+    // run's only offer, so its outcome on the board is this candidate's.
+    await expect(
+      page.getByRole('button', { name: `Open details for ${candidate.name}` }).first(),
+    ).toBeVisible();
+    await expect(page.getByText('Offer accepted').first()).toBeVisible();
 
     await candidateContext.close();
   });

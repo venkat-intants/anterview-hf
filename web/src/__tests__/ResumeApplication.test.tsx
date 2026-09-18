@@ -172,6 +172,9 @@ describe('the confirmation step', () => {
     getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
     renderPage();
     const name = await screen.findByLabelText(/Full name/);
+    // Same seeding race as "lets the candidate change it": change the value
+    // only once the parsed name has been seeded, or the seed can overwrite it.
+    await waitFor(() => expect(name).toHaveValue('Priya Sharma'));
     fireEvent.change(name, { target: { value: 'Priya S. Sharma' } });
     await userEvent.click(
       await screen.findByRole('button', { name: /These details are correct/ }),
@@ -479,6 +482,9 @@ describe('ResumeApplication — the seed is idempotent', () => {
     );
 
     const name = await screen.findByLabelText(/Full name/);
+    // Same seeding race as "lets the candidate change it": change the value
+    // only once the parsed name has been seeded, or the seed can overwrite it.
+    await waitFor(() => expect(name).toHaveValue('Priya Sharma'));
     fireEvent.change(name, { target: { value: 'Priya S. Sharma' } });
     getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
     await client.refetchQueries({ queryKey: ['apply', 'draft'] });

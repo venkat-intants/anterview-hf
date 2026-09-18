@@ -241,6 +241,11 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("acceptance records when and the name typed", state[2] is not None
               and state[3] == "Asha Rao", str(state))
         check("accepting records consent for the documents that follow", consent == 1, str(consent))
+        r = await c.get("/hr/pipeline", params={"status": "hired", "limit": 200})
+        prow = next((i for i in r.json().get("items", []) if i.get("enrolment_id") == str(e1)), {})
+        check("HR's pipeline shows the offer's outcome beside the hire",
+              prow.get("status") == "hired" and prow.get("offer_outcome") == "offer_accepted",
+              str(prow)[:200])
 
         print("\nPH4-A4 — documents")
         r = await c.post(f"/hr/requisitions/{req}/document-requirements",

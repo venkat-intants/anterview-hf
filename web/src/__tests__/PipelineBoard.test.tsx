@@ -126,6 +126,17 @@ describe('PipelineBoard — the columns', () => {
     expect(within(column('decided')).getByText('hired')).toBeInTheDocument();
   });
 
+  it('shows how the offer ended beside the hire, not instead of it (PH4-A3)', () => {
+    renderBoard([
+      row({ full_name: 'Took It', status: 'hired', offer_outcome: 'offer_accepted' }),
+      row({ full_name: 'Turned It Down', status: 'hired', offer_outcome: 'offer_declined' }),
+    ]);
+    const decided = column('decided');
+    expect(within(decided).getByText('Offer accepted')).toBeInTheDocument();
+    expect(within(decided).getByText('Offer declined')).toBeInTheDocument();
+    expect(within(decided).getAllByText('hired')).toHaveLength(2);
+  });
+
   it('does not repeat the status where the heading already says it', () => {
     renderBoard([row({ full_name: 'Short Lister', status: 'shortlisted' })]);
     // The heading says Shortlisted; a tag on every card would be noise.

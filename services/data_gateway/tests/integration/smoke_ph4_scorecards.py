@@ -102,6 +102,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             " WHERE round_id = :r AND competency_id = 'problem_solving'"),
             {"r": rnd, "pr": '["Why this approach?"]',
              "an": '{"low": "guesses", "mid": "reasons", "high": "weighs trade-offs"}'})
+        # PH4-O6: a workflow must be walked through review (draft -> in_review
+        # -> approved, by two different people) before the database allows
+        # status -> 'published'.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        await approve_for_publish(db, workflow_id=wf, company_id=cid)
         await db.execute(text(
             "UPDATE workflows SET status='published', published_at=:n WHERE id=:w"),
             {"w": wf, "n": now})

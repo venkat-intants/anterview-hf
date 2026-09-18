@@ -11,6 +11,7 @@ import { getMe } from '@/api/auth';
 import { getHrAnalytics } from '@/api/hr';
 import { listNotifications, type NotificationItem } from '@/api/notifications';
 import AttentionPanel from '@/components/AttentionPanel';
+import StagesAtRiskWidget from '@/components/StagesAtRiskWidget';
 import { useAuth } from '@/context/AuthContext';
 import { LIVE_POLL_MS } from '@/lib/polling';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
@@ -245,6 +246,12 @@ export default function HRConsole() {
                 </Link>
               </div>
             </GlassCard>
+          </Reveal>
+
+          {/* PH4-O1 — overdue/due-soon stages across every opening, so nobody
+              has to open each one's decision queue to find out. */}
+          <Reveal dir="right">
+            <StagesAtRiskWidget />
           </Reveal>
 
           <Reveal dir="right">

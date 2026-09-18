@@ -99,6 +99,23 @@ vi.mock('../lib/toast', () => ({
   },
 }));
 
+// PH4-O1 — the Exceptions section always mounts alongside the human interview
+// section whenever an enrolmentId is present.
+const stageSlaApi = {
+  listExceptions: vi.fn(),
+  raiseException: vi.fn(),
+  resolveException: vi.fn(),
+  reassignException: vi.fn(),
+  listStageOwners: vi.fn(),
+};
+vi.mock('../api/stageSla', () => ({
+  listExceptions: (...a: unknown[]) => stageSlaApi.listExceptions(...a) as unknown,
+  raiseException: (...a: unknown[]) => stageSlaApi.raiseException(...a) as unknown,
+  resolveException: (...a: unknown[]) => stageSlaApi.resolveException(...a) as unknown,
+  reassignException: (...a: unknown[]) => stageSlaApi.reassignException(...a) as unknown,
+  listStageOwners: (...a: unknown[]) => stageSlaApi.listStageOwners(...a) as unknown,
+}));
+
 import CandidateDrawer from '../components/CandidateDrawer';
 
 function applicant(over: Partial<Applicant> = {}): Applicant {
@@ -148,6 +165,8 @@ beforeEach(() => {
   scorecardsApi.listInterviewers.mockResolvedValue([]);
   workflowsApi.listWorkflows.mockResolvedValue([]);
   workflowsApi.getWorkflow.mockResolvedValue(undefined);
+  stageSlaApi.listExceptions.mockResolvedValue([]);
+  stageSlaApi.listStageOwners.mockResolvedValue([]);
 });
 
 describe('CandidateDrawer', () => {
@@ -691,6 +710,109 @@ describe('CandidateDrawer', () => {
 
       await waitFor(() =>
         expect(scorecardsApi.withdrawScorecard).toHaveBeenCalledWith('sc-1', undefined),
+      );
+    });
+  });
+
+  // ── Exceptions (PH4-O1) ──────────────────────────────────────────────────
+  describe('exceptions', () => {
+    it('says nothing changes a candidate status, and lists nothing when there are none', async () => {
+      renderDrawer({ enrolmentId: 'en-1' });
+      await screen.findByText('Nadia Newbie');
+
+      expect(await screen.findByText(/never changes the candidate.s status/)).toBeInTheDocument();
+      expect(screen.getByText('No exceptions raised for this application.')).toBeInTheDocument();
+    });
+
+    it('raises an exception with a reason and an owner', async () => {
+      stageSlaApi.listStageOwners.mockResolvedValue([
+        { user_id: 'u-hr-1', full_name: 'Priya HR', email: 'priya@acme.edu' },
+      ]);
+      stageSlaApi.raiseException.mockResolvedValue({
+        exception_id: 'exc-1', status: 'open', stage: 'Fundamentals', owner_user_id: 'u-hr-1',
+      });
+      const user = userEvent.setup();
+      renderDrawer({ enrolmentId: 'en-1' });
+      await screen.findByText('Nadia Newbie');
+
+      await user.click(screen.getByRole('button', { name: /raise exception/i }));
+      await user.type(
+        screen.getByLabelText(/what is blocking this application/i),
+        'Interviewer had to reschedule twice',
+      );
+      await user.selectOptions(screen.getByLabelText('Owner'), 'u-hr-1');
+      await user.click(screen.getByRole('button', { name: /^raise exception$/i }));
+
+      await waitFor(() =>
+        expect(stageSlaApi.raiseException).toHaveBeenCalledWith('en-1', {
+          reason: 'Interviewer had to reschedule twice',
+          owner_user_id: 'u-hr-1',
+        }),
+      );
+    });
+
+    it('will not raise with fewer than 10 characters', async () => {
+      const user = userEvent.setup();
+      renderDrawer({ enrolmentId: 'en-1' });
+      await screen.findByText('Nadia Newbie');
+
+      await user.click(screen.getByRole('button', { name: /raise exception/i }));
+      await user.type(screen.getByLabelText(/what is blocking this application/i), 'too short');
+      expect(screen.getByRole('button', { name: /^raise exception$/i })).toBeDisabled();
+      expect(stageSlaApi.raiseException).not.toHaveBeenCalled();
+    });
+
+    it('resolves an open exception with an optional note', async () => {
+      stageSlaApi.listExceptions.mockResolvedValue([
+        {
+          exception_id: 'exc-1', enrolment_id: 'en-1', stage: 'Fundamentals',
+          reason: 'Interviewer had to reschedule twice', status: 'open',
+          owner_user_id: 'u-hr-1', owner_name: 'Priya HR', raised_by_name: 'Priya HR',
+          raised_at: '2026-09-01T00:00:00.000Z', resolved_by_name: null, resolved_at: null,
+          resolution_note: null,
+        },
+      ]);
+      stageSlaApi.resolveException.mockResolvedValue({ exception_id: 'exc-1', status: 'resolved' });
+      const user = userEvent.setup();
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      await screen.findByText('Interviewer had to reschedule twice');
+      await user.type(
+        screen.getByLabelText(/resolution note for fundamentals exception/i),
+        'Rescheduled and completed',
+      );
+      await user.click(screen.getByRole('button', { name: /^resolve$/i }));
+
+      await waitFor(() =>
+        expect(stageSlaApi.resolveException).toHaveBeenCalledWith('exc-1', 'Rescheduled and completed'),
+      );
+    });
+
+    it('reassigns an open exception to another owner', async () => {
+      stageSlaApi.listExceptions.mockResolvedValue([
+        {
+          exception_id: 'exc-1', enrolment_id: 'en-1', stage: 'Fundamentals',
+          reason: 'Interviewer had to reschedule twice', status: 'open',
+          owner_user_id: 'u-hr-1', owner_name: 'Priya HR', raised_by_name: 'Priya HR',
+          raised_at: '2026-09-01T00:00:00.000Z', resolved_by_name: null, resolved_at: null,
+          resolution_note: null,
+        },
+      ]);
+      stageSlaApi.listStageOwners.mockResolvedValue([
+        { user_id: 'u-hr-1', full_name: 'Priya HR', email: 'priya@acme.edu' },
+        { user_id: 'u-hr-2', full_name: 'Ravi HR', email: 'ravi@acme.edu' },
+      ]);
+      stageSlaApi.reassignException.mockResolvedValue({ exception_id: 'exc-1', owner_user_id: 'u-hr-2' });
+      const user = userEvent.setup();
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      await screen.findByText('Interviewer had to reschedule twice');
+      const reassignSelect = screen.getByLabelText(/reassign to/i);
+      await within(reassignSelect).findByText('Ravi HR');
+      await user.selectOptions(reassignSelect, 'u-hr-2');
+
+      await waitFor(() =>
+        expect(stageSlaApi.reassignException).toHaveBeenCalledWith('exc-1', 'u-hr-2'),
       );
     });
   });

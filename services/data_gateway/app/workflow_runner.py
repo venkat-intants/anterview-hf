@@ -62,10 +62,12 @@ from app.requisitions import record_round_move, record_transition
 from app.workflows import (
     AI_GRADED_KINDS,
     EXAM_BACKED_KINDS,
+    Route,
     exam_round_problem,
     exam_round_readiness,
     load_criteria,
     published_workflow,
+    route_after_result,
 )
 
 log = structlog.get_logger(__name__)
@@ -88,7 +90,7 @@ RELEASE_TO_STATUSES: frozenset[str] = frozenset({"shortlisted", "interviewed"})
 class RunnerOutcome:
     """What the runner did, for logging, tests and the ops surface."""
 
-    action: str  # enrolled | advanced | held | completed | noop
+    action: str  # enrolled | advanced | routed (a fail branch) | held | completed | noop
     enrolment_id: str | None = None
     from_round: str | None = None
     to_round: str | None = None
@@ -307,7 +309,9 @@ async def _load_round(db: AsyncSession, round_id: uuid.UUID) -> dict[str, Any] |
         await db.execute(
             text(
                 "SELECT id, workflow_id, position, title, kind, pass_threshold,"
-                "       deadline_days, on_pass_next_round_id, exam_round_id"
+                "       deadline_days, on_pass_next_round_id, exam_round_id,"
+                "       on_fail_next_round_id, fast_track_min_percent,"
+                "       on_fast_track_next_round_id"
                 "  FROM workflow_rounds WHERE id = :i AND deleted_at IS NULL"
             ),
             {"i": round_id},
@@ -321,7 +325,9 @@ async def _first_round(db: AsyncSession, workflow_id: uuid.UUID) -> dict[str, An
         await db.execute(
             text(
                 "SELECT id, workflow_id, position, title, kind, pass_threshold,"
-                "       deadline_days, on_pass_next_round_id, exam_round_id"
+                "       deadline_days, on_pass_next_round_id, exam_round_id,"
+                "       on_fail_next_round_id, fast_track_min_percent,"
+                "       on_fast_track_next_round_id"
                 "  FROM workflow_rounds WHERE workflow_id = :w AND deleted_at IS NULL"
                 " ORDER BY position LIMIT 1"
             ),
@@ -666,6 +672,10 @@ async def record_result(
          "gu": grader_user_id, "ev": evidence, "n": now},
     )
 
+    # PH4-O3: the one function that turns a result into a destination — the
+    # O2 simulation calls it too, so a dry run tests exactly this.
+    route = route_after_result(round_, passed=passed, percent=percent)
+
     if not passed:
         band = int(workflow["hold_band"] or 0)
         near = (
@@ -678,6 +688,13 @@ async def record_result(
         )
         if near:
             reason += f" — within {band} points"
+        # A fail branch routes rather than holds — to another round, never to an
+        # outcome. With auto-advance off, a person moves people, so it holds.
+        if route.kind == "advance" and workflow["auto_advance_rounds"]:
+            return await _advance(
+                db, enrolment=enrolment, round_=round_, workflow=workflow, route=route,
+                why=reason,
+            )
         return await _hold(db, enrolment, reason)
 
     if not workflow["auto_advance_rounds"]:
@@ -685,7 +702,7 @@ async def record_result(
                              from_round=round_["title"],
                              reason="auto-advance disabled for this workflow")
 
-    return await _advance(db, enrolment=enrolment, round_=round_, workflow=workflow)
+    return await _advance(db, enrolment=enrolment, round_=round_, workflow=workflow, route=route)
 
 
 # ---------------------------------------------------------------------------
@@ -816,8 +833,18 @@ async def _advance(
     enrolment: dict[str, Any],
     round_: dict[str, Any],
     workflow: dict[str, Any],
+    route: Route | None = None,
+    why: str | None = None,
 ) -> RunnerOutcome:
-    """Move to the next round, or finish the workflow at the human decision."""
+    """Move along the route a result chose, or finish at the human decision.
+
+    ``route`` defaults to the pass branch, which is what every caller before
+    PH4-O3 meant. A fail branch arrives here too (with ``why``, the reason it
+    was taken): it moves the candidate to another round, exactly like a pass,
+    and never changes their status to anything a person has not chosen.
+    """
+    if route is None:
+        route = route_after_result(round_, passed=True, percent=None)
     # Idempotency: a candidate can only advance FROM the round they are on.
     #
     # This was previously a truthiness check on current_round_id, which left a
@@ -830,7 +857,9 @@ async def _advance(
         return RunnerOutcome(action="noop", enrolment_id=str(enrolment["id"]),
                              reason="not the candidate's current round")
 
-    nxt_id = round_["on_pass_next_round_id"]
+    nxt_id = route.next_round_id if route.kind == "advance" else None
+    if route.kind == "hold":
+        return await _hold(db, enrolment, why or f"{round_['title']}: needs a human decision")
     if nxt_id is None:
         # End of the workflow. NOT an outcome — the candidate is queued for the
         # final human decision, which is the only thing that ends a candidacy.
@@ -862,6 +891,12 @@ async def _advance(
         return await _hold(db, enrolment, f"{round_['title']}: the next round no longer exists")
 
     await _move_to_round(db, enrolment=enrolment, round_=nxt, workflow=workflow)
+    moved = {
+        "pass": f"advanced from {round_['title']} to {nxt['title']}",
+        "fast_track": f"fast-tracked from {round_['title']} to {nxt['title']}",
+        "fail": f"routed from {round_['title']} to {nxt['title']}"
+        + (f" ({why})" if why else ""),
+    }[route.branch]
     await record_transition(
         db,
         enrolment_id=enrolment["id"],
@@ -869,14 +904,16 @@ async def _advance(
         to_status="shortlisted" if enrolment["status"] == "new" else enrolment["status"],
         actor_user_id=None,
         automated=True,
-        reason=f"advanced from {round_['title']} to {nxt['title']}",
+        reason=moved,
     )
     log.info(
         "runner.advanced",
         enrolment_id=str(enrolment["id"]), **{"from": round_["title"]}, to=nxt["title"],
     )
-    return RunnerOutcome(action="advanced", enrolment_id=str(enrolment["id"]),
-                         from_round=round_["title"], to_round=nxt["title"])
+    return RunnerOutcome(action="routed" if route.branch == "fail" else "advanced",
+                         enrolment_id=str(enrolment["id"]),
+                         from_round=round_["title"], to_round=nxt["title"],
+                         reason=route.branch)
 
 
 async def release_hold(

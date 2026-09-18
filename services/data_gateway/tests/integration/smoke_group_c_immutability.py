@@ -83,6 +83,15 @@ async def main() -> None:
                               kind="ai_interview", pass_threshold=60)
         await set_round_criteria(db, company_id=company, round_id=rd1, criteria=competencies)
         await db.commit()
+        # PH4-O6: publish() now refuses anything not review_status='approved',
+        # and the database enforces the same lifecycle directly. This smoke is
+        # about the immutability guard, not the review workflow, so the seed
+        # helper walks the row through review rather than driving
+        # submit/approve through the API.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        await approve_for_publish(db, workflow_id=wf1, company_id=company)
+        await db.commit()
         report = await publish(db, company_id=company, workflow_id=wf1,
                                profile_competencies=competencies)
         await db.commit()
@@ -114,11 +123,32 @@ async def main() -> None:
     msg = await refused(f, "DELETE FROM workflows WHERE id = :i", {"i": wf1})
     check("nor deleted outright", msg is not None and "cannot be deleted" in msg, str(msg)[:160])
 
-    msg = await refused(f, "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
-                           " created_at,updated_at) VALUES (:i,:c,:r,99,'published',now(),now())",
-                        {"i": uuid.uuid4(), "c": company, "r": req})
+    # PH4-O6: an INSERT must be an unreviewed draft (the trigger refuses
+    # anything else before the uniqueness constraint is ever reached), so a
+    # second, competing live version is built the legitimate way — draft,
+    # approved — and it is the UPDATE to 'published' the constraint refuses.
+    rogue = uuid.uuid4()
+    async with f() as db:
+        await db.execute(text(
+            "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
+            " created_at,updated_at) VALUES (:i,:c,:r,99,'draft',now(),now())"),
+            {"i": rogue, "c": company, "r": req})
+        await approve_for_publish(db, workflow_id=rogue, company_id=company)
+        await db.commit()
+    msg = await refused(
+        f, "UPDATE workflows SET status = 'published', published_at = now() WHERE id = :i",
+        {"i": rogue},
+    )
     check("one opening cannot have two live workflows",
           msg is not None and "uq_workflows_one_published" in msg, str(msg)[:160])
+    # The refused UPDATE rolled back, but the rogue draft itself is still
+    # there (its INSERT and approval committed cleanly) — clear it so it does
+    # not read as "this opening already has a draft" below. deleted_at is one
+    # of the few columns review_keys still allows to change on an approved row.
+    async with f() as db:
+        await db.execute(text("UPDATE workflows SET deleted_at = now() WHERE id = :i"),
+                         {"i": rogue})
+        await db.commit()
 
     # ── The legitimate path still works ─────────────────────────────────────
     async with f() as db:
@@ -144,6 +174,8 @@ async def main() -> None:
     check("the new draft is editable", moved == 75, str(moved))
 
     async with f() as db:
+        # Same as wf1's publish above.
+        await approve_for_publish(db, workflow_id=wf2, company_id=company)
         report2 = await publish(db, company_id=company, workflow_id=wf2,
                                 profile_competencies=competencies)
         await db.commit()

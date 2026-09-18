@@ -87,6 +87,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
             " pass_threshold,deadline_days,on_pass_next_round_id,created_at,updated_at)"
             " VALUES (:i,:c,:w,0,'Technical Test','mcq',60,5,:nx,:n,:n)"),
             {"i": r_test, "c": cid, "w": wf, "nx": r_review, "n": now})
+        # PH4-O6: a workflow must be walked through review (draft -> in_review
+        # -> approved, by two different people) before the database allows
+        # status -> 'published'.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        await approve_for_publish(db, workflow_id=wf, company_id=cid)
         await db.execute(text(
             "UPDATE workflows SET status='published', published_at=:n WHERE id=:i"),
             {"i": wf, "n": now})

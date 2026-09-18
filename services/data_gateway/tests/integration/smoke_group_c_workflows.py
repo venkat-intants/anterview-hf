@@ -190,6 +190,13 @@ async def main() -> None:
         await db.commit()
         rep_empty = await validate(db, empty_wf, PROFILE)
         check("an empty workflow is refused", not rep_empty.publishable, str(rep_empty.errors))
+        # PH4-O6: publish() checks review_status before validation, so this is
+        # approved directly (the seed helper walks the DB-enforced lifecycle)
+        # — the check below is about the emptiness being blocked, not about
+        # the (separate) review gate.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        await approve_for_publish(db, workflow_id=empty_wf, company_id=cid)
         try:
             await publish(db, company_id=cid, workflow_id=empty_wf, profile_competencies=PROFILE)
             pub_blocked = not (await published_workflow(db, rid2))
@@ -201,6 +208,12 @@ async def main() -> None:
     # ── Publish + immutability ───────────────────────────────────────────
     print("\n--- publish and immutability ---")
     async with f() as db:
+        # PH4-O6: publish() now refuses anything not review_status='approved',
+        # and the database enforces the same lifecycle directly. This smoke is
+        # about versioning and immutability, not the review workflow, so the
+        # seed helper walks the row through review rather than driving
+        # submit/approve through the API.
+        await approve_for_publish(db, workflow_id=wf, company_id=cid)
         rep = await publish(db, company_id=cid, workflow_id=wf, profile_competencies=PROFILE)
         await db.commit()
         check("publish succeeded", rep.publishable, str(rep.errors))
@@ -263,6 +276,8 @@ async def main() -> None:
               == sorted(c["competency_id"] for v in new_c.values() for c in v))
 
         # Publishing v2 must archive v1, never leave two live.
+        # PH4-O6: same as above.
+        await approve_for_publish(db, workflow_id=v2, company_id=cid)
         await publish(db, company_id=cid, workflow_id=v2, profile_competencies=PROFILE)
         await db.commit()
         live_count = await db.scalar(text(

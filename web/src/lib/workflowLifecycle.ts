@@ -1,25 +1,42 @@
-// The workflow lifecycle rules the builder shows (D5), kept pure so they can be
-// tested without rendering the builder.
+// The workflow lifecycle rules the builder shows (D5, PH4-O6), kept pure so
+// they can be tested without rendering the builder.
 
 export type StepState = 'done' | 'current' | 'blocked' | 'todo';
 
+export type LifecycleStep = 'draft' | 'dryRun' | 'review' | 'approved' | 'publish';
+
 export interface LifecycleInput {
   status: 'draft' | 'published' | 'archived';
-  previewed: boolean;
-  issues: number;
+  reviewStatus: 'draft' | 'in_review' | 'changes_requested' | 'approved';
+  /** A dry run has been run for the CURRENT content of this version — i.e. the
+   *  latest simulation exists and is not `stale`. */
+  simulated: boolean;
   publishable: boolean;
 }
 
-/** Draft → Preview → Validate → Publish, as states for the stepper. */
-export function stepStates(i: LifecycleInput): Record<'draft' | 'preview' | 'validate' | 'publish', StepState> {
+/**
+ * Draft → Dry run → Review → Approved → Published, as states for the
+ * stepper (PH4-O6 replaced the old Draft → Preview → Validate → Publish: a
+ * version cannot be published at all now without a company super admin
+ * approving it first — see workflows.py publish()).
+ */
+export function stepStates(i: LifecycleInput): Record<LifecycleStep, StepState> {
   if (i.status !== 'draft') {
-    return { draft: 'done', preview: 'done', validate: 'done', publish: 'done' };
+    return { draft: 'done', dryRun: 'done', review: 'done', approved: 'done', publish: 'done' };
   }
+  if (i.reviewStatus === 'approved') {
+    return { draft: 'done', dryRun: 'done', review: 'done', approved: 'done', publish: 'current' };
+  }
+  if (i.reviewStatus === 'in_review') {
+    return { draft: 'done', dryRun: 'done', review: 'current', approved: 'todo', publish: 'todo' };
+  }
+  // 'draft' or 'changes_requested' — still being authored.
   return {
     draft: 'done',
-    preview: i.previewed ? 'done' : 'current',
-    validate: i.publishable ? 'done' : i.previewed ? 'blocked' : 'todo',
-    publish: i.publishable ? (i.previewed ? 'current' : 'todo') : 'todo',
+    dryRun: i.simulated ? 'done' : 'current',
+    review: !i.simulated ? 'todo' : i.publishable ? 'current' : 'blocked',
+    approved: 'todo',
+    publish: 'todo',
   };
 }
 

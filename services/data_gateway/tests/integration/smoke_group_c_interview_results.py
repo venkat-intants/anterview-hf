@@ -78,6 +78,12 @@ async def seed(f) -> dict:
         # Published only once its rounds and criteria exist: a published
         # workflow is immutable at the database (migration f3b5d7a9c1e4), which
         # is the same order the API enforces.
+        # PH4-O6: a workflow must be walked through review (draft -> in_review
+        # -> approved, by two different people) before the database allows
+        # status -> 'published'.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        await approve_for_publish(db, workflow_id=wf, company_id=cid)
         await db.execute(text("UPDATE workflows SET status = 'published' WHERE id = :i"),
                          {"i": wf})
 

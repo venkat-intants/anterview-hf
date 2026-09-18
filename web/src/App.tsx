@@ -68,6 +68,8 @@ const HiringBoard = lazy(() => import('./pages/superadmin/HiringBoard'));
 const ApprovalQueue = lazy(() => import('./pages/superadmin/ApprovalQueue'));
 // O4 — the company's structured decision-reason taxonomy.
 const DecisionReasons = lazy(() => import('./pages/superadmin/DecisionReasons'));
+// PH4-O6 — the queue of workflow versions waiting for the super admin's review.
+const WorkflowReviews = lazy(() => import('./pages/superadmin/WorkflowReviews'));
 // D4-1 — the interviewer console: assignments and one scorecard at a time.
 const InterviewerConsole = lazy(() => import('./pages/interviewer/InterviewerConsole'));
 const InterviewerScorecard = lazy(() => import('./pages/interviewer/InterviewerScorecard'));
@@ -210,6 +212,14 @@ export default function App() {
               />
               {/* O4 — the company's own hire/reject reason taxonomy. */}
               <Route path="/superadmin/decision-reasons" element={<DecisionReasons />} />
+              {/* PH4-O6 — the workflow review queue, and one version in full.
+                  /workflow-reviews before the :workflowId route so the literal
+                  wins the match, matching the /hr/requisitions pattern above. */}
+              <Route path="/superadmin/workflow-reviews" element={<WorkflowReviews />} />
+              <Route
+                path="/superadmin/workflow-reviews/:workflowId"
+                element={<WorkflowReviews />}
+              />
             </Route>
           </Route>
 

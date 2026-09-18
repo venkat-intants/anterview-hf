@@ -231,6 +231,11 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             consent = await db.scalar(text(
                 "SELECT count(*) FROM dpdp_consent_ledger WHERE user_id = :u"
                 " AND consent_type = 'preboarding_documents' AND granted"), {"u": cand})
+            invited = await db.scalar(text(
+                "SELECT count(*) FROM email_events WHERE template = 'offer_account'"
+                " AND to_user_id = :u"), {"u": cand})
+        check("someone who already has an account is not invited to make one", invited == 0,
+              str(invited))
         check("the outcome sits beside the decision, which is unchanged",
               state[0] == "hired" and state[1] == "offer_accepted", str(state))
         check("acceptance records when and the name typed", state[2] is not None

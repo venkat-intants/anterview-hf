@@ -64,7 +64,7 @@ beforeEach(() => {
 describe('InterviewPanel — tabs', () => {
   it('opens on Workload', async () => {
     renderPage();
-    expect(await screen.findByText('No interviewers have sessions in this period.')).toBeInTheDocument();
+    expect(await screen.findByText('No one can be booked for interviews yet. Your super admin adds interviewers under Team.')).toBeInTheDocument();
   });
 
   it('switches to Availability', async () => {

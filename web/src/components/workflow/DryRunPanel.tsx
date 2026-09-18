@@ -95,7 +95,9 @@ function ScenarioRow({ scenario }: { scenario: SimulationScenario }) {
       ? 'reaches a decision'
       : scenario.end === 'held'
         ? 'is held for you'
-        : 'could not finish';
+        : scenario.end === 'waiting'
+          ? 'waits for a person to move them on'
+          : 'could not finish';
   return (
     <li className="rounded-[10px] border border-border">
       <button
@@ -129,7 +131,9 @@ function ScenarioRow({ scenario }: { scenario: SimulationScenario }) {
                     ? (s.next.round_title ?? 'another round')
                     : s.next.kind === 'complete'
                       ? 'final decision'
-                      : 'held for a person'}
+                      : s.next.kind === 'person'
+                        ? 'stays until a person moves them'
+                        : 'held for a person'}
                 </span>
               ) : null}
               {s.error ? <span className="text-[var(--ui-danger)]"> — {s.error}</span> : null}

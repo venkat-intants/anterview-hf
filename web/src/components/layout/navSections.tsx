@@ -19,6 +19,7 @@
 // them; they were simply empty by construction for anyone who is not a candidate.
 
 import {
+  AlertTriangle,
   BarChart2,
   Briefcase,
   Building2,
@@ -84,6 +85,8 @@ const HR_NAV: NavItem[] = [
   { to: '/hr/interviews', label: 'Interviews', icon: <Video className={ICON} aria-hidden="true" /> },
   // PH4 Wave 3 (O5) — panel workload, availability and calibration.
   { to: '/hr/panel', label: 'Interview panel', icon: <Gauge className={ICON} aria-hidden="true" /> },
+  // PH4-O1 — every application against its stage SLA.
+  { to: '/hr/stages-at-risk', label: 'Stages at risk', icon: <AlertTriangle className={ICON} aria-hidden="true" /> },
   { to: '/hr/pipeline', label: 'Pipeline', icon: <TrendingUp className={ICON} aria-hidden="true" /> },
   // PH4 Wave 4 (A3/A4) — offers, and the reusable templates behind them.
   { to: '/hr/offers', label: 'Offers', icon: <Handshake className={ICON} aria-hidden="true" /> },

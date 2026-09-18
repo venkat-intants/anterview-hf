@@ -66,6 +66,8 @@ export function listStageOwners(): Promise<StageOwner[]> {
 
 export interface SlaBoardRow {
   enrolment_id: string;
+  /** Opens the candidate's drawer from the at-risk list. */
+  applicant_id: string;
   requisition_id: string;
   opening_title: string;
   full_name: string;

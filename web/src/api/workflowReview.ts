@@ -58,7 +58,9 @@ export function getReview(workflowId: string): Promise<ReviewState> {
 export type SimulationSeverity = 'error' | 'warning';
 export type SimulationRoundState = 'ok' | 'warning' | 'error';
 export type SimulationBranch = 'pass' | 'fast_track' | 'fail';
-export type SimulationEnd = 'decision' | 'held' | 'error';
+// 'waiting': passed, and stays on the round until a person moves them —
+// what the runner does when rounds do not advance automatically.
+export type SimulationEnd = 'decision' | 'held' | 'waiting' | 'error';
 
 export interface SimulationFinding {
   severity: SimulationSeverity;
@@ -77,7 +79,7 @@ export interface SimulationRound {
 }
 
 export interface SimulationStepNext {
-  kind: 'round' | 'complete' | 'hold';
+  kind: 'round' | 'complete' | 'hold' | 'person';
   round_id?: string | null;
   round_title?: string | null;
 }

@@ -189,7 +189,7 @@ export default function WorkloadTab(): JSX.Element {
           {errText(error, 'Could not load panel workload')}
         </p>
       ) : (data?.interviewers.length ?? 0) === 0 ? (
-        <p className="mt-4 text-[13px] text-muted-foreground">No interviewers have sessions in this period.</p>
+        <p className="mt-4 text-[13px] text-muted-foreground">No one can be booked for interviews yet. Your super admin adds interviewers under Team.</p>
       ) : (
         <div className="mt-4 flex flex-col gap-3">
           {data?.interviewers.map((row) => (

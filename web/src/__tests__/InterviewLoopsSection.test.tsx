@@ -266,6 +266,39 @@ describe('InterviewLoopsSection — a session’s controls', () => {
     await waitFor(() => expect(schedulingApi.setSessionOutcome).toHaveBeenCalledWith('sess-1', 'completed', null));
   });
 
+  it('lets HR set a time for a session still waiting on the candidate', async () => {
+    schedulingApi.listLoopsForEnrolment.mockResolvedValue([
+      loop({
+        self_schedule: true,
+        sessions: [session({ status: 'awaiting_slot', starts_at: null, ends_at: null })],
+      }),
+    ]);
+    schedulingApi.rescheduleSession.mockResolvedValue({ session_id: 'sess-1', starts_at: 'x' });
+    const user = userEvent.setup();
+    renderSection();
+
+    await user.click(await screen.findByRole('button', { name: 'Set a time' }));
+    const input = screen.getByLabelText<HTMLInputElement>('New start time');
+    expect(input.value).toBe('');
+    await user.type(input, '2099-01-02T10:00');
+    await user.click(screen.getByRole('button', { name: 'Save new time' }));
+    await waitFor(() =>
+      expect(schedulingApi.rescheduleSession).toHaveBeenCalledWith(
+        'sess-1',
+        expect.objectContaining({ starts_at: new Date('2099-01-02T10:00').toISOString() }),
+      ),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith('Interview time set');
+  });
+
+  it('shows the day of a session, not only its time', async () => {
+    schedulingApi.listLoopsForEnrolment.mockResolvedValue([loop()]);
+    renderSection();
+    await screen.findByText('Rekha Iyer');
+    // 2099-01-01 is a Thursday.
+    expect(screen.getByText(/Thu.*1 Jan.*·\s*45 min/)).toBeInTheDocument();
+  });
+
   it('pre-fills reschedule with the session’s LOCAL wall time', async () => {
     const originalTz = process.env.TZ;
     process.env.TZ = 'America/New_York';

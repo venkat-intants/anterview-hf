@@ -87,6 +87,7 @@ const ExamAttemptDetail = lazy(() => import('./pages/hr/ExamAttemptDetail'));
 const HRInterviews = lazy(() => import('./pages/hr/HRInterviews'));
 // PH4 Wave 3 — panel workload, availability and calibration (O5).
 const InterviewPanel = lazy(() => import('./pages/hr/InterviewPanel'));
+const StagesAtRisk = lazy(() => import('./pages/hr/StagesAtRisk'));
 const HRPipeline = lazy(() => import('./pages/hr/HRPipeline'));
 // PH4 Wave 4 — offer lifecycle (A3) and documents & preboarding (A4).
 const Offers = lazy(() => import('./pages/hr/Offers'));
@@ -268,6 +269,7 @@ export default function App() {
               />
               <Route path="/hr/interviews" element={<HRInterviews />} />
               <Route path="/hr/panel" element={<InterviewPanel />} />
+              <Route path="/hr/stages-at-risk" element={<StagesAtRisk />} />
               <Route path="/hr/pipeline" element={<HRPipeline />} />
               {/* PH4 Wave 4 — offer lifecycle (A3) and documents/preboarding (A4).
                   /offer-templates before /offers/:offerId-shaped routes so the

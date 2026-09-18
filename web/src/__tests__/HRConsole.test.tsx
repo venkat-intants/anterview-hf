@@ -186,10 +186,11 @@ describe('HRConsole — stages at risk (PH4-O1)', () => {
     expect(await screen.findByText('Nothing overdue or due soon.')).toBeInTheDocument();
   });
 
-  it('links each at-risk stage to that opening decision queue', async () => {
+  it('offers each at-risk stage as a way into that candidate, and the full list', async () => {
     getSlaBoard.mockResolvedValue([
       {
-        enrolment_id: 'en-1', requisition_id: 'req-9', opening_title: 'Backend Engineer',
+        enrolment_id: 'en-1', applicant_id: 'ap-1', requisition_id: 'req-9',
+        opening_title: 'Backend Engineer',
         full_name: 'Chetan Iyer', stage: 'Fundamentals', owner_user_id: 'u-hr-1',
         owner_name: 'Priya HR', open_exceptions: 0, state: 'overdue', sla_hours: 24,
         entered_at: '2026-09-01T00:00:00.000Z', due_at: '2026-09-02T00:00:00.000Z',
@@ -199,8 +200,13 @@ describe('HRConsole — stages at risk (PH4-O1)', () => {
     renderConsole();
     await screen.findByRole('heading', { name: /welcome/i });
 
-    const link = await screen.findByRole('link', { name: /Chetan Iyer.*Fundamentals/s });
-    expect(link).toHaveAttribute('href', '/hr/requisitions/req-9/decisions');
+    expect(
+      await screen.findByRole('button', { name: /Chetan Iyer — Fundamentals.*overdue/s }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View the full list' })).toHaveAttribute(
+      'href',
+      '/hr/stages-at-risk',
+    );
     expect(getSlaBoard).toHaveBeenCalledWith({ state: ['overdue', 'due_soon'] });
   });
 });

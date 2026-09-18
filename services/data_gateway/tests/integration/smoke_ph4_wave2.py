@@ -139,6 +139,41 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("branch changes are audited with before and after", (branch_audits or 0) >= 3,
               str(branch_audits))
 
+        # Removing a round, or reordering, rewrites routing nobody edited
+        # directly (O3 #13). Both are audited, and the workflow is left as it was.
+        r = await c.post(f"/hr/workflows/{wf}/rounds",
+                         json={"title": "Spare", "kind": "human_review", "criteria": crit,
+                               "deadline_days": 5})
+        spare = next(x["id"] for x in r.json()["rounds"] if x["title"] == "Spare")
+        await c.patch(f"/hr/workflows/{wf}/rounds/{tech}", json={"on_fail_next_round_id": spare})
+        r = await c.delete(f"/hr/workflows/{wf}/rounds/{spare}")
+        async with factory() as db:
+            removed = (await db.execute(text(
+                "SELECT details FROM audit_log WHERE action = 'workflow.branch.updated'"
+                " AND resource_id = :w AND details->>'cause' = 'round_removed'"),
+                {"w": uuid.UUID(wf)})).scalars().all()
+        by_round = {d["round_id"]: d for d in removed}
+        check("removing a round audits every route it rewrote, and why",
+              r.status_code == 200 and tech in by_round and second in by_round
+              and all(d["removed_round_title"] == "Spare" for d in removed), str(removed)[:300])
+        check("…with the branch it cleared, before and after",
+              by_round.get(tech, {}).get("before", {}).get("on_fail_next_round_id") == spare
+              and by_round.get(tech, {}).get("after", {}).get("on_fail_next_round_id") is None,
+              str(by_round.get(tech)))
+        order = [screen, tech, panel, second]
+        await c.put(f"/hr/workflows/{wf}/rounds/order",
+                    json={"round_ids": [screen, panel, tech, second]})
+        r = await c.put(f"/hr/workflows/{wf}/rounds/order", json={"round_ids": order})
+        async with factory() as db:
+            reordered = await db.scalar(text(
+                "SELECT count(*) FROM audit_log WHERE action = 'workflow.branch.updated'"
+                " AND resource_id = :w AND details->>'cause' = 'rounds_reordered'"),
+                {"w": uuid.UUID(wf)})
+        check("reordering audits the pass chain it rewrote", r.status_code == 200
+              and (reordered or 0) >= 4, str(reordered))
+        check("…and the workflow is back as it was",
+              [x["id"] for x in sorted(r.json()["rounds"], key=lambda x: x["position"])] == order)
+
         print("\nPH4-O2 — dry run")
         before = await counts()
         r = await c.post(f"/hr/workflows/{wf}/simulate")

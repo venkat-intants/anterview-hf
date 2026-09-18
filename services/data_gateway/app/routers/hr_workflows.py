@@ -132,6 +132,39 @@ class RoundPatch(BaseModel):
 
 
 _BRANCH_KEYS = ("on_fail_next_round_id", "fast_track_min_percent", "on_fast_track_next_round_id")
+# Removing or reordering rounds rewrites routing the author never edited
+# directly — the pass chain among it — so those audit every routing field.
+_ROUTING_KEYS = ("on_pass_next_round_id", *_BRANCH_KEYS)
+
+
+def _routing(r: dict[str, Any] | None) -> dict[str, Any]:
+    return {k: (str(r[k]) if r and r.get(k) is not None else None) for k in _ROUTING_KEYS}
+
+
+async def _audit_routing_changes(
+    db: DbSessionDep, request: Request, *, actor: uuid.UUID, company_id: uuid.UUID,
+    workflow: dict[str, Any], before: list[dict[str, Any]], cause: dict[str, Any],
+) -> int:
+    """One ``workflow.branch.updated`` row per surviving round whose routing a
+    removal or reorder changed, before and after, with the cause (PH4-O3 #13:
+    a branch that moved silently is exactly what the audit exists to catch).
+    Returns how many rounds changed."""
+    after = {str(r["id"]): r for r in await load_rounds(db, workflow["id"])}
+    changed = 0
+    for r in before:
+        now_ = after.get(str(r["id"]))
+        if now_ is None or _routing(r) == _routing(now_):
+            continue
+        changed += 1
+        db.add(AuditLog(
+            actor_id=actor, actor_type="user", action="workflow.branch.updated",
+            resource_type="workflow", resource_id=workflow["id"],
+            details={"company_id": str(company_id), "version": workflow["version"],
+                     "round_id": str(r["id"]), "round_title": r["title"],
+                     "before": _routing(r), "after": _routing(now_), **cause},
+            ip_address=extract_client_ip(request), user_agent=extract_user_agent(request),
+        ))
+    return changed
 
 
 class SettingsPatch(BaseModel):
@@ -620,12 +653,20 @@ async def patch_round(
 
 @router.delete("/workflows/{workflow_id}/rounds/{round_id}")
 async def delete_round(
-    workflow_id: uuid.UUID, round_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+    workflow_id: uuid.UUID, round_id: uuid.UUID, request: Request, ctx: HrCtxDep,
+    db: DbSessionDep,
 ) -> dict[str, Any]:
-    _hr_uid, company_id = ctx
-    await _owned_workflow(db, company_id, workflow_id)
+    hr_uid, company_id = ctx
+    wf = await _owned_workflow(db, company_id, workflow_id)
+    before = await load_rounds(db, workflow_id)
+    removed = next((r for r in before if str(r["id"]) == str(round_id)), None)
     try:
         await remove_round(db, workflow_id=workflow_id, round_id=round_id)
+        await _audit_routing_changes(
+            db, request, actor=hr_uid, company_id=company_id, workflow=wf, before=before,
+            cause={"cause": "round_removed", "removed_round_id": str(round_id),
+                   "removed_round_title": removed["title"] if removed else None},
+        )
         await db.commit()
     except WorkflowError as exc:
         await db.rollback()
@@ -635,12 +676,17 @@ async def delete_round(
 
 @router.put("/workflows/{workflow_id}/rounds/order")
 async def put_order(
-    workflow_id: uuid.UUID, body: OrderIn, ctx: HrCtxDep, db: DbSessionDep
+    workflow_id: uuid.UUID, body: OrderIn, request: Request, ctx: HrCtxDep, db: DbSessionDep
 ) -> dict[str, Any]:
-    _hr_uid, company_id = ctx
-    await _owned_workflow(db, company_id, workflow_id)
+    hr_uid, company_id = ctx
+    wf = await _owned_workflow(db, company_id, workflow_id)
+    before = await load_rounds(db, workflow_id)
     try:
         await reorder_rounds(db, workflow_id=workflow_id, ordered_ids=body.round_ids)
+        await _audit_routing_changes(
+            db, request, actor=hr_uid, company_id=company_id, workflow=wf, before=before,
+            cause={"cause": "rounds_reordered"},
+        )
         await db.commit()
     except WorkflowError as exc:
         await db.rollback()

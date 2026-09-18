@@ -34,7 +34,14 @@ import { formatSessionWhen, browserTimezone } from '@/lib/timezone';
 import { toLocalInputValue, localInputToIso } from '@/lib/localDatetime';
 import { StatusTag, ToggleSwitch, type TagTone } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
-import { Calendar, ChevronDown, ChevronRight, Download, Loader2, Send } from '@/design/components/icons';
+import {
+  Calendar,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Loader2,
+  Send,
+} from '@/design/components/icons';
 
 const inputCls =
   'mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
@@ -88,7 +95,9 @@ function zoneOptions(current?: string): string[] {
 }
 
 function hasStarted(session: InterviewSession): boolean {
-  return Boolean(session.starts_at) && new Date(session.starts_at as string).getTime() <= Date.now();
+  return (
+    Boolean(session.starts_at) && new Date(session.starts_at as string).getTime() <= Date.now()
+  );
 }
 
 function invalidateLoops(qc: QueryClient, enrolmentId: string): void {
@@ -129,13 +138,7 @@ function useHumanReviewRounds(requisitionId: string | null) {
 
 /* ── Create a loop ───────────────────────────────────────────────────────── */
 
-function CreateLoopForm({
-  enrolmentId,
-  onDone,
-}: {
-  enrolmentId: string;
-  onDone: () => void;
-}) {
+function CreateLoopForm({ enrolmentId, onDone }: { enrolmentId: string; onDone: () => void }) {
   const qc = useQueryClient();
   const [title, setTitle] = useState('Interviews');
   const [timezone, setTimezone] = useState('Asia/Kolkata');
@@ -277,7 +280,8 @@ function AddSessionForm({
 
   if (blocked) return <p className="mt-2 text-[11.5px] text-[var(--ui-faint)]">{blocked}</p>;
 
-  const ready = Boolean(roundId) && selected.length > 0 && Boolean(startLocal || loop.self_schedule);
+  const ready =
+    Boolean(roundId) && selected.length > 0 && Boolean(startLocal || loop.self_schedule);
 
   return (
     <div className="mt-3 flex flex-col gap-2.5 rounded-[10px] border border-border p-3">
@@ -350,13 +354,18 @@ function AddSessionForm({
           <span className="text-[12px] text-muted-foreground">No interviewers set up yet.</span>
         ) : (
           (interviewers.data ?? []).map((iv) => (
-            <label key={iv.user_id} className="flex items-center gap-2 text-[12.5px] text-foreground">
+            <label
+              key={iv.user_id}
+              className="flex items-center gap-2 text-[12.5px] text-foreground"
+            >
               <input
                 type="checkbox"
                 checked={selected.includes(iv.user_id)}
                 onChange={(e) =>
                   setSelected((prev) =>
-                    e.target.checked ? [...prev, iv.user_id] : prev.filter((id) => id !== iv.user_id),
+                    e.target.checked
+                      ? [...prev, iv.user_id]
+                      : prev.filter((id) => id !== iv.user_id),
                   )
                 }
                 className="h-4 w-4 accent-[var(--accent)]"
@@ -435,7 +444,9 @@ function FreeSlotsPanel({
       ) : slots.isError ? (
         <p className="text-[12px] text-muted-foreground">Could not check free times.</p>
       ) : (slots.data ?? []).length === 0 ? (
-        <p className="text-[12px] text-muted-foreground">No shared free time found in the next few weeks.</p>
+        <p className="text-[12px] text-muted-foreground">
+          No shared free time found in the next few weeks.
+        </p>
       ) : (
         <ul className="flex max-h-[180px] flex-col gap-1 overflow-y-auto">
           {(slots.data ?? []).slice(0, 30).map((iso) => (
@@ -612,7 +623,8 @@ function SessionRow({
   const [cancelReason, setCancelReason] = useState('');
 
   const outcomeMut = useMutation({
-    mutationFn: (outcome: SessionOutcome) => setSessionOutcome(session.id, outcome, cancelReason || null),
+    mutationFn: (outcome: SessionOutcome) =>
+      setSessionOutcome(session.id, outcome, cancelReason || null),
     onSuccess: (res) => {
       toast.success(
         res.status === 'cancelled'
@@ -652,7 +664,10 @@ function SessionRow({
       {session.interviewers.length > 0 ? (
         <ul className="mt-2 flex flex-col gap-1">
           {session.interviewers.map((iv) => (
-            <li key={iv.user_id} className="flex items-center justify-between text-[11.5px] text-[var(--ui-soft)]">
+            <li
+              key={iv.user_id}
+              className="flex items-center justify-between text-[11.5px] text-[var(--ui-soft)]"
+            >
               <span>{iv.name}</span>
               <span className="text-[var(--ui-faint)]">
                 {iv.scorecard_status ? iv.scorecard_status.replace('_', ' ') : 'no scorecard'}
@@ -764,7 +779,11 @@ function LoopCard({ loop, requisitionId }: { loop: InterviewLoop; requisitionId:
   });
 
   return (
-    <div className="rounded-[12px] border border-border p-3">
+    <div
+      role="group"
+      aria-label={`Interview loop: ${loop.title}`}
+      className="rounded-[12px] border border-border p-3"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-[12.5px] font-medium text-foreground">{loop.title}</p>
@@ -806,7 +825,11 @@ function LoopCard({ loop, requisitionId }: { loop: InterviewLoop; requisitionId:
             {addingSession ? 'Close' : 'Add session'}
           </button>
           {addingSession ? (
-            <AddSessionForm loop={loop} requisitionId={requisitionId} onDone={() => setAddingSession(false)} />
+            <AddSessionForm
+              loop={loop}
+              requisitionId={requisitionId}
+              onDone={() => setAddingSession(false)}
+            />
           ) : null}
         </div>
       ) : null}

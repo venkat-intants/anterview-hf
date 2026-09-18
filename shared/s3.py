@@ -119,6 +119,20 @@ def _addressing_config(endpoint_url: str | None) -> BotoConfig | None:
     return BotoConfig(s3={"addressing_style": "path"})
 
 
+# Signature Version 4, always. botocore still pre-signs S3 URLs with the legacy
+# SigV2 scheme unless told otherwise, and Cloudflare R2 and Backblaze B2 accept
+# only SigV4 — a SigV2 link to either answers 403 while MinIO, locally, serves
+# it happily. Found by PH4-A4's document downloads; every pre-signed link on the
+# platform (CV previews, scorecard PDFs) takes the same path.
+_SIGV4 = BotoConfig(signature_version="s3v4")
+
+
+def _client_config(endpoint_url: str | None) -> BotoConfig:
+    """SigV4 everywhere, plus path-style addressing for a custom endpoint."""
+    addressing = _addressing_config(endpoint_url)
+    return _SIGV4 if addressing is None else _SIGV4.merge(addressing)
+
+
 @asynccontextmanager
 async def s3_client(
     *,
@@ -161,6 +175,6 @@ async def s3_client(
         "s3",
         endpoint_url=endpoint_url,
         use_ssl=use_ssl,
-        config=_addressing_config(endpoint_url),
+        config=_client_config(endpoint_url),
     ) as client:
         yield client

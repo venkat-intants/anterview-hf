@@ -55,6 +55,25 @@ function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
+/**
+ * PH4-O1 — informational only: an SLA badge never changes what a reviewer can
+ * do here, it just says where to look first. Worded with the due time and
+ * owner, never colour alone.
+ */
+function slaBadge(row: DecisionQueueRow): { tone: 'ember' | 'amber' | 'forest'; text: string } | null {
+  const sla = row.sla;
+  if (!sla) return null;
+  const due = new Date(sla.due_at).toLocaleString();
+  const owner = row.stage_owner_name ? ` · ${row.stage_owner_name}` : '';
+  if (sla.state === 'overdue') {
+    return { tone: 'ember', text: `Overdue since ${due}${owner}` };
+  }
+  if (sla.state === 'due_soon') {
+    return { tone: 'amber', text: `Due soon — ${due}${owner}` };
+  }
+  return { tone: 'forest', text: `On track — due ${due}${owner}` };
+}
+
 /** Where this candidate is, in words a reviewer reads at a glance. */
 function stageLine(row: DecisionQueueRow): string {
   const version = row.workflow_version ? ` · workflow v${row.workflow_version}` : '';
@@ -149,6 +168,21 @@ function QueueCard({
             ) : (
               <StatusTag tone="forest">finished the workflow</StatusTag>
             )}
+            {/* PH4-O1 — where this application stands against its stage SLA.
+                Informational: it never changes what a reviewer can do here. */}
+            {(() => {
+              const badge = slaBadge(row);
+              return badge ? (
+                <StatusTag tone={badge.tone} dot>
+                  {badge.text}
+                </StatusTag>
+              ) : null;
+            })()}
+            {(row.open_exceptions ?? 0) > 0 ? (
+              <StatusTag tone="amber">
+                {row.open_exceptions} open exception{row.open_exceptions === 1 ? '' : 's'}
+              </StatusTag>
+            ) : null}
           </div>
           {row.email ? (
             <div className="mt-0.5 truncate text-[12.5px] text-muted-foreground">{row.email}</div>
@@ -408,6 +442,9 @@ function resolutionNote(
 export default function DecisionQueue(): JSX.Element {
   const { requisitionId = '' } = useParams();
   const [open, setOpen] = useState<DecisionQueueRow | null>(null);
+  // PH4-O1 — informational filter only: it narrows what is shown, never what
+  // is in the queue or what a reviewer can do with a row.
+  const [slaOnly, setSlaOnly] = useState(false);
 
   const req = useQuery({
     queryKey: ['hr', 'requisition', requisitionId],
@@ -425,6 +462,10 @@ export default function DecisionQueue(): JSX.Element {
 
   const rows = queue.data ?? [];
   const held = rows.filter((r) => r.held).length;
+  const atRisk = rows.filter((r) => r.sla?.state === 'overdue' || r.sla?.state === 'due_soon').length;
+  const visibleRows = slaOnly
+    ? rows.filter((r) => r.sla?.state === 'overdue' || r.sla?.state === 'due_soon')
+    : rows;
   const note = queue.isSuccess
     ? resolutionNote(req.data?.status, rows.length, req.data?.unresolved)
     : null;
@@ -476,6 +517,18 @@ export default function DecisionQueue(): JSX.Element {
               {note.text}
             </p>
           ) : null}
+          {rows.some((r) => r.sla) ? (
+            <label className="mt-3 flex w-fit items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
+              <input
+                type="checkbox"
+                checked={slaOnly}
+                onChange={(e) => setSlaOnly(e.target.checked)}
+                className="h-4 w-4 accent-[var(--accent)]"
+              />
+              Overdue or due soon only
+              {atRisk > 0 ? <span className="text-[var(--ui-faint)]"> ({atRisk})</span> : null}
+            </label>
+          ) : null}
         </header>
       </Reveal>
 
@@ -497,9 +550,20 @@ export default function DecisionQueue(): JSX.Element {
             below a round&rsquo;s threshold.
           </p>
         </GlassCard>
+      ) : visibleRows.length === 0 ? (
+        <GlassCard className="p-10 text-center">
+          <p className="text-[13.5px] text-foreground">Nobody is overdue or due soon.</p>
+          <button
+            type="button"
+            onClick={() => setSlaOnly(false)}
+            className="mt-2 text-[12.5px] text-[var(--accent)] hover:underline"
+          >
+            Show everyone waiting
+          </button>
+        </GlassCard>
       ) : (
         <div className="flex flex-col gap-3">
-          {rows.map((r) => (
+          {visibleRows.map((r) => (
             <QueueCard key={r.enrolment_id} row={r} requisitionId={requisitionId} onOpen={setOpen} />
           ))}
         </div>

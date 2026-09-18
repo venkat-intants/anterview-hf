@@ -184,6 +184,55 @@ describe('DecisionQueue — one list', () => {
   });
 });
 
+describe('DecisionQueue — SLA (PH4-O1, informational only)', () => {
+  const OVERDUE: DecisionQueueRow = {
+    ...HELD,
+    enrolment_id: 'en-overdue',
+    applicant_id: 'ap-overdue',
+    full_name: 'Chetan Iyer',
+    sla: {
+      state: 'overdue',
+      sla_hours: 24,
+      entered_at: '2026-09-01T00:00:00.000Z',
+      due_at: '2026-09-02T00:00:00.000Z',
+      hours_remaining: -10,
+    },
+    stage_owner_name: 'Priya HR',
+    open_exceptions: 1,
+  };
+
+  it('shows an overdue badge with the due time and owner, and an open-exceptions badge', async () => {
+    getDecisionQueue.mockResolvedValue([OVERDUE, FINISHED]);
+    renderQueue();
+    await screen.findByText('Chetan Iyer');
+
+    const card = cardFor('Chetan Iyer');
+    expect(within(card).getByText(/Overdue since/)).toBeTruthy();
+    expect(within(card).getByText(/Priya HR/)).toBeTruthy();
+    expect(within(card).getByText('1 open exception')).toBeTruthy();
+    // Nothing SLA-related on a row with no SLA.
+    expect(within(cardFor('Bhavya Nair')).queryByText(/Overdue|Due soon|On track/)).toBeNull();
+  });
+
+  it('filters to overdue-or-due-soon without hiding anyone from the underlying queue', async () => {
+    const user = userEvent.setup();
+    getDecisionQueue.mockResolvedValue([OVERDUE, FINISHED]);
+    renderQueue();
+    await screen.findByText('Chetan Iyer');
+    expect(screen.getByText('Bhavya Nair')).toBeTruthy();
+
+    await user.click(screen.getByLabelText(/Overdue or due soon only/));
+
+    expect(screen.getByText('Chetan Iyer')).toBeTruthy();
+    expect(screen.queryByText('Bhavya Nair')).toBeNull();
+    // Toggling back restores the full queue — the filter never re-fetches or
+    // drops data, it only narrows what is rendered.
+    await user.click(screen.getByLabelText(/Overdue or due soon only/));
+    expect(screen.getByText('Bhavya Nair')).toBeTruthy();
+    expect(getDecisionQueue).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('DecisionQueue — the decision itself', () => {
   it('does not hire on the first click', async () => {
     const user = userEvent.setup();

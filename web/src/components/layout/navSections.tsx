@@ -114,6 +114,9 @@ const SUPER_NAV: NavItem[] = [
   // of it.
   { to: '/superadmin', label: 'Team', icon: <Users className={ICON} aria-hidden="true" /> },
   { to: '/superadmin/decision-reasons', label: 'Decision reasons', icon: <ListChecks className={ICON} aria-hidden="true" /> },
+  // PH4-O6: workflow versions waiting for this super admin's approval before
+  // HR can publish them (D4-2).
+  { to: '/superadmin/workflow-reviews', label: 'Workflow reviews', icon: <FileCheck2 className={ICON} aria-hidden="true" /> },
 ];
 
 // interviewer — company staff who see ONLY interviews assigned to them (D4-1).

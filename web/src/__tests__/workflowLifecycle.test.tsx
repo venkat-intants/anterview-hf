@@ -36,13 +36,36 @@ describe('what publishing will do', () => {
 });
 
 describe('the lifecycle steps', () => {
-  it('asks for a preview first, then publish once it validates', () => {
-    expect(stepStates({ status: 'draft', previewed: false, issues: 0, publishable: true }))
-      .toMatchObject({ preview: 'current', publish: 'todo' });
-    expect(stepStates({ status: 'draft', previewed: true, issues: 0, publishable: true }))
-      .toMatchObject({ preview: 'done', validate: 'done', publish: 'current' });
-    expect(stepStates({ status: 'draft', previewed: true, issues: 2, publishable: false }))
-      .toMatchObject({ validate: 'blocked', publish: 'todo' });
+  it('walks draft → dry run → review → approved → published', () => {
+    // Not dry-run yet.
+    expect(
+      stepStates({ status: 'draft', reviewStatus: 'draft', simulated: false, publishable: true }),
+    ).toMatchObject({ dryRun: 'current', review: 'todo' });
+
+    // Dry-run done, publishable — ready to submit for review.
+    expect(
+      stepStates({ status: 'draft', reviewStatus: 'draft', simulated: true, publishable: true }),
+    ).toMatchObject({ dryRun: 'done', review: 'current' });
+
+    // Dry-run done, but validation still fails — review is blocked, not offered.
+    expect(
+      stepStates({ status: 'draft', reviewStatus: 'draft', simulated: true, publishable: false }),
+    ).toMatchObject({ review: 'blocked' });
+
+    // A super admin is looking at it — locked, waiting.
+    expect(
+      stepStates({ status: 'draft', reviewStatus: 'in_review', simulated: true, publishable: true }),
+    ).toMatchObject({ review: 'current', approved: 'todo', publish: 'todo' });
+
+    // Approved, not yet published.
+    expect(
+      stepStates({ status: 'draft', reviewStatus: 'approved', simulated: true, publishable: true }),
+    ).toMatchObject({ approved: 'done', publish: 'current' });
+
+    // Live — every step reads as done.
+    expect(
+      stepStates({ status: 'published', reviewStatus: 'approved', simulated: true, publishable: true }),
+    ).toMatchObject({ draft: 'done', dryRun: 'done', review: 'done', approved: 'done', publish: 'done' });
   });
 });
 

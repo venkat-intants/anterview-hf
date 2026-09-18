@@ -38,6 +38,7 @@ import { describeMove } from '@/lib/stageHistory';
 import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import ExceptionsSection from '@/components/ExceptionsSection';
 import { AlertTriangle, Info, User, X } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 
@@ -820,6 +821,11 @@ export default function CandidateDrawer({
         {enrolmentId ? (
           <HumanInterviewSection enrolmentId={enrolmentId} requisitionId={app?.requisition_id ?? null} />
         ) : null}
+
+        {/* PH4-O1 — what is blocking this application, for a person to see and
+            act on. Scoped to this enrolment/application, same as the rest of
+            the drawer. */}
+        {enrolmentId ? <ExceptionsSection enrolmentId={enrolmentId} /> : null}
 
         <div className="mt-5">
           <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">

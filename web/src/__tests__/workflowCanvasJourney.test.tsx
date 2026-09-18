@@ -57,6 +57,39 @@ describe('the canvas journey', () => {
   });
 });
 
+describe('the canvas — branches (PH4-O3)', () => {
+  it('draws no legend and no branch text when nothing branches', () => {
+    renderCanvas([round({ id: 'a', title: 'Aptitude' })]);
+    expect(screen.queryByTestId('branch-legend')).toBeNull();
+    expect(screen.queryByText(/below threshold/)).toBeNull();
+    expect(screen.queryByText(/fast-track/)).toBeNull();
+  });
+
+  it('states the below-threshold and fast-track edges as text, and shows the legend', () => {
+    renderCanvas([
+      round({
+        id: 'a', title: 'Aptitude', position: 0,
+        on_pass_next_round_id: 'b',
+        on_fail_next_round_id: 'c',
+        fast_track_min_percent: 90,
+        on_fast_track_next_round_id: 'b',
+      }),
+      round({ id: 'b', title: 'Conversation', position: 1 }),
+      round({ id: 'c', title: 'Extra practice', position: 2, kind: 'human_review', pass_threshold: null }),
+    ]);
+
+    // The legend — text, not colour alone.
+    const legend = screen.getByTestId('branch-legend');
+    expect(legend.textContent).toMatch(/pass/);
+    expect(legend.textContent).toMatch(/below threshold/);
+    expect(legend.textContent).toMatch(/fast-track/);
+
+    // The edges themselves, stated on the round that carries them.
+    expect(screen.getByText(/below threshold.*Extra practice/)).toBeTruthy();
+    expect(screen.getByText(/fast-track.*Conversation.*90%/)).toBeTruthy();
+  });
+});
+
 describe('round kinds', () => {
   it('lets a human review carry a checklist, decided by a person', () => {
     expect(ROUND_KIND_META.human_review.supportsCriteria).toBe(true);

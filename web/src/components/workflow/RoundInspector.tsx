@@ -43,12 +43,19 @@ import type {
 } from '@/api/workflows';
 import { MAX_CRITERIA_PER_ROUND } from '@/api/workflows';
 import { ROUND_KIND_META, ROUND_KIND_ORDER } from './roundKinds';
+import RoundRouting from './RoundRouting';
+import StageSettings from './StageSettings';
 
 interface Props {
   round: Round;
+  /** Every round of this workflow, in order — routing targets and the pass label. */
+  allRounds: Round[];
+  workflowId: string;
   roleModel: RoleModel | undefined;
   editable: boolean;
   saving: boolean;
+  /** Validation messages that name this round (they start with its title). */
+  roundErrors?: string[];
   onPatch: (fields: RoundPatch) => void;
   onCriteria: (criteria: CriterionInput[]) => void;
 }
@@ -591,9 +598,12 @@ function KitEditor({
 
 export default function RoundInspector({
   round,
+  allRounds,
+  workflowId,
   roleModel,
   editable,
   saving,
+  roundErrors = [],
   onPatch,
   onCriteria,
 }: Props): JSX.Element {
@@ -792,6 +802,24 @@ export default function RoundInspector({
           passes them on or holds them for a decision. Nobody is rejected automatically.
         </section>
       )}
+
+      {/* PH4-O3 — where a result on this round actually sends someone. */}
+      <RoundRouting
+        round={round}
+        otherRounds={allRounds
+          .filter((r) => r.id !== round.id)
+          .map((r) => ({ id: r.id, title: r.title }))}
+        editable={editable}
+        errors={roundErrors}
+        onPatch={onPatch}
+      />
+
+      {/* PH4-O1 — operational, so editable on a live version too (like the
+          interview kit below). */}
+      <section className="flex flex-col gap-2">
+        <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">Stage owner &amp; SLA</h3>
+        <StageSettings workflowId={workflowId} roundId={round.id} label={round.title} />
+      </section>
     </div>
   );
 }

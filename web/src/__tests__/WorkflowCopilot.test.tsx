@@ -39,13 +39,20 @@ const EMPTY_DRAFT: Workflow = {
   status: 'draft',
   name: null,
   editable: true,
+  review_status: 'draft',
   role_profile_id: null,
   settings: SETTINGS,
   published_at: null,
   rounds: [],
 };
 
-const PUBLISHED: Workflow = { ...EMPTY_DRAFT, id: 'wf-live', status: 'published', editable: false };
+const PUBLISHED: Workflow = {
+  ...EMPTY_DRAFT,
+  id: 'wf-live',
+  status: 'published',
+  editable: false,
+  review_status: 'approved',
+};
 
 const VERSIONS: WorkflowSummary[] = [
   {
@@ -174,6 +181,27 @@ vi.mock('../api/questions', async () => {
 vi.mock('../api/exams', () => ({
   listExams: () => Promise.resolve([]),
   getStructure: () => Promise.resolve({ exam_id: 'e1', rounds: [] }),
+}));
+
+// PH4-O6 / O2 / O1 — ReviewPanel, DryRunPanel and StageSettings are always
+// mounted for a draft workflow.
+vi.mock('../api/workflowReview', () => ({
+  getReview: () =>
+    Promise.resolve({
+      review_status: 'draft', submitted_at: null, submitted_by_name: null,
+      reviewed_at: null, reviewed_by_name: null, note: null, history: [],
+    }),
+  submitForReview: vi.fn(),
+  withdrawReview: vi.fn(),
+  reopenForEdits: vi.fn(),
+  runSimulation: vi.fn(),
+  getSimulation: () => Promise.resolve(null),
+  reviewErrorDetail: () => null,
+}));
+vi.mock('../api/stageSla', () => ({
+  getStages: () => Promise.resolve([]),
+  listStageOwners: () => Promise.resolve([]),
+  setStage: vi.fn(),
 }));
 
 const toastError = vi.fn();

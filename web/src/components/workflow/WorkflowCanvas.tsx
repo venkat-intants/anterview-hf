@@ -58,12 +58,33 @@ function nodeGap(round: Round): string | null {
   return null;
 }
 
+/**
+ * The below-threshold and fast-track edges leaving a round (PH4-O3), resolved
+ * to titles. The pass edge is not drawn here — it IS the vertical order below,
+ * which is what makes it read as the "main" path and these two as departures
+ * from it.
+ */
+function branchEdges(
+  round: Round,
+  byId: Map<string, Round>,
+): { fail: string | null; fastTrack: string | null } {
+  const fail = round.on_fail_next_round_id
+    ? (byId.get(round.on_fail_next_round_id)?.title ?? 'another round')
+    : null;
+  const fastTrack =
+    round.on_fast_track_next_round_id && round.fast_track_min_percent !== null
+      ? `${byId.get(round.on_fast_track_next_round_id)?.title ?? 'another round'} (≥${round.fast_track_min_percent}%)`
+      : null;
+  return { fail, fastTrack };
+}
+
 function RoundNode({
   round,
   index,
   total,
   selected,
   editable,
+  edges,
   onSelect,
   onRemove,
   onMove,
@@ -74,6 +95,7 @@ function RoundNode({
   total: number;
   selected: boolean;
   editable: boolean;
+  edges: { fail: string | null; fastTrack: string | null };
   onSelect: () => void;
   onRemove: () => void;
   onMove: (to: number) => void;
@@ -147,6 +169,31 @@ function RoundNode({
               {gap}
             </span>
           ) : null}
+          {/* PH4-O3 branches, drawn distinctly from the pass chain (the vertical
+              order below) and always also stated as text — never colour or
+              line-style alone. */}
+          {edges.fail || edges.fastTrack ? (
+            <span className="mt-1.5 flex flex-col gap-1 border-t border-dashed border-[var(--ui-line-strong)] pt-1.5">
+              {edges.fail ? (
+                <span className="flex items-center gap-1.5 text-[11px] text-[var(--ui-warn)]">
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-0 w-4 border-t-2 border-dashed border-[var(--ui-warn)]"
+                  />
+                  below threshold &rarr; {edges.fail}
+                </span>
+              ) : null}
+              {edges.fastTrack ? (
+                <span className="flex items-center gap-1.5 text-[11px] text-[var(--accent)]">
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-0 w-4 border-t-2 border-dotted border-[var(--accent)]"
+                  />
+                  fast-track &rarr; {edges.fastTrack}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
         </span>
       </button>
 
@@ -202,6 +249,9 @@ export default function WorkflowCanvas({
     if (next !== rounds) onReorder(next.map((r) => r.id));
   };
 
+  const byId = new Map(rounds.map((r) => [r.id, r]));
+  const hasBranches = rounds.some((r) => r.on_fail_next_round_id || r.on_fast_track_next_round_id);
+
   return (
     <div className={cn('flex flex-col', busy && 'pointer-events-none opacity-60')}>
       {/* Entry marker — where candidates come in. Not a round, and not
@@ -229,6 +279,30 @@ export default function WorkflowCanvas({
         </span>
       </div>
 
+      {/* Legend for the branch edges below (PH4-O3) — text, not colour alone,
+          because the edges themselves are also always stated as text on the
+          round that carries them. */}
+      {hasBranches ? (
+        <ul
+          aria-label="Edge legend"
+          data-testid="branch-legend"
+          className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-muted-foreground"
+        >
+          <li className="flex items-center gap-1.5">
+            <span aria-hidden="true" className="inline-block h-0 w-4 border-t-2 border-[var(--ui-line-strong)]" />
+            pass — the order below
+          </li>
+          <li className="flex items-center gap-1.5 text-[var(--ui-warn)]">
+            <span aria-hidden="true" className="inline-block h-0 w-4 border-t-2 border-dashed border-[var(--ui-warn)]" />
+            below threshold
+          </li>
+          <li className="flex items-center gap-1.5 text-[var(--accent)]">
+            <span aria-hidden="true" className="inline-block h-0 w-4 border-t-2 border-dotted border-[var(--accent)]" />
+            fast-track
+          </li>
+        </ul>
+      ) : null}
+
       <ol className="mt-2 flex list-none flex-col">
         {rounds.map((round, i) => (
           <li key={round.id} className="flex flex-col">
@@ -245,6 +319,7 @@ export default function WorkflowCanvas({
               total={rounds.length}
               selected={round.id === selectedId}
               editable={editable}
+              edges={branchEdges(round, byId)}
               onSelect={() => onSelect(round.id)}
               onRemove={() => onRemove(round.id)}
               onMove={(to) => move(i, to)}

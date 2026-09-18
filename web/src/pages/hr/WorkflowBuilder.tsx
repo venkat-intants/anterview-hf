@@ -38,7 +38,7 @@ import {
   Trash2,
   Users,
 } from '@/design/components/icons';
-import { GlassCard, StatusTag, ToggleSwitch } from '@/design/components/primitives';
+import { GlassCard, StatusTag, ToggleSwitch, type TagTone } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -63,11 +63,13 @@ import {
   validateWorkflow,
   MAX_ROUNDS,
   type CriterionInput,
+  type ReviewStatus,
   type Round,
   type RoundKind,
   type Workflow,
   type WorkflowSettings,
 } from '@/api/workflows';
+import { getSimulation, runSimulation } from '@/api/workflowReview';
 import WorkflowCanvas from '@/components/workflow/WorkflowCanvas';
 import WorkflowCopilot from '@/components/workflow/WorkflowCopilot';
 import ProposalPreview from '@/components/workflow/ProposalPreview';
@@ -76,12 +78,23 @@ import RoundInspector from '@/components/workflow/RoundInspector';
 import CoveragePanel from '@/components/workflow/CoveragePanel';
 import CandidatePreview from '@/components/workflow/CandidatePreview';
 import LifecycleSteps from '@/components/workflow/LifecycleSteps';
+import ReviewPanel from '@/components/workflow/ReviewPanel';
+import DryRunPanel from '@/components/workflow/DryRunPanel';
+import StageSettings from '@/components/workflow/StageSettings';
 import { applicationsWarning, publishImpact } from '@/lib/workflowLifecycle';
 import GovernancePanel from '@/components/workflow/GovernancePanel';
 import JdVersionPanel from '@/components/workflow/JdVersionPanel';
 import PostingEditor from '@/components/workflow/PostingEditor';
 import QuestionEditor from '@/components/workflow/QuestionEditor';
 import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
+
+/** PH4-O6 — the badge next to a version's status, everywhere this page shows one. */
+const REVIEW_META: Record<ReviewStatus, { label: string; tone: TagTone }> = {
+  draft: { label: 'Draft', tone: 'neutral' },
+  in_review: { label: 'In review', tone: 'electric' },
+  changes_requested: { label: 'Changes requested', tone: 'amber' },
+  approved: { label: 'Approved', tone: 'forest' },
+};
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -204,6 +217,14 @@ function SettingsPanel({
           <span className="text-[13px] text-muted-foreground">/ 10</span>
         </div>
       </div>
+
+      {/* PH4-O1. The final decision has no round of its own, so its owner and
+          SLA live here rather than in a round's inspector. Editable on a live
+          version too — see StageSettings. */}
+      <div className="border-t border-border pt-4">
+        <h3 className="mb-2 text-[13px] text-foreground">Final decision — owner &amp; SLA</h3>
+        <StageSettings workflowId={workflow.id} roundId={null} label="the final decision" />
+      </div>
     </div>
   );
 }
@@ -303,9 +324,8 @@ export default function WorkflowBuilder(): JSX.Element {
   const [selectedRound, setSelectedRound] = useState<string | null>(null);
   const [tab, setTab] = useState<'round' | 'settings'>('round');
   const [confirmPublish, setConfirmPublish] = useState(false);
-  // D5: the candidate's-eye preview, and whether it has been looked at.
+  // D5: the candidate's-eye preview.
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewed, setPreviewed] = useState(false);
   // What the copilot has drafted and the user has not yet accepted or
   // discarded. Held here rather than inside the chat panel because the preview
   // is drawn on the canvas, and only one of the two surfaces can own it.
@@ -347,6 +367,14 @@ export default function WorkflowBuilder(): JSX.Element {
     queryKey: ['hr', 'workflow', workflowId, 'validate'],
     queryFn: () => validateWorkflow(workflowId as string),
     enabled: Boolean(workflowId) && (wf.data?.rounds.length ?? 0) > 0,
+  });
+
+  // PH4-O2 — shares its cache key with DryRunPanel's own query, so "Run dry
+  // run" from either the lifecycle strip or the panel updates both.
+  const simulation = useQuery({
+    queryKey: ['hr', 'workflow', workflowId, 'simulation'],
+    queryFn: () => getSimulation(workflowId as string),
+    enabled: Boolean(workflowId),
   });
 
   const templates = useQuery({
@@ -398,6 +426,23 @@ export default function WorkflowBuilder(): JSX.Element {
   });
 
   const run = (op: () => Promise<Workflow>) => mutating.mutate(op);
+
+  // PH4-O2 — the lifecycle strip's "2. Dry run" is a shortcut to the same
+  // action DryRunPanel offers; both write the same cache key.
+  const runDryRunMut = useMutation({
+    mutationFn: () => runSimulation(workflowId as string),
+    onSuccess: (result) => {
+      qc.setQueryData(['hr', 'workflow', workflowId, 'simulation'], result);
+      toast.success(
+        result.status === 'passed'
+          ? 'Dry run passed'
+          : result.status === 'warnings'
+            ? 'Dry run passed, with warnings to look at'
+            : 'Dry run found errors',
+      );
+    },
+    onError: (e) => toast.error(errText(e, 'Could not run the dry run')),
+  });
 
   // ── Creating ──────────────────────────────────────────────────────────────
   const createMut = useMutation({
@@ -506,6 +551,14 @@ export default function WorkflowBuilder(): JSX.Element {
                           ? `v${workflow.version} · draft`
                           : `v${workflow.version} · archived`}
                     </StatusTag>
+                    {/* PH4-O6: where this version stands in the approval
+                        lifecycle. Once published the review is history, not
+                        news, so this stops being worth a second badge. */}
+                    {workflow.status === 'draft' ? (
+                      <StatusTag tone={REVIEW_META[workflow.review_status].tone} dot>
+                        {REVIEW_META[workflow.review_status].label}
+                      </StatusTag>
+                    ) : null}
                     <span>
                       {workflow.rounds.length} round{workflow.rounds.length === 1 ? '' : 's'}
                     </span>
@@ -549,37 +602,43 @@ export default function WorkflowBuilder(): JSX.Element {
                   Decision queue
                 </Link>
 
+                {/* PH4-O6: Discard is offered while still authoring; Publish
+                    only once a super admin has approved this exact version —
+                    the server 409s otherwise, so the header must not offer it
+                    sooner. Reopening an approved version (back to Discard's
+                    state) is an action on the ReviewPanel below, not here. */}
                 {editable ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => discardMut.mutate()}
-                      disabled={discardMut.isPending}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-2 text-[12.5px] text-muted-foreground hover:border-[var(--ui-danger)]/40 hover:text-[var(--ui-danger)] disabled:opacity-50"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      Discard
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmPublish(true)}
-                      data-testid="publish-workflow"
-                      // Same gate as the lifecycle strip's "4. Publish": the
-                      // server refuses anything validate does not call
-                      // publishable, so the button should not offer it.
-                      disabled={publishMut.isPending || publishBlockedReason !== null}
-                      title={publishBlockedReason ?? undefined}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-                    >
-                      {publishMut.isPending ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                      ) : (
-                        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      )}
-                      Publish
-                    </button>
-                  </>
-                ) : (
+                  <button
+                    type="button"
+                    onClick={() => discardMut.mutate()}
+                    disabled={discardMut.isPending}
+                    className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-2 text-[12.5px] text-muted-foreground hover:border-[var(--ui-danger)]/40 hover:text-[var(--ui-danger)] disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    Discard
+                  </button>
+                ) : null}
+                {workflow.status === 'draft' && workflow.review_status === 'approved' ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmPublish(true)}
+                    data-testid="publish-workflow"
+                    // Same gate as the lifecycle strip's "5. Published": the
+                    // server refuses anything validate does not call
+                    // publishable, so the button should not offer it.
+                    disabled={publishMut.isPending || publishBlockedReason !== null}
+                    title={publishBlockedReason ?? undefined}
+                    className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+                  >
+                    {publishMut.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    )}
+                    Publish
+                  </button>
+                ) : null}
+                {workflow.status !== 'draft' ? (
                   <button
                     type="button"
                     onClick={() => cloneMut.mutate()}
@@ -594,7 +653,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     )}
                     Edit as new version
                   </button>
-                )}
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -707,27 +766,23 @@ export default function WorkflowBuilder(): JSX.Element {
               ) : null;
             })()}
 
-            {editable ? (
+            {workflow.status === 'draft' ? (
               <LifecycleSteps
                 status={workflow.status}
-                previewed={previewed}
-                issues={validation.data?.errors.length ?? 0}
+                reviewStatus={workflow.review_status}
+                simulated={Boolean(simulation.data && !simulation.data.stale)}
                 publishable={Boolean(validation.data?.publishable)}
-                onPreview={() => {
-                  setPreviewOpen((open) => !open);
-                  setPreviewed(true);
-                }}
-                onPublish={() => setConfirmPublish(true)}
+                onRunDryRun={() => runDryRunMut.mutate()}
               />
-            ) : (
-              <button
-                type="button"
-                onClick={() => setPreviewOpen((open) => !open)}
-                className="mb-4 rounded-pill border border-border px-3 py-1 text-[12px] text-[var(--ui-soft)] hover:border-[var(--accent)]"
-              >
-                {previewOpen ? 'Hide candidate preview' : 'Preview as a candidate'}
-              </button>
-            )}
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => setPreviewOpen((open) => !open)}
+              className="mb-4 rounded-pill border border-border px-3 py-1 text-[12px] text-[var(--ui-soft)] hover:border-[var(--accent)]"
+            >
+              {previewOpen ? 'Hide candidate preview' : 'Preview as a candidate'}
+            </button>
 
             {previewOpen ? (
               <div className="mb-5 rounded-[14px] border border-[var(--accent)]/25 p-4">
@@ -742,7 +797,11 @@ export default function WorkflowBuilder(): JSX.Element {
                   ? 'This version is live, so it is read-only. Editing creates version ' +
                     (workflow.version + 1) +
                     ' and leaves this one running for everyone already inside it.'
-                  : 'An archived version, kept because candidates finished under it.'}
+                  : workflow.status === 'archived'
+                    ? 'An archived version, kept because candidates finished under it.'
+                    : workflow.review_status === 'in_review'
+                      ? 'This version is waiting for review, so it is locked. Withdraw it from review below to make changes.'
+                      : 'This version has been approved, so it is locked. Reopen it below to make changes — it will need approving again.'}
               </div>
             ) : null}
 
@@ -837,9 +896,14 @@ export default function WorkflowBuilder(): JSX.Element {
                 <RoundInspector
                   key={selected.id}
                   round={selected}
+                  allRounds={workflow.rounds}
+                  workflowId={workflow.id}
                   roleModel={roleModel.data}
                   editable={editable}
                   saving={busy}
+                  roundErrors={(validation.data?.errors ?? []).filter((e) =>
+                    e.startsWith(`${selected.title}:`),
+                  )}
                   onPatch={(fields) => run(() => updateRound(workflow.id, selected.id, fields))}
                   onCriteria={(criteria: CriterionInput[]) =>
                     run(() => setRoundCriteria(workflow.id, selected.id, criteria))
@@ -852,6 +916,26 @@ export default function WorkflowBuilder(): JSX.Element {
                 </p>
               )}
             </GlassCard>
+
+            {/* PH4-O6 / O2 — where this version stands with the reviewer, and
+                whether a dry run of its routing comes back clean. Shown for
+                every draft, whatever tab the inspector is on. */}
+            {workflow.status === 'draft' ? (
+              <GlassCard className="p-5">
+                <ReviewPanel
+                  workflowId={workflow.id}
+                  onChanged={() => {
+                    void qc.invalidateQueries({ queryKey: ['hr', 'workflow', workflow.id] });
+                    void qc.invalidateQueries({ queryKey: ['hr', 'workflows', requisitionId] });
+                  }}
+                />
+              </GlassCard>
+            ) : null}
+            {workflow.status === 'draft' ? (
+              <GlassCard className="p-5">
+                <DryRunPanel workflowId={workflow.id} />
+              </GlassCard>
+            ) : null}
 
             <GlassCard className="p-5">
               <CoveragePanel report={validation.data} loading={validation.isFetching} />

@@ -34,7 +34,7 @@ import uuid
 from typing import Annotated, Any, Literal
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
 from shared.intelligence import baseline_profile, compute_profile_id
 from sqlalchemy import text
@@ -42,6 +42,9 @@ from sqlalchemy import text
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.interviewer_scorecards import summary_for_enrolments
+from app.models import AuditLog
+from app.stage_sla import sla_for_enrolments
+from app.utils.request_ip import extract_client_ip, extract_user_agent
 from app.workflow_runner import decision_queue, on_shortlisted, record_result, release_hold
 from app.workflow_templates import TEMPLATES, build_template, template_summaries
 from app.workflows import (
@@ -113,6 +116,12 @@ class RoundPatch(BaseModel):
     time_limit_seconds: int | None = Field(default=None, gt=0, le=86_400)
     deadline_days: int | None = Field(default=None, gt=0, le=365)
     exam_round_id: uuid.UUID | None = None
+    # PH4-O3 branches. The pass branch is the chain and is not set here.
+    # Below the threshold: route to this round; null = hold for a person.
+    on_fail_next_round_id: uuid.UUID | None = None
+    # At or above this score, skip to that round. Both or neither.
+    fast_track_min_percent: float | None = Field(default=None, gt=0, le=100)
+    on_fast_track_next_round_id: uuid.UUID | None = None
 
     @field_validator("kind")
     @classmethod
@@ -120,6 +129,9 @@ class RoundPatch(BaseModel):
         if v is not None and v not in ROUND_KINDS:
             raise ValueError(f"kind must be one of {sorted(ROUND_KINDS)}")
         return v
+
+
+_BRANCH_KEYS = ("on_fail_next_round_id", "fast_track_min_percent", "on_fast_track_next_round_id")
 
 
 class SettingsPatch(BaseModel):
@@ -467,7 +479,10 @@ async def get_workflow(
         "version": wf["version"],
         "status": wf["status"],
         "name": wf["name"],
-        "editable": wf["status"] == "draft",
+        # PH4-O6: a version under review or approved is locked for its reviewer.
+        "review_status": wf["review_status"],
+        "editable": wf["status"] == "draft"
+        and wf["review_status"] in ("draft", "changes_requested"),
         "role_profile_id": wf["role_profile_id"],
         "settings": _settings_of(wf),
         "published_at": wf["published_at"].isoformat() if wf["published_at"] else None,
@@ -485,6 +500,12 @@ async def get_workflow(
                 "deadline_days": r["deadline_days"],
                 "on_pass_next_round_id": str(r["on_pass_next_round_id"])
                 if r["on_pass_next_round_id"] else None,
+                "on_fail_next_round_id": str(r["on_fail_next_round_id"])
+                if r["on_fail_next_round_id"] else None,
+                "fast_track_min_percent": float(r["fast_track_min_percent"])
+                if r["fast_track_min_percent"] is not None else None,
+                "on_fast_track_next_round_id": str(r["on_fast_track_next_round_id"])
+                if r["on_fast_track_next_round_id"] else None,
                 "exam_round_id": str(r["exam_round_id"]) if r["exam_round_id"] else None,
                 "needs_questions": r["kind"] in EXAM_BACKED_KINDS and not r["exam_round_id"],
                 "criteria": [_criterion_out(c) for c in criteria.get(str(r["id"]), [])],
@@ -558,15 +579,38 @@ async def create_round(
 @router.patch("/workflows/{workflow_id}/rounds/{round_id}")
 async def patch_round(
     workflow_id: uuid.UUID, round_id: uuid.UUID, body: RoundPatch,
-    ctx: HrCtxDep, db: DbSessionDep,
+    request: Request, ctx: HrCtxDep, db: DbSessionDep,
 ) -> dict[str, Any]:
-    _hr_uid, company_id = ctx
-    await _owned_workflow(db, company_id, workflow_id)
+    hr_uid, company_id = ctx
+    wf = await _owned_workflow(db, company_id, workflow_id)
+    fields = body.model_dump(exclude_unset=True)
+    before = next(
+        (r for r in await load_rounds(db, workflow_id) if str(r["id"]) == str(round_id)), None
+    )
     try:
-        await update_round(
-            db, workflow_id=workflow_id, round_id=round_id,
-            fields=body.model_dump(exclude_unset=True),
-        )
+        await update_round(db, workflow_id=workflow_id, round_id=round_id, fields=fields)
+        # PH4-O3: a change to where a round sends people is audited, before
+        # and after. The settings of a round are not; its routing is.
+        if before is not None and any(k in fields for k in _BRANCH_KEYS):
+            after = next(
+                (r for r in await load_rounds(db, workflow_id) if str(r["id"]) == str(round_id)),
+                None,
+            )
+
+            def _snap(r: dict[str, Any] | None) -> dict[str, Any]:
+                return {k: (str(r[k]) if r and r.get(k) is not None else None)
+                        for k in _BRANCH_KEYS}
+
+            if _snap(before) != _snap(after):
+                db.add(AuditLog(
+                    actor_id=hr_uid, actor_type="user", action="workflow.branch.updated",
+                    resource_type="workflow", resource_id=workflow_id,
+                    details={"company_id": str(company_id), "version": wf["version"],
+                             "round_id": str(round_id), "round_title": before["title"],
+                             "before": _snap(before), "after": _snap(after)},
+                    ip_address=extract_client_ip(request),
+                    user_agent=extract_user_agent(request),
+                ))
         await db.commit()
     except WorkflowError as exc:
         await db.rollback()
@@ -755,8 +799,19 @@ async def get_decision_queue(
         db, company_id=company_id,
         enrolment_ids=[uuid.UUID(str(r["enrolment_id"])) for r in rows if r.get("enrolment_id")],
     )
+    # PH4-O1: where each candidate stands against their stage's SLA, who owns
+    # it, and whether an exception is open. Also informational: nothing here
+    # reorders, filters or moves anyone.
+    slas = await sla_for_enrolments(
+        db, company_id=company_id,
+        enrolment_ids=[uuid.UUID(str(r["enrolment_id"])) for r in rows if r.get("enrolment_id")],
+    )
     for r in rows:
         r["scorecards"] = counts.get(str(r.get("enrolment_id")))
+        info = slas.get(str(r.get("enrolment_id"))) or {}
+        r["sla"] = info.get("sla")
+        r["stage_owner_name"] = info.get("owner_name")
+        r["open_exceptions"] = info.get("open_exceptions", 0)
     return rows
 
 

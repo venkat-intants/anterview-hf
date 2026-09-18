@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 
 def _db() -> AsyncMock:
     db = AsyncMock()
-    db.scalar = AsyncMock(return_value="draft")  # _assert_draft
-    db.execute = AsyncMock()
+    db.scalar = AsyncMock(return_value="draft")
+    # _assert_draft reads (status, review_status) — PH4-O6 locks a version under review.
+    res = MagicMock()
+    res.first.return_value = ("draft", "draft")
+    db.execute = AsyncMock(return_value=res)
     return db
 
 

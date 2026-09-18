@@ -101,6 +101,8 @@ class SweepResult:
     # Scored workflow interviews recorded as their round's result (advanced,
     # held for a person, or queued for the final decision).
     workflow_results: int = 0
+    # PH4-O1: stage owners told an application in their stage ran past its SLA.
+    sla_overdue: int = 0
     # "stage: ErrorType: message" for each stage that failed this sweep. The
     # sweep carries on past them; this is how the failure is still recorded.
     failed_stages: list[str] = field(default_factory=list)
@@ -114,6 +116,7 @@ class SweepResult:
             + self.completions
             + self.results_emails
             + self.workflow_results
+            + self.sla_overdue
         )
 
 
@@ -733,6 +736,21 @@ async def _workflow_results(db: AsyncSession, result: SweepResult) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 7. Stage SLAs (PH4-O1) — tell the owner once when a stage runs overdue
+# ---------------------------------------------------------------------------
+async def _stage_sla(db: AsyncSession, result: SweepResult) -> None:
+    """Notify stage owners about applications past their stage's SLA.
+
+    Notifies, never moves: an overdue stage is a prompt for a person, not a
+    trigger for anything (D-05). Deduplicated per application and stage entry.
+    """
+    from app.stage_sla import notify_overdue_stages  # noqa: PLC0415
+
+    result.sla_overdue += await notify_overdue_stages(db)
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
 async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
@@ -752,6 +770,9 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
             ("completed", _interview_completed),
             # After "completed", never before: see _workflow_results.
             ("workflow", _workflow_results),
+            # Last: after this sweep's own moves, so a candidate it just
+            # advanced is not reported overdue at the stage they left.
+            ("stage_sla", _stage_sla),
         ):
             try:
                 await fn(db, result)

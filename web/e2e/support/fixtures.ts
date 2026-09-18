@@ -115,6 +115,12 @@ export class Api {
     const res = await this.request.patch(`${API_URL}${route}`, { headers: this.headers(), data });
     return { status: res.status(), body: await res.text() };
   }
+
+  /** For asserting refusals: returns the raw status and body instead of failing. */
+  async postRaw(route: string, data?: unknown): Promise<{ status: number; body: string }> {
+    const res = await this.request.post(`${API_URL}${route}`, { headers: this.headers(), data });
+    return { status: res.status(), body: await res.text() };
+  }
 }
 
 /**
@@ -236,6 +242,11 @@ export async function createLiveMcqOpening(
     deadline_days: 5,
     exam_round_id: examRoundId,
   });
+  // PH4-O6: a version must be reviewed and approved by the company's super
+  // admin before HR can publish it. The same super admin who approved the
+  // opening does the review — a different account from the one authoring it.
+  await api.post(`/hr/workflows/${draft.id}/submit-review`, { note: null });
+  await approver.post(`/admin/workflow-reviews/${draft.id}/approve`, { note: null });
   await api.post(`/hr/workflows/${draft.id}/publish`);
   await api.patch(`/hr/requisitions/${opening.id}`, { public_apply_enabled: true });
 
@@ -273,6 +284,9 @@ export async function createLiveReviewOpening(
       { id: 'ownership', name: 'Ownership', kind: 'behavioural', weight: 0.4 },
     ],
   });
+  // PH4-O6: same review gate as createLiveMcqOpening.
+  await api.post(`/hr/workflows/${draft.id}/submit-review`, { note: null });
+  await approver.post(`/admin/workflow-reviews/${draft.id}/approve`, { note: null });
   await api.post(`/hr/workflows/${draft.id}/publish`);
   await api.patch(`/hr/requisitions/${opening.id}`, { public_apply_enabled: true });
 
@@ -336,6 +350,9 @@ export async function createLiveCodingOpening(
     deadline_days: 5,
     exam_round_id: examRoundId,
   });
+  // PH4-O6: same review gate as createLiveMcqOpening.
+  await api.post(`/hr/workflows/${draft.id}/submit-review`, { note: null });
+  await approver.post(`/admin/workflow-reviews/${draft.id}/approve`, { note: null });
   await api.post(`/hr/workflows/${draft.id}/publish`);
   await api.patch(`/hr/requisitions/${opening.id}`, { public_apply_enabled: true });
 

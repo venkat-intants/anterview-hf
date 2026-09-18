@@ -36,6 +36,9 @@ from app.schedule_core import covered, merge
 DEFAULT_MAX_PER_DAY = 4
 DEFAULT_MAX_PER_WEEK = 15
 MAX_SPAN = timedelta(days=92)
+# Calibration looks back over scored interviews, and a quiet panel needs a long
+# period to reach the minimum number of candidates at all.
+MAX_CALIBRATION_SPAN = timedelta(days=366)
 # A calibration period shorter than this adds nothing but a way to isolate one
 # candidate by time (security review M1).
 MIN_CALIBRATION_SPAN = timedelta(days=7)
@@ -51,14 +54,15 @@ class PanelError(Exception):
         self.detail = detail
 
 
-def _period(start: datetime, end: datetime) -> tuple[datetime, datetime]:
+def _period(start: datetime, end: datetime,
+            max_span: timedelta = MAX_SPAN) -> tuple[datetime, datetime]:
     if start.tzinfo is None or end.tzinfo is None:
         raise PanelError(422, "The period needs timezone offsets.")
     start, end = start.astimezone(UTC), end.astimezone(UTC)
     if end <= start:
         raise PanelError(422, "The period must end after it starts.")
-    if end - start > MAX_SPAN:
-        raise PanelError(422, "Choose a period of at most 92 days.")
+    if end - start > max_span:
+        raise PanelError(422, f"Choose a period of at most {max_span.days} days.")
     return start, end
 
 
@@ -251,7 +255,7 @@ async def calibration(
     requisition_id: uuid.UUID | None, round_id: uuid.UUID | None, actor: uuid.UUID,
     meta: RequestMeta,
 ) -> dict[str, Any]:
-    start, end = _period(start, end)
+    start, end = _period(start, end, MAX_CALIBRATION_SPAN)
     if end - start < MIN_CALIBRATION_SPAN:
         raise PanelError(422, "Choose a period of at least 7 days.")
     rows = (

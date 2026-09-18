@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -38,7 +39,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
     now = datetime.now(tz=UTC)
     tag = uuid.uuid4().hex[:8]
     cid = uuid.uuid4()
-    hr, admin, iv1, iv2 = (uuid.uuid4() for _ in range(4))
+    hr, admin, iv1, iv2, iv3 = (uuid.uuid4() for _ in range(5))
     cand1, cand2 = uuid.uuid4(), uuid.uuid4()
     req = uuid.uuid4()
     # Three days out, 04:00 UTC = 09:30 in India.
@@ -52,7 +53,8 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             "INSERT INTO companies (id,name,slug,is_active,created_at,updated_at)"
             " VALUES (:i,:s,:s,true,:n,:n)"), {"i": cid, "s": f"w3-{tag}", "n": now})
         staff = ((hr, "hr_manager", "Hema HR"), (admin, "super_admin", "Sam Admin"),
-                 (iv1, "interviewer", "Ivan One"), (iv2, "interviewer", "Iris Two"))
+                 (iv1, "interviewer", "Ivan One"), (iv2, "interviewer", "Iris Two"),
+                 (iv3, "interviewer", "Ines Three"))
         for uid, role, name in staff:
             await db.execute(text(
                 "INSERT INTO users (id,email,full_name,password_hash,company_id,preferred_language,"
@@ -266,6 +268,11 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             moved = await db.scalar(text(
                 "SELECT count(*) FROM email_events WHERE related_id = :s"
                 " AND template = 'interview_session_update'"), {"s": uuid.UUID(s_b["id"])})
+        r = await c.get(f"/hr/loops/{loop1}/calendar.ics")
+        sequences = set(re.findall(r"SEQUENCE:(\d+)", r.text))
+        check("moving a sent session raises the calendar SEQUENCE, so calendars update",
+              r.status_code == 200 and sequences and min(int(x) for x in sequences) >= 2,
+              str(sequences))
         check("the scorecard is due after the NEW time",
               due == base + timedelta(minutes=150) + timedelta(days=2), str(due))
         check("the candidate is told the new time", moved == 1, str(moved))
@@ -277,8 +284,8 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("a session cannot be marked done before it starts", r.status_code == 409, r.text[:120])
         async with factory() as db:
             audits = dict((await db.execute(text(
-                "SELECT action, count(*) FROM audit_log WHERE action LIKE 'session.%'"
-                "   OR action LIKE 'loop.%' OR action LIKE 'availability.%'"
+                "SELECT action, count(*) FROM audit_log WHERE (action LIKE 'session.%'"
+                "   OR action LIKE 'loop.%' OR action LIKE 'availability.%')"
                 "  AND (details->>'company_id') = :c GROUP BY action"),
                 {"c": str(cid)})).all())
             reason_leak = await db.scalar(text(
@@ -349,6 +356,54 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post(f"/hr/sessions/{only['id']}/outcome", json={"outcome": "cancelled"})
         check("a loop left with no session to hold is cancelled, not 'scheduled' forever",
               r.status_code == 200 and r.json()["loop_status"] == "cancelled", r.text[:200])
+
+        # Cancelling releases a scorecard only that interview was holding open;
+        # one another live session still needs is kept.
+        r = await c.post(f"/hr/enrolments/{e1}/loops", json={"title": "Guest panel"})
+        guest = r.json()["id"]
+        r = await c.post(f"/hr/loops/{guest}/sessions",
+                         json={"round_id": rnd, "title": "Guest chat", "duration_minutes": 30,
+                               "interviewer_user_ids": [str(iv3)], "starts_at": at(1700),
+                               "allow_outside_availability": True})
+        g = r.json()["sessions"][0]
+        g_card = g["interviewers"][0]["scorecard_id"]
+        r = await c.post(f"/hr/sessions/{g['id']}/outcome", json={"outcome": "cancelled"})
+        async with factory() as db:
+            g_state = await db.scalar(text(
+                "SELECT status FROM interviewer_scorecards WHERE id = :i"), {"i": uuid.UUID(g_card)})
+            kept = await db.scalar(text(
+                "SELECT sc.status FROM interview_session_interviewers si"
+                " JOIN interviewer_scorecards sc ON sc.id = si.scorecard_id"
+                " WHERE si.session_id = :s"), {"s": uuid.UUID(only["id"])})
+            told = await db.scalar(text(
+                "SELECT count(*) FROM notifications WHERE user_id = :u"
+                " AND title = 'An interview assignment was withdrawn'"), {"u": iv3})
+        check("cancelling an interview releases the scorecard only it was holding",
+              r.status_code == 200 and g_state == "withdrawn", f"{r.status_code} {g_state}")
+        check("…and tells that interviewer", told == 1, str(told))
+        check("a scorecard another live session still needs is kept", kept == "assigned",
+              str(kept))
+
+        # An AI interview's schedule is part of the same record (A2 #25).
+        r = await c.post("/hr/interviews", json={"applicant_id": str(a2), "enrolment_id": str(e2),
+                                                 "scheduled_at": at(2000)})
+        invite = r.json().get("invite_id")
+        check("HR invites the candidate to an AI interview", r.status_code == 201, r.text[:160])
+        r = await c.patch(f"/hr/interviews/{invite}", json={"scheduled_at": at(2100)})
+        check("…moves it", r.status_code == 200, r.text[:160])
+        r = await c.post(f"/hr/interviews/{invite}/revoke")
+        check("…and revokes it", r.status_code == 200, r.text[:160])
+        async with factory() as db:
+            invite_audit = {row[0]: row[1] for row in (await db.execute(text(
+                "SELECT action, details FROM audit_log WHERE resource_id = :i"
+                " AND action LIKE 'interview_invite.%'"), {"i": uuid.UUID(invite)})).all()}
+        check("creating, moving and revoking an AI interview are each audited",
+              set(invite_audit) == {"interview_invite.created", "interview_invite.rescheduled",
+                                    "interview_invite.revoked"}, str(sorted(invite_audit)))
+        check("…against this company, with where the time moved from and to",
+              all(d.get("company_id") == str(cid) for d in invite_audit.values())
+              and invite_audit.get("interview_invite.rescheduled", {}).get("to", "")[:16]
+              == at(2100)[:16], str(invite_audit.get("interview_invite.rescheduled")))
 
         print("\nPH4-A2 — interviewers see their own")
         acting["iv"] = iv2
@@ -423,6 +478,10 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                              params={"start": at(-60), "end": at(60), "round_id": rnd})
         check("a narrow window cannot isolate a candidate", narrow.status_code == 422,
               narrow.text[:160])
+        year = await c.get("/hr/panel/calibration",
+                           params={"start": at(-180 * 24 * 60), "end": at(0)})
+        check("calibration looks back 180 days, as the panel offers", year.status_code == 200,
+              year.text[:160])
         async with factory() as db:
             after = await db.scalar(text(
                 "SELECT count(*) FROM interviewer_scorecard_scores WHERE scorecard_id = ANY(:s)"),
@@ -434,7 +493,8 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 "SELECT id, status FROM enrolments WHERE id = ANY(:e)"), {"e": [e1, e2]})).all())
         check("submitted scorecards are untouched by calibration", before == after == 4,
               f"{before} {after}")
-        check("looking at calibration is audited", viewed == 2, str(viewed))
+        # Three reports were served: the full panel, one candidate, and 180 days.
+        check("looking at calibration is audited, every time", viewed == 3, str(viewed))
         check("nothing in scheduling or calibration moved a candidate",
               await ledger() == ledger_before and set(status.values()) == {"shortlisted"},
               str(status))

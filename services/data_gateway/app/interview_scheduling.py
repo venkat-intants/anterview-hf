@@ -710,12 +710,26 @@ async def reschedule_session(
                     "to": start.isoformat(), "duration_minutes": duration,
                     "outside_availability": allow_outside_availability})
     if s["sent_at"] is not None:
+        await _bump_itinerary(db, [s["loop_id"]])
         loop = await _load_loop(db, company_id=company_id, loop_id=s["loop_id"])
         await _tell_candidate_session(db, loop=loop, session_id=session_id, cancelled=False)
         await _notify_interviewers(db, company_id=company_id, loop=loop, session_id=session_id,
                                    user_ids=ids, what="moved")
     await _refresh_loop_status(db, s["loop_id"])
     return {"session_id": str(session_id), "starts_at": start.isoformat()}
+
+
+async def _bump_itinerary(db: AsyncSession, loop_ids: list[uuid.UUID]) -> None:
+    """A change to a schedule the candidate already has raises its calendar
+    SEQUENCE. Without it, a calendar app that already holds the event keeps the
+    old time or ignores the cancellation (RFC 5545 3.8.7.4). Loops not yet sent
+    have no event anywhere, so they are left alone."""
+    if loop_ids:
+        await db.execute(
+            text("UPDATE interview_loops SET itinerary_version = itinerary_version + 1,"
+                 " updated_at = now() WHERE id = ANY(:l) AND sent_at IS NOT NULL"),
+            {"l": loop_ids},
+        )
 
 
 async def _move_scorecard_due(db: AsyncSession, *, session_id: uuid.UUID, due: datetime) -> None:
@@ -728,6 +742,54 @@ async def _move_scorecard_due(db: AsyncSession, *, session_id: uuid.UUID, due: d
         ),
         {"d": due, "s": session_id},
     )
+
+
+# Which of a cancelled interview's scorecards to hand back: those no other
+# session of the same candidate and round still needs (one scheduled, awaiting a
+# slot, or already held), and that the interviewer has not started. A begun one
+# holds their words, and whether it stands is HR's call from the drawer.
+_RELEASABLE_SQL = """
+SELECT DISTINCT si.scorecard_id
+  FROM interview_session_interviewers si
+  JOIN interviewer_scorecards sc ON sc.id = si.scorecard_id
+ WHERE si.session_id = ANY(:s) AND sc.company_id = :c
+   AND sc.status = 'assigned' AND sc.superseded_at IS NULL AND sc.corrects_id IS NULL
+   AND NOT EXISTS (
+         SELECT 1 FROM interview_session_interviewers o
+           JOIN interview_sessions os ON os.id = o.session_id
+          WHERE o.scorecard_id = si.scorecard_id AND os.id <> ALL(:s)
+            AND os.status IN ('scheduled', 'awaiting_slot', 'completed', 'no_show'))
+"""
+
+
+async def _release_scorecards(
+    db: AsyncSession, *, company_id: uuid.UUID, session_ids: list[uuid.UUID],
+    actor: uuid.UUID, meta: RequestMeta,
+) -> int:
+    """Withdraw the scorecards only these (now cancelled) sessions were holding
+    open, so none turns "late" for an interview that is not going to happen.
+
+    Through A1's own ``withdraw``, one at a time: each keeps its audit row and
+    its notifications, and A1's refusals stand — an HR manager on the panel is
+    not withdrawn by their own hand, and is left for a colleague, as before.
+    Returns how many were withdrawn. Caller commits.
+    """
+    if not session_ids:
+        return 0
+    ids = [r[0] for r in (await db.execute(
+        text(_RELEASABLE_SQL), {"s": session_ids, "c": company_id})).all()]
+    released = 0
+    for card_id in ids:
+        try:
+            async with db.begin_nested():
+                await cards.withdraw(db, company_id=company_id, scorecard_id=card_id,
+                                     actor=actor, reason="The interview was cancelled.",
+                                     meta=meta)
+            released += 1
+        except ScorecardError as exc:
+            log.info("scheduling.scorecard_kept", scorecard_id=str(card_id),
+                     reason=exc.detail[:80])
+    return released
 
 
 async def set_session_outcome(
@@ -751,11 +813,16 @@ async def set_session_outcome(
         ),
         {"o": outcome, "r": why, "i": session_id},
     )
+    released = 0
+    if outcome == "cancelled":
+        released = await _release_scorecards(db, company_id=company_id,
+                                             session_ids=[session_id], actor=actor, meta=meta)
     _audit(db, actor_id=actor, action=f"session.{outcome}", resource_type="interview_session",
            resource_id=session_id, meta=meta,
            details={"company_id": str(company_id), "has_reason": bool(why),
-                    "reason_chars": len(why or "")})
+                    "reason_chars": len(why or ""), "scorecards_released": released})
     if outcome == "cancelled" and s["sent_at"] is not None and s["starts_at"] is not None:
+        await _bump_itinerary(db, [s["loop_id"]])
         loop = await _load_loop(db, company_id=company_id, loop_id=s["loop_id"])
         await _tell_candidate_session(db, loop=loop, session_id=session_id, cancelled=True)
         ids = [r[0] for r in (await db.execute(
@@ -794,11 +861,16 @@ async def cancel_loop(
         ),
         {"r": why, "u": actor, "l": loop_id},
     )
+    released = await _release_scorecards(db, company_id=company_id, session_ids=pending,
+                                         actor=actor, meta=meta)
     _audit(db, actor_id=actor, action="loop.cancelled", resource_type="interview_loop",
            resource_id=loop_id, meta=meta,
            details={"company_id": str(company_id), "sessions_cancelled": len(pending),
-                    "has_reason": bool(why), "reason_chars": len(why or "")})
+                    "has_reason": bool(why), "reason_chars": len(why or ""),
+                    "scorecards_released": released})
     if loop["sent_at"] is not None:
+        await _bump_itinerary(db, [loop_id])
+        loop = await _load_loop(db, company_id=company_id, loop_id=loop_id)
         await _tell_candidate_loop(db, loop={**loop, "status": "cancelled"}, kind="cancelled")
     return {"loop_id": str(loop_id), "status": "cancelled", "sessions_cancelled": len(pending)}
 
@@ -1270,7 +1342,7 @@ async def close_for_decision(
                 " cancelled_at = CAST(:n AS timestamptz), updated_at = CAST(:n AS timestamptz)"
                 " WHERE enrolment_id = :e AND company_id = :c"
                 "   AND (status = 'awaiting_slot' OR (status = 'scheduled' AND starts_at > :n))"
-                " RETURNING id, title, starts_at"
+                " RETURNING id, title, starts_at, loop_id"
             ),
             {"e": enrolment_id, "c": company_id, "n": now},
         )
@@ -1314,9 +1386,18 @@ async def close_for_decision(
                 body=f"{s['title']} · no longer needed", link="/interviewer",
                 dedupe_key=f"iv-session:{s['id']}:{uid}:decision",
             )
+    await _bump_itinerary(db, list({s["loop_id"] for s in cancelled}))
+    # A decided candidate's untouched scorecards for interviews that will not
+    # now happen are handed back too — when a person made the decision.
+    released = 0
+    if actor is not None:
+        released = await _release_scorecards(
+            db, company_id=company_id, session_ids=[s["id"] for s in cancelled],
+            actor=actor, meta=RequestMeta())
     if cancelled or closed:
         _audit(db, actor_id=actor, action="loop.closed_on_decision",
                resource_type="enrolment", resource_id=enrolment_id, meta=RequestMeta(),
                details={"company_id": str(company_id), "decision": decision,
-                        "sessions_cancelled": len(cancelled), "loops_closed": len(closed)})
+                        "sessions_cancelled": len(cancelled), "loops_closed": len(closed),
+                        "scorecards_released": released})
     return len(cancelled)

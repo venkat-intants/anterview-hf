@@ -104,6 +104,7 @@ class SweepResult:
     # PH4-O1: stage owners told an application in their stage ran past its SLA.
     sla_overdue: int = 0
     session_reminders: int = 0
+    offers_expired: int = 0
     # "stage: ErrorType: message" for each stage that failed this sweep. The
     # sweep carries on past them; this is how the failure is still recorded.
     failed_stages: list[str] = field(default_factory=list)
@@ -119,6 +120,7 @@ class SweepResult:
             + self.workflow_results
             + self.sla_overdue
             + self.session_reminders
+            + self.offers_expired
         )
 
 
@@ -821,6 +823,16 @@ async def _session_reminders(db: AsyncSession, result: SweepResult) -> None:
     await db.commit()
 
 
+async def _offer_expiry(db: AsyncSession, result: SweepResult) -> None:
+    """PH4-A3: a sent offer past its deadline becomes expired, and HR is told.
+    The database refuses acceptance after expiry regardless; this makes the
+    state say so without waiting for someone to open the link."""
+    from app.offers import expire_due  # noqa: PLC0415 — keep the sweep import light
+
+    result.offers_expired += await expire_due(db)
+    await db.commit()
+
+
 async def _stage_sla(db: AsyncSession, result: SweepResult) -> None:
     """Notify stage owners about applications past their stage's SLA.
 
@@ -857,6 +869,7 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
             # advanced is not reported overdue at the stage they left.
             ("stage_sla", _stage_sla),
             ("sessions", _session_reminders),
+            ("offers", _offer_expiry),
         ):
             try:
                 await fn(db, result)

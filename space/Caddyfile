@@ -150,6 +150,13 @@
 	handle /interview-invite* {
 		reverse_proxy 127.0.0.1:8002
 	}
+	# PH4-A3/A4 — the candidate's offer and preboarding documents (X-Offer-Token).
+	handle /offer* {
+		request_body {
+			max_size 11MB
+		}
+		reverse_proxy 127.0.0.1:8002
+	}
 	handle /jobs* {
 		reverse_proxy 127.0.0.1:8002
 	}
@@ -232,6 +239,7 @@
 				request>headers>X-Exam-Token delete
 				request>headers>X-Interview-Token delete
 				request>headers>X-Draft-Token delete
+				request>headers>X-Offer-Token delete
 				request>headers>X-Test-Hooks-Token delete
 				request>uri query {
 					replace code REDACTED

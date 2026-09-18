@@ -1600,6 +1600,169 @@ def _t_interview_session_reminder(lang: str, ctx: dict) -> tuple[str, str, str, 
 
 
 
+# ===========================================================================
+# PH4-A3 / A4 — offers and preboarding documents. Every link carries its token
+# in the URL fragment; a code is never a link.
+# ===========================================================================
+def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    name = ctx.get("name")
+    job_title = ctx.get("job_title", "the role")
+    org = (ctx.get("company") or ctx.get("brand") or "").strip()
+    url = ctx.get("offer_url")
+    expires = ctx.get("expires", "")
+    resent = bool(ctx.get("resent"))
+    jt, orge, exp = _esc(job_title), _esc(org), _esc(expires)
+    loc = _loc(lang, {
+        "en": {
+            "subject": f"Your offer from {org}: {job_title}" if org else f"Your offer: {job_title}",
+            "pre": "Your offer is ready to read.",
+            "lead": (f"<strong>{orge}</strong> is pleased to offer you the role of <strong>{jt}</strong>."
+                     if org else f"You have an offer for the role of <strong>{jt}</strong>."),
+            "resent": "Here is a fresh link to your offer. The earlier link no longer works.",
+            "read": "Read the offer, then accept or decline it. To confirm your answer we will email you a one-time code.",
+            "expires": f"The offer is open until <strong>{exp}</strong>.",
+            "cta": "Read my offer",
+            "fallback": "Or paste this link into your browser:",
+            "keep": "This link is personal to you. Please don't forward it.",
+        },
+        "hi": {
+            "subject": f"{org} से आपका ऑफ़र: {job_title}" if org else f"आपका ऑफ़र: {job_title}",
+            "pre": "आपका ऑफ़र पढ़ने के लिए तैयार है।",
+            "lead": (f"<strong>{orge}</strong> आपको <strong>{jt}</strong> की भूमिका का ऑफ़र देते हुए प्रसन्न है।"
+                     if org else f"आपके पास <strong>{jt}</strong> की भूमिका का ऑफ़र है।"),
+            "resent": "यह आपके ऑफ़र का नया लिंक है। पुराना लिंक अब काम नहीं करता।",
+            "read": "ऑफ़र पढ़ें, फिर उसे स्वीकार या अस्वीकार करें। आपके उत्तर की पुष्टि के लिए हम आपको एक बार उपयोग होने वाला कोड ईमेल करेंगे।",
+            "expires": f"यह ऑफ़र <strong>{exp}</strong> तक खुला है।",
+            "cta": "मेरा ऑफ़र पढ़ें",
+            "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
+            "keep": "यह लिंक केवल आपके लिए है। कृपया इसे आगे न भेजें।",
+        },
+        "te": {
+            "subject": f"{org} నుండి మీ ఆఫర్: {job_title}" if org else f"మీ ఆఫర్: {job_title}",
+            "pre": "మీ ఆఫర్ చదవడానికి సిద్ధంగా ఉంది.",
+            "lead": (f"<strong>{orge}</strong> మీకు <strong>{jt}</strong> పాత్రను ఆఫర్ చేయడానికి సంతోషిస్తోంది."
+                     if org else f"మీకు <strong>{jt}</strong> పాత్ర కోసం ఆఫర్ ఉంది."),
+            "resent": "ఇది మీ ఆఫర్‌కు కొత్త లింక్. పాత లింక్ ఇకపై పనిచేయదు.",
+            "read": "ఆఫర్‌ను చదివి, దాన్ని అంగీకరించండి లేదా తిరస్కరించండి. మీ సమాధానాన్ని నిర్ధారించడానికి మేము మీకు ఒకసారి ఉపయోగించే కోడ్‌ను ఇమెయిల్ చేస్తాము.",
+            "expires": f"ఈ ఆఫర్ <strong>{exp}</strong> వరకు తెరిచి ఉంటుంది.",
+            "cta": "నా ఆఫర్ చదవండి",
+            "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
+            "keep": "ఈ లింక్ మీకు మాత్రమే. దయచేసి దీన్ని ఫార్వర్డ్ చేయవద్దు.",
+        },
+    })
+    inner = _p(_greeting(lang, name))
+    if resent:
+        inner += _p(f"<strong>{loc['resent']}</strong>")
+    inner += _p(loc["lead"]) + _p(loc["read"])
+    if expires:
+        inner += _p(loc["expires"])
+    if url:
+        inner += _button(url, loc["cta"]) + _fallback_link(loc["fallback"], url)
+    inner += _p(loc["keep"])
+    plain = lambda h: h.replace("<strong>", "").replace("</strong>", "")  # noqa: E731
+    text = [_greeting(lang, name), ""] + ([loc["resent"]] if resent else []) + [
+        plain(loc["lead"]), loc["read"]] + ([plain(loc["expires"])] if expires else []) + (
+        ["", url] if url else []) + ["", loc["keep"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_offer_code(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    name = ctx.get("name")
+    code = str(ctx.get("code", ""))
+    minutes = int(ctx.get("minutes") or 10)
+    accept = ctx.get("purpose") == "accept"
+    loc = _loc(lang, {
+        "en": {
+            "subject": f"Your code to {'accept' if accept else 'decline'} the offer",
+            "pre": "Your one-time code.",
+            "lead": f"Use this code to {'accept' if accept else 'decline'} your offer:",
+            "exp": f"It works once, for {minutes} minutes.",
+            "not_you": "If you did not ask for this code, you can ignore this email — nothing happens without it.",
+        },
+        "hi": {
+            "subject": f"ऑफ़र {'स्वीकार' if accept else 'अस्वीकार'} करने के लिए आपका कोड",
+            "pre": "आपका एक बार उपयोग होने वाला कोड।",
+            "lead": f"अपना ऑफ़र {'स्वीकार' if accept else 'अस्वीकार'} करने के लिए इस कोड का उपयोग करें:",
+            "exp": f"यह केवल एक बार, {minutes} मिनट के लिए काम करता है।",
+            "not_you": "यदि आपने यह कोड नहीं मांगा, तो इस ईमेल को अनदेखा करें — इसके बिना कुछ नहीं होता।",
+        },
+        "te": {
+            "subject": f"ఆఫర్‌ను {'అంగీకరించడానికి' if accept else 'తిరస్కరించడానికి'} మీ కోడ్",
+            "pre": "మీ ఒకసారి ఉపయోగించే కోడ్.",
+            "lead": f"మీ ఆఫర్‌ను {'అంగీకరించడానికి' if accept else 'తిరస్కరించడానికి'} ఈ కోడ్‌ను ఉపయోగించండి:",
+            "exp": f"ఇది ఒక్కసారి మాత్రమే, {minutes} నిమిషాల పాటు పనిచేస్తుంది.",
+            "not_you": "మీరు ఈ కోడ్ అడగకపోతే, ఈ ఇమెయిల్‌ను విస్మరించండి — ఇది లేకుండా ఏమీ జరగదు.",
+        },
+    })
+    big = (f'<p style="font-size:28px;letter-spacing:6px;font-weight:700;margin:12px 0 18px;">'
+           f"{_esc(code)}</p>")
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + big + _p(loc["exp"]) + _p(loc["not_you"])
+    text = [_greeting(lang, name), "", loc["lead"], code, "", loc["exp"], loc["not_you"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_offer_update(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """The offer was withdrawn by the company."""
+    name = ctx.get("name")
+    job_title = ctx.get("job_title", "the role")
+    org = (ctx.get("company") or "").strip()
+    jt, orge = _esc(job_title), _esc(org)
+    loc = _loc(lang, {
+        "en": {"subject": f"Update on your offer: {job_title}",
+               "pre": "An update on your offer.",
+               "lead": (f"<strong>{orge}</strong> has withdrawn its offer for <strong>{jt}</strong>."
+                        if org else f"The offer for <strong>{jt}</strong> has been withdrawn."),
+               "next": "If you have questions, reply to the recruiter who contacted you."},
+        "hi": {"subject": f"आपके ऑफ़र पर अपडेट: {job_title}",
+               "pre": "आपके ऑफ़र पर एक अपडेट।",
+               "lead": (f"<strong>{orge}</strong> ने <strong>{jt}</strong> के लिए अपना ऑफ़र वापस ले लिया है।"
+                        if org else f"<strong>{jt}</strong> का ऑफ़र वापस ले लिया गया है।"),
+               "next": "यदि आपके कोई प्रश्न हैं, तो उस रिक्रूटर को उत्तर दें जिसने आपसे संपर्क किया।"},
+        "te": {"subject": f"మీ ఆఫర్‌పై అప్‌డేట్: {job_title}",
+               "pre": "మీ ఆఫర్‌పై ఒక అప్‌డేట్.",
+               "lead": (f"<strong>{orge}</strong> <strong>{jt}</strong> కోసం తన ఆఫర్‌ను ఉపసంహరించుకుంది."
+                        if org else f"<strong>{jt}</strong> కోసం ఆఫర్ ఉపసంహరించబడింది."),
+               "next": "మీకు ప్రశ్నలు ఉంటే, మిమ్మల్ని సంప్రదించిన రిక్రూటర్‌కు జవాబు ఇవ్వండి."},
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + _p(loc["next"])
+    text = [_greeting(lang, name), "", loc["lead"].replace("<strong>", "").replace("</strong>", ""),
+            loc["next"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_document_update(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """HR rejected a preboarding document, or asked for a replacement."""
+    name = ctx.get("name")
+    doc = _esc(ctx.get("document", ""))
+    reason = ctx.get("reason")
+    loc = _loc(lang, {
+        "en": {"subject": "Please upload a document again",
+               "pre": "One of your documents needs attention.",
+               "lead": f"The hiring team needs a new copy of <strong>{doc}</strong>.",
+               "why": "What they said:",
+               "how": "Open your offer link and upload a new file for this document."},
+        "hi": {"subject": "कृपया एक दस्तावेज़ फिर से अपलोड करें",
+               "pre": "आपके एक दस्तावेज़ पर ध्यान देने की ज़रूरत है।",
+               "lead": f"हायरिंग टीम को <strong>{doc}</strong> की नई प्रति चाहिए।",
+               "why": "उन्होंने क्या कहा:",
+               "how": "अपना ऑफ़र लिंक खोलें और इस दस्तावेज़ के लिए नई फ़ाइल अपलोड करें।"},
+        "te": {"subject": "దయచేసి ఒక పత్రాన్ని మళ్లీ అప్‌లోడ్ చేయండి",
+               "pre": "మీ పత్రాల్లో ఒకదానికి శ్రద్ధ అవసరం.",
+               "lead": f"నియామక బృందానికి <strong>{doc}</strong> యొక్క కొత్త కాపీ అవసరం.",
+               "why": "వారు చెప్పింది:",
+               "how": "మీ ఆఫర్ లింక్‌ను తెరిచి, ఈ పత్రం కోసం కొత్త ఫైల్‌ను అప్‌లోడ్ చేయండి."},
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"])
+    text = [_greeting(lang, name), "", loc["lead"].replace("<strong>", "").replace("</strong>", "")]
+    if reason:
+        inner += _p(f"<strong>{loc['why']}</strong> {_esc(reason)}")
+        text.append(f"{loc['why']} {reason}")
+    inner += _p(loc["how"])
+    text.append(loc["how"])
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+
 _BUILDERS = {
     "welcome": _t_welcome,
     "email_verify": _t_email_verify,
@@ -1624,6 +1787,11 @@ _BUILDERS = {
     "interview_slot_request": _t_interview_slot_request,
     "interview_session_update": _t_interview_session_update,
     "interview_session_reminder": _t_interview_session_reminder,
+    # PH4-A3 / A4 offers and preboarding documents.
+    "offer_ready": _t_offer_ready,
+    "offer_code": _t_offer_code,
+    "offer_update": _t_offer_update,
+    "document_update": _t_document_update,
     "generic": _t_generic,
 }
 

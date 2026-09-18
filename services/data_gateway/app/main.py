@@ -77,6 +77,10 @@ from app.routers.interviewer import router as interviewer_router
 from app.routers.jd import router as jd_router
 from app.routers.jobs import router as jobs_router
 from app.routers.notifications import router as notifications_router
+from app.routers.offers import admin_router as offers_admin_router
+from app.routers.offers import hr_router as offers_hr_router
+from app.routers.offers import me_router as offers_me_router
+from app.routers.offers import public_router as offers_public_router
 from app.routers.onboarding import router as onboarding_router
 from app.routers.profile import router as profile_router
 from app.routers.public_apply import router as public_apply_router
@@ -207,6 +211,25 @@ async def _run_retention_job() -> None:
         log.error(
             "interviewer_notes.retention.error", exc_type=type(exc).__name__,
             exc_msg=str(exc),
+        )
+
+    # Same tick: preboarding documents whose purpose is over (PH4-A4) — the
+    # offer ended without an acceptance, or preboarding completed and the HRMS
+    # holds them. Files first, rows only on a full count; honours dry-run.
+    try:
+        from app.preboarding import purge_documents  # noqa: PLC0415
+
+        async with factory() as session:
+            docs = await purge_documents(
+                session, retention_days=settings.preboarding_document_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("preboarding.retention.done", documents=docs,
+                 dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let document cleanup kill the scheduler
+        log.error(
+            "preboarding.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
         )
 
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft
@@ -429,6 +452,9 @@ app.add_middleware(
         "X-Exam-Token",
         "X-Interview-Token",
         "X-Draft-Token",
+        # PH4-A3/A4: the candidate's offer link — view, one-time code, accept or
+        # decline, and preboarding document upload.
+        "X-Offer-Token",
         # Only ever sent by the local browser-test runner. Inert in a
         # deployment: the router that reads it is mounted only under
         # TEST_HOOKS_ENABLED, which config refuses outside a local env, and
@@ -473,6 +499,11 @@ app.include_router(workflow_ops_hr_router)
 app.include_router(scheduling_hr_router)
 app.include_router(scheduling_iv_router)
 app.include_router(scheduling_me_router)
+# PH4 Wave 4 — offers, preboarding documents, the HRMS handoff.
+app.include_router(offers_hr_router)
+app.include_router(offers_admin_router)
+app.include_router(offers_public_router)
+app.include_router(offers_me_router)
 app.include_router(workflow_review_admin_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)

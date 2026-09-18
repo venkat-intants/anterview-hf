@@ -148,6 +148,15 @@
 	handle /interview-invite* {
 		reverse_proxy data_gateway:8002
 	}
+	# /offer* — PH4-A3/A4: the candidate's offer and preboarding documents,
+	# reached by a magic link (X-Offer-Token). Uploads are one document at a
+	# time, 10 MB at most.
+	handle /offer* {
+		request_body {
+			max_size 11MB
+		}
+		reverse_proxy data_gateway:8002
+	}
 	handle /jobs* {
 		reverse_proxy data_gateway:8002
 	}
@@ -216,6 +225,7 @@
 				request>headers>X-Exam-Token delete
 				request>headers>X-Interview-Token delete
 				request>headers>X-Draft-Token delete
+				request>headers>X-Offer-Token delete
 				request>headers>X-Test-Hooks-Token delete
 				request>uri query {
 					replace code REDACTED

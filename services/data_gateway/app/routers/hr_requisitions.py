@@ -57,6 +57,7 @@ from app.requisition_dashboard import gather_dashboard
 from app.requisitions import (
     TERMINAL_STATUSES,
     VALID_STATUSES,
+    StatusRefusedError,
     delivery_risk,
     ensure_applicant_identity_index,
     merge_applicants,
@@ -1150,15 +1151,19 @@ async def set_enrolment_status(
                 return e
         raise HTTPException(status_code=404, detail="Enrolment not found.")
 
-    previous = await record_transition(
-        db,
-        enrolment_id=enrolment_id,
-        company_id=company_id,
-        to_status=body.status,
-        actor_user_id=hr_uid,
-        automated=False,
-        reason=body.reason,
-    )
+    try:
+        previous = await record_transition(
+            db,
+            enrolment_id=enrolment_id,
+            company_id=company_id,
+            to_status=body.status,
+            actor_user_id=hr_uid,
+            automated=False,
+            reason=body.reason,
+        )
+    except StatusRefusedError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     # A person holding someone by hand is still a hold: the decision queue and
     # time-held read held_at / held_reason, which only the runner used to set.
     # Moving them out of held by hand clears it, as release_hold does.

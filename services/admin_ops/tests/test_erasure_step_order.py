@@ -147,7 +147,8 @@ def test_step_5f_counts_reach_the_completion_record() -> None:
     for key in ("interview_assignments_withdrawn", "interview_evidence_redacted",
                 "interview_scorecards_redacted", "interviewer_notes_deleted",
                 "stage_exceptions_redacted", "interview_sessions_cancelled",
-                "interview_loops_redacted"):
+                "interview_loops_redacted", "offers_redacted",
+                "preboarding_documents_redacted"):
         assert body.count(f'"{key}": {key}') == 2, key  # artifacts AND audit row
 
 

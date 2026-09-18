@@ -1611,6 +1611,9 @@ def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     url = ctx.get("offer_url")
     expires = ctx.get("expires", "")
     resent = bool(ctx.get("resent"))
+    # Re-sent after acceptance (to lift a lock, or replace a lost link): the
+    # answer is given, so the email is about documents, not a decision.
+    accepted = bool(ctx.get("accepted"))
     jt, orge, exp = _esc(job_title), _esc(org), _esc(expires)
     loc = _loc(lang, {
         "en": {
@@ -1620,6 +1623,7 @@ def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                      if org else f"You have an offer for the role of <strong>{jt}</strong>."),
             "resent": "Here is a fresh link to your offer. The earlier link no longer works.",
             "read": "Read the offer, then accept or decline it. To confirm your answer we will email you a one-time code.",
+            "accepted_read": "You have accepted this offer. Use this link to send the documents the hiring team asked for — we will email you a one-time code to open them.",
             "expires": f"The offer is open until <strong>{exp}</strong>.",
             "cta": "Read my offer",
             "fallback": "Or paste this link into your browser:",
@@ -1632,6 +1636,7 @@ def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                      if org else f"आपके पास <strong>{jt}</strong> की भूमिका का ऑफ़र है।"),
             "resent": "यह आपके ऑफ़र का नया लिंक है। पुराना लिंक अब काम नहीं करता।",
             "read": "ऑफ़र पढ़ें, फिर उसे स्वीकार या अस्वीकार करें। आपके उत्तर की पुष्टि के लिए हम आपको एक बार उपयोग होने वाला कोड ईमेल करेंगे।",
+            "accepted_read": "आपने यह ऑफ़र स्वीकार कर लिया है। हायरिंग टीम द्वारा माँगे गए दस्तावेज़ भेजने के लिए इस लिंक का उपयोग करें — उन्हें खोलने के लिए हम आपको एक बार उपयोग होने वाला कोड ईमेल करेंगे।",
             "expires": f"यह ऑफ़र <strong>{exp}</strong> तक खुला है।",
             "cta": "मेरा ऑफ़र पढ़ें",
             "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
@@ -1644,6 +1649,7 @@ def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                      if org else f"మీకు <strong>{jt}</strong> పాత్ర కోసం ఆఫర్ ఉంది."),
             "resent": "ఇది మీ ఆఫర్‌కు కొత్త లింక్. పాత లింక్ ఇకపై పనిచేయదు.",
             "read": "ఆఫర్‌ను చదివి, దాన్ని అంగీకరించండి లేదా తిరస్కరించండి. మీ సమాధానాన్ని నిర్ధారించడానికి మేము మీకు ఒకసారి ఉపయోగించే కోడ్‌ను ఇమెయిల్ చేస్తాము.",
+            "accepted_read": "మీరు ఈ ఆఫర్‌ను అంగీకరించారు. నియామక బృందం అడిగిన పత్రాలను పంపడానికి ఈ లింక్‌ను ఉపయోగించండి — వాటిని తెరవడానికి మేము మీకు ఒకసారి ఉపయోగించే కోడ్‌ను ఇమెయిల్ చేస్తాము.",
             "expires": f"ఈ ఆఫర్ <strong>{exp}</strong> వరకు తెరిచి ఉంటుంది.",
             "cta": "నా ఆఫర్ చదవండి",
             "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
@@ -1653,15 +1659,17 @@ def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     inner = _p(_greeting(lang, name))
     if resent:
         inner += _p(f"<strong>{loc['resent']}</strong>")
-    inner += _p(loc["lead"]) + _p(loc["read"])
-    if expires:
+    read = loc["accepted_read"] if accepted else loc["read"]
+    inner += _p(loc["lead"]) + _p(read)
+    if expires and not accepted:
         inner += _p(loc["expires"])
     if url:
         inner += _button(url, loc["cta"]) + _fallback_link(loc["fallback"], url)
     inner += _p(loc["keep"])
     plain = lambda h: h.replace("<strong>", "").replace("</strong>", "")  # noqa: E731
     text = [_greeting(lang, name), ""] + ([loc["resent"]] if resent else []) + [
-        plain(loc["lead"]), loc["read"]] + ([plain(loc["expires"])] if expires else []) + (
+        plain(loc["lead"]), read] + ([plain(loc["expires"])] if expires and not accepted
+                                     else []) + (
         ["", url] if url else []) + ["", loc["keep"]]
     return loc["subject"], inner, "\n".join(text), loc["pre"]
 
@@ -1789,6 +1797,62 @@ def _t_document_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     return loc["subject"], inner, "\n".join(text), loc["pre"]
 
 
+
+def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """After accepting an offer with no account yet: claim the one made for them.
+
+    ctx: name, job_title, company, set_url (optional), applications_url — the
+    same two shapes as application_received (PH4-A3, security review L-new).
+    """
+    name = ctx.get("name")
+    job = ctx.get("job_title") or "the role"
+    company = ctx.get("company") or ""
+    set_url = ctx.get("set_url")
+    apps_url = ctx.get("applications_url") or settings.app_base_url
+    jobe, orge = _esc(job), _esc(company)
+    loc = _loc(lang, {
+        "en": {"subject": f"Welcome aboard — set up your account for {job}",
+               "lead": (f"Thank you for accepting the role of <strong>{jobe}</strong>"
+                        + (f" at <strong>{orge}</strong>." if company else ".")),
+               "activate": "Set a password to follow your onboarding and see your offer in one place.",
+               "cta_set": "Set my password",
+               "signed_in": "You can see your offer and onboarding from your applications page.",
+               "cta_view": "View my applications",
+               "expiry": "This link can be used once and expires in 7 days.",
+               "fallback": "Or paste this link into your browser:"},
+        "hi": {"subject": f"स्वागत है — {job} के लिए अपना खाता सेट करें",
+               "lead": ((f"<strong>{orge}</strong> में " if company else "")
+                        + f"<strong>{jobe}</strong> की भूमिका स्वीकार करने के लिए धन्यवाद।"),
+               "activate": "अपनी ऑनबोर्डिंग देखने और अपना ऑफ़र एक ही जगह देखने के लिए पासवर्ड सेट करें।",
+               "cta_set": "पासवर्ड सेट करें",
+               "signed_in": "आप अपने आवेदन पृष्ठ से अपना ऑफ़र और ऑनबोर्डिंग देख सकते हैं।",
+               "cta_view": "मेरे आवेदन देखें",
+               "expiry": "यह लिंक एक बार उपयोग हो सकता है और 7 दिनों में समाप्त हो जाएगा।",
+               "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:"},
+        "te": {"subject": f"స్వాగతం — {job} కోసం మీ ఖాతాను సెటప్ చేయండి",
+               "lead": ((f"<strong>{orge}</strong>లో " if company else "")
+                        + f"<strong>{jobe}</strong> పాత్రను అంగీకరించినందుకు ధన్యవాదాలు."),
+               "activate": "మీ ఆన్‌బోర్డింగ్‌ను, మీ ఆఫర్‌ను ఒకే చోట చూడటానికి పాస్‌వర్డ్ సెట్ చేయండి.",
+               "cta_set": "పాస్‌వర్డ్ సెట్ చేయండి",
+               "signed_in": "మీ దరఖాస్తుల పేజీ నుండి మీ ఆఫర్‌ను, ఆన్‌బోర్డింగ్‌ను చూడవచ్చు.",
+               "cta_view": "నా దరఖాస్తులు చూడండి",
+               "expiry": "ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, 7 రోజుల్లో ముగుస్తుంది.",
+               "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:"},
+    })
+    plain = loc["lead"].replace("<strong>", "").replace("</strong>", "")
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"])
+    text = [_greeting(lang, name), "", plain]
+    if set_url:
+        inner += _p(loc["activate"]) + _button(set_url, loc["cta_set"])
+        inner += _fallback_link(loc["fallback"], set_url)
+        inner += _p(f'<span style="color:{_MUTED};font-size:13px;">{_esc(loc["expiry"])}</span>')
+        text += ["", loc["activate"], set_url, "", loc["expiry"]]
+    else:
+        inner += _p(loc["signed_in"]) + _button(apps_url, loc["cta_view"])
+        text += ["", loc["signed_in"], apps_url]
+    return loc["subject"], inner, "\n".join(text), plain
+
+
 _BUILDERS = {
     "welcome": _t_welcome,
     "email_verify": _t_email_verify,
@@ -1819,6 +1883,7 @@ _BUILDERS = {
     "offer_update": _t_offer_update,
     "document_update": _t_document_update,
     "document_received": _t_document_received,
+    "offer_account": _t_offer_account,
     "generic": _t_generic,
 }
 

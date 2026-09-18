@@ -74,11 +74,20 @@ class StorageNotConfiguredError(RuntimeError):
 
 async def keys_under(bucket: str, prefix: str, *, settings: Settings) -> list[str]:
     """Every object key under ``prefix`` — for files no row names any more, such
-    as one a failed commit left behind (PH4 Wave 4 security review L4). Empty
-    when storage is not configured: there is nothing to list, and the delete
-    step reports the unconfigured case on its own."""
+    as one a failed commit left behind (PH4 Wave 4 security review L4).
+
+    Refuses, as delete_objects does, when storage is not configured: an empty
+    answer here would let an erasure complete without ever having looked, and
+    an erasure that reports success while files remain is the failure this
+    module exists to prevent."""
     if not settings.s3_endpoint_url or not settings.s3_access_key_id:
-        return []
+        log.error("s3_client.keys_under.not_configured", prefix=prefix,
+                  has_endpoint=bool(settings.s3_endpoint_url),
+                  has_access_key=bool(settings.s3_access_key_id))
+        raise StorageNotConfiguredError(
+            "S3 is not configured (S3_ENDPOINT_URL and S3_ACCESS_KEY_ID must both be "
+            "set); cannot list an offer's stored documents for erasure."
+        )
     from shared.s3 import s3_client  # noqa: PLC0415 — same client every service uses
 
     keys: list[str] = []

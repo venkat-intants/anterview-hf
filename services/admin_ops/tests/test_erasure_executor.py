@@ -1420,3 +1420,16 @@ async def test_objects_under_an_offer_prefix_are_erased_even_when_no_row_names_t
 
     assert listed == [prefix]
     assert delete_calls and delete_calls[0][settings.s3_bucket_name] == [orphan]
+
+
+
+@pytest.mark.asyncio
+async def test_listing_an_offer_prefix_refuses_when_storage_is_not_configured() -> None:
+    """An empty answer would let an erasure complete without ever looking; the
+    listing fails closed as delete_objects does."""
+    from app.s3_client import StorageNotConfiguredError, keys_under
+
+    settings = _mock_s3_settings()
+    settings.s3_endpoint_url = ""
+    with pytest.raises(StorageNotConfiguredError):
+        await keys_under("intants-uploads", "preboarding/c/o/", settings=settings)

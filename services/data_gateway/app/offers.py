@@ -619,7 +619,8 @@ async def send(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
     await _email_candidate(
         db, offer, "offer_ready",
         {"company": offer["company_name"], "offer_url": offer_link(raw),
-         "expires": expires.strftime("%d %b %Y"), "resent": again},
+         "expires": expires.strftime("%d %b %Y"), "resent": again,
+         "accepted": offer["status"] == "accepted"},
         key=f"offer:{offer_id}:{'resent:' + now.strftime('%Y%m%d%H%M%S') if again else 'sent'}",
     )
     return offer_out(await _load(db, company_id=company_id, offer_id=offer_id))
@@ -809,8 +810,11 @@ async def _ensure_candidate_identity(db: AsyncSession, offer: dict[str, Any]) ->
     if offer["candidate_user_id"] is not None:
         return uuid.UUID(str(offer["candidate_user_id"]))
     # The same shape public apply gives a guest (security review L3): no
-    # company — a candidate is never tenant staff — and the address pattern that
-    # activation and account creation recognise and relink to a real account.
+    # company — a candidate is never tenant staff. The acceptance then emails an
+    # activation link (_offer_account_email), and activating either promotes
+    # this row to the applicant's own address or hands it to the account that
+    # already holds that address — so the person reaches the offer from their
+    # portal, and an erasure they ask for covers it.
     uid = uuid.uuid4()
     await db.execute(
         text("INSERT INTO users (id, email, password_hash, full_name, company_id,"
@@ -856,6 +860,28 @@ async def _record_document_consent(db: AsyncSession, *, user_id: uuid.UUID,
     )
 
 
+async def _offer_account_email(db: AsyncSession, offer: dict[str, Any],
+                               user_id: uuid.UUID) -> None:
+    """Invite the person who just accepted to claim the account made for them
+    (security review of 473c9d3, L-new). Best effort: the acceptance stands if
+    the email cannot be queued — what is lost is a convenience, and HR can
+    re-send the offer."""
+    if not offer.get("candidate_email"):
+        return
+    from app.apply_activation import stage_activation_email  # noqa: PLC0415 — keeps offers light
+
+    try:
+        async with db.begin_nested():
+            await stage_activation_email(
+                db, user_id=user_id, applicant_email=offer["candidate_email"],
+                applicant_name=offer["candidate_name"] or "", job_title=offer["job_title"],
+                company_id=offer["company_id"], company_name=offer["company_name"],
+                now=datetime.now(tz=UTC), template="offer_account",
+            )
+    except Exception:  # noqa: BLE001 — see the docstring
+        log.warning("offers.account_email_failed", offer_id=str(offer["id"]))
+
+
 async def _tell_hr(db: AsyncSession, offer: dict[str, Any], title: str) -> None:
     for who in {offer["created_by_user_id"], offer["sent_by_user_id"]} - {None}:
         await create_notification(db, user_id=who, kind="offer_update",
@@ -888,6 +914,8 @@ async def answer(db: AsyncSession, *, raw: str | None, accept: bool, code: str,
         await _set_outcome(db, offer, "offer_accepted")
         await _record(db, offer=offer, action="accepted", actor=user_id, meta=meta,
                       actor_type="candidate")
+        if offer["candidate_user_id"] is None:  # the identity was made just now
+            await _offer_account_email(db, offer, user_id)
         await _tell_hr(db, offer, "Offer accepted")
     else:
         why = (reason or "").strip() or None
@@ -998,6 +1026,8 @@ async def open_documents_session(db: AsyncSession, *, raw: str | None, code: str
         raise OfferError(409, "Documents are open only after you accept, until preboarding is "
                               "complete.")
     await _check_code(db, offer, "documents", code)
+    await db.execute(text("DELETE FROM offer_sessions WHERE offer_id = :o AND expires_at <= now()"),
+                     {"o": offer["id"]})
     token = mint_offer_token()
     expires = datetime.now(tz=UTC) + timedelta(minutes=SESSION_MINUTES)
     await db.execute(

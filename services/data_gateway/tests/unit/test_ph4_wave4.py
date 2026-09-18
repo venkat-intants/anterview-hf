@@ -353,10 +353,41 @@ def test_a_wrong_code_counts_over_the_offer_s_life_and_hr_is_told_once(after: in
 
     offer = {"id": uuid.uuid4(), "code_failures": 0}
     tell = AsyncMock()
-    with patch.object(offers, "_tell_hr", tell), pytest.raises(offers.OfferError) as exc:
+    with (
+        patch.object(offers, "_tell_hr", tell),
+        patch.object(offers, "codes_match", return_value=False),
+        pytest.raises(offers.OfferError) as exc,
+    ):
         asyncio.run(offers._check_code(_code_db(after), offer, "accept", "000000"))
     assert exc.value.status_code == 422 and exc.value.keep  # the attempt is committed
     assert tell.await_count == (1 if told else 0)
+
+
+def test_only_an_identity_made_at_acceptance_is_invited_to_claim_it() -> None:
+    """Security review of 473c9d3, L-new: the guest made for an applicant HR
+    added is emailed an activation link; someone who already had an account is
+    not sent one."""
+    import app.offers as offers
+
+    src = inspect.getsource(offers.answer)
+    assert 'if offer["candidate_user_id"] is None:' in src
+    assert src.index('offer["candidate_user_id"] is None') < src.index("_offer_account_email(")
+    helper = inspect.getsource(offers._offer_account_email)
+    assert 'template="offer_account"' in helper and "begin_nested" in helper
+
+
+@pytest.mark.parametrize("lang", ["en", "hi", "te"])
+def test_a_re_sent_accepted_offer_asks_for_documents_not_an_answer(lang: str) -> None:
+    from app.email_templates import render
+
+    ctx = {"name": "Asha", "job_title": "Engineer", "company": "Acme",
+           "offer_url": "https://x/offer#t", "expires": "1 Oct", "resent": True}
+    sent = render("offer_ready", lang, ctx)
+    accepted = render("offer_ready", lang, {**ctx, "accepted": True})
+    assert accepted.text != sent.text and "1 Oct" not in accepted.text
+    if lang == "en":
+        assert "accept or decline" in sent.text and "accept or decline" not in accepted.text
+        assert "documents" in accepted.text
 
 
 def test_a_re_send_resets_the_lock_and_closes_every_session() -> None:
@@ -409,6 +440,8 @@ def test_every_offer_email_speaks_the_candidate_s_language(lang: str) -> None:
         ("offer_update", {"company": "Acme"}),
         ("document_update", {"document": "Passport <b>", "reason": "Blurry <i>"}),
         ("document_received", {"document": "Passport <b>"}),
+        ("offer_account", {"company": "Acme <b>", "set_url": "https://x/activate#t"}),
+        ("offer_account", {"company": "Acme", "applications_url": "https://x/applications"}),
     ):
         mail = render(template, lang, {"name": "Asha", "job_title": "Engineer", **ctx})
         assert mail.subject and "<b>" not in mail.html.replace("<strong>", "")

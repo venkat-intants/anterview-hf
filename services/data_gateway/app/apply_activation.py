@@ -87,8 +87,13 @@ async def stage_activation_email(
     company_id: uuid.UUID,
     company_name: str | None,
     now: datetime,
+    template: str = "application_received",
 ) -> bool:
     """Queue the "your application is in" email, with an activation link.
+
+    ``template`` names another email carrying the same two links — the offer
+    acceptance sends ``offer_account`` (PH4-A3), since "we have your
+    application" would be the wrong thing to say to someone who just accepted.
 
     Returns True when an activation link was included. Caller commits.
 
@@ -121,7 +126,7 @@ async def stage_activation_email(
     await enqueue_email(
         db,
         to=applicant_email,
-        template="application_received",
+        template=template,
         lang=(lang or "en"),
         ctx={
             "name": applicant_name,
@@ -137,7 +142,7 @@ async def stage_activation_email(
         },
         to_user_id=user_id,
         company_id=company_id,
-        related_kind="application_received",
+        related_kind=template,
     )
     return raw is not None
 

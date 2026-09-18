@@ -436,3 +436,29 @@ async def test_a_session_goes_with_its_offer(db: AsyncSession) -> None:
     await db.execute(text("DELETE FROM offers WHERE id = :o"), {"o": f.offer})
     left = await db.scalar(text("SELECT count(*) FROM offer_sessions WHERE token_hash = 'gone'"))
     assert left == 0
+
+
+# ===========================================================================
+# An identity made at acceptance can be claimed (security review L-new)
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_a_guest_made_at_acceptance_is_invited_to_claim_an_account(db: AsyncSession) -> None:
+    from app.offers import _offer_account_email
+
+    f = await _build(db)
+    guest = uuid.uuid4()
+    await db.execute(text("INSERT INTO users (id, email, company_id, preferred_language)"
+                          " VALUES (:u, :e, NULL, 'hi')"),
+                     {"u": guest, "e": f"guest+{guest}@applicants.invalid"})
+    offer = {"id": f.offer, "candidate_email": "asha@w4.test", "candidate_name": "Asha",
+             "job_title": "Engineer", "company_id": f.company, "company_name": "W4 co"}
+    await _offer_account_email(db, offer, guest)
+    mail = (await db.execute(text(
+        "SELECT to_email, lang, body_text FROM email_events"
+        " WHERE template = 'offer_account' AND to_user_id = :u"), {"u": guest})).first()
+    assert mail is not None, "no invitation queued"
+    assert mail.to_email == "asha@w4.test" and mail.lang == "hi"  # their address, their language
+    assert "/activate#" in mail.body_text
+    live = await db.scalar(text("SELECT count(*) FROM auth_tokens WHERE user_id = :u"
+                                " AND expires_at > now()"), {"u": guest})
+    assert live == 1

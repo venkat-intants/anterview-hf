@@ -1675,29 +1675,48 @@ def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
 
 
 def _t_offer_code(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """A one-time code, worded for what it unlocks: accepting, declining, or
+    opening the documents step. (The documents code once fell through to the
+    decline wording — a candidate told they were confirming a refusal.)"""
     name = ctx.get("name")
     code = str(ctx.get("code", ""))
     minutes = int(ctx.get("minutes") or 10)
-    accept = ctx.get("purpose") == "accept"
+    purpose = ctx.get("purpose")
+    purpose = purpose if purpose in ("accept", "decline", "documents") else "decline"
+    words = {
+        "en": {"accept": ("Your code to accept the offer", "Use this code to accept your offer:"),
+               "decline": ("Your code to decline the offer", "Use this code to decline your offer:"),
+               "documents": ("Your code to open your documents",
+                             "Use this code to open the documents step of your offer:")},
+        "hi": {"accept": ("ऑफ़र स्वीकार करने के लिए आपका कोड",
+                          "अपना ऑफ़र स्वीकार करने के लिए इस कोड का उपयोग करें:"),
+               "decline": ("ऑफ़र अस्वीकार करने के लिए आपका कोड",
+                           "अपना ऑफ़र अस्वीकार करने के लिए इस कोड का उपयोग करें:"),
+               "documents": ("अपने दस्तावेज़ खोलने के लिए आपका कोड",
+                             "अपने ऑफ़र का दस्तावेज़ चरण खोलने के लिए इस कोड का उपयोग करें:")},
+        "te": {"accept": ("ఆఫర్‌ను అంగీకరించడానికి మీ కోడ్",
+                          "మీ ఆఫర్‌ను అంగీకరించడానికి ఈ కోడ్‌ను ఉపయోగించండి:"),
+               "decline": ("ఆఫర్‌ను తిరస్కరించడానికి మీ కోడ్",
+                           "మీ ఆఫర్‌ను తిరస్కరించడానికి ఈ కోడ్‌ను ఉపయోగించండి:"),
+               "documents": ("మీ పత్రాలను తెరవడానికి మీ కోడ్",
+                             "మీ ఆఫర్ యొక్క పత్రాల దశను తెరవడానికి ఈ కోడ్‌ను ఉపయోగించండి:")},
+    }
     loc = _loc(lang, {
         "en": {
-            "subject": f"Your code to {'accept' if accept else 'decline'} the offer",
-            "pre": "Your one-time code.",
-            "lead": f"Use this code to {'accept' if accept else 'decline'} your offer:",
+            "subject": words["en"][purpose][0], "pre": "Your one-time code.",
+            "lead": words["en"][purpose][1],
             "exp": f"It works once, for {minutes} minutes.",
             "not_you": "If you did not ask for this code, you can ignore this email — nothing happens without it.",
         },
         "hi": {
-            "subject": f"ऑफ़र {'स्वीकार' if accept else 'अस्वीकार'} करने के लिए आपका कोड",
-            "pre": "आपका एक बार उपयोग होने वाला कोड।",
-            "lead": f"अपना ऑफ़र {'स्वीकार' if accept else 'अस्वीकार'} करने के लिए इस कोड का उपयोग करें:",
+            "subject": words["hi"][purpose][0], "pre": "आपका एक बार उपयोग होने वाला कोड।",
+            "lead": words["hi"][purpose][1],
             "exp": f"यह केवल एक बार, {minutes} मिनट के लिए काम करता है।",
             "not_you": "यदि आपने यह कोड नहीं मांगा, तो इस ईमेल को अनदेखा करें — इसके बिना कुछ नहीं होता।",
         },
         "te": {
-            "subject": f"ఆఫర్‌ను {'అంగీకరించడానికి' if accept else 'తిరస్కరించడానికి'} మీ కోడ్",
-            "pre": "మీ ఒకసారి ఉపయోగించే కోడ్.",
-            "lead": f"మీ ఆఫర్‌ను {'అంగీకరించడానికి' if accept else 'తిరస్కరించడానికి'} ఈ కోడ్‌ను ఉపయోగించండి:",
+            "subject": words["te"][purpose][0], "pre": "మీ ఒకసారి ఉపయోగించే కోడ్.",
+            "lead": words["te"][purpose][1],
             "exp": f"ఇది ఒక్కసారి మాత్రమే, {minutes} నిమిషాల పాటు పనిచేస్తుంది.",
             "not_you": "మీరు ఈ కోడ్ అడగకపోతే, ఈ ఇమెయిల్‌ను విస్మరించండి — ఇది లేకుండా ఏమీ జరగదు.",
         },

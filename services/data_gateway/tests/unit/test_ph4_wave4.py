@@ -459,6 +459,18 @@ def test_every_offer_email_speaks_the_candidate_s_language(lang: str) -> None:
             assert mail.subject != render(template, "en", {"job_title": "Engineer", **ctx}).subject
 
 
+@pytest.mark.parametrize("lang", ["en", "hi", "te"])
+def test_each_code_email_says_what_the_code_is_for(lang: str) -> None:
+    """The documents code once fell through to the decline wording."""
+    from app.email_templates import render
+
+    subjects = {p: render("offer_code", lang, {"code": "042917", "purpose": p, "minutes": 10}).subject
+                for p in ("accept", "decline", "documents")}
+    assert len(set(subjects.values())) == 3, subjects
+    if lang == "en":
+        assert "documents" in subjects["documents"] and "decline" not in subjects["documents"]
+
+
 def test_a_code_email_never_carries_a_link() -> None:
     from app.email_templates import render
 

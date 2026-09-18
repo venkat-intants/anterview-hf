@@ -8,13 +8,8 @@
 // it, the candidate re-uploads, HR verifies it and closes preboarding out,
 // then prepares the signed HRMS handoff.
 //
-// NOTE on the offer_code email: the template used for a candidate's "answer"
-// code (offer_security purpose accept/decline) is reused for the DOCUMENTS
-// code, and it labels anything that is not literally purpose "accept" as a
-// decline email — so the documents code arrives with the subject "Your code
-// to decline the offer". That is a real backend wording bug, not a typo in
-// this spec: the two waitForMail patterns below are chosen to match what the
-// server actually sends today.
+// Each one-time code email says what it is for — accept, decline, or open the
+// documents — so the spec reads each by its own subject.
 
 import {
   Api,
@@ -32,7 +27,7 @@ import {
   shortlistFromApplicants,
   sitTheExam,
 } from './support/journeys';
-import { linkIn, waitForMail } from './support/mail';
+import { linkIn, waitForMail, waitForNewerMail } from './support/mail';
 import { makeCvPdf } from './support/pdf';
 
 // No candidate password anywhere in this journey — acceptance and documents
@@ -147,10 +142,7 @@ test.describe('an offer moves from creation to preboarding complete', () => {
 
     // ── 6. The candidate opens documents with a second code, uploads a PDF ──
     await candidatePage.getByRole('button', { name: 'Get a code' }).click();
-    // The backend's offer_code template only recognises purpose "accept" —
-    // anything else, including "documents", reads as a decline code. See the
-    // file-level note.
-    const docsCodeMail = await waitForMail(candidate.email, /code to decline the offer/i);
+    const docsCodeMail = await waitForMail(candidate.email, /code to open your documents/i);
     await candidatePage.getByLabel(/enter the code/i).fill(codeIn(docsCodeMail.text));
     await candidatePage.getByRole('button', { name: 'Continue' }).click();
     await expect(candidatePage.getByText('PAN card')).toBeVisible();
@@ -179,10 +171,10 @@ test.describe('an offer moves from creation to preboarding complete', () => {
     await candidatePage.goto(`/offer#${offerToken}`);
     await expect(candidatePage.getByText('Offer accepted')).toBeVisible();
     await candidatePage.getByRole('button', { name: 'Get a code' }).click();
-    const secondDocsCodeMail = await waitForMail(
+    const secondDocsCodeMail = await waitForNewerMail(
       candidate.email,
-      /code to decline the offer/i,
-      30_000,
+      /code to open your documents/i,
+      docsCodeMail,
     );
     await candidatePage.getByLabel(/enter the code/i).fill(codeIn(secondDocsCodeMail.text));
     await candidatePage.getByRole('button', { name: 'Continue' }).click();

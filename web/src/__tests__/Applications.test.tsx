@@ -48,6 +48,14 @@ vi.mock('../lib/toast', () => ({
   },
 }));
 
+// PH4-A2 — "Your interviews" always mounts above the applications list.
+// Mocked to an empty list so every existing page test stays deterministic;
+// its own behaviour is covered in YourInterviews.test.tsx.
+const listMyInterviewLoops = vi.fn();
+vi.mock('../api/scheduling', () => ({
+  listMyInterviewLoops: (...a: unknown[]) => listMyInterviewLoops(...a) as unknown,
+}));
+
 import Applications from '../pages/Applications';
 
 function app(over: Partial<MyApplication> = {}): MyApplication {
@@ -84,6 +92,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listMyInterviewLoops.mockResolvedValue([]);
   listMyApplications.mockResolvedValue([app()]);
   getMyApplication.mockResolvedValue({
     ...app(),

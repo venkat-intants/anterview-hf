@@ -24,6 +24,7 @@ import {
   Building2,
   ClipboardCheck,
   ClipboardList,
+  Gauge,
   Kanban,
   FileCheck2,
   FileSearch,
@@ -80,6 +81,8 @@ const HR_NAV: NavItem[] = [
   { to: '/hr/applicants', label: 'Applicants', icon: <FileSearch className={ICON} aria-hidden="true" /> },
   { to: '/hr/exams', label: 'Exams', icon: <ClipboardList className={ICON} aria-hidden="true" /> },
   { to: '/hr/interviews', label: 'Interviews', icon: <Video className={ICON} aria-hidden="true" /> },
+  // PH4 Wave 3 (O5) — panel workload, availability and calibration.
+  { to: '/hr/panel', label: 'Interview panel', icon: <Gauge className={ICON} aria-hidden="true" /> },
   { to: '/hr/pipeline', label: 'Pipeline', icon: <TrendingUp className={ICON} aria-hidden="true" /> },
   { to: '/hr/analytics', label: 'Analytics', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
   // D4-1: an HR manager can ALSO be assigned as an interviewer. Kept as an item

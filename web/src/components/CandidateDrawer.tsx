@@ -39,6 +39,7 @@ import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import ExceptionsSection from '@/components/ExceptionsSection';
+import InterviewLoopsSection from '@/components/InterviewLoopsSection';
 import { AlertTriangle, Info, User, X } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 
@@ -820,6 +821,13 @@ export default function CandidateDrawer({
 
         {enrolmentId ? (
           <HumanInterviewSection enrolmentId={enrolmentId} requisitionId={app?.requisition_id ?? null} />
+        ) : null}
+
+        {/* PH4-A2 — scheduling the human interview(s) above: the loop(s), each
+            session's time in both zones, and the controls to create, send,
+            move and close them out. */}
+        {enrolmentId ? (
+          <InterviewLoopsSection enrolmentId={enrolmentId} requisitionId={app?.requisition_id ?? null} />
         ) : null}
 
         {/* PH4-O1 — what is blocking this application, for a person to see and

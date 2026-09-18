@@ -25,6 +25,7 @@ import { getMyApplication,
 import { toast } from '@/lib/toast';
 import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
+import YourInterviews from '@/components/candidate/YourInterviews';
 import { AlertCircle, Briefcase, Building2, Check, ChevronDown, ChevronRight, Clock, User, Video } from '@/design/components/icons';
 
 /**
@@ -307,6 +308,10 @@ export default function Applications() {
           Where you stand on every role you have applied for.
         </p>
       </Reveal>
+
+      {/* PH4-A2 — interview loops the hiring team has scheduled or asked the
+          candidate to choose a time for. */}
+      <YourInterviews />
 
       <div className="mt-6 flex flex-col gap-4">
         {isLoading && (

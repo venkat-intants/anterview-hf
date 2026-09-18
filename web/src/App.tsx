@@ -80,6 +80,8 @@ const ExamEditor = lazy(() => import('./pages/hr/ExamEditor'));
 const ExamResults = lazy(() => import('./pages/hr/ExamResults'));
 const ExamAttemptDetail = lazy(() => import('./pages/hr/ExamAttemptDetail'));
 const HRInterviews = lazy(() => import('./pages/hr/HRInterviews'));
+// PH4 Wave 3 — panel workload, availability and calibration (O5).
+const InterviewPanel = lazy(() => import('./pages/hr/InterviewPanel'));
 const HRPipeline = lazy(() => import('./pages/hr/HRPipeline'));
 // Phase 2 — openings, the visual workflow builder, and the human decision point.
 const Requisitions = lazy(() => import('./pages/hr/Requisitions'));
@@ -248,6 +250,7 @@ export default function App() {
                 element={<ExamAttemptDetail />}
               />
               <Route path="/hr/interviews" element={<HRInterviews />} />
+              <Route path="/hr/panel" element={<InterviewPanel />} />
               <Route path="/hr/pipeline" element={<HRPipeline />} />
               {/* /review before /:requisitionId so the literal wins the match. */}
               <Route path="/hr/requisitions" element={<Requisitions />} />

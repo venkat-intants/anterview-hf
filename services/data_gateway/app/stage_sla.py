@@ -307,7 +307,7 @@ async def copy_stage_settings(
 _BOARD_SQL = """
 SELECT * FROM (
 SELECT e.id AS enrolment_id, e.requisition_id, e.status, e.current_round_id,
-       a.full_name, jr.title AS opening_title,
+       a.id AS applicant_id, a.full_name, jr.title AS opening_title,
        COALESCE(cur.title, 'Final decision') AS stage,
        enrolment_stage_entered_at(e.id, e.created_at) AS entered_at,
        s.sla_hours, s.owner_user_id, u.full_name AS owner_name,
@@ -356,6 +356,7 @@ async def sla_board(
             continue
         out.append({
             "enrolment_id": str(r["enrolment_id"]),
+            "applicant_id": str(r["applicant_id"]),
             "requisition_id": str(r["requisition_id"]),
             "opening_title": r["opening_title"],
             "full_name": r["full_name"],

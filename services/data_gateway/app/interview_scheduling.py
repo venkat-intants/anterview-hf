@@ -565,6 +565,11 @@ async def add_session(
 
     # Scorecards first: A1's rules (eligible, independent, not the candidate,
     # not decided, not erased) refuse here before anything is booked.
+    # Taken BEFORE the scorecards are assigned and written as the session's
+    # created_at: a scorecard this call creates is then never older than the
+    # session, and one HR assigned by hand beforehand always is — which is how a
+    # cancellation tells the two apart (_RELEASABLE_SQL). One clock, not two.
+    created = datetime.now(tz=UTC)
     due = (end or datetime.now(tz=UTC) + HORIZON) + SCORECARD_GRACE
     try:
         await cards.assign(
@@ -595,15 +600,16 @@ async def add_session(
             text(
                 "INSERT INTO interview_sessions (id, company_id, loop_id, enrolment_id,"
                 " applicant_id, round_id, title, position, duration_minutes, starts_at, ends_at,"
-                " blocked_until, location, status, booked_by, booked_at)"
+                " blocked_until, location, status, booked_by, booked_at, created_at,"
+                " updated_at)"
                 " VALUES (:i, :c, :l, :e, :a, :r, :t, :p, :d, :s, :en, :b, :loc, :st,"
                 " CASE WHEN :st = 'scheduled' THEN 'hr' END,"
-                " CASE WHEN :st = 'scheduled' THEN now() END)"
+                " CASE WHEN :st = 'scheduled' THEN now() END, :created, :created)"
             ),
             {"i": session_id, "c": company_id, "l": loop_id, "e": loop["enrolment_id"],
              "a": e["applicant_id"], "r": round_id, "t": name, "p": position,
              "d": duration_minutes, "s": start, "en": end, "b": blocked, "loc": place,
-             "st": status},
+             "st": status, "created": created},
         )
         for uid in ids:
             await db.execute(
@@ -744,16 +750,22 @@ async def _move_scorecard_due(db: AsyncSession, *, session_id: uuid.UUID, due: d
     )
 
 
-# Which of a cancelled interview's scorecards to hand back: those no other
-# session of the same candidate and round still needs (one scheduled, awaiting a
-# slot, or already held), and that the interviewer has not started. A begun one
-# holds their words, and whether it stands is HR's call from the drawer.
+# Which of a cancelled interview's scorecards to hand back: those scheduling
+# itself created (no older than the first session they were linked to — one HR
+# assigned by hand before scheduling is left alone), that no other session of
+# the same candidate and round still needs (scheduled, awaiting a slot, or
+# already held), and that the interviewer has not started. A begun one holds
+# their words, and whether it stands is HR's call from the drawer.
 _RELEASABLE_SQL = """
 SELECT DISTINCT si.scorecard_id
   FROM interview_session_interviewers si
   JOIN interviewer_scorecards sc ON sc.id = si.scorecard_id
  WHERE si.session_id = ANY(:s) AND sc.company_id = :c
    AND sc.status = 'assigned' AND sc.superseded_at IS NULL AND sc.corrects_id IS NULL
+   AND sc.created_at >= (SELECT min(fs.created_at)
+                           FROM interview_session_interviewers f
+                           JOIN interview_sessions fs ON fs.id = f.session_id
+                          WHERE f.scorecard_id = si.scorecard_id)
    AND NOT EXISTS (
          SELECT 1 FROM interview_session_interviewers o
            JOIN interview_sessions os ON os.id = o.session_id

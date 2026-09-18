@@ -481,6 +481,8 @@ def test_a_cancelled_interview_releases_only_the_scorecards_it_alone_held() -> N
     assert "sc.corrects_id IS NULL" in sql          # never an open correction
     assert "os.id <> ALL(:s)" in sql and "'completed', 'no_show'" in sql  # still needed elsewhere
     assert "sc.company_id = :c" in sql
+    assert "sc.created_at >= (SELECT min(fs.created_at)" in sql  # made by scheduling, not by hand
+    assert "created_at," in inspect.getsource(sch.add_session)    # one clock for both stamps
     assert "cards.withdraw(" in inspect.getsource(sch._release_scorecards)  # A1's rules and audit
     for fn in (sch.set_session_outcome, sch.cancel_loop, sch.close_for_decision):
         assert "_release_scorecards(" in inspect.getsource(fn), fn.__name__

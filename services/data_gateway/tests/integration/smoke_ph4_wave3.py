@@ -383,6 +383,25 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("…and tells that interviewer", told == 1, str(told))
         check("a scorecard another live session still needs is kept", kept == "assigned",
               str(kept))
+        # A scorecard HR assigned by hand before scheduling is theirs to withdraw.
+        r = await c.post(f"/hr/enrolments/{e2}/scorecards",
+                         json={"round_id": rnd, "interviewer_user_ids": [str(iv3)]})
+        own_card = r.json()["created"][0]["scorecard_id"]
+        r = await c.post(f"/hr/enrolments/{e2}/loops", json={"title": "By hand"})
+        by_hand = r.json()["id"]
+        r = await c.post(f"/hr/loops/{by_hand}/sessions",
+                         json={"round_id": rnd, "title": "Hand chat", "duration_minutes": 30,
+                               "interviewer_user_ids": [str(iv3)], "starts_at": at(1800),
+                               "allow_outside_availability": True})
+        h = r.json()["sessions"][0]
+        await c.post(f"/hr/sessions/{h['id']}/outcome", json={"outcome": "cancelled"})
+        async with factory() as db:
+            own_state = await db.scalar(text(
+                "SELECT status FROM interviewer_scorecards WHERE id = :i"),
+                {"i": uuid.UUID(own_card)})
+        check("a scorecard HR assigned by hand before scheduling is not handed back",
+              h["interviewers"][0]["scorecard_id"] == own_card and own_state == "assigned",
+              f"{h['interviewers'][0]['scorecard_id']} {own_state}")
 
         # An AI interview's schedule is part of the same record (A2 #25).
         r = await c.post("/hr/interviews", json={"applicant_id": str(a2), "enrolment_id": str(e2),

@@ -226,6 +226,20 @@ async def delete_offer_template(template_id: uuid.UUID, request: Request, ctx: H
 # ---------------------------------------------------------------------------
 # HR — offers
 # ---------------------------------------------------------------------------
+@hr_router.get("/offers")
+async def list_company_offers(ctx: HrCtxDep, db: DbSessionDep, status: str | None = None,
+                              limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    """Every offer of the company, newest activity first, with preboarding
+    progress. ``status`` is an offer state, or ``preboarding`` for accepted
+    offers still collecting documents."""
+    _uid, company_id = ctx
+    try:
+        return await svc.list_offers(db, company_id=company_id, status=status, limit=limit,
+                                     offset=offset)
+    except OfferError as exc:
+        raise await _fail(db, exc) from exc
+
+
 @hr_router.get("/enrolments/{enrolment_id}/offers")
 async def list_enrolment_offers(enrolment_id: uuid.UUID, ctx: HrCtxDep,
                                 db: DbSessionDep) -> list[dict[str, Any]]:

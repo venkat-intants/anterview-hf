@@ -348,6 +348,64 @@ async def get_offer(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.U
     return offer_out(await _load(db, company_id=company_id, offer_id=offer_id, lock=False))
 
 
+# The company's offers in one list — where HR's notifications point, and where
+# preboarding is followed across candidates (PH4-A4 #21). No compensation: the
+# list is for finding an offer, and the figures are one click away.
+LIST_FILTERS = ("draft", "pending_approval", "approved", "rejected", "sent", "accepted",
+                "declined", "withdrawn", "expired", "preboarding")
+_LIST_SQL = """
+SELECT o.id, o.enrolment_id, o.requisition_id, o.status, o.job_title, o.sent_at,
+       o.expires_at, o.responded_at, o.preboarding_completed_at, o.updated_at,
+       a.full_name AS candidate_name,
+       (SELECT count(*) FROM document_requirements r
+         WHERE r.requisition_id = o.requisition_id AND r.company_id = o.company_id
+           AND r.mandatory AND r.deleted_at IS NULL) AS mandatory_total,
+       (SELECT count(*) FROM candidate_documents d
+          JOIN document_requirements r ON r.id = d.requirement_id
+         WHERE d.offer_id = o.id AND d.superseded_at IS NULL AND d.status = 'verified'
+           AND (d.expires_on IS NULL OR d.expires_on > current_date)
+           AND r.mandatory AND r.deleted_at IS NULL) AS mandatory_verified,
+       (SELECT count(*) FROM candidate_documents d
+         WHERE d.offer_id = o.id AND d.superseded_at IS NULL
+           AND d.status = 'submitted') AS awaiting_review,
+       count(*) OVER () AS total
+  FROM offers o
+  JOIN applicants a ON a.id = o.applicant_id
+ WHERE o.company_id = :c
+   AND (CAST(:s AS text) IS NULL
+        OR (CAST(:s AS text) = 'preboarding' AND o.status = 'accepted'
+            AND o.preboarding_completed_at IS NULL)
+        OR o.status = CAST(:s AS text))
+ ORDER BY o.updated_at DESC, o.id
+ LIMIT :lim OFFSET :off
+"""
+
+
+async def list_offers(db: AsyncSession, *, company_id: uuid.UUID, status: str | None,
+                      limit: int, offset: int) -> dict[str, Any]:
+    if status is not None and status not in LIST_FILTERS:
+        raise OfferError(422, "Filter by one of: " + ", ".join(LIST_FILTERS) + ".")
+    limit, offset = max(1, min(int(limit), 200)), max(0, int(offset))
+    rows = (
+        await db.execute(text(_LIST_SQL), {"c": company_id, "s": status, "lim": limit,
+                                           "off": offset})
+    ).mappings().all()
+    items = [{
+        "id": str(r["id"]), "enrolment_id": str(r["enrolment_id"]),
+        "requisition_id": str(r["requisition_id"]) if r["requisition_id"] else None,
+        "status": r["status"], "job_title": r["job_title"], "candidate_name": r["candidate_name"],
+        "sent_at": _iso(r["sent_at"]), "expires_at": _iso(r["expires_at"]),
+        "responded_at": _iso(r["responded_at"]),
+        "preboarding_completed_at": _iso(r["preboarding_completed_at"]),
+        "updated_at": _iso(r["updated_at"]),
+        "documents": {"mandatory_total": int(r["mandatory_total"]),
+                      "mandatory_verified": int(r["mandatory_verified"]),
+                      "awaiting_review": int(r["awaiting_review"])},
+    } for r in rows]
+    total = int(rows[0]["total"]) if rows else 0
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
 async def offers_for_enrolment(db: AsyncSession, *, company_id: uuid.UUID,
                                enrolment_id: uuid.UUID) -> list[dict[str, Any]]:
     rows = (

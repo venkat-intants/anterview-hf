@@ -188,6 +188,16 @@ def test_offer_fields_are_validated_in_words() -> None:
         clean_fields({"currency": "INR"}, partial=False)
 
 
+def test_the_company_offer_list_carries_no_compensation() -> None:
+    import app.offers as offers
+
+    selected = offers._LIST_SQL.split("FROM offers o")[0]
+    for field in ("base_salary", "bonus", "equity", "benefits", "terms", "o.*"):
+        assert field not in selected, field
+    assert "o.company_id = :c" in offers._LIST_SQL
+    assert "preboarding" in offers.LIST_FILTERS
+
+
 def test_the_candidate_view_has_no_approval_trail() -> None:
     from app.offers import candidate_out
 

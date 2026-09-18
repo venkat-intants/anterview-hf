@@ -353,6 +353,23 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         doc2 = r.json().get("document_id")
         check("the candidate uploads a replacement", r.status_code == 201
               and r.json()["version"] == 2, r.text[:160])
+        r = await c.get("/hr/offers", params={"status": "preboarding"})
+        row = next((i for i in r.json().get("items", []) if i["id"] == o1), None)
+        check("HR sees the offer among those in preboarding, with its progress",
+              r.status_code == 200 and row is not None
+              and row["documents"]["awaiting_review"] >= 1
+              and row["documents"]["mandatory_verified"] < row["documents"]["mandatory_total"],
+              r.text[:200])
+        check("…and no compensation in the list", row is not None and "base_salary" not in row,
+              str(row)[:200])
+        r = await c.get("/hr/offers", params={"status": "nonsense"})
+        check("an unknown filter is refused in words", r.status_code == 422, r.text[:160])
+        acting["hr_company"] = uuid.uuid4()
+        app.dependency_overrides[get_hr_company] = lambda: (acting["hr"], acting["hr_company"])
+        r = await c.get("/hr/offers")
+        check("another company's HR sees none of these offers",
+              r.status_code == 200 and r.json()["total"] == 0, r.text[:160])
+        app.dependency_overrides[get_hr_company] = lambda: (acting["hr"], cid)
         r = await c.post(f"/hr/offers/{o1}/preboarding-complete")
         check("preboarding cannot complete with the passport unverified", r.status_code == 409
               and "Passport" in r.json()["detail"], r.text[:200])

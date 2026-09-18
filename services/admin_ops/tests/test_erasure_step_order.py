@@ -145,6 +145,14 @@ def test_the_steps_read_in_order() -> None:
 def test_step_5f_counts_reach_the_completion_record() -> None:
     body = _body()
     for key in ("interview_assignments_withdrawn", "interview_evidence_redacted",
-                "interview_scorecards_redacted", "interviewer_notes_deleted"):
+                "interview_scorecards_redacted", "interviewer_notes_deleted",
+                "stage_exceptions_redacted"):
         assert body.count(f'"{key}": {key}') == 2, key  # artifacts AND audit row
+
+
+def test_stage_exception_prose_is_redacted_before_applicants_lose_their_user_id() -> None:
+    """PH4-O1: an exception's reason is prose about the candidate."""
+    body = _body()
+    redact = _at("UPDATE stage_exceptions SET reason = '[redacted]'", where=body)
+    assert redact < _at("UPDATE applicants", where=body)
 

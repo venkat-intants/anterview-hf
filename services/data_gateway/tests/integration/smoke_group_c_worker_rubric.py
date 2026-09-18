@@ -109,6 +109,16 @@ async def main() -> None:
         rnd = await add_round(db, company_id=cid, workflow_id=wf, title="AI Interview",
                               kind="ai_interview", pass_threshold=60, criteria=RUBRIC)
         await db.commit()
+        # PH4-O6: publish() now refuses anything not review_status='approved',
+        # and the database enforces the same lifecycle (draft -> in_review ->
+        # approved, by two different people) on the row directly. This smoke
+        # is about the frozen rubric the worker reads back, not the review
+        # workflow, so the seed helper walks the row through it rather than
+        # driving submit-review/approve through the API.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        await approve_for_publish(db, workflow_id=wf, company_id=cid)
+        await db.commit()
         await publish(db, company_id=cid, workflow_id=wf, profile_competencies=RUBRIC)
         await db.commit()
 
@@ -172,13 +182,24 @@ async def main() -> None:
           await load_frozen_rubric(f, uuid.uuid4(), job_title="X") is None)
 
     async with f() as db:
-        # The workflow is archived first: a PUBLISHED one refuses this, which is
-        # the point of migration f3b5d7a9c1e4. Archiving is how a version stops
-        # being live, and it is what makes this "a round whose criteria are
-        # gone" rather than "an edit nobody should be able to make".
-        await db.execute(text("UPDATE workflows SET status = 'archived' WHERE id = :i"),
-                         {"i": wf})
-        await db.execute(text("DELETE FROM round_criteria WHERE round_id = :r"), {"r": rnd})
+        # A round that carries no criteria. A live or archived version's
+        # criteria are frozen by the database (migrations f3b5d7a9c1e4 and
+        # a2b4c6d8e0f1), so the legitimate way to reach one is a DRAFT version:
+        # the worker's lookup follows the enrolment's current round whatever
+        # its version's status, which is exactly the defensive case tested.
+        wf2, bare = uuid.uuid4(), uuid.uuid4()
+        await db.execute(text(
+            "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
+            " created_at,updated_at) VALUES (:w,:c,:r,2,'draft',:t,:t)"),
+            {"w": wf2, "c": cid, "r": rid, "t": now})
+        await db.execute(text(
+            "INSERT INTO workflow_rounds (id,company_id,workflow_id,position,title,kind,"
+            " pass_threshold,created_at,updated_at)"
+            " VALUES (:b,:c,:w,0,'AI Interview','ai_interview',60,:t,:t)"),
+            {"b": bare, "c": cid, "w": wf2, "t": now})
+        await db.execute(text(
+            "UPDATE enrolments SET workflow_id = :w, current_round_id = :b WHERE id = :e"),
+            {"w": wf2, "b": bare, "e": enr})
         await db.commit()
     check("a round stripped of its criteria falls back rather than breaking",
           await load_frozen_rubric(f, sid_wf, job_title="Python Developer") is None)

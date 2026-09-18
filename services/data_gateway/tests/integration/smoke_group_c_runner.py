@@ -106,6 +106,15 @@ async def main() -> None:
         r4 = await add_round(db, company_id=cid, workflow_id=wf, title="HR Final",
                              kind="human_review")
         await db.commit()
+        # PH4-O6: publish() now refuses anything not review_status='approved',
+        # and the database enforces the same lifecycle directly. This smoke is
+        # about the runner walking candidates through, not the review
+        # workflow, so the seed helper walks the row through review rather
+        # than driving submit-review/approve through the API.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        await approve_for_publish(db, workflow_id=wf, company_id=cid)
+        await db.commit()
         rep = await publish(db, company_id=cid, workflow_id=wf, profile_competencies=PROFILE)
         await db.commit()
         check("workflow published", rep.publishable, str(rep.errors))
@@ -312,6 +321,9 @@ async def main() -> None:
                         kind="human_review")
         await update_settings(db, workflow_id=wf_slow,
                               fields={"auto_advance_rounds": False})
+        await db.commit()
+        # PH4-O6: same as the main workflow's publish above.
+        await approve_for_publish(db, workflow_id=wf_slow, company_id=cid)
         await db.commit()
         rep_slow = await publish(db, company_id=cid, workflow_id=wf_slow,
                                  profile_competencies=PROFILE)

@@ -19,6 +19,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from tests.integration.seed_helpers import approve_for_publish
+
 URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:55432/intants_smoke"
 PASS, FAIL = [], []
 
@@ -72,12 +74,22 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
                  "cl": now + timedelta(days=closes_in) if closes_in is not None else None,
                  "loc": location, "ca": now - timedelta(days=age), "n": now})
             if workflow:
+                # PH4-O6: the database now refuses any INSERT that is not an
+                # unreviewed draft, so a "published" workflow here is born a
+                # draft, walked through review, and then published.
+                wf_id = uuid.uuid4()
                 await db.execute(text(
                     "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
-                    " auto_score_on_apply,auto_assign_first_round,auto_advance_rounds,"
-                    " reminders_enabled,hold_band,created_at,updated_at)"
-                    " VALUES (:i,:c,:r,1,:s,true,true,true,true,10,:n,:n)"),
-                    {"i": uuid.uuid4(), "c": company, "r": ids[key], "s": workflow, "n": now})
+                    " auto_score_on_apply,auto_assign_first_round,"
+                    " auto_advance_rounds,reminders_enabled,hold_band,created_at,updated_at)"
+                    " VALUES (:i,:c,:r,1,'draft',true,true,true,true,10,:n,:n)"),
+                    {"i": wf_id, "c": company, "r": ids[key], "n": now})
+                if workflow == "published":
+                    await approve_for_publish(db, workflow_id=wf_id, company_id=company)
+                    await db.execute(text(
+                        "UPDATE workflows SET status = 'published', published_at = :n"
+                        " WHERE id = :i"),
+                        {"i": wf_id, "n": now})
 
         await opening("on_track", title="Python Developer", target=2, closes_in=60, age=20,
                       workflow="published", location="Hyderabad")

@@ -165,13 +165,24 @@ async def main() -> None:
         print("\n--- a candidate part-way through the workflow blocks the split ---")
         wf_id = uuid.uuid4()
         async with factory() as db:
+            # PH4-O6: the database refuses any INSERT that is not an
+            # unreviewed draft, so this is born a draft, walked through
+            # review, then published.
+            from tests.integration.seed_helpers import approve_for_publish
+
             await db.execute(
                 text(
                     "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
                     " created_by_user_id,created_at,updated_at)"
-                    " VALUES (:i,:c,:r,1,'published',:u,:t,:t)"
+                    " VALUES (:i,:c,:r,1,'draft',:u,:t,:t)"
                 ),
                 {"i": wf_id, "c": cid, "r": req_id, "u": hr_uid, "t": now},
+            )
+            await approve_for_publish(db, workflow_id=wf_id, company_id=cid)
+            await db.execute(
+                text("UPDATE workflows SET status = 'published', published_at = :t"
+                     " WHERE id = :i"),
+                {"i": wf_id, "t": now},
             )
             await db.execute(
                 text("UPDATE enrolments SET workflow_id = :w WHERE id = :e"),

@@ -76,6 +76,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
                     " VALUES (:i,:c,:w,:p,:t,:k,:th,:d,:n,:n)"),
                     {"i": rounds[key], "c": company, "w": wid, "p": pos, "t": key, "k": kind,
                      "th": None if kind == "human_review" else 60, "d": deadline, "n": now})
+            # PH4-O6: a workflow must be walked through review (draft ->
+            # in_review -> approved, by two different people) before the
+            # database allows status -> 'published'.
+            from tests.integration.seed_helpers import approve_for_publish
+
+            await approve_for_publish(db, workflow_id=wid, company_id=company)
             await db.execute(text(
                 "UPDATE workflows SET status='published', published_at=:n WHERE id=:i"),
                 {"i": wid, "n": now})

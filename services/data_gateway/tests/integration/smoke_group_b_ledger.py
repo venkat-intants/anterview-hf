@@ -68,6 +68,12 @@ async def seed(f) -> dict:
                 " VALUES (:i,:c,:w,:p,:t,'human_review',:nx,:n,:n)"),
                 {"i": rid, "c": s["company"], "w": s["wf"], "p": pos, "t": title, "nx": nxt,
                  "n": now})
+        # PH4-O6: a workflow must be walked through review (draft -> in_review
+        # -> approved, by two different people) before the database allows
+        # status -> 'published'.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        await approve_for_publish(db, workflow_id=s["wf"], company_id=s["company"])
         await db.execute(text(
             "UPDATE workflows SET status='published', published_at=:n WHERE id=:i"),
             {"i": s["wf"], "n": now})

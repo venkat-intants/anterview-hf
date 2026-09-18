@@ -97,17 +97,28 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
             " pass_threshold,deadline_days,on_pass_next_round_id,created_at,updated_at)"
             " VALUES (:i,:c,:w,0,'AI Interview','ai_interview',60,7,:nx,:n,:n)"),
             {"i": r_ai, "c": cid, "w": wf, "nx": r_review, "n": now})
+        # PH4-O6: a workflow must be walked through review (draft -> in_review
+        # -> approved, by two different people) before the database allows
+        # status -> 'published'.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        await approve_for_publish(db, workflow_id=wf, company_id=cid)
         await db.execute(text(
             "UPDATE workflows SET status='published', published_at=:n WHERE id=:i"),
             {"i": wf, "n": now})
         # Openings B and C take public applications, which needs a live workflow (E4).
         for rid in (req["b"], req["c"]):
+            wid = uuid.uuid4()
             await db.execute(text(
                 "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
-                " auto_score_on_apply,auto_assign_first_round,auto_advance_rounds,"
-                " reminders_enabled,hold_band,published_at,created_at,updated_at)"
-                " VALUES (:i,:c,:r,1,'published',true,true,true,true,10,:n,:n,:n)"),
-                {"i": uuid.uuid4(), "c": cid, "r": rid, "n": now})
+                " auto_score_on_apply,auto_assign_first_round,"
+                " auto_advance_rounds,reminders_enabled,hold_band,created_at,updated_at)"
+                " VALUES (:i,:c,:r,1,'draft',true,true,true,true,10,:n,:n)"),
+                {"i": wid, "c": cid, "r": rid, "n": now})
+            await approve_for_publish(db, workflow_id=wid, company_id=cid)
+            await db.execute(text(
+                "UPDATE workflows SET status = 'published', published_at = :n WHERE id = :i"),
+                {"i": wid, "n": now})
 
         async def person(name: str, *, pending: bool = False) -> uuid.UUID:
             aid = uuid.uuid4()

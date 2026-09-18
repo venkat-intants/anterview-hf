@@ -494,7 +494,7 @@ function RescheduleForm({
         allow_outside_availability: allowOutside,
       }),
     onSuccess: () => {
-      toast.success('Interview rescheduled');
+      toast.success(session.starts_at ? 'Interview rescheduled' : 'Interview time set');
       setConflict(null);
       invalidateLoops(qc, enrolmentId);
       onDone();
@@ -679,15 +679,15 @@ function SessionRow({
 
       {live ? (
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          {session.status === 'scheduled' ? (
-            <button
-              type="button"
-              onClick={() => setRescheduling((v) => !v)}
-              className="text-[12px] text-[var(--ui-info)] hover:underline"
-            >
-              {rescheduling ? 'Close' : 'Reschedule'}
-            </button>
-          ) : null}
+          {/* A session still waiting on the candidate can be given a time by
+              HR too — the candidate may never choose one. */}
+          <button
+            type="button"
+            onClick={() => setRescheduling((v) => !v)}
+            className="text-[12px] text-[var(--ui-info)] hover:underline"
+          >
+            {rescheduling ? 'Close' : session.status === 'awaiting_slot' ? 'Set a time' : 'Reschedule'}
+          </button>
           {session.status === 'scheduled' && started ? (
             <>
               <button

@@ -46,14 +46,21 @@ export function zoneAbbrev(iso: string, tz: string): string {
 }
 
 /**
- * "10:30 IST (06:00 your time)" — the candidate's zone first (named), then
- * the reader's own. Used everywhere HR reads a session time that belongs to
- * a candidate in a different zone.
+ * "Mon 21 Sep, 10:30 IST (06:00 your time)" — the candidate's day and time
+ * first (zone named), then the reader's own: time only when it is the same
+ * calendar day for them, day and time when it is not. Used everywhere HR
+ * reads a session time that belongs to a candidate. It used to print the time
+ * alone, so a session list read "10:30 IST" with no way to tell which day.
  */
-export function formatSessionWhen(iso: string, candidateTz: string): string {
-  const theirs = `${timeInZone(iso, candidateTz)} ${zoneAbbrev(iso, candidateTz)}`;
-  const mine = timeInZone(iso, browserTimezone());
-  if (candidateTz === browserTimezone()) return theirs;
+export function formatSessionWhen(
+  iso: string,
+  candidateTz: string,
+  myTz: string = browserTimezone(),
+): string {
+  const theirs = `${formatDayTime(iso, candidateTz)} ${zoneAbbrev(iso, candidateTz)}`;
+  if (candidateTz === myTz) return theirs;
+  const sameDay = dayKey(iso, candidateTz) === dayKey(iso, myTz);
+  const mine = sameDay ? timeInZone(iso, myTz) : formatDayTime(iso, myTz);
   return `${theirs} (${mine} your time)`;
 }
 

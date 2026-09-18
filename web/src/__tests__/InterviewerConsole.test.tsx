@@ -5,14 +5,42 @@
 //   • empty/loading/error states are distinct, not one blank screen.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { InterviewerAssignment } from '../api/interviewer';
+import type { AvailabilityWindow, InterviewerSession } from '../api/scheduling';
 
 const listAssignments = vi.fn();
 vi.mock('../api/interviewer', () => ({
   listAssignments: (...a: unknown[]) => listAssignments(...a) as unknown,
+}));
+
+// PH4-A2/O5 — "Upcoming interviews" and "My availability" always mount below
+// the assignment list.
+const schedulingApi = {
+  getMySessions: vi.fn(),
+  getMyAvailability: vi.fn(),
+  addMyAvailability: vi.fn(),
+  removeMyAvailability: vi.fn(),
+};
+vi.mock('../api/scheduling', () => ({
+  getMySessions: (...a: unknown[]) => schedulingApi.getMySessions(...a) as unknown,
+  getMyAvailability: (...a: unknown[]) => schedulingApi.getMyAvailability(...a) as unknown,
+  addMyAvailability: (...a: unknown[]) => schedulingApi.addMyAvailability(...a) as unknown,
+  removeMyAvailability: (...a: unknown[]) => schedulingApi.removeMyAvailability(...a) as unknown,
+}));
+
+const toastError = vi.fn();
+const toastSuccess = vi.fn();
+vi.mock('../lib/toast', () => ({
+  toast: {
+    error: (...a: unknown[]) => toastError(...a) as unknown,
+    success: (...a: unknown[]) => toastSuccess(...a) as unknown,
+    info: vi.fn(),
+    warning: vi.fn(),
+  },
 }));
 
 import InterviewerConsole from '../pages/interviewer/InterviewerConsole';
@@ -66,6 +94,8 @@ const SUBMITTED: InterviewerAssignment = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  schedulingApi.getMySessions.mockResolvedValue([]);
+  schedulingApi.getMyAvailability.mockResolvedValue([]);
 });
 
 describe('InterviewerConsole — listing assignments', () => {
@@ -149,5 +179,90 @@ describe('InterviewerConsole — page copy', () => {
 
     const heading = await screen.findByRole('heading', { name: /my interviews/i });
     expect(within(heading.parentElement as HTMLElement).getByText(/nothing here decides an outcome/i)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PH4-A2/O5 — Upcoming interviews + My availability
+// ---------------------------------------------------------------------------
+
+const SESSION: InterviewerSession = {
+  id: 'sess-1',
+  title: 'Panel interview',
+  starts_at: '2026-09-25T10:00:00.000Z',
+  ends_at: '2026-09-25T10:45:00.000Z',
+  duration_minutes: 45,
+  location: 'Meet link',
+  status: 'scheduled',
+  candidate: 'Asha Rao',
+  job_title: 'Backend Engineer',
+  scorecard_id: 'sc-1',
+};
+
+const WINDOW: AvailabilityWindow = {
+  id: 'win-1',
+  starts_at: '2026-09-22T04:00:00.000Z',
+  ends_at: '2026-09-22T10:00:00.000Z',
+};
+
+describe('InterviewerConsole — upcoming interviews', () => {
+  beforeEach(() => {
+    listAssignments.mockResolvedValue([]);
+  });
+
+  it('lists only the caller’s own sessions, with a link to that session’s scorecard', async () => {
+    schedulingApi.getMySessions.mockResolvedValue([SESSION]);
+    renderConsole();
+
+    expect(await screen.findByText('Asha Rao')).toBeInTheDocument();
+    expect(screen.getByText(/Backend Engineer/)).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'Open scorecard' });
+    expect(link).toHaveAttribute('href', '/interviewer/scorecards/sc-1');
+  });
+
+  it('shows an empty state when nothing is scheduled', async () => {
+    schedulingApi.getMySessions.mockResolvedValue([]);
+    renderConsole();
+
+    expect(await screen.findByText('Nothing scheduled right now.')).toBeInTheDocument();
+  });
+
+  it('surfaces a load failure for the sessions list', async () => {
+    schedulingApi.getMySessions.mockRejectedValue(new Error('Could not reach the server'));
+    renderConsole();
+
+    expect(await screen.findByText('Could not reach the server')).toBeInTheDocument();
+  });
+});
+
+describe('InterviewerConsole — my availability', () => {
+  beforeEach(() => {
+    listAssignments.mockResolvedValue([]);
+  });
+
+  it('lists existing windows and adds a new one', async () => {
+    schedulingApi.getMyAvailability.mockResolvedValueOnce([]).mockResolvedValue([WINDOW]);
+    schedulingApi.addMyAvailability.mockResolvedValue(WINDOW);
+    const user = userEvent.setup();
+    renderConsole();
+
+    expect(await screen.findByText('No windows set yet.')).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('From'), '2026-09-22T10:00');
+    await user.type(screen.getByLabelText('To'), '2026-09-22T16:00');
+    await user.click(screen.getByRole('button', { name: 'Add window' }));
+
+    await waitFor(() => expect(schedulingApi.addMyAvailability).toHaveBeenCalled());
+    expect(toastSuccess).toHaveBeenCalled();
+  });
+
+  it('removes a window on request', async () => {
+    schedulingApi.getMyAvailability.mockResolvedValue([WINDOW]);
+    schedulingApi.removeMyAvailability.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('button', { name: 'Remove this window' }));
+    await waitFor(() => expect(schedulingApi.removeMyAvailability).toHaveBeenCalledWith('win-1'));
   });
 });

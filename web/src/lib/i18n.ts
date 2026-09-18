@@ -906,6 +906,36 @@ const en = {
       humanReview:
         'Your application is reviewed by people at {{company}}. Assessments may be scored automatically, but no hiring decision is made without a person.',
     },
+    // ── PH4-A2: a candidate's own interview schedule (Applications page) ──
+    // Candidate-facing, so EN/HI/TE like the rest of this file. There is
+    // deliberately no reschedule/cancel copy here — A2 #23: only HR can move
+    // a booked session, and this page never offers to.
+    myInterviews: {
+      heading: 'Your interviews',
+      loading: 'Loading your interviews…',
+      loadError: 'Could not load your interviews.',
+      empty: 'No interviews scheduled yet.',
+      duration: '{{count}} min',
+      withInterviewers: 'With {{names}}',
+      addToCalendar: 'Add to calendar (.ics)',
+      downloadingCalendar: 'Preparing your calendar file…',
+      calendarError: 'Could not download the calendar file.',
+      status: {
+        awaiting_slot: 'Waiting for you to choose a time',
+        scheduled: 'Scheduled',
+        completed: 'Completed',
+        no_show: 'Marked as no-show',
+        cancelled: 'Cancelled',
+      },
+      chooseTime: 'Choose a time',
+      hideTimes: 'Hide times',
+      slotsLoading: 'Looking for times…',
+      slotsError: 'Could not load available times.',
+      slotsEmpty: 'No times are available for this interview any more.',
+      booked: 'Time booked.',
+      bookError: 'Could not book that time. Please try again.',
+      fixedNotice: 'To change this time, contact the hiring team.',
+    },
   },
 };
 
@@ -1713,6 +1743,32 @@ const hi = {
       humanReview:
         'आपके आवेदन की समीक्षा {{company}} के लोग करते हैं। आकलन स्वतः अंकित हो सकते हैं, पर कोई भी नियुक्ति निर्णय बिना किसी व्यक्ति के नहीं लिया जाता।',
     },
+    myInterviews: {
+      heading: 'आपके इंटरव्यू',
+      loading: 'आपके इंटरव्यू लोड हो रहे हैं…',
+      loadError: 'आपके इंटरव्यू लोड नहीं हो सके।',
+      empty: 'अभी तक कोई इंटरव्यू निर्धारित नहीं है।',
+      duration: '{{count}} मिनट',
+      withInterviewers: '{{names}} के साथ',
+      addToCalendar: 'कैलेंडर में जोड़ें (.ics)',
+      downloadingCalendar: 'आपकी कैलेंडर फ़ाइल तैयार हो रही है…',
+      calendarError: 'कैलेंडर फ़ाइल डाउनलोड नहीं हो सकी।',
+      status: {
+        awaiting_slot: 'आपके समय चुनने की प्रतीक्षा है',
+        scheduled: 'निर्धारित',
+        completed: 'पूर्ण हुआ',
+        no_show: 'अनुपस्थित दर्ज',
+        cancelled: 'रद्द',
+      },
+      chooseTime: 'समय चुनें',
+      hideTimes: 'समय छिपाएं',
+      slotsLoading: 'उपलब्ध समय खोजे जा रहे हैं…',
+      slotsError: 'उपलब्ध समय लोड नहीं हो सके।',
+      slotsEmpty: 'इस इंटरव्यू के लिए अब कोई समय उपलब्ध नहीं है।',
+      booked: 'समय बुक कर दिया गया।',
+      bookError: 'वह समय बुक नहीं हो सका। कृपया दोबारा कोशिश करें।',
+      fixedNotice: 'यह समय बदलने के लिए भर्ती टीम से संपर्क करें।',
+    },
   },
 };
 
@@ -2519,6 +2575,32 @@ const te = {
       continue: 'కొనసాగండి',
       humanReview:
         'మీ దరఖాస్తును {{company}}లోని వ్యక్తులు సమీక్షిస్తారు. మూల్యాంకనాలు స్వయంచాలకంగా స్కోర్ కావచ్చు, కానీ ఏ నియామక నిర్ణయమూ వ్యక్తి లేకుండా తీసుకోబడదు.',
+    },
+    myInterviews: {
+      heading: 'మీ ఇంటర్వ్యూలు',
+      loading: 'మీ ఇంటర్వ్యూలు లోడ్ అవుతున్నాయి…',
+      loadError: 'మీ ఇంటర్వ్యూలను లోడ్ చేయలేకపోయాము.',
+      empty: 'ఇంకా ఇంటర్వ్యూలు షెడ్యూల్ కాలేదు.',
+      duration: '{{count}} నిమిషాలు',
+      withInterviewers: '{{names}}తో',
+      addToCalendar: 'క్యాలెండర్‌కి జోడించండి (.ics)',
+      downloadingCalendar: 'మీ క్యాలెండర్ ఫైల్ సిద్ధమవుతోంది…',
+      calendarError: 'క్యాలెండర్ ఫైల్‌ను డౌన్‌లోడ్ చేయలేకపోయాము.',
+      status: {
+        awaiting_slot: 'మీరు సమయం ఎంచుకోవడం కోసం వేచి ఉంది',
+        scheduled: 'షెడ్యూల్ చేయబడింది',
+        completed: 'పూర్తయింది',
+        no_show: 'హాజరుకాలేదని నమోదైంది',
+        cancelled: 'రద్దు చేయబడింది',
+      },
+      chooseTime: 'సమయం ఎంచుకోండి',
+      hideTimes: 'సమయాలను దాచండి',
+      slotsLoading: 'అందుబాటులో ఉన్న సమయాలను వెతుకుతోంది…',
+      slotsError: 'అందుబాటులో ఉన్న సమయాలను లోడ్ చేయలేకపోయాము.',
+      slotsEmpty: 'ఈ ఇంటర్వ్యూకి ఇక సమయాలు అందుబాటులో లేవు.',
+      booked: 'సమయం బుక్ చేయబడింది.',
+      bookError: 'ఆ సమయాన్ని బుక్ చేయలేకపోయాము. దయచేసి మళ్లీ ప్రయత్నించండి.',
+      fixedNotice: 'ఈ సమయాన్ని మార్చడానికి నియామక బృందాన్ని సంప్రదించండి.',
     },
   },
 };

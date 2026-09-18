@@ -63,6 +63,7 @@ import {
   type RoundProgress,
 } from '@/api/requisitions';
 import OpeningDetails from '@/components/OpeningDetails';
+import DocumentRequirementsSection from '@/components/DocumentRequirementsSection';
 import { getCompanyRequisitionDashboard } from '@/api/companyBoard';
 
 function errText(e: unknown, fallback: string): string {
@@ -795,6 +796,9 @@ export default function RequisitionDashboard({
       <NeedsAttention items={data.attention} />
 
       {readOnly ? null : <OpeningDetails requisition={req} />}
+      {/* PH4-A4 — what a candidate who accepts an offer for this opening must
+          upload during preboarding. */}
+      {readOnly ? null : <DocumentRequirementsSection requisitionId={requisitionId} />}
 
       {still_being_read > 0 ? (
         <div className="mb-5 flex items-center gap-2 rounded-[14px] border border-border bg-black/25 px-4 py-3 text-[12.5px] text-muted-foreground">

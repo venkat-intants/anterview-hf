@@ -36,6 +36,9 @@ const ResumeApplication = lazy(() => import('./pages/ResumeApplication'));
 const ActivateAccount = lazy(() => import('./pages/ActivateAccount'));
 // The public job board — one company's open roles, no session.
 const Careers = lazy(() => import('./pages/Careers'));
+// PH4 Wave 4 (A3/A4) — the candidate's own offer, magic-link token in the
+// URL #fragment, same rule as /exam and /interview-invite.
+const PublicOffer = lazy(() => import('./pages/PublicOffer'));
 
 // ── Authenticated shell pages ─────────────────────────────────────────────────
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -70,6 +73,8 @@ const ApprovalQueue = lazy(() => import('./pages/superadmin/ApprovalQueue'));
 const DecisionReasons = lazy(() => import('./pages/superadmin/DecisionReasons'));
 // PH4-O6 — the queue of workflow versions waiting for the super admin's review.
 const WorkflowReviews = lazy(() => import('./pages/superadmin/WorkflowReviews'));
+// PH4-A3 — the queue of offers waiting for the super admin's approval (D4-2).
+const OfferApprovals = lazy(() => import('./pages/superadmin/OfferApprovals'));
 // D4-1 — the interviewer console: assignments and one scorecard at a time.
 const InterviewerConsole = lazy(() => import('./pages/interviewer/InterviewerConsole'));
 const InterviewerScorecard = lazy(() => import('./pages/interviewer/InterviewerScorecard'));
@@ -83,6 +88,10 @@ const HRInterviews = lazy(() => import('./pages/hr/HRInterviews'));
 // PH4 Wave 3 — panel workload, availability and calibration (O5).
 const InterviewPanel = lazy(() => import('./pages/hr/InterviewPanel'));
 const HRPipeline = lazy(() => import('./pages/hr/HRPipeline'));
+// PH4 Wave 4 — offer lifecycle (A3) and documents & preboarding (A4).
+const Offers = lazy(() => import('./pages/hr/Offers'));
+const OfferDetail = lazy(() => import('./pages/hr/OfferDetail'));
+const OfferTemplates = lazy(() => import('./pages/hr/OfferTemplates'));
 // Phase 2 — openings, the visual workflow builder, and the human decision point.
 const Requisitions = lazy(() => import('./pages/hr/Requisitions'));
 const RequisitionReview = lazy(() => import('./pages/hr/RequisitionReview'));
@@ -151,6 +160,8 @@ export default function App() {
           <Route path="/apply/draft" element={<ResumeApplication />} />
           <Route path="/activate" element={<ActivateAccount />} />
           <Route path="/careers/:companySlug" element={<Careers />} />
+          {/* Public offer — magic-link token in the URL #fragment, no login. */}
+          <Route path="/offer" element={<PublicOffer />} />
 
           {/* Authenticated routes rendered INSIDE AppShell */}
           <Route element={<ProtectedRoute />}>
@@ -222,6 +233,12 @@ export default function App() {
                 path="/superadmin/workflow-reviews/:workflowId"
                 element={<WorkflowReviews />}
               />
+              {/* PH4-A3 — offers awaiting this super admin's approval (D4-2). */}
+              <Route path="/superadmin/offer-approvals" element={<OfferApprovals />} />
+              <Route
+                path="/superadmin/offer-approvals/:offerId"
+                element={<OfferApprovals />}
+              />
             </Route>
           </Route>
 
@@ -252,6 +269,12 @@ export default function App() {
               <Route path="/hr/interviews" element={<HRInterviews />} />
               <Route path="/hr/panel" element={<InterviewPanel />} />
               <Route path="/hr/pipeline" element={<HRPipeline />} />
+              {/* PH4 Wave 4 — offer lifecycle (A3) and documents/preboarding (A4).
+                  /offer-templates before /offers/:offerId-shaped routes so the
+                  literal wins the match, matching the /hr/requisitions pattern. */}
+              <Route path="/hr/offer-templates" element={<OfferTemplates />} />
+              <Route path="/hr/offers" element={<Offers />} />
+              <Route path="/hr/offers/:offerId" element={<OfferDetail />} />
               {/* /review before /:requisitionId so the literal wins the match. */}
               <Route path="/hr/requisitions" element={<Requisitions />} />
               <Route path="/hr/requisitions/review" element={<RequisitionReview />} />

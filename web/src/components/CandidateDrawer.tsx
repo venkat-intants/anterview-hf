@@ -40,6 +40,7 @@ import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import ExceptionsSection from '@/components/ExceptionsSection';
 import InterviewLoopsSection from '@/components/InterviewLoopsSection';
+import OfferSection from '@/components/OfferSection';
 import { AlertTriangle, Info, User, X } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 
@@ -834,6 +835,15 @@ export default function CandidateDrawer({
             act on. Scoped to this enrolment/application, same as the rest of
             the drawer. */}
         {enrolmentId ? <ExceptionsSection enrolmentId={enrolmentId} /> : null}
+
+        {/* PH4-A3 — the offer, once this application is a hire. */}
+        {enrolmentId ? (
+          <OfferSection
+            enrolmentId={enrolmentId}
+            jobTitle={candidate.target_job_title}
+            applicationStatus={candidate.status}
+          />
+        ) : null}
 
         <div className="mt-5">
           <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">

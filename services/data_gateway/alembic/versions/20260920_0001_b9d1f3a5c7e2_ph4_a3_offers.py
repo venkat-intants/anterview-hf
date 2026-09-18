@@ -312,6 +312,9 @@ def upgrade() -> None:
         sa.Column("withdraw_reason", sa.Text(), nullable=True),
         _ts("preboarding_completed_at"),
         sa.Column("preboarding_completed_by", sa.Uuid(), nullable=True),
+        # Wrong one-time codes over the offer's whole life (security review M1):
+        # at the cap, answering and document access lock until HR re-sends.
+        sa.Column("code_failures", sa.SmallInteger(), nullable=False, server_default="0"),
         _ts("redacted_at"),
         *_stamps(),
         sa.PrimaryKeyConstraint("id", name="pk_offers"),
@@ -360,6 +363,7 @@ def upgrade() -> None:
                            name="ck_offers_withdraw_reason"),
         sa.CheckConstraint("preboarding_completed_at IS NULL OR status = 'accepted'",
                            name="ck_offers_preboarding_needs_acceptance"),
+        sa.CheckConstraint("code_failures BETWEEN 0 AND 100", name="ck_offers_code_failures"),
     )
     op.create_index("ix_offers_enrolment", "offers", ["enrolment_id"])
     # At most one offer in play per application; a new one only after the last
@@ -409,10 +413,29 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name="pk_offer_codes"),
         sa.ForeignKeyConstraint(["offer_id"], ["offers.id"], name="fk_offer_codes_offer",
                                 ondelete="CASCADE"),
-        sa.CheckConstraint("purpose IN ('accept', 'decline')", name="ck_offer_codes_purpose"),
+        sa.CheckConstraint("purpose IN ('accept', 'decline', 'documents')",
+                           name="ck_offer_codes_purpose"),
         sa.CheckConstraint("attempts BETWEEN 0 AND 10", name="ck_offer_codes_attempts"),
     )
     op.create_index("ix_offer_codes_offer", "offer_codes", ["offer_id", "created_at"])
+
+    # A preboarding session: opened with a one-time code, it — and not the
+    # emailed link alone — is what lists and accepts a candidate's documents
+    # (security review H1). Stored hashed; lives an hour.
+    op.create_table(
+        "offer_sessions",
+        sa.Column("id", sa.Uuid(), nullable=False, server_default=sa.text("gen_random_uuid()")),
+        sa.Column("offer_id", sa.Uuid(), nullable=False),
+        sa.Column("token_hash", sa.Text(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False,
+                  server_default=sa.text("now()")),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("id", name="pk_offer_sessions"),
+        sa.UniqueConstraint("token_hash", name="uq_offer_sessions_token_hash"),
+        sa.ForeignKeyConstraint(["offer_id"], ["offers.id"], name="fk_offer_sessions_offer",
+                                ondelete="CASCADE"),
+        sa.CheckConstraint("expires_at > created_at", name="ck_offer_sessions_expiry"),
+    )
 
     op.add_column("enrolments", sa.Column("offer_outcome", sa.Text(), nullable=True))
     op.create_check_constraint("ck_enrolments_offer_outcome", "enrolments",
@@ -432,6 +455,7 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS offers_lifecycle()")
     op.drop_constraint("ck_enrolments_offer_outcome", "enrolments", type_="check")
     op.drop_column("enrolments", "offer_outcome")
+    op.drop_table("offer_sessions")
     op.drop_index("ix_offer_codes_offer", table_name="offer_codes")
     op.drop_table("offer_codes")
     op.drop_index("ix_offer_events_offer", table_name="offer_events")

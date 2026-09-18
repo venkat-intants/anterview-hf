@@ -1763,6 +1763,32 @@ def _t_document_update(lang: str, ctx: dict) -> tuple[str, str, str, str]:
 
 
 
+
+def _t_document_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """A document arrived through the candidate's offer link — told to them, so
+    one they did not send is noticed."""
+    name = ctx.get("name")
+    doc = _esc(ctx.get("document", ""))
+    loc = _loc(lang, {
+        "en": {"subject": "We received your document",
+               "pre": "A document was uploaded to your offer.",
+               "lead": f"We received <strong>{doc}</strong>. The hiring team will review it.",
+               "not_you": "If you did not upload this, contact the hiring team straight away."},
+        "hi": {"subject": "हमें आपका दस्तावेज़ मिल गया",
+               "pre": "आपके ऑफ़र पर एक दस्तावेज़ अपलोड किया गया।",
+               "lead": f"हमें <strong>{doc}</strong> मिल गया। हायरिंग टीम इसकी समीक्षा करेगी।",
+               "not_you": "यदि आपने इसे अपलोड नहीं किया, तो तुरंत हायरिंग टीम से संपर्क करें।"},
+        "te": {"subject": "మీ పత్రం మాకు అందింది",
+               "pre": "మీ ఆఫర్‌కు ఒక పత్రం అప్‌లోడ్ చేయబడింది.",
+               "lead": f"మాకు <strong>{doc}</strong> అందింది. నియామక బృందం దాన్ని సమీక్షిస్తుంది.",
+               "not_you": "మీరు దీన్ని అప్‌లోడ్ చేయకపోతే, వెంటనే నియామక బృందాన్ని సంప్రదించండి."},
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + _p(f"<strong>{loc['not_you']}</strong>")
+    text = [_greeting(lang, name), "", loc["lead"].replace("<strong>", "").replace("</strong>", ""),
+            loc["not_you"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
 _BUILDERS = {
     "welcome": _t_welcome,
     "email_verify": _t_email_verify,
@@ -1792,6 +1818,7 @@ _BUILDERS = {
     "offer_code": _t_offer_code,
     "offer_update": _t_offer_update,
     "document_update": _t_document_update,
+    "document_received": _t_document_received,
     "generic": _t_generic,
 }
 

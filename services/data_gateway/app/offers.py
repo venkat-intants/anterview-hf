@@ -43,6 +43,7 @@ from app.offer_security import (
     codes_match,
     hash_code,
     hash_offer_token,
+    hash_session_token,
     mint_code,
     mint_offer_token,
 )
@@ -56,6 +57,13 @@ BEFORE_ANSWER = ("draft", "pending_approval", "approved", "rejected", "sent")
 FINAL = ("accepted", "declined", "expired", "withdrawn")
 CODES_PER_WINDOW = 3
 CODE_WINDOW = timedelta(minutes=15)
+# Wrong codes over an offer's whole life (security review M1). Per-window limits
+# alone still allow ~1,400 guesses a day; at this cap answering and document
+# access lock until HR re-sends the offer, which rotates the link.
+MAX_CODE_FAILURES = 20
+SESSION_MINUTES = 60
+LOCKED = ("Too many wrong codes. For your security this offer is locked — please ask "
+          "the hiring team to send it to you again.")
 TEXT_LIMITS = {"job_title": 200, "location": 200, "bonus": 1000, "equity": 1000,
                "benefits": 4000, "terms": 20000}
 CONTENT_FIELDS = ("job_title", "employment_type", "start_date", "location", "base_salary",
@@ -584,10 +592,17 @@ async def send(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
     raw = mint_offer_token()
     now = datetime.now(tz=UTC)
     if again:
-        if offer["status"] != "sent":
-            raise OfferError(409, "Only an offer that is out with the candidate can be re-sent.")
-        await db.execute(text("UPDATE offers SET token_hash = :h, updated_at = now() WHERE id = :o"),
-                         {"h": hash_offer_token(raw), "o": offer_id})
+        if offer["status"] not in ("sent", "accepted") or offer["preboarding_completed_at"]:
+            raise OfferError(409, "Only an offer out with the candidate, or accepted and still "
+                                  "in preboarding, can be re-sent.")
+        # A new link, the old one retired, and the wrong-code count cleared — the
+        # way back from a lock (security review M1).
+        await db.execute(
+            text("UPDATE offers SET token_hash = :h, code_failures = 0, updated_at = now()"
+                 " WHERE id = :o"),
+            {"h": hash_offer_token(raw), "o": offer_id},
+        )
+        await db.execute(text("DELETE FROM offer_sessions WHERE offer_id = :o"), {"o": offer_id})
         expires = offer["expires_at"]
     else:
         if offer["status"] != "approved":
@@ -648,10 +663,12 @@ async def withdraw(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UU
 # ---------------------------------------------------------------------------
 _BY_TOKEN_SQL = """
 SELECT o.*, a.full_name AS candidate_name, a.email AS candidate_email,
-       a.user_id AS candidate_user_id, co.name AS company_name
+       a.user_id AS candidate_user_id, co.name AS company_name,
+       e.status AS enrolment_status
   FROM offers o
   JOIN applicants a ON a.id = o.applicant_id
   JOIN companies co ON co.id = o.company_id
+  JOIN enrolments e ON e.id = o.enrolment_id
  WHERE o.token_hash = :h AND o.redacted_at IS NULL
  FOR UPDATE OF o
 """
@@ -668,12 +685,22 @@ async def by_token(db: AsyncSession, raw: str | None) -> dict[str, Any]:
     o = dict(row)
     now = datetime.now(tz=UTC)
     grace = timedelta(days=settings.offer_link_grace_days)
+    if o["status"] not in ("sent", "accepted", "declined", "expired", "withdrawn"):
+        raise OfferError(404, NOT_AVAILABLE)
+    # A hire reversed by a rejection ends everything the offer opened.
+    if o["status"] == "accepted" and o["enrolment_status"] == "rejected":
+        raise OfferError(404, NOT_AVAILABLE)
     ended = o["preboarding_completed_at"] or (
         o["responded_at"] if o["status"] == "declined" else None
     ) or o["withdrawn_at"] or (o["expires_at"] if o["status"] == "expired" else None)
-    if o["status"] not in ("sent", "accepted", "declined", "expired", "withdrawn"):
-        raise OfferError(404, NOT_AVAILABLE)
     if ended is not None and now > ended + grace:
+        raise OfferError(404, NOT_AVAILABLE)
+    # An acceptance whose preboarding never completes does not keep the link
+    # alive for ever (security review H1/M2): it lasts the document-retention
+    # period from the acceptance, the period after which its files are purged.
+    if (o["status"] == "accepted" and o["preboarding_completed_at"] is None
+            and o["responded_at"] is not None
+            and now > o["responded_at"] + timedelta(days=settings.preboarding_document_retention_days)):
         raise OfferError(404, NOT_AVAILABLE)
     return o
 
@@ -701,11 +728,21 @@ async def candidate_view(db: AsyncSession, *, raw: str | None, meta: RequestMeta
 
 async def request_code(db: AsyncSession, *, raw: str | None, purpose: str,
                        meta: RequestMeta) -> dict[str, Any]:
-    if purpose not in ("accept", "decline"):
+    """A one-time code: to accept, to decline, or to open the documents."""
+    if purpose not in ("accept", "decline", "documents"):
         raise OfferError(422, "Choose to accept or decline.")
     offer = await by_token(db, raw)
-    if offer["status"] != "sent" or offer["expires_at"] <= datetime.now(tz=UTC):
+    if offer["code_failures"] >= MAX_CODE_FAILURES:
+        raise OfferError(423, LOCKED)
+    if purpose == "documents":
+        if offer["status"] != "accepted" or offer["preboarding_completed_at"] is not None:
+            raise OfferError(409, "Documents are open only after you accept, until preboarding "
+                                  "is complete.")
+    elif offer["status"] != "sent":
         raise OfferError(409, "This offer can no longer be answered.")
+    elif offer["expires_at"] <= datetime.now(tz=UTC):
+        await _expire(db, offer)
+        raise OfferError(409, "This offer has expired and can no longer be answered.", keep=True)
     if not offer["candidate_email"]:
         raise OfferError(409, "There is no email address to send a code to.")
     recent = await db.scalar(
@@ -742,15 +779,24 @@ async def _check_code(db: AsyncSession, offer: dict[str, Any], purpose: str, cod
         )
     ).mappings().first()
     wrong = "That code is not right, or it has expired. Request a new one."
+    if offer["code_failures"] >= MAX_CODE_FAILURES:
+        raise OfferError(423, LOCKED)
     if row is None or row["expires_at"] <= datetime.now(tz=UTC):
         raise OfferError(422, wrong)
     if row["attempts"] >= MAX_CODE_ATTEMPTS:
         raise OfferError(429, "Too many attempts with this code. Request a new one.")
     if not codes_match(row["code_hash"], str(offer["id"]), purpose, code or ""):
         # The attempt counts even though the request fails (keep=True: the
-        # router commits it), so guessing a code is bounded.
+        # router commits it) — per code AND over the offer's life (M1).
         await db.execute(text("UPDATE offer_codes SET attempts = attempts + 1 WHERE id = :i"),
                          {"i": row["id"]})
+        failures = await db.scalar(
+            text("UPDATE offers SET code_failures = code_failures + 1 WHERE id = :o"
+                 " RETURNING code_failures"),
+            {"o": offer["id"]},
+        )
+        if failures == MAX_CODE_FAILURES:
+            await _tell_hr(db, offer, "Offer locked after repeated wrong codes")
         raise OfferError(422, wrong, keep=True)
     await db.execute(text("UPDATE offer_codes SET consumed_at = now() WHERE id = :i"),
                      {"i": row["id"]})
@@ -762,13 +808,16 @@ async def _ensure_candidate_identity(db: AsyncSession, offer: dict[str, Any]) ->
     redemption does."""
     if offer["candidate_user_id"] is not None:
         return uuid.UUID(str(offer["candidate_user_id"]))
+    # The same shape public apply gives a guest (security review L3): no
+    # company — a candidate is never tenant staff — and the address pattern that
+    # activation and account creation recognise and relink to a real account.
     uid = uuid.uuid4()
     await db.execute(
         text("INSERT INTO users (id, email, password_hash, full_name, company_id,"
-             " preferred_language, is_active, must_change_password, created_at, updated_at)"
-             " VALUES (:i, :e, NULL, :n, :c, 'en', true, false, now(), now())"),
-        {"i": uid, "e": f"offer+{uid}@guest.intants.local", "n": offer["candidate_name"],
-         "c": offer["company_id"]},
+             " preferred_language, is_active, notify_login_email, must_change_password,"
+             " created_at, updated_at)"
+             " VALUES (:i, :e, NULL, :n, NULL, 'en', true, false, false, now(), now())"),
+        {"i": uid, "e": f"guest+{uid}@applicants.invalid", "n": offer["candidate_name"]},
     )
     await db.execute(
         text("INSERT INTO user_roles (user_id, role_id, assigned_at) VALUES"
@@ -862,25 +911,36 @@ async def answer(db: AsyncSession, *, raw: str | None, accept: bool, code: str,
 # Expiry
 # ---------------------------------------------------------------------------
 async def _expire(db: AsyncSession, offer: dict[str, Any]) -> None:
-    await db.execute(
+    """Expire a sent offer past its deadline. Does nothing — no outcome, no
+    notice — unless this call is what changed it (code review)."""
+    changed = await db.scalar(
         text("UPDATE offers SET status = 'expired', updated_at = now()"
-             " WHERE id = :o AND status = 'sent' AND expires_at <= now()"),
+             " WHERE id = :o AND status = 'sent' AND expires_at <= now() RETURNING id"),
         {"o": offer["id"]},
     )
+    if changed is None:
+        return
     await _set_outcome(db, offer, "offer_expired")
     await _event(db, offer=offer, action="expired", actor_type="system", actor=None)
     await _tell_hr(db, offer, "Offer expired")
 
 
+_DUE_SQL = """
+SELECT o.*, a.full_name AS candidate_name, a.email AS candidate_email,
+       a.user_id AS candidate_user_id, co.name AS company_name
+  FROM offers o
+  JOIN applicants a ON a.id = o.applicant_id
+  JOIN companies co ON co.id = o.company_id
+ WHERE o.status = 'sent' AND o.expires_at <= now()
+ ORDER BY o.expires_at
+ LIMIT 200
+ FOR UPDATE OF o SKIP LOCKED
+"""
+
+
 async def expire_due(db: AsyncSession) -> int:
     """The sweep: every sent offer past its expiry becomes expired. Caller commits."""
-    rows = (
-        await db.execute(
-            text(_OFFER_SQL.replace("WHERE o.id = :o AND o.company_id = :c",
-                                    "WHERE o.status = 'sent' AND o.expires_at <= now()")
-                 + " ORDER BY o.expires_at LIMIT 200 FOR UPDATE OF o SKIP LOCKED")
-        )
-    ).mappings().all()
+    rows = (await db.execute(text(_DUE_SQL))).mappings().all()
     for r in rows:
         await _expire(db, dict(r))
     return len(rows)
@@ -924,3 +984,46 @@ async def candidate_link(db: AsyncSession, *, user_id: uuid.UUID, offer_id: uuid
     await _record(db, offer=dict(row), action="resent", actor=user_id, meta=meta,
                   actor_type="candidate", details={"by": "candidate_portal"})
     return {"url": offer_link(raw)}
+
+
+# ---------------------------------------------------------------------------
+# The preboarding session (security review H1)
+# ---------------------------------------------------------------------------
+async def open_documents_session(db: AsyncSession, *, raw: str | None, code: str,
+                                 meta: RequestMeta) -> dict[str, Any]:
+    """Trade a ``documents`` code for an hour-long session token. The token is
+    returned to the page, never emailed, and stored only as a hash."""
+    offer = await by_token(db, raw)
+    if offer["status"] != "accepted" or offer["preboarding_completed_at"] is not None:
+        raise OfferError(409, "Documents are open only after you accept, until preboarding is "
+                              "complete.")
+    await _check_code(db, offer, "documents", code)
+    token = mint_offer_token()
+    expires = datetime.now(tz=UTC) + timedelta(minutes=SESSION_MINUTES)
+    await db.execute(
+        text("INSERT INTO offer_sessions (id, offer_id, token_hash, expires_at)"
+             " VALUES (gen_random_uuid(), :o, :h, :x)"),
+        {"o": offer["id"], "h": hash_session_token(token), "x": expires},
+    )
+    await _record(db, offer=offer, action="viewed", actor=offer["candidate_user_id"], meta=meta,
+                  actor_type="candidate", details={"documents_session": True})
+    return {"session_token": token, "expires_at": expires.isoformat()}
+
+
+async def with_documents_session(db: AsyncSession, *, raw: str | None,
+                                 session: str | None) -> dict[str, Any]:
+    """The offer, if the link AND a live preboarding session both hold. One
+    answer for every failure of either, as for the link alone."""
+    offer = await by_token(db, raw)
+    if not session or len(session) > 200:
+        raise OfferError(401, "Enter the code we emailed you to open your documents.")
+    ok = await db.scalar(
+        text("SELECT 1 FROM offer_sessions WHERE offer_id = :o AND token_hash = :h"
+             " AND expires_at > now()"),
+        {"o": offer["id"], "h": hash_session_token(session)},
+    )
+    if not ok:
+        raise OfferError(401, "Enter the code we emailed you to open your documents.")
+    if offer["status"] != "accepted":
+        raise OfferError(409, "Documents are requested once you accept the offer.")
+    return offer

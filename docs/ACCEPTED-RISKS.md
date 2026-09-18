@@ -132,6 +132,14 @@ anything, which is the actual goal.
 
 ---
 
+**PH4 Wave 4 addendum (2026-09-20).** The offer-link secret and the HRMS export
+signing key, when `OFFER_LINK_SECRET` / `HRMS_EXPORT_SECRET` are not set, are
+DERIVED from `JWT_SECRET` (namespaced HMAC, never the secret itself). Rotating the
+key an HRMS verifies against then means rotating the JWT secret. Set both
+explicitly in any deployment that hands exports to a real HRMS.
+
+---
+
 ## AR-3 — Candidate-authored code executes on JDoodle, a third party
 
 | | |
@@ -287,8 +295,9 @@ over a scanner later. What exists instead:
 - **Content allow-list.** Only PDF, JPEG and PNG, recognised by their first bytes
   (`app/document_storage.py`); the file name and the browser's Content-Type are
   ignored. Anything else is refused before it is stored.
-- **No active PDFs.** A PDF carrying JavaScript, launch actions, embedded files,
-  rich media or XFA is refused.
+- **No active PDFs, as far as a byte scan sees.** A PDF whose names spell
+  JavaScript, launch actions, embedded files, rich media or XFA — including
+  when escaped as ``#xx`` — is refused.
 - **Isolation in delivery.** Documents are never served by the API or rendered
   by the app. They leave storage only by a pre-signed link that lives five
   minutes and forces `Content-Disposition: attachment`, stored under a key that
@@ -297,7 +306,8 @@ over a scanner later. What exists instead:
 
 **What is NOT true.** It is not true that an uploaded document is known to be
 safe. The PDF check reads raw bytes, so a marker inside a compressed object
-stream is not seen; an image can still exploit a vulnerable viewer. The control
+stream is not seen (escaped names ARE decoded); an image can still exploit a
+vulnerable viewer. The control
 is "only three well-understood formats, never opened by us", not "scanned".
 
 **Path to closure.** Scan on upload before a document is marked `submitted`

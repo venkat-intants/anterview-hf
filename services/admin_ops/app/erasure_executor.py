@@ -178,6 +178,8 @@ ERASURE_POLL_INTERVAL_SECONDS: int = 300  # 5 minutes
 ERASED_TABLES: dict[str, str] = {
     "offer_codes": "PH4-A3 — one-time codes sent to the candidate to accept or decline; "
                    "deleted in step 5f.",
+    "offer_sessions": "PH4-A4 — hashed, hour-long preboarding sessions a candidate opened "
+                      "with a code; deleted in step 5f.",
     "hrms_exports": "PH4-A4 — signed HRMS payloads carrying the candidate's name, email "
                     "and compensation; deleted in step 5f (after their offer is redacted, "
                     "which is when the append-only trigger lets them go).",
@@ -600,6 +602,23 @@ async def _execute_one_erasure(
     applicant_resume_keys += [
         str(row[0]) for row in preboarding_keys_result.fetchall() if row[0]
     ]
+    # ...and anything under those offers' prefixes that no row names (an object
+    # a failed commit orphaned) — listed from storage itself.
+    offer_prefixes = await db.execute(
+        text(
+            "SELECT o.company_id, o.id FROM offers o JOIN applicants a ON a.id = o.applicant_id"
+            " WHERE a.user_id = :uid"
+        ),
+        {"uid": uid_str},
+    )
+    if settings is not None:
+        from app.s3_client import keys_under  # noqa: PLC0415 — see step 8's import note
+
+        for company_id, offer_id in offer_prefixes.fetchall():
+            applicant_resume_keys += await keys_under(
+                settings.s3_bucket_name, f"preboarding/{company_id}/{offer_id}/",
+                settings=settings,
+            )
 
     # One delete per object: the same file is often the current, scored AND
     # submitted copy at once.
@@ -1007,6 +1026,11 @@ async def _execute_one_erasure(
     offers_redacted: int = len(redacted_offer_ids)
     await db.execute(
         text("DELETE FROM offer_codes WHERE offer_id IN (SELECT o.id FROM offers o"
+             " JOIN applicants a ON a.id = o.applicant_id WHERE a.user_id = :uid)"),
+        {"uid": uid_str},
+    )
+    await db.execute(
+        text("DELETE FROM offer_sessions WHERE offer_id IN (SELECT o.id FROM offers o"
              " JOIN applicants a ON a.id = o.applicant_id WHERE a.user_id = :uid)"),
         {"uid": uid_str},
     )

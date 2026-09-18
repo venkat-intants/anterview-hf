@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import (
@@ -70,6 +71,18 @@ async def _offer_token(
 OfferTokenDep = Annotated[str | None, Depends(_offer_token)]
 
 
+async def _offer_session(
+    session: Annotated[str | None, Header(alias="X-Offer-Session")] = None,
+) -> str | None:
+    """The hour-long preboarding session opened with an emailed code — what the
+    document routes need besides the link (security review H1). A credential:
+    redacted from access logs like the link."""
+    return session
+
+
+OfferSessionDep = Annotated[str | None, Depends(_offer_session)]
+
+
 def _meta(request: Request) -> RequestMeta:
     return RequestMeta(ip_address=extract_client_ip(request), user_agent=extract_user_agent(request))
 
@@ -92,7 +105,8 @@ class OfferFieldsIn(BaseModel):
     employment_type: str | None = None
     start_date: date | None = None
     location: str | None = Field(default=None, max_length=200)
-    base_salary: float | None = Field(default=None, gt=0)
+    # Money arrives as a decimal (a JSON number or string), never a float.
+    base_salary: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     pay_period: str | None = None
     bonus: str | None = Field(default=None, max_length=1000)
@@ -143,6 +157,10 @@ class ReviewIn(BaseModel):
 
 class CodeIn(BaseModel):
     purpose: str = Field(pattern="^(accept|decline)$")
+
+
+class SessionIn(BaseModel):
+    code: str = Field(min_length=4, max_length=12)
 
 
 class AcceptIn(BaseModel):
@@ -501,10 +519,34 @@ async def decline_offer(body: DeclineIn, token: OfferTokenDep, request: Request,
     return out
 
 
-@public_router.get("/documents", dependencies=[rate_limit("offer_view", 30)])
-async def my_documents(token: OfferTokenDep, db: CandidateDbDep) -> dict[str, Any]:
+@public_router.post("/documents/code", dependencies=[rate_limit("offer_code", 5)])
+async def request_documents_code(token: OfferTokenDep, request: Request,
+                                 db: CandidateDbDep) -> dict[str, Any]:
+    """Email a code that opens the documents for an hour."""
     try:
-        out = await docs.candidate_checklist(db, raw=token)
+        out = await svc.request_code(db, raw=token, purpose="documents", meta=_meta(request))
+    except OfferError as exc:
+        raise await _fail(db, exc) from exc
+    await db.commit()
+    return out
+
+
+@public_router.post("/documents/session", dependencies=[rate_limit("offer_answer", 10)])
+async def open_documents_session(body: SessionIn, token: OfferTokenDep, request: Request,
+                                 db: CandidateDbDep) -> dict[str, Any]:
+    try:
+        out = await svc.open_documents_session(db, raw=token, code=body.code, meta=_meta(request))
+    except OfferError as exc:
+        raise await _fail(db, exc) from exc
+    await db.commit()
+    return out
+
+
+@public_router.get("/documents", dependencies=[rate_limit("offer_view", 30)])
+async def my_documents(token: OfferTokenDep, session: OfferSessionDep,
+                       db: CandidateDbDep) -> dict[str, Any]:
+    try:
+        out = await docs.candidate_checklist(db, raw=token, session=session)
     except OfferError as exc:
         raise await _fail(db, exc) from exc
     await db.rollback()
@@ -514,7 +556,8 @@ async def my_documents(token: OfferTokenDep, db: CandidateDbDep) -> dict[str, An
 @public_router.post("/documents/{requirement_id}", status_code=201,
                    dependencies=[rate_limit("offer_upload", 10)])
 async def upload_my_document(
-    requirement_id: uuid.UUID, token: OfferTokenDep, request: Request, db: CandidateDbDep,
+    requirement_id: uuid.UUID, token: OfferTokenDep, session: OfferSessionDep,
+    request: Request, db: CandidateDbDep,
     file: Annotated[UploadFile, File()],
     expires_on: Annotated[date | None, Form()] = None,
 ) -> dict[str, Any]:
@@ -522,26 +565,23 @@ async def upload_my_document(
     # an arbitrarily large body (the edge also caps /offer* bodies at 11 MB).
     data = await file.read(settings.preboarding_document_max_bytes + 1)
     try:
-        out = await docs.upload(db, raw=token, requirement_id=requirement_id, data=data,
-                                filename=file.filename, expires_on=expires_on,
+        out = await docs.upload(db, raw=token, session=session, requirement_id=requirement_id,
+                                data=data, filename=file.filename, expires_on=expires_on,
                                 meta=_meta(request))
     except OfferError as exc:
         raise await _fail(db, exc) from exc
-    await db.commit()
-    return out
-
-
-@public_router.post("/documents/{document_id}/download",
-                   dependencies=[rate_limit("offer_view", 30)])
-async def download_my_document(document_id: uuid.UUID, token: OfferTokenDep, request: Request,
-                               db: CandidateDbDep) -> dict[str, Any]:
+    key = out.pop("_storage_key")
     try:
-        out = await docs.candidate_download(db, raw=token, document_id=document_id,
-                                            meta=_meta(request))
-    except OfferError as exc:
-        raise await _fail(db, exc) from exc
-    await db.commit()
+        await db.commit()
+    except Exception:
+        # The rows are gone; so must the bytes be (security review L4).
+        from app.document_storage import remove as _remove  # noqa: PLC0415
+
+        await _remove(settings, [key])
+        raise
     return out
+# No candidate download: the candidate already has the file, and a link that
+# could fetch every document back was the exposure (security review H1).
 
 
 # ---------------------------------------------------------------------------

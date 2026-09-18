@@ -4,7 +4,9 @@ THE LINK
 An offer reaches the candidate as ``{base}/offer#<token>``: a 256-bit random
 token carried in the URL fragment (never sent to a server as part of a URL) and
 presented as the ``X-Offer-Token`` header. Only ``hmac_sha256(token, secret)``
-is stored; a database leak yields nothing that opens an offer.
+is stored. The raw link does exist once more: in the outbound email until it
+is sent — the outbox clears a message's body once it is delivered or has
+finally failed (app.mailer).
 
 THE CODE
 Reading an offer needs the link. ANSWERING it needs more: a six-digit code sent
@@ -13,6 +15,11 @@ forwarded or leaked link lets someone read an offer; it does not let them
 accept or refuse a job on the candidate's behalf. Codes are hashed, live ten
 minutes, allow five attempts, and are bound to the purpose they were issued
 for.
+
+THE PREBOARDING SESSION
+Documents are the most sensitive thing an offer carries, so the link alone does
+not open them either: a code, then an hour-long session token (returned to the
+page, never emailed, stored hashed) presented as ``X-Offer-Session``.
 
 THE EXPORT
 An HRMS handoff is a JSON payload signed with HMAC-SHA256 over its canonical
@@ -76,8 +83,14 @@ def canonical(payload: dict[str, Any]) -> bytes:
                       default=str).encode("utf-8")
 
 
+def hash_session_token(raw: str) -> str:
+    msg = f"session:{raw}".encode()
+    return hmac.new(_link_secret().encode(), msg, hashlib.sha256).hexdigest()
+
+
 def export_key_id() -> str:
-    return hashlib.sha256(_export_secret().encode()).hexdigest()[:12]
+    """Names the key without being a cheap test of a guessed one."""
+    return hmac.new(_export_secret().encode(), b"key-id", hashlib.sha256).hexdigest()[:12]
 
 
 def sign_export(payload: dict[str, Any]) -> str:

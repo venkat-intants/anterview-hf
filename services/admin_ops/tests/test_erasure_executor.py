@@ -52,6 +52,7 @@ def _make_key_collecting_db(
     resume_version_keys: list[str] | None = None,
     applicant_resume_keys: list[str] | None = None,
     turn_audio_keys: list[str] | None = None,
+    offer_prefixes: list[tuple[str, str]] | None = None,
 ) -> tuple[AsyncMock, list[str]]:
     """A DB mock that answers each key-collection SELECT by matching its SQL.
 
@@ -76,7 +77,9 @@ def _make_key_collecting_db(
         result.fetchall.return_value = []
         result.fetchone.return_value = None
 
-        if "FROM scorecards" in sql and "SELECT" in sql:
+        if "SELECT o.company_id, o.id FROM offers o" in sql:
+            result.fetchall.return_value = offer_prefixes or []
+        elif "FROM scorecards" in sql and "SELECT" in sql:
             result.fetchall.return_value = scorecard_keys or []
         elif "FROM resumes" in sql and sql.strip().startswith("SELECT"):
             result.fetchall.return_value = [(k,) for k in (resume_version_keys or [])]
@@ -264,8 +267,11 @@ async def test_execute_one_erasure_happy_path() -> None:
     request = _make_erasure_request()
     # This DB mock hands back object keys on every SELECT, so the happy path
     # needs working storage: an erasure that collects keys it cannot delete is
-    # no longer allowed to complete.
-    with patch("app.s3_client.delete_objects", new=_fake_delete_objects()):
+    # no longer allowed to complete. That includes listing each offer's prefix.
+    with (
+        patch("app.s3_client.delete_objects", new=_fake_delete_objects()),
+        patch("app.s3_client.keys_under", new=AsyncMock(return_value=[])),
+    ):
         artifacts = await _execute_one_erasure(
             db=db,
             request=request,
@@ -1381,3 +1387,36 @@ async def test_the_submitted_copy_of_the_resume_is_collected_too() -> None:
     anonymise_at = next(i for i, s in enumerate(stmts) if "UPDATE applicants" in s)
     assert select_at < anonymise_at
     assert select_at < anonymise_at
+
+
+# ---------------------------------------------------------------------------
+# PH4-A4 — an object under an offer's prefix that no row names is erased too
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_objects_under_an_offer_prefix_are_erased_even_when_no_row_names_them() -> None:
+    """A failed commit can leave an uploaded document in storage with no row
+    naming it (security review L4). Step 1 lists each of the person's offer
+    prefixes in storage itself, so erasure does not depend on the row."""
+    company, offer = "c0ffee00-0000-4000-8000-000000000001", "0ffe0000-0000-4000-8000-000000000002"
+    prefix = f"preboarding/{company}/{offer}/"
+    orphan = prefix + "requirement/orphan.pdf"
+    db, _ = _make_key_collecting_db(offer_prefixes=[(company, offer)])
+    listed: list[str] = []
+
+    async def _keys_under(bucket: str, pfx: str, *, settings: Any) -> list[str]:
+        listed.append(pfx)
+        return [orphan, orphan]  # listed twice: deduplicated before the delete
+
+    delete_calls: list[dict[str, list[str]]] = []
+    settings = _mock_s3_settings()
+    with (
+        patch("app.s3_client.delete_objects", new=_fake_delete_objects(delete_calls)),
+        patch("app.s3_client.keys_under", new=AsyncMock(side_effect=_keys_under)),
+    ):
+        await _execute_one_erasure(db=db, request=_make_erasure_request(),
+                                   system_actor_id=_SYSTEM_ACTOR, settings=settings)
+
+    assert listed == [prefix]
+    assert delete_calls and delete_calls[0][settings.s3_bucket_name] == [orphan]

@@ -40,6 +40,13 @@ PRESIGN_SECONDS = 300
 # marker inside a compressed object stream is not seen, which is why the
 # absence of a virus scanner is an accepted risk rather than a solved one.
 _PDF_ACTIVE = re.compile(rb"/(JavaScript|JS|Launch|EmbeddedFiles?|RichMedia|XFA)\b")
+# PDF names may spell any byte as #xx (``/J#61vaScript`` is ``/JavaScript``), and
+# viewers decode it; so is the check (security review L2).
+_NAME_ESCAPE = re.compile(rb"#([0-9A-Fa-f]{2})")
+
+
+def _decoded_names(data: bytes) -> bytes:
+    return _NAME_ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), data)
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
@@ -85,7 +92,7 @@ def check(data: bytes, filename: str | None, *, max_bytes: int) -> CheckedFile:
     if kind is None:
         raise DocumentRejectedError("Upload a PDF, JPEG or PNG file.")
     content_type, extension = kind
-    if content_type == "application/pdf" and _PDF_ACTIVE.search(data):
+    if content_type == "application/pdf" and _PDF_ACTIVE.search(_decoded_names(data)):
         raise DocumentRejectedError(
             "This PDF contains scripts or embedded files, which we cannot accept. "
             "Save or print it as a plain PDF and upload that."
@@ -120,6 +127,31 @@ async def signed_download(settings: Settings, key: str, filename: str) -> str:
             ExpiresIn=PRESIGN_SECONDS,
         )
     return url
+
+
+async def keys_under(settings: Settings, prefix: str) -> list[str]:
+    """Every object under a prefix — including any a failed commit orphaned
+    (security review L4), which no row points at."""
+    keys: list[str] = []
+    async with s3_client(
+        endpoint=settings.s3_endpoint, region=settings.s3_region,
+        access_key=settings.s3_access_key_id, secret_key=settings.s3_secret_access_key,
+        use_ssl=settings.s3_use_ssl,
+    ) as s3:
+        token: str | None = None
+        while True:
+            kwargs = {"Bucket": settings.s3_bucket_name, "Prefix": prefix, "MaxKeys": 1000}
+            if token:
+                kwargs["ContinuationToken"] = token
+            page = await s3.list_objects_v2(**kwargs)
+            keys += [o["Key"] for o in page.get("Contents", [])]
+            if not page.get("IsTruncated"):
+                return keys
+            token = page.get("NextContinuationToken")
+
+
+def offer_prefix(company_id: uuid.UUID, offer_id: uuid.UUID) -> str:
+    return f"preboarding/{company_id}/{offer_id}/"
 
 
 async def remove(settings: Settings, keys: list[str]) -> int:

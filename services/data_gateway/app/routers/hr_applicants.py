@@ -59,6 +59,7 @@ from app.final_decision import (
 from app.mailer import candidate_language, enqueue_email
 from app.models import Applicant, AuditLog
 from app.requisitions import (
+    HIRE_UNDONE_ONLY_BY_REJECTION,
     StatusRefusedError,
     ambiguous_decision_detail,
     applicant_by_email,
@@ -1549,6 +1550,14 @@ async def update_applicant_status(
         # sending three exam links because a recruiter clicked once would be
         # worse than doing nothing.
         if body.status == "shortlisted" and only is not None:
+            current = await db.scalar(
+                text("SELECT status FROM enrolments WHERE id = :e"), {"e": only}
+            )
+            if current == "hired":
+                # Refused before the workflow is started, not after (security
+                # review INFO): a hire is undone only by a rejection.
+                await db.rollback()
+                raise HTTPException(status_code=409, detail=HIRE_UNDONE_ONLY_BY_REJECTION)
             outcome = await on_shortlisted(db, enrolment_id=only, actor_user_id=_hr_uid)
             log.info(
                 "hr.applicant.shortlisted",

@@ -455,6 +455,7 @@ app.add_middleware(
         # PH4-A3/A4: the candidate's offer link — view, one-time code, accept or
         # decline, and preboarding document upload.
         "X-Offer-Token",
+        "X-Offer-Session",
         # Only ever sent by the local browser-test runner. Inert in a
         # deployment: the router that reads it is mounted only under
         # TEST_HOOKS_ENABLED, which config refuses outside a local env, and

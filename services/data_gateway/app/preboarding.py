@@ -28,7 +28,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import document_storage as store
@@ -38,7 +38,7 @@ from app.mailer import candidate_language, enqueue_email
 from app.models import AuditLog
 from app.notifications_util import create_notification
 from app.offer_security import export_key_id, sign_export
-from app.offers import OfferError, by_token
+from app.offers import OfferError, with_documents_session
 
 log = structlog.get_logger()
 
@@ -248,18 +248,18 @@ async def checklist(db: AsyncSession, offer: dict[str, Any], *, for_candidate: b
 # ---------------------------------------------------------------------------
 # The candidate's side (by offer link)
 # ---------------------------------------------------------------------------
-async def candidate_checklist(db: AsyncSession, *, raw: str | None) -> dict[str, Any]:
-    offer = await by_token(db, raw)
-    if offer["status"] != "accepted":
-        raise OfferError(409, "Documents are requested once you accept the offer.")
+async def candidate_checklist(db: AsyncSession, *, raw: str | None,
+                              session: str | None) -> dict[str, Any]:
+    offer = await with_documents_session(db, raw=raw, session=session)
     return await checklist(db, offer, for_candidate=True)
 
 
-async def upload(db: AsyncSession, *, raw: str | None, requirement_id: uuid.UUID, data: bytes,
-                 filename: str | None, expires_on: date | None, meta: RequestMeta) -> dict[str, Any]:
-    offer = await by_token(db, raw)
-    if offer["status"] != "accepted":
-        raise OfferError(409, "Documents are requested once you accept the offer.")
+async def upload(db: AsyncSession, *, raw: str | None, session: str | None,
+                 requirement_id: uuid.UUID, data: bytes, filename: str | None,
+                 expires_on: date | None, meta: RequestMeta) -> dict[str, Any]:
+    """Store one document. Returns ``_storage_key`` for the router, which deletes
+    the object again if its commit fails (the rows then do not exist)."""
+    offer = await with_documents_session(db, raw=raw, session=session)
     if offer["preboarding_completed_at"] is not None:
         raise OfferError(409, "Your documents are complete; nothing more is needed.")
     req = (
@@ -293,25 +293,46 @@ async def upload(db: AsyncSession, *, raw: str | None, requirement_id: uuid.UUID
     doc_id = uuid.uuid4()
     key = store.storage_key(offer["company_id"], offer["id"], doc_id)
     version = (current["version"] + 1) if current else 1
-    if current is not None:
+    sp = await db.begin_nested()
+    try:
+        if current is not None:
+            await db.execute(
+                text("UPDATE candidate_documents SET superseded_at = now(), superseded_by_id = :n"
+                     " WHERE id = :i"),
+                {"n": doc_id, "i": current["id"]},
+            )
         await db.execute(
-            text("UPDATE candidate_documents SET superseded_at = now(), superseded_by_id = :n"
-                 " WHERE id = :i"),
-            {"n": doc_id, "i": current["id"]},
+            text("INSERT INTO candidate_documents (id, company_id, offer_id, requirement_id,"
+                 " enrolment_id, version, storage_key, original_name, content_type, size_bytes,"
+                 " sha256, expires_on, uploaded_at) VALUES (:i, :c, :o, :r, :e, :v, :k, :n, :t,"
+                 " :s, :h, :x, now())"),
+            {"i": doc_id, "c": offer["company_id"], "o": offer["id"], "r": requirement_id,
+             "e": offer["enrolment_id"], "v": version, "k": key, "n": checked.safe_name,
+             "t": checked.content_type, "s": checked.size_bytes, "h": checked.sha256,
+             "x": expires_on if req["requires_expiry"] else None},
         )
-    await db.execute(
-        text("INSERT INTO candidate_documents (id, company_id, offer_id, requirement_id,"
-             " enrolment_id, version, storage_key, original_name, content_type, size_bytes,"
-             " sha256, expires_on, uploaded_at) VALUES (:i, :c, :o, :r, :e, :v, :k, :n, :t, :s,"
-             " :h, :x, now())"),
-        {"i": doc_id, "c": offer["company_id"], "o": offer["id"], "r": requirement_id,
-         "e": offer["enrolment_id"], "v": version, "k": key, "n": checked.safe_name,
-         "t": checked.content_type, "s": checked.size_bytes, "h": checked.sha256,
-         "x": expires_on if req["requires_expiry"] else None},
-    )
-    # Rows first, bytes second: a failed insert leaves no orphan object, and a
-    # failed upload rolls the rows back (the router does not commit on error).
+        await sp.commit()
+    except IntegrityError as exc:
+        await sp.rollback()
+        # Two first uploads for one document at once: the unique index lets one
+        # through; the other is told so, not given a 500 (code review).
+        if "uq_candidate_documents_current" in str(exc.orig):
+            raise OfferError(409, "This document was just uploaded. Refresh to see it.") from exc
+        raise
+    # Rows first, bytes second: a failed insert leaves no orphan object. After
+    # the bytes are in, anything that fails removes them again.
     await store.store(settings, key, data, checked.content_type)
+    try:
+        return await _after_upload(db, offer=offer, req=req, doc_id=doc_id, version=version,
+                                   checked=checked, key=key, meta=meta)
+    except Exception:
+        await store.remove(settings, [key])
+        raise
+
+
+async def _after_upload(db: AsyncSession, *, offer: dict[str, Any], req: Any, doc_id: uuid.UUID,
+                        version: int, checked: Any, key: str, meta: RequestMeta) -> dict[str, Any]:
+    requirement_id = req["id"]
     facts = {"company_id": str(offer["company_id"]), "offer_id": str(offer["id"]),
              "requirement_id": str(requirement_id), "version": version,
              "content_type": checked.content_type, "size_bytes": checked.size_bytes}
@@ -326,14 +347,19 @@ async def upload(db: AsyncSession, *, raw: str | None, requirement_id: uuid.UUID
             title=f"Document to review: {offer['candidate_name']}", body=req["name"],
             link="/hr/offers", dedupe_key=f"doc-uploaded:{doc_id}:{who}",
         )
-    return {"document_id": str(doc_id), "version": version, "state": "submitted"}
-
-
-async def candidate_download(db: AsyncSession, *, raw: str | None, document_id: uuid.UUID,
-                             meta: RequestMeta) -> dict[str, Any]:
-    offer = await by_token(db, raw)
-    return await _signed(db, offer, document_id, actor=offer["candidate_user_id"],
-                         actor_type="candidate", meta=meta)
+    # Every upload is told to the candidate's own inbox, so a document someone
+    # else supplied through their link is noticed (security review H1).
+    lang = await candidate_language(db, offer["applicant_id"])
+    await enqueue_email(
+        db, to=offer["candidate_email"], template="document_received", lang=lang,
+        ctx={"name": offer["candidate_name"], "job_title": offer["job_title"],
+             "company": offer["company_name"], "document": req["name"]},
+        to_user_id=offer["candidate_user_id"], company_id=offer["company_id"],
+        related_kind="candidate_document", related_id=doc_id,
+        dedupe_key=f"doc-received:{doc_id}",
+    )
+    return {"document_id": str(doc_id), "version": version, "state": "submitted",
+            "_storage_key": key}
 
 
 # ---------------------------------------------------------------------------
@@ -582,13 +608,19 @@ async def export_to_hrms(db: AsyncSession, *, company_id: uuid.UUID, offer_id: u
 # ---------------------------------------------------------------------------
 # Retention (DPDP): documents are not kept once they have served
 # ---------------------------------------------------------------------------
+# Whose documents have served their purpose (security review M2 added the last
+# two): the offer ended without an acceptance; preboarding completed; the hire
+# was reversed by a rejection; or preboarding never completed at all.
 _PURGEABLE_DOCS_SQL = """
 SELECT d.id, d.storage_key, d.offer_id, d.company_id
   FROM candidate_documents d
   JOIN offers o ON o.id = d.offer_id
+  JOIN enrolments e ON e.id = o.enrolment_id
  WHERE d.redacted_at IS NULL AND d.storage_key IS NOT NULL
    AND (   (o.status IN ('declined', 'withdrawn', 'expired') AND o.updated_at < :cutoff)
-        OR (o.preboarding_completed_at IS NOT NULL AND o.preboarding_completed_at < :cutoff))
+        OR (o.preboarding_completed_at IS NOT NULL AND o.preboarding_completed_at < :cutoff)
+        OR (o.status = 'accepted' AND o.preboarding_completed_at IS NULL
+            AND (e.status = 'rejected' OR o.responded_at < :cutoff)))
  ORDER BY d.uploaded_at
  LIMIT 2000
 """
@@ -611,6 +643,11 @@ async def purge_documents(db: AsyncSession, *, retention_days: int, dry_run: boo
         log.info("preboarding.retention.candidates", documents=len(rows), dry_run=dry_run)
         return len(rows)
     keys = [r["storage_key"] for r in rows]
+    # Plus anything under those offers' prefixes that no row names: an object a
+    # failed commit left behind (security review L4).
+    for company_id, offer_id in {(r["company_id"], r["offer_id"]) for r in rows}:
+        keys += await store.keys_under(settings, store.offer_prefix(company_id, offer_id))
+    keys = list(dict.fromkeys(keys))
     removed = await store.remove(settings, keys)
     if removed != len(keys):
         raise RuntimeError(f"preboarding purge removed {removed} of {len(keys)} files; "

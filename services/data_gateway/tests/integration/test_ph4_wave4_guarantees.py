@@ -387,3 +387,52 @@ async def test_a_sent_offer_s_deadline_cannot_move(db: AsyncSession) -> None:
                        " WHERE id = :o", {"o": f.offer}, "its deadline cannot change")
     await _allowed(db, "UPDATE offers SET token_hash = :t WHERE id = :o",
                    {"t": uuid.uuid4().hex, "o": f.offer})  # a re-send rotates only the link
+
+
+# ===========================================================================
+# The second factor (security review H1, M1)
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_the_lifetime_count_of_wrong_codes_is_bounded(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _refused(db, "UPDATE offers SET code_failures = -1 WHERE id = :o", {"o": f.offer},
+                   "ck_offers_code_failures")
+    await _refused(db, "UPDATE offers SET code_failures = 101 WHERE id = :o", {"o": f.offer},
+                   "ck_offers_code_failures")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("purpose", "ok"), [("accept", True), ("decline", True),
+                                             ("documents", True), ("download", False)])
+async def test_a_code_is_issued_only_for_a_known_purpose(db: AsyncSession, purpose: str,
+                                                         ok: bool) -> None:
+    f = await _build(db)
+    sql = ("INSERT INTO offer_codes (id, offer_id, purpose, code_hash, expires_at)"
+           " VALUES (gen_random_uuid(), :o, :p, :h, now() + interval '10 minutes')")
+    params = {"o": f.offer, "p": purpose, "h": uuid.uuid4().hex}
+    if ok:
+        await _allowed(db, sql, params)
+    else:
+        await _refused(db, sql, params, "purpose")
+
+
+@pytest.mark.asyncio
+async def test_a_session_is_unique_and_ends_after_it_starts(db: AsyncSession) -> None:
+    f = await _build(db)
+    sql = ("INSERT INTO offer_sessions (offer_id, token_hash, expires_at)"
+           " VALUES (:o, :h, now() + interval '1 hour')")
+    await _allowed(db, sql, {"o": f.offer, "h": "same"})
+    await _refused(db, sql, {"o": f.offer, "h": "same"}, "uq_offer_sessions_token_hash")
+    await _refused(db, "INSERT INTO offer_sessions (offer_id, token_hash, expires_at)"
+                       " VALUES (:o, 'other', now() - interval '1 minute')", {"o": f.offer},
+                   "ck_offer_sessions_expiry")
+
+
+@pytest.mark.asyncio
+async def test_a_session_goes_with_its_offer(db: AsyncSession) -> None:
+    f = await _build(db)  # a draft offer may be deleted
+    await db.execute(text("INSERT INTO offer_sessions (offer_id, token_hash, expires_at)"
+                          " VALUES (:o, 'gone', now() + interval '1 hour')"), {"o": f.offer})
+    await db.execute(text("DELETE FROM offers WHERE id = :o"), {"o": f.offer})
+    left = await db.scalar(text("SELECT count(*) FROM offer_sessions WHERE token_hash = 'gone'"))
+    assert left == 0

@@ -47,7 +47,7 @@ IMPORTANT: admin_ops shares the same AWS/R2 credentials as feedback_billing
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from botocore.exceptions import ClientError
@@ -70,6 +70,32 @@ class StorageNotConfiguredError(RuntimeError):
     "S3 rejected the delete".  Both must leave the erasure request retryable;
     only this one is fixed by setting env vars rather than by retrying.
     """
+
+
+async def keys_under(bucket: str, prefix: str, *, settings: Settings) -> list[str]:
+    """Every object key under ``prefix`` — for files no row names any more, such
+    as one a failed commit left behind (PH4 Wave 4 security review L4). Empty
+    when storage is not configured: there is nothing to list, and the delete
+    step reports the unconfigured case on its own."""
+    if not settings.s3_endpoint_url or not settings.s3_access_key_id:
+        return []
+    from shared.s3 import s3_client  # noqa: PLC0415 — same client every service uses
+
+    keys: list[str] = []
+    async with s3_client(
+        endpoint=settings.s3_endpoint_url, region=settings.s3_region,
+        access_key=settings.s3_access_key_id, secret_key=settings.s3_secret_access_key,
+    ) as s3:
+        token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": 1000}
+            if token:
+                kwargs["ContinuationToken"] = token
+            page = await s3.list_objects_v2(**kwargs)
+            keys += [o["Key"] for o in page.get("Contents", [])]
+            if not page.get("IsTruncated"):
+                return keys
+            token = page.get("NextContinuationToken")
 
 
 async def delete_objects(

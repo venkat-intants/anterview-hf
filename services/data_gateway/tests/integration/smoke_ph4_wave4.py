@@ -246,7 +246,29 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post(f"/hr/requisitions/{req}/document-requirements",
                          json={"name": "Photo", "doc_type": "photo", "mandatory": False})
         check("…and an optional one", r.status_code == 201, r.text[:160])
-        h = {"X-Offer-Token": tok}
+        link_only = {"X-Offer-Token": tok}
+        r = await c.get("/offer/documents", headers=link_only)
+        check("the link alone does not open the documents (H1)", r.status_code == 401, r.text[:160])
+        r = await c.post(f"/offer/documents/{passport}", headers=link_only,
+                         files={"file": ("p.pdf", PDF, "application/pdf")},
+                         data={"expires_on": str(date.today() + timedelta(days=900))})
+        check("…nor uploads one", r.status_code == 401, r.text[:160])
+        r = await c.post("/offer/documents/code", headers=link_only)
+        check("the candidate asks for a code to open their documents", r.status_code == 200,
+              r.text[:160])
+        dcode = (re.search(r"\b(\d{6})\b", await last_mail("offer_code", o1)) or [None, ""])[1]
+        bad = "111111" if dcode != "111111" else "222222"
+        r = await c.post("/offer/documents/session", headers=link_only, json={"code": bad})
+        check("a wrong code opens nothing", r.status_code == 422, r.text[:160])
+        r = await c.post("/offer/documents/session", headers=link_only, json={"code": dcode})
+        sess = r.json().get("session_token", "")
+        check("the right code opens an hour-long session", r.status_code == 200 and bool(sess),
+              r.text[:160])
+        async with factory() as db:
+            leaked = await db.scalar(text("SELECT count(*) FROM email_events"
+                                          " WHERE body_text LIKE :s"), {"s": f"%{sess}%"})
+        check("…whose token is never emailed", leaked == 0, str(leaked))
+        h = {"X-Offer-Token": tok, "X-Offer-Session": sess}
         r = await c.get("/offer/documents", headers=h)
         items = {i["name"]: i for i in r.json()["items"]}
         check("the candidate sees what is outstanding", items["Passport"]["state"] == "outstanding"
@@ -294,6 +316,37 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               mine["state"] == "rejected" and "cut off" in (mine["document"]["review_note"] or ""),
               str(mine))
         check("…and is emailed", "cut off" in await last_mail("document_update", doc1))
+        check("the candidate is told of every upload, so one they did not send is noticed",
+              "अपलोड नहीं किया" in await last_mail("document_received", doc1))
+
+        print("\nPH4-A3 — the lifetime lock on wrong codes (M1)")
+        async with factory() as db:
+            await db.execute(text("UPDATE offers SET code_failures = 19 WHERE id = :o"),
+                             {"o": uuid.UUID(o1)})
+            await db.commit()
+        await c.post("/offer/documents/code", headers=link_only)
+        r = await c.post("/offer/documents/session", headers=link_only, json={"code": bad})
+        r2 = await c.post("/offer/documents/code", headers=link_only)
+        check("the twentieth wrong code locks the offer", r.status_code == 422
+              and r2.status_code == 423, f"{r.status_code} {r2.status_code} {r2.text[:120]}")
+        async with factory() as db:
+            told = await db.scalar(text(
+                "SELECT count(*) FROM notifications WHERE title LIKE 'Offer locked%'"
+                " AND user_id = :u"), {"u": hr})
+        check("…and HR is told", told == 1, str(told))
+        r = await c.post(f"/hr/offers/{o1}/resend")
+        check("HR re-sends the offer, which unlocks it", r.status_code == 200, r.text[:160])
+        tok = token_in(await last_mail("offer_ready", o1))
+        old = await c.get("/offer/documents", headers=h)
+        check("…retires the old link and closes its sessions", old.status_code in (401, 404),
+              str(old.status_code))
+        link_only = {"X-Offer-Token": tok}
+        await c.post("/offer/documents/code", headers=link_only)
+        dcode = (re.search(r"\b(\d{6})\b", await last_mail("offer_code", o1)) or [None, ""])[1]
+        r = await c.post("/offer/documents/session", headers=link_only, json={"code": dcode})
+        h = {"X-Offer-Token": tok, "X-Offer-Session": r.json().get("session_token", "")}
+        check("…and the candidate opens their documents again with a new code",
+              r.status_code == 200, r.text[:160])
         r = await c.post(f"/offer/documents/{passport}", headers=h,
                          files={"file": ("passport2.pdf", PDF + b"%v2\n", "application/pdf")},
                          data={"expires_on": str(date.today() + timedelta(days=900))})

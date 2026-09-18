@@ -240,6 +240,7 @@
 				request>headers>X-Interview-Token delete
 				request>headers>X-Draft-Token delete
 				request>headers>X-Offer-Token delete
+				request>headers>X-Offer-Session delete
 				request>headers>X-Test-Hooks-Token delete
 				request>uri query {
 					replace code REDACTED

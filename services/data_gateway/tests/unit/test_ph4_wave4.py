@@ -59,6 +59,27 @@ def test_a_code_is_six_digits_bound_to_its_offer_and_purpose() -> None:
     assert not codes_match(stored, "offer-2", "accept", code)   # nor open another offer
 
 
+def test_a_session_token_hash_is_not_a_link_hash() -> None:
+    """Domain-separated: a session token can never pass as the offer link, nor
+    the link as a session, even were the same string presented as both."""
+    from app.offer_security import hash_offer_token, hash_session_token, mint_offer_token
+
+    raw = mint_offer_token()
+    assert hash_session_token(raw) != hash_offer_token(raw)
+    assert len(hash_session_token(raw)) == 64
+
+
+def test_the_export_key_id_names_the_key_without_being_a_cheap_test_of_it() -> None:
+    import hashlib
+
+    from app.offer_security import _export_secret, export_key_id
+
+    kid = export_key_id()
+    assert len(kid) == 12 and kid == export_key_id()
+    # Not a bare digest of the secret — which an offline guesser could match.
+    assert kid != hashlib.sha256(_export_secret().encode()).hexdigest()[:12]
+
+
 def test_the_export_signature_is_over_the_canonical_payload() -> None:
     from app.offer_security import canonical, export_key_id, sign_export, verify_export
 
@@ -102,6 +123,16 @@ def test_a_pdf_that_can_run_or_carry_something_is_refused(marker: bytes) -> None
 
     with pytest.raises(DocumentRejectedError, match="scripts or embedded files"):
         check(PDF + b" << " + marker + b" (x) >>", "a.pdf", max_bytes=10_000)
+
+
+@pytest.mark.parametrize("marker", [b"/J#61vaScript", b"/#4A#53", b"/Launc#68",
+                                    b"/Embedded#46ile", b"/#58FA"])
+def test_a_marker_spelled_with_name_escapes_is_still_refused(marker: bytes) -> None:
+    from app.document_storage import DocumentRejectedError, check
+
+    with pytest.raises(DocumentRejectedError):
+        check(PDF.replace(b"%%EOF", b"<< " + marker + b" 1 0 R >>\n%%EOF"), "a.pdf",
+              max_bytes=10_000)
 
 
 def test_an_ordinary_pdf_with_an_open_action_is_accepted() -> None:
@@ -246,6 +277,95 @@ def test_every_route_sits_behind_its_audience_gate() -> None:
     assert seen >= 30
 
 
+def test_documents_need_a_session_as_well_as_the_link() -> None:
+    """Security review H1: every public route that lists or takes a document
+    names the session dependency, and no public route serves a file."""
+    import app.routers.offers as r
+
+    source = inspect.getsource(r)
+    assert 'Header(alias="X-Offer-Session")' in source
+    tree = ast.parse(source)
+    gated = 0
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.AsyncFunctionDef):
+            continue
+        for d in fn.decorator_list:
+            if not (isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                    and getattr(d.func.value, "id", "") == "public_router" and d.args):
+                continue
+            path = d.args[0].value if isinstance(d.args[0], ast.Constant) else ""
+            ann = " ".join(ast.unparse(a.annotation) for a in fn.args.args if a.annotation)
+            if path == "/documents" or path.startswith("/documents/{"):
+                assert "OfferSessionDep" in ann, fn.name
+                gated += 1
+    assert gated == 2
+    assert not [rt.path for rt in r.public_router.routes if "download" in rt.path]
+
+
+def test_the_session_is_checked_before_anything_is_listed() -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    import app.offers as offers
+
+    offer = {"id": uuid.uuid4(), "status": "accepted"}
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=None)
+    with patch.object(offers, "by_token", AsyncMock(return_value=offer)):
+        for session in (None, "", "x" * 201, "not-a-live-session"):
+            with pytest.raises(offers.OfferError) as exc:
+                asyncio.run(offers.with_documents_session(db, raw="t", session=session))
+            assert exc.value.status_code == 401
+
+
+def _code_db(failures_after: int) -> Any:
+    from unittest.mock import AsyncMock, MagicMock
+
+    db = AsyncMock()
+    res = MagicMock()
+    res.mappings.return_value.first.return_value = {
+        "id": uuid.uuid4(), "code_hash": "0" * 64, "attempts": 0,
+        "expires_at": datetime(2999, 1, 1, tzinfo=UTC)}
+    db.execute = AsyncMock(return_value=res)
+    db.scalar = AsyncMock(return_value=failures_after)
+    return db
+
+
+def test_a_locked_offer_refuses_every_code_until_hr_re_sends_it() -> None:
+    import asyncio
+
+    import app.offers as offers
+
+    offer = {"id": uuid.uuid4(), "code_failures": offers.MAX_CODE_FAILURES}
+    with pytest.raises(offers.OfferError) as exc:
+        asyncio.run(offers._check_code(_code_db(0), offer, "documents", "123456"))
+    assert exc.value.status_code == 423 and "locked" in exc.value.detail
+    assert offers.MAX_CODE_FAILURES == 20
+
+
+@pytest.mark.parametrize(("after", "told"), [(19, False), (20, True), (21, False)])
+def test_a_wrong_code_counts_over_the_offer_s_life_and_hr_is_told_once(after: int,
+                                                                       told: bool) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    import app.offers as offers
+
+    offer = {"id": uuid.uuid4(), "code_failures": 0}
+    tell = AsyncMock()
+    with patch.object(offers, "_tell_hr", tell), pytest.raises(offers.OfferError) as exc:
+        asyncio.run(offers._check_code(_code_db(after), offer, "accept", "000000"))
+    assert exc.value.status_code == 422 and exc.value.keep  # the attempt is committed
+    assert tell.await_count == (1 if told else 0)
+
+
+def test_a_re_send_resets_the_lock_and_closes_every_session() -> None:
+    import app.offers as offers
+
+    src = inspect.getsource(offers.send)
+    assert "code_failures = 0" in src and "DELETE FROM offer_sessions" in src
+
+
 def test_the_offer_link_is_read_only_from_a_header_and_every_public_route_is_rate_limited() -> None:
     import app.routers.offers as r
 
@@ -269,10 +389,13 @@ def test_new_tables_are_in_the_erasure_inventory_and_documents_leave_storage() -
     inv = (APP.parents[1] / "admin_ops" / "app" / "erasure_executor.py").read_text(encoding="utf-8")
     for table in ("offer_templates", "offers", "offer_events", "offer_codes",
                   "document_requirements", "candidate_documents", "document_events",
-                  "hrms_exports"):
+                  "hrms_exports", "offer_sessions"):
         assert f'"{table}"' in inv, table
     assert "SELECT d.storage_key FROM candidate_documents d" in inv  # collected in step 1
     assert "DELETE FROM hrms_exports" in inv and "DELETE FROM offer_codes" in inv
+    assert "DELETE FROM offer_sessions" in inv
+    # An object no row names any more (a failed commit's) is found by prefix (L4).
+    assert "keys_under" in inv and "preboarding/{company_id}/{offer_id}/" in inv
 
 
 @pytest.mark.parametrize("lang", ["en", "hi", "te"])
@@ -285,6 +408,7 @@ def test_every_offer_email_speaks_the_candidate_s_language(lang: str) -> None:
         ("offer_code", {"code": "042917", "purpose": "decline", "minutes": 10}),
         ("offer_update", {"company": "Acme"}),
         ("document_update", {"document": "Passport <b>", "reason": "Blurry <i>"}),
+        ("document_received", {"document": "Passport <b>"}),
     ):
         mail = render(template, lang, {"name": "Asha", "job_title": "Engineer", **ctx})
         assert mail.subject and "<b>" not in mail.html.replace("<strong>", "")

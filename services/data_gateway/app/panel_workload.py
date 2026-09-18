@@ -295,7 +295,10 @@ async def calibration(
             {"user_id": c.interviewer_id,
              "name": names.get(c.interviewer_id, "Former interviewer"),
              "scorecards": c.scorecards, "candidates": c.candidates,
-             "suppressed": c.suppressed, "scores": c.scores, "mean": c.mean,
+             # Withheld with the figures: a count over one candidate says how
+             # many criteria they were scored on (code review).
+             "suppressed": c.suppressed, "scores": None if c.suppressed else c.scores,
+             "mean": c.mean,
              "not_assessed_rate": c.not_assessed_rate,
              "distribution": ({str(k): v for k, v in sorted(c.distribution.items())}
                               if c.distribution is not None else None),

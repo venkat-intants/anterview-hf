@@ -338,6 +338,18 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("a session still awaiting its slot can be cancelled", r.status_code == 200,
               r.text[:200])
 
+        # A loop whose every session is cancelled one by one is itself cancelled.
+        r = await c.post(f"/hr/enrolments/{e1}/loops", json={"title": "Short-lived"})
+        lone = r.json()["id"]
+        r = await c.post(f"/hr/loops/{lone}/sessions",
+                         json={"round_id": rnd, "title": "Only one", "duration_minutes": 30,
+                               "interviewer_user_ids": [str(iv2)], "starts_at": at(1500),
+                               "allow_outside_availability": True})
+        only = r.json()["sessions"][0]
+        r = await c.post(f"/hr/sessions/{only['id']}/outcome", json={"outcome": "cancelled"})
+        check("a loop left with no session to hold is cancelled, not 'scheduled' forever",
+              r.status_code == 200 and r.json()["loop_status"] == "cancelled", r.text[:200])
+
         print("\nPH4-A2 — interviewers see their own")
         acting["iv"] = iv2
         r = await c.get("/interviewer/sessions",

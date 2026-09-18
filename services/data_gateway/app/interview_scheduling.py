@@ -379,14 +379,20 @@ async def loops_for_enrolment(
 
 
 async def _refresh_loop_status(db: AsyncSession, loop_id: uuid.UUID) -> str:
-    """Derive the loop's status from its sessions; a cancelled loop stays so."""
+    """Derive the loop's status from its sessions; a cancelled loop stays so.
+
+    One rule, shared with close_for_decision: once no session is pending
+    (scheduled or awaiting a slot), the loop is COMPLETED if any session was
+    held — completed, or the candidate did not show — and CANCELLED if none
+    was. Until then it is scheduled once sent, draft before.
+    """
     row = (
         await db.execute(
             text(
-                "SELECT l.status, l.sent_at,"
-                "       count(*) FILTER (WHERE s.status NOT IN ('cancelled')) AS live,"
-                "       count(*) FILTER (WHERE s.status IN ('completed', 'no_show')) AS done,"
-                "       count(*) FILTER (WHERE s.status = 'completed') AS completed"
+                "SELECT l.status, l.sent_at, count(s.id) AS total,"
+                "       count(*) FILTER (WHERE s.status IN ('scheduled', 'awaiting_slot'))"
+                "         AS pending,"
+                "       count(*) FILTER (WHERE s.status IN ('completed', 'no_show')) AS held"
                 "  FROM interview_loops l LEFT JOIN interview_sessions s ON s.loop_id = l.id"
                 " WHERE l.id = :l GROUP BY l.id"
             ),
@@ -395,15 +401,18 @@ async def _refresh_loop_status(db: AsyncSession, loop_id: uuid.UUID) -> str:
     ).mappings().first()
     if row is None or row["status"] == "cancelled":
         return row["status"] if row else "cancelled"
-    if row["live"] and row["done"] == row["live"] and row["completed"]:
-        new = "completed"
+    if row["total"] and not row["pending"]:
+        new = "completed" if row["held"] else "cancelled"
     elif row["sent_at"] is not None:
         new = "scheduled"
     else:
         new = "draft"
     if new != row["status"]:
         await db.execute(
-            text("UPDATE interview_loops SET status = :s, updated_at = now() WHERE id = :l"),
+            text(
+                "UPDATE interview_loops SET status = :s, updated_at = now(),"
+                " cancelled_at = CASE WHEN :s = 'cancelled' THEN now() END WHERE id = :l"
+            ),
             {"s": new, "l": loop_id},
         )
     return new
@@ -1257,8 +1266,8 @@ async def close_for_decision(
     cancelled = (
         await db.execute(
             text(
-                "UPDATE interview_sessions SET status = 'cancelled', cancelled_at = :n,"
-                " updated_at = :n"
+                "UPDATE interview_sessions SET status = 'cancelled',"
+                " cancelled_at = CAST(:n AS timestamptz), updated_at = CAST(:n AS timestamptz)"
                 " WHERE enrolment_id = :e AND company_id = :c"
                 "   AND (status = 'awaiting_slot' OR (status = 'scheduled' AND starts_at > :n))"
                 " RETURNING id, title, starts_at"

@@ -5,6 +5,7 @@
 //
 // Embedded in OfferDetail.tsx — this is the panel, not the page.
 
+import { downloadUrl } from '@/lib/safeUrl';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -61,7 +62,8 @@ function DocumentRow({ offerId, item }: { offerId: string; item: ChecklistItem }
   const [note, setNote] = useState('');
   const [pendingAction, setPendingAction] = useState<ReviewAction | null>(null);
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['hr', 'offer', offerId, 'documents'] });
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: ['hr', 'offer', offerId, 'documents'] });
 
   const reviewMut = useMutation({
     mutationFn: (action: ReviewAction) => reviewDocument(item.document!.id, action, note || null),
@@ -83,7 +85,12 @@ function DocumentRow({ offerId, item }: { offerId: string; item: ChecklistItem }
   const downloadMut = useMutation({
     mutationFn: () => downloadDocument(item.document!.id),
     onSuccess: (res) => {
-      window.open(res.url, '_blank', 'noopener,noreferrer');
+      const url = downloadUrl(res.url);
+      if (!url) {
+        toast.error('That download link could not be opened.');
+        return;
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
     },
     onError: (e: unknown) => toast.error(errText(e, 'Could not open this document')),
   });
@@ -154,9 +161,7 @@ function DocumentRow({ offerId, item }: { offerId: string; item: ChecklistItem }
             htmlFor={`note-${item.requirement_id}`}
             className="text-[11.5px] font-medium text-[var(--ui-soft)]"
           >
-            {needsReason
-              ? 'Tell the candidate what is wrong (required)'
-              : 'Note (optional)'}
+            {needsReason ? 'Tell the candidate what is wrong (required)' : 'Note (optional)'}
           </label>
           <input
             id={`note-${item.requirement_id}`}
@@ -165,9 +170,7 @@ function DocumentRow({ offerId, item }: { offerId: string; item: ChecklistItem }
             className="rounded-[8px] border border-border bg-secondary px-2.5 py-1.5 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none"
           />
           {needsReason && !reasonReady ? (
-            <p className="text-[11px] text-[var(--ui-warn)]">
-              At least {REASON_MIN} characters.
-            </p>
+            <p className="text-[11px] text-[var(--ui-warn)]">At least {REASON_MIN} characters.</p>
           ) : null}
           <div className="flex gap-2">
             <button
@@ -206,9 +209,7 @@ export default function OfferDocumentsPanel({ offerId }: { offerId: string }) {
     return <p className="text-[12.5px] text-muted-foreground">Loading…</p>;
   }
   if (docs.isError || !docs.data) {
-    return (
-      <p className="text-[12.5px] text-muted-foreground">Could not load these documents.</p>
-    );
+    return <p className="text-[12.5px] text-muted-foreground">Could not load these documents.</p>;
   }
 
   const data = docs.data;
@@ -248,7 +249,9 @@ export default function OfferDocumentsPanel({ offerId }: { offerId: string }) {
 
       <button
         type="button"
-        onClick={() => void qc.invalidateQueries({ queryKey: ['hr', 'offer', offerId, 'documents'] })}
+        onClick={() =>
+          void qc.invalidateQueries({ queryKey: ['hr', 'offer', offerId, 'documents'] })
+        }
         className="mt-3 text-[11.5px] text-muted-foreground hover:text-foreground"
       >
         Refresh

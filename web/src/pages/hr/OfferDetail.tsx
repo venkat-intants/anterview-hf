@@ -8,6 +8,7 @@
 // EXACTLY — EDITABLE = draft/rejected, BEFORE_ANSWER = the states withdraw
 // still works from. Every refusal from the server is shown as written.
 
+import { offerActionWord } from '@/lib/offerHistory';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -50,26 +51,6 @@ const OFFER_TONE: Record<OfferStatus, TagTone> = {
   declined: 'ember',
   expired: 'neutral',
   withdrawn: 'neutral',
-};
-
-const ACTION_WORDS: Record<string, string> = {
-  created: 'Created',
-  updated: 'Updated',
-  submitted: 'Submitted for approval',
-  recalled: 'Recalled',
-  reopened: 'Reopened for editing',
-  approved: 'Approved',
-  rejected: 'Sent back',
-  sent: 'Sent to the candidate',
-  resent: 'Re-sent to the candidate',
-  withdrawn: 'Withdrawn',
-  viewed: 'Opened by the candidate',
-  code_requested: 'Candidate requested a code',
-  accepted: 'Accepted',
-  declined: 'Declined',
-  expired: 'Expired',
-  preboarding_completed: 'Preboarding marked complete',
-  exported: 'HRMS export prepared',
 };
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ['full_time', 'part_time', 'contract', 'internship'];
@@ -151,7 +132,8 @@ function diff(current: FieldsState, saved: FieldsState): OfferFieldsInput {
   if (current.benefits !== saved.benefits) out.benefits = current.benefits;
   if (current.terms !== saved.terms) out.terms = current.terms;
   if (current.probation_months !== saved.probation_months) {
-    out.probation_months = current.probation_months === '' ? null : Number(current.probation_months);
+    out.probation_months =
+      current.probation_months === '' ? null : Number(current.probation_months);
   }
   if (current.notice_period_days !== saved.notice_period_days) {
     out.notice_period_days =
@@ -193,8 +175,8 @@ function OfferFields({ offer }: { offer: OfferDetailShape }) {
       <h2 className="text-[15px] font-semibold text-foreground">Offer details</h2>
       {!editable ? (
         <p className="mt-1 text-[12px] text-muted-foreground">
-          This offer is {offer.status.replace('_', ' ')} — it can be changed only as a draft or
-          once it has been sent back.
+          This offer is {offer.status.replace('_', ' ')} — it can be changed only as a draft or once
+          it has been sent back.
         </p>
       ) : null}
 
@@ -557,9 +539,7 @@ function PreboardingPanel({ offer }: { offer: OfferDetailShape }) {
 
   if (offer.status !== 'accepted') {
     return (
-      <p className="text-[12.5px] text-muted-foreground">
-        Preboarding follows an accepted offer.
-      </p>
+      <p className="text-[12.5px] text-muted-foreground">Preboarding follows an accepted offer.</p>
     );
   }
 
@@ -608,9 +588,7 @@ function PreboardingPanel({ offer }: { offer: OfferDetailShape }) {
               </pre>
               <button
                 type="button"
-                onClick={() =>
-                  downloadJson(`offer-${offer.id}-hrms-export.json`, exportResult)
-                }
+                onClick={() => downloadJson(`offer-${offer.id}-hrms-export.json`, exportResult)}
                 className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-[var(--ui-info)] hover:underline"
               >
                 <Download className="h-3.5 w-3.5" aria-hidden="true" />
@@ -675,9 +653,7 @@ export default function OfferDetail() {
         </StatusTag>
       </div>
       {offer.expires_at ? (
-        <p className="mt-1 text-[12.5px] text-muted-foreground">
-          Expires {fmt(offer.expires_at)}
-        </p>
+        <p className="mt-1 text-[12.5px] text-muted-foreground">Expires {fmt(offer.expires_at)}</p>
       ) : null}
 
       {offer.status === 'rejected' && offer.approval_note ? (
@@ -722,7 +698,7 @@ export default function OfferDetail() {
             <ol className="flex flex-col gap-1.5 border-l border-border pl-3">
               {offer.history.map((h, i) => (
                 <li key={i} className="text-[12.5px] text-[var(--ui-soft)]">
-                  {ACTION_WORDS[h.action] ?? h.action.replace(/_/g, ' ')}
+                  {offerActionWord(h.action)}
                   {h.actor_name ? ` — ${h.actor_name}` : ''}
                   <span className="ml-1.5 text-[11px] text-[var(--ui-faint)]">
                     {new Date(h.at).toLocaleString()}

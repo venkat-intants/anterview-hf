@@ -128,6 +128,30 @@ describe('OfferSection — create only once hired', () => {
       }),
     );
   });
+
+  it('takes the currency of the template chosen, not the form default', async () => {
+    const user = userEvent.setup();
+    listOfferTemplates.mockResolvedValue([
+      TEMPLATE,
+      { ...TEMPLATE, id: 'tpl-usd', name: 'US contractor', currency: 'USD' },
+    ]);
+    createEnrolmentOffer.mockResolvedValue(OFFER);
+    renderSection('hired');
+    await screen.findByText('No offer yet for this application.');
+
+    await user.click(screen.getByRole('button', { name: 'Create offer' }));
+    await user.selectOptions(screen.getByLabelText('Template (optional)'), 'tpl-usd');
+    expect(screen.getByLabelText('Currency')).toHaveValue('USD');
+    await user.type(screen.getByLabelText('Base salary'), '90000');
+    await user.click(screen.getByRole('button', { name: 'Create offer' }));
+    await waitFor(() =>
+      expect(createEnrolmentOffer).toHaveBeenCalledWith('enr-1', {
+        template_id: 'tpl-usd',
+        base_salary: '90000',
+        currency: 'USD',
+      }),
+    );
+  });
 });
 
 describe('OfferSection — the list', () => {

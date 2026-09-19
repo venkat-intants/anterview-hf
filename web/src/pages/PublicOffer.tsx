@@ -38,13 +38,7 @@ import {
 import { AuroraField } from '@/design/components/AuroraField';
 import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
-import {
-  AlertCircle,
-  CheckCircle2,
-  Loader2,
-  Lock,
-  Upload,
-} from '@/design/components/icons';
+import { AlertCircle, CheckCircle2, Loader2, Lock, Upload } from '@/design/components/icons';
 
 const MAX_DOC_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -286,11 +280,7 @@ function AnswerPanel({
           <p className="mt-2 text-[13px] text-muted-foreground">
             {purpose === 'accept' ? t('offer.acceptCodeIntro') : t('offer.declineCodeIntro')}
           </p>
-          <Pill
-            className="mt-4"
-            disabled={codeMut.isPending}
-            onClick={() => codeMut.mutate()}
-          >
+          <Pill className="mt-4" disabled={codeMut.isPending} onClick={() => codeMut.mutate()}>
             {codeMut.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : null}
@@ -375,7 +365,11 @@ function aadhaarLike(item: PublicChecklistItem): boolean {
 /** Matches the server: only these states accept an upload (an 'expired' one
  *  needs HR to ask for a replacement first — see app/preboarding.py `upload`). */
 function canUpload(item: PublicChecklistItem): boolean {
-  return item.state === 'outstanding' || item.state === 'rejected' || item.state === 'replacement_requested';
+  return (
+    item.state === 'outstanding' ||
+    item.state === 'rejected' ||
+    item.state === 'replacement_requested'
+  );
 }
 
 function DocumentRow({
@@ -457,7 +451,10 @@ function DocumentRow({
 
       {aadhaarLike(item) ? (
         <p className="mt-2 flex items-start gap-1.5 rounded-[8px] border border-[var(--ui-warn)]/30 bg-[rgba(255,183,100,0.08)] p-2.5 text-[12px] text-[var(--ui-soft)]">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
+          <AlertCircle
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]"
+            aria-hidden="true"
+          />
           {t('offer.documents.aadhaarNotice')}
         </p>
       ) : null}
@@ -623,6 +620,8 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
             ? t('offer.documents.sessionExpired')
             : errText(checklist.error, t('offer.documents.loadError'))}
         </p>
+      ) : (checklist.data?.items ?? []).length === 0 ? (
+        <p className="mt-4 text-[13px] text-muted-foreground">{t('offer.documents.none')}</p>
       ) : (
         <ul className="mt-4 flex flex-col gap-3">
           {(checklist.data?.items ?? []).map((item) => (

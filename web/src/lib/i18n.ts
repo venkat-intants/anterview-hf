@@ -1014,6 +1014,7 @@ const en = {
       documents: {
         heading: 'Your documents',
         intro: 'The hiring team needs a few documents from you before you start.',
+        none: 'Nothing to send — the hiring team has not asked for any documents.',
         getCode: 'Get a code',
         codeIntro: 'We will email you a one-time code so you can manage your documents securely.',
         openChecklist: 'Continue',
@@ -1954,6 +1955,7 @@ const hi = {
       documents: {
         heading: 'आपके दस्तावेज़',
         intro: 'शुरू करने से पहले भर्ती टीम को आपसे कुछ दस्तावेज़ चाहिए।',
+        none: 'भेजने के लिए कुछ नहीं — भर्ती टीम ने कोई दस्तावेज़ नहीं माँगा है।',
         getCode: 'कोड प्राप्त करें',
         codeIntro: 'आप अपने दस्तावेज़ सुरक्षित रूप से प्रबंधित कर सकें, इसके लिए हम आपको ईमेल पर एक बार का कोड भेजेंगे।',
         openChecklist: 'आगे बढ़ें',
@@ -2894,6 +2896,7 @@ const te = {
       documents: {
         heading: 'మీ పత్రాలు',
         intro: 'మీరు ప్రారంభించే ముందు నియామక బృందానికి మీ నుండి కొన్ని పత్రాలు అవసరం.',
+        none: 'పంపడానికి ఏమీ లేదు — నియామక బృందం ఏ పత్రాలనూ అడగలేదు.',
         getCode: 'కోడ్ పొందండి',
         codeIntro: 'మీరు మీ పత్రాలను సురక్షితంగా నిర్వహించగలిగేలా మేము మీకు ఈమెయిల్‌లో ఒకసారి-వాడే కోడ్ పంపుతాము.',
         openChecklist: 'కొనసాగించండి',

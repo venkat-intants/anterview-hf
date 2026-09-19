@@ -3,7 +3,7 @@
 // app ever navigates to it.
 
 import { describe, it, expect } from 'vitest';
-import { sameOriginUrl } from '../lib/safeUrl';
+import { downloadUrl, sameOriginUrl } from '../lib/safeUrl';
 
 describe('sameOriginUrl', () => {
   it('accepts a same-origin link at the expected path', () => {
@@ -27,4 +27,32 @@ describe('sameOriginUrl', () => {
   it('rejects an unparsable value', () => {
     expect(sameOriginUrl('not a url at all', '/offer')).toBeNull();
   });
+});
+
+describe('sameOriginUrl — forms that must never pass', () => {
+  it.each([
+    ['a javascript: URL', 'javascript:alert(1)'],
+    ['userinfo naming our host', `https://${window.location.host}@evil.example.com/offer`],
+    ['userinfo with a password', 'https://user:pass@evil.example.com/offer'],
+    ['a backslash host', '\\\\evil.example.com/offer'],
+    ['a look-alike subdomain', `https://${window.location.hostname}.evil.example.com/offer`],
+    ['a data: URL', 'data:text/html,<p>x</p>'],
+  ])('rejects %s', (_label, raw) => {
+    expect(sameOriginUrl(raw, '/offer')).toBeNull();
+  });
+});
+
+describe('downloadUrl', () => {
+  it('opens an https signed link', () => {
+    expect(downloadUrl('https://store.example.com/k?X-Amz-Signature=abc')).toBe(
+      'https://store.example.com/k?X-Amz-Signature=abc',
+    );
+  });
+
+  it.each([['javascript:alert(1)'], ['data:text/html,x'], ['/relative/path'], ['not a url']])(
+    'refuses %s',
+    (raw) => {
+      expect(downloadUrl(raw)).toBeNull();
+    },
+  );
 });

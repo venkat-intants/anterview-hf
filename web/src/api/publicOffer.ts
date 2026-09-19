@@ -20,6 +20,7 @@
 // `public_router` and app/offers.py's `candidate_out` / `checklist(...,
 // for_candidate=True)` EXACTLY.
 
+import { pathId } from './pathId';
 import { ApiError } from './client';
 import type { DocType, DocumentState, EmploymentType, OfferStatus, PayPeriod } from './offers';
 
@@ -133,10 +134,7 @@ export interface DocumentsSession {
   expires_at: string;
 }
 
-export async function openDocumentsSession(
-  token: string,
-  code: string,
-): Promise<DocumentsSession> {
+export async function openDocumentsSession(token: string, code: string): Promise<DocumentsSession> {
   const res = await fetch(`${API_BASE}/offer/documents/session`, {
     method: 'POST',
     headers: offerHeaders(token, { 'Content-Type': 'application/json' }),
@@ -208,7 +206,7 @@ export async function uploadMyDocument(
   form.append('file', file);
   if (expiresOn) form.append('expires_on', expiresOn);
   // No Content-Type: the browser must set the multipart boundary.
-  const res = await fetch(`${API_BASE}/offer/documents/${encodeURIComponent(requirementId)}`, {
+  const res = await fetch(`${API_BASE}/offer/documents/${pathId(requirementId)}`, {
     method: 'POST',
     headers: documentsHeaders(token, session),
     body: form,

@@ -10,6 +10,22 @@
 // navSections.tsx's own note on the same rule), and this is plain,
 // side-effect-free logic worth testing on its own.
 
+/**
+ * A link the server handed back to OPEN (a signed download), accepted only as
+ * https — or http when this app is itself served over http, as in local
+ * development. Anything else (javascript:, data:, a relative path) is refused.
+ */
+export function downloadUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.protocol === 'https:') return url.href;
+    if (url.protocol === 'http:' && window.location.protocol === 'http:') return url.href;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function sameOriginUrl(raw: string, pathname: string): string | null {
   try {
     const url = new URL(raw, window.location.origin);

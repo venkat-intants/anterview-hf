@@ -7,6 +7,7 @@
 // offer). Separation of duties (nobody approves an offer they wrote or
 // submitted) is enforced server-side; a 403 here is shown exactly as worded.
 
+import { offerActionWord } from '@/lib/offerHistory';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -42,22 +43,6 @@ function waiting(iso: string | null): string {
   return days === 1 ? 'Waiting 1 day' : `Waiting ${days} days`;
 }
 
-const ACTION_WORDS: Record<string, string> = {
-  created: 'Created',
-  updated: 'Updated',
-  submitted: 'Submitted for approval',
-  recalled: 'Recalled',
-  reopened: 'Reopened for editing',
-  approved: 'Approved',
-  rejected: 'Sent back',
-  sent: 'Sent to the candidate',
-  resent: 'Re-sent to the candidate',
-  withdrawn: 'Withdrawn',
-  viewed: 'Opened by the candidate',
-  accepted: 'Accepted',
-  declined: 'Declined',
-};
-
 /* ── The queue ──────────────────────────────────────────────────────────── */
 
 function ApprovalQueueView(): JSX.Element {
@@ -68,8 +53,8 @@ function ApprovalQueueView(): JSX.Element {
       <Reveal>
         <h1 className="text-[22px] font-semibold text-foreground">Offer approvals</h1>
         <p className="mt-1 text-[13px] text-muted-foreground">
-          Offers your HR managers have submitted, waiting on your decision before they can be
-          sent. Oldest request first.
+          Offers your HR managers have submitted, waiting on your decision before they can be sent.
+          Oldest request first.
         </p>
       </Reveal>
 
@@ -217,14 +202,18 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
             <dt className="text-muted-foreground">Offer window</dt>
             <dd className="text-foreground">{o.valid_days ? `${o.valid_days} days` : '—'}</dd>
           </dl>
-          {o.bonus ? <p className="mt-3 text-[12.5px] text-[var(--ui-soft)]">Bonus: {o.bonus}</p> : null}
+          {o.bonus ? (
+            <p className="mt-3 text-[12.5px] text-[var(--ui-soft)]">Bonus: {o.bonus}</p>
+          ) : null}
           {o.equity ? (
             <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">Equity: {o.equity}</p>
           ) : null}
           {o.benefits ? (
             <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">Benefits: {o.benefits}</p>
           ) : null}
-          {o.terms ? <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">Terms: {o.terms}</p> : null}
+          {o.terms ? (
+            <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">Terms: {o.terms}</p>
+          ) : null}
         </GlassCard>
 
         <GlassCard className="p-5">
@@ -235,7 +224,7 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
             <ol className="flex flex-col gap-1.5 border-l border-border pl-3">
               {o.history.map((h, i) => (
                 <li key={i} className="text-[12.5px] text-[var(--ui-soft)]">
-                  {ACTION_WORDS[h.action] ?? h.action.replace(/_/g, ' ')}
+                  {offerActionWord(h.action)}
                   {h.actor_name ? ` — ${h.actor_name}` : ''}
                   <span className="ml-1.5 text-[11px] text-[var(--ui-faint)]">
                     {new Date(h.at).toLocaleString()}
@@ -280,7 +269,9 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
                   id="offer-decision-note"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder={mode === 'reject' ? `At least ${REJECT_NOTE_MIN} characters` : undefined}
+                  placeholder={
+                    mode === 'reject' ? `At least ${REJECT_NOTE_MIN} characters` : undefined
+                  }
                   className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
                 />
                 {mode === 'reject' && !rejectReady ? (

@@ -84,7 +84,15 @@ function CreateOfferForm({
         <select
           id={`${uid}-template`}
           value={templateId}
-          onChange={(e) => setTemplateId(e.target.value)}
+          onChange={(e) => {
+            // The form always sends a currency, and what it sends wins over the
+            // template's — so take the template's the moment it is chosen, or a
+            // USD template would quietly become an INR offer.
+            const id = e.target.value;
+            setTemplateId(id);
+            const tpl = (templates.data ?? []).find((x) => x.id === id);
+            if (tpl?.currency) setCurrency(tpl.currency);
+          }}
           className={inputCls}
         >
           <option value="">No template — start from scratch</option>
@@ -124,8 +132,8 @@ function CreateOfferForm({
         </div>
       </div>
       <p className="text-[11.5px] text-[var(--ui-faint)]">
-        Job title defaults to {jobTitle ?? 'this opening'}. Everything else — dates, benefits,
-        terms — is filled in on the offer itself.
+        Job title defaults to {jobTitle ?? 'this opening'}. Everything else — dates, benefits, terms
+        — is filled in on the offer itself.
       </p>
       <button
         type="button"

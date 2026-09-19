@@ -310,6 +310,24 @@ describe('PublicOffer — documents, once accepted', () => {
     expect(sessionStorage.length).toBe(0);
   });
 
+  it('says so when the hiring team has asked for no documents', async () => {
+    const user = userEvent.setup();
+    requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
+    openDocumentsSession.mockResolvedValue({
+      session_token: 'sess_tok',
+      expires_at: '2026-09-18T02:00:00.000Z',
+    });
+    getMyDocuments.mockResolvedValue({ ...CHECKLIST, outstanding: [], items: [] });
+    renderPage();
+
+    await screen.findByText('Your documents');
+    await user.click(screen.getByRole('button', { name: 'Get a code' }));
+    await screen.findByText(/Code sent/);
+    await user.type(screen.getByLabelText(/enter the code/i), '111111');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText(/has not asked for any documents/)).toBeInTheDocument();
+  });
+
   it('shows Aadhaar-specific masking guidance for an identity document', async () => {
     requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
     openDocumentsSession.mockResolvedValue({

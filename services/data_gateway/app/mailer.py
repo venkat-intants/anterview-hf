@@ -300,7 +300,12 @@ async def _record_failure(
     await db.execute(
         text(
             "UPDATE email_events SET status=:st, last_error=:err, updated_at=now(), "
-            "next_attempt_at = now() + make_interval(secs => :backoff) WHERE id=:id"
+            "next_attempt_at = now() + make_interval(secs => :backoff),"
+            # A message that has finally failed keeps no body, as a delivered one
+            # does not: bodies can hold an offer link or a one-time code.
+            " body_html = CASE WHEN :st = 'failed' THEN NULL ELSE body_html END,"
+            " body_text = CASE WHEN :st = 'failed' THEN NULL ELSE body_text END"
+            " WHERE id=:id"
         ),
         {
             "st": "failed" if terminal else "queued",

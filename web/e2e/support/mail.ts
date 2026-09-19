@@ -60,6 +60,27 @@ export async function waitForMail(
   );
 }
 
+/**
+ * Wait for a matching email NEWER than one already read — for a second code of
+ * the same kind, where waitForMail would return the first, already-used one.
+ */
+export async function waitForNewerMail(
+  address: string,
+  subjectMatch: RegExp,
+  previous: Mail,
+  timeoutMs = 30_000,
+): Promise<Mail> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const hit = (await mailFor(address)).find(
+      (m) => subjectMatch.test(m.subject) && m.created > previous.created,
+    );
+    if (hit) return hit;
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  throw new Error(`No mail to ${address} matching ${subjectMatch} newer than ${previous.created}`);
+}
+
 /** The single-use link out of an email body, e.g. /exam#<token>. */
 export function linkIn(mail: Mail, pattern: RegExp): string {
   const match = mail.text.match(pattern);

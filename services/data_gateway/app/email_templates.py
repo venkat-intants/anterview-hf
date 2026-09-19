@@ -1600,6 +1600,278 @@ def _t_interview_session_reminder(lang: str, ctx: dict) -> tuple[str, str, str, 
 
 
 
+# ===========================================================================
+# PH4-A3 / A4 — offers and preboarding documents. Every link carries its token
+# in the URL fragment; a code is never a link.
+# ===========================================================================
+def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    name = ctx.get("name")
+    job_title = ctx.get("job_title", "the role")
+    org = (ctx.get("company") or ctx.get("brand") or "").strip()
+    url = ctx.get("offer_url")
+    expires = ctx.get("expires", "")
+    resent = bool(ctx.get("resent"))
+    # Re-sent after acceptance (to lift a lock, or replace a lost link): the
+    # answer is given, so the email is about documents, not a decision.
+    accepted = bool(ctx.get("accepted"))
+    jt, orge, exp = _esc(job_title), _esc(org), _esc(expires)
+    loc = _loc(lang, {
+        "en": {
+            "subject": f"Your offer from {org}: {job_title}" if org else f"Your offer: {job_title}",
+            "pre": "Your offer is ready to read.",
+            "lead": (f"<strong>{orge}</strong> is pleased to offer you the role of <strong>{jt}</strong>."
+                     if org else f"You have an offer for the role of <strong>{jt}</strong>."),
+            "resent": "Here is a fresh link to your offer. The earlier link no longer works.",
+            "read": "Read the offer, then accept or decline it. To confirm your answer we will email you a one-time code.",
+            "accepted_read": "You have accepted this offer. Use this link to send the documents the hiring team asked for — we will email you a one-time code to open them.",
+            "expires": f"The offer is open until <strong>{exp}</strong>.",
+            "cta": "Read my offer",
+            "fallback": "Or paste this link into your browser:",
+            "keep": "This link is personal to you. Please don't forward it.",
+        },
+        "hi": {
+            "subject": f"{org} से आपका ऑफ़र: {job_title}" if org else f"आपका ऑफ़र: {job_title}",
+            "pre": "आपका ऑफ़र पढ़ने के लिए तैयार है।",
+            "lead": (f"<strong>{orge}</strong> आपको <strong>{jt}</strong> की भूमिका का ऑफ़र देते हुए प्रसन्न है।"
+                     if org else f"आपके पास <strong>{jt}</strong> की भूमिका का ऑफ़र है।"),
+            "resent": "यह आपके ऑफ़र का नया लिंक है। पुराना लिंक अब काम नहीं करता।",
+            "read": "ऑफ़र पढ़ें, फिर उसे स्वीकार या अस्वीकार करें। आपके उत्तर की पुष्टि के लिए हम आपको एक बार उपयोग होने वाला कोड ईमेल करेंगे।",
+            "accepted_read": "आपने यह ऑफ़र स्वीकार कर लिया है। हायरिंग टीम द्वारा माँगे गए दस्तावेज़ भेजने के लिए इस लिंक का उपयोग करें — उन्हें खोलने के लिए हम आपको एक बार उपयोग होने वाला कोड ईमेल करेंगे।",
+            "expires": f"यह ऑफ़र <strong>{exp}</strong> तक खुला है।",
+            "cta": "मेरा ऑफ़र पढ़ें",
+            "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
+            "keep": "यह लिंक केवल आपके लिए है। कृपया इसे आगे न भेजें।",
+        },
+        "te": {
+            "subject": f"{org} నుండి మీ ఆఫర్: {job_title}" if org else f"మీ ఆఫర్: {job_title}",
+            "pre": "మీ ఆఫర్ చదవడానికి సిద్ధంగా ఉంది.",
+            "lead": (f"<strong>{orge}</strong> మీకు <strong>{jt}</strong> పాత్రను ఆఫర్ చేయడానికి సంతోషిస్తోంది."
+                     if org else f"మీకు <strong>{jt}</strong> పాత్ర కోసం ఆఫర్ ఉంది."),
+            "resent": "ఇది మీ ఆఫర్‌కు కొత్త లింక్. పాత లింక్ ఇకపై పనిచేయదు.",
+            "read": "ఆఫర్‌ను చదివి, దాన్ని అంగీకరించండి లేదా తిరస్కరించండి. మీ సమాధానాన్ని నిర్ధారించడానికి మేము మీకు ఒకసారి ఉపయోగించే కోడ్‌ను ఇమెయిల్ చేస్తాము.",
+            "accepted_read": "మీరు ఈ ఆఫర్‌ను అంగీకరించారు. నియామక బృందం అడిగిన పత్రాలను పంపడానికి ఈ లింక్‌ను ఉపయోగించండి — వాటిని తెరవడానికి మేము మీకు ఒకసారి ఉపయోగించే కోడ్‌ను ఇమెయిల్ చేస్తాము.",
+            "expires": f"ఈ ఆఫర్ <strong>{exp}</strong> వరకు తెరిచి ఉంటుంది.",
+            "cta": "నా ఆఫర్ చదవండి",
+            "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
+            "keep": "ఈ లింక్ మీకు మాత్రమే. దయచేసి దీన్ని ఫార్వర్డ్ చేయవద్దు.",
+        },
+    })
+    inner = _p(_greeting(lang, name))
+    if resent:
+        inner += _p(f"<strong>{loc['resent']}</strong>")
+    read = loc["accepted_read"] if accepted else loc["read"]
+    inner += _p(loc["lead"]) + _p(read)
+    if expires and not accepted:
+        inner += _p(loc["expires"])
+    if url:
+        inner += _button(url, loc["cta"]) + _fallback_link(loc["fallback"], url)
+    inner += _p(loc["keep"])
+    plain = lambda h: h.replace("<strong>", "").replace("</strong>", "")  # noqa: E731
+    text = [_greeting(lang, name), ""] + ([loc["resent"]] if resent else []) + [
+        plain(loc["lead"]), read] + ([plain(loc["expires"])] if expires and not accepted
+                                     else []) + (
+        ["", url] if url else []) + ["", loc["keep"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_offer_code(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """A one-time code, worded for what it unlocks: accepting, declining, or
+    opening the documents step. (The documents code once fell through to the
+    decline wording — a candidate told they were confirming a refusal.)"""
+    name = ctx.get("name")
+    code = str(ctx.get("code", ""))
+    minutes = int(ctx.get("minutes") or 10)
+    purpose = ctx.get("purpose")
+    purpose = purpose if purpose in ("accept", "decline", "documents") else "decline"
+    words = {
+        "en": {"accept": ("Your code to accept the offer", "Use this code to accept your offer:"),
+               "decline": ("Your code to decline the offer", "Use this code to decline your offer:"),
+               "documents": ("Your code to open your documents",
+                             "Use this code to open the documents step of your offer:")},
+        "hi": {"accept": ("ऑफ़र स्वीकार करने के लिए आपका कोड",
+                          "अपना ऑफ़र स्वीकार करने के लिए इस कोड का उपयोग करें:"),
+               "decline": ("ऑफ़र अस्वीकार करने के लिए आपका कोड",
+                           "अपना ऑफ़र अस्वीकार करने के लिए इस कोड का उपयोग करें:"),
+               "documents": ("अपने दस्तावेज़ खोलने के लिए आपका कोड",
+                             "अपने ऑफ़र का दस्तावेज़ चरण खोलने के लिए इस कोड का उपयोग करें:")},
+        "te": {"accept": ("ఆఫర్‌ను అంగీకరించడానికి మీ కోడ్",
+                          "మీ ఆఫర్‌ను అంగీకరించడానికి ఈ కోడ్‌ను ఉపయోగించండి:"),
+               "decline": ("ఆఫర్‌ను తిరస్కరించడానికి మీ కోడ్",
+                           "మీ ఆఫర్‌ను తిరస్కరించడానికి ఈ కోడ్‌ను ఉపయోగించండి:"),
+               "documents": ("మీ పత్రాలను తెరవడానికి మీ కోడ్",
+                             "మీ ఆఫర్ యొక్క పత్రాల దశను తెరవడానికి ఈ కోడ్‌ను ఉపయోగించండి:")},
+    }
+    loc = _loc(lang, {
+        "en": {
+            "subject": words["en"][purpose][0], "pre": "Your one-time code.",
+            "lead": words["en"][purpose][1],
+            "exp": f"It works once, for {minutes} minutes.",
+            "not_you": "If you did not ask for this code, you can ignore this email — nothing happens without it.",
+        },
+        "hi": {
+            "subject": words["hi"][purpose][0], "pre": "आपका एक बार उपयोग होने वाला कोड।",
+            "lead": words["hi"][purpose][1],
+            "exp": f"यह केवल एक बार, {minutes} मिनट के लिए काम करता है।",
+            "not_you": "यदि आपने यह कोड नहीं मांगा, तो इस ईमेल को अनदेखा करें — इसके बिना कुछ नहीं होता।",
+        },
+        "te": {
+            "subject": words["te"][purpose][0], "pre": "మీ ఒకసారి ఉపయోగించే కోడ్.",
+            "lead": words["te"][purpose][1],
+            "exp": f"ఇది ఒక్కసారి మాత్రమే, {minutes} నిమిషాల పాటు పనిచేస్తుంది.",
+            "not_you": "మీరు ఈ కోడ్ అడగకపోతే, ఈ ఇమెయిల్‌ను విస్మరించండి — ఇది లేకుండా ఏమీ జరగదు.",
+        },
+    })
+    big = (f'<p style="font-size:28px;letter-spacing:6px;font-weight:700;margin:12px 0 18px;">'
+           f"{_esc(code)}</p>")
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + big + _p(loc["exp"]) + _p(loc["not_you"])
+    text = [_greeting(lang, name), "", loc["lead"], code, "", loc["exp"], loc["not_you"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_offer_update(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """The offer was withdrawn by the company."""
+    name = ctx.get("name")
+    job_title = ctx.get("job_title", "the role")
+    org = (ctx.get("company") or "").strip()
+    jt, orge = _esc(job_title), _esc(org)
+    loc = _loc(lang, {
+        "en": {"subject": f"Update on your offer: {job_title}",
+               "pre": "An update on your offer.",
+               "lead": (f"<strong>{orge}</strong> has withdrawn its offer for <strong>{jt}</strong>."
+                        if org else f"The offer for <strong>{jt}</strong> has been withdrawn."),
+               "next": "If you have questions, reply to the recruiter who contacted you."},
+        "hi": {"subject": f"आपके ऑफ़र पर अपडेट: {job_title}",
+               "pre": "आपके ऑफ़र पर एक अपडेट।",
+               "lead": (f"<strong>{orge}</strong> ने <strong>{jt}</strong> के लिए अपना ऑफ़र वापस ले लिया है।"
+                        if org else f"<strong>{jt}</strong> का ऑफ़र वापस ले लिया गया है।"),
+               "next": "यदि आपके कोई प्रश्न हैं, तो उस रिक्रूटर को उत्तर दें जिसने आपसे संपर्क किया।"},
+        "te": {"subject": f"మీ ఆఫర్‌పై అప్‌డేట్: {job_title}",
+               "pre": "మీ ఆఫర్‌పై ఒక అప్‌డేట్.",
+               "lead": (f"<strong>{orge}</strong> <strong>{jt}</strong> కోసం తన ఆఫర్‌ను ఉపసంహరించుకుంది."
+                        if org else f"<strong>{jt}</strong> కోసం ఆఫర్ ఉపసంహరించబడింది."),
+               "next": "మీకు ప్రశ్నలు ఉంటే, మిమ్మల్ని సంప్రదించిన రిక్రూటర్‌కు జవాబు ఇవ్వండి."},
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + _p(loc["next"])
+    text = [_greeting(lang, name), "", loc["lead"].replace("<strong>", "").replace("</strong>", ""),
+            loc["next"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_document_update(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """HR rejected a preboarding document, or asked for a replacement."""
+    name = ctx.get("name")
+    doc = _esc(ctx.get("document", ""))
+    reason = ctx.get("reason")
+    loc = _loc(lang, {
+        "en": {"subject": "Please upload a document again",
+               "pre": "One of your documents needs attention.",
+               "lead": f"The hiring team needs a new copy of <strong>{doc}</strong>.",
+               "why": "What they said:",
+               "how": "Open your offer link and upload a new file for this document."},
+        "hi": {"subject": "कृपया एक दस्तावेज़ फिर से अपलोड करें",
+               "pre": "आपके एक दस्तावेज़ पर ध्यान देने की ज़रूरत है।",
+               "lead": f"हायरिंग टीम को <strong>{doc}</strong> की नई प्रति चाहिए।",
+               "why": "उन्होंने क्या कहा:",
+               "how": "अपना ऑफ़र लिंक खोलें और इस दस्तावेज़ के लिए नई फ़ाइल अपलोड करें।"},
+        "te": {"subject": "దయచేసి ఒక పత్రాన్ని మళ్లీ అప్‌లోడ్ చేయండి",
+               "pre": "మీ పత్రాల్లో ఒకదానికి శ్రద్ధ అవసరం.",
+               "lead": f"నియామక బృందానికి <strong>{doc}</strong> యొక్క కొత్త కాపీ అవసరం.",
+               "why": "వారు చెప్పింది:",
+               "how": "మీ ఆఫర్ లింక్‌ను తెరిచి, ఈ పత్రం కోసం కొత్త ఫైల్‌ను అప్‌లోడ్ చేయండి."},
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"])
+    text = [_greeting(lang, name), "", loc["lead"].replace("<strong>", "").replace("</strong>", "")]
+    if reason:
+        inner += _p(f"<strong>{loc['why']}</strong> {_esc(reason)}")
+        text.append(f"{loc['why']} {reason}")
+    inner += _p(loc["how"])
+    text.append(loc["how"])
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+
+
+def _t_document_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """A document arrived through the candidate's offer link — told to them, so
+    one they did not send is noticed."""
+    name = ctx.get("name")
+    doc = _esc(ctx.get("document", ""))
+    loc = _loc(lang, {
+        "en": {"subject": "We received your document",
+               "pre": "A document was uploaded to your offer.",
+               "lead": f"We received <strong>{doc}</strong>. The hiring team will review it.",
+               "not_you": "If you did not upload this, contact the hiring team straight away."},
+        "hi": {"subject": "हमें आपका दस्तावेज़ मिल गया",
+               "pre": "आपके ऑफ़र पर एक दस्तावेज़ अपलोड किया गया।",
+               "lead": f"हमें <strong>{doc}</strong> मिल गया। हायरिंग टीम इसकी समीक्षा करेगी।",
+               "not_you": "यदि आपने इसे अपलोड नहीं किया, तो तुरंत हायरिंग टीम से संपर्क करें।"},
+        "te": {"subject": "మీ పత్రం మాకు అందింది",
+               "pre": "మీ ఆఫర్‌కు ఒక పత్రం అప్‌లోడ్ చేయబడింది.",
+               "lead": f"మాకు <strong>{doc}</strong> అందింది. నియామక బృందం దాన్ని సమీక్షిస్తుంది.",
+               "not_you": "మీరు దీన్ని అప్‌లోడ్ చేయకపోతే, వెంటనే నియామక బృందాన్ని సంప్రదించండి."},
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + _p(f"<strong>{loc['not_you']}</strong>")
+    text = [_greeting(lang, name), "", loc["lead"].replace("<strong>", "").replace("</strong>", ""),
+            loc["not_you"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+
+def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """After accepting an offer with no account yet: claim the one made for them.
+
+    ctx: name, job_title, company, set_url (optional), applications_url — the
+    same two shapes as application_received (PH4-A3, security review L-new).
+    """
+    name = ctx.get("name")
+    job = ctx.get("job_title") or "the role"
+    company = ctx.get("company") or ""
+    set_url = ctx.get("set_url")
+    apps_url = ctx.get("applications_url") or settings.app_base_url
+    jobe, orge = _esc(job), _esc(company)
+    loc = _loc(lang, {
+        "en": {"subject": f"Welcome aboard — set up your account for {job}",
+               "lead": (f"Thank you for accepting the role of <strong>{jobe}</strong>"
+                        + (f" at <strong>{orge}</strong>." if company else ".")),
+               "activate": "Set a password to follow your onboarding and see your offer in one place.",
+               "cta_set": "Set my password",
+               "signed_in": "You can see your offer and onboarding from your applications page.",
+               "cta_view": "View my applications",
+               "expiry": "This link can be used once and expires in 7 days.",
+               "fallback": "Or paste this link into your browser:"},
+        "hi": {"subject": f"स्वागत है — {job} के लिए अपना खाता सेट करें",
+               "lead": ((f"<strong>{orge}</strong> में " if company else "")
+                        + f"<strong>{jobe}</strong> की भूमिका स्वीकार करने के लिए धन्यवाद।"),
+               "activate": "अपनी ऑनबोर्डिंग देखने और अपना ऑफ़र एक ही जगह देखने के लिए पासवर्ड सेट करें।",
+               "cta_set": "पासवर्ड सेट करें",
+               "signed_in": "आप अपने आवेदन पृष्ठ से अपना ऑफ़र और ऑनबोर्डिंग देख सकते हैं।",
+               "cta_view": "मेरे आवेदन देखें",
+               "expiry": "यह लिंक एक बार उपयोग हो सकता है और 7 दिनों में समाप्त हो जाएगा।",
+               "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:"},
+        "te": {"subject": f"స్వాగతం — {job} కోసం మీ ఖాతాను సెటప్ చేయండి",
+               "lead": ((f"<strong>{orge}</strong>లో " if company else "")
+                        + f"<strong>{jobe}</strong> పాత్రను అంగీకరించినందుకు ధన్యవాదాలు."),
+               "activate": "మీ ఆన్‌బోర్డింగ్‌ను, మీ ఆఫర్‌ను ఒకే చోట చూడటానికి పాస్‌వర్డ్ సెట్ చేయండి.",
+               "cta_set": "పాస్‌వర్డ్ సెట్ చేయండి",
+               "signed_in": "మీ దరఖాస్తుల పేజీ నుండి మీ ఆఫర్‌ను, ఆన్‌బోర్డింగ్‌ను చూడవచ్చు.",
+               "cta_view": "నా దరఖాస్తులు చూడండి",
+               "expiry": "ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, 7 రోజుల్లో ముగుస్తుంది.",
+               "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:"},
+    })
+    plain = loc["lead"].replace("<strong>", "").replace("</strong>", "")
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"])
+    text = [_greeting(lang, name), "", plain]
+    if set_url:
+        inner += _p(loc["activate"]) + _button(set_url, loc["cta_set"])
+        inner += _fallback_link(loc["fallback"], set_url)
+        inner += _p(f'<span style="color:{_MUTED};font-size:13px;">{_esc(loc["expiry"])}</span>')
+        text += ["", loc["activate"], set_url, "", loc["expiry"]]
+    else:
+        inner += _p(loc["signed_in"]) + _button(apps_url, loc["cta_view"])
+        text += ["", loc["signed_in"], apps_url]
+    return loc["subject"], inner, "\n".join(text), plain
+
+
 _BUILDERS = {
     "welcome": _t_welcome,
     "email_verify": _t_email_verify,
@@ -1624,6 +1896,13 @@ _BUILDERS = {
     "interview_slot_request": _t_interview_slot_request,
     "interview_session_update": _t_interview_session_update,
     "interview_session_reminder": _t_interview_session_reminder,
+    # PH4-A3 / A4 offers and preboarding documents.
+    "offer_ready": _t_offer_ready,
+    "offer_code": _t_offer_code,
+    "offer_update": _t_offer_update,
+    "document_update": _t_document_update,
+    "document_received": _t_document_received,
+    "offer_account": _t_offer_account,
     "generic": _t_generic,
 }
 

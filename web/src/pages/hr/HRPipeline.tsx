@@ -29,6 +29,7 @@ import { MIN_REASON_EXPLAINED, useDecisionReasons } from '@/lib/decisionReasons'
 import { toast } from '@/lib/toast';
 import CandidateDrawer from '@/components/CandidateDrawer';
 import { applicationKey } from '@/lib/applicationKey';
+import { offerOutcomeTag } from '@/lib/offerOutcome';
 import PipelineBoard from '@/components/PipelineBoard';
 import { cn } from '@/lib/utils';
 import {
@@ -198,6 +199,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
   const rec = recBadge(a.ats_recommendation);
   const iv = interviewBadge(a.interview_status);
   const pill = statusBadge(a.status);
+  const offerTag = offerOutcomeTag(a.offer_outcome);
 
   const canHire = a.status === 'shortlisted' || a.status === 'interviewed';
   const canReject =
@@ -257,6 +259,11 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
             {pill && (
               <StatusTag tone={pill.tone} className="text-[11px]">
                 {pill.label}
+              </StatusTag>
+            )}
+            {offerTag && (
+              <StatusTag tone={offerTag.tone} className="text-[11px]">
+                {offerTag.label}
               </StatusTag>
             )}
           </div>

@@ -176,6 +176,16 @@ ERASURE_POLL_INTERVAL_SECONDS: int = 300  # 5 minutes
 
 #: Tables this executor deletes from or anonymises. The value names the step.
 ERASED_TABLES: dict[str, str] = {
+    "offer_codes": "PH4-A3 — one-time codes sent to the candidate to accept or decline; "
+                   "deleted in step 5f.",
+    "offer_sessions": "PH4-A4 — hashed, hour-long preboarding sessions a candidate opened "
+                      "with a code; deleted in step 5f.",
+    "hrms_exports": "PH4-A4 — signed HRMS payloads carrying the candidate's name, email "
+                    "and compensation; deleted in step 5f (after their offer is redacted, "
+                    "which is when the append-only trigger lets them go).",
+    "candidate_documents": "PH4-A4 — identity and other preboarding documents. The FILES "
+                           "are collected in step 1 and deleted in step 8; the rows are "
+                           "redacted in 5f (key, file name and review note cleared).",
     "users": "step 7 — anonymised in place (email → sentinel, every other "
              "personal column NULLed). Not deleted, because "
              "erasure_requests.user_id is ON DELETE RESTRICT and that row is "
@@ -409,6 +419,18 @@ EXCLUDED_TABLES: dict[str, str] = {
     "interview_session_interviewers": "PH4-A2 — which staff sat on a session and their "
                                       "scorecard link. Staff-side record; the scorecard "
                                       "itself is redacted in 5f.",
+    "offer_templates": "PH4-A3 — a company's offer boilerplate (terms, benefits). "
+                       "Company configuration; no candidate column.",
+    "offers": "PH4-A3 — an offer to one application. Kept as the company's record of "
+              "what was offered; in step 5f an offer still in play is WITHDRAWN, the "
+              "link is killed, and every piece of prose a person wrote (acceptance "
+              "name, decline / withdrawal reason, approval note) is REDACTED.",
+    "offer_events": "PH4-A3 — append-only history of an offer: action, actor, time and "
+                    "facts (never prose). Company record; the offer it names is redacted.",
+    "document_requirements": "PH4-A4 — which documents an opening asks for. Company "
+                             "configuration; no candidate column.",
+    "document_events": "PH4-A4 — append-only history of a candidate's documents: action, "
+                       "actor, time and facts. No file content, name or reason text.",
 }
 
 
@@ -565,6 +587,38 @@ async def _execute_one_erasure(
     applicant_resume_keys += [
         str(row[0]) for row in draft_keys_result.fetchall() if row[0]
     ]
+
+    # 1c-bis — PH4-A4 preboarding documents (identity papers and the like), in
+    # the same uploads bucket. Every version, superseded ones included.
+    preboarding_keys_result = await db.execute(
+        text(
+            "SELECT d.storage_key FROM candidate_documents d"
+            "  JOIN applicants a ON a.id = (SELECT o.applicant_id FROM offers o"
+            "                                WHERE o.id = d.offer_id)"
+            " WHERE a.user_id = :uid AND d.storage_key IS NOT NULL"
+        ),
+        {"uid": uid_str},
+    )
+    applicant_resume_keys += [
+        str(row[0]) for row in preboarding_keys_result.fetchall() if row[0]
+    ]
+    # ...and anything under those offers' prefixes that no row names (an object
+    # a failed commit orphaned) — listed from storage itself.
+    offer_prefixes = await db.execute(
+        text(
+            "SELECT o.company_id, o.id FROM offers o JOIN applicants a ON a.id = o.applicant_id"
+            " WHERE a.user_id = :uid"
+        ),
+        {"uid": uid_str},
+    )
+    if settings is not None:
+        from app.s3_client import keys_under  # noqa: PLC0415 — see step 8's import note
+
+        for company_id, offer_id in offer_prefixes.fetchall():
+            applicant_resume_keys += await keys_under(
+                settings.s3_bucket_name, f"preboarding/{company_id}/{offer_id}/",
+                settings=settings,
+            )
 
     # One delete per object: the same file is often the current, scored AND
     # submitted copy at once.
@@ -945,6 +999,58 @@ async def _execute_one_erasure(
         {"uid": uid_str},
     )
     interview_loops_redacted: int = getattr(loops_result, "rowcount", 0) or 0
+    # PH4-A3 offers: an offer still in play is withdrawn and its link killed;
+    # the prose people wrote on every offer (the name typed to accept, reasons,
+    # the approver's note) is redacted. The offer — what was offered and when —
+    # stays as the company's record, against an anonymised applicant.
+    offers_result = await db.execute(
+        text(
+            "UPDATE offers SET"
+            " status = CASE WHEN status IN ('draft', 'pending_approval', 'approved',"
+            "                               'rejected', 'sent') THEN 'withdrawn' ELSE status END,"
+            " withdrawn_at = CASE WHEN status IN ('draft', 'pending_approval', 'approved',"
+            "                                     'rejected', 'sent')"
+            "                     THEN COALESCE(withdrawn_at, now()) ELSE withdrawn_at END,"
+            " token_hash = NULL, accepted_name = NULL,"
+            " decline_reason = CASE WHEN decline_reason IS NULL THEN NULL ELSE '[redacted]' END,"
+            " withdraw_reason = CASE WHEN withdraw_reason IS NULL THEN NULL ELSE '[redacted]' END,"
+            " approval_note = CASE WHEN approval_note IS NULL THEN NULL ELSE '[redacted]' END,"
+            " redacted_at = now(), updated_at = now()"
+            " WHERE redacted_at IS NULL AND applicant_id IN ("
+            "   SELECT a.id FROM applicants a WHERE a.user_id = :uid)"
+            " RETURNING id"
+        ),
+        {"uid": uid_str},
+    )
+    redacted_offer_ids = [row[0] for row in offers_result.fetchall()]
+    offers_redacted: int = len(redacted_offer_ids)
+    await db.execute(
+        text("DELETE FROM offer_codes WHERE offer_id IN (SELECT o.id FROM offers o"
+             " JOIN applicants a ON a.id = o.applicant_id WHERE a.user_id = :uid)"),
+        {"uid": uid_str},
+    )
+    await db.execute(
+        text("DELETE FROM offer_sessions WHERE offer_id IN (SELECT o.id FROM offers o"
+             " JOIN applicants a ON a.id = o.applicant_id WHERE a.user_id = :uid)"),
+        {"uid": uid_str},
+    )
+    await db.execute(
+        text("DELETE FROM hrms_exports WHERE offer_id IN (SELECT o.id FROM offers o"
+             " JOIN applicants a ON a.id = o.applicant_id WHERE a.user_id = :uid)"),
+        {"uid": uid_str},
+    )
+    # PH4-A4 documents: the FILES go in step 8 (their keys were collected in
+    # step 1); here the rows lose everything that points at them.
+    documents_result = await db.execute(
+        text(
+            "UPDATE candidate_documents SET storage_key = NULL, original_name = NULL,"
+            " review_note = NULL, redacted_at = now()"
+            " WHERE redacted_at IS NULL AND offer_id IN (SELECT o.id FROM offers o"
+            "   JOIN applicants a ON a.id = o.applicant_id WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    preboarding_documents_redacted: int = getattr(documents_result, "rowcount", 0) or 0
     log.info(
         "erasure.executor.interview_evidence_redacted",
         user_id=uid_str,
@@ -956,6 +1062,8 @@ async def _execute_one_erasure(
         stage_exceptions_redacted=stage_exceptions_redacted,
         interview_sessions_cancelled=interview_sessions_cancelled,
         interview_loops_redacted=interview_loops_redacted,
+        offers_redacted=offers_redacted,
+        preboarding_documents_redacted=preboarding_documents_redacted,
     )
 
     # ------------------------------------------------------------------
@@ -1180,12 +1288,13 @@ async def _execute_one_erasure(
     artifacts: dict[str, Any] = {
         # Bumped 1.1 → 1.2 when step 5b (notifications) joined the erasure, and
         # 1.2 → 1.3 when step 5f (human interview evidence, PH4-A1/A5) did, and
-        # 1.3 → 1.4 when 5f took in stage exceptions (PH4-O1), and 1.4 → 1.5
-        # when it took in interview loops and sessions (PH4-A2): the
+        # 1.3 → 1.4 when 5f took in stage exceptions (PH4-O1), 1.4 → 1.5
+        # when it took in interview loops and sessions (PH4-A2), and 1.5 → 1.6
+        # when it took in offers and preboarding documents (PH4-A3/A4): the
         # artifacts record is what an auditor reads to know WHAT a given
         # completion covered, so two records with different coverage must not
         # claim the same version.
-        "executor_version": "1.5",
+        "executor_version": "1.6",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
@@ -1200,6 +1309,8 @@ async def _execute_one_erasure(
         "stage_exceptions_redacted": stage_exceptions_redacted,
         "interview_sessions_cancelled": interview_sessions_cancelled,
         "interview_loops_redacted": interview_loops_redacted,
+        "offers_redacted": offers_redacted,
+        "preboarding_documents_redacted": preboarding_documents_redacted,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
         # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,
@@ -1247,6 +1358,8 @@ async def _execute_one_erasure(
             "stage_exceptions_redacted": stage_exceptions_redacted,
             "interview_sessions_cancelled": interview_sessions_cancelled,
             "interview_loops_redacted": interview_loops_redacted,
+            "offers_redacted": offers_redacted,
+            "preboarding_documents_redacted": preboarding_documents_redacted,
         },
         ip_address=None,
         user_agent=None,

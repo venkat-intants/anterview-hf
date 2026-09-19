@@ -258,3 +258,23 @@ def test_importing_shared_does_not_drag_in_botocore() -> None:
     init = pathlib.Path(__file__).parent.parent / "__init__.py"
 
     assert init.read_text(encoding="utf-8").strip() == ""
+
+
+# --------------------------------------------------------------------------
+# Pre-signed links are SigV4 — R2 and B2 refuse SigV2 (found by PH4-A4)
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize(("endpoint", "region"), [(_MINIO_ENDPOINT, "us-east-1"),
+                                                  (_R2_ENDPOINT, "auto"),
+                                                  ("", "ap-south-1")])
+async def test_presigned_links_are_signature_v4_on_every_endpoint(endpoint: str, region: str) -> None:
+    async with s3_client(endpoint=endpoint, region=region, access_key="AKIAEXAMPLE",
+                         secret_key="secret") as s3:
+        url = await s3.generate_presigned_url(
+            "get_object", Params={"Bucket": "b", "Key": "k"}, ExpiresIn=300)
+    assert "X-Amz-Algorithm=AWS4-HMAC-SHA256" in url and "X-Amz-Expires=300" in url
+    assert "AWSAccessKeyId=" not in url  # the SigV2 form
+
+
+async def test_custom_endpoints_keep_path_style_with_sigv4() -> None:
+    endpoint_url, config_s3, _ = await _client_meta(endpoint=_R2_ENDPOINT)
+    assert config_s3 == {"addressing_style": "path"}

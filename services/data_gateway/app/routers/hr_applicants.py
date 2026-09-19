@@ -59,6 +59,8 @@ from app.final_decision import (
 from app.mailer import candidate_language, enqueue_email
 from app.models import Applicant, AuditLog
 from app.requisitions import (
+    HIRE_UNDONE_ONLY_BY_REJECTION,
+    StatusRefusedError,
     ambiguous_decision_detail,
     applicant_by_email,
     choose_application,
@@ -1548,6 +1550,14 @@ async def update_applicant_status(
         # sending three exam links because a recruiter clicked once would be
         # worse than doing nothing.
         if body.status == "shortlisted" and only is not None:
+            current = await db.scalar(
+                text("SELECT status FROM enrolments WHERE id = :e"), {"e": only}
+            )
+            if current == "hired":
+                # Refused before the workflow is started, not after (security
+                # review INFO): a hire is undone only by a rejection.
+                await db.rollback()
+                raise HTTPException(status_code=409, detail=HIRE_UNDONE_ONLY_BY_REJECTION)
             outcome = await on_shortlisted(db, enrolment_id=only, actor_user_id=_hr_uid)
             log.info(
                 "hr.applicant.shortlisted",
@@ -1566,15 +1576,19 @@ async def update_applicant_status(
     if only is not None:
         # Every change, not just a shortlist. No-op (and no ledger entry) when
         # the application is already in that status.
-        await record_transition(
-            db,
-            enrolment_id=only,
-            company_id=company_id,
-            to_status=body.status,
-            actor_user_id=_hr_uid,
-            automated=False,
-            reason=f"{body.status} from the applicant board",
-        )
+        try:
+            await record_transition(
+                db,
+                enrolment_id=only,
+                company_id=company_id,
+                to_status=body.status,
+                actor_user_id=_hr_uid,
+                automated=False,
+                reason=f"{body.status} from the applicant board",
+            )
+        except StatusRefusedError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     await db.commit()
     return _to_out(a)
 

@@ -132,6 +132,14 @@ anything, which is the actual goal.
 
 ---
 
+**PH4 Wave 4 addendum (2026-09-20).** The offer-link secret and the HRMS export
+signing key, when `OFFER_LINK_SECRET` / `HRMS_EXPORT_SECRET` are not set, are
+DERIVED from `JWT_SECRET` (namespaced HMAC, never the secret itself). Rotating the
+key an HRMS verifies against then means rotating the JWT secret. Set both
+explicitly in any deployment that hands exports to a real HRMS.
+
+---
+
 ## AR-3 — Candidate-authored code executes on JDoodle, a third party
 
 | | |
@@ -270,6 +278,44 @@ details, and accept the residue. (1) is the fix; (2) only reduces it.
 
 ---
 
+## AR-6 — Preboarding documents are not scanned for malware
+
+| | |
+|---|---|
+| **Source finding** | PH4 decision D4-3 (Wave 4, A4), 2026-09-20 |
+| **Status** | **ACCEPTED — allow-listed and isolated, not scanned** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` reviews when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a customer or bid that requires malware scanning of uploads; (b) any feature that renders an uploaded document in the browser or processes it server-side (thumbnails, OCR, conversion); (c) a single report of a malicious document; (d) the Tier-2 migration, where AWS offers a managed scanner |
+
+**The decision.** After an offer is accepted, a candidate uploads identity and
+other documents that HR managers then open. There is no antivirus scan (no
+ClamAV or managed equivalent) — decision D4-3 chose a strict allow-list now
+over a scanner later. What exists instead:
+
+- **Content allow-list.** Only PDF, JPEG and PNG, recognised by their first bytes
+  (`app/document_storage.py`); the file name and the browser's Content-Type are
+  ignored. Anything else is refused before it is stored.
+- **No active PDFs, as far as a byte scan sees.** A PDF whose names spell
+  JavaScript, launch actions, embedded files, rich media or XFA — including
+  when escaped as ``#xx`` — is refused.
+- **Isolation in delivery.** Documents are never served by the API or rendered
+  by the app. They leave storage only by a pre-signed link that lives five
+  minutes and forces `Content-Disposition: attachment`, stored under a key that
+  names no person.
+- **Size.** 10 MB, enforced at the edge and again in the handler.
+
+**What is NOT true.** It is not true that an uploaded document is known to be
+safe. The PDF check reads raw bytes, so a marker inside a compressed object
+stream is not seen (escaped names ARE decoded); an image can still exploit a
+vulnerable viewer. The control
+is "only three well-understood formats, never opened by us", not "scanned".
+
+**Path to closure.** Scan on upload before a document is marked `submitted`
+(ClamAV in a sidecar, or the object store's managed scanner at Tier 2), with a
+`quarantined` state the review trigger refuses to verify.
+
+---
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -279,3 +325,4 @@ details, and accept the residue. (1) is the fix; (2) only reduces it.
 | **AR-3** | Candidate code executes on JDoodle | AG-05 | `platform_owner` | Residency bid, confidential-IP customer, or free-tier exhaustion |
 | **AR-4** | No production avatar gate; `custom` unimplemented | AG-06 residue | `cto-architect` | Production `APP_ENV`, residency bid, or 2026-11-28 sunset review |
 | **AR-5** | Decision rationale in audit log / ledger not redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | Erasure grievance naming it, audit details shown to others, or Tier-2 |
+| **AR-6** | Preboarding documents are allow-listed, not malware-scanned | PH4 D4-3 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |

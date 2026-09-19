@@ -191,9 +191,21 @@ describe('PublicOffer — a sent offer', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm acceptance' }));
 
     await waitFor(() =>
-      expect(acceptOffer).toHaveBeenCalledWith('offer_tok_123456', '123456', 'Kiran Rao'),
+      expect(acceptOffer).toHaveBeenCalledWith('offer_tok_123456', '123456', 'Kiran Rao', 'en'),
     );
     expect(await screen.findByText('Offer accepted')).toBeInTheDocument();
+  });
+
+  it('says what accepting agrees to, before the candidate confirms (DPDP)', async () => {
+    const user = userEvent.setup();
+    requestOfferCode.mockResolvedValue({ sent: true, minutes: 15 });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Accept offer' }));
+    await user.click(screen.getByRole('button', { name: 'Send me a code' }));
+    await screen.findByText(/Code sent/);
+    expect(screen.getByText(/you agree to share the documents/i)).toBeInTheDocument();
+    expect(screen.getByText(/may be outside India/i)).toBeInTheDocument();
+    expect(screen.getByText(/withdraw this consent/i)).toBeInTheDocument();
   });
 
   it('declines with an emailed code and an optional reason', async () => {
@@ -212,11 +224,7 @@ describe('PublicOffer — a sent offer', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm decline' }));
 
     await waitFor(() =>
-      expect(declineOffer).toHaveBeenCalledWith(
-        'offer_tok_123456',
-        '654321',
-        'Accepted elsewhere',
-      ),
+      expect(declineOffer).toHaveBeenCalledWith('offer_tok_123456', '654321', 'Accepted elsewhere'),
     );
     expect(await screen.findByText('You declined this offer')).toBeInTheDocument();
   });
@@ -328,6 +336,29 @@ describe('PublicOffer — documents, once accepted', () => {
     expect(await screen.findByText(/has not asked for any documents/)).toBeInTheDocument();
   });
 
+  it('explains a verified document past its date, and lets it be replaced', async () => {
+    const user = userEvent.setup();
+    requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
+    openDocumentsSession.mockResolvedValue({
+      session_token: 'sess_tok',
+      expires_at: '2026-09-18T02:00:00.000Z',
+    });
+    getMyDocuments.mockResolvedValue({
+      ...CHECKLIST,
+      items: [{ ...CHECKLIST.items[0], state: 'expired' }],
+    });
+    renderPage();
+
+    await screen.findByText('Your documents');
+    await user.click(screen.getByRole('button', { name: 'Get a code' }));
+    await screen.findByText(/Code sent/);
+    await user.type(screen.getByLabelText(/enter the code/i), '111111');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText(/passed its expiry date/)).toBeInTheDocument();
+    const row = screen.getByText('PAN card').closest('li') as HTMLElement;
+    expect(row.querySelector('input[type="file"]')).not.toBeNull();
+  });
+
   it('shows Aadhaar-specific masking guidance for an identity document', async () => {
     requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
     openDocumentsSession.mockResolvedValue({
@@ -410,7 +441,10 @@ describe('PublicOffer — documents, once accepted', () => {
   });
 
   it('shows the completed state once preboarding is done, with no code step', async () => {
-    viewOffer.mockResolvedValue({ ...ACCEPTED, preboarding_completed_at: '2026-09-18T00:00:00.000Z' });
+    viewOffer.mockResolvedValue({
+      ...ACCEPTED,
+      preboarding_completed_at: '2026-09-18T00:00:00.000Z',
+    });
     renderPage();
 
     await screen.findByText('Your documents');

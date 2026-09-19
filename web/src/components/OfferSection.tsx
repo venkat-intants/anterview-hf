@@ -7,6 +7,7 @@
 // documents) lives on the offer detail page — this is a launch pad, same
 // relationship InterviewLoopsSection has to the interview-scheduling screens.
 
+import { offerStatusWord } from '@/lib/offerStatus';
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -229,7 +230,7 @@ export default function OfferSection({
                         : ''}
                     </span>
                     <StatusTag tone={OFFER_TONE[o.status]} dot>
-                      {o.status.replace('_', ' ')}
+                      {offerStatusWord(o.status)}
                     </StatusTag>
                   </Link>
                 </li>

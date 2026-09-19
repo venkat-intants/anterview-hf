@@ -1009,6 +1009,8 @@ const en = {
       fullNamePlaceholder: 'Your full name',
       reasonLabel: 'Reason (optional)',
       confirmAccept: 'Confirm acceptance',
+      acceptConsent:
+        'By accepting, you agree to share the documents the hiring team asks for, for your onboarding. They are kept securely — with a storage provider that may be outside India — and deleted once they have served their purpose. You can withdraw this consent at any time.',
       confirmDecline: 'Confirm decline',
       cancel: 'Cancel',
       documents: {
@@ -1032,6 +1034,7 @@ const en = {
           replacement_requested: 'Replacement requested',
           expired: 'Expired',
         },
+        expiredHint: 'This document has passed its expiry date. Upload a current one.',
         rejectedReason: 'The hiring team said: {{reason}}',
         upload: 'Upload',
         reupload: 'Upload a replacement',
@@ -1950,6 +1953,8 @@ const hi = {
       fullNamePlaceholder: 'आपका पूरा नाम',
       reasonLabel: 'कारण (वैकल्पिक)',
       confirmAccept: 'स्वीकृति की पुष्टि करें',
+      acceptConsent:
+        'स्वीकार करके, आप अपनी ऑनबोर्डिंग के लिए भर्ती टीम द्वारा माँगे गए दस्तावेज़ साझा करने के लिए सहमत होते हैं। वे सुरक्षित रखे जाते हैं — ऐसे स्टोरेज प्रदाता के पास जो भारत के बाहर हो सकता है — और अपना उद्देश्य पूरा होने पर हटा दिए जाते हैं। आप यह सहमति कभी भी वापस ले सकते हैं।',
       confirmDecline: 'अस्वीकृति की पुष्टि करें',
       cancel: 'रद्द करें',
       documents: {
@@ -1973,6 +1978,7 @@ const hi = {
           replacement_requested: 'प्रतिस्थापन का अनुरोध',
           expired: 'समाप्त',
         },
+        expiredHint: 'इस दस्तावेज़ की समाप्ति तिथि निकल गई है। एक वर्तमान दस्तावेज़ अपलोड करें।',
         rejectedReason: 'भर्ती टीम ने कहा: {{reason}}',
         upload: 'अपलोड करें',
         reupload: 'प्रतिस्थापन अपलोड करें',
@@ -2891,6 +2897,8 @@ const te = {
       fullNamePlaceholder: 'మీ పూర్తి పేరు',
       reasonLabel: 'కారణం (ఐచ్ఛికం)',
       confirmAccept: 'అంగీకారాన్ని నిర్ధారించండి',
+      acceptConsent:
+        'అంగీకరించడం ద్వారా, మీ ఆన్‌బోర్డింగ్ కోసం నియామక బృందం అడిగే పత్రాలను పంచుకోవడానికి మీరు అంగీకరిస్తారు. అవి సురక్షితంగా ఉంచబడతాయి — భారతదేశం వెలుపల ఉండే అవకాశం ఉన్న నిల్వ ప్రదాత వద్ద — మరియు వాటి ప్రయోజనం పూర్తయిన తర్వాత తొలగించబడతాయి. మీరు ఈ సమ్మతిని ఎప్పుడైనా ఉపసంహరించుకోవచ్చు.',
       confirmDecline: 'తిరస్కరణను నిర్ధారించండి',
       cancel: 'రద్దు చేయండి',
       documents: {
@@ -2914,6 +2922,7 @@ const te = {
           replacement_requested: 'ప్రత్యామ్నాయం అభ్యర్థించారు',
           expired: 'గడువు ముగిసింది',
         },
+        expiredHint: 'ఈ పత్రం గడువు తేదీ దాటిపోయింది. ప్రస్తుత పత్రాన్ని అప్‌లోడ్ చేయండి.',
         rejectedReason: 'నియామక బృందం ఇలా చెప్పింది: {{reason}}',
         upload: 'అప్‌లోడ్ చేయండి',
         reupload: 'ప్రత్యామ్నాయాన్ని అప్‌లోడ్ చేయండి',

@@ -160,7 +160,9 @@ describe('OfferDetail — fields', () => {
     await user.type(location, 'Hyderabad');
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
-    await waitFor(() => expect(updateOffer).toHaveBeenCalledWith('offer-1', { location: 'Hyderabad' }));
+    await waitFor(() =>
+      expect(updateOffer).toHaveBeenCalledWith('offer-1', { location: 'Hyderabad' }),
+    );
   });
 });
 
@@ -179,7 +181,9 @@ describe('OfferDetail — actions only where legal', () => {
   });
 
   it('pending approval offers only recall and withdraw', async () => {
-    getOffer.mockResolvedValue(offer({ status: 'pending_approval', submitted_at: '2026-09-02T00:00:00.000Z' }));
+    getOffer.mockResolvedValue(
+      offer({ status: 'pending_approval', submitted_at: '2026-09-02T00:00:00.000Z' }),
+    );
     renderPage();
     await screen.findByText('Kiran Rao · Backend Engineer');
 
@@ -189,7 +193,9 @@ describe('OfferDetail — actions only where legal', () => {
   });
 
   it('an approved offer offers reopen, send and withdraw', async () => {
-    getOffer.mockResolvedValue(offer({ status: 'approved', decided_at: '2026-09-03T00:00:00.000Z' }));
+    getOffer.mockResolvedValue(
+      offer({ status: 'approved', decided_at: '2026-09-03T00:00:00.000Z' }),
+    );
     renderPage();
     await screen.findByText('Kiran Rao · Backend Engineer');
 
@@ -239,7 +245,9 @@ describe('OfferDetail — actions only where legal', () => {
       offer({ status: 'rejected', approval_note: 'Please raise the base salary.' }),
     );
     renderPage();
-    expect(await screen.findByText(/Sent back: Please raise the base salary\./)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Sent back: Please raise the base salary\./),
+    ).toBeInTheDocument();
   });
 });
 
@@ -253,7 +261,7 @@ describe('OfferDetail — withdrawing', () => {
 
     await user.type(screen.getByLabelText('Withdraw reason'), 'Position closed');
     await user.click(screen.getByRole('button', { name: 'Withdraw offer' }));
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await user.click(screen.getByRole('button', { name: 'Withdraw' }));
 
     await waitFor(() => expect(withdrawOffer).toHaveBeenCalledWith('offer-1', 'Position closed'));
   });

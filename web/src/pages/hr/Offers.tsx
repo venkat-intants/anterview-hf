@@ -3,6 +3,7 @@
 // answers "who is mid-preboarding, and what are they waiting on?" across
 // every candidate at once.
 
+import { offerStatusWord } from '@/lib/offerStatus';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -117,12 +118,13 @@ export default function Offers() {
                 <p className="truncate text-[14px] font-medium text-foreground">
                   {o.candidate_name}
                 </p>
-                <p className="mt-0.5 truncate text-[12.5px] text-muted-foreground">
-                  {o.job_title}
-                </p>
+                <p className="mt-0.5 truncate text-[12.5px] text-muted-foreground">{o.job_title}</p>
               </div>
               <div className="flex flex-wrap items-center gap-3 text-[12px] text-muted-foreground">
-                <span>Expires {fmtDate(o.expires_at)}</span>
+                {o.status === 'sent' && o.expires_at ? (
+                  <span>Expires {fmtDate(o.expires_at)}</span>
+                ) : null}
+                {o.preboarding_completed_at ? <span>Preboarding complete</span> : null}
                 {o.documents.mandatory_total > 0 ? (
                   <span>
                     Documents {o.documents.mandatory_verified}/{o.documents.mandatory_total}
@@ -132,7 +134,7 @@ export default function Offers() {
                   </span>
                 ) : null}
                 <StatusTag tone={STATUS_TONE[o.status]} dot>
-                  {o.status.replace('_', ' ')}
+                  {offerStatusWord(o.status)}
                 </StatusTag>
               </div>
             </Link>

@@ -94,11 +94,13 @@ export async function acceptOffer(
   token: string,
   code: string,
   fullName: string,
+  /** The page's language — an account made for them at acceptance takes it. */
+  language?: 'en' | 'hi' | 'te',
 ): Promise<PublicOffer> {
   const res = await fetch(`${API_BASE}/offer/accept`, {
     method: 'POST',
     headers: offerHeaders(token, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ code, full_name: fullName }),
+    body: JSON.stringify({ code, full_name: fullName, ...(language ? { language } : {}) }),
   });
   if (!res.ok) return readError(res);
   return (await res.json()) as PublicOffer;

@@ -8,6 +8,7 @@
 // EXACTLY — EDITABLE = draft/rejected, BEFORE_ANSWER = the states withdraw
 // still works from. Every refusal from the server is shown as written.
 
+import { offerStatusWord } from '@/lib/offerStatus';
 import { offerActionWord } from '@/lib/offerHistory';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -175,7 +176,7 @@ function OfferFields({ offer }: { offer: OfferDetailShape }) {
       <h2 className="text-[15px] font-semibold text-foreground">Offer details</h2>
       {!editable ? (
         <p className="mt-1 text-[12px] text-muted-foreground">
-          This offer is {offer.status.replace('_', ' ')} — it can be changed only as a draft or once
+          This offer is {offerStatusWord(offer.status)} — it can be changed only as a draft or once
           it has been sent back.
         </p>
       ) : null}
@@ -424,7 +425,7 @@ function ActionsPanel({ offer }: { offer: OfferDetailShape }) {
   if (!canSubmit && !canRecall && !canReopen && !canSend && !canResend && !canWithdraw) {
     return (
       <p className="text-[12.5px] text-muted-foreground">
-        This offer is {offer.status.replace('_', ' ')} — there is nothing left to do here.
+        This offer is {offerStatusWord(offer.status)} — there is nothing left to do here.
       </p>
     );
   }
@@ -501,6 +502,7 @@ function ActionsPanel({ offer }: { offer: OfferDetailShape }) {
           />
           <ConfirmDeleteButton
             label="Withdraw offer"
+            confirmText="Withdraw"
             pending={withdrawMut.isPending}
             onConfirm={() => withdrawMut.mutate()}
           />
@@ -649,7 +651,7 @@ export default function OfferDetail() {
           {offer.candidate_name} · {offer.job_title}
         </h1>
         <StatusTag tone={OFFER_TONE[offer.status]} dot>
-          {offer.status.replace('_', ' ')}
+          {offerStatusWord(offer.status)}
         </StatusTag>
       </div>
       {offer.expires_at ? (

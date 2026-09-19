@@ -16,7 +16,8 @@
 //
 // Every terminal state (expired, withdrawn, already declined, locked, or an
 // invalid link) gets a plain full-page message rather than a form that quietly
-// does nothing.
+// does nothing — except a lock met inside the documents step, which is shown
+// there, in place, with the same words.
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -236,7 +237,7 @@ function AnswerPanel({
   onLocked: (message: string) => void;
   onCancel: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [codeSent, setCodeSent] = useState(false);
   const [minutes, setMinutes] = useState<number | null>(null);
   const [code, setCode] = useState('');
@@ -260,7 +261,7 @@ function AnswerPanel({
   const answerMut = useMutation({
     mutationFn: () =>
       purpose === 'accept'
-        ? acceptOffer(token, code, fullName)
+        ? acceptOffer(token, code, fullName, pageLanguage(i18n.language))
         : declineOffer(token, code, reason || undefined),
     onSuccess: () => onAnswered(),
     onError: (e: unknown) => {
@@ -322,6 +323,12 @@ function AnswerPanel({
                 />
               </label>
             )}
+            {purpose === 'accept' ? (
+              // What accepting agrees to (DPDP): said here, before they do it.
+              <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+                {t('offer.acceptConsent')}
+              </p>
+            ) : null}
             <Pill
               disabled={
                 answerMut.isPending ||
@@ -358,17 +365,25 @@ function AnswerPanel({
 
 /* ── Documents ────────────────────────────────────────────────────────────── */
 
+/** The page's language as the server takes it: en, hi or te. */
+function pageLanguage(lng: string | undefined): 'en' | 'hi' | 'te' {
+  const two = (lng ?? 'en').slice(0, 2);
+  return two === 'hi' || two === 'te' ? two : 'en';
+}
+
 function aadhaarLike(item: PublicChecklistItem): boolean {
   return item.doc_type === 'identity' || /aadhaar/i.test(item.name);
 }
 
-/** Matches the server: only these states accept an upload (an 'expired' one
- *  needs HR to ask for a replacement first — see app/preboarding.py `upload`). */
+/** Matches the server (app/preboarding.py `upload`): a document can be sent
+ *  when none is there yet, when HR rejected it or asked for another, or when a
+ *  verified one has passed its expiry date. */
 function canUpload(item: PublicChecklistItem): boolean {
   return (
     item.state === 'outstanding' ||
     item.state === 'rejected' ||
-    item.state === 'replacement_requested'
+    item.state === 'replacement_requested' ||
+    item.state === 'expired'
   );
 }
 
@@ -447,6 +462,10 @@ function DocumentRow({
 
       {item.description ? (
         <p className="mt-2 text-[12.5px] text-muted-foreground">{item.description}</p>
+      ) : null}
+
+      {item.state === 'expired' ? (
+        <p className="mt-2 text-[12px] text-ember">{t('offer.documents.expiredHint')}</p>
       ) : null}
 
       {aadhaarLike(item) ? (

@@ -84,6 +84,8 @@ from app.routers.offers import public_router as offers_public_router
 from app.routers.onboarding import router as onboarding_router
 from app.routers.profile import router as profile_router
 from app.routers.public_apply import router as public_apply_router
+from app.routers.question_banks import admin_router as question_banks_admin_router
+from app.routers.question_banks import hr_router as question_banks_hr_router
 from app.routers.resume import _delete_from_s3
 from app.routers.resume import router as resume_router
 from app.routers.sso_google import router as sso_google_router
@@ -480,6 +482,9 @@ app.include_router(hr_applicants_router)
 app.include_router(hr_exams_router)
 app.include_router(hr_coding_router)
 app.include_router(hr_rounds_router)
+# PH4-D1: reusable question banks, and the locked-round unlock ("duplicate").
+app.include_router(question_banks_hr_router)
+app.include_router(question_banks_admin_router)
 app.include_router(exam_take_router)
 app.include_router(hr_interviews_router)
 app.include_router(interview_take_router)

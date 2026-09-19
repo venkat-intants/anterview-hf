@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import exam_locks
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
@@ -429,17 +430,6 @@ async def _get_owned_question(
     )
 
 
-async def _require_no_attempts(
-    db: AsyncSession, company_id: uuid.UUID, exam_id: uuid.UUID
-) -> None:
-    """Questions are immutable once any attempt exists (graded-exam integrity)."""
-    if await _attempt_count(db, company_id, exam_id) > 0:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This exam already has attempts — its questions are locked.",
-        )
-
-
 def _exam_out(e: Exam) -> ExamOut:
     return ExamOut(
         id=str(e.id),
@@ -499,7 +489,7 @@ async def _bulk_insert_questions(
         )
         db.add(q)
         created.append(q)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return created
 
 
@@ -720,7 +710,7 @@ async def add_question(
 ) -> QuestionOut:
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     # Back-compat: target the exam's default MCQ section.
     section = await _default_section(db, company_id, exam_id, "mcq")
 
@@ -744,7 +734,7 @@ async def add_question(
         updated_at=now,
     )
     db.add(q)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return _question_out(q)
 
 
@@ -754,7 +744,7 @@ async def update_question(
 ) -> QuestionOut:
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     q = await _get_owned_question(db, company_id, exam_id, qid)
 
     new_options = body.options if body.options is not None else list(q.options or [])
@@ -769,7 +759,7 @@ async def update_question(
     if body.points is not None:
         q.points = body.points
     q.updated_at = datetime.now(tz=UTC)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return _question_out(q)
 
 
@@ -779,7 +769,7 @@ async def delete_question(
 ) -> Response:
     _hr_uid, company_id = ctx
     exam = await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     q = await _get_owned_question(db, company_id, exam_id, qid)
 
     live = await _live_questions(db, company_id, exam_id)
@@ -789,7 +779,7 @@ async def delete_question(
             detail="A published exam must keep at least one question. Unpublish first.",
         )
     q.deleted_at = datetime.now(tz=UTC)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -799,7 +789,7 @@ async def reorder_questions(
 ) -> list[QuestionOut]:
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
 
     live = await _live_questions(db, company_id, exam_id)
     if {q.id for q in live} != set(body.question_ids):
@@ -816,7 +806,7 @@ async def reorder_questions(
     for idx, qid in enumerate(body.question_ids):
         by_id[qid].position = idx
         by_id[qid].updated_at = now
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return [_question_out(by_id[qid]) for qid in body.question_ids]
 
 
@@ -834,7 +824,7 @@ async def bulk_add_questions(
     """Append many questions at once (AI-generate 'add all', or a reviewed import)."""
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     section = await _default_section(db, company_id, exam_id, "mcq")
     created = await _bulk_insert_questions(db, company_id, section, body.questions)
     log.info(
@@ -918,7 +908,7 @@ async def import_questions(
     """
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
 
     content = await file.read()
     if not content:

@@ -281,7 +281,9 @@ async def test_update_round_applies_only_the_supplied_fields() -> None:
     from app.routers.hr_rounds import RoundUpdateIn, update_round
 
     rnd = _round(title="Old", pass_threshold=60, advances_to_interview=False)
-    db = _db(scalars=[_exam(), rnd], executes=[_rows()])
+    # A grading field is supplied, so PH4-D1's lock check runs too: draft status
+    # short-circuits the "published" branch, then one attempt-count query (0).
+    db = _db(scalars=[_exam(), rnd, 0], executes=[_rows()])
 
     out = await update_round(
         _EXAM, rnd.id, RoundUpdateIn(pass_threshold=75), _ctx(), db
@@ -417,7 +419,9 @@ async def test_update_section_cannot_change_kind() -> None:
 
     rnd = _round()
     sec = _section(kind="mcq", round_id=rnd.id)
-    db = _db(scalars=[_exam(), rnd, sec, 0])
+    # PH4-D1's lock check adds one attempt-count query (draft, so no "published"
+    # short-circuit); the section's own question count follows it.
+    db = _db(scalars=[_exam(), rnd, sec, 0, 0])
 
     out = await update_section(
         _EXAM, rnd.id, sec.id, SectionUpdateIn(title="Renamed"), _ctx(), db
@@ -474,7 +478,9 @@ async def test_deleting_a_section_question_soft_deletes_it() -> None:
 
     sec = _section(kind="mcq")
     q = SimpleNamespace(deleted_at=None)
-    db = _db(scalars=[_exam(), sec, 0, q])
+    # PH4-D1's lock check fetches the round by id (it only has sec.round_id in
+    # hand), then one attempt-count query, before the question itself is fetched.
+    db = _db(scalars=[_exam(), sec, _round(id=sec.round_id), 0, q])
 
     resp = await delete_section_question(_EXAM, sec.id, uuid.uuid4(), _ctx(), db)
 
@@ -488,7 +494,7 @@ async def test_deleting_a_question_that_is_not_in_the_section_is_404() -> None:
     from app.routers.hr_rounds import delete_section_question
 
     sec = _section(kind="mcq")
-    db = _db(scalars=[_exam(), sec, 0, None])
+    db = _db(scalars=[_exam(), sec, _round(id=sec.round_id), 0, None])
 
     with pytest.raises(HTTPException) as exc:
         await delete_section_question(_EXAM, sec.id, uuid.uuid4(), _ctx(), db)

@@ -459,6 +459,13 @@ class ExamQuestion(Base):
     correct_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     points: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
     position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # PH4-D1: where this question came from, if it was copied from a bank
+    # question rather than authored here directly. Nullable — every existing
+    # row, and the whole candidate take/grading path, is untouched. Copy-on-add:
+    # nothing about a later version of the bank question ever reaches this row.
+    source_bank_question_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_bank_root_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_bank_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -511,6 +518,10 @@ class CodingQuestion(Base):
     time_limit_ms: Mapped[int] = mapped_column(Integer, default=5000, nullable=False)
     points: Mapped[int] = mapped_column(SmallInteger, default=100, nullable=False)
     position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # PH4-D1: see ExamQuestion — the same bank provenance, copy-on-add.
+    source_bank_question_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_bank_root_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_bank_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -1712,4 +1723,155 @@ class RoundResult(Base):
     # A retake supersedes rather than overwrites: the earlier attempt stays
     # readable, which an appeal or an audit will ask for.
     superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# Reusable question banks — PH4-D1 (migration d2a4c6e8f0b3)
+# ---------------------------------------------------------------------------
+
+
+class QuestionBank(Base):
+    """A company-scoped library of reusable questions, independent of any exam."""
+
+    __tablename__ = "question_banks"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_question_banks_id_company"),
+        CheckConstraint("char_length(name) BETWEEN 1 AND 120", name="ck_question_banks_name"),
+        CheckConstraint(
+            "description IS NULL OR char_length(description) <= 1000",
+            name="ck_question_banks_description",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class BankQuestion(Base):
+    """One version of a reusable question. ``root_id`` == ``id`` for version 1;
+    later versions share ``root_id`` and are numbered by ``version``.
+
+    The lifecycle (draft -> in_review -> approved -> retired, plus a new
+    version) is enforced at the database by the ``bank_questions_lifecycle``
+    trigger (migration d2a4c6e8f0b3) — this class only shapes the row.
+    """
+
+    __tablename__ = "bank_questions"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_bank_questions_id_company"),
+        UniqueConstraint("root_id", "version", name="uq_bank_questions_root_version"),
+        ForeignKeyConstraint(
+            ["bank_id", "company_id"], ["question_banks.id", "question_banks.company_id"],
+            name="fk_bank_questions_bank", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["root_id", "company_id"], ["bank_questions.id", "bank_questions.company_id"],
+            name="fk_bank_questions_root", deferrable=True, initially="DEFERRED",
+        ),
+        CheckConstraint("kind IN ('mcq','coding')", name="ck_bank_questions_kind"),
+        CheckConstraint(
+            "status IN ('draft','in_review','approved','retired')", name="ck_bank_questions_status"
+        ),
+        CheckConstraint(
+            "origin IN ('authored','ai_draft','from_exam')", name="ck_bank_questions_origin"
+        ),
+        CheckConstraint(
+            "difficulty IN ('easy','medium','hard')", name="ck_bank_questions_difficulty"
+        ),
+        CheckConstraint("language IN ('en','hi','te')", name="ck_bank_questions_language"),
+        CheckConstraint("char_length(prompt) BETWEEN 1 AND 20000", name="ck_bank_questions_prompt"),
+        CheckConstraint("points >= 1", name="ck_bank_questions_points"),
+        CheckConstraint("version >= 1", name="ck_bank_questions_version"),
+        CheckConstraint("content_hash ~ '^[0-9a-f]{64}$'", name="ck_bank_questions_content_hash"),
+        CheckConstraint(
+            "review_note IS NULL OR char_length(review_note) <= 1000",
+            name="ck_bank_questions_review_note",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    bank_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    root_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    version: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    points: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # none_as_null=True on every nullable JSONB column here: SQLAlchemy's JSONB
+    # otherwise persists a Python None as the JSON literal 'null' rather than a
+    # SQL NULL, and this table's shape CHECK constraints test IS NULL — a
+    # coding row's unset `options` must be a real SQL NULL, not a JSONB scalar
+    # `null` that `jsonb_array_length()` then raises on.
+    options: Mapped[list[Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    correct_index: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    starter_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reference_solution: Mapped[str | None] = mapped_column(Text, nullable=True)
+    allowed_languages: Mapped[list[Any] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    test_cases: Mapped[list[Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    time_limit_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    difficulty: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(Text, default="en", nullable=False)
+    competencies: Mapped[list[Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    competency_ids: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    status: Mapped[str] = mapped_column(Text, default="draft", nullable=False)
+    origin: Mapped[str] = mapped_column(Text, default="authored", nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retired_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class BankQuestionEvent(Base):
+    """Append-only: what happened to a bank question, never its content."""
+
+    __tablename__ = "bank_question_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["bank_question_id", "company_id"], ["bank_questions.id", "bank_questions.company_id"],
+            name="fk_bank_question_events_question", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "action IN ('created','edited','submitted','withdrawn','approved','changes_requested',"
+            "'retired','versioned','copied_to_exam','saved_from_exam')",
+            name="ck_bank_question_events_action",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    bank_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

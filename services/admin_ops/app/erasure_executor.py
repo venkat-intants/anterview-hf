@@ -282,6 +282,15 @@ EXCLUDED_TABLES: dict[str, str] = {
     "exam_sections": "company-authored assessment content. No candidate column.",
     "exam_questions": "company-authored assessment content. No candidate column.",
     "coding_questions": "company-authored assessment content. No candidate column.",
+    "question_banks": "PH4-D1 — a company's reusable question library. created_by_user_id "
+                      "is HR staff; no candidate column.",
+    "bank_questions": "PH4-D1 — one version of a reusable question: prompt, options or test "
+                      "cases, difficulty, tags. Company-authored content, on the exam_questions "
+                      "precedent. created_by_user_id / submitted_by_user_id / "
+                      "reviewed_by_user_id / retired_by_user_id are HR staff, not candidates.",
+    "bank_question_events": "PH4-D1 — append-only history of a bank question (created, "
+                            "submitted, approved, copied into an exam, ...): action, actor "
+                            "(HR staff) and facts (ids), never question text.",
     # --- Candidate-DERIVED, but reached through applicants ------------------
     # These four are the judgement call in this list, so the reasoning is
     # written out rather than asserted: they hang off `applicants`, which step 6

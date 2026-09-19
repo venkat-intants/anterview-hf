@@ -21,13 +21,14 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import exam_locks
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.exam_ai_client import ExamGenerationError, generate_coding_questions_remote
 from app.execution import SUPPORTED_LANGUAGES
 from app.models import CodingQuestion, Exam
-from app.routers.hr_exams import _default_section, _get_owned_exam, _require_no_attempts
+from app.routers.hr_exams import _default_section, _get_owned_exam
 from app.utils.ownership import get_owned
 from app.workflows import round_rubric_for_generation, rubric_for_exam
 
@@ -250,7 +251,7 @@ async def add_coding_question(
 ) -> CodingQuestionOut:
     _hr_uid, company_id = ctx
     await _get_coding_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     # Back-compat: target the exam's default coding section.
     section = await _default_section(db, company_id, exam_id, "coding")
 
@@ -277,7 +278,7 @@ async def add_coding_question(
         updated_at=now,
     )
     db.add(q)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     log.info("hr.coding_question.created", exam_id=str(exam_id), company_id=str(company_id))
     return _coding_out(q)
 
@@ -294,7 +295,7 @@ async def update_coding_question(
 ) -> CodingQuestionOut:
     _hr_uid, company_id = ctx
     await _get_coding_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     q = await _get_owned_coding_question(db, company_id, exam_id, qid)
 
     if body.prompt is not None:
@@ -312,7 +313,7 @@ async def update_coding_question(
     if body.points is not None:
         q.points = body.points
     q.updated_at = datetime.now(tz=UTC)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return _coding_out(q)
 
 
@@ -324,7 +325,7 @@ async def delete_coding_question(
 ) -> Response:
     _hr_uid, company_id = ctx
     exam = await _get_coding_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     q = await _get_owned_coding_question(db, company_id, exam_id, qid)
 
     live = await db.scalar(
@@ -342,7 +343,7 @@ async def delete_coding_question(
     # Soft-delete: the partial-unique index is WHERE deleted_at IS NULL, so a
     # deleted row leaves its (exam_id, position) slot free for re-use.
     q.deleted_at = datetime.now(tz=UTC)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

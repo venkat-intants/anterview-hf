@@ -26,11 +26,11 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import exam_locks
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.models import (
     CodingQuestion,
-    ExamAttempt,
     ExamQuestion,
     ExamRound,
     ExamSection,
@@ -147,24 +147,6 @@ async def _get_owned_section(
     return await get_owned(
         db, ExamSection, company_id, section_id, noun="Section", exam_id=exam_id
     )
-
-
-async def _require_no_round_attempts(
-    db: AsyncSession, company_id: uuid.UUID, round_id: uuid.UUID
-) -> None:
-    """A round's structure/questions are immutable once any attempt exists on it."""
-    n = await db.scalar(
-        select(func.count()).select_from(ExamAttempt).where(
-            ExamAttempt.round_id == round_id,
-            ExamAttempt.company_id == company_id,
-            ExamAttempt.deleted_at.is_(None),
-        )
-    )
-    if int(n or 0) > 0:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This round already has attempts — its structure is locked.",
-        )
 
 
 async def _section_question_count(db: AsyncSession, section: ExamSection) -> int:
@@ -313,12 +295,18 @@ async def update_round(
     if body.status == "draft" and rnd.status == "published":
         # A live workflow sends candidates links to this round, and exam_take
         # refuses a link to a draft round — unpublishing it would strand every
-        # candidate the workflow assigns it to next.
+        # candidate the workflow assigns it to next. Widened for PH4-D1: an
+        # ARCHIVED workflow may still have a candidate finishing on it, and an
+        # IN-REVIEW or APPROVED version was reviewed against this round's exact
+        # content (the O6 fingerprint) — pulling it out from under either one
+        # is exactly what the lock exists to prevent.
         in_use = await db.scalar(
             text(
                 "SELECT r.title FROM workflow_rounds wr"
                 "  JOIN workflows w ON w.id = wr.workflow_id"
-                "   AND w.status = 'published' AND w.deleted_at IS NULL"
+                "   AND (w.status IN ('published', 'archived')"
+                "        OR w.review_status IN ('in_review', 'approved'))"
+                "   AND w.deleted_at IS NULL"
                 "  JOIN job_requisitions r ON r.id = w.requisition_id"
                 " WHERE wr.exam_round_id = :er AND wr.company_id = :c"
                 "   AND wr.deleted_at IS NULL"
@@ -330,10 +318,21 @@ async def update_round(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    f"This round is used by the live workflow for {in_use}. "
+                    f"This round is used by the workflow for {in_use}. "
                     "Publish a workflow version that no longer uses it first."
                 ),
             )
+
+    # PH4-D1: grading fields are frozen once the round is published or taken
+    # (exam_rounds_frozen). Checked before the write for a message naming the
+    # reason; the trigger is the backstop against a race lost between the two.
+    grading_changed = (
+        body.pass_threshold is not None
+        or body.time_limit_seconds is not None
+        or body.advances_to_interview is not None
+    )
+    if grading_changed:
+        await exam_locks.assert_round_editable(db, company_id, rnd)
 
     if body.status == "published":
         if await _section_count(db, rnd) < 1:
@@ -365,7 +364,7 @@ async def update_round(
             exam.status = "published"
             exam.updated_at = now
     rnd.updated_at = now
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return await _round_out(db, rnd)
 
 
@@ -376,7 +375,7 @@ async def delete_round(
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
     rnd = await _get_owned_round(db, company_id, exam_id, round_id)
-    await _require_no_round_attempts(db, company_id, round_id)
+    await exam_locks.assert_round_editable(db, company_id, rnd)
 
     live = await db.scalar(
         select(func.count()).select_from(ExamRound).where(
@@ -404,7 +403,7 @@ async def delete_round(
     ).scalars().all()
     for s in secs:
         s.deleted_at = now
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -496,8 +495,8 @@ async def create_section(
 ) -> SectionOut:
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _get_owned_round(db, company_id, exam_id, round_id)
-    await _require_no_round_attempts(db, company_id, round_id)
+    rnd = await _get_owned_round(db, company_id, exam_id, round_id)
+    await exam_locks.assert_round_editable(db, company_id, rnd)
 
     max_pos = await db.scalar(
         select(func.max(ExamSection.position)).where(
@@ -518,7 +517,7 @@ async def create_section(
         updated_at=now,
     )
     db.add(sec)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     log.info("hr.exam.section.created", round_id=str(round_id), section_id=str(sec.id))
     return await _section_out(db, sec)
 
@@ -536,15 +535,19 @@ async def update_section(
 ) -> SectionOut:
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _get_owned_round(db, company_id, exam_id, round_id)
+    rnd = await _get_owned_round(db, company_id, exam_id, round_id)
     sec = await _get_owned_section(db, company_id, exam_id, section_id)
+    # PH4-D1: a section's fields (its time limit shapes the candidate's clock)
+    # are frozen the same way a round's grading fields are — checked nowhere
+    # before this.
+    await exam_locks.assert_round_editable(db, company_id, rnd)
     # kind is immutable after creation (it'd orphan the section's questions).
     if body.title is not None:
         sec.title = body.title.strip()
     if body.time_limit_seconds is not None:
         sec.time_limit_seconds = body.time_limit_seconds
     sec.updated_at = datetime.now(tz=UTC)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return await _section_out(db, sec)
 
 
@@ -561,8 +564,8 @@ async def delete_section(
 ) -> Response:
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _get_owned_round(db, company_id, exam_id, round_id)
-    await _require_no_round_attempts(db, company_id, round_id)
+    rnd = await _get_owned_round(db, company_id, exam_id, round_id)
+    await exam_locks.assert_round_editable(db, company_id, rnd)
     sec = await _get_owned_section(db, company_id, exam_id, section_id)
     now = datetime.now(tz=UTC)
     sec.deleted_at = now
@@ -591,7 +594,7 @@ async def delete_section(
         mq.deleted_at = now
     for cq in coding_rows:
         cq.deleted_at = now
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -613,7 +616,7 @@ async def delete_section_question(
     await _get_owned_exam(db, company_id, exam_id)
     sec = await _get_owned_section(db, company_id, exam_id, section_id)
     _require_section_kind(sec, "mcq")
-    await _require_no_round_attempts(db, company_id, sec.round_id)
+    await exam_locks.assert_round_editable_by_id(db, company_id, sec.round_id)
     q = await db.scalar(
         select(ExamQuestion).where(
             ExamQuestion.id == qid,
@@ -625,7 +628,7 @@ async def delete_section_question(
     if q is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found.")
     q.deleted_at = datetime.now(tz=UTC)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -644,7 +647,7 @@ async def delete_section_coding_question(
     await _get_owned_exam(db, company_id, exam_id)
     sec = await _get_owned_section(db, company_id, exam_id, section_id)
     _require_section_kind(sec, "coding")
-    await _require_no_round_attempts(db, company_id, sec.round_id)
+    await exam_locks.assert_round_editable_by_id(db, company_id, sec.round_id)
     q = await db.scalar(
         select(CodingQuestion).where(
             CodingQuestion.id == qid,
@@ -656,7 +659,7 @@ async def delete_section_coding_question(
     if q is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found.")
     q.deleted_at = datetime.now(tz=UTC)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -711,7 +714,7 @@ async def add_section_question(
     await _get_owned_exam(db, company_id, exam_id)
     sec = await _get_owned_section(db, company_id, exam_id, section_id)
     _require_section_kind(sec, "mcq")
-    await _require_no_round_attempts(db, company_id, sec.round_id)
+    await exam_locks.assert_round_editable_by_id(db, company_id, sec.round_id)
     created = await _bulk_insert_questions(db, company_id, sec, [body])
     return _question_out(created[0])
 
@@ -757,7 +760,7 @@ async def add_section_coding_question(
     await _get_owned_exam(db, company_id, exam_id)
     sec = await _get_owned_section(db, company_id, exam_id, section_id)
     _require_section_kind(sec, "coding")
-    await _require_no_round_attempts(db, company_id, sec.round_id)
+    await exam_locks.assert_round_editable_by_id(db, company_id, sec.round_id)
 
     max_pos = await db.scalar(
         select(func.max(CodingQuestion.position)).where(
@@ -782,6 +785,133 @@ async def add_section_coding_question(
         updated_at=now,
     )
     db.add(q)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     log.info("hr.section.coding_question.created", section_id=str(section_id))
     return _coding_out(q)
+
+
+# ---------------------------------------------------------------------------
+# Duplicate a locked round (PH4-D1) — the way forward once a round is
+# published or taken, so a lock is never a dead end.
+# ---------------------------------------------------------------------------
+@router.post(
+    "/exams/{exam_id}/rounds/{round_id}/duplicate",
+    status_code=status.HTTP_201_CREATED,
+    response_model=RoundOut,
+)
+async def duplicate_round(
+    exam_id: uuid.UUID, round_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> RoundOut:
+    """Copy a round's sections and questions into a new, editable draft round.
+
+    Deliberately does NOT carry the source round's bank provenance onto the
+    copies: the partial unique index that stops the same bank question landing
+    in one exam twice is scoped to the EXAM (``exam_id, source_bank_root_id``),
+    not the round, precisely so a lineage cannot be asked twice across an
+    exam's rounds. A round is most often duplicated exactly because it has
+    attempts and cannot be unpublished — so its bank-sourced questions are
+    still live in the original round, and copying the link as well would
+    collide with that same index (and misreport a question the reviewer never
+    re-approved as still "from the bank"). The duplicate's questions are
+    therefore this exam's own authored content from the moment they are
+    copied; HR can still re-add fresh bank questions to the new round.
+    """
+    _hr_uid, company_id = ctx
+    await _get_owned_exam(db, company_id, exam_id)
+    src = await _get_owned_round(db, company_id, exam_id, round_id)
+
+    max_num = await db.scalar(
+        select(func.max(ExamRound.round_number)).where(
+            ExamRound.exam_id == exam_id, ExamRound.deleted_at.is_(None)
+        )
+    )
+    nxt = (int(max_num) + 1) if max_num is not None else 1
+    now = datetime.now(tz=UTC)
+    new_round = ExamRound(
+        id=uuid.uuid4(),
+        exam_id=exam_id,
+        company_id=company_id,
+        round_number=nxt,
+        title=f"{src.title} (copy)",
+        pass_threshold=src.pass_threshold,
+        time_limit_seconds=src.time_limit_seconds,
+        advances_to_interview=src.advances_to_interview,
+        status="draft",
+        position=nxt,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(new_round)
+    await db.flush()
+
+    sections = (
+        await db.execute(
+            select(ExamSection)
+            .where(
+                ExamSection.round_id == round_id,
+                ExamSection.company_id == company_id,
+                ExamSection.deleted_at.is_(None),
+            )
+            .order_by(ExamSection.position.asc())
+        )
+    ).scalars().all()
+    for sec in sections:
+        new_sec = ExamSection(
+            id=uuid.uuid4(),
+            round_id=new_round.id,
+            exam_id=exam_id,
+            company_id=company_id,
+            title=sec.title,
+            kind=sec.kind,
+            time_limit_seconds=sec.time_limit_seconds,
+            position=sec.position,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(new_sec)
+        await db.flush()
+        if sec.kind == "mcq":
+            qs = (
+                await db.execute(
+                    select(ExamQuestion)
+                    .where(
+                        ExamQuestion.section_id == sec.id,
+                        ExamQuestion.company_id == company_id,
+                        ExamQuestion.deleted_at.is_(None),
+                    )
+                    .order_by(ExamQuestion.position.asc())
+                )
+            ).scalars().all()
+            for q in qs:
+                db.add(ExamQuestion(
+                    id=uuid.uuid4(), exam_id=exam_id, section_id=new_sec.id, company_id=company_id,
+                    prompt=q.prompt, options=list(q.options or []), correct_index=q.correct_index,
+                    points=q.points, position=q.position, created_at=now, updated_at=now,
+                ))
+        else:
+            cqs = (
+                await db.execute(
+                    select(CodingQuestion)
+                    .where(
+                        CodingQuestion.section_id == sec.id,
+                        CodingQuestion.company_id == company_id,
+                        CodingQuestion.deleted_at.is_(None),
+                    )
+                    .order_by(CodingQuestion.position.asc())
+                )
+            ).scalars().all()
+            for cq in cqs:
+                db.add(CodingQuestion(
+                    id=uuid.uuid4(), exam_id=exam_id, section_id=new_sec.id, company_id=company_id,
+                    prompt=cq.prompt, starter_code=cq.starter_code,
+                    reference_solution=cq.reference_solution,
+                    allowed_languages=list(cq.allowed_languages or []),
+                    test_cases=list(cq.test_cases or []), time_limit_ms=cq.time_limit_ms,
+                    points=cq.points, position=cq.position, created_at=now, updated_at=now,
+                ))
+    await db.commit()
+    log.info(
+        "hr.exam.round.duplicated",
+        exam_id=str(exam_id), src_round_id=str(round_id), new_round_id=str(new_round.id),
+    )
+    return await _round_out(db, new_round)

@@ -273,14 +273,20 @@ def test_without_a_company_no_dangling_words_remain() -> None:
 
 
 # ===========================================================================
-# An exam round a live workflow uses cannot be unpublished
+# An exam round a live (or reviewed) workflow uses cannot be unpublished
 # ===========================================================================
 def test_unpublishing_a_round_used_by_a_live_workflow_is_refused() -> None:
+    """PH4-D1 widened this guard: an ARCHIVED workflow may still have a
+    candidate finishing on it, and an IN-REVIEW or APPROVED version was
+    reviewed against this round's exact content (the O6 fingerprint) — both
+    are now refused too, not just a currently PUBLISHED workflow."""
     from app.routers.hr_rounds import update_round
 
     src = " ".join(inspect.getsource(update_round).split())
     assert 'body.status == "draft" and rnd.status == "published"' in src
-    assert "w.status = 'published'" in src and "HTTP_409_CONFLICT" in src
+    assert "w.status IN ('published', 'archived')" in src
+    assert "w.review_status IN ('in_review', 'approved')" in src
+    assert "HTTP_409_CONFLICT" in src
 
 
 # ===========================================================================

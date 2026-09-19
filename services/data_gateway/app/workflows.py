@@ -1301,6 +1301,14 @@ async def _assert_draft(db: AsyncSession, workflow_id: uuid.UUID) -> None:
 # stays editable — so without this an approved version could go live on an exam
 # its reviewer never saw. Timestamps are left out (they move without the content
 # moving); ``deleted_at`` is not, so removing a question changes the digest.
+#
+# PH4-D1: a question/coding row's three ``source_bank_*`` provenance columns are
+# also subtracted. Where a question came from is not what the reviewer approved
+# — the content is identical whether it was typed by hand or copied from an
+# approved bank question — and leaving them in would change every existing
+# workflow's fingerprint the moment D1 shipped, failing every approved-but-
+# unpublished version's publish with "changed after it was approved" and
+# marking every stored dry run stale, for a change nobody made.
 _EXAM_CONTENT_SQL = """
 SELECT er.id,
        md5((to_jsonb(er) - 'created_at' - 'updated_at')::text) AS round_digest,
@@ -1308,12 +1316,16 @@ SELECT er.id,
                                    ',' ORDER BY s.id)
                    FROM exam_sections s
                   WHERE s.round_id = er.id AND s.deleted_at IS NULL), '') AS sections,
-       COALESCE((SELECT string_agg(md5((to_jsonb(q) - 'created_at' - 'updated_at')::text),
+       COALESCE((SELECT string_agg(md5((to_jsonb(q) - 'created_at' - 'updated_at'
+                                        - 'source_bank_question_id' - 'source_bank_root_id'
+                                        - 'source_bank_version')::text),
                                    ',' ORDER BY q.id)
                    FROM exam_questions q
                    JOIN exam_sections s ON s.id = q.section_id AND s.deleted_at IS NULL
                   WHERE s.round_id = er.id AND q.deleted_at IS NULL), '') AS questions,
-       COALESCE((SELECT string_agg(md5((to_jsonb(c) - 'created_at' - 'updated_at')::text),
+       COALESCE((SELECT string_agg(md5((to_jsonb(c) - 'created_at' - 'updated_at'
+                                        - 'source_bank_question_id' - 'source_bank_root_id'
+                                        - 'source_bank_version')::text),
                                    ',' ORDER BY c.id)
                    FROM coding_questions c
                    JOIN exam_sections s ON s.id = c.section_id AND s.deleted_at IS NULL

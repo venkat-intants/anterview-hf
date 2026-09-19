@@ -160,7 +160,11 @@ SELECT r.id, r.title, r.location, r.status, r.target_hires, r.closes_at, r.creat
            AND w.status = 'draft' AND w.deleted_at IS NULL) AS draft_version,
        count(e.id) AS applied,
        count(e.id) FILTER (WHERE e.status NOT IN ('hired', 'rejected')) AS in_play,
-       count(e.id) FILTER (WHERE e.status = 'hired') AS hired,
+       count(e.id) FILTER (WHERE e.status = 'hired'
+         -- PH4-A3: a hire whose offer was declined, expired or withdrawn
+         -- has not filled the role; the decision itself is unchanged.
+         AND COALESCE(e.offer_outcome, '') NOT IN
+             ('offer_declined', 'offer_expired', 'offer_withdrawn')) AS hired,
        count(e.id) FILTER (WHERE e.status = 'rejected') AS rejected,
        count(e.id) FILTER (WHERE enrolment_awaits_human(e.status, e.current_round_id))
          AS awaiting_decision,

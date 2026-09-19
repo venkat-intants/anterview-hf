@@ -498,3 +498,39 @@ def test_a_hire_is_undone_only_by_a_rejection() -> None:
         asyncio.run(record_transition(db, enrolment_id=uuid.uuid4(), company_id=uuid.uuid4(),
                                       to_status="shortlisted", actor_user_id=None,
                                       automated=False))
+
+
+def test_a_guest_account_speaks_the_language_the_offer_was_accepted_in() -> None:
+    """Found in the evidence pass: a guest made at acceptance was always 'en', so
+    their activation email was always English."""
+    from pydantic import ValidationError
+
+    import app.offers as offers
+    from app.routers.offers import AcceptIn
+
+    assert AcceptIn(code="123456", full_name="Asha Rao", language="te").language == "te"
+    with pytest.raises(ValidationError):
+        AcceptIn(code="123456", full_name="Asha Rao", language="fr")
+    assert "_ensure_candidate_identity(db, offer, language)" in inspect.getsource(offers.answer)
+    assert '"lang": language if language in ("en", "hi", "te") else "en"' in inspect.getsource(
+        offers._ensure_candidate_identity)
+
+
+def test_uploads_stop_when_consent_is_withdrawn_and_a_lapsed_document_can_be_replaced() -> None:
+    import app.preboarding as pb
+
+    src = inspect.getsource(pb.upload)
+    assert "consent_type = 'preboarding_documents'" in src and "revoked_at IS NULL" in src
+    assert src.index("revoked_at IS NULL") < src.index("store.check(")  # before anything is kept
+    assert "lapsed" in src
+
+
+def test_staff_reading_an_offer_is_audited_and_the_hire_count_leaves_out_unfilled_hires() -> None:
+    import app.routers.offers as r
+
+    for fn in (r.get_offer, r.admin_offer):
+        assert "record_staff_view(" in inspect.getsource(fn), fn.__name__
+    for mod in ("requisition_dashboard.py", "company_board.py"):
+        text_ = (APP / mod).read_text(encoding="utf-8")
+        assert "('offer_declined', 'offer_expired', 'offer_withdrawn')" in text_, mod
+

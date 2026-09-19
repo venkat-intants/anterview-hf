@@ -262,6 +262,16 @@ async def upload(db: AsyncSession, *, raw: str | None, session: str | None,
     offer = await with_documents_session(db, raw=raw, session=session)
     if offer["preboarding_completed_at"] is not None:
         raise OfferError(409, "Your documents are complete; nothing more is needed.")
+    # Consent to share documents is recorded at acceptance; once withdrawn
+    # (DELETE /users/me/consent revokes it), nothing more is taken.
+    consented = await db.scalar(
+        text("SELECT bool_or(revoked_at IS NULL) FROM dpdp_consent_ledger"
+             " WHERE user_id = :u AND consent_type = 'preboarding_documents' AND granted"),
+        {"u": offer["candidate_user_id"]},
+    )
+    if not consented:
+        raise OfferError(409, "You have withdrawn your consent to share documents, so none can "
+                              "be uploaded. Contact the hiring team if you want to continue.")
     req = (
         await db.execute(
             text("SELECT * FROM document_requirements WHERE id = :i AND requisition_id = :r"
@@ -278,12 +288,18 @@ async def upload(db: AsyncSession, *, raw: str | None, session: str | None,
             raise OfferError(422, "This document has already expired. Upload a current one.")
     current = (
         await db.execute(
-            text("SELECT id, status, version FROM candidate_documents WHERE offer_id = :o"
-                 " AND requirement_id = :r AND superseded_at IS NULL FOR UPDATE"),
+            text("SELECT id, status, version, expires_on FROM candidate_documents"
+                 " WHERE offer_id = :o AND requirement_id = :r AND superseded_at IS NULL"
+                 " FOR UPDATE"),
             {"o": offer["id"], "r": requirement_id},
         )
     ).mappings().first()
-    if current is not None and current["status"] in ("submitted", "verified"):
+    # A verified document past its expiry date is shown to the candidate as
+    # expired, and they may send a current one without waiting to be asked.
+    lapsed = (current is not None and current["status"] == "verified"
+              and current["expires_on"] is not None
+              and current["expires_on"] <= datetime.now(tz=UTC).date())
+    if current is not None and current["status"] in ("submitted", "verified") and not lapsed:
         raise OfferError(409, "This document is already with the hiring team. You can replace it "
                               "if they ask you to.")
     try:
@@ -627,9 +643,12 @@ SELECT d.id, d.storage_key, d.offer_id, d.company_id
 
 
 async def purge_documents(db: AsyncSession, *, retention_days: int, dry_run: bool) -> int:
-    """Delete the files, and blank the rows, of documents whose purpose is over:
-    the offer ended without an acceptance, or preboarding completed (the HRMS
-    holds them from then) — ``retention_days`` ago. Honours RETENTION_DRY_RUN.
+    """Delete the files, and blank the rows, of documents whose purpose is over
+    (_PURGEABLE_DOCS_SQL): ``retention_days`` after the offer ended without an
+    acceptance, after preboarding completed (the HRMS holds them from then), or
+    after an acceptance whose preboarding never completed; and at the next run
+    once a hire is reversed by a rejection before preboarding completed.
+    Honours RETENTION_DRY_RUN.
 
     Files first, rows second, and only on a full count: a storage shortfall
     raises, nothing is committed, and the next nightly run retries the same set

@@ -63,7 +63,11 @@ SELECT count(*) AS applications,
                        ) AS in_progress,
        count(*) FILTER (WHERE enrolment_awaits_human(e.status, e.current_round_id)) AS awaiting,
        count(*) FILTER (WHERE e.status = 'held') AS held,
-       count(*) FILTER (WHERE e.status = 'hired') AS hired,
+       count(*) FILTER (WHERE e.status = 'hired'
+         -- PH4-A3: a hire whose offer was declined, expired or withdrawn
+         -- has not filled the role; the decision itself is unchanged.
+         AND COALESCE(e.offer_outcome, '') NOT IN
+             ('offer_declined', 'offer_expired', 'offer_withdrawn')) AS hired,
        count(*) FILTER (WHERE e.status = 'rejected') AS rejected,
        count(*) FILTER (WHERE e.status = 'new' AND e.current_round_id IS NULL) AS not_started,
        count(*) FILTER (WHERE e.status NOT IN ('hired', 'rejected', 'held')

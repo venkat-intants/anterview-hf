@@ -108,6 +108,14 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 " ORDER BY created_at DESC LIMIT 1"), {"t": template, "r": uuid.UUID(str(related))})
         return body or ""
 
+    async def backdate(sql: str, params: dict[str, object]) -> None:
+        """Move a date the lifecycle triggers freeze — the only way to make an
+        offer expire or a document lapse without waiting. Local database only."""
+        async with factory() as db:
+            await db.execute(text("SET LOCAL session_replication_role = replica"))
+            await db.execute(text(sql), params)
+            await db.commit()
+
     def token_in(body: str) -> str:
         m = re.search(r"/offer#([A-Za-z0-9_-]+)", body)
         return m.group(1) if m else ""
@@ -157,6 +165,11 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               and r.json()["status"] == "pending_approval", r.text[:160])
         r = await c.patch(f"/hr/offers/{o1}", json={"base_salary": 9999999})
         check("an offer under approval is frozen", r.status_code == 409, r.text[:160])
+        r = await c.post(f"/hr/offers/{o1}/recall")
+        check("HR recalls an offer from approval", r.status_code == 200
+              and r.json()["status"] == "draft", r.text[:160])
+        r = await c.post(f"/hr/offers/{o1}/submit")
+        check("…and submits it again", r.json().get("status") == "pending_approval", r.text[:160])
         acting["admin"] = hr
         r = await c.post(f"/admin/offers/{o1}/approve", json={})
         check("nobody approves their own offer", r.status_code == 403, r.text[:160])
@@ -173,6 +186,26 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         await c.post(f"/hr/offers/{o1}/submit")
         r = await c.post(f"/admin/offers/{o1}/approve", json={"note": "Good to go"})
         check("…and approved", r.json().get("status") == "approved", r.text[:160])
+        r = await c.post(f"/hr/offers/{o1}/reopen")
+        check("HR reopens an approved offer for editing, which clears the approval",
+              r.status_code == 200 and r.json()["status"] == "draft", r.text[:160])
+        await c.post(f"/hr/offers/{o1}/submit")
+        r = await c.post(f"/admin/offers/{o1}/approve", json={"note": "Still good"})
+        check("…and it is approved afresh", r.json().get("status") == "approved", r.text[:160])
+        await c.get(f"/hr/offers/{o1}")
+        await c.get(f"/admin/offers/{o1}")
+        async with factory() as db:
+            seen = dict((await db.execute(text(
+                "SELECT details->>'audience', count(*) FROM audit_log"
+                " WHERE action = 'offer.viewed_by_staff' AND resource_id = :o GROUP BY 1"),
+                {"o": uuid.UUID(o1)})).all())
+            link = await db.scalar(text(
+                "SELECT link FROM notifications WHERE user_id = :u AND link LIKE '%' || :o"
+                " ORDER BY created_at DESC LIMIT 1"), {"u": admin, "o": o1})
+        check("staff opening an offer — its pay included — is audited, by console",
+              seen.get("hr", 0) >= 1 and seen.get("super_admin", 0) >= 1, str(seen))
+        check("the super admin's notice opens the approval page",
+              link == f"/superadmin/offer-approvals/{o1}", str(link))
         async with factory() as db:
             decided = (await db.execute(text("SELECT decided_by_user_id, decided_at FROM offers"
                                              " WHERE id = :o"), {"o": uuid.UUID(o1)})).one()
@@ -379,6 +412,10 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.get("/hr/offers")
         check("another company's HR sees none of these offers",
               r.status_code == 200 and r.json()["total"] == 0, r.text[:160])
+        r = await c.get(f"/hr/offers/{o1}/documents")
+        r2 = await c.post(f"/hr/documents/{doc1}/download")
+        check("…nor their documents, nor a download link", r.status_code == 404
+              and r2.status_code == 404, f"{r.status_code} {r2.status_code}")
         app.dependency_overrides[get_hr_company] = lambda: (acting["hr"], cid)
         r = await c.post(f"/hr/offers/{o1}/preboarding-complete")
         check("preboarding cannot complete with the passport unverified", r.status_code == 409
@@ -393,6 +430,54 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                                        " WHERE id = :d"), {"d": uuid.UUID(doc1)})
         check("verification records who and when", reviewed[0] == hr and reviewed[1] is not None)
         check("the rejected version is kept, superseded", str(old) == doc2, str(old))
+
+        r = await c.post(f"/hr/documents/{doc2}/review",
+                         json={"action": "request_replacement",
+                               "note": "Please send the page with the visa stamp."})
+        check("HR asks for a replacement of a verified document",
+              r.json().get("state") == "replacement_requested", r.text[:160])
+        r = await c.get("/offer/documents", headers=h)
+        mine = {i["name"]: i for i in r.json()["items"]}["Passport"]
+        check("the candidate sees what is asked, and why", mine["state"] == "replacement_requested"
+              and "visa stamp" in (mine["document"]["review_note"] or ""), str(mine)[:200])
+
+        async with factory() as db:
+            await db.execute(text("UPDATE dpdp_consent_ledger SET revoked_at = now()"
+                                  " WHERE user_id = :u AND consent_type = 'preboarding_documents'"),
+                             {"u": cand})
+            await db.commit()
+        r = await c.post(f"/offer/documents/{passport}", headers=h,
+                         files={"file": ("passport3.pdf", PDF + b"%v3\n", "application/pdf")},
+                         data={"expires_on": str(date.today() + timedelta(days=900))})
+        check("once consent to share documents is withdrawn, nothing more is taken",
+              r.status_code == 409 and "consent" in r.json()["detail"], r.text[:160])
+        async with factory() as db:
+            await db.execute(text(
+                "INSERT INTO dpdp_consent_ledger (id, user_id, consent_type, granted, granted_at,"
+                " purpose, evidence) VALUES (gen_random_uuid(), :u, 'preboarding_documents', true,"
+                " now(), 'onboarding', CAST('{\"source\": \"smoke\"}' AS jsonb))"), {"u": cand})
+            await db.commit()
+        r = await c.post(f"/offer/documents/{passport}", headers=h,
+                         files={"file": ("passport3.pdf", PDF + b"%v3\n", "application/pdf")},
+                         data={"expires_on": str(date.today() + timedelta(days=900))})
+        doc3 = r.json().get("document_id")
+        check("given again, the candidate sends the replacement", r.status_code == 201
+              and r.json()["version"] == 3, r.text[:160])
+        await c.post(f"/hr/documents/{doc3}/review", json={"action": "verify"})
+        await backdate("UPDATE candidate_documents SET expires_on = current_date - 1 WHERE id = :d",
+                       {"d": uuid.UUID(doc3)})
+        r = await c.get("/offer/documents", headers=h)
+        mine = {i["name"]: i for i in r.json()["items"]}["Passport"]
+        check("a verified document past its date shows as expired", mine["state"] == "expired",
+              str(mine)[:160])
+        r = await c.post(f"/offer/documents/{passport}", headers=h,
+                         files={"file": ("passport4.pdf", PDF + b"%v4\n", "application/pdf")},
+                         data={"expires_on": str(date.today() + timedelta(days=900))})
+        doc4 = r.json().get("document_id")
+        check("…and the candidate can send a current one without being asked",
+              r.status_code == 201 and r.json()["version"] == 4, r.text[:160])
+        r = await c.post(f"/hr/documents/{doc4}/review", json={"action": "verify"})
+        check("HR verifies the current passport", r.json().get("state") == "verified", r.text[:160])
 
         print("\nPH4-A4 — preboarding and the HRMS handoff")
         r = await c.post(f"/hr/offers/{o1}/hrms-export")
@@ -440,6 +525,65 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post("/offer/code", headers={"X-Offer-Token": tok2}, json={"purpose": "accept"})
         check("a withdrawn offer cannot be answered", r.status_code == 409, r.text[:160])
 
+        print("\nPH4-A3 — a declined offer, the hire count, and expiry")
+        r = await c.post(f"/hr/enrolments/{e2}/offers", json={"base_salary": 1850000})
+        o3 = r.json()["id"]
+        async with factory() as db:
+            cleared = await db.scalar(text("SELECT offer_outcome FROM enrolments WHERE id = :e"),
+                                      {"e": e2})
+        check("a new offer clears the last one's outcome from the application", cleared is None,
+              str(cleared))
+        acting["hr"] = hr2
+        await c.post(f"/hr/offers/{o3}/submit")
+        acting["hr"] = hr
+        await c.post(f"/admin/offers/{o3}/approve", json={})
+        await c.post(f"/hr/offers/{o3}/send")
+        tok3 = token_in(await last_mail("offer_ready", o3))
+        before = (await c.get(f"/hr/requisitions/{req}/dashboard")).json()["progress"]["hired"]
+        await c.post("/offer/code", headers={"X-Offer-Token": tok3}, json={"purpose": "decline"})
+        dmail = await last_mail("offer_code", o3)
+        dc = (re.search(r"\b(\d{6})\b", dmail) or [None, ""])[1]
+        r = await c.post("/offer/decline", headers={"X-Offer-Token": tok3},
+                         json={"code": dc, "reason": "Accepted another offer."})
+        check("the candidate declines with the emailed code, giving a reason",
+              r.status_code == 200 and r.json()["status"] == "declined", r.text[:160])
+        after = (await c.get(f"/hr/requisitions/{req}/dashboard")).json()["progress"]["hired"]
+        async with factory() as db:
+            st = (await db.execute(text(
+                "SELECT e.status, e.offer_outcome, o.decline_reason FROM enrolments e"
+                " JOIN offers o ON o.enrolment_id = e.id WHERE o.id = :o"),
+                {"o": uuid.UUID(o3)})).one()
+        check("the decision stands, the outcome says declined, and the reason is kept",
+              st[0] == "hired" and st[1] == "offer_declined" and "another" in (st[2] or ""),
+              str(st))
+        check("…and the opening no longer counts that hire as filling the role",
+              after == before - 1, f"{before} -> {after}")
+
+        r = await c.post(f"/hr/enrolments/{e2}/offers", json={"base_salary": 1900000})
+        o4 = r.json()["id"]
+        acting["hr"] = hr2
+        await c.post(f"/hr/offers/{o4}/submit")
+        acting["hr"] = hr
+        await c.post(f"/admin/offers/{o4}/approve", json={})
+        await c.post(f"/hr/offers/{o4}/send")
+        await backdate("UPDATE offers SET expires_at = now() - interval '1 minute' WHERE id = :o",
+                       {"o": uuid.UUID(o4)})
+        from app.offers import expire_due
+
+        async with factory() as db:
+            expired_n = await expire_due(db)
+            await db.commit()
+        async with factory() as db:
+            ex = (await db.execute(text(
+                "SELECT o.status, e.offer_outcome FROM offers o JOIN enrolments e"
+                " ON e.id = o.enrolment_id WHERE o.id = :o"), {"o": uuid.UUID(o4)})).one()
+            ex_audit = await db.scalar(text(
+                "SELECT count(*) FROM audit_log WHERE action = 'offer.expired'"
+                " AND resource_id = :o"), {"o": uuid.UUID(o4)})
+        check("the expiry sweep expires an offer past its deadline", expired_n >= 1
+              and ex[0] == "expired" and ex[1] == "offer_expired", f"{expired_n} {ex}")
+        check("…and the expiry is on the audit log", ex_audit == 1, str(ex_audit))
+
         r = await c.get("/users/me/offers")
         check("the signed-in candidate sees their offer", any(x["id"] == o1 for x in r.json())
               and all(x["id"] != o2 for x in r.json()), r.text[:200])
@@ -456,6 +600,35 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("a hire cannot slide back into the pipeline", r.status_code == 409
               and "rejection" in r.json().get("detail", ""), r.text[:200])
         check("nothing in the offer journey wrote the stage ledger", await ledger() == ledger_before)
+
+        print("\nPH4-A4 — retention")
+        from app.preboarding import purge_documents
+
+        await backdate("UPDATE offers SET preboarding_completed_at = now() - interval '100 days'"
+                       " WHERE id = :o", {"o": uuid.UUID(o1)})
+        async with factory() as db:
+            kept = await db.scalar(text(
+                "SELECT count(*) FROM candidate_documents WHERE offer_id = :o"
+                " AND storage_key IS NOT NULL"), {"o": uuid.UUID(o1)})
+            planned = await purge_documents(db, retention_days=90, dry_run=True)
+            await db.commit()
+        async with factory() as db:
+            still = await db.scalar(text(
+                "SELECT count(*) FROM candidate_documents WHERE offer_id = :o"
+                " AND storage_key IS NOT NULL"), {"o": uuid.UUID(o1)})
+        check("a dry run only counts what the purge would remove", planned >= kept > 0
+              and still == kept, f"{planned} {kept} {still}")
+        async with factory() as db:
+            removed = await purge_documents(db, retention_days=90, dry_run=False)
+            await db.commit()
+        async with factory() as db:
+            left = await db.scalar(text(
+                "SELECT count(*) FROM candidate_documents WHERE offer_id = :o"
+                " AND (storage_key IS NOT NULL OR redacted_at IS NULL)"), {"o": uuid.UUID(o1)})
+        r = await c.post(f"/hr/documents/{doc4}/download")
+        check("90 days after preboarding completes, the documents are deleted",
+              removed >= kept and left == 0 and r.status_code in (404, 409),
+              f"{removed} {left} {r.status_code}")
 
     app.dependency_overrides.clear()
     await eng.dispose()

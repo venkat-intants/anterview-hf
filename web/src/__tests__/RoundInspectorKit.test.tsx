@@ -27,6 +27,11 @@ vi.mock('../api/exams', () => ({
   listExams: vi.fn(() => Promise.resolve([])),
   getStructure: vi.fn(() => Promise.resolve(null)),
 }));
+vi.mock('../api/stageSla', () => ({
+  getStages: vi.fn(() => Promise.resolve([])),
+  listStageOwners: vi.fn(() => Promise.resolve([])),
+  setStage: vi.fn(),
+}));
 vi.mock('../lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import RoundInspector from '../components/workflow/RoundInspector';
@@ -40,6 +45,9 @@ const ROUND: Round = {
   time_limit_seconds: null,
   deadline_days: 7,
   on_pass_next_round_id: null,
+  on_fail_next_round_id: null,
+  fast_track_min_percent: null,
+  on_fast_track_next_round_id: null,
   exam_round_id: null,
   needs_questions: false,
   criteria: [
@@ -81,6 +89,8 @@ function renderInspector(editable: boolean) {
       <MemoryRouter>
         <RoundInspector
           round={ROUND}
+          allRounds={[ROUND]}
+          workflowId="wf-1"
           roleModel={undefined}
           editable={editable}
           saving={false}
@@ -122,6 +132,8 @@ describe('RoundInspector — interview kit', () => {
         <MemoryRouter>
           <RoundInspector
             round={{ ...ROUND, kind: 'mcq' }}
+            allRounds={[{ ...ROUND, kind: 'mcq' }]}
+            workflowId="wf-1"
             roleModel={undefined}
             editable={false}
             saving={false}

@@ -81,6 +81,8 @@ from app.routers.resume import _delete_from_s3
 from app.routers.resume import router as resume_router
 from app.routers.sso_google import router as sso_google_router
 from app.routers.sso_naipunyam import router as sso_naipunyam_router
+from app.routers.workflow_ops import admin_router as workflow_review_admin_router
+from app.routers.workflow_ops import hr_router as workflow_ops_hr_router
 from app.s3_upload import StorageNotConfiguredError
 from app.scheduling import run_scheduled_job, start_catchup, stop_catchup
 
@@ -463,6 +465,8 @@ app.include_router(interviewer_router)
 # PH4-O4: decision reason categories (HR reads, super admin configures).
 app.include_router(decision_reasons_hr_router)
 app.include_router(decision_reasons_admin_router)
+app.include_router(workflow_ops_hr_router)
+app.include_router(workflow_review_admin_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)
 app.include_router(careers_router)

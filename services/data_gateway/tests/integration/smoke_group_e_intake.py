@@ -164,9 +164,15 @@ async def main() -> None:
             )
         # A published workflow for every opening but r_noflow: an opening with
         # no process does not take applications (E4).
+        # PH4-O6: born a draft (the trigger refuses any other INSERT), then
+        # walked through review one at a time before the batch publish below.
+        from tests.integration.seed_helpers import approve_for_publish
+
+        wf_ids: list[uuid.UUID] = []
         for rid, c_id, *_ in rows:
             if rid == r_noflow:
                 continue
+            wf_id = uuid.uuid4()
             await db.execute(
                 text(
                     "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
@@ -174,11 +180,16 @@ async def main() -> None:
                     " reminders_enabled,hold_band,created_at,updated_at)"
                     " VALUES (:i,:c,:r,1,'draft',true,true,true,true,10,:n,:n)"
                 ),
-                {"i": uuid.uuid4(), "c": c_id, "r": rid, "n": now},
+                {"i": wf_id, "c": c_id, "r": rid, "n": now},
             )
+            await approve_for_publish(db, workflow_id=wf_id, company_id=c_id)
+            wf_ids.append(wf_id)
         await db.execute(
-            text("UPDATE workflows SET status = 'published', published_at = :n"),
-            {"n": now},
+            text(
+                "UPDATE workflows SET status = 'published', published_at = :n"
+                " WHERE id = ANY(:ids)"
+            ),
+            {"n": now, "ids": wf_ids},
         )
         await db.commit()
 

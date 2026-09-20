@@ -43,6 +43,7 @@ const DRAFT: Workflow = {
   status: 'draft',
   name: 'Technical hire',
   editable: true,
+  review_status: 'draft',
   role_profile_id: null,
   settings: SETTINGS,
   published_at: null,
@@ -56,6 +57,9 @@ const DRAFT: Workflow = {
       time_limit_seconds: null,
       deadline_days: 7,
       on_pass_next_round_id: 'r-ai',
+      on_fail_next_round_id: null,
+      fast_track_min_percent: null,
+      on_fast_track_next_round_id: null,
       exam_round_id: null,
       needs_questions: true,
       criteria: [],
@@ -69,6 +73,9 @@ const DRAFT: Workflow = {
       time_limit_seconds: null,
       deadline_days: 7,
       on_pass_next_round_id: null,
+      on_fail_next_round_id: null,
+      fast_track_min_percent: null,
+      on_fast_track_next_round_id: null,
       exam_round_id: null,
       needs_questions: false,
       criteria: [],
@@ -82,6 +89,7 @@ const PUBLISHED: Workflow = {
   version: 1,
   status: 'published',
   editable: false,
+  review_status: 'approved',
   published_at: '2026-08-01T00:00:00.000Z',
 };
 
@@ -237,6 +245,38 @@ vi.mock('../api/exams', () => ({
   getStructure: (...a: unknown[]) => getStructure(...a) as unknown,
 }));
 
+// PH4-O6 / O2 — ReviewPanel and DryRunPanel are always mounted for a draft
+// workflow now, so every test that renders one needs these.
+const getReview = vi.fn();
+const submitForReview = vi.fn();
+const withdrawReview = vi.fn();
+const reopenForEdits = vi.fn();
+const runSimulation = vi.fn();
+const getSimulation = vi.fn();
+vi.mock('../api/workflowReview', () => ({
+  getReview: (...a: unknown[]) => getReview(...a) as unknown,
+  submitForReview: (...a: unknown[]) => submitForReview(...a) as unknown,
+  withdrawReview: (...a: unknown[]) => withdrawReview(...a) as unknown,
+  reopenForEdits: (...a: unknown[]) => reopenForEdits(...a) as unknown,
+  runSimulation: (...a: unknown[]) => runSimulation(...a) as unknown,
+  getSimulation: (...a: unknown[]) => getSimulation(...a) as unknown,
+  reviewErrorDetail: (err: unknown) => {
+    const detail = (err as { detail?: unknown } | null)?.detail;
+    if (detail && typeof detail === 'object' && 'message' in detail) return detail;
+    return null;
+  },
+}));
+
+// PH4-O1 — StageSettings (round + final-decision) always mounts too.
+const getStages = vi.fn();
+const listStageOwners = vi.fn();
+const setStage = vi.fn();
+vi.mock('../api/stageSla', () => ({
+  getStages: (...a: unknown[]) => getStages(...a) as unknown,
+  listStageOwners: (...a: unknown[]) => listStageOwners(...a) as unknown,
+  setStage: (...a: unknown[]) => setStage(...a) as unknown,
+}));
+
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 vi.mock('../lib/toast', () => ({
@@ -287,6 +327,19 @@ beforeEach(() => {
   cloneWorkflow.mockResolvedValue(DRAFT);
   listExams.mockResolvedValue([]);
   getStructure.mockResolvedValue({ exam_id: 'e1', rounds: [] });
+
+  getReview.mockResolvedValue({
+    review_status: 'draft',
+    submitted_at: null,
+    submitted_by_name: null,
+    reviewed_at: null,
+    reviewed_by_name: null,
+    note: null,
+    history: [],
+  });
+  getSimulation.mockResolvedValue(null);
+  getStages.mockResolvedValue([]);
+  listStageOwners.mockResolvedValue([]);
 });
 
 describe('WorkflowBuilder — the canvas', () => {
@@ -294,7 +347,9 @@ describe('WorkflowBuilder — the canvas', () => {
     renderBuilder();
     await screen.findByText('Fundamentals');
 
-    expect(screen.getByText('Conversation')).toBeTruthy();
+    // By role, not text: the coverage panel below also names every round a
+    // competency is assessed in, which can include "Conversation" too.
+    expect(screen.getByRole('button', { name: /^Conversation/ })).toBeTruthy();
     // needs_questions surfaced on the node itself, not only in the panel —
     // the gap belongs next to the round that has it.
     expect(screen.getByText('No questions attached')).toBeTruthy();
@@ -408,10 +463,25 @@ describe('WorkflowBuilder — coverage', () => {
 
 describe('WorkflowBuilder — publishing', () => {
   const REPORT_READY: ValidationReport = { ...REPORT_BLOCKED, publishable: true, errors: [] };
+  const APPROVED_DRAFT: Workflow = { ...DRAFT, review_status: 'approved' };
+
+  it('offers no Publish button until a company super admin has approved this version', async () => {
+    // Default DRAFT fixture — review_status: 'draft'.
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+
+    expect(screen.queryByText('Publish')).toBeNull();
+    expect(await screen.findByText('Submit for review')).toBeTruthy();
+  });
 
   it('asks before publishing, because publishing emails real people', async () => {
     const user = userEvent.setup();
     validateWorkflow.mockResolvedValue(REPORT_READY);
+    getWorkflow.mockResolvedValue(APPROVED_DRAFT);
+    getReview.mockResolvedValue({
+      review_status: 'approved', submitted_at: null, submitted_by_name: null,
+      reviewed_at: null, reviewed_by_name: 'A Reviewer', note: null, history: [],
+    });
     renderBuilder();
     await screen.findByText('Fundamentals');
     await waitFor(() =>
@@ -435,6 +505,11 @@ describe('WorkflowBuilder — publishing', () => {
     // check only publish runs) — the panel must pick up the new reasons.
     validateWorkflow.mockResolvedValue(REPORT_READY);
     publishWorkflow.mockRejectedValue(new Error('This workflow is not ready to publish'));
+    getWorkflow.mockResolvedValue(APPROVED_DRAFT);
+    getReview.mockResolvedValue({
+      review_status: 'approved', submitted_at: null, submitted_by_name: null,
+      reviewed_at: null, reviewed_by_name: 'A Reviewer', note: null, history: [],
+    });
     renderBuilder();
     await screen.findByText('Fundamentals');
     await waitFor(() =>
@@ -451,14 +526,19 @@ describe('WorkflowBuilder — publishing', () => {
     expect(toastError).toHaveBeenCalledWith('This workflow is not ready to publish');
   });
 
-  it('disables the header Publish on the same condition as the lifecycle strip, and says why', async () => {
+  it('disables the header Publish button when validation still finds issues, and says why', async () => {
+    // Approved, but validation (re-checked live) still finds the coverage gap —
+    // the header must not let this be clicked regardless.
+    getWorkflow.mockResolvedValue(APPROVED_DRAFT);
+    getReview.mockResolvedValue({
+      review_status: 'approved', submitted_at: null, submitted_by_name: null,
+      reviewed_at: null, reviewed_by_name: 'A Reviewer', note: null, history: [],
+    });
     renderBuilder();
     await screen.findByText('Fundamentals');
     await screen.findByText('1 thing to fix before this can go live.');
 
     const header = screen.getByText('Publish').closest('button');
-    const lifecycle = screen.getByRole('button', { name: '4. Publish' });
-    expect(lifecycle).toBeDisabled();
     expect(header).toBeDisabled();
     expect(header).toHaveAttribute('title', 'Fix 1 issue before publishing.');
   });

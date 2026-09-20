@@ -53,14 +53,23 @@ async def seed(f) -> dict:
                 {"i": rid, "c": s["company"], "t": title, "n": now})
         # Two published workflows: one scores arrivals and sets a shortlist bar
         # of 7/10, the other scores nothing.
+        # PH4-O6: the database refuses any INSERT that is not an unreviewed
+        # draft, so each is born a draft, walked through review, then published.
+        from tests.integration.seed_helpers import approve_for_publish
+
         for wf, rid, auto, thr in [(s["wf_on"], s["scored"], True, 7),
                                    (s["wf_off"], s["unscored"], False, None)]:
             await db.execute(text(
                 "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
-                " auto_score_on_apply,auto_assign_first_round,auto_advance_rounds,"
-                " reminders_enabled,shortlist_ats_threshold,hold_band,created_at,updated_at,"
-                " published_at) VALUES (:i,:c,:r,1,'published',:a,true,true,true,:t,10,:n,:n,:n)"),
+                " auto_score_on_apply,auto_assign_first_round,"
+                " auto_advance_rounds,reminders_enabled,shortlist_ats_threshold,hold_band,"
+                " created_at,updated_at)"
+                " VALUES (:i,:c,:r,1,'draft',:a,true,true,true,:t,10,:n,:n)"),
                 {"i": wf, "c": s["company"], "r": rid, "a": auto, "t": thr, "n": now})
+            await approve_for_publish(db, workflow_id=wf, company_id=s["company"])
+            await db.execute(text(
+                "UPDATE workflows SET status = 'published', published_at = :n WHERE id = :i"),
+                {"i": wf, "n": now})
         await db.commit()
     return s
 

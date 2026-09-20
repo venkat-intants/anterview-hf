@@ -42,6 +42,9 @@ async def main() -> None:
             " notifications CASCADE"))
 
     cid, uid, rid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    # PH4-O6: publishing needs a version approved by the company's super admin
+    # — a different account from the one that authored it.
+    sa_uid = uuid.uuid4()
     async with f() as db:
         await db.execute(text(
             "INSERT INTO companies (id,name,slug,is_active,created_at,updated_at)"
@@ -51,6 +54,15 @@ async def main() -> None:
             " is_active,notify_login_email,must_change_password,created_at,updated_at)"
             " VALUES (:i,'hr@acme.test','HR','x',:c,'en',true,false,false,:t,:t)"),
             {"i": uid, "c": cid, "t": now})
+        await db.execute(text(
+            "INSERT INTO users (id,email,full_name,password_hash,company_id,preferred_language,"
+            " is_active,notify_login_email,must_change_password,created_at,updated_at)"
+            " VALUES (:i,'superadmin@acme.test','Super Admin','x',:c,'en',true,false,false,:t,:t)"),
+            {"i": sa_uid, "c": cid, "t": now})
+        await db.execute(text(
+            "INSERT INTO user_roles (user_id, role_id, assigned_at)"
+            " SELECT :u, id, :t FROM roles WHERE name = 'super_admin'"),
+            {"u": sa_uid, "t": now})
         await db.execute(text(
             "INSERT INTO job_requisitions (id,company_id,title,status,public_apply_enabled,"
             " created_at,updated_at) VALUES (:i,:c,'Welder','open',true,:t,:t)"),
@@ -85,7 +97,7 @@ async def main() -> None:
         await db.commit()
 
     from app.database import get_db_session
-    from app.dependencies import get_hr_company
+    from app.dependencies import get_hr_company, get_super_admin_company
     from app.main import app
 
     async def _db():  # noqa: ANN202
@@ -93,12 +105,22 @@ async def main() -> None:
             yield session
 
     app.dependency_overrides[get_hr_company] = lambda: (uid, cid)
+    app.dependency_overrides[get_super_admin_company] = lambda: (sa_uid, cid)
     app.dependency_overrides[get_db_session] = _db
     ac = AsyncClient(transport=ASGITransport(app=app), base_url="http://t")
 
     report = (await ac.get(f"/hr/workflows/{wf}/validate")).json()
     check("validation says who is waiting, before publishing",
           report.get("waiting") == {"shortlisted": 1, "applied": 1}, str(report.get("waiting")))
+
+    # PH4-O6: a version must be reviewed and approved before it goes live.
+    r = await ac.post(f"/hr/workflows/{wf}/publish")
+    check("publishing an unapproved version is refused (409)", r.status_code == 409,
+          str(r.status_code))
+    r = await ac.post(f"/hr/workflows/{wf}/submit-review", json={})
+    check("submit for review -> 200", r.status_code == 200, r.text[:200])
+    r = await ac.post(f"/admin/workflow-reviews/{wf}/approve", json={})
+    check("super admin approves -> 200", r.status_code == 200, r.text[:200])
 
     r = await ac.post(f"/hr/workflows/{wf}/publish")
     body = r.json() if r.status_code == 200 else {}

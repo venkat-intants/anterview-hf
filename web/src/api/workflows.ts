@@ -20,6 +20,7 @@
 // Field names match services/data_gateway/app/routers/hr_workflows.py EXACTLY.
 
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './client';
+import type { StageSla } from './stageSla';
 
 /** The four things a round can be. `human_review` is a deliberate pause. */
 export type RoundKind = 'mcq' | 'coding' | 'ai_interview' | 'human_review';
@@ -33,6 +34,13 @@ export const MAX_ROUNDS = 12;
 export const MAX_CRITERIA_PER_ROUND = 8;
 
 export type WorkflowStatus = 'draft' | 'published' | 'archived';
+
+/**
+ * PH4-O6: a draft is also reviewed. `editable` (below) is still the one flag
+ * to branch UI on for "can this be changed" — this is for showing WHERE a
+ * draft is in that separate approval lifecycle.
+ */
+export type ReviewStatus = 'draft' | 'in_review' | 'changes_requested' | 'approved';
 
 /**
  * One competency a round assesses, frozen onto the round at publish time.
@@ -66,6 +74,16 @@ export interface Round {
   time_limit_seconds: number | null;
   deadline_days: number;
   on_pass_next_round_id: string | null;
+  /**
+   * PH4-O3 branches. Below the threshold: route here, or null = hold for a
+   * person. The pass branch above is the chain add/reorder maintain and is
+   * not set through the round patch — these two, and the fast-track pair
+   * below, are.
+   */
+  on_fail_next_round_id: string | null;
+  /** At or above this score, skip to `on_fast_track_next_round_id`. Both or neither. */
+  fast_track_min_percent: number | null;
+  on_fast_track_next_round_id: string | null;
   exam_round_id: string | null;
   /** An exam-backed round with no exam attached yet — blocks publish. */
   needs_questions: boolean;
@@ -92,6 +110,8 @@ export interface Workflow {
   name: string | null;
   /** The only thing the UI should branch on to decide "can I change this?". */
   editable: boolean;
+  /** PH4-O6: draft → in_review → approved (or changes_requested) → draft resets on reopen. */
+  review_status: ReviewStatus;
   role_profile_id: string | null;
   settings: WorkflowSettings;
   published_at: string | null;
@@ -257,9 +277,18 @@ export function addRound(workflowId: string, body: RoundInput): Promise<Workflow
  * purpose: changing an MCQ round into an interview would silently invalidate
  * its attached questions and its rubric, so that is a delete and an add.
  */
+/** PH4-O3 — the branch fields a round patch may carry. See Round above for
+ *  what each means; `RoundInput` (create) does not carry these because a
+ *  brand-new round has nothing yet to route from. */
+export interface RoundBranchPatch {
+  on_fail_next_round_id?: string | null;
+  fast_track_min_percent?: number | null;
+  on_fast_track_next_round_id?: string | null;
+}
+
 /** A round's own settings. `kind` changes the type (D2); the server clears
  *  whatever cannot apply to the new type. Criteria have their own endpoint. */
-export type RoundPatch = Partial<Omit<RoundInput, 'criteria'>>;
+export type RoundPatch = Partial<Omit<RoundInput, 'criteria'>> & RoundBranchPatch;
 
 export function updateRound(
   workflowId: string,
@@ -389,6 +418,11 @@ export interface DecisionQueueRow {
   /** Human-interview scorecard progress for this application; null when the
    *  candidate has no human_review round in their workflow. */
   scorecards: { assigned: number; submitted: number; late: number } | null;
+  /** PH4-O1. null when the current stage carries no SLA — most workflows,
+   *  today. Informational: nothing here reorders or filters the queue itself. */
+  sla?: StageSla | null;
+  stage_owner_name?: string | null;
+  open_exceptions?: number;
 }
 
 /** One completed round, as the queue summarises it. Criteria and evidence are in the drawer. */

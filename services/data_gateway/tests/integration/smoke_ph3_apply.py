@@ -148,6 +148,9 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
     # unless that user's stored address is synthetic.
     other_cid, other_hr, other_req = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     taken_email = "priya@example.com"
+    wf_id, other_wf_id = uuid.uuid4(), uuid.uuid4()
+
+    from tests.integration.seed_helpers import approve_for_publish
 
     async with factory() as db:
         await db.execute(text(
@@ -172,12 +175,18 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             " VALUES (:i,:c,'Platform Engineer','senior','Run the platform.','open',"
             " false,true,:u,:u,'draft',:n,:n)"),
             {"i": req, "c": cid, "u": hr_uid, "n": now})
+        # PH4-O6: a workflow must be born a draft (the trigger refuses any
+        # other INSERT), then walked through review before it can publish.
         await db.execute(text(
             "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
             " auto_score_on_apply,auto_assign_first_round,auto_advance_rounds,"
-            " reminders_enabled,hold_band,created_at,updated_at,published_at)"
-            " VALUES (gen_random_uuid(),:c,:r,1,'published',true,true,true,true,10,:n,:n,:n)"),
-            {"c": cid, "r": req, "n": now})
+            " reminders_enabled,hold_band,created_at,updated_at)"
+            " VALUES (:i,:c,:r,1,'draft',true,true,true,true,10,:n,:n)"),
+            {"i": wf_id, "c": cid, "r": req, "n": now})
+        await approve_for_publish(db, workflow_id=wf_id, company_id=cid)
+        await db.execute(text(
+            "UPDATE workflows SET status = 'published', published_at = :n WHERE id = :i"),
+            {"i": wf_id, "n": now})
 
         # ── The second company, already accepting applications ───────────
         await db.execute(text(
@@ -196,12 +205,17 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             " VALUES (:i,:c,'Data Engineer','mid','Move data.','open',"
             " false,true,:u,:u,'approved',:n,:n,:n)"),
             {"i": other_req, "c": other_cid, "u": other_hr, "n": now})
+        # PH4-O6: same as above — born a draft, then approved, then published.
         await db.execute(text(
             "INSERT INTO workflows (id,company_id,requisition_id,version,status,"
             " auto_score_on_apply,auto_assign_first_round,auto_advance_rounds,"
-            " reminders_enabled,hold_band,created_at,updated_at,published_at)"
-            " VALUES (gen_random_uuid(),:c,:r,1,'published',true,true,true,true,10,:n,:n,:n)"),
-            {"c": other_cid, "r": other_req, "n": now})
+            " reminders_enabled,hold_band,created_at,updated_at)"
+            " VALUES (:i,:c,:r,1,'draft',true,true,true,true,10,:n,:n)"),
+            {"i": other_wf_id, "c": other_cid, "r": other_req, "n": now})
+        await approve_for_publish(db, workflow_id=other_wf_id, company_id=other_cid)
+        await db.execute(text(
+            "UPDATE workflows SET status = 'published', published_at = :n WHERE id = :i"),
+            {"i": other_wf_id, "n": now})
 
         # A REAL registered account that already holds the candidate's address.
         # users.email is globally unique, so this is the row a draft-created

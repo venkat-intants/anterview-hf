@@ -25,10 +25,28 @@ measures.
 setting here that rejects anyone. ``pass_threshold`` decides *advancement*; a
 candidate below it is held, which is neutral and non-terminal. That is D-05, and
 it is enforced by the absence of any mechanism rather than by a default.
+
+Branches (PH4-O3)
+-----------------
+A round has up to three exits: the pass branch (``on_pass_next_round_id``, the
+chain add/remove/reorder maintain), a fast-track branch for a score at or above
+a higher bar, and a fail branch that routes a candidate below the threshold to
+another round instead of holding them. Every exit ends at another round, a hold,
+or the final human decision — there is no "rejected" destination to point at.
+:func:`route_after_result` is the ONE place a result becomes a destination; the
+runner and the O2 simulation both call it, so a dry run tests the real logic.
+
+Review (PH4-O6)
+---------------
+A version is also reviewed: ``review_status`` goes draft → in_review → approved
+(or changes_requested). Only an approved version is published, and a version
+under review or approved cannot be edited — see ``app/workflow_review.py`` and
+migration a2b4c6d8e0f1, which holds both rules at the database too.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -65,6 +83,64 @@ _POSITION_PARK = 1000
 
 class WorkflowError(Exception):
     """Refused for a reason the caller should show the user verbatim."""
+
+
+#: Review states in which a version's content is frozen for its reviewer.
+REVIEW_LOCKED: frozenset[str] = frozenset({"in_review", "approved"})
+
+#: The fields that make up a round's routing, as the builder edits them.
+BRANCH_FIELDS: tuple[str, ...] = (
+    "on_fail_next_round_id", "fast_track_min_percent", "on_fast_track_next_round_id",
+)
+
+
+# ---------------------------------------------------------------------------
+# Routing (PH4-O3) — the one place a round result becomes a destination
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Route:
+    """Where a result sends a candidate.
+
+    ``kind`` is ``advance`` (to ``next_round_id``), ``complete`` (the workflow
+    is finished: the final human decision) or ``hold`` (stopped for a person).
+    ``branch`` says which exit was taken: ``pass``, ``fast_track`` or ``fail``.
+    Note what ``kind`` can never be.
+    """
+
+    kind: str
+    branch: str
+    next_round_id: str | None = None
+
+
+def route_after_result(round_: dict[str, Any], *, passed: bool, percent: float | None) -> Route:
+    """The destination of a result on ``round_``. Pure — no database.
+
+    Called by the runner for real candidates and by the simulation for
+    synthetic ones, so a dry run exercises exactly the logic that will run.
+    """
+    if passed:
+        fast_to = round_.get("on_fast_track_next_round_id")
+        fast_min = round_.get("fast_track_min_percent")
+        if fast_to and fast_min is not None and percent is not None and percent >= float(fast_min):
+            return Route("advance", "fast_track", str(fast_to))
+        nxt = round_.get("on_pass_next_round_id")
+        return Route("advance", "pass", str(nxt)) if nxt else Route("complete", "pass")
+    fail_to = round_.get("on_fail_next_round_id")
+    return Route("advance", "fail", str(fail_to)) if fail_to else Route("hold", "fail")
+
+
+def round_edges(r: dict[str, Any]) -> list[tuple[str, str]]:
+    """Every (branch, target round id) leaving a round."""
+    out: list[tuple[str, str]] = []
+    for branch, key in (("pass", "on_pass_next_round_id"),
+                        ("fast_track", "on_fast_track_next_round_id"),
+                        ("fail", "on_fail_next_round_id")):
+        if r.get(key):
+            out.append((branch, str(r[key])))
+    return out
+
+
+_BRANCH_WORDS = {"pass": "pass", "fast_track": "fast-track", "fail": "below-threshold"}
 
 
 # ---------------------------------------------------------------------------
@@ -132,20 +208,103 @@ class ValidationReport:
         }
 
 
-def validate_chain(rounds: list[dict[str, Any]]) -> list[str]:
-    """Structural checks on the round chain. Returns blocking errors.
+def branch_errors(rounds: list[dict[str, Any]]) -> list[str]:
+    """What is wrong with each round's branches (PH4-O3). Blocking errors.
 
-    The cycle check matters more than it looks. Execution is linear today, but
-    the next-round pointer is a real edge, and a cycle would put the runner in
-    an infinite loop moving one candidate between two rounds forever.
+    Checked per round, before the graph as a whole: a branch that points
+    nowhere makes every graph check below meaningless.
+    """
+    errors: list[str] = []
+    by_id = {str(r["id"]): r for r in rounds}
+    for r in rounds:
+        title = r.get("title") or "(untitled)"
+        for branch, target in round_edges(r):
+            if target not in by_id:
+                errors.append(
+                    f"{title}: the {_BRANCH_WORDS[branch]} branch points at a round that is "
+                    "not in this workflow."
+                )
+            elif target == str(r["id"]):
+                errors.append(f"{title}: the {_BRANCH_WORDS[branch]} branch points at itself.")
+        fast_min = r.get("fast_track_min_percent")
+        fast_to = r.get("on_fast_track_next_round_id")
+        if (fast_min is None) != (not fast_to):
+            errors.append(f"{title}: a fast-track needs both a score and a destination.")
+        if fast_to:
+            if r["kind"] == "human_review":
+                errors.append(
+                    f"{title}: a human review has no score, so it cannot fast-track anyone."
+                )
+            elif r.get("pass_threshold") is not None and fast_min is not None and (
+                float(fast_min) <= float(r["pass_threshold"])
+            ):
+                errors.append(
+                    f"{title}: the fast-track score ({float(fast_min):.0f}%) must be above the "
+                    f"advance threshold ({float(r['pass_threshold']):.0f}%), or it is just the "
+                    "pass branch under another name."
+                )
+    return errors
+
+
+def graph_problems(rounds: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """Cycles and unreachable rounds across EVERY branch. Returns (cycles, unreachable).
+
+    A cycle would move a candidate between rounds forever, and there is no
+    runtime guard that could tell a deliberate retake from a loop — so any
+    cycle, through any mix of branches, is refused. Unreachable rounds are those
+    no path from the first round can get to: dead configuration that would sit
+    in every candidate's workflow and never run.
+    """
+    if not rounds:
+        return [], []
+    by_id = {str(r["id"]): r for r in rounds}
+    first = str(min(rounds, key=lambda r: r["position"])["id"])
+
+    reached: set[str] = set()
+    stack = [first]
+    while stack:
+        cur = stack.pop()
+        if cur in reached or cur not in by_id:
+            continue
+        reached.add(cur)
+        stack.extend(t for _b, t in round_edges(by_id[cur]))
+    unreachable = sorted(by_id[i].get("title") or i for i in by_id if i not in reached)
+
+    cycles: list[str] = []
+    state: dict[str, int] = {}  # 1 = on the current path, 2 = finished
+
+    def visit(node: str, path: list[str]) -> None:
+        state[node] = 1
+        for _b, nxt in round_edges(by_id[node]):
+            if nxt not in by_id:
+                continue
+            if state.get(nxt) == 1:
+                loop = path[path.index(nxt):] + [nxt] if nxt in path else [node, nxt]
+                names = " → ".join(by_id[x].get("title") or x for x in loop)
+                if names not in cycles:
+                    cycles.append(names)
+            elif state.get(nxt) is None:
+                visit(nxt, path + [nxt])
+        state[node] = 2
+
+    for rid in sorted(by_id, key=lambda i: by_id[i]["position"]):
+        if state.get(rid) is None:
+            visit(rid, [rid])
+    return cycles, unreachable
+
+
+def validate_chain(rounds: list[dict[str, Any]]) -> list[str]:
+    """Structural checks on the rounds and every branch. Returns blocking errors.
+
+    The cycle check matters more than it looks: a cycle would put the runner in
+    an infinite loop moving one candidate between two rounds forever. With
+    branches (PH4-O3) it has to cover every exit, not just the pass chain.
     """
     errors: list[str] = []
     if not rounds:
         return ["A workflow needs at least one round."]
     if len(rounds) > MAX_ROUNDS:
         return [f"A workflow cannot have more than {MAX_ROUNDS} rounds."]
-
-    by_id = {str(r["id"]): r for r in rounds}
 
     for r in rounds:
         title = r.get("title") or "(untitled)"
@@ -155,27 +314,17 @@ def validate_chain(rounds: list[dict[str, Any]]) -> list[str]:
             errors.append(f"{title}: a {r['kind']} round needs questions before publishing.")
         if r["kind"] != "human_review" and r.get("pass_threshold") is None:
             errors.append(f"{title}: needs an advance threshold.")
-        nxt = r.get("on_pass_next_round_id")
-        if nxt and str(nxt) not in by_id:
-            errors.append(f"{title}: points at a round that is not in this workflow.")
 
-    # Every round must be reachable from the first, and the walk must terminate.
-    ordered = sorted(rounds, key=lambda r: r["position"])
-    seen: set[str] = set()
-    cur: str | None = str(ordered[0]["id"])
-    while cur is not None:
-        if cur in seen:
-            errors.append("The rounds form a loop — a candidate would never finish.")
-            break
-        seen.add(cur)
-        nxt = by_id.get(cur, {}).get("on_pass_next_round_id")
-        cur = str(nxt) if nxt else None
+    edge_errors = branch_errors(rounds)
+    errors.extend(edge_errors)
+    if edge_errors:
+        return errors  # a dangling branch makes the graph checks meaningless
 
-    unreachable = [by_id[i]["title"] for i in by_id if i not in seen]
-    if unreachable and not errors:
-        errors.append(
-            "Unreachable from the first round: " + ", ".join(sorted(unreachable))
-        )
+    cycles, unreachable = graph_problems(rounds)
+    for loop in cycles:
+        errors.append(f"The rounds form a loop — a candidate would never finish: {loop}.")
+    if unreachable:  # independent of any loop: report both, fix both in one pass
+        errors.append("Unreachable from the first round: " + ", ".join(unreachable))
     return errors
 
 
@@ -303,7 +452,9 @@ async def load_rounds(db: AsyncSession, workflow_id: uuid.UUID) -> list[dict[str
         await db.execute(
             text(
                 "SELECT id, position, title, kind, pass_threshold, time_limit_seconds,"
-                "       deadline_days, on_pass_next_round_id, exam_round_id"
+                "       deadline_days, on_pass_next_round_id, exam_round_id,"
+                "       on_fail_next_round_id, fast_track_min_percent,"
+                "       on_fast_track_next_round_id"
                 "  FROM workflow_rounds"
                 " WHERE workflow_id = :w AND deleted_at IS NULL"
                 " ORDER BY position"
@@ -569,14 +720,52 @@ async def update_round(
     Deliberately cannot change ``workflow_id``, ``position`` or
     ``on_pass_next_round_id`` — the chain is maintained by add/remove/reorder so
     it stays valid by construction rather than by the caller remembering to
-    rewire it.
+    rewire it. The OTHER two branches (PH4-O3) are set here, and a destination
+    must be a live round of this same workflow.
     """
     await _assert_draft(db, workflow_id)
     allowed = {"title", "kind", "pass_threshold", "time_limit_seconds",
-               "deadline_days", "exam_round_id"}
+               "deadline_days", "exam_round_id", *BRANCH_FIELDS}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    for key in ("on_fail_next_round_id", "on_fast_track_next_round_id"):
+        target = updates.get(key)
+        if target is None:
+            continue
+        if str(target) == str(round_id):
+            raise WorkflowError("A branch cannot point at its own round.")
+        ok = await db.scalar(
+            text(
+                "SELECT 1 FROM workflow_rounds"
+                " WHERE id = :t AND workflow_id = :w AND deleted_at IS NULL"
+            ),
+            {"t": target, "w": workflow_id},
+        )
+        if not ok:
+            raise WorkflowError("A branch can only point at another round of this workflow.")
+    # Fast-track travels as a pair. A patch may send one half — a new score for
+    # the same destination — so the other half comes from the round as it is;
+    # if either half ends up empty, both are cleared.
+    fast_keys = ("fast_track_min_percent", "on_fast_track_next_round_id")
+    if any(k in updates for k in fast_keys):
+        current: dict[str, Any] = {} if all(k in updates for k in fast_keys) else dict(
+            (await db.execute(
+                text(
+                    "SELECT fast_track_min_percent, on_fast_track_next_round_id"
+                    "  FROM workflow_rounds WHERE id = :r AND workflow_id = :w"
+                ),
+                {"r": round_id, "w": workflow_id},
+            )).mappings().first() or {}
+        )
+        fast_min = updates.get("fast_track_min_percent", current.get("fast_track_min_percent"))
+        fast_to = updates.get(
+            "on_fast_track_next_round_id", current.get("on_fast_track_next_round_id")
+        )
+        if fast_min is None or not fast_to:
+            fast_min, fast_to = None, None
+        updates["fast_track_min_percent"] = fast_min
+        updates["on_fast_track_next_round_id"] = fast_to
     if "kind" in updates and updates["kind"] not in ROUND_KINDS:
         raise WorkflowError(f"Unknown round type {updates['kind']!r}.")
     if "kind" in updates:
@@ -590,6 +779,9 @@ async def update_round(
             updates["pass_threshold"] = None
             updates["exam_round_id"] = None
             updates["time_limit_seconds"] = None
+            # No score, so nothing to fast-track on.
+            updates["fast_track_min_percent"] = None
+            updates["on_fast_track_next_round_id"] = None
         elif updates["kind"] not in EXAM_BACKED_KINDS:
             updates["exam_round_id"] = None
     sets = ", ".join(f"{k} = :{k}" for k in updates)
@@ -627,13 +819,31 @@ async def remove_round(
         ),
         {"nxt": successor, "r": round_id, "w": workflow_id, "n": now},
     )
+    # Other branches pointing at it go back to their defaults (hold; no
+    # fast-track) rather than dangling — the author re-points them if they want.
+    await db.execute(
+        text(
+            "UPDATE workflow_rounds SET on_fail_next_round_id = NULL, updated_at = :n"
+            " WHERE workflow_id = :w AND on_fail_next_round_id = :r"
+        ),
+        {"r": round_id, "w": workflow_id, "n": now},
+    )
+    await db.execute(
+        text(
+            "UPDATE workflow_rounds SET on_fast_track_next_round_id = NULL,"
+            " fast_track_min_percent = NULL, updated_at = :n"
+            " WHERE workflow_id = :w AND on_fast_track_next_round_id = :r"
+        ),
+        {"r": round_id, "w": workflow_id, "n": now},
+    )
     # The unique index on (workflow_id, position) is partial on deleted_at, so
     # the removed row leaves it as soon as it is soft-deleted and its position
     # needs no adjustment.
     await db.execute(
         text(
             "UPDATE workflow_rounds SET deleted_at = :n, on_pass_next_round_id = NULL,"
-            " updated_at = :n WHERE id = :r"
+            " on_fail_next_round_id = NULL, on_fast_track_next_round_id = NULL,"
+            " fast_track_min_percent = NULL, updated_at = :n WHERE id = :r"
         ),
         {"r": round_id, "n": now},
     )
@@ -881,8 +1091,8 @@ async def publish(
     row = (
         await db.execute(
             text(
-                "SELECT status, requisition_id FROM workflows"
-                " WHERE id = :i AND company_id = :c AND deleted_at IS NULL"
+                "SELECT status, review_status, review_fingerprint, requisition_id"
+                "  FROM workflows WHERE id = :i AND company_id = :c AND deleted_at IS NULL"
             ),
             {"i": workflow_id, "c": company_id},
         )
@@ -891,6 +1101,19 @@ async def publish(
         raise WorkflowError("Workflow not found.")
     if row["status"] != "draft":
         raise WorkflowError("Only a draft can be published.")
+    if row["review_status"] != "approved":
+        # PH4-O6. The database refuses it as well; this says so in words.
+        raise WorkflowError(
+            "This version has not been approved. Submit it for review — a company "
+            "super admin approves a workflow before it can go live."
+        )
+    if await workflow_fingerprint(db, workflow_id) != row["review_fingerprint"]:
+        # The version itself is locked once submitted, but an exam round it uses
+        # is not: what goes live must be what the reviewer approved.
+        raise WorkflowError(
+            "Something this version uses — such as an exam round's questions — changed "
+            "after it was approved. Reopen it and submit it for review again."
+        )
 
     report = await validate(db, workflow_id, profile_competencies)
     if not report.publishable:
@@ -980,11 +1203,24 @@ async def clone_for_edit(
              "dd": r["deadline_days"], "er": r["exam_round_id"], "n": now},
         )
     for r in old_rounds:
-        nxt = r["on_pass_next_round_id"]
-        if nxt:
+        # Every branch, re-pointed at the new version's rounds (PH4-O3).
+        edges = {
+            key: id_map.get(str(r[key])) if r.get(key) else None
+            for key in ("on_pass_next_round_id", "on_fail_next_round_id",
+                        "on_fast_track_next_round_id")
+        }
+        if any(edges.values()):
             await db.execute(
-                text("UPDATE workflow_rounds SET on_pass_next_round_id = :nx WHERE id = :i"),
-                {"nx": id_map[str(nxt)], "i": id_map[str(r["id"])]},
+                text(
+                    "UPDATE workflow_rounds SET on_pass_next_round_id = :p,"
+                    " on_fail_next_round_id = :f, on_fast_track_next_round_id = :ft,"
+                    " fast_track_min_percent = :fm WHERE id = :i"
+                ),
+                {"p": edges["on_pass_next_round_id"], "f": edges["on_fail_next_round_id"],
+                 "ft": edges["on_fast_track_next_round_id"],
+                 "fm": r["fast_track_min_percent"] if edges["on_fast_track_next_round_id"]
+                 else None,
+                 "i": id_map[str(r["id"])]},
             )
 
     old_criteria = await load_criteria(db, [r["id"] for r in old_rounds])
@@ -1010,7 +1246,15 @@ async def clone_for_edit(
     from app.interview_kits import copy_kits  # noqa: PLC0415
 
     kits = await copy_kits(db, company_id=company_id, id_map=id_map)
-    log.info("workflow.cloned", source=str(workflow_id), draft=str(new_id), kits=kits)
+    # PH4-O1: who owns each stage and its SLA carry forward the same way.
+    from app.stage_sla import copy_stage_settings  # noqa: PLC0415
+
+    stages = await copy_stage_settings(
+        db, company_id=company_id, source_workflow_id=workflow_id, target_workflow_id=new_id,
+        id_map=id_map,
+    )
+    log.info("workflow.cloned", source=str(workflow_id), draft=str(new_id), kits=kits,
+             stage_settings=stages)
     return new_id
 
 
@@ -1022,14 +1266,112 @@ async def _assert_draft(db: AsyncSession, workflow_id: uuid.UUID) -> None:
     workflow that could be edited in place would silently re-grade the people
     running it.
     """
-    st = await db.scalar(
-        text("SELECT status FROM workflows WHERE id = :i AND deleted_at IS NULL"),
-        {"i": workflow_id},
-    )
-    if st is None:
+    row = (
+        await db.execute(
+            text(
+                "SELECT status, review_status FROM workflows"
+                " WHERE id = :i AND deleted_at IS NULL"
+            ),
+            {"i": workflow_id},
+        )
+    ).first()
+    if row is None:
         raise WorkflowError("Workflow not found.")
+    st, review = row[0], row[1]
     if st != "draft":
         raise WorkflowError(
             f"This workflow is {st}. Create a new version to change it — "
             "candidates already enrolled must finish on the version they started."
         )
+    # PH4-O6: what the reviewer sees is what goes live.
+    if review == "in_review":
+        raise WorkflowError(
+            "This version is waiting for review, so it cannot be edited. Withdraw it "
+            "from review to make changes."
+        )
+    if review == "approved":
+        raise WorkflowError(
+            "This version has been approved, so it cannot be edited. Reopen it to make "
+            "changes — it will need approving again."
+        )
+
+
+# The content of each exam round a version points at, one digest per row. The
+# workflow row locks while under review, but an exam round is its own object and
+# stays editable — so without this an approved version could go live on an exam
+# its reviewer never saw. Timestamps are left out (they move without the content
+# moving); ``deleted_at`` is not, so removing a question changes the digest.
+_EXAM_CONTENT_SQL = """
+SELECT er.id,
+       md5((to_jsonb(er) - 'created_at' - 'updated_at')::text) AS round_digest,
+       COALESCE((SELECT string_agg(md5((to_jsonb(s) - 'created_at' - 'updated_at')::text),
+                                   ',' ORDER BY s.id)
+                   FROM exam_sections s
+                  WHERE s.round_id = er.id AND s.deleted_at IS NULL), '') AS sections,
+       COALESCE((SELECT string_agg(md5((to_jsonb(q) - 'created_at' - 'updated_at')::text),
+                                   ',' ORDER BY q.id)
+                   FROM exam_questions q
+                   JOIN exam_sections s ON s.id = q.section_id AND s.deleted_at IS NULL
+                  WHERE s.round_id = er.id AND q.deleted_at IS NULL), '') AS questions,
+       COALESCE((SELECT string_agg(md5((to_jsonb(c) - 'created_at' - 'updated_at')::text),
+                                   ',' ORDER BY c.id)
+                   FROM coding_questions c
+                   JOIN exam_sections s ON s.id = c.section_id AND s.deleted_at IS NULL
+                  WHERE s.round_id = er.id AND c.deleted_at IS NULL), '') AS coding
+  FROM exam_rounds er
+ WHERE er.id = ANY(:ids)
+ ORDER BY er.id
+"""
+
+
+async def workflow_fingerprint(db: AsyncSession, workflow_id: uuid.UUID) -> str:
+    """A hash of everything a reviewer approves and a simulation tests.
+
+    Settings, every round (with its branches), every criterion, and the content
+    of every exam round the version points at, in a stable order. Two versions
+    with the same fingerprint behave identically; a result recorded against one
+    fingerprint says nothing about another. Interview kits and stage owners are
+    excluded: they are operational guidance, editable on a live version, and
+    change no candidate's path.
+    """
+    wf = (
+        await db.execute(
+            text(
+                "SELECT auto_score_on_apply, auto_assign_first_round, auto_advance_rounds,"
+                "       reminders_enabled, shortlist_ats_threshold, hold_band"
+                "  FROM workflows WHERE id = :i"
+            ),
+            {"i": workflow_id},
+        )
+    ).mappings().first()
+    rounds = await load_rounds(db, workflow_id)
+    criteria = await load_criteria(db, [r["id"] for r in rounds])
+    exam_ids = sorted({str(r["exam_round_id"]) for r in rounds if r.get("exam_round_id")})
+    exams: list[dict[str, Any]] = []
+    if exam_ids:
+        exams = [
+            {k: str(v) for k, v in row.items()}
+            for row in (
+                await db.execute(
+                    text(_EXAM_CONTENT_SQL), {"ids": [uuid.UUID(i) for i in exam_ids]}
+                )
+            ).mappings().all()
+        ]
+    payload = {
+        "settings": dict(wf) if wf else {},
+        "exams": exams,
+        "rounds": [
+            {k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in r.items()}
+            for r in rounds
+        ],
+        "criteria": {
+            rid: sorted(
+                ({"id": c["competency_id"], "w": c["weight"], "a": c.get("anchors"),
+                  "p": c.get("probes")} for c in crits),
+                key=lambda c: str(c["id"]),
+            )
+            for rid, crits in sorted(criteria.items())
+        },
+    }
+    blob = json.dumps(payload, sort_keys=True, default=str).encode()
+    return hashlib.sha256(blob).hexdigest()

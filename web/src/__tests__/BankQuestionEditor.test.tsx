@@ -98,4 +98,74 @@ describe('BankQuestionEditor — anything but draft is read-only', () => {
     expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();
     expect(screen.getByText(/only a draft can be edited/)).toBeInTheDocument();
   });
+
+  it('is editable and pre-filled once the caller opens the new-version flow', () => {
+    renderEditor({ question: approvedQuestion(), forceEditable: true, onSave: vi.fn() });
+    expect(screen.getByLabelText('Prompt')).toHaveValue('What is a monad?');
+    expect(screen.getByRole('button', { name: 'Save as new version' })).toBeInTheDocument();
+  });
+});
+
+describe('BankQuestionEditor — the form belongs to the question it is showing', () => {
+  function draft(over: Partial<BankQuestion>): BankQuestion {
+    return {
+      id: 'q-a', bank_id: 'bank-1', root_id: 'q-a', version: 1, kind: 'mcq',
+      prompt: 'Question A', points: 1, options: ['a', 'b', 'c', 'd'], correct_index: 0,
+      starter_code: null, reference_solution: null, allowed_languages: null, test_cases: null,
+      time_limit_ms: null, difficulty: 'medium', language: 'en', competencies: [], tags: [],
+      status: 'draft', origin: 'authored', content_hash: 'h',
+      created_by_user_id: 'u-1', submitted_by_user_id: null, submitted_at: null,
+      reviewed_by_user_id: null, reviewed_at: null, review_note: null,
+      retired_by_user_id: null, retired_at: null,
+      created_at: '2026-09-01T00:00:00.000Z', updated_at: '2026-09-01T00:00:00.000Z',
+      ...over,
+    };
+  }
+
+  // The regression this pins: form state was initialised once per mount, and
+  // the page does not remount the editor when a question already in the query
+  // cache is re-selected. Showing A while still holding B's state was reachable
+  // by clicking A, then B, then A again — and "Save changes" then PATCHed B's
+  // content onto A. The server cannot catch that: the request is well-formed,
+  // correctly scoped and correctly authorised; only the content is wrong.
+  it('follows the question it is given rather than keeping the previous one', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <BankQuestionEditor question={draft({})} onSave={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Question A');
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <BankQuestionEditor
+          question={draft({ id: 'q-b', root_id: 'q-b', prompt: 'Question B' })}
+          onSave={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Question B');
+  });
+
+  it('does not wipe an in-progress edit when the same question is refetched', async () => {
+    const user = userEvent.setup();
+    const q = draft({});
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <BankQuestionEditor question={q} onSave={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await user.clear(screen.getByLabelText('Prompt'));
+    await user.type(screen.getByLabelText('Prompt'), 'Half-typed edit');
+
+    // A background refetch hands back the same id as a new object.
+    rerender(
+      <QueryClientProvider client={client}>
+        <BankQuestionEditor question={{ ...q }} onSave={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Half-typed edit');
+  });
 });

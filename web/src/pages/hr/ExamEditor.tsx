@@ -295,22 +295,17 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                         </li>
                       ))}
                     </ul>
-                    {savingToBankId === q.id ? (
-                      <div className="mt-2">
-                        <SaveToBankButton
-                          saving={saveToBankMut.isPending}
-                          onSave={(body) => saveToBankMut.mutate({ qid: q.id, body })}
-                        />
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setSavingToBankId(q.id)}
-                        className="mt-2 text-[11.5px] text-[var(--ui-info)] hover:underline"
-                      >
-                        Save to bank
-                      </button>
-                    )}
+                    {/* SaveToBankButton owns its own open/closed state and
+                        renders the "Save to bank" link itself, so gating it
+                        behind a second one made the user click twice. */}
+                    <SaveToBankButton
+                      className="mt-2"
+                      saving={saveToBankMut.isPending && savingToBankId === q.id}
+                      onSave={(body) => {
+                        setSavingToBankId(q.id);
+                        saveToBankMut.mutate({ qid: q.id, body });
+                      }}
+                    />
                   </div>
                   {!locked && (
                     <button

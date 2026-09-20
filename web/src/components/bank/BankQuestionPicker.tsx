@@ -27,6 +27,10 @@ const inputCls =
   'rounded-[9px] border border-border bg-secondary px-2.5 py-1.5 text-[12.5px] text-foreground ' +
   'placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
 
+/** A section add is one request carrying every id — an unbounded selection
+ *  would be a payload of arbitrary size with no server-side cap to catch it. */
+const SELECTION_CAP = 100;
+
 export interface BankQuestionPickerProps {
   examId: string;
   sectionId: string;
@@ -95,6 +99,10 @@ export function BankQuestionPicker({
 
   function toggle(id: string, on: boolean) {
     setSelected((prev) => {
+      if (on && !prev.has(id) && prev.size >= SELECTION_CAP) {
+        toast.error(`You can select up to ${SELECTION_CAP} questions at once.`);
+        return prev;
+      }
       const next = new Set(prev);
       if (on) next.add(id);
       else next.delete(id);
@@ -191,7 +199,9 @@ export function BankQuestionPicker({
           ) : (
             <ul className="flex flex-col gap-1.5" aria-label="Bank questions">
               {rows.map((row) => {
-                const disabled = row.already_in_exam;
+                const isSelected = selected.has(row.id);
+                const capReached = !isSelected && selected.size >= SELECTION_CAP;
+                const disabled = row.already_in_exam || capReached;
                 const reason = reasonById.get(row.id);
                 return (
                   <li
@@ -203,7 +213,7 @@ export function BankQuestionPicker({
                   >
                     <input
                       type="checkbox"
-                      checked={selected.has(row.id)}
+                      checked={isSelected}
                       disabled={disabled}
                       onChange={(e) => toggle(row.id, e.target.checked)}
                       aria-label={`Select ${row.prompt}`}
@@ -216,9 +226,13 @@ export function BankQuestionPicker({
                       <p className="text-[11.5px] text-muted-foreground">
                         {row.bank_name} · v{row.version} · {row.difficulty} · {row.language}
                       </p>
-                      {disabled ? (
+                      {row.already_in_exam ? (
                         <p className="mt-0.5 text-[11px] text-[var(--ui-warn)]">
                           {reason ?? 'Already in this exam'}
+                        </p>
+                      ) : capReached ? (
+                        <p className="mt-0.5 text-[11px] text-[var(--ui-warn)]">
+                          Selection limit reached ({SELECTION_CAP})
                         </p>
                       ) : reason ? (
                         <p className="mt-0.5 text-[11px] text-[var(--ui-danger)]">Skipped — {reason}</p>
@@ -242,7 +256,7 @@ export function BankQuestionPicker({
 
         <div className="flex items-center justify-between border-t border-border px-5 py-3">
           <span className="text-[12px] text-muted-foreground">
-            {selected.size} selected · {pickableCount} available
+            {selected.size}/{SELECTION_CAP} selected · {pickableCount} available
           </span>
           <div className="flex gap-2">
             <button

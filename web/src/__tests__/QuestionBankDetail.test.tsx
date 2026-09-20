@@ -50,6 +50,12 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useParams: () => ({ bankId: 'bank-1' }) };
 });
 
+// The page reads the signed-in user because only the person who submitted a
+// question may withdraw it — the server 403s anyone else, and the control is
+// gated so that refusal is never a surprise. 'u-1' is the fixtures' author.
+const mockUseAuth = vi.fn(() => ({ user: { user_id: 'u-1' } }));
+vi.mock('../context/AuthContext', () => ({ useAuth: () => mockUseAuth() as unknown }));
+
 import QuestionBankDetail from '../pages/hr/QuestionBankDetail';
 
 function renderPage() {
@@ -145,7 +151,7 @@ describe('QuestionBankDetail — the editor is draft-only', () => {
     expect(screen.getByRole('button', { name: 'Submit for review' })).toBeInTheDocument();
   });
 
-  it('renders an approved question read-only, offering a new version instead of Save changes', async () => {
+  it('renders an approved question read-only, and offers New version as the way to change it', async () => {
     const user = userEvent.setup();
     const detail: BankQuestionDetail = {
       question: APPROVED_V2,
@@ -163,6 +169,65 @@ describe('QuestionBankDetail — the editor is draft-only', () => {
     expect(screen.queryByDisplayValue('What is a monad? (v2)')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retire' })).toBeInTheDocument();
+    // The read-only banner tells the user to start a new version, so the
+    // control it points at has to exist. It did not: the review found the
+    // whole revise-an-approved-question path unreachable, with this test's
+    // old name claiming to cover exactly that.
+    expect(screen.getByRole('button', { name: 'New version' })).toBeInTheDocument();
+  });
+
+  it('New version opens the content for editing and saves as a new version', async () => {
+    const user = userEvent.setup();
+    getBankQuestion.mockResolvedValue({
+      question: APPROVED_V2,
+      versions: [RETIRED_V1, APPROVED_V2],
+      used_in_exams: [],
+    });
+    newBankQuestionVersion.mockResolvedValue({ id: 'q-approved-v3' });
+    renderPage();
+
+    await user.click(await screen.findByText('What is a monad? (v2)'));
+    await user.click(await screen.findByRole('button', { name: 'New version' }));
+
+    // Pre-filled with the current content, and now editable.
+    const prompt = await screen.findByDisplayValue('What is a monad? (v2)');
+    expect(prompt).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Save as new version' }));
+    await waitFor(() => expect(newBankQuestionVersion).toHaveBeenCalled());
+    expect(newBankQuestionVersion.mock.calls[0][0]).toBe('q-approved-v2');
+    expect(updateBankQuestion).not.toHaveBeenCalled();
+  });
+
+  it('offers Withdraw only to the person who submitted the question', async () => {
+    const user = userEvent.setup();
+    // Submitted by someone else: the server would 403, so the control is not
+    // offered at all.
+    const theirs = question({
+      id: 'q-in-review',
+      status: 'in_review',
+      prompt: 'Whose question is this?',
+      submitted_by_user_id: 'u-someone-else',
+    });
+    getBankQuestion.mockResolvedValue({ question: theirs, versions: [theirs], used_in_exams: [] });
+    listBankQuestions.mockResolvedValue([theirs]);
+    const view = renderPage();
+
+    await user.click(await screen.findByText('Whose question is this?'));
+    // Wait for the detail panel itself: an in_review question renders
+    // read-only, so its banner is the signal the action bar has rendered.
+    await screen.findByText(/only a draft can be edited/);
+    expect(screen.queryByRole('button', { name: 'Withdraw' })).not.toBeInTheDocument();
+
+    // Submitted by the signed-in user ('u-1'): offered.
+    view.unmount();
+    const mine = question({ ...theirs, submitted_by_user_id: 'u-1' });
+    getBankQuestion.mockResolvedValue({ question: mine, versions: [mine], used_in_exams: [] });
+    listBankQuestions.mockResolvedValue([mine]);
+    renderPage();
+
+    await user.click(await screen.findByText('Whose question is this?'));
+    expect(await screen.findByRole('button', { name: 'Withdraw' })).toBeInTheDocument();
   });
 });
 

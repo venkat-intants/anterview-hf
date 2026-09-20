@@ -5,12 +5,23 @@
 // question and an exam question look like the same idea, and reuses the same
 // lazy-loaded CodeEditor for starter/reference code.
 //
-// Content fields are editable only while the question is a draft — a new
-// question (`question` omitted) is always editable; anything else (in_review,
-// approved, retired) renders read-only, matching the server's own rule
-// (`update_question` 409s on anything but draft).
+// Content fields are editable while the question is a draft — a new question
+// (`question` omitted) is always editable — or while the caller has forced
+// the "new version" flow open via `forceEditable` for an approved/retired
+// question (see QuestionBankDetail.tsx's "New version" action). Anything else
+// (in_review, or approved/retired without `forceEditable`) renders read-only,
+// matching the server's own rule (`update_question` 409s on anything but
+// draft; `new_version` is the only route that accepts approved/retired).
+//
+// The form resets from `question` whenever `question?.id` changes — not on
+// every render or every field in `question` — so a background refetch of the
+// SAME question (e.g. after "Save changes" invalidates the query) never wipes
+// mid-typing edits, but selecting a DIFFERENT question (including a different
+// version through the history list) always starts from that question's own
+// content instead of silently keeping the previous selection's draft in the
+// form (content_hash then gets computed from, and PATCHes, the wrong row).
 
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import {
   CODING_LANGUAGES,
   type CodingTestCase,
@@ -85,11 +96,16 @@ function stateFrom(q: BankQuestion | null | undefined): FormState {
   };
 }
 
+/** Mirrors the server's own cap so a save never round-trips into a 422. */
+const MAX_TAGS = 20;
+const MAX_PROMPT_LENGTH = 20000;
+
 function parseTags(raw: string): string[] {
   return raw
     .split(',')
     .map((t) => t.trim().toLowerCase())
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, MAX_TAGS);
 }
 
 function formToBankQuestionInput(f: FormState): BankQuestionInput {
@@ -129,6 +145,15 @@ export interface BankQuestionEditorProps {
   saving?: boolean;
   onSave: (input: BankQuestionInput) => void;
   onCancel?: () => void;
+  /**
+   * Forces the form open for a question that is not a draft — the "New
+   * version" flow. The form still pre-fills from `question` (unchanged by
+   * this flag) and `onSave` still fires with the edited content; the caller
+   * is the one that decides that content becomes a new draft version rather
+   * than a PATCH, by routing to `newBankQuestionVersion` instead of
+   * `updateBankQuestion` (see QuestionBankDetail.tsx).
+   */
+  forceEditable?: boolean;
 }
 
 export function BankQuestionEditor({
@@ -136,9 +161,25 @@ export function BankQuestionEditor({
   saving = false,
   onSave,
   onCancel,
+  forceEditable = false,
 }: BankQuestionEditorProps): JSX.Element {
   const [form, setForm] = useState<FormState>(() => stateFrom(question));
-  const editable = !question || question.status === 'draft';
+  const [error, setError] = useState<string | null>(null);
+  const editable = !question || question.status === 'draft' || forceEditable;
+
+  // Re-seed the form when the QUESTION IDENTITY changes (a different id) —
+  // never on every render, and never on a background refetch of the same id
+  // (e.g. the invalidateQueries a successful save triggers), which would
+  // otherwise clobber whatever the user is mid-typing. Without this, opening
+  // draft A then draft B and re-selecting A left the form still holding B's
+  // values, and "Save changes" PATCHed B's content onto A's row — a
+  // well-formed, correctly authorised request the server has no way to catch.
+  useEffect(() => {
+    setForm(stateFrom(question));
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question?.id]);
+
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
@@ -166,8 +207,6 @@ export function BankQuestionEditor({
     }
     return null;
   }
-
-  const [error, setError] = useState<string | null>(null);
 
   function submit(ev: React.FormEvent) {
     ev.preventDefault();
@@ -244,6 +283,7 @@ export function BankQuestionEditor({
           value={form.prompt}
           onChange={(e) => set('prompt', e.target.value)}
           rows={3}
+          maxLength={MAX_PROMPT_LENGTH}
           className={cn(inputCls, 'resize-y')}
           aria-label="Prompt"
         />
@@ -530,7 +570,7 @@ export function BankQuestionEditor({
           className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
         >
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
-          {question ? 'Save changes' : 'Create question'}
+          {!question ? 'Create question' : question.status !== 'draft' ? 'Save as new version' : 'Save changes'}
         </button>
       </div>
     </form>

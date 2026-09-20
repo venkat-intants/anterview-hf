@@ -14,6 +14,8 @@ import { toast } from '@/lib/toast';
 import type { BankQuestion, ReviewQueueRow } from '@/api/questionBanks';
 
 const CHANGES_NOTE_MIN = 5;
+/** Mirrors the server's own cap so a save never round-trips into a 422. */
+const NOTE_MAX_LENGTH = 1000;
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -109,6 +111,7 @@ function ReviewRow({ row, approve, requestChanges, invalidate }: RowProps) {
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder={mode === 'changes' ? `At least ${CHANGES_NOTE_MIN} characters` : undefined}
+            maxLength={NOTE_MAX_LENGTH}
             className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
           />
           {mode === 'changes' && !changesReady ? (

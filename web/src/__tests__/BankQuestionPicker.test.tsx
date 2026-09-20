@@ -104,10 +104,31 @@ describe('BankQuestionPicker — rows already in the exam', () => {
     expect(alreadyIn).toBeDisabled();
     expect(fresh).not.toBeDisabled();
     expect(screen.getByText('Already in this exam')).toBeInTheDocument();
-    expect(screen.getByText('0 selected · 1 available')).toBeInTheDocument();
+    expect(screen.getByText('0/100 selected · 1 available')).toBeInTheDocument();
 
     await user.click(fresh);
-    expect(screen.getByText('1 selected · 1 available')).toBeInTheDocument();
+    expect(screen.getByText('1/100 selected · 1 available')).toBeInTheDocument();
+  });
+});
+
+describe('BankQuestionPicker — selection cap', () => {
+  it('refuses to select a 101st question and shows why', async () => {
+    const user = userEvent.setup();
+    const rows = Array.from({ length: 101 }, (_, i) =>
+      row({ id: `q-${i}`, prompt: `Question ${i}` }),
+    );
+    searchBankQuestions.mockResolvedValue(rows);
+    renderPicker();
+
+    await screen.findByText('Question 0');
+    for (let i = 0; i < 100; i++) {
+      await user.click(screen.getByLabelText(`Select Question ${i}`));
+    }
+    expect(screen.getByText('100/100 selected · 101 available')).toBeInTheDocument();
+
+    const capped = screen.getByLabelText('Select Question 100');
+    expect(capped).toBeDisabled();
+    expect(screen.getByText('Selection limit reached (100)')).toBeInTheDocument();
   });
 });
 

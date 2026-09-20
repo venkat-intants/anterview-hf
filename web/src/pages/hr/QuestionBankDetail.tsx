@@ -20,6 +20,7 @@ import { Reveal } from '@/design/components/Reveal';
 import { toast } from '@/lib/toast';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/context/AuthContext';
 import { BankQuestionEditor } from '@/components/bank/BankQuestionEditor';
 import {
   createBankQuestion,
@@ -191,9 +192,20 @@ function QuestionRow({
 export default function QuestionBankDetail(): JSX.Element {
   const { bankId = '' } = useParams();
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [filters, setFilters] = useState<BankQuestionFilters>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // PH4-D1 review finding — approved/retired content had no editable path at
+  // all ("New version" was unreachable). True while the user is editing an
+  // approved/retired question's content to create the next draft version.
+  const [newVersionMode, setNewVersionMode] = useState(false);
+
+  function selectQuestion(id: string | null) {
+    setCreating(false);
+    setSelectedId(id);
+    setNewVersionMode(false);
+  }
 
   const banksQuery = useQuery({ queryKey: ['hr', 'question-banks'], queryFn: listQuestionBanks });
   const bank = (banksQuery.data ?? []).find((b) => b.id === bankId);
@@ -280,6 +292,7 @@ export default function QuestionBankDetail(): JSX.Element {
     onSuccess: (q) => {
       toast.success(`Version ${q.version} created as a draft`);
       setSelectedId(q.id);
+      setNewVersionMode(false);
       invalidateAll();
     },
     onError: (e: unknown) => toast.error(errText(e, 'Could not create a new version')),
@@ -313,6 +326,7 @@ export default function QuestionBankDetail(): JSX.Element {
             onClick={() => {
               setCreating(true);
               setSelectedId(null);
+              setNewVersionMode(false);
             }}
             className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground"
           >
@@ -345,10 +359,7 @@ export default function QuestionBankDetail(): JSX.Element {
                     key={q.id}
                     q={q}
                     selected={selectedId === q.id}
-                    onSelect={() => {
-                      setCreating(false);
-                      setSelectedId(q.id);
-                    }}
+                    onSelect={() => selectQuestion(q.id)}
                   />
                 ))}
               </div>
@@ -394,9 +405,18 @@ export default function QuestionBankDetail(): JSX.Element {
                 </p>
               ) : null}
 
+              {newVersionMode ? (
+                <p className="rounded-[10px] border border-[rgba(var(--accent-rgb),0.35)] bg-[rgba(var(--accent-rgb),0.08)] px-3 py-2 text-[12.5px] text-[var(--ui-soft)]">
+                  Saving creates version {selected.version + 1} as a new draft — this{' '}
+                  {selected.status} version is unchanged.
+                </p>
+              ) : null}
+
               <BankQuestionEditor
                 question={selected}
                 saving={updateMut.isPending || newVersionMut.isPending}
+                forceEditable={newVersionMode}
+                onCancel={newVersionMode ? () => setNewVersionMode(false) : undefined}
                 onSave={(input) =>
                   selected.status === 'draft'
                     ? updateMut.mutate(input)
@@ -404,45 +424,60 @@ export default function QuestionBankDetail(): JSX.Element {
                 }
               />
 
-              <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-                {selected.status === 'draft' ? (
-                  <>
+              {!newVersionMode ? (
+                <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+                  {selected.status === 'draft' ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={submitMut.isPending}
+                        onClick={() => submitMut.mutate()}
+                        className="rounded-[9px] bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
+                      >
+                        Submit for review
+                      </button>
+                      <ConfirmDeleteButton
+                        label="Delete"
+                        pending={deleteMut.isPending}
+                        onConfirm={() => deleteMut.mutate()}
+                      />
+                    </>
+                  ) : null}
+                  {selected.status === 'in_review' && selected.submitted_by_user_id === user?.user_id ? (
+                    // Only the submitter may withdraw — the server 403s anyone
+                    // else with "Only the person who submitted this question can
+                    // withdraw it." Gating the control means that refusal is
+                    // never something another reviewer runs into by surprise.
                     <button
                       type="button"
-                      disabled={submitMut.isPending}
-                      onClick={() => submitMut.mutate()}
-                      className="rounded-[9px] bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
+                      disabled={withdrawMut.isPending}
+                      onClick={() => withdrawMut.mutate()}
+                      className="rounded-[9px] border border-border px-3.5 py-1.5 text-[12.5px] text-foreground disabled:opacity-50"
                     >
-                      Submit for review
+                      Withdraw
                     </button>
-                    <ConfirmDeleteButton
-                      label="Delete"
-                      pending={deleteMut.isPending}
-                      onConfirm={() => deleteMut.mutate()}
-                    />
-                  </>
-                ) : null}
-                {selected.status === 'in_review' ? (
-                  <button
-                    type="button"
-                    disabled={withdrawMut.isPending}
-                    onClick={() => withdrawMut.mutate()}
-                    className="rounded-[9px] border border-border px-3.5 py-1.5 text-[12.5px] text-foreground disabled:opacity-50"
-                  >
-                    Withdraw
-                  </button>
-                ) : null}
-                {selected.status === 'approved' ? (
-                  <button
-                    type="button"
-                    disabled={retireMut.isPending}
-                    onClick={() => retireMut.mutate()}
-                    className="rounded-[9px] border border-border px-3.5 py-1.5 text-[12.5px] text-foreground disabled:opacity-50"
-                  >
-                    Retire
-                  </button>
-                ) : null}
-              </div>
+                  ) : null}
+                  {selected.status === 'approved' ? (
+                    <button
+                      type="button"
+                      disabled={retireMut.isPending}
+                      onClick={() => retireMut.mutate()}
+                      className="rounded-[9px] border border-border px-3.5 py-1.5 text-[12.5px] text-foreground disabled:opacity-50"
+                    >
+                      Retire
+                    </button>
+                  ) : null}
+                  {selected.status === 'approved' || selected.status === 'retired' ? (
+                    <button
+                      type="button"
+                      onClick={() => setNewVersionMode(true)}
+                      className="rounded-[9px] border border-border px-3.5 py-1.5 text-[12.5px] text-foreground"
+                    >
+                      New version
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
 
               {detailQuery.data && detailQuery.data.versions.length > 1 ? (
                 <div className="border-t border-border pt-3">
@@ -454,7 +489,7 @@ export default function QuestionBankDetail(): JSX.Element {
                       <li key={v.id}>
                         <button
                           type="button"
-                          onClick={() => setSelectedId(v.id)}
+                          onClick={() => selectQuestion(v.id)}
                           className={cn(
                             'flex w-full items-center justify-between rounded-[9px] border px-2.5 py-1.5 text-[12px]',
                             v.id === selectedId

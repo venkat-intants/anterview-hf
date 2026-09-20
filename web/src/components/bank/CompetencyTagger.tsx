@@ -25,6 +25,7 @@ export function CompetencyTagger({
   disabled = false,
 }: CompetencyTaggerProps): JSX.Element {
   const [draft, setDraft] = useState('');
+  const [hint, setHint] = useState<string | null>(null);
   const catalog = useQuery({
     queryKey: ['hr', 'bank-competencies'],
     queryFn: listBankCompetencies,
@@ -41,13 +42,21 @@ export function CompetencyTagger({
     if (value.length >= MAX_COMPETENCIES || selectedIds.has(comp.id)) return;
     onChange([...value, comp]);
     setDraft('');
+    setHint(null);
   }
 
   function addFromDraft() {
     const name = draft.trim();
     if (!name) return;
     const id = slugifyCompetencyId(name);
-    if (!id) return;
+    if (!id) {
+      // A competency's id is [a-z0-9_], so a name written only in Devanagari
+      // or Telugu slugifies to nothing. Day-1 languages are EN, HI and TE, so
+      // that is a name people will reasonably type — say why it did not stick
+      // rather than swallowing the click.
+      setHint('A competency name needs Latin letters or digits, because it becomes the id.');
+      return;
+    }
     addCompetency({ id, name });
   }
 
@@ -123,6 +132,11 @@ export function CompetencyTagger({
                 </li>
               ))}
             </ul>
+          ) : null}
+          {hint ? (
+            <p role="status" className="mt-1 text-[11.5px] text-[var(--ui-danger)]">
+              {hint}
+            </p>
           ) : null}
         </div>
       ) : null}

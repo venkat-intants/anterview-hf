@@ -38,6 +38,7 @@ import {
 } from '@/api/accommodations';
 import { getWorkflow, listWorkflows, type Round } from '@/api/workflows';
 import { formatDate } from '@/lib/formatters';
+import { toLocalInputValue } from '@/lib/localDatetime';
 import { toast } from '@/lib/toast';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { StatusTag } from '@/design/components/primitives';
@@ -151,8 +152,13 @@ function fieldsFromRow(row: Accommodation): FieldsState {
     otherAdjustment: row.other_adjustment ?? '',
     interviewerNote: row.interviewer_note ?? '',
     internalNote: row.internal_note ?? '',
-    effectiveFrom: '',
-    effectiveUntil: '',
+    // The window is carried over, not blanked. `revise` writes whatever it is
+    // given, so a blank here silently turned a time-boxed adjustment into one
+    // that never ends -- which keeps the interviewer_note being served past
+    // the date HR chose, and stops the retention purge's effective_until
+    // branch from ever matching the row.
+    effectiveFrom: toLocalInputValue(row.effective_from),
+    effectiveUntil: toLocalInputValue(row.effective_until),
   };
 }
 

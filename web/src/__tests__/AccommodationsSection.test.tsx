@@ -395,6 +395,37 @@ describe('AccommodationsSection — revise and revoke', () => {
     expect(toastSuccess).toHaveBeenCalledWith('Accommodation revised — the earlier record is kept');
   });
 
+  it('carries the effective window through a revision instead of clearing it', async () => {
+    // Security review, PH4-D2: the revise form prefilled every field EXCEPT
+    // the dates, and `revise` writes what it is given -- so editing the
+    // percentage silently turned a time-boxed adjustment into one that never
+    // ends. That keeps the interviewer_note being served past the date HR
+    // chose, and stops retention's effective_until branch matching the row.
+    accApi.listAccommodations.mockResolvedValue([
+      row({
+        id: 'acc-1',
+        extra_time_percent: 50,
+        effective_from: '2026-09-01T00:00:00.000Z',
+        effective_until: '2026-12-31T00:00:00.000Z',
+      }),
+    ]);
+    accApi.reviseAccommodation.mockResolvedValue({ id: 'acc-2' });
+    const user = userEvent.setup();
+    renderSection();
+
+    await user.click(await screen.findByRole('button', { name: 'Revise' }));
+    const timeInput = screen.getByLabelText('Extra time percent');
+    await user.clear(timeInput);
+    await user.type(timeInput, '25');
+    await user.click(screen.getByRole('button', { name: 'Save revision' }));
+
+    await waitFor(() => expect(accApi.reviseAccommodation).toHaveBeenCalledTimes(1));
+    const [, body] = accApi.reviseAccommodation.mock.calls[0] as [string, Record<string, unknown>];
+    expect(body.extra_time_percent).toBe(25);
+    expect(body.effective_until).not.toBeNull();
+    expect(String(body.effective_until)).toContain('2026-12-31');
+  });
+
   it('revokes an accommodation with a typed reason after confirming', async () => {
     accApi.listAccommodations.mockResolvedValue([row({ id: 'acc-1' })]);
     accApi.revokeAccommodation.mockResolvedValue({ status: 'revoked' });

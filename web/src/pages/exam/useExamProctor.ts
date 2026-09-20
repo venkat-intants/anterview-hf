@@ -62,6 +62,12 @@ export function useExamProctor({
   const violationRef = useRef(0);
   // Guard: auto-submit fires at most once.
   const autoSubmittedRef = useRef(false);
+  // PH4-D2: set once an integrity-event response reveals this attempt's
+  // auto-submit is relaxed (max_violations: null) — the candidate never sees
+  // that fact directly (GET /exam does not expose relax_auto_submit), so this
+  // is the only way the client learns it, and only after the first violation
+  // round-trips. Once true, no path here may auto-submit again.
+  const autoSubmitRelaxedRef = useRef(false);
   // Per-event-type debounce timestamps.
   const lastEmitRef = useRef<Record<string, number>>({});
 
@@ -87,7 +93,15 @@ export function useExamProctor({
         if (res && typeof res.violation_count === 'number') {
           violationRef.current = res.violation_count;
           setViolationCount(res.violation_count);
-          if (!autoSubmittedRef.current && res.violation_count >= res.max_violations) {
+          if (res.max_violations === null) {
+            // PH4-D2: relaxed for this attempt — never auto-submit on
+            // violation count alone, no matter what a stale local count says.
+            autoSubmitRelaxedRef.current = true;
+          } else if (
+            !autoSubmittedRef.current &&
+            !autoSubmitRelaxedRef.current &&
+            res.violation_count >= res.max_violations
+          ) {
             autoSubmittedRef.current = true;
             onAutoSubmit();
           }
@@ -100,7 +114,7 @@ export function useExamProctor({
         const next = violationRef.current + 1;
         violationRef.current = next;
         setViolationCount(next);
-        if (!autoSubmittedRef.current && next >= maxViolations) {
+        if (!autoSubmittedRef.current && !autoSubmitRelaxedRef.current && next >= maxViolations) {
           autoSubmittedRef.current = true;
           onAutoSubmit();
         }

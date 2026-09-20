@@ -549,6 +549,15 @@ export default function PublicExam() {
               <p className="mt-4 text-caption text-amber-glow">{t('publicExam.timerNote')}</p>
             )}
 
+            {/* PH4-D2 — the fact only: never the percentage, never why. The
+                round/section limits below are already the scaled ones. */}
+            {exam.adjustments && (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
+              <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
+                <Clock size={14} className="mt-0.5 shrink-0 text-vivid-mint" aria-hidden="true" />
+                <span>{t('publicExam.adjustmentNotice')}</span>
+              </div>
+            ) : null}
+
             {/* Proctoring notice */}
             <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
               <ShieldCheck
@@ -628,6 +637,9 @@ export default function PublicExam() {
               })}
             </p>
           )}
+          {exam.adjustments && (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
+            <p className="text-caption text-vivid-mint">{t('publicExam.adjustmentNotice')}</p>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2">

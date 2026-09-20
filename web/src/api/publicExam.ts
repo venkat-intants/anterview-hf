@@ -49,6 +49,14 @@ export interface PublicSection {
   coding_questions: PublicCodingQuestion[];
 }
 
+/** PH4-D2 — the fact only, never a value beyond this: never the notes, never
+ *  the basis, never who recorded it. See services/data_gateway/app/routers/
+ *  exam_take.py's AdjustmentsOut. */
+export interface ExamAdjustments {
+  extra_time_percent: number | null;
+  deadline_extended: boolean;
+}
+
 export interface TakeExam {
   exam_id: string;
   title: string;
@@ -66,6 +74,9 @@ export interface TakeExam {
   deadline: string | null;
   scheduled_at: string | null;
   max_integrity_violations: number;
+  /** Null when no accommodation is effective for this attempt — "no
+   *  adjustment" is a normal, common state, not an error. */
+  adjustments?: ExamAdjustments | null;
   /** Authoritative ordered sections (prefer over the flattened back-compat arrays below). */
   sections: PublicSection[];
   /** Back-compat flattened arrays — prefer sections. */
@@ -202,7 +213,10 @@ export interface ExamIntegrityEventBody {
 export interface ExamIntegrityResult {
   accepted: boolean;
   violation_count: number;
-  max_violations: number;
+  /** PH4-D2 — null means this attempt's auto-submit is relaxed: never
+   *  auto-submit on violation count alone. Events and the integrity score are
+   *  still recorded either way. */
+  max_violations: number | null;
   integrity_score: number;
 }
 

@@ -578,6 +578,25 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
         </div>
       ) : null}
 
+      {/* PH4-D2 — the ONE thing this page ever says about a candidate's
+          accommodations: the interviewer note, when one is effective for this
+          round. Nothing else about accommodations reaches this payload — no
+          basis, no internal note, no who recorded it — so there is nothing
+          else to render here. */}
+      {detail.adjustments_note ? (
+        <div
+          role="note"
+          aria-label="Adjustments"
+          className="mb-5 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
+        >
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
+          <span>
+            <span className="font-medium text-foreground">Adjustments: </span>
+            {detail.adjustments_note}
+          </span>
+        </div>
+      ) : null}
+
       {formError ? (
         <div
           role="alert"

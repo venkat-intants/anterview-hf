@@ -126,6 +126,27 @@ vi.mock('../api/scheduling', () => ({
   listLoopsForEnrolment: (...a: unknown[]) => schedulingApi.listLoopsForEnrolment(...a) as unknown,
 }));
 
+// PH4-D2 — the Accommodations section always mounts alongside the rest of the
+// drawer once the applicant has loaded (it is scoped to the applicant, not
+// the application, so it renders even without an enrolmentId). Mocked to an
+// empty history so every existing drawer test stays deterministic; its own
+// behaviour is covered in AccommodationsSection.test.tsx.
+const accommodationsApi = {
+  listAccommodations: vi.fn(),
+  recordAccommodation: vi.fn(),
+  reviseAccommodation: vi.fn(),
+  revokeAccommodation: vi.fn(),
+  getEffectiveAccommodation: vi.fn(),
+};
+vi.mock('../api/accommodations', () => ({
+  listAccommodations: (...a: unknown[]) => accommodationsApi.listAccommodations(...a) as unknown,
+  recordAccommodation: (...a: unknown[]) => accommodationsApi.recordAccommodation(...a) as unknown,
+  reviseAccommodation: (...a: unknown[]) => accommodationsApi.reviseAccommodation(...a) as unknown,
+  revokeAccommodation: (...a: unknown[]) => accommodationsApi.revokeAccommodation(...a) as unknown,
+  getEffectiveAccommodation: (...a: unknown[]) =>
+    accommodationsApi.getEffectiveAccommodation(...a) as unknown,
+}));
+
 import CandidateDrawer from '../components/CandidateDrawer';
 
 function applicant(over: Partial<Applicant> = {}): Applicant {
@@ -178,6 +199,8 @@ beforeEach(() => {
   stageSlaApi.listExceptions.mockResolvedValue([]);
   stageSlaApi.listStageOwners.mockResolvedValue([]);
   schedulingApi.listLoopsForEnrolment.mockResolvedValue([]);
+  accommodationsApi.listAccommodations.mockResolvedValue([]);
+  accommodationsApi.getEffectiveAccommodation.mockResolvedValue({ effective: false });
 });
 
 describe('CandidateDrawer', () => {

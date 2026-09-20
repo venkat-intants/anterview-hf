@@ -65,6 +65,7 @@ function detail(over: Partial<ScorecardDetail> = {}): ScorecardDetail {
     superseded: false,
     can_edit: true,
     can_correct: false,
+    adjustments_note: null,
     criteria: [
       {
         competency_id: 'c-sysdesign',
@@ -418,6 +419,44 @@ describe('InterviewerScorecard — read-only, superseded and correction', () => 
     // And none of the first page's transient state (the correction form).
     expect(screen.queryByLabelText(/why does this need correcting/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});
+
+// PH4-D2 — the ONLY thing this page (or any interviewer payload) ever says
+// about a candidate's accommodations: `adjustments_note`, verbatim, and
+// nothing else — no basis, no internal note, no who recorded it. Nothing here
+// fetches anything beyond what getScorecard already returns.
+describe('InterviewerScorecard — adjustments (PH4-D2)', () => {
+  it('renders the adjustments note when the server sends one', async () => {
+    api.getScorecard.mockResolvedValue(
+      detail({ adjustments_note: 'Extra time granted — no other change to the round.' }),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Deepa Menon')).toBeInTheDocument();
+    const note = screen.getByRole('note', { name: 'Adjustments' });
+    expect(note).toHaveTextContent('Extra time granted — no other change to the round.');
+  });
+
+  it('shows nothing at all when there is no adjustments note', async () => {
+    api.getScorecard.mockResolvedValue(detail({ adjustments_note: null }));
+    renderPage();
+
+    await screen.findByText('Deepa Menon');
+    expect(screen.queryByRole('note', { name: 'Adjustments' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Adjustments:/)).not.toBeInTheDocument();
+  });
+
+  it('requests nothing beyond the scorecard itself for the adjustments note', async () => {
+    api.getScorecard.mockResolvedValue(
+      detail({ adjustments_note: 'Relaxed auto-submit for this round.' }),
+    );
+    renderPage();
+
+    await screen.findByRole('note', { name: 'Adjustments' });
+    // The only network calls this page makes are the three it already made
+    // before this feature existed — no new endpoint for accommodations.
+    expect(api.getScorecard).toHaveBeenCalledTimes(1);
   });
 });
 

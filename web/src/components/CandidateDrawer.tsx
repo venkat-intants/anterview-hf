@@ -38,6 +38,7 @@ import { describeMove } from '@/lib/stageHistory';
 import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import AccommodationsSection from '@/components/hr/AccommodationsSection';
 import ExceptionsSection from '@/components/ExceptionsSection';
 import InterviewLoopsSection from '@/components/InterviewLoopsSection';
 import OfferSection from '@/components/OfferSection';
@@ -819,6 +820,15 @@ export default function CandidateDrawer({
             the id as `id`, so that field was always undefined and the round
             scores never loaded. */}
         <RoundScores applicantId={applicantId} enrolmentId={enrolmentId} />
+
+        {/* PH4-D2 — recorded adjustments to how this applicant is assessed.
+            Scoped to the applicant, so shown regardless of whether the drawer
+            was opened from a specific application. */}
+        <AccommodationsSection
+          applicantId={applicantId}
+          enrolmentId={enrolmentId}
+          requisitionId={app?.requisition_id ?? null}
+        />
 
         {enrolmentId ? (
           <HumanInterviewSection enrolmentId={enrolmentId} requisitionId={app?.requisition_id ?? null} />

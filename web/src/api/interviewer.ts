@@ -70,6 +70,11 @@ export interface ScorecardDetail {
   superseded: boolean;
   can_edit: boolean;
   can_correct: boolean;
+  /** PH4-D2 — the ONLY thing this scorecard, or any interviewer payload, ever
+   *  says about a candidate's accommodations: the effective `interviewer_note`
+   *  for this round, or null when there is none. Never a value, a basis, or
+   *  who recorded it — the server does not send those to an interviewer. */
+  adjustments_note: string | null;
   criteria: ScorecardCriterionDetail[];
 }
 

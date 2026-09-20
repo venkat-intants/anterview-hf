@@ -12,6 +12,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TakeExam } from '../api/publicExam';
+import i18n from '../lib/i18n';
 
 const getPublicExam = vi.fn();
 vi.mock('../api/publicExam', () => ({
@@ -98,5 +99,77 @@ describe('PublicExam — intro card', () => {
     expect(screen.getByText('30 min')).toBeTruthy();
     expect(screen.queryByText('Language')).toBeNull();
     expect(screen.queryByText('EN · हि · తె')).toBeNull();
+  });
+});
+
+// PH4-D2 — the candidate is told the FACT that their time includes an
+// adjustment, never the percentage, never a note, never who recorded it or
+// why. The round/section timers themselves already arrive pre-scaled from
+// the server (exam_take.py), so there is nothing to recompute here — only
+// this banner to show, in EN, HI and TE.
+describe('PublicExam — the accommodation banner (PH4-D2)', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('en');
+  });
+
+  it('says nothing when no adjustment is effective for this attempt', async () => {
+    getPublicExam.mockResolvedValue({ ...EXAM, adjustments: null });
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+    expect(screen.queryByText(/adjustment/i)).toBeNull();
+  });
+
+  it('says nothing when adjustments carries no extra time and no deadline extension', async () => {
+    getPublicExam.mockResolvedValue({
+      ...EXAM,
+      adjustments: { extra_time_percent: null, deadline_extended: false },
+    });
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+    expect(screen.queryByText(/adjustment/i)).toBeNull();
+  });
+
+  it('shows the banner in English when extra time is effective', async () => {
+    getPublicExam.mockResolvedValue({
+      ...EXAM,
+      adjustments: { extra_time_percent: 50, deadline_extended: false },
+    });
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+    expect(screen.getByText('Your time for this round includes an adjustment.')).toBeInTheDocument();
+    // The fact only — never the percentage this test set up with.
+    expect(screen.queryByText(/50%/)).toBeNull();
+  });
+
+  it('shows the banner when only the deadline is extended, not the round timer', async () => {
+    getPublicExam.mockResolvedValue({
+      ...EXAM,
+      adjustments: { extra_time_percent: null, deadline_extended: true },
+    });
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+    expect(screen.getByText('Your time for this round includes an adjustment.')).toBeInTheDocument();
+  });
+
+  it('shows the banner in Hindi', async () => {
+    await i18n.changeLanguage('hi');
+    getPublicExam.mockResolvedValue({
+      ...EXAM,
+      adjustments: { extra_time_percent: 50, deadline_extended: false },
+    });
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+    expect(screen.getByText('इस राउंड के लिए आपके समय में एक समायोजन शामिल है।')).toBeInTheDocument();
+  });
+
+  it('shows the banner in Telugu', async () => {
+    await i18n.changeLanguage('te');
+    getPublicExam.mockResolvedValue({
+      ...EXAM,
+      adjustments: { extra_time_percent: 50, deadline_extended: false },
+    });
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+    expect(screen.getByText('ఈ రౌండ్ కోసం మీ సమయంలో ఒక సర్దుబాటు చేర్చబడింది.')).toBeInTheDocument();
   });
 });

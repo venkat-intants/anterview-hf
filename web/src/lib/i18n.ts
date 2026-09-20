@@ -674,6 +674,10 @@ const en = {
       roundLabel: 'Round {{n}}: {{title}}',
       proctoringNotice:
         'This exam is proctored: it runs in fullscreen and tab-switching is monitored. Each exit is recorded as a violation.',
+      // PH4-D2 — told as a fact only: never the percentage, never a note,
+      // never who recorded it or why. The round/section timers below are
+      // already scaled by the server.
+      adjustmentNotice: 'Your time for this round includes an adjustment.',
       fullscreenExitTitle: 'You left fullscreen',
       fullscreenExitSub:
         'The exam must run in fullscreen. Leaving it is recorded as a violation. Return to fullscreen to continue.',
@@ -1641,6 +1645,7 @@ const hi = {
       roundLabel: 'राउंड {{n}}: {{title}}',
       proctoringNotice:
         'यह परीक्षा proctored है: यह fullscreen में चलती है और tab-switching monitor की जाती है। प्रत्येक बाहर निकलना उल्लंघन के रूप में दर्ज किया जाता है।',
+      adjustmentNotice: 'इस राउंड के लिए आपके समय में एक समायोजन शामिल है।',
       fullscreenExitTitle: 'आपने fullscreen छोड़ दिया',
       fullscreenExitSub:
         'परीक्षा fullscreen में चलनी चाहिए। बाहर निकलना उल्लंघन के रूप में दर्ज किया जाता है। जारी रखने के लिए fullscreen पर वापस जाएं।',
@@ -2591,6 +2596,7 @@ const te = {
       roundLabel: 'రౌండ్ {{n}}: {{title}}',
       proctoringNotice:
         'ఈ పరీక్ష proctored: ఇది fullscreen లో నడుస్తుంది మరియు tab-switching పర్యవేక్షించబడుతుంది. ప్రతి నిష్క్రమణ ఉల్లంఘనగా నమోదవుతుంది.',
+      adjustmentNotice: 'ఈ రౌండ్ కోసం మీ సమయంలో ఒక సర్దుబాటు చేర్చబడింది.',
       fullscreenExitTitle: 'మీరు fullscreen వదిలారు',
       fullscreenExitSub:
         'పరీక్ష fullscreen లో నడవాలి. వదిలివేయడం ఉల్లంఘనగా నమోదవుతుంది. కొనసాగించడానికి fullscreen కు తిరిగి వెళ్ళండి.',

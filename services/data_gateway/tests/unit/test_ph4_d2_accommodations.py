@@ -81,6 +81,44 @@ def test_an_exam_round_scoped_row_matches_by_exam_round_id() -> None:
     assert picked is row
 
 
+def test_an_exam_round_scoped_row_stays_on_the_application_it_was_recorded_for() -> None:
+    """Code review, PH4-D2: the exam-round branch matched on the exam round
+    alone. The same exam round can back more than one application -- the same
+    exam used for two openings, or a retake under a second enrolment -- so an
+    adjustment HR scoped to ONE application silently followed the candidate
+    into another. The round_id branch has always carried this check."""
+    exam_round_id = uuid.uuid4()
+    theirs, other = uuid.uuid4(), uuid.uuid4()
+    row = _row(enrolment_id=theirs, exam_round_id=exam_round_id, extra_time_percent=30)
+
+    assert svc.pick(
+        [row], enrolment_id=theirs, workflow_round_id=None, exam_round_id=exam_round_id,
+        at=datetime(2026, 6, 1, tzinfo=UTC),
+    ) is row
+    assert svc.pick(
+        [row], enrolment_id=other, workflow_round_id=None, exam_round_id=exam_round_id,
+        at=datetime(2026, 6, 1, tzinfo=UTC),
+    ) is None
+
+
+def test_two_rows_at_the_same_scope_and_date_resolve_the_same_way_every_time() -> None:
+    """``effective_from`` is a date HR types, so two active rows at one scope
+    can share it. Before the id tie-break, which one applied depended on the
+    order the database happened to return them in, which nothing guarantees."""
+    enrolment_id = uuid.uuid4()
+    same_day = datetime(2026, 3, 1, tzinfo=UTC)
+    low = _row(row_id=uuid.UUID(int=1), enrolment_id=enrolment_id,
+               extra_time_percent=10, effective_from=same_day)
+    high = _row(row_id=uuid.UUID(int=2), enrolment_id=enrolment_id,
+                extra_time_percent=50, effective_from=same_day)
+
+    for rows in ([low, high], [high, low]):
+        assert svc.pick(
+            rows, enrolment_id=enrolment_id, workflow_round_id=None, exam_round_id=None,
+            at=datetime(2026, 6, 1, tzinfo=UTC),
+        ) is high
+
+
 def test_a_row_scoped_to_a_different_round_never_matches() -> None:
     round_id, other_round_id = uuid.uuid4(), uuid.uuid4()
     enrolment_id = uuid.uuid4()

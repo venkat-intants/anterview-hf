@@ -114,6 +114,14 @@ def pick(
         elif row.exam_round_id is not None:
             if exam_round_id is None or row.exam_round_id != exam_round_id:
                 continue
+            # The same exam round can back more than one application -- the
+            # same exam used for two openings, or a retake under a second
+            # enrolment. Without this an adjustment HR scoped to ONE
+            # application would follow the candidate into another, which is
+            # both wrong and invisible. The round_id branch above has always
+            # checked this; the omission here was an asymmetry, not a rule.
+            if row.enrolment_id is not None and row.enrolment_id != enrolment_id:
+                continue
             level = 3
         elif row.enrolment_id is not None:
             if enrolment_id is None or row.enrolment_id != enrolment_id:
@@ -126,7 +134,12 @@ def pick(
     if not by_level:
         return None
     candidates = by_level[max(by_level)]
-    return max(candidates, key=lambda r: r.effective_from)
+    # Ties are broken by id so the rule is total. effective_from is a date HR
+    # types, so two active rows at the same scope can share one; before this,
+    # which of them applied depended on the order the rows came back in, which
+    # nothing guarantees. The id is arbitrary but stable, which is the point:
+    # the same inputs pick the same row every time.
+    return max(candidates, key=lambda r: (r.effective_from, r.id))
 
 
 def extra_seconds(base: int | None, pct: int | None) -> int:
@@ -277,6 +290,7 @@ async def _active_rows(
                 "  FROM candidate_accommodations"
                 " WHERE company_id = :c AND applicant_id = :a AND status = 'active'"
                 "   AND superseded_at IS NULL AND redacted_at IS NULL"
+                " ORDER BY effective_from, id"
             ),
             {"c": company_id, "a": applicant_id},
         )

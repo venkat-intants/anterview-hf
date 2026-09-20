@@ -380,6 +380,35 @@ EXCLUDED_TABLES: dict[str, str] = {
                                     "free-text `evidence` column is REDACTED to NULL "
                                     "in step 5f for the same re-identification reason "
                                     "as the scorecard summary.",
+    # --- PH4 Wave 2 ---------------------------------------------------------
+    "workflow_review_events": "PH4-O6 — who submitted, approved or sent back a "
+                              "workflow VERSION, and their note. Company "
+                              "configuration history; no candidate column.",
+    "workflow_simulations": "PH4-O2 — dry-run results for a workflow version. The "
+                            "candidates in them are synthetic (SIM-001, ...), "
+                            "never people, so there is nothing personal to erase.",
+    "workflow_stage_settings": "PH4-O1 — a stage's owner (an HR manager) and SLA in "
+                               "hours. Configuration; no candidate column.",
+    "stage_exceptions": "PH4-O1 — why an application could not proceed normally. "
+                        "Kept as the company's operational record, but its prose "
+                        "(`reason`, `resolution_note`) is REDACTED to "
+                        "'[redacted]' / NULL in step 5f: a person wrote it about "
+                        "the candidate and it can name them.",
+    "interviewer_availability": "PH4-A2 — when an interviewer (company staff) is free. "
+                                "Staff scheduling configuration; no candidate column.",
+    "interviewer_capacity": "PH4-O5 — how many sessions an interviewer should carry. "
+                            "Staff configuration; no candidate column.",
+    "interview_loops": "PH4-A2 — a set of interviews for one application: title, "
+                       "timezone, status. Kept as the company's scheduling record; in "
+                       "step 5f an open loop is CANCELLED and any cancel reason is "
+                       "REDACTED to '[redacted]' (a person wrote it, it can name them).",
+    "interview_sessions": "PH4-A2 — one interview's time, round and place. Kept as the "
+                          "scheduling record; in step 5f every session not yet held is "
+                          "CANCELLED (nobody should turn up to interview an erased "
+                          "person) and any cancel reason REDACTED to '[redacted]'.",
+    "interview_session_interviewers": "PH4-A2 — which staff sat on a session and their "
+                                      "scorecard link. Staff-side record; the scorecard "
+                                      "itself is redacted in 5f.",
 }
 
 
@@ -863,6 +892,59 @@ async def _execute_one_erasure(
         {"uid": uid_str},
     )
     interviewer_notes_deleted: int = getattr(notes_result, "rowcount", 0) or 0
+    # PH4-O1 stage exceptions: the record stays (the company's operational
+    # history), the prose about the candidate does not. An open one is closed
+    # too — nobody should go on working an exception about an erased person.
+    exceptions_result = await db.execute(
+        text(
+            "UPDATE stage_exceptions SET reason = '[redacted]',"
+            " resolution_note = NULL, redacted_at = now(), updated_at = now(),"
+            " status = 'resolved', resolved_at = COALESCE(resolved_at, now())"
+            " WHERE redacted_at IS NULL AND enrolment_id IN ("
+            "   SELECT e.id FROM enrolments e"
+            "     JOIN applicants a ON a.id = e.applicant_id"
+            "    WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    stage_exceptions_redacted: int = getattr(exceptions_result, "rowcount", 0) or 0
+    # PH4-A2 interview loops: every session not yet held is cancelled — an
+    # interviewer must not turn up for an erased person — and the prose a
+    # person wrote when cancelling is redacted. Who sat on past sessions stays,
+    # as the company's scheduling record. Sessions first: their status feeds
+    # nothing on the loop that this step does not set itself.
+    sessions_result = await db.execute(
+        text(
+            "UPDATE interview_sessions SET status = 'cancelled',"
+            " cancelled_at = COALESCE(cancelled_at, now()), updated_at = now()"
+            " WHERE status IN ('scheduled', 'awaiting_slot') AND applicant_id IN ("
+            "   SELECT a.id FROM applicants a WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    interview_sessions_cancelled: int = getattr(sessions_result, "rowcount", 0) or 0
+    await db.execute(
+        text(
+            "UPDATE interview_sessions SET cancel_reason = '[redacted]', updated_at = now()"
+            " WHERE cancel_reason IS NOT NULL AND cancel_reason <> '[redacted]'"
+            "   AND applicant_id IN (SELECT a.id FROM applicants a WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    loops_result = await db.execute(
+        text(
+            "UPDATE interview_loops SET"
+            " status = CASE WHEN status IN ('draft', 'scheduled') THEN 'cancelled' ELSE status END,"
+            " cancelled_at = CASE WHEN status IN ('draft', 'scheduled')"
+            "                     THEN COALESCE(cancelled_at, now()) ELSE cancelled_at END,"
+            " cancel_reason = CASE WHEN cancel_reason IS NULL THEN NULL ELSE '[redacted]' END,"
+            " redacted_at = now(), updated_at = now()"
+            " WHERE redacted_at IS NULL AND applicant_id IN ("
+            "   SELECT a.id FROM applicants a WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    interview_loops_redacted: int = getattr(loops_result, "rowcount", 0) or 0
     log.info(
         "erasure.executor.interview_evidence_redacted",
         user_id=uid_str,
@@ -871,6 +953,9 @@ async def _execute_one_erasure(
         evidence_redacted=interview_evidence_redacted,
         scorecards=interview_scorecards_redacted,
         notes_deleted=interviewer_notes_deleted,
+        stage_exceptions_redacted=stage_exceptions_redacted,
+        interview_sessions_cancelled=interview_sessions_cancelled,
+        interview_loops_redacted=interview_loops_redacted,
     )
 
     # ------------------------------------------------------------------
@@ -1094,11 +1179,13 @@ async def _execute_one_erasure(
     now_utc = datetime.now(UTC)
     artifacts: dict[str, Any] = {
         # Bumped 1.1 → 1.2 when step 5b (notifications) joined the erasure, and
-        # 1.2 → 1.3 when step 5f (human interview evidence, PH4-A1/A5) did: the
+        # 1.2 → 1.3 when step 5f (human interview evidence, PH4-A1/A5) did, and
+        # 1.3 → 1.4 when 5f took in stage exceptions (PH4-O1), and 1.4 → 1.5
+        # when it took in interview loops and sessions (PH4-A2): the
         # artifacts record is what an auditor reads to know WHAT a given
         # completion covered, so two records with different coverage must not
         # claim the same version.
-        "executor_version": "1.3",
+        "executor_version": "1.5",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
@@ -1110,6 +1197,9 @@ async def _execute_one_erasure(
         "interview_evidence_redacted": interview_evidence_redacted,
         "interview_scorecards_redacted": interview_scorecards_redacted,
         "interviewer_notes_deleted": interviewer_notes_deleted,
+        "stage_exceptions_redacted": stage_exceptions_redacted,
+        "interview_sessions_cancelled": interview_sessions_cancelled,
+        "interview_loops_redacted": interview_loops_redacted,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
         # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,
@@ -1154,6 +1244,9 @@ async def _execute_one_erasure(
             "interview_evidence_redacted": interview_evidence_redacted,
             "interview_scorecards_redacted": interview_scorecards_redacted,
             "interviewer_notes_deleted": interviewer_notes_deleted,
+            "stage_exceptions_redacted": stage_exceptions_redacted,
+            "interview_sessions_cancelled": interview_sessions_cancelled,
+            "interview_loops_redacted": interview_loops_redacted,
         },
         ip_address=None,
         user_agent=None,

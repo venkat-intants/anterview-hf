@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,12 +27,13 @@ from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.interview_link import hash_interview_token, mint_interview_token
 from app.mailer import enqueue_email
-from app.models import Applicant, InterviewInvite, Job, Scorecard
+from app.models import Applicant, AuditLog, InterviewInvite, Job, Scorecard
 from app.notifications_util import create_notification
 from app.reminders import rearm_interview_reminders
 from app.requisitions import ApplicationChoice, choose_application
 from app.routers.hr_applicants import _get_owned
 from app.utils.ownership import get_owned
+from app.utils.request_ip import extract_client_ip, extract_user_agent
 
 log = structlog.get_logger(__name__)
 
@@ -431,7 +432,9 @@ SELECT 1 FROM application_progress
 
 
 @router.post("/interviews", status_code=status.HTTP_201_CREATED, response_model=InviteResult)
-async def create_invite(body: InviteCreateIn, ctx: HrCtxDep, db: DbSessionDep) -> InviteResult:
+async def create_invite(
+    body: InviteCreateIn, request: Request, ctx: HrCtxDep, db: DbSessionDep
+) -> InviteResult:
     hr_uid, company_id = ctx
     applicant = await _get_owned(db, company_id, body.applicant_id)
 
@@ -523,6 +526,12 @@ async def create_invite(body: InviteCreateIn, ctx: HrCtxDep, db: DbSessionDep) -
         scheduled_at=invite.scheduled_at, language=body.language, company_id=company_id,
         invite_id=invite.id,
     )
+    _audit_invite(db, request, actor=hr_uid, action="interview_invite.created",
+                  invite_id=invite.id,
+                  details={"company_id": str(company_id), "applicant_id": str(applicant.id),
+                           "scheduled_at": invite.scheduled_at.isoformat()
+                           if invite.scheduled_at else None,
+                           "expires_at": invite.expires_at.isoformat()})
     await db.commit()
     log.info("hr.interview.invited", invite_id=str(invite.id), company_id=str(company_id))
     return InviteResult(
@@ -535,6 +544,20 @@ async def create_invite(body: InviteCreateIn, ctx: HrCtxDep, db: DbSessionDep) -
         scheduled_at=invite.scheduled_at.isoformat() if invite.scheduled_at else None,
         status=invite.status,
     )
+
+
+
+def _audit_invite(
+    db: AsyncSession, request: Request, *, actor: uuid.UUID, action: str,
+    invite_id: uuid.UUID, details: dict[str, Any],
+) -> None:
+    """PH4-A2 #25: scheduling changes to an AI interview are audited too — the
+    human-interview loops are, and a candidate's schedule is one record."""
+    db.add(AuditLog(
+        actor_id=actor, actor_type="user", action=action, resource_type="interview_invite",
+        resource_id=invite_id, details=details, ip_address=extract_client_ip(request),
+        user_agent=extract_user_agent(request), event_ts=datetime.now(tz=UTC),
+    ))
 
 
 class InviteRescheduleIn(BaseModel):
@@ -550,22 +573,29 @@ class InviteRescheduleIn(BaseModel):
 
 @router.patch("/interviews/{invite_id}", response_model=InviteResult)
 async def reschedule_invite(
-    invite_id: uuid.UUID, body: InviteRescheduleIn, ctx: HrCtxDep, db: DbSessionDep
+    invite_id: uuid.UUID, body: InviteRescheduleIn, request: Request, ctx: HrCtxDep,
+    db: DbSessionDep,
 ) -> InviteResult:
     """Change an invite's scheduled_at (only while still invited/consumed, not
     completed/expired/revoked). Re-emails the candidate the new time. The magic
     link is NOT re-minted, so the response carries no raw token."""
-    _hr_uid, company_id = ctx
+    hr_uid, company_id = ctx
     inv = await _get_owned_invite(db, company_id, invite_id)
     if inv.status not in ("invited", "consumed"):
         raise HTTPException(
             status_code=409, detail="Only an active invite can be rescheduled."
         )
+    previous = inv.scheduled_at
     if inv.scheduled_at != body.scheduled_at:
         # The reminders already sent were for the old slot; the new one needs
         # its own 24h and 1h nudges.
         await rearm_interview_reminders(db, inv.id)
     inv.scheduled_at = body.scheduled_at
+    _audit_invite(db, request, actor=hr_uid, action="interview_invite.rescheduled",
+                  invite_id=inv.id,
+                  details={"company_id": str(company_id),
+                           "from": previous.isoformat() if previous else None,
+                           "to": body.scheduled_at.isoformat() if body.scheduled_at else None})
     inv.updated_at = datetime.now(tz=UTC)
 
     applicant = await db.scalar(select(Applicant).where(Applicant.id == inv.applicant_id))
@@ -687,9 +717,14 @@ async def get_invite(invite_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep) -> I
 
 
 @router.post("/interviews/{invite_id}/revoke", response_model=InviteOut)
-async def revoke_invite(invite_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep) -> InviteOut:
-    _hr_uid, company_id = ctx
+async def revoke_invite(
+    invite_id: uuid.UUID, request: Request, ctx: HrCtxDep, db: DbSessionDep
+) -> InviteOut:
+    hr_uid, company_id = ctx
     inv = await _get_owned_invite(db, company_id, invite_id)
+    _audit_invite(db, request, actor=hr_uid, action="interview_invite.revoked",
+                  invite_id=inv.id,
+                  details={"company_id": str(company_id), "previous_status": inv.status})
     # Kills the link + future redeems immediately. Cannot claw back an already-issued
     # in-flight guest JWT (no jti denylist) — mitigated by the short TTL + single-use.
     inv.status = "revoked"

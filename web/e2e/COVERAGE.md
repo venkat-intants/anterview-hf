@@ -36,6 +36,7 @@ What is in the browser suite today (`E`):
 - `same-person-two-openings.spec.ts` — one applicant, two applications, and a move on one leaving the other alone.
 - `opening-dashboard.spec.ts` — an opening with a real held candidate in it.
 - `coding-round.spec.ts` — a candidate writes Python, it is executed on the sandbox against hidden tests, and the result advances them. Skips with instructions when no code runner is up.
+- `interview-scheduling.spec.ts` (PH4-A2, PH4-O5) — the interviewer publishes availability; HR builds a loop the candidate books themselves, and a fixed time outside that availability is refused with the override offered, not taken; the candidate is emailed, sees only times inside the window, books one, and then has no control that moves or cancels it; the interviewer sees the booking; HR's panel shows the load.
 - **The main journeys**, each one run end to end against the local stack:
   - `journey-hire.spec.ts` — a candidate applies from the public page, is scored, is shortlisted by a person, sits the exam from the emailed link, passes, and is hired with a reason. Hiring without a reason is refused.
   - `journey-held.spec.ts` — the same candidate fails instead. They are held, never rejected; the queue says why; a person can let them continue; and the rejection, when it comes, is a person’s with a reason on the ledger.

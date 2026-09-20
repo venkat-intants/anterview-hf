@@ -49,7 +49,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import settings
-from app.mailer import enqueue_email
+from app.mailer import candidate_language, enqueue_email
 from app.notifications_util import create_notification
 from app.scheduling import record_loop_pass
 
@@ -101,6 +101,9 @@ class SweepResult:
     # Scored workflow interviews recorded as their round's result (advanced,
     # held for a person, or queued for the final decision).
     workflow_results: int = 0
+    # PH4-O1: stage owners told an application in their stage ran past its SLA.
+    sla_overdue: int = 0
+    session_reminders: int = 0
     # "stage: ErrorType: message" for each stage that failed this sweep. The
     # sweep carries on past them; this is how the failure is still recorded.
     failed_stages: list[str] = field(default_factory=list)
@@ -114,6 +117,8 @@ class SweepResult:
             + self.completions
             + self.results_emails
             + self.workflow_results
+            + self.sla_overdue
+            + self.session_reminders
         )
 
 
@@ -733,6 +738,102 @@ async def _workflow_results(db: AsyncSession, result: SweepResult) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 7. Stage SLAs (PH4-O1) — tell the owner once when a stage runs overdue
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# PH4-A2. Scheduled human interviews coming up — the candidate and each
+# interviewer. Only loops that were sent (the candidate has the itinerary) and
+# are still on. The key carries the start time, so a session HR moves is
+# reminded about its NEW time; the old keys simply never match again.
+# ---------------------------------------------------------------------------
+_SESSION_DUE_SQL = """
+SELECT s.id, s.title, s.starts_at, s.duration_minutes, s.location, s.company_id,
+       l.candidate_timezone, a.id AS applicant_id, a.full_name, a.email, a.user_id,
+       COALESCE(jr.title, e.target_job_title) AS job_title
+  FROM interview_sessions s
+  JOIN interview_loops l ON l.id = s.loop_id AND l.sent_at IS NOT NULL
+                        AND l.status = 'scheduled'
+  JOIN enrolments e ON e.id = s.enrolment_id AND e.deleted_at IS NULL
+                   AND e.status NOT IN ('hired', 'rejected')
+  JOIN applicants a ON a.id = s.applicant_id AND a.deleted_at IS NULL
+  LEFT JOIN job_requisitions jr ON jr.id = e.requisition_id
+  LEFT JOIN workflows wf ON wf.id = e.workflow_id
+ WHERE s.status = 'scheduled'
+   AND COALESCE(wf.reminders_enabled, true)
+   AND s.starts_at > :near
+   AND s.starts_at <= :horizon
+ ORDER BY s.starts_at
+ LIMIT :lim
+"""
+
+
+def session_reminder_key(session_id: uuid.UUID | str, window: str, starts_at: datetime) -> str:
+    return f"session_reminder:{session_id}:{window}:{starts_at.astimezone(UTC):%Y%m%dT%H%M}"
+
+
+async def _session_reminders(db: AsyncSession, result: SweepResult) -> None:
+    from app.schedule_core import local_label  # noqa: PLC0415 — keep the sweep import light
+
+    now = datetime.now(tz=UTC)
+    link = f"{settings.app_base_url.rstrip('/')}/applications"
+    for label, near, far in _WINDOWS:
+        rows = (
+            await db.execute(
+                text(_SESSION_DUE_SQL),
+                {"near": now + near, "horizon": now + far, "lim": _BATCH},
+            )
+        ).mappings().all()
+        for r in rows:
+            key = session_reminder_key(r["id"], label, r["starts_at"])
+            when = local_label(r["starts_at"], r["candidate_timezone"])
+            item = {"title": r["title"], "when": when, "duration_minutes": r["duration_minutes"],
+                    "location": r["location"]}
+            sent = await enqueue_email(
+                db, to=r["email"], template="interview_session_reminder",
+                lang=await candidate_language(db, r["applicant_id"]),
+                ctx={"name": r["full_name"], "job_title": r["job_title"], "window": label,
+                     "session": item, "cta_url": link},
+                to_user_id=r["user_id"], company_id=r["company_id"],
+                related_kind="interview_session", related_id=r["id"], dedupe_key=key,
+            )
+            await create_notification(
+                db, user_id=r["user_id"], kind="interview_schedule",
+                title="Your interview is coming up", body=f"{r['title']} · {when}",
+                link="/applications", dedupe_key=key,
+            )
+            panel = (
+                await db.execute(
+                    text("SELECT interviewer_user_id FROM interview_session_interviewers"
+                         " WHERE session_id = :s AND live"),
+                    {"s": r["id"]},
+                )
+            ).all()
+            for (uid,) in panel:
+                await create_notification(
+                    db, user_id=uid, kind="interview_scheduled",
+                    title=f"Interview {'within the hour' if label == '1h' else 'tomorrow'}: "
+                          f"{r['full_name'] or 'candidate'}",
+                    body=f"{r['title']} · {when}", link="/interviewer",
+                    dedupe_key=f"iv_{key}:{uid}",
+                )
+            if sent is not None:
+                result.session_reminders += 1
+    await db.commit()
+
+
+async def _stage_sla(db: AsyncSession, result: SweepResult) -> None:
+    """Notify stage owners about applications past their stage's SLA.
+
+    Notifies, never moves: an overdue stage is a prompt for a person, not a
+    trigger for anything (D-05). Deduplicated per application and stage entry.
+    """
+    from app.stage_sla import notify_overdue_stages  # noqa: PLC0415
+
+    result.sla_overdue += await notify_overdue_stages(db)
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
 async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
@@ -752,6 +853,10 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
             ("completed", _interview_completed),
             # After "completed", never before: see _workflow_results.
             ("workflow", _workflow_results),
+            # Last: after this sweep's own moves, so a candidate it just
+            # advanced is not reported overdue at the stage they left.
+            ("stage_sla", _stage_sla),
+            ("sessions", _session_reminders),
         ):
             try:
                 await fn(db, result)

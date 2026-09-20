@@ -69,6 +69,9 @@ from app.routers.hr_requisitions import router as hr_requisitions_router
 from app.routers.hr_rounds import router as hr_rounds_router
 from app.routers.hr_scorecards import router as hr_scorecards_router
 from app.routers.hr_workflows import router as hr_workflows_router
+from app.routers.interview_scheduling import hr_router as scheduling_hr_router
+from app.routers.interview_scheduling import interviewer_router as scheduling_iv_router
+from app.routers.interview_scheduling import me_router as scheduling_me_router
 from app.routers.interview_take import router as interview_take_router
 from app.routers.interviewer import router as interviewer_router
 from app.routers.jd import router as jd_router
@@ -81,6 +84,8 @@ from app.routers.resume import _delete_from_s3
 from app.routers.resume import router as resume_router
 from app.routers.sso_google import router as sso_google_router
 from app.routers.sso_naipunyam import router as sso_naipunyam_router
+from app.routers.workflow_ops import admin_router as workflow_review_admin_router
+from app.routers.workflow_ops import hr_router as workflow_ops_hr_router
 from app.s3_upload import StorageNotConfiguredError
 from app.scheduling import run_scheduled_job, start_catchup, stop_catchup
 
@@ -463,6 +468,12 @@ app.include_router(interviewer_router)
 # PH4-O4: decision reason categories (HR reads, super admin configures).
 app.include_router(decision_reasons_hr_router)
 app.include_router(decision_reasons_admin_router)
+app.include_router(workflow_ops_hr_router)
+# PH4 Wave 3 — interview scheduling, loops, panel workload and calibration.
+app.include_router(scheduling_hr_router)
+app.include_router(scheduling_iv_router)
+app.include_router(scheduling_me_router)
+app.include_router(workflow_review_admin_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)
 app.include_router(careers_router)

@@ -61,6 +61,12 @@ vi.mock('../api/notifications', () => ({
   listNotifications: (...a: unknown[]) => listNotifications(...a) as unknown,
 }));
 
+// PH4-O1 — the "Stages at risk" widget.
+const getSlaBoard = vi.fn();
+vi.mock('../api/stageSla', () => ({
+  getSlaBoard: (...a: unknown[]) => getSlaBoard(...a) as unknown,
+}));
+
 const { mockUseAuth } = vi.hoisted(() => ({ mockUseAuth: vi.fn() }));
 vi.mock('../context/AuthContext', () => ({ useAuth: () => mockUseAuth() as unknown }));
 
@@ -94,6 +100,7 @@ beforeEach(() => {
   });
   getHrAnalytics.mockResolvedValue(ANALYTICS);
   listNotifications.mockResolvedValue(NOTIFS);
+  getSlaBoard.mockResolvedValue([]);
 });
 
 describe('HRConsole — greeting', () => {
@@ -168,6 +175,39 @@ describe('HRConsole — activity feed', () => {
     // funnel or the quick actions.
     expect(await screen.findByRole('heading', { name: /welcome/i })).toBeInTheDocument();
     expect(await screen.findByText(/no recent activity yet/i)).toBeInTheDocument();
+  });
+});
+
+describe('HRConsole — stages at risk (PH4-O1)', () => {
+  it('says nothing is overdue when the board is clear', async () => {
+    renderConsole();
+    await screen.findByRole('heading', { name: /welcome/i });
+
+    expect(await screen.findByText('Nothing overdue or due soon.')).toBeInTheDocument();
+  });
+
+  it('offers each at-risk stage as a way into that candidate, and the full list', async () => {
+    getSlaBoard.mockResolvedValue([
+      {
+        enrolment_id: 'en-1', applicant_id: 'ap-1', requisition_id: 'req-9',
+        opening_title: 'Backend Engineer',
+        full_name: 'Chetan Iyer', stage: 'Fundamentals', owner_user_id: 'u-hr-1',
+        owner_name: 'Priya HR', open_exceptions: 0, state: 'overdue', sla_hours: 24,
+        entered_at: '2026-09-01T00:00:00.000Z', due_at: '2026-09-02T00:00:00.000Z',
+        hours_remaining: -10,
+      },
+    ]);
+    renderConsole();
+    await screen.findByRole('heading', { name: /welcome/i });
+
+    expect(
+      await screen.findByRole('button', { name: /Chetan Iyer — Fundamentals.*overdue/s }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View the full list' })).toHaveAttribute(
+      'href',
+      '/hr/stages-at-risk',
+    );
+    expect(getSlaBoard).toHaveBeenCalledWith({ state: ['overdue', 'due_soon'] });
   });
 });
 

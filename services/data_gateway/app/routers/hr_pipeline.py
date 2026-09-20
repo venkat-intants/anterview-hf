@@ -555,6 +555,14 @@ async def decide_applicant(
             reason_code=chosen.code,
             reason_label=chosen.label,
         )
+        # PH4-A2: the same as a decision from the decision queue — interviews
+        # not yet held are no longer needed, so the panel's calendar is freed.
+        from app.interview_scheduling import close_for_decision  # noqa: PLC0415 — import cycle
+
+        await close_for_decision(
+            db, company_id=company_id, enrolment_id=app_.enrolment_id, actor=hr_uid,
+            decision=body.decision,
+        )
 
     db.add(
         AuditLog(

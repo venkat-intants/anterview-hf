@@ -27,7 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import get_db_session
-from app.dependencies import get_hr_company
+from app.dependencies import get_hr_company, get_super_admin_company
 from app.main import app
 
 URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:55432/intants_smoke"
@@ -53,6 +53,9 @@ async def main() -> None:
     cid, uid, rid, other_rid = (uuid.uuid4() for _ in range(4))
     exam_id, er = uuid.uuid4(), uuid.uuid4()
     other_cid, other_uid = uuid.uuid4(), uuid.uuid4()
+    # PH4-O6: a workflow's own author cannot approve it, so approving needs a
+    # second account in the same company.
+    sa_uid = uuid.uuid4()
 
     async with factory() as db:
         for c_id, name, slug in [(cid, "Acme", "acme"), (other_cid, "Globex", "globex")]:
@@ -66,6 +69,16 @@ async def main() -> None:
                 " created_at,updated_at)"
                 " VALUES (:i,:e,'HR','x',:c,'en',true,false,false,:t,:t)"),
                 {"i": u_id, "e": em, "c": c_id, "t": now})
+        await db.execute(text(
+            "INSERT INTO users (id,email,full_name,password_hash,company_id,"
+            " preferred_language,is_active,notify_login_email,must_change_password,"
+            " created_at,updated_at)"
+            " VALUES (:i,'superadmin@acme.t','Company Super Admin','x',:c,'en',true,false,"
+            " false,:t,:t)"), {"i": sa_uid, "c": cid, "t": now})
+        await db.execute(text(
+            "INSERT INTO user_roles (user_id, role_id, assigned_at)"
+            " SELECT :u, id, :t FROM roles WHERE name = 'super_admin'"),
+            {"u": sa_uid, "t": now})
         await db.execute(text(
             "INSERT INTO job_requisitions (id,company_id,title,level,created_at,updated_at)"
             " VALUES (:i,:c,'Python Developer','mid',:t,:t)"), {"i": rid, "c": cid, "t": now})
@@ -98,6 +111,7 @@ async def main() -> None:
 
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_hr_company] = lambda: (uid, cid)
+    app.dependency_overrides[get_super_admin_company] = lambda: (sa_uid, cid)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         # ── the criteria picker ──────────────────────────────────────────
@@ -212,7 +226,26 @@ async def main() -> None:
         await c.patch(f"/hr/workflows/{wf_id}", json={"auto_advance_rounds": True})
 
         # ── publish and immutability ─────────────────────────────────────
-        print("\n--- publish ---")
+        # PH4-O6: a version must be reviewed and approved by the company's
+        # super admin before it can be published.
+        print("\n--- review and publish ---")
+        r = await c.post(f"/hr/workflows/{wf_id}/publish")
+        check("publishing before it is even submitted for review -> 409",
+              r.status_code == 409, str(r.status_code))
+
+        r = await c.post(f"/hr/workflows/{wf_id}/submit-review", json={})
+        check("POST submit-review -> 200", r.status_code == 200, r.text[:300])
+        check("review status is in_review", r.json()["review"]["review_status"] == "in_review",
+              str(r.json()))
+
+        r = await c.post(f"/hr/workflows/{wf_id}/publish")
+        check("publishing while waiting for review -> 409", r.status_code == 409,
+              str(r.status_code))
+
+        r = await c.post(f"/admin/workflow-reviews/{wf_id}/approve", json={})
+        check("POST approve (super admin) -> 200", r.status_code == 200, r.text[:300])
+        check("review status is approved", r.json()["review_status"] == "approved", str(r.json()))
+
         r = await c.post(f"/hr/workflows/{wf_id}/publish")
         check("POST publish -> 200", r.status_code == 200, r.text[:300])
         check("status is published", r.json()["status"] == "published")
@@ -249,17 +282,26 @@ async def main() -> None:
               {v["version"]: v["status"] for v in vers} == {1: "published", 2: "draft"},
               str({v["version"]: v["status"] for v in vers}))
 
-        # ── an invalid draft cannot be published ─────────────────────────
+        # ── an invalid draft cannot even be submitted for review ─────────
+        # PH4-O6: publish() checks review_status before validation, so an
+        # unapproved draft is refused at 409 regardless of its content — the
+        # validation report now surfaces at submit-review, which HR reaches
+        # first in the real flow.
         print("\n--- publish is gated ---")
         r = await c.post(f"/hr/workflows/{v2['id']}/rounds",
                          json={"title": "No questions", "kind": "mcq", "pass_threshold": 50})
         check("a round with no questions can be added to a draft", r.status_code == 201)
         r = await c.post(f"/hr/workflows/{v2['id']}/publish")
-        check("publishing it -> 422 with the reasons", r.status_code == 422, str(r.status_code))
+        check("publishing an unsubmitted draft -> 409, before content is even checked",
+              r.status_code == 409, str(r.status_code))
+        r = await c.post(f"/hr/workflows/{v2['id']}/submit-review", json={})
+        check("submitting it for review -> 422 with the reasons", r.status_code == 422,
+              str(r.status_code))
         detail = r.json()["detail"]
         check("the errors say what to fix",
-              any("needs questions" in e for e in detail["errors"]), str(detail["errors"]))
-        check("v1 is still the published one after a failed publish",
+              any("needs questions" in e for e in detail["validation"]["errors"]),
+              str(detail))
+        check("v1 is still the published one after a failed submission",
               (await c.get(f"/hr/workflows/{wf_id}")).json()["status"] == "published")
 
         # ── tenant isolation ─────────────────────────────────────────────

@@ -19,11 +19,13 @@
 // them; they were simply empty by construction for anyone who is not a candidate.
 
 import {
+  AlertTriangle,
   BarChart2,
   Briefcase,
   Building2,
   ClipboardCheck,
   ClipboardList,
+  Gauge,
   Kanban,
   FileCheck2,
   FileSearch,
@@ -80,6 +82,10 @@ const HR_NAV: NavItem[] = [
   { to: '/hr/applicants', label: 'Applicants', icon: <FileSearch className={ICON} aria-hidden="true" /> },
   { to: '/hr/exams', label: 'Exams', icon: <ClipboardList className={ICON} aria-hidden="true" /> },
   { to: '/hr/interviews', label: 'Interviews', icon: <Video className={ICON} aria-hidden="true" /> },
+  // PH4 Wave 3 (O5) — panel workload, availability and calibration.
+  { to: '/hr/panel', label: 'Interview panel', icon: <Gauge className={ICON} aria-hidden="true" /> },
+  // PH4-O1 — every application against its stage SLA.
+  { to: '/hr/stages-at-risk', label: 'Stages at risk', icon: <AlertTriangle className={ICON} aria-hidden="true" /> },
   { to: '/hr/pipeline', label: 'Pipeline', icon: <TrendingUp className={ICON} aria-hidden="true" /> },
   { to: '/hr/analytics', label: 'Analytics', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
   // D4-1: an HR manager can ALSO be assigned as an interviewer. Kept as an item
@@ -114,6 +120,9 @@ const SUPER_NAV: NavItem[] = [
   // of it.
   { to: '/superadmin', label: 'Team', icon: <Users className={ICON} aria-hidden="true" /> },
   { to: '/superadmin/decision-reasons', label: 'Decision reasons', icon: <ListChecks className={ICON} aria-hidden="true" /> },
+  // PH4-O6: workflow versions waiting for this super admin's approval before
+  // HR can publish them (D4-2).
+  { to: '/superadmin/workflow-reviews', label: 'Workflow reviews', icon: <FileCheck2 className={ICON} aria-hidden="true" /> },
 ];
 
 // interviewer — company staff who see ONLY interviews assigned to them (D4-1).

@@ -18,6 +18,8 @@ import {
   type InterviewerAssignment,
   type ScorecardState,
 } from '@/api/interviewer';
+import UpcomingInterviews from '@/components/interviewer/UpcomingInterviews';
+import MyAvailability from '@/components/interviewer/MyAvailability';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -116,6 +118,9 @@ export default function InterviewerConsole(): JSX.Element {
           ))}
         </Stagger>
       )}
+
+      <UpcomingInterviews />
+      <MyAvailability />
     </div>
   );
 }

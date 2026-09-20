@@ -26,6 +26,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from tests.integration.seed_helpers import approve_for_publish
 
 pytestmark = pytest.mark.integration
 
@@ -64,6 +65,11 @@ async def _build(db: AsyncSession) -> Fixture:
         " weight, created_at) VALUES"
         " (gen_random_uuid(), :c, :rd, 'problem_solving', 'Problem Solving', 0.5, now()),"
         " (gen_random_uuid(), :c, :rd, 'communication', 'Communication', 0.5, now())",
+    ):
+        await db.execute(text(sql), p)
+    # PH4-O6: a version goes live only once a second person has approved it.
+    await approve_for_publish(db, workflow_id=f.wf, company_id=f.company)
+    for sql in (
         "UPDATE workflows SET status = 'published', published_at = now() WHERE id = :w",
         "INSERT INTO applicants (id, company_id, full_name, target_job_title)"
         " VALUES (:a, :c, 'Candidate', 'Engineer')",

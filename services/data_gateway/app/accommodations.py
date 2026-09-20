@@ -213,32 +213,57 @@ def _audit(
     ))
 
 
+_BASIS_NOTE: dict[str, str] = {
+    "candidate_request": (
+        "the candidate asked HR for this adjustment; the candidate did not consent "
+        "through the product"
+    ),
+    "hr_initiated": (
+        "HR recorded this adjustment on its own initiative, without a candidate "
+        "request; the candidate did not consent through the product"
+    ),
+}
+
+
 async def _record_basis(
     db: AsyncSession, *, accommodation_id: uuid.UUID, applicant_id: uuid.UUID,
-    company_id: uuid.UUID, actor: uuid.UUID, now: datetime, action: str,
+    company_id: uuid.UUID, actor: uuid.UUID, now: datetime, action: str, basis: str,
+    granted: bool,
 ) -> None:
-    """Ledger entry: the lawful basis for recording this adjustment. Against
-    the applicant's own account when one is linked (they are the data
-    subject); otherwise against the HR manager who recorded it, on the
-    ``record_hr_collected_basis`` precedent (``bulk_ingest.py``). Evidence is
-    ids and the basis only — never the parameters or notes."""
-    user_id = await db.scalar(
-        text("SELECT user_id FROM applicants WHERE id = :a AND company_id = :c"),
-        {"a": applicant_id, "c": company_id},
-    )
-    ledger_user = user_id or actor
+    """Ledger entry: the basis for this accommodation state change.
+
+    Booked against the RECORDER (``actor``), never the applicant --
+    ``bulk_ingest.record_hr_collected_basis`` precedent. There is no candidate
+    route on this feature (module docstring): whatever ``basis`` says, the
+    candidate never consented through the product for ``record``, ``revise``
+    or ``revoke``. Booking a ``granted=true`` row against the applicant's own
+    linked ``user_id`` -- the previous behaviour -- asserted a consent that was
+    never given, and the platform-owner DPDP audit feed reads any
+    ``granted=true`` row as exactly that (``kind='consent_granted',
+    actor='candidate'``).
+
+    ``granted`` is True for ``record``/``revise`` (this state change is what
+    establishes the basis for holding the new PII, same as
+    ``record_hr_collected_basis``) and False for ``revoke`` (nothing new is
+    granted here -- an existing adjustment is being ended, and a
+    ``granted=true`` row for that would be dishonest in the other direction).
+
+    Evidence carries ids, the accommodation's own ``basis`` field and a
+    sentence naming what it means -- never the parameters or either note.
+    """
     await db.execute(
         text(
             "INSERT INTO dpdp_consent_ledger"
             " (id, user_id, consent_type, granted, granted_at, purpose, evidence)"
-            " VALUES (:id, :uid, :ct, true, :n, :p, CAST(:ev AS jsonb))"
+            " VALUES (:id, :uid, :ct, :granted, :n, :p, CAST(:ev AS jsonb))"
         ),
         {
-            "id": uuid.uuid4(), "uid": ledger_user, "ct": CONSENT_TYPE, "n": now,
+            "id": uuid.uuid4(), "uid": actor, "ct": CONSENT_TYPE, "granted": granted, "n": now,
             "p": f"accommodation:{accommodation_id}:{action}",
             "ev": json.dumps({
                 "accommodation_id": str(accommodation_id), "applicant_id": str(applicant_id),
-                "company_id": str(company_id), "action": action,
+                "company_id": str(company_id), "action": action, "basis": basis,
+                "basis_note": _BASIS_NOTE.get(basis, _BASIS_NOTE["hr_initiated"]),
                 "recorded_by_user_id": str(actor), "recorded_at_iso": now.isoformat(),
             }),
         },
@@ -402,6 +427,8 @@ def _validate_scope_and_params(
         raise AccommodationError(422, "basis must be candidate_request or hr_initiated.")
     if round_id is not None and enrolment_id is None:
         raise AccommodationError(422, "A round-scoped adjustment needs an application.")
+    if exam_round_id is not None and enrolment_id is None:
+        raise AccommodationError(422, "An exam-round-scoped adjustment needs an application.")
     if round_id is not None and exam_round_id is not None:
         raise AccommodationError(422, "Choose a workflow round or an exam round, not both.")
     if not (extra_time_percent or deadline_extension_days or relax_auto_submit or other_adjustment):
@@ -496,7 +523,7 @@ async def record(
     )
     await _record_basis(
         db, accommodation_id=aid, applicant_id=applicant_id, company_id=company_id, actor=actor,
-        now=now, action="recorded",
+        now=now, action="recorded", basis=basis, granted=True,
     )
     log.info("accommodation.recorded", accommodation_id=str(aid), company_id=str(company_id))
     return aid
@@ -560,7 +587,7 @@ async def revise(
     )
     await _record_basis(
         db, accommodation_id=new_id, applicant_id=old.applicant_id, company_id=company_id,
-        actor=actor, now=now, action="revised",
+        actor=actor, now=now, action="revised", basis=old.basis, granted=True,
     )
     log.info("accommodation.revised", accommodation_id=str(accommodation_id), new_id=str(new_id))
     return new_id
@@ -596,7 +623,7 @@ async def revoke(
     )
     await _record_basis(
         db, accommodation_id=accommodation_id, applicant_id=old.applicant_id, company_id=company_id,
-        actor=actor, now=now, action="revoked",
+        actor=actor, now=now, action="revoked", basis=old.basis, granted=False,
     )
     log.info("accommodation.revoked", accommodation_id=str(accommodation_id))
 
@@ -693,10 +720,10 @@ async def effective_preview(
 # Retention
 # ---------------------------------------------------------------------------
 _PURGEABLE_SQL = """
-SELECT ca.id, ca.company_id FROM candidate_accommodations ca
+SELECT ca.id, ca.company_id, ca.status FROM candidate_accommodations ca
  WHERE ca.redacted_at IS NULL
    AND (ca.other_adjustment IS NOT NULL OR ca.interviewer_note IS NOT NULL
-        OR ca.internal_note IS NOT NULL)
+        OR ca.internal_note IS NOT NULL OR ca.revoke_reason IS NOT NULL)
    AND (
      (ca.effective_until IS NOT NULL AND ca.effective_until < :cutoff)
      OR (
@@ -728,7 +755,20 @@ async def purge(db: AsyncSession, *, retention_days: int, dry_run: bool) -> int:
     applicant's applications at the company is decided, or 180 days after
     ``effective_until`` — whichever a row qualifies under. The parameters
     (numbers) are kept, the scorecard precedent. Honours ``RETENTION_DRY_RUN``.
-    Caller commits."""
+
+    F8: a row still ``active`` at redaction time is ended first -- ``pick``
+    and ``_active_rows`` already stop seeing it the moment ``redacted_at`` is
+    set, so leaving ``status`` at ``active`` would have HR's list keep
+    reporting an adjustment that can no longer take effect. The guard trigger
+    forbids changing ``status`` in the same statement as ``redacted_at``, so
+    this is two statements, status first: that order leaves the row
+    ``status='revoked'`` before it is also frozen by ``redacted_at``, which is
+    exactly the shape a later erasure (BLOCKING 1's ``redacted_at IS NULL``
+    guard) is written to skip outright. A row HR already revoked keeps
+    whatever status it has -- there is nothing to end.
+
+    Caller commits.
+    """
     cutoff = datetime.now(tz=UTC) - timedelta(days=retention_days)
     rows = (
         await db.execute(text(_PURGEABLE_SQL), {"cutoff": cutoff, "lim": PURGE_BATCH})
@@ -737,12 +777,31 @@ async def purge(db: AsyncSession, *, retention_days: int, dry_run: bool) -> int:
         log.info("accommodation.retention", candidates=len(rows), dry_run=dry_run)
         return len(rows)
     now = datetime.now(tz=UTC)
-    for aid, cid in rows:
+    for aid, cid, status in rows:
+        if status == "active":
+            # revoked_by_user_id stays NULL: the platform ended this, not a
+            # person, and that column is a real FK to users. Naming a sentinel
+            # id needs a fabricated account and fails without one -- the smoke
+            # caught exactly that.
+            await db.execute(
+                text(
+                    "UPDATE candidate_accommodations SET status = 'revoked',"
+                    " revoked_at = :n, updated_at = :n"
+                    " WHERE id = :id AND status = 'active'"
+                ),
+                {"n": now, "id": aid},
+            )
+            _event(
+                db, company_id=cid, accommodation_id=aid, action="revoked", actor=None,
+                details={"reason": "retention"},
+            )
         await db.execute(
             text(
                 "UPDATE candidate_accommodations SET"
                 " other_adjustment = CASE WHEN other_adjustment IS NULL THEN NULL"
                 "                         ELSE '[redacted]' END,"
+                " revoke_reason = CASE WHEN revoke_reason IS NULL THEN NULL"
+                "                      ELSE '[redacted]' END,"
                 " interviewer_note = NULL, internal_note = NULL, redacted_at = :n,"
                 " updated_at = :n WHERE id = :id"
             ),

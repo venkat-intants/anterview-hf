@@ -12,16 +12,21 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 import pathlib
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app import accommodations as svc
 from app.email_templates import render
+from app.interviewer_scorecards import RequestMeta
 
 APP = pathlib.Path(__file__).resolve().parents[2] / "app"
+_META = RequestMeta(ip_address=None, user_agent=None)
 
 
 def _row(
@@ -415,3 +420,136 @@ def test_accommodation_email_differs_from_english_in_other_languages() -> None:
 def test_accommodation_email_with_no_adjustment_fields_still_renders() -> None:
     mail = render("accommodation_recorded", "en", {"name": "Asha"})
     assert mail.subject and mail.html
+
+
+# ===========================================================================
+# F6 — an exam-round scope needs an application, exactly like a workflow round
+# ===========================================================================
+def test_an_exam_round_scoped_row_needs_an_application() -> None:
+    with pytest.raises(svc.AccommodationError) as exc:
+        svc._validate_scope_and_params(  # noqa: SLF001 — the function under test
+            enrolment_id=None, round_id=None, exam_round_id=uuid.uuid4(), basis="hr_initiated",
+            extra_time_percent=50, deadline_extension_days=None, relax_auto_submit=False,
+            other_adjustment=None,
+        )
+    assert exc.value.status_code == 422
+
+
+def test_an_exam_round_scoped_row_is_fine_with_an_application() -> None:
+    svc._validate_scope_and_params(  # noqa: SLF001 — the function under test
+        enrolment_id=uuid.uuid4(), round_id=None, exam_round_id=uuid.uuid4(), basis="hr_initiated",
+        extra_time_percent=50, deadline_extension_days=None, relax_auto_submit=False,
+        other_adjustment=None,
+    )
+
+
+# ===========================================================================
+# BLOCKING 3 — the consent ledger never asserts consent the candidate never
+# gave
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_record_basis_books_against_the_recorder_never_the_applicant() -> None:
+    """The previous version looked up the applicant's own linked user_id and
+    booked ``granted=true`` against IT whenever one existed — asserting
+    candidate consent that was never given for an ``hr_initiated`` basis. It
+    is booked against the recorder now, unconditionally, following
+    ``bulk_ingest.record_hr_collected_basis``."""
+    db = AsyncMock()
+    accommodation_id, applicant_id, company_id, actor = (
+        uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4(),
+    )
+    now = datetime.now(tz=UTC)
+    await svc._record_basis(  # noqa: SLF001 — the function under test
+        db, accommodation_id=accommodation_id, applicant_id=applicant_id, company_id=company_id,
+        actor=actor, now=now, action="recorded", basis="hr_initiated", granted=True,
+    )
+    assert db.execute.call_count == 1
+    params = db.execute.call_args.args[1]
+    assert params["uid"] == actor
+    assert params["uid"] != applicant_id
+    assert params["granted"] is True
+    evidence = json.loads(params["ev"])
+    assert evidence["basis"] == "hr_initiated"
+    assert "did not consent through the product" in evidence["basis_note"]
+    assert evidence["recorded_by_user_id"] == str(actor)
+
+
+@pytest.mark.asyncio
+async def test_record_basis_does_not_assert_consent_for_a_revoke() -> None:
+    """A revoke ends an adjustment; nothing is newly granted, so this must
+    never write ``granted=true`` — the previous version always did, for every
+    one of record/revise/revoke."""
+    db = AsyncMock()
+    now = datetime.now(tz=UTC)
+    await svc._record_basis(  # noqa: SLF001 — the function under test
+        db, accommodation_id=uuid.uuid4(), applicant_id=uuid.uuid4(), company_id=uuid.uuid4(),
+        actor=uuid.uuid4(), now=now, action="revoked", basis="candidate_request", granted=False,
+    )
+    params = db.execute.call_args.args[1]
+    assert params["granted"] is False
+    evidence = json.loads(params["ev"])
+    assert evidence["basis"] == "candidate_request"
+
+
+@pytest.mark.asyncio
+async def test_revoke_wires_the_old_rows_basis_and_never_grants(monkeypatch: Any) -> None:
+    """Call-site check: ``revoke`` must pass the accommodation's OWN basis
+    (from the row being revoked, since revoke takes no basis argument) and
+    ``granted=False`` through to the ledger."""
+    db = AsyncMock()
+    company_id, actor, accommodation_id, applicant_id = (
+        uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4(),
+    )
+    old = svc._ActiveRow(  # noqa: SLF001 — the dataclass under test
+        id=accommodation_id, applicant_id=applicant_id, enrolment_id=None, round_id=None,
+        exam_round_id=None, basis="candidate_request", requested_on=None,
+    )
+
+    async def _fake_get_active(
+        _db: object, _company_id: uuid.UUID, _accommodation_id: uuid.UUID,
+    ) -> svc._ActiveRow:  # noqa: SLF001
+        return old
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_record_basis(*_args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(svc, "_get_active", _fake_get_active)
+    monkeypatch.setattr(svc, "_record_basis", _fake_record_basis)
+
+    await svc.revoke(
+        db, company_id=company_id, actor=actor, accommodation_id=accommodation_id,
+        reason="no longer needed", meta=_META,
+    )
+    assert captured["actor"] == actor
+    assert captured["basis"] == "candidate_request"
+    assert captured["granted"] is False
+    assert captured["applicant_id"] == applicant_id
+
+
+@pytest.mark.asyncio
+async def test_record_wires_the_callers_basis_and_always_grants(monkeypatch: Any) -> None:
+    """Call-site check: ``record`` passes through whatever ``basis`` the
+    caller gave (it is the one recording it) and always ``granted=True`` — a
+    new basis for holding this PII is what this state change establishes."""
+    db = AsyncMock()
+    company_id, applicant_id, actor = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    captured: dict[str, Any] = {}
+
+    async def _fake_record_basis(*_args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(svc, "_record_basis", _fake_record_basis)
+
+    await svc.record(
+        db, company_id=company_id, applicant_id=applicant_id, actor=actor,
+        enrolment_id=None, round_id=None, exam_round_id=None, extra_time_percent=50,
+        deadline_extension_days=None, relax_auto_submit=False, other_adjustment=None,
+        interviewer_note=None, internal_note=None, basis="candidate_request",
+        requested_on=None, effective_from=None, effective_until=None, meta=_META,
+    )
+    assert captured["actor"] == actor
+    assert captured["basis"] == "candidate_request"
+    assert captured["granted"] is True
+    assert captured["applicant_id"] == applicant_id

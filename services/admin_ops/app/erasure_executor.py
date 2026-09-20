@@ -1094,29 +1094,47 @@ async def _execute_one_erasure(
     # Step 5g: Candidate accommodations (PH4-D2)
     # ------------------------------------------------------------------
     # Any accommodation still active is REVOKED — an erased candidate is not
-    # going to sit another assessment under it. Both notes go: interviewer_note
+    # going to sit another assessment under it. The notes go: interviewer_note
     # (the one thing an assigned interviewer ever saw) is set to NULL, and
-    # other_adjustment / internal_note follow the CASE-WHEN-NULL pattern used
-    # everywhere else in this executor, so a column that was already empty
-    # stays empty rather than gaining a spurious '[redacted]'. The PARAMETERS
-    # (extra_time_percent, deadline_extension_days, relax_auto_submit) are kept
-    # — they are numbers, on the interviewer_scorecard_scores precedent, and
-    # they describe the company's assessment record (what was granted),
-    # not the candidate.
+    # other_adjustment / internal_note / revoke_reason follow the
+    # CASE-WHEN-NULL pattern used everywhere else in this executor, so a
+    # column that was already empty stays empty rather than gaining a
+    # spurious '[redacted]'. revoke_reason is included because it is free text
+    # HR typed when withdrawing an adjustment — in practice the likeliest
+    # place a health or disability explanation gets written, and it is no more
+    # exempt from erasure than the other three notes just because it lives
+    # next to the revoke columns. The PARAMETERS (extra_time_percent,
+    # deadline_extension_days, relax_auto_submit) are kept — they are numbers,
+    # on the interviewer_scorecard_scores precedent, and they describe the
+    # company's assessment record (what was granted), not the candidate.
     #
     # MUST run before step 6: the join reaches these rows through
     # applicants.user_id, which step 6 sets to NULL.
     # revoked_by_user_id / revoked_at are NOT NULL on this transition
     # (candidate_accommodations_guard) — attributed to the erasure's own
     # system actor, the audit_log precedent (step 10).
+    #
+    # BLOCKING 1: the revoke statement must not touch a row retention already
+    # redacted (accommodations.purge sets redacted_at but, before F8, left
+    # status='active' — an ordinary reachable row here). The guard trigger
+    # raises on ANY update to a redacted row, and this statement had no
+    # redacted_at guard, so the transaction rolled back and the erasure
+    # request retried forever, never reaching step 6 onward. The redaction
+    # statement below already carried the guard; this one did not.
+    # revoked_by_user_id stays NULL, which is how the guard trigger records
+    # "ended by the platform, not a person". system_actor_id cannot go here:
+    # that column is a real FK to users and the id this task runs under
+    # (00000000-...-0001) has no account, so naming it fails outright. It is
+    # still the actor on the audit row at the end of this function, where the
+    # column has no such constraint.
     accommodations_revoked_result = await db.execute(
         text(
             "UPDATE candidate_accommodations SET status = 'revoked',"
-            " revoked_by_user_id = :sys, revoked_at = now(), updated_at = now()"
-            " WHERE status = 'active' AND applicant_id IN ("
+            " revoked_at = now(), updated_at = now()"
+            " WHERE status = 'active' AND redacted_at IS NULL AND applicant_id IN ("
             "   SELECT id FROM applicants WHERE user_id = :uid)"
         ),
-        {"uid": uid_str, "sys": system_actor_id},
+        {"uid": uid_str},
     )
     accommodations_revoked: int = getattr(accommodations_revoked_result, "rowcount", 0) or 0
     accommodations_redacted_result = await db.execute(
@@ -1124,6 +1142,8 @@ async def _execute_one_erasure(
             "UPDATE candidate_accommodations SET"
             " other_adjustment = CASE WHEN other_adjustment IS NULL THEN NULL"
             "                         ELSE '[redacted]' END,"
+            " revoke_reason = CASE WHEN revoke_reason IS NULL THEN NULL"
+            "                      ELSE '[redacted]' END,"
             " interviewer_note = NULL, internal_note = NULL, redacted_at = now(),"
             " updated_at = now()"
             " WHERE redacted_at IS NULL AND applicant_id IN ("

@@ -158,10 +158,39 @@ REVOKE = (
     "UPDATE candidate_accommodations SET status = 'revoked', revoked_by_user_id = :u,"
     " revoked_at = now() WHERE id = :i"
 )
+REVOKE_WITH_REASON = (
+    "UPDATE candidate_accommodations SET status = 'revoked', revoked_by_user_id = :u,"
+    " revoked_at = now(), revoke_reason = :reason WHERE id = :i"
+)
 REDACT = (
     "UPDATE candidate_accommodations SET interviewer_note = NULL, internal_note = NULL,"
     " other_adjustment = '[redacted]', redacted_at = now() WHERE id = :i"
 )
+
+# Mirrors services/admin_ops/app/erasure_executor.py step 5g exactly (BLOCKING
+# 1 / BLOCKING 2), scoped to one applicant rather than a user_id join so it
+# can be driven directly against the fixture built here.
+_ERASURE_STEP_5G_REVOKE = (
+    "UPDATE candidate_accommodations SET status = 'revoked',"
+    " revoked_at = now(), updated_at = now()"
+    " WHERE status = 'active' AND redacted_at IS NULL AND applicant_id = :a"
+)
+_ERASURE_STEP_5G_REDACT = (
+    "UPDATE candidate_accommodations SET"
+    " other_adjustment = CASE WHEN other_adjustment IS NULL THEN NULL ELSE '[redacted]' END,"
+    " revoke_reason = CASE WHEN revoke_reason IS NULL THEN NULL ELSE '[redacted]' END,"
+    " interviewer_note = NULL, internal_note = NULL, redacted_at = now(), updated_at = now()"
+    " WHERE redacted_at IS NULL AND applicant_id = :a"
+)
+
+# The fixed sentinel both accommodations.purge (F8) and erasure_executor's
+# step 5g use for revoked_by_user_id when a SYSTEM action, not a person, ends
+# an accommodation. Neither names a person in revoked_by_user_id: that column
+# is a real FK to users and the id those tasks run under has no account, so a
+# sentinel needs a fabricated row. An earlier version of this file seeded one,
+# which is exactly why the suite stayed green while the smoke -- driving the
+# real app -- failed on the foreign key. NULL is the record that the platform
+# ended it, not a person.
 
 
 # ===========================================================================
@@ -262,6 +291,59 @@ async def test_a_redaction_is_allowed_once(db: AsyncSession) -> None:
     await _allowed(db, REDACT, {"i": aid})
 
 
+# ===========================================================================
+# BLOCKING 2: revoke_reason is one of the redactable notes
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_a_redaction_may_null_the_revoke_reason(db: AsyncSession) -> None:
+    """Before this fix, the trigger's redaction branch forbade ANY change to
+    revoke_reason in the same statement as redacted_at -- and once
+    redacted_at is set the whole row is frozen, so the value became
+    permanently unreachable. revoke_reason is free text HR types when
+    withdrawing an adjustment: in practice the likeliest place a health or
+    disability explanation gets written."""
+    f = await _build(db)
+    aid = await _new_active(db, f)
+    await db.execute(text(REVOKE_WITH_REASON), {"i": aid, "u": f.hr2, "reason": "no longer needed"})
+    await _allowed(
+        db,
+        "UPDATE candidate_accommodations SET revoke_reason = '[redacted]', redacted_at = now()"
+        " WHERE id = :i",
+        {"i": aid},
+    )
+    row = await db.scalar(
+        text("SELECT revoke_reason FROM candidate_accommodations WHERE id = :i"), {"i": aid},
+    )
+    assert row == "[redacted]", row
+
+
+@pytest.mark.asyncio
+async def test_a_redacted_revoke_reason_must_be_null_or_the_fixed_marker(db: AsyncSession) -> None:
+    f = await _build(db)
+    aid = await _new_active(db, f)
+    await db.execute(text(REVOKE_WITH_REASON), {"i": aid, "u": f.hr2, "reason": "no longer needed"})
+    await _refused(
+        db,
+        "UPDATE candidate_accommodations SET revoke_reason = 'still readable', redacted_at = now()"
+        " WHERE id = :i",
+        {"i": aid}, "becomes NULL or [redacted]",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_redaction_leaving_revoke_reason_alone_is_still_allowed(db: AsyncSession) -> None:
+    """A row with no revoke_reason (never revoked, or revoked with none given)
+    redacts exactly as before -- the CASE-WHEN-NULL rule the other three notes
+    already follow."""
+    f = await _build(db)
+    aid = await _new_active(db, f, other_adjustment="quiet room")
+    await _allowed(db, REDACT, {"i": aid})
+    row = await db.scalar(
+        text("SELECT revoke_reason FROM candidate_accommodations WHERE id = :i"), {"i": aid},
+    )
+    assert row is None
+
+
 @pytest.mark.asyncio
 async def test_once_redacted_the_row_is_frozen(db: AsyncSession) -> None:
     f = await _build(db)
@@ -277,13 +359,35 @@ async def test_once_redacted_the_row_is_frozen(db: AsyncSession) -> None:
 # Revoke: active -> revoked, who and when, never back
 # ===========================================================================
 @pytest.mark.asyncio
-async def test_revoking_needs_who_and_when(db: AsyncSession) -> None:
+async def test_revoking_needs_when(db: AsyncSession) -> None:
     f = await _build(db)
     aid = await _new_active(db, f)
     await _refused(
         db, "UPDATE candidate_accommodations SET status = 'revoked' WHERE id = :i",
-        {"i": aid}, "needs who and when",
+        {"i": aid}, "needs when",
     )
+
+
+@pytest.mark.asyncio
+async def test_the_platform_revokes_without_naming_a_person(db: AsyncSession) -> None:
+    """A NULL ``revoked_by_user_id`` is how retention and erasure record that
+    the platform ended an adjustment rather than a person. The column is a
+    real FK to users, so a sentinel id would need a fabricated account -- and
+    failed outright when one path tried it. A person revoking is still named,
+    but by the service, not by this trigger."""
+    f = await _build(db)
+    aid = await _new_active(db, f)
+    await _allowed(
+        db,
+        "UPDATE candidate_accommodations SET status = 'revoked', revoked_at = now()"
+        " WHERE id = :i",
+        {"i": aid},
+    )
+    revoked_by = await db.scalar(
+        text("SELECT revoked_by_user_id FROM candidate_accommodations WHERE id = :i"),
+        {"i": aid},
+    )
+    assert revoked_by is None
 
 
 @pytest.mark.asyncio
@@ -393,6 +497,19 @@ async def test_a_round_scoped_row_needs_an_enrolment(db: AsyncSession) -> None:
     f = await _build(db)
     sql, params = _acc_insert(f, uuid.uuid4(), round_id=f.round, enrolment_id=None)
     await _check_violated(db, sql, params, "ck_candidate_accommodations_round_needs_enrolment")
+
+
+@pytest.mark.asyncio
+async def test_an_exam_round_scoped_row_needs_an_enrolment(db: AsyncSession) -> None:
+    """F6: mirrors the round_id rule exactly. Without it, "extra time on exam
+    round X" recorded with no application named would apply to every
+    application of the candidate that reuses exam round X, not just the one
+    HR meant."""
+    f = await _build(db)
+    sql, params = _acc_insert(f, uuid.uuid4(), exam_round_id=f.exam_round, enrolment_id=None)
+    await _check_violated(
+        db, sql, params, "ck_candidate_accommodations_exam_round_needs_enrolment"
+    )
 
 
 @pytest.mark.asyncio
@@ -568,3 +685,127 @@ async def test_accommodation_events_cannot_be_deleted(db: AsyncSession) -> None:
         {"i": eid, "c": f.company, "a": aid, "u": f.hr},
     )
     await _refused(db, "DELETE FROM accommodation_events WHERE id = :i", {"i": eid}, "append-only")
+
+
+# ===========================================================================
+# BLOCKING 1: a retention-redacted accommodation does not block erasure
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_a_retention_redacted_row_does_not_block_erasure(db: AsyncSession) -> None:
+    """Before this fix, erasure's own revoke statement (mirrored here as
+    _ERASURE_STEP_5G_REVOKE) had no redacted_at guard, while status stayed
+    'active' on a retention-redacted row (F8 fixes that separately, but this
+    proves the erasure side holds even against a row F8 never touched -- e.g.
+    one redacted before the F8 fix shipped). The guard trigger raises on ANY
+    update to an already-redacted row, so the erasure transaction rolled back
+    and the request retried forever, never reaching the applicant
+    anonymisation that follows step 5g. Both statements here must be no-ops,
+    not exceptions."""
+    f = await _build(db)
+    aid = await _new_active(db, f, other_adjustment="Quiet room")
+    await db.execute(text(REDACT), {"i": aid})  # simulates a redacted, still-'active' row
+    # Must not raise -- this is the exact regression BLOCKING 1 fixes.
+    await db.execute(text(_ERASURE_STEP_5G_REVOKE), {"a": f.applicant})
+    await db.execute(text(_ERASURE_STEP_5G_REDACT), {"a": f.applicant})
+    await db.flush()
+    row = (
+        await db.execute(
+            text("SELECT status, redacted_at FROM candidate_accommodations WHERE id = :i"),
+            {"i": aid},
+        )
+    ).first()
+    assert row is not None
+    assert row[0] == "active", "the guard already skipped this row; the statement must not revoke it"
+    assert row[1] is not None
+
+
+# ===========================================================================
+# F8: retention leaves the row's reported state matching its effect
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_retention_marks_an_active_row_revoked_before_redacting_it(db: AsyncSession) -> None:
+    """Before this fix, accommodations.purge set redacted_at but left
+    status='active' -- pick()/_active_rows already stop seeing the row
+    (redacted_at IS NOT NULL), but HR's list kept reporting status='active',
+    so the console said an adjustment applied when it no longer could."""
+    from app import accommodations as accommodations_svc
+
+    f = await _build(db)
+    aid = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO candidate_accommodations (id, company_id, applicant_id,"
+            " other_adjustment, basis, effective_from, effective_until, status,"
+            " recorded_by_user_id, created_at, updated_at)"
+            " VALUES (:i, :c, :a, 'Quiet room', 'hr_initiated', now() - interval '400 days',"
+            " now() - interval '200 days', 'active', :rec, now(), now())"
+        ),
+        {"i": aid, "c": f.company, "a": f.applicant, "rec": f.hr},
+    )
+    purged = await accommodations_svc.purge(db, retention_days=180, dry_run=False)
+    assert purged >= 1
+    row = (
+        await db.execute(
+            text(
+                "SELECT status, revoked_by_user_id, revoke_reason, redacted_at, other_adjustment"
+                "  FROM candidate_accommodations WHERE id = :i"
+            ),
+            {"i": aid},
+        )
+    ).first()
+    assert row is not None
+    status, revoked_by, revoke_reason, redacted_at, other_adjustment = row
+    assert status == "revoked", status
+    assert revoked_by is None  # the platform ended it, not a person
+    assert revoke_reason is None
+    assert redacted_at is not None
+    assert other_adjustment == "[redacted]"
+
+
+@pytest.mark.asyncio
+async def test_retention_redacts_the_revoke_reason_of_an_already_revoked_row(
+    db: AsyncSession,
+) -> None:
+    """BLOCKING 2, via the retention path: a row HR already revoked (with a
+    real reason) is not re-flipped -- it is only redacted, and the reason
+    goes with the other notes."""
+    from app import accommodations as accommodations_svc
+
+    f = await _build(db)
+    aid = uuid.uuid4()
+    # A row arrives active — the guard trigger refuses any other starting
+    # state — so a revoked row is reached the way HR reaches one: by revoking.
+    await db.execute(
+        text(
+            "INSERT INTO candidate_accommodations (id, company_id, applicant_id,"
+            " extra_time_percent, basis, effective_from, effective_until, status,"
+            " recorded_by_user_id, created_at, updated_at)"
+            " VALUES (:i, :c, :a, 50, 'hr_initiated', now() - interval '400 days',"
+            " now() - interval '200 days', 'active', :rec, now(), now())"
+        ),
+        {"i": aid, "c": f.company, "a": f.applicant, "rec": f.hr},
+    )
+    await db.execute(
+        text(
+            "UPDATE candidate_accommodations SET status = 'revoked',"
+            " revoked_by_user_id = :rec2, revoked_at = now() - interval '199 days',"
+            " revoke_reason = 'a sensitive explanation', updated_at = now()"
+            " WHERE id = :i"
+        ),
+        {"i": aid, "rec2": f.hr2},
+    )
+    purged = await accommodations_svc.purge(db, retention_days=180, dry_run=False)
+    assert purged >= 1
+    row = (
+        await db.execute(
+            text(
+                "SELECT status, revoke_reason, redacted_at FROM candidate_accommodations"
+                " WHERE id = :i"
+            ),
+            {"i": aid},
+        )
+    ).first()
+    assert row is not None
+    assert row[0] == "revoked"          # unchanged -- already revoked, no re-flip needed
+    assert row[1] == "[redacted]", row  # BLOCKING 2: the revoke reason is not left readable
+    assert row[2] is not None

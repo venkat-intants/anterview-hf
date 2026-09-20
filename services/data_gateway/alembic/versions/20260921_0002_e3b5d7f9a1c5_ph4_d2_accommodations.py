@@ -121,12 +121,18 @@ BEGIN
     END IF;
 
     IF NEW.redacted_at IS NOT NULL THEN
-        -- A redaction: the two notes go to NULL or '[redacted]', together with
-        -- redacted_at, and nothing else in this same statement.
+        -- A redaction: the notes -- other_adjustment, interviewer_note,
+        -- internal_note AND revoke_reason (it is prose HR typed about the
+        -- candidate exactly like the other three, and is not exempt just
+        -- because it lives next to the revoke columns) -- go to NULL or
+        -- '[redacted]', together with redacted_at, and nothing else in this
+        -- same statement. A status change, if any, is a separate statement
+        -- that must already have landed before this one runs (see the
+        -- accommodations retention purge and the erasure executor's step 5g,
+        -- both of which redact only after any status flip they need).
         IF NEW.status IS DISTINCT FROM OLD.status
            OR NEW.revoked_by_user_id IS DISTINCT FROM OLD.revoked_by_user_id
            OR NEW.revoked_at IS DISTINCT FROM OLD.revoked_at
-           OR NEW.revoke_reason IS DISTINCT FROM OLD.revoke_reason
            OR NEW.supersedes_id IS DISTINCT FROM OLD.supersedes_id
            OR NEW.superseded_at IS DISTINCT FROM OLD.superseded_at
            OR NEW.superseded_by_id IS DISTINCT FROM OLD.superseded_by_id THEN
@@ -139,6 +145,9 @@ BEGIN
             RAISE EXCEPTION 'a redacted note becomes NULL or [redacted]';
         END IF;
         IF NEW.internal_note IS NOT NULL AND NEW.internal_note <> '[redacted]' THEN
+            RAISE EXCEPTION 'a redacted note becomes NULL or [redacted]';
+        END IF;
+        IF NEW.revoke_reason IS NOT NULL AND NEW.revoke_reason <> '[redacted]' THEN
             RAISE EXCEPTION 'a redacted note becomes NULL or [redacted]';
         END IF;
         RETURN NEW;
@@ -156,8 +165,17 @@ BEGIN
             RAISE EXCEPTION 'candidate accommodation % cannot go from % to %',
                 OLD.id, OLD.status, NEW.status;
         END IF;
-        IF NEW.revoked_by_user_id IS NULL OR NEW.revoked_at IS NULL THEN
-            RAISE EXCEPTION 'a revoked candidate accommodation needs who and when';
+        -- WHEN is always required. WHO may be NULL, and a NULL means something
+        -- specific: the platform ended it rather than a person -- retention
+        -- redacting a still-active row, or an erasure. Those callers have no
+        -- user to name, and revoked_by_user_id is a real FK to users, so a
+        -- sentinel id would need a fabricated account or fail outright. It did
+        -- fail: the smoke caught an FK violation on 00000000-...-0001 from
+        -- exactly that shortcut. A person revoking is still named, because
+        -- `revoke` passes the acting HR manager -- but that is the service's
+        -- job to supply, not something this trigger can tell apart.
+        IF NEW.revoked_at IS NULL THEN
+            RAISE EXCEPTION 'a revoked candidate accommodation needs when';
         END IF;
     ELSIF NEW.revoked_by_user_id IS DISTINCT FROM OLD.revoked_by_user_id
        OR NEW.revoked_at IS DISTINCT FROM OLD.revoked_at
@@ -318,6 +336,16 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "round_id IS NULL OR enrolment_id IS NOT NULL",
             name="ck_candidate_accommodations_round_needs_enrolment",
+        ),
+        sa.CheckConstraint(
+            # F6: mirrors the round_id rule exactly. Without it, "extra time on
+            # exam round X" recorded with no application named would follow the
+            # candidate into every application that reuses exam round X, not
+            # just the one HR meant -- the same bug 3bc9e39 fixed for pick()
+            # when an enrolment WAS given but did not match, just reached one
+            # layer earlier (no enrolment given at all).
+            "exam_round_id IS NULL OR enrolment_id IS NOT NULL",
+            name="ck_candidate_accommodations_exam_round_needs_enrolment",
         ),
         sa.CheckConstraint(
             "NOT (round_id IS NOT NULL AND exam_round_id IS NOT NULL)",

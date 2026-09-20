@@ -259,6 +259,12 @@ async def test_start_after_submit_is_allowed_when_exam_permits_retake() -> None:
     db.add = MagicMock()
     # no in-progress attempt, one submitted attempt, then max(attempt_no) = 1.
     db.scalar = AsyncMock(side_effect=[None, 1, 1])
+    # PH4-D2: start_attempt also resolves an accommodation scope (no workflow
+    # round, no rows) — a plain SELECT, never db.scalar.
+    exec_result = MagicMock()
+    exec_result.first.return_value = None
+    exec_result.mappings.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=exec_result)
 
     out = await start_attempt(_take_ctx(allow_retake=True), db)
     assert out.attempt_id

@@ -689,6 +689,14 @@ async def get_for_interviewer(
     scores = await _scores_for(db, scorecard_id)
     decided = card["enrolment_status"] in TERMINAL_STATUSES or bool(card.get("candidate_erased"))
     live = card["superseded_at"] is None
+    # PH4-D2: the ONE thing an accommodation ever tells an interviewer. Local
+    # import — accommodations.py already imports this module (RequestMeta),
+    # and a module-level import here would be circular.
+    from app.accommodations import interviewer_note_for  # noqa: PLC0415
+
+    adjustments_note = await interviewer_note_for(
+        db, company_id=company_id, enrolment_id=card["enrolment_id"], round_id=card["round_id"],
+    )
     return {
         "scorecard_id": str(card["id"]),
         "state": derived_state(card["status"], card["due_at"]),
@@ -704,6 +712,7 @@ async def get_for_interviewer(
         "superseded": not live,
         "can_edit": card["status"] in EDITABLE and live and not decided,
         "can_correct": card["status"] == "submitted" and live and not decided,
+        "adjustments_note": adjustments_note,
         "criteria": [
             {
                 "competency_id": c["competency_id"],

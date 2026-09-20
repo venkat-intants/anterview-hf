@@ -286,6 +286,8 @@ async def test_execute_one_erasure_happy_path() -> None:
     assert artifacts["scorecards_deleted"] == 3
     assert artifacts["sessions_deleted"] == 3
     assert artifacts["applicants_anonymised"] == 3
+    assert artifacts["accommodations_revoked"] == 3
+    assert artifacts["accommodations_redacted"] == 3
     assert "completed_at" in artifacts
     assert "scorecard_s3_keys" in artifacts
 
@@ -552,11 +554,12 @@ async def test_execute_one_erasure_stamps_completed() -> None:
     # since step 5f (human interview evidence, PH4-A1/A5), 1.4 since 5f took in
     # stage exceptions (PH4-O1), 1.5 since it took in interview loops and
     # sessions (PH4-A2), 1.6 since it took in offers and preboarding documents
-    # (PH4-A3/A4). The version
+    # (PH4-A3/A4), 1.7 since step 5g took in candidate accommodations (PH4-D2).
+    # The version
     # is asserted rather than ignored because the artifacts blob is the auditor's
     # record of WHAT a completion covered, so widening coverage without moving
     # the version leaves two incomparable records claiming the same one.
-    assert artifacts["executor_version"] == "1.6"
+    assert artifacts["executor_version"] == "1.7"
 
 
 # ---------------------------------------------------------------------------

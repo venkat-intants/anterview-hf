@@ -232,6 +232,14 @@ ERASED_TABLES: dict[str, str] = {
                          "notes about the candidate: prose, never shown to HR, never "
                          "part of the submitted evidence (PH4-A5), so there is no "
                          "structural residue worth keeping.",
+    "candidate_accommodations": "PH4-D2 — a recorded adjustment (extra time, a deadline "
+                                "extension, relaxed auto-submit, or a free-text 'other' "
+                                "adjustment) and two notes about the candidate "
+                                "(interviewer-facing and HR-only). Kept as the company's "
+                                "record that an adjustment applied — the numbers, on the "
+                                "scorecard precedent — but in step 5g every active row is "
+                                "REVOKED and both notes are REDACTED to NULL or "
+                                "'[redacted]'.",
 }
 
 #: Tables deliberately left standing, each with the reason it is defensible.
@@ -441,6 +449,12 @@ EXCLUDED_TABLES: dict[str, str] = {
                              "configuration; no candidate column.",
     "document_events": "PH4-A4 — append-only history of a candidate's documents: action, "
                        "actor, time and facts. No file content, name or reason text.",
+    "accommodation_events": "PH4-D2 — append-only history of an accommodation: action, "
+                            "actor and facts (scope, which fields are present, the "
+                            "target). Never the notes or the parameter values, so there "
+                            "is nothing here that identifies or describes the candidate "
+                            "beyond the accommodation row it names, which is redacted "
+                            "in step 5g.",
 }
 
 
@@ -1077,6 +1091,56 @@ async def _execute_one_erasure(
     )
 
     # ------------------------------------------------------------------
+    # Step 5g: Candidate accommodations (PH4-D2)
+    # ------------------------------------------------------------------
+    # Any accommodation still active is REVOKED — an erased candidate is not
+    # going to sit another assessment under it. Both notes go: interviewer_note
+    # (the one thing an assigned interviewer ever saw) is set to NULL, and
+    # other_adjustment / internal_note follow the CASE-WHEN-NULL pattern used
+    # everywhere else in this executor, so a column that was already empty
+    # stays empty rather than gaining a spurious '[redacted]'. The PARAMETERS
+    # (extra_time_percent, deadline_extension_days, relax_auto_submit) are kept
+    # — they are numbers, on the interviewer_scorecard_scores precedent, and
+    # they describe the company's assessment record (what was granted),
+    # not the candidate.
+    #
+    # MUST run before step 6: the join reaches these rows through
+    # applicants.user_id, which step 6 sets to NULL.
+    # revoked_by_user_id / revoked_at are NOT NULL on this transition
+    # (candidate_accommodations_guard) — attributed to the erasure's own
+    # system actor, the audit_log precedent (step 10).
+    accommodations_revoked_result = await db.execute(
+        text(
+            "UPDATE candidate_accommodations SET status = 'revoked',"
+            " revoked_by_user_id = :sys, revoked_at = now(), updated_at = now()"
+            " WHERE status = 'active' AND applicant_id IN ("
+            "   SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str, "sys": system_actor_id},
+    )
+    accommodations_revoked: int = getattr(accommodations_revoked_result, "rowcount", 0) or 0
+    accommodations_redacted_result = await db.execute(
+        text(
+            "UPDATE candidate_accommodations SET"
+            " other_adjustment = CASE WHEN other_adjustment IS NULL THEN NULL"
+            "                         ELSE '[redacted]' END,"
+            " interviewer_note = NULL, internal_note = NULL, redacted_at = now(),"
+            " updated_at = now()"
+            " WHERE redacted_at IS NULL AND applicant_id IN ("
+            "   SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    accommodations_redacted: int = getattr(accommodations_redacted_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.accommodations_redacted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        revoked=accommodations_revoked,
+        redacted=accommodations_redacted,
+    )
+
+    # ------------------------------------------------------------------
     # Step 6: Anonymise applicant rows linked to this user_id
     # ------------------------------------------------------------------
     # embedding is NOT decoration on this list. applicants.embedding is a
@@ -1299,12 +1363,13 @@ async def _execute_one_erasure(
         # Bumped 1.1 → 1.2 when step 5b (notifications) joined the erasure, and
         # 1.2 → 1.3 when step 5f (human interview evidence, PH4-A1/A5) did, and
         # 1.3 → 1.4 when 5f took in stage exceptions (PH4-O1), 1.4 → 1.5
-        # when it took in interview loops and sessions (PH4-A2), and 1.5 → 1.6
-        # when it took in offers and preboarding documents (PH4-A3/A4): the
-        # artifacts record is what an auditor reads to know WHAT a given
+        # when it took in interview loops and sessions (PH4-A2), 1.5 → 1.6
+        # when it took in offers and preboarding documents (PH4-A3/A4), and
+        # 1.6 → 1.7 when step 5g took in candidate accommodations (PH4-D2):
+        # the artifacts record is what an auditor reads to know WHAT a given
         # completion covered, so two records with different coverage must not
         # claim the same version.
-        "executor_version": "1.6",
+        "executor_version": "1.7",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
@@ -1321,6 +1386,8 @@ async def _execute_one_erasure(
         "interview_loops_redacted": interview_loops_redacted,
         "offers_redacted": offers_redacted,
         "preboarding_documents_redacted": preboarding_documents_redacted,
+        "accommodations_revoked": accommodations_revoked,
+        "accommodations_redacted": accommodations_redacted,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
         # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,
@@ -1370,6 +1437,8 @@ async def _execute_one_erasure(
             "interview_loops_redacted": interview_loops_redacted,
             "offers_redacted": offers_redacted,
             "preboarding_documents_redacted": preboarding_documents_redacted,
+            "accommodations_revoked": accommodations_revoked,
+            "accommodations_redacted": accommodations_redacted,
         },
         ip_address=None,
         user_agent=None,

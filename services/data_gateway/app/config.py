@@ -228,6 +228,13 @@ class Settings(BaseSettings):
     # an acceptance, or after preboarding completes (the HRMS holds them then).
     preboarding_document_retention_days: int = 90
 
+    # --- PH4-D2: candidate accommodations ---
+    # Notes (other_adjustment / interviewer_note / internal_note) are redacted
+    # this many days after every one of the applicant's applications at the
+    # company is decided, or after effective_until, whichever a row qualifies
+    # under. The numeric parameters are kept — the scorecard precedent.
+    accommodation_retention_days: int = 180
+
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""

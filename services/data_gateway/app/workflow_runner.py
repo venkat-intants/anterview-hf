@@ -53,6 +53,7 @@ from shared.intelligence import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import accommodations
 from app.application_source import SOURCES, UNTRACKED, normalise_detail
 from app.config import settings
 from app.exam_link import hash_exam_token, mint_exam_token
@@ -435,15 +436,23 @@ async def _assign_round(
             ),
             {"n": now, "r": round_["exam_round_id"], "a": enrolment["applicant_id"]},
         )
+        # PH4-D2: the link's deadline gains any recorded extension — the exam's
+        # own time limit is scaled separately, at /exam/start.
+        adj_row = await accommodations.effective_for(
+            db, company_id=company_id, applicant_id=enrolment["applicant_id"],
+            enrolment_id=enrolment["id"], workflow_round_id=round_["id"],
+            exam_round_id=round_["exam_round_id"],
+        )
+        extra_days = adj_row.deadline_extension_days if adj_row else None
         raw = mint_exam_token()
         asn_id = uuid.uuid4()
-        expires = now + timedelta(days=int(round_["deadline_days"] or 7))
+        expires = now + timedelta(days=int(round_["deadline_days"] or 7) + (extra_days or 0))
         await db.execute(
             text(
                 "INSERT INTO exam_assignments (id, company_id, exam_id, round_id, applicant_id,"
-                " enrolment_id, created_by_user_id, token_hash, expires_at, status,"
-                " created_at, updated_at)"
-                " VALUES (:i,:c,:e,:r,:a,:en,:cb,:th,:x,'invited',:n,:n)"
+                " enrolment_id, created_by_user_id, token_hash, expires_at, accommodation_id,"
+                " status, created_at, updated_at)"
+                " VALUES (:i,:c,:e,:r,:a,:en,:cb,:th,:x,:acc,'invited',:n,:n)"
             ),
             # Attributed to the workflow's owner, as the interview branch below
             # already does. Left NULL, the assignment had no owner, and a lapse
@@ -451,8 +460,14 @@ async def _assign_round(
             {"i": asn_id, "c": company_id, "e": exam_id, "r": round_["exam_round_id"],
              "a": enrolment["applicant_id"], "en": enrolment["id"],
              "cb": workflow.get("created_by_user_id"),
-             "th": hash_exam_token(raw, settings.exam_link_secret), "x": expires, "n": now},
+             "th": hash_exam_token(raw, settings.exam_link_secret), "x": expires,
+             "acc": adj_row.id if adj_row else None, "n": now},
         )
+        if adj_row is not None:
+            await accommodations.record_applied(
+                db, company_id=company_id, accommodation_id=adj_row.id,
+                target_kind="exam_assignment", target_id=asn_id,
+            )
         base = settings.exam_link_base_url.rstrip("/")
         await enqueue_email(
             db,
@@ -496,6 +511,9 @@ async def _assign_round(
             notify_user_id=workflow.get("created_by_user_id"),
             # Created linked to this application, and grounded in its role.
             enrolment_id=enrolment["id"],
+            # PH4-D2: this workflow round is the accommodation scope, when one
+            # was recorded against it specifically.
+            workflow_round_id=round_["id"],
         )
         log.info("runner.assigned.interview", enrolment_id=str(enrolment["id"]),
                  created=invite is not None)

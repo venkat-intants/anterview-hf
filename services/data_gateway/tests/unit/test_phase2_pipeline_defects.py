@@ -16,7 +16,7 @@ from __future__ import annotations
 import inspect
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -166,7 +166,14 @@ async def test_the_exam_invite_is_sent_in_the_candidates_language(
     monkeypatch.setattr(wr, "candidate_language", _lang)
     monkeypatch.setattr(wr, "enqueue_email", _enqueue)
 
-    await wr._assign_round(_db(), enrolment=_enrolment(), round_=round_,
+    db = _db()
+    # PH4-D2: _assign_round also looks up an effective accommodation (none
+    # here) before minting the assignment — a plain SELECT, never db.scalar.
+    exec_result = MagicMock()
+    exec_result.mappings.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=exec_result)
+
+    await wr._assign_round(db, enrolment=_enrolment(), round_=round_,
                            workflow={"created_by_user_id": uuid.uuid4()})
 
     assert len(sent) == 1

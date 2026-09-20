@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import exam_locks
+from app import accommodations, exam_locks
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
@@ -1007,7 +1007,7 @@ async def assign_exam(
         raise HTTPException(status_code=422, detail="scheduled_at cannot be in the past.")
 
     ttl_hours = body.ttl_hours or settings.exam_link_ttl_hours
-    expires_at = now + timedelta(hours=ttl_hours)
+    base_expires_at = now + timedelta(hours=ttl_hours)
     base = settings.exam_link_base_url.rstrip("/")
 
     if not body.applicant_ids and not body.enrolment_ids:
@@ -1058,6 +1058,18 @@ async def assign_exam(
             prior.updated_at = now
             await db.flush()
 
+        resolved_enrolment_id = named_enrolment or await enrolment_for_exam_round(
+            db, applicant_id=applicant_id, company_id=company_id, exam_round_id=rnd.id
+        )
+        # PH4-D2: any recorded deadline extension applies to THIS applicant's
+        # link — the exam's own time limit is scaled separately, at /exam/start.
+        adj_row = await accommodations.effective_for(
+            db, company_id=company_id, applicant_id=applicant_id,
+            enrolment_id=resolved_enrolment_id, exam_round_id=rnd.id,
+        )
+        extra_days = adj_row.deadline_extension_days if adj_row else None
+        expires_at = base_expires_at + timedelta(days=extra_days or 0)
+
         raw_token = mint_exam_token()
         asn = ExamAssignment(
             id=uuid.uuid4(),
@@ -1067,19 +1079,23 @@ async def assign_exam(
             applicant_id=applicant_id,
             # B5: which application this exam is for, when that can be known
             # without guessing — so its result shows against that opening.
-            enrolment_id=named_enrolment or await enrolment_for_exam_round(
-                db, applicant_id=applicant_id, company_id=company_id, exam_round_id=rnd.id
-            ),
+            enrolment_id=resolved_enrolment_id,
             created_by_user_id=hr_uid,
             token_hash=hash_exam_token(raw_token, settings.exam_link_secret),
             expires_at=expires_at,
             scheduled_at=body.scheduled_at,
+            accommodation_id=adj_row.id if adj_row else None,
             status="invited",
             created_at=now,
             updated_at=now,
         )
         db.add(asn)
         await db.flush()
+        if adj_row is not None:
+            await accommodations.record_applied(
+                db, company_id=company_id, accommodation_id=adj_row.id,
+                target_kind="exam_assignment", target_id=asn.id,
+            )
         magic_link = f"{base}/exam#{raw_token}"  # raw token returned ONCE
         # Email the candidate their exam link (staged on this transaction →
         # atomic with the assignment, then delivered by the outbox worker). HR

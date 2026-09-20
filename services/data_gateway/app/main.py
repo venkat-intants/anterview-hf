@@ -39,6 +39,7 @@ from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
 from app import reconciliation, reminders, scheduled_publishing
+from app.accommodations import purge as purge_accommodations
 from app.application_drafts import purge_expired as purge_expired_drafts
 from app.config import settings
 from app.database import dispose_engine, get_db_session, get_session_factory, init_engine
@@ -48,6 +49,7 @@ from app.interview_kits import purge_expired_notes
 from app.mailer import purge_old_email_events, start_email_worker, stop_email_worker
 from app.redis_client import close_redis, get_redis, init_redis
 from app.retention import purge_expired_sessions
+from app.routers.accommodations import hr_router as accommodations_hr_router
 from app.routers.admin_hr import router as admin_hr_router
 from app.routers.agent import router as agent_router
 from app.routers.auth import router as auth_router
@@ -232,6 +234,25 @@ async def _run_retention_job() -> None:
     except Exception as exc:  # broad — never let document cleanup kill the scheduler
         log.error(
             "preboarding.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
+    # Same tick: candidate accommodations whose notes have outlived their
+    # purpose (PH4-D2) — every one of the applicant's applications at the
+    # company has been decided, or the adjustment's own window closed, 180
+    # days ago. The parameters (numbers) are kept; only the two notes go.
+    # Honours RETENTION_DRY_RUN like the purges above.
+    try:
+        async with factory() as session:
+            redacted = await purge_accommodations(
+                session, retention_days=settings.accommodation_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("accommodation.retention.done", redacted=redacted,
+                 dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "accommodation.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
         )
 
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft
@@ -485,6 +506,8 @@ app.include_router(hr_rounds_router)
 # PH4-D1: reusable question banks, and the locked-round unlock ("duplicate").
 app.include_router(question_banks_hr_router)
 app.include_router(question_banks_admin_router)
+# PH4-D2: candidate accommodations — HR only, no super-admin/interviewer route.
+app.include_router(accommodations_hr_router)
 app.include_router(exam_take_router)
 app.include_router(hr_interviews_router)
 app.include_router(interview_take_router)

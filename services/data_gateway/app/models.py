@@ -24,7 +24,7 @@ exists; this header is orientation, not an index.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -34,6 +34,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
@@ -577,6 +578,9 @@ class ExamAssignment(Base):
     # enrolments, ON DELETE SET NULL) but not mapped until B5, so rows created
     # through the ORM never set it. NULL = recorded against no application.
     enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # PH4-D2: which accommodation, if any, extended this link's expiry. Nullable —
+    # every existing row is untouched, and most links have none.
+    accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="invited", nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
@@ -643,6 +647,13 @@ class ExamAttempt(Base):
     # no proctoring data. Rolling score maintained by /exam/integrity-event.
     integrity_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     proctoring_summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # PH4-D2: the allowance this attempt started with, frozen by the
+    # exam_attempts_allowance_fixed trigger the moment it is set at /exam/start.
+    # accommodation_id is nullable — most attempts have none — and, once set,
+    # may only ever become NULL (never repoint to a different accommodation).
+    accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    extra_time_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    auto_submit_relaxed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[str] = mapped_column(Text, default="in_progress", nullable=False)
     started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -742,6 +753,8 @@ class InterviewInvite(Base):
     # enrolments, ON DELETE SET NULL) but not mapped until B5, so rows created
     # through the ORM never set it. NULL = recorded against no application.
     enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # PH4-D2: which accommodation, if any, extended this invite's expiry.
+    accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="invited", nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
@@ -1869,6 +1882,162 @@ class BankQuestionEvent(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     bank_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# Candidate accommodations — PH4-D2 (migration e3b5d7f9a1c5)
+# ---------------------------------------------------------------------------
+class CandidateAccommodation(Base):
+    """A recorded adjustment for one applicant: extra time, a deadline
+    extension, relaxed auto-submit, or a free-text "other" adjustment.
+
+    Scoped to the whole applicant (``enrolment_id``, ``round_id`` and
+    ``exam_round_id`` all NULL), one application, one workflow round, or one
+    hand-assigned exam round. ``interviewer_note`` is the only accommodation
+    text an assigned interviewer ever sees; ``internal_note`` is HR-only. A
+    revision is a NEW row (``supersedes_id`` / ``superseded_by_id``), never an
+    edit of the one it replaces — an attempt already taken keeps pointing at
+    what applied when it was taken.
+
+    The database enforces the guarantees this class only shapes: a row arrives
+    active, not superseded, not redacted, with a named recorder; its scope,
+    parameters, basis and dates never change after insert; its two notes
+    change only as part of one redaction; ``active`` only ever becomes
+    ``revoked`` (``candidate_accommodations_guard``, migration ``e3b5d7f9a1c5``).
+    """
+
+    __tablename__ = "candidate_accommodations"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_candidate_accommodations_id_company"),
+        ForeignKeyConstraint(
+            ["applicant_id", "company_id"], ["applicants.id", "applicants.company_id"],
+            name="fk_candidate_accommodations_applicant", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["enrolment_id", "company_id"], ["enrolments.id", "enrolments.company_id"],
+            name="fk_candidate_accommodations_enrolment", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_candidate_accommodations_round", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["exam_round_id", "company_id"], ["exam_rounds.id", "exam_rounds.company_id"],
+            name="fk_candidate_accommodations_exam_round", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "basis IN ('candidate_request','hr_initiated')", name="ck_candidate_accommodations_basis"
+        ),
+        CheckConstraint(
+            "status IN ('active','revoked')", name="ck_candidate_accommodations_status"
+        ),
+        CheckConstraint(
+            "extra_time_percent IS NULL OR extra_time_percent BETWEEN 10 AND 200",
+            name="ck_candidate_accommodations_extra_time_range",
+        ),
+        CheckConstraint(
+            "deadline_extension_days IS NULL OR deadline_extension_days BETWEEN 1 AND 30",
+            name="ck_candidate_accommodations_deadline_range",
+        ),
+        CheckConstraint(
+            "other_adjustment IS NULL OR char_length(other_adjustment) <= 500",
+            name="ck_candidate_accommodations_other_len",
+        ),
+        CheckConstraint(
+            "interviewer_note IS NULL OR char_length(interviewer_note) <= 500",
+            name="ck_candidate_accommodations_interviewer_note_len",
+        ),
+        CheckConstraint(
+            "internal_note IS NULL OR char_length(internal_note) <= 1000",
+            name="ck_candidate_accommodations_internal_note_len",
+        ),
+        CheckConstraint(
+            "revoke_reason IS NULL OR char_length(revoke_reason) <= 500",
+            name="ck_candidate_accommodations_revoke_reason_len",
+        ),
+        CheckConstraint(
+            "effective_until IS NULL OR effective_until > effective_from",
+            name="ck_candidate_accommodations_window",
+        ),
+        CheckConstraint(
+            "round_id IS NULL OR enrolment_id IS NOT NULL",
+            name="ck_candidate_accommodations_round_needs_enrolment",
+        ),
+        CheckConstraint(
+            "NOT (round_id IS NOT NULL AND exam_round_id IS NOT NULL)",
+            name="ck_candidate_accommodations_one_round_scope",
+        ),
+        CheckConstraint(
+            "redacted_at IS NOT NULL OR extra_time_percent IS NOT NULL"
+            " OR deadline_extension_days IS NOT NULL OR relax_auto_submit"
+            " OR other_adjustment IS NOT NULL",
+            name="ck_candidate_accommodations_at_least_one",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    applicant_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    exam_round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    extra_time_percent: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    deadline_extension_days: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    relax_auto_submit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    other_adjustment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The only accommodation text an assigned interviewer ever sees.
+    interviewer_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # HR-only — never shown to an interviewer, never in an event or an email.
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    basis: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_from: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    effective_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(Text, default="active", nullable=False)
+    recorded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    revoked_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    revoke_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class AccommodationEvent(Base):
+    """Append-only: what happened to an accommodation, never its notes or its
+    parameter values."""
+
+    __tablename__ = "accommodation_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["accommodation_id", "company_id"],
+            ["candidate_accommodations.id", "candidate_accommodations.company_id"],
+            name="fk_accommodation_events_accommodation", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "action IN ('recorded','revised','revoked','applied','redacted')",
+            name="ck_accommodation_events_action",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    accommodation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     action: Mapped[str] = mapped_column(Text, nullable=False)
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True

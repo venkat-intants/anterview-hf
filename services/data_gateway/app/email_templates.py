@@ -1853,6 +1853,71 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     return loc["subject"], inner, "\n".join(text), plain
 
 
+def _t_accommodation_recorded(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """PH4-D2: an accommodation was recorded for the candidate's application.
+
+    ctx: name, extra_time_percent (int | None), deadline_extension_days
+    (int | None), relax_auto_submit (bool), has_other_adjustment (bool).
+    NEVER ``other_adjustment``'s text, ``interviewer_note`` or
+    ``internal_note`` — this email states only WHICH parameters were
+    recorded, never any note."""
+    name = ctx.get("name")
+    pct = ctx.get("extra_time_percent")
+    days = ctx.get("deadline_extension_days")
+    relaxed = bool(ctx.get("relax_auto_submit"))
+    has_other = bool(ctx.get("has_other_adjustment"))
+    loc = _loc(lang, {
+        "en": {
+            "subject": "An adjustment was recorded for your application",
+            "pre": "A hiring adjustment was recorded for you.",
+            "lead": "The hiring team recorded the following for your application:",
+            "extra_time": f"{pct}% extra time on timed assessments",
+            "extra_days": f"{days} extra day(s) to complete assessments",
+            "relaxed": "Assessments will not end early for proctoring flags",
+            "other": "Other adjustments recorded for your application",
+            "closing": "If anything here looks wrong, reply to the hiring team.",
+        },
+        "hi": {
+            "subject": "आपके आवेदन के लिए एक समायोजन दर्ज किया गया",
+            "pre": "आपके लिए एक भर्ती समायोजन दर्ज किया गया।",
+            "lead": "हायरिंग टीम ने आपके आवेदन के लिए निम्नलिखित दर्ज किया:",
+            "extra_time": f"समयबद्ध मूल्यांकन में {pct}% अतिरिक्त समय",
+            "extra_days": f"मूल्यांकन पूरा करने के लिए {days} अतिरिक्त दिन",
+            "relaxed": "प्रॉक्टरिंग फ़्लैग के कारण मूल्यांकन जल्दी समाप्त नहीं होगा",
+            "other": "आपके आवेदन के लिए अन्य समायोजन दर्ज किए गए",
+            "closing": "यदि यहाँ कुछ गलत लगे, तो हायरिंग टीम को उत्तर दें।",
+        },
+        "te": {
+            "subject": "మీ దరఖాస్తు కోసం ఒక సర్దుబాటు నమోదు చేయబడింది",
+            "pre": "మీ కోసం ఒక నియామక సర్దుబాటు నమోదు చేయబడింది.",
+            "lead": "మీ దరఖాస్తు కోసం నియామక బృందం ఈ క్రిందివి నమోదు చేసింది:",
+            "extra_time": f"సమయ-పరిమిత మూల్యాంకనాల్లో {pct}% అదనపు సమయం",
+            "extra_days": f"మూల్యాంకనాలు పూర్తి చేయడానికి {days} అదనపు రోజు(లు)",
+            "relaxed": "ప్రొక్టరింగ్ ఫ్లాగ్‌ల వల్ల మూల్యాంకనం ముందుగా ముగియదు",
+            "other": "మీ దరఖాస్తు కోసం ఇతర సర్దుబాట్లు నమోదు చేయబడ్డాయి",
+            "closing": "ఇక్కడ ఏదైనా తప్పుగా అనిపిస్తే, నియామక బృందానికి జవాబు ఇవ్వండి.",
+        },
+    })
+    items: list[str] = []
+    if pct:
+        items.append(loc["extra_time"])
+    if days:
+        items.append(loc["extra_days"])
+    if relaxed:
+        items.append(loc["relaxed"])
+    if has_other:
+        items.append(loc["other"])
+    list_html = "".join(f'<li style="margin:4px 0;">{_esc(i)}</li>' for i in items)
+    inner = (
+        _p(_greeting(lang, name))
+        + _p(loc["lead"])
+        + f'<ul style="margin:0 0 16px;padding-left:20px;">{list_html}</ul>'
+        + _p(loc["closing"])
+    )
+    text = [_greeting(lang, name), "", loc["lead"], *[f"- {i}" for i in items], "", loc["closing"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
 _BUILDERS = {
     "welcome": _t_welcome,
     "email_verify": _t_email_verify,
@@ -1884,6 +1949,8 @@ _BUILDERS = {
     "document_update": _t_document_update,
     "document_received": _t_document_received,
     "offer_account": _t_offer_account,
+    # PH4-D2 — candidate accommodations.
+    "accommodation_recorded": _t_accommodation_recorded,
     "generic": _t_generic,
 }
 

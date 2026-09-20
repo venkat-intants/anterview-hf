@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import accommodations
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
@@ -276,6 +277,7 @@ async def advance_applicant_to_interview(
     scheduled_at: datetime | None = None,
     notify_user_id: uuid.UUID | None = None,
     enrolment_id: uuid.UUID | None = None,
+    workflow_round_id: uuid.UUID | None = None,
 ) -> InterviewInvite | None:
     """Auto-advance: mint an interview invite for an exam-passed applicant + email
     the candidate the link. Caller owns the commit. Returns the invite, or None if
@@ -288,6 +290,11 @@ async def advance_applicant_to_interview(
     created linked to it, and the interview is grounded in THAT opening's role
     rather than the person's latest one; an active invite for a different
     application no longer blocks this one.
+
+    ``workflow_round_id`` (PH4-D2) — the workflow round this invite is for, so
+    a round-scoped accommodation is found; ``None`` from a manual invite
+    outside any workflow, where only an applicant-wide or application-scoped
+    adjustment can apply.
     """
     role = None
     if enrolment_id is not None:
@@ -324,6 +331,12 @@ async def advance_applicant_to_interview(
         jd_text=role.jd_text if role else None,
     )
     now = datetime.now(tz=UTC)
+    # PH4-D2: any recorded deadline extension applies to this invite's expiry too.
+    adj_row = await accommodations.effective_for(
+        db, company_id=company_id, applicant_id=applicant.id, enrolment_id=enrolment_id,
+        workflow_round_id=workflow_round_id,
+    )
+    extra_days = adj_row.deadline_extension_days if adj_row else None
     raw_token = mint_interview_token()
     invite = InterviewInvite(
         id=uuid.uuid4(),
@@ -334,13 +347,22 @@ async def advance_applicant_to_interview(
         created_by_user_id=created_by_user_id,
         token_hash=hash_interview_token(raw_token, settings.interview_link_secret),
         language=language,
-        expires_at=now + timedelta(hours=settings.interview_link_ttl_hours),
+        expires_at=now + timedelta(
+            hours=settings.interview_link_ttl_hours, days=extra_days or 0
+        ),
         scheduled_at=scheduled_at,
+        accommodation_id=adj_row.id if adj_row else None,
         status="invited",
         created_at=now,
         updated_at=now,
     )
     db.add(invite)
+    if adj_row is not None:
+        await db.flush()
+        await accommodations.record_applied(
+            db, company_id=company_id, accommodation_id=adj_row.id,
+            target_kind="interview_invite", target_id=invite.id,
+        )
     if notify_user_id is not None:
         await create_notification(
             db,
@@ -489,6 +511,13 @@ async def create_invite(
         await db.flush()
 
     ttl_hours = body.ttl_hours or settings.interview_link_ttl_hours
+    # PH4-D2: any recorded deadline extension applies to this invite's expiry
+    # too — application-scoped or applicant-wide (a manual invite has no
+    # workflow round to be scoped to).
+    adj_row = await accommodations.effective_for(
+        db, company_id=company_id, applicant_id=applicant.id, enrolment_id=app_.enrolment_id,
+    )
+    extra_days = adj_row.deadline_extension_days if adj_row else None
     raw_token = mint_interview_token()
     invite = InterviewInvite(
         id=uuid.uuid4(),
@@ -499,13 +528,20 @@ async def create_invite(
         created_by_user_id=hr_uid,
         token_hash=hash_interview_token(raw_token, settings.interview_link_secret),
         language=body.language,
-        expires_at=now + timedelta(hours=ttl_hours),
+        expires_at=now + timedelta(hours=ttl_hours, days=extra_days or 0),
         scheduled_at=body.scheduled_at,
+        accommodation_id=adj_row.id if adj_row else None,
         status="invited",
         created_at=now,
         updated_at=now,
     )
     db.add(invite)
+    if adj_row is not None:
+        await db.flush()
+        await accommodations.record_applied(
+            db, company_id=company_id, accommodation_id=adj_row.id,
+            target_kind="interview_invite", target_id=invite.id,
+        )
     # Notify the inviting HR (their own activity feed).
     await create_notification(
         db,

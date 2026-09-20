@@ -64,9 +64,10 @@ async def _event(db: AsyncSession, *, company_id: Any, offer_id: Any, document_i
 
 
 def _audit(db: AsyncSession, *, actor: uuid.UUID | None, action: str, resource_id: uuid.UUID,
-           details: dict[str, Any], meta: RequestMeta, actor_type: str = "user") -> None:
+           details: dict[str, Any], meta: RequestMeta, actor_type: str = "user",
+           resource_type: str = "candidate_document") -> None:
     db.add(AuditLog(actor_id=actor, actor_type=actor_type, action=action,
-                    resource_type="candidate_document", resource_id=resource_id,
+                    resource_type=resource_type, resource_id=resource_id,
                     details=details, ip_address=meta.ip_address, user_agent=meta.user_agent,
                     event_ts=datetime.now(tz=UTC)))
 
@@ -513,6 +514,41 @@ async def _signed(db: AsyncSession, offer: dict[str, Any], document_id: uuid.UUI
 # ---------------------------------------------------------------------------
 # Completion and the HRMS handoff
 # ---------------------------------------------------------------------------
+async def withdraw_consent(db: AsyncSession, *, raw: str | None, session: str | None,
+                           meta: RequestMeta) -> dict[str, Any]:
+    """The candidate withdraws their consent to share documents (DPDP §11).
+
+    Reachable with the same credential that authorises an upload — the offer
+    link and a live documents session — because most candidates here have no
+    account to sign in with: the identity made at acceptance is claimed by
+    email, and may never be. Nothing already sent is deleted by this; it stops
+    anything further being taken (`upload` refuses next), and the hiring team
+    is told so they can talk to the candidate. Caller commits.
+    """
+    offer = await with_documents_session(db, raw=raw, session=session)
+    revoked = (
+        await db.execute(
+            text("UPDATE dpdp_consent_ledger SET revoked_at = now()"
+                 " WHERE user_id = :u AND consent_type = 'preboarding_documents'"
+                 "   AND granted AND revoked_at IS NULL RETURNING id"),
+            {"u": offer["candidate_user_id"]},
+        )
+    ).all()
+    if not revoked:
+        raise OfferError(409, "Your consent to share documents is already withdrawn.")
+    _audit(db, actor=None, action="document.consent_withdrawn", resource_id=offer["id"],
+           details={"company_id": str(offer["company_id"]), "rows": len(revoked)},
+           meta=meta, actor_type="candidate", resource_type="offer")
+    for who in {offer["created_by_user_id"], offer["sent_by_user_id"]} - {None}:
+        await create_notification(
+            db, user_id=who, kind="offer_update",
+            title=f"Documents consent withdrawn: {offer['candidate_name']}",
+            body="They can send no more documents until they agree again.",
+            link=f"/hr/offers/{offer['id']}",
+        )
+    return {"withdrawn": True}
+
+
 async def complete(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
                    actor: uuid.UUID, meta: RequestMeta) -> dict[str, Any]:
     offer = await _hr_offer(db, company_id, offer_id)

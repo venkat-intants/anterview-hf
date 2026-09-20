@@ -189,6 +189,17 @@ export async function getMyDocuments(
   return (await res.json()) as PublicDocumentsChecklist;
 }
 
+/** Withdraw consent to share documents (DPDP §11) — nothing already sent is
+ *  deleted, but nothing further can be. Needs the link and a live session, the
+ *  same credential an upload needs. */
+export async function withdrawDocumentsConsent(token: string, session: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/offer/documents/consent/withdraw`, {
+    method: 'POST',
+    headers: documentsHeaders(token, session),
+  });
+  if (!res.ok) return readError(res);
+}
+
 export interface UploadResult {
   document_id: string;
   version: number;

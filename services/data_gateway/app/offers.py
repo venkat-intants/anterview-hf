@@ -509,10 +509,23 @@ async def create_offer(
     return offer_out(offer)
 
 
-def record_staff_view(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
-                      actor: uuid.UUID, meta: RequestMeta, audience: str) -> None:
+async def record_staff_view(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
+                            actor: uuid.UUID, meta: RequestMeta, audience: str) -> None:
     """A member of staff reading an offer — its compensation included — is on the
-    audit log (PH4-A3 #16). Facts only: who, which offer, from which console."""
+    audit log (PH4-A3 #16). Facts only: who, which offer, from which console.
+
+    Once an hour per person and offer: this is a page load, and a refresh or a
+    browser prefetch would otherwise write a row every time, burying the reads
+    that matter (security review of 2148ef1, INFO).
+    """
+    seen = await db.scalar(
+        text("SELECT 1 FROM audit_log WHERE action = 'offer.viewed_by_staff'"
+             "   AND resource_id = :o AND actor_id = :a"
+             "   AND event_ts > now() - interval '1 hour' LIMIT 1"),
+        {"o": offer_id, "a": actor},
+    )
+    if seen:
+        return
     _audit(db, actor=actor, action="offer.viewed_by_staff", offer_id=offer_id,
            details={"company_id": str(company_id), "audience": audience}, meta=meta)
 

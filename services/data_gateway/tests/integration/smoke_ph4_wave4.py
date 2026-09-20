@@ -443,11 +443,21 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the candidate sees what is asked, and why", mine["state"] == "replacement_requested"
               and "visa stamp" in (mine["document"]["review_note"] or ""), str(mine)[:200])
 
+        r = await c.post("/offer/documents/consent/withdraw", headers=h)
+        check("the candidate withdraws their consent from the documents step (DPDP 11)",
+              r.status_code == 200 and r.json()["withdrawn"] is True, r.text[:160])
+        r2 = await c.post("/offer/documents/consent/withdraw", headers=h)
         async with factory() as db:
-            await db.execute(text("UPDATE dpdp_consent_ledger SET revoked_at = now()"
-                                  " WHERE user_id = :u AND consent_type = 'preboarding_documents'"),
-                             {"u": cand})
-            await db.commit()
+            revoked = await db.scalar(text(
+                "SELECT count(*) FROM dpdp_consent_ledger WHERE user_id = :u"
+                " AND consent_type = 'preboarding_documents' AND revoked_at IS NOT NULL"),
+                {"u": cand})
+            hr_told = await db.scalar(text(
+                "SELECT count(*) FROM notifications WHERE user_id = :u"
+                " AND title LIKE 'Documents consent withdrawn%'"), {"u": hr})
+        check("…which is recorded once and told to the hiring team",
+              revoked >= 1 and hr_told == 1 and r2.status_code == 409,
+              f"{revoked} {hr_told} {r2.status_code}")
         r = await c.post(f"/offer/documents/{passport}", headers=h,
                          files={"file": ("passport3.pdf", PDF + b"%v3\n", "application/pdf")},
                          data={"expires_on": str(date.today() + timedelta(days=900))})

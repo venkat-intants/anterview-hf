@@ -274,8 +274,8 @@ async def get_offer(offer_id: uuid.UUID, request: Request, ctx: HrCtxDep,
     except OfferError as exc:
         raise await _fail(db, exc) from exc
     out["history"] = await svc.history(db, company_id=company_id, offer_id=offer_id)
-    svc.record_staff_view(db, company_id=company_id, offer_id=offer_id, actor=uid,
-                          meta=_meta(request), audience="hr")
+    await svc.record_staff_view(db, company_id=company_id, offer_id=offer_id, actor=uid,
+                                meta=_meta(request), audience="hr")
     await db.commit()
     return out
 
@@ -464,8 +464,8 @@ async def admin_offer(offer_id: uuid.UUID, request: Request, ctx: SuperAdminCtxD
     except OfferError as exc:
         raise await _fail(db, exc) from exc
     out["history"] = await svc.history(db, company_id=company_id, offer_id=offer_id)
-    svc.record_staff_view(db, company_id=company_id, offer_id=offer_id, actor=uid,
-                          meta=_meta(request), audience="super_admin")
+    await svc.record_staff_view(db, company_id=company_id, offer_id=offer_id, actor=uid,
+                                meta=_meta(request), audience="super_admin")
     await db.commit()
     return out
 
@@ -559,6 +559,21 @@ async def open_documents_session(body: SessionIn, token: OfferTokenDep, request:
                                  db: CandidateDbDep) -> dict[str, Any]:
     try:
         out = await svc.open_documents_session(db, raw=token, code=body.code, meta=_meta(request))
+    except OfferError as exc:
+        raise await _fail(db, exc) from exc
+    await db.commit()
+    return out
+
+
+@public_router.post("/documents/consent/withdraw",
+                    dependencies=[rate_limit("offer_answer", 10)])
+async def withdraw_documents_consent(token: OfferTokenDep, session: OfferSessionDep,
+                                     request: Request, db: CandidateDbDep) -> dict[str, Any]:
+    """Withdraw consent to share documents — what the offer page promises, for
+    a candidate who has no account to withdraw from (PH4-A4, DPDP §11)."""
+    try:
+        out = await docs.withdraw_consent(db, raw=token, session=session,
+                                                 meta=_meta(request))
     except OfferError as exc:
         raise await _fail(db, exc) from exc
     await db.commit()

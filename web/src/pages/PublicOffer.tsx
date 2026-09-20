@@ -27,6 +27,7 @@ import {
   acceptOffer,
   declineOffer,
   getMyDocuments,
+  withdrawDocumentsConsent,
   openDocumentsSession,
   requestDocumentsCode,
   requestOfferCode,
@@ -531,6 +532,18 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
   const [minutes, setMinutes] = useState<number | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [withdrawn, setWithdrawn] = useState(false);
+
+  const withdrawMut = useMutation({
+    mutationFn: () => withdrawDocumentsConsent(token, session as string),
+    onSuccess: () => {
+      setWithdrawn(true);
+      setAsking(false);
+      void qc.invalidateQueries({ queryKey: ['public-offer-documents', token, session] });
+    },
+    onError: (e: unknown) => setError(errText(e, t('offer.errorGeneric'))),
+  });
 
   const codeMut = useMutation({
     mutationFn: () => requestDocumentsCode(token),
@@ -657,6 +670,47 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
           ))}
         </ul>
       )}
+
+      {session && !checklist.isLoading && !checklist.isError ? (
+        <div className="mt-5 border-t border-border pt-4">
+          {withdrawn ? (
+            <p className="text-[12.5px] text-muted-foreground">
+              {t('offer.documents.withdrawnDone')}
+            </p>
+          ) : asking ? (
+            <div className="flex flex-col gap-2">
+              <p className="text-[12.5px] text-foreground">
+                {t('offer.documents.withdrawConfirm')}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={withdrawMut.isPending}
+                  onClick={() => withdrawMut.mutate()}
+                  className="rounded-[9px] border border-[var(--ui-danger)]/40 px-3 py-1.5 text-[12.5px] font-medium text-[var(--ui-danger)] disabled:opacity-40"
+                >
+                  {t('offer.documents.withdrawYes')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAsking(false)}
+                  className="text-[12.5px] text-muted-foreground hover:text-foreground"
+                >
+                  {t('offer.cancel')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setAsking(true)}
+              className="text-[12.5px] text-[var(--ui-info)] hover:underline"
+            >
+              {t('offer.documents.withdraw')}
+            </button>
+          )}
+        </div>
+      ) : null}
     </GlassCard>
   );
 }

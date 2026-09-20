@@ -86,7 +86,14 @@ router = APIRouter(prefix="/consent", tags=["consent"])
 # purpose).
 _CONSENT_TYPE = "interview_voice_recording"
 _VIDEO_CONSENT_TYPE = "video_capture"
-_VALID_CONSENT_TYPES = frozenset({_CONSENT_TYPE, _VIDEO_CONSENT_TYPE})
+# PH4-A4: accepting an offer records consent to share preboarding documents.
+# DPDP §11 gives withdrawal at any time, and the offer page says so, so the
+# revoke route covers it as well — withdrawing stops any further upload
+# (app/preboarding.py `upload`). A candidate who has no account to sign in
+# with withdraws from the documents step itself (POST /offer/documents/consent).
+_DOCUMENTS_CONSENT_TYPE = "preboarding_documents"
+_VALID_CONSENT_TYPES = frozenset({_CONSENT_TYPE, _VIDEO_CONSENT_TYPE,
+                                  _DOCUMENTS_CONSENT_TYPE})
 _VALID_PURPOSES = frozenset({"interview"})
 
 # ---------------------------------------------------------------------------

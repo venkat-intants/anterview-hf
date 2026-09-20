@@ -29,6 +29,7 @@ const requestDocumentsCode = vi.fn();
 const openDocumentsSession = vi.fn();
 const getMyDocuments = vi.fn();
 const uploadMyDocument = vi.fn();
+const withdrawDocumentsConsent = vi.fn();
 vi.mock('../api/publicOffer', () => ({
   viewOffer: (...a: unknown[]) => viewOffer(...a) as unknown,
   requestOfferCode: (...a: unknown[]) => requestOfferCode(...a) as unknown,
@@ -38,6 +39,7 @@ vi.mock('../api/publicOffer', () => ({
   openDocumentsSession: (...a: unknown[]) => openDocumentsSession(...a) as unknown,
   getMyDocuments: (...a: unknown[]) => getMyDocuments(...a) as unknown,
   uploadMyDocument: (...a: unknown[]) => uploadMyDocument(...a) as unknown,
+  withdrawDocumentsConsent: (...a: unknown[]) => withdrawDocumentsConsent(...a) as unknown,
 }));
 
 import PublicOffer from '../pages/PublicOffer';
@@ -357,6 +359,34 @@ describe('PublicOffer — documents, once accepted', () => {
     expect(await screen.findByText(/passed its expiry date/)).toBeInTheDocument();
     const row = screen.getByText('PAN card').closest('li') as HTMLElement;
     expect(row.querySelector('input[type="file"]')).not.toBeNull();
+  });
+
+  it('lets the candidate withdraw the consent the offer page promised they could', async () => {
+    const user = userEvent.setup();
+    requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
+    openDocumentsSession.mockResolvedValue({
+      session_token: 'sess_tok',
+      expires_at: '2026-09-18T02:00:00.000Z',
+    });
+    getMyDocuments.mockResolvedValue(CHECKLIST);
+    withdrawDocumentsConsent.mockResolvedValue(undefined);
+    renderPage();
+
+    await screen.findByText('Your documents');
+    await user.click(screen.getByRole('button', { name: 'Get a code' }));
+    await screen.findByText(/Code sent/);
+    await user.type(screen.getByLabelText(/enter the code/i), '111111');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('PAN card');
+
+    // Asked before it happens, never on the first click.
+    await user.click(screen.getByRole('button', { name: /Withdraw my consent/i }));
+    expect(withdrawDocumentsConsent).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: /Yes, withdraw consent/i }));
+    await waitFor(() =>
+      expect(withdrawDocumentsConsent).toHaveBeenCalledWith('offer_tok_123456', 'sess_tok'),
+    );
+    expect(await screen.findByText(/consent is withdrawn/i)).toBeInTheDocument();
   });
 
   it('shows Aadhaar-specific masking guidance for an identity document', async () => {

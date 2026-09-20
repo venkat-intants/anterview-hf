@@ -1035,6 +1035,12 @@ const en = {
           expired: 'Expired',
         },
         expiredHint: 'This document has passed its expiry date. Upload a current one.',
+        withdraw: 'Withdraw my consent to share documents',
+        withdrawConfirm:
+          'Withdraw consent? You will not be able to send any more documents, and the hiring team will be told. What you have already sent is kept until it is deleted under the retention rules.',
+        withdrawYes: 'Yes, withdraw consent',
+        withdrawnDone:
+          'Your consent is withdrawn. No more documents can be sent. Contact the hiring team if you change your mind.',
         rejectedReason: 'The hiring team said: {{reason}}',
         upload: 'Upload',
         reupload: 'Upload a replacement',
@@ -1979,6 +1985,12 @@ const hi = {
           expired: 'समाप्त',
         },
         expiredHint: 'इस दस्तावेज़ की समाप्ति तिथि निकल गई है। एक वर्तमान दस्तावेज़ अपलोड करें।',
+        withdraw: 'दस्तावेज़ साझा करने की मेरी सहमति वापस लें',
+        withdrawConfirm:
+          'सहमति वापस लें? आप और दस्तावेज़ नहीं भेज पाएंगे, और हायरिंग टीम को बता दिया जाएगा। आपने जो पहले भेजा है वह रिटेंशन नियमों के अनुसार हटाए जाने तक रखा जाएगा।',
+        withdrawYes: 'हाँ, सहमति वापस लें',
+        withdrawnDone:
+          'आपकी सहमति वापस ले ली गई है। अब कोई दस्तावेज़ नहीं भेजा जा सकता। मन बदले तो हायरिंग टीम से संपर्क करें।',
         rejectedReason: 'भर्ती टीम ने कहा: {{reason}}',
         upload: 'अपलोड करें',
         reupload: 'प्रतिस्थापन अपलोड करें',
@@ -2923,6 +2935,12 @@ const te = {
           expired: 'గడువు ముగిసింది',
         },
         expiredHint: 'ఈ పత్రం గడువు తేదీ దాటిపోయింది. ప్రస్తుత పత్రాన్ని అప్‌లోడ్ చేయండి.',
+        withdraw: 'పత్రాలు పంచుకోవడానికి నా సమ్మతిని ఉపసంహరించుకుంటాను',
+        withdrawConfirm:
+          'సమ్మతిని ఉపసంహరించుకోవాలా? మీరు ఇక పత్రాలు పంపలేరు, నియామక బృందానికి తెలియజేయబడుతుంది. మీరు ఇప్పటికే పంపినవి నిలుపుదల నిబంధనల ప్రకారం తొలగించే వరకు ఉంచబడతాయి.',
+        withdrawYes: 'అవును, సమ్మతిని ఉపసంహరించు',
+        withdrawnDone:
+          'మీ సమ్మతి ఉపసంహరించబడింది. ఇక పత్రాలు పంపడం సాధ్యం కాదు. మనసు మారితే నియామక బృందాన్ని సంప్రదించండి.',
         rejectedReason: 'నియామక బృందం ఇలా చెప్పింది: {{reason}}',
         upload: 'అప్‌లోడ్ చేయండి',
         reupload: 'ప్రత్యామ్నాయాన్ని అప్‌లోడ్ చేయండి',

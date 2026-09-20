@@ -680,15 +680,17 @@ async def search(
             (
                 await db.execute(
                     text(
+                        # Company-scoped as well as exam-scoped, like every
+                        # other query here.
                         "SELECT source_bank_root_id FROM exam_questions"
-                        " WHERE exam_id = :e AND deleted_at IS NULL"
+                        " WHERE exam_id = :e AND company_id = :c AND deleted_at IS NULL"
                         "   AND source_bank_root_id IS NOT NULL"
                         " UNION"
                         " SELECT source_bank_root_id FROM coding_questions"
-                        " WHERE exam_id = :e AND deleted_at IS NULL"
+                        " WHERE exam_id = :e AND company_id = :c AND deleted_at IS NULL"
                         "   AND source_bank_root_id IS NOT NULL"
                     ),
-                    {"e": exclude_exam_id},
+                    {"e": exclude_exam_id, "c": company_id},
                 )
             ).scalars().all()
         )

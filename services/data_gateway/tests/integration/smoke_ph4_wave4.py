@@ -89,6 +89,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
     from app.database import get_db_session
     from app.dependencies import get_current_user, get_hr_company, get_super_admin_company
     from app.main import app
+    from app.routers.admin_hr import get_company_admin_ctx
 
     async def _db():  # noqa: ANN202
         async with factory() as session:
@@ -98,6 +99,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
     app.dependency_overrides[get_db_session] = _db
     app.dependency_overrides[get_hr_company] = lambda: (acting["hr"], cid)
     app.dependency_overrides[get_super_admin_company] = lambda: (acting["admin"], cid)
+    app.dependency_overrides[get_company_admin_ctx] = lambda: (acting["admin"], cid)
     app.dependency_overrides[get_current_user] = lambda: User(
         user_id=str(cand), full_name="Asha", email="asha@x.test", roles=["candidate"])
 
@@ -558,6 +560,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               str(st))
         check("…and the opening no longer counts that hire as filling the role",
               after == before - 1, f"{before} -> {after}")
+        funnel = (await c.get("/hr/analytics")).json()["funnel"]["hired"]
+        board = next((o for o in (await c.get("/admin/hiring-board")).json()["openings"]
+                      if o["requisition_id"] == str(req)), {})
+        check("every count of hires says the same number — dashboard, funnel and board",
+              funnel == after and board.get("hired") == after,
+              f"dashboard {after} funnel {funnel} board {board.get('hired')}")
 
         r = await c.post(f"/hr/enrolments/{e2}/offers", json={"base_salary": 1900000})
         o4 = r.json()["id"]

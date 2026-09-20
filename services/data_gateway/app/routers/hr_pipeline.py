@@ -304,7 +304,14 @@ SELECT
   COUNT(DISTINCT applicant_id)                                        AS total_applicants,
   COUNT(*) FILTER (WHERE enrolment_id IS NOT NULL)                    AS total_applications,
   COUNT(*) FILTER (WHERE stored_status = 'shortlisted')               AS shortlisted,
-  COUNT(*) FILTER (WHERE stored_status = 'hired')                     AS hired,
+  -- PH4-A3: a hire whose offer was declined, expired or withdrawn has not
+  -- filled the role, and the two dashboards leave it out of their counts; the
+  -- funnel says the same number for the same data. The shared
+  -- application_progress view is left alone (the copilot reads it), so the
+  -- outcome is read from the application itself.
+  COUNT(*) FILTER (WHERE stored_status = 'hired' AND COALESCE(
+    (SELECT e.offer_outcome FROM enrolments e WHERE e.id = application_progress.enrolment_id),
+    '') NOT IN ('offer_declined', 'offer_expired', 'offer_withdrawn'))  AS hired,
   COUNT(*) FILTER (WHERE stored_status = 'rejected')                  AS rejected,
   COUNT(*) FILTER (WHERE total_exam_attempts > 0)                     AS exam_taken,
   COUNT(*) FILTER (WHERE exam_passed IS TRUE)                         AS exam_passed,

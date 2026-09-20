@@ -177,6 +177,14 @@ async def record_final_decision(
             {"e": enrolment_id},
         )
 
+    # PH4-A2: interviews not yet held are no longer needed; free the panel.
+    from app.interview_scheduling import close_for_decision  # noqa: PLC0415 — import cycle
+
+    await close_for_decision(
+        db, company_id=company_id, enrolment_id=enrolment_id, actor=actor_user_id,
+        decision=decision,
+    )
+
     now = datetime.now(tz=UTC)
     reversal = previous == "hired"
     db.add(

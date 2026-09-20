@@ -146,7 +146,8 @@ def test_step_5f_counts_reach_the_completion_record() -> None:
     body = _body()
     for key in ("interview_assignments_withdrawn", "interview_evidence_redacted",
                 "interview_scorecards_redacted", "interviewer_notes_deleted",
-                "stage_exceptions_redacted"):
+                "stage_exceptions_redacted", "interview_sessions_cancelled",
+                "interview_loops_redacted"):
         assert body.count(f'"{key}": {key}') == 2, key  # artifacts AND audit row
 
 
@@ -156,3 +157,11 @@ def test_stage_exception_prose_is_redacted_before_applicants_lose_their_user_id(
     redact = _at("UPDATE stage_exceptions SET reason = '[redacted]'", where=body)
     assert redact < _at("UPDATE applicants", where=body)
 
+
+def test_interview_sessions_are_cancelled_before_applicants_lose_their_user_id() -> None:
+    """PH4-A2: sessions and loops are found through applicants.user_id, which
+    step 6 does not clear, but ordering them inside 5f keeps the step whole."""
+    body = _body()
+    cancel = _at("UPDATE interview_sessions SET status = 'cancelled'", where=body)
+    loops = _at("UPDATE interview_loops SET", where=body)
+    assert cancel < loops < _at("UPDATE applicants", where=body)

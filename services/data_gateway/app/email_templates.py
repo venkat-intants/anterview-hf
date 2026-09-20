@@ -1339,6 +1339,267 @@ def _t_generic(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     return title, inner, "\n".join(text_parts), title
 
 
+# ===========================================================================
+# PH4-A2 — interview loops: the itinerary, the request to pick times, and a
+# change to one session. Times arrive pre-formatted in the candidate's
+# timezone; a template never guesses a zone.
+# ===========================================================================
+def _session_lines(sessions: list[dict], lang: str) -> tuple[str, list[str]]:
+    """The itinerary as an HTML list and as plain-text lines.
+
+    Each session dict carries pre-formatted strings — ``when`` is already in
+    the candidate's timezone (the caller formats it), so the template never
+    guesses a zone.
+    """
+    minutes = {"en": "min", "hi": "मिनट", "te": "నిమిషాలు"}.get(lang, "min")
+    html_items: list[str] = []
+    text: list[str] = []
+    for s in sessions:
+        title = _esc(s.get("title", ""))
+        when = _esc(s.get("when", ""))
+        dur = s.get("duration_minutes")
+        place = s.get("location") or ""
+        detail = f"{when} · {dur} {minutes}" if dur else when
+        extra = f"<br><span style=\"color:#555\">{_esc(place)}</span>" if place else ""
+        html_items.append(f"<li style=\"margin:0 0 10px\"><strong>{title}</strong><br>{detail}{extra}</li>")
+        text.append(f"- {s.get('title', '')}: {s.get('when', '')}"
+                    + (f" ({dur} {minutes})" if dur else "") + (f" — {place}" if place else ""))
+    return "<ul style=\"padding-left:18px;margin:8px 0 16px\">" + "".join(html_items) + "</ul>", text
+
+
+def _t_interview_itinerary(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    name = ctx.get("name")
+    job_title = ctx.get("job_title", "the role")
+    org = (ctx.get("brand") or "").strip()
+    tz = _esc(ctx.get("timezone", ""))
+    updated = bool(ctx.get("updated"))
+    cta_url = ctx.get("cta_url")
+    jt, orge = _esc(job_title), _esc(org)
+    loc = _loc(lang, {
+        "en": {
+            "subject": f"Your interview schedule for {job_title}",
+            "pre": "Your interviews, in one place.",
+            "lead": (f"Here is your interview schedule with <strong>{orge}</strong> for "
+                     f"<strong>{jt}</strong>." if org
+                     else f"Here is your interview schedule for <strong>{jt}</strong>."),
+            "tz": f"Times are shown in {tz}.",
+            "updated": "Your schedule has changed. This replaces the one we sent before.",
+            "cal": "You can add these to your calendar from your applications page.",
+            "resched": "If a time does not work for you, reply to the recruiter who contacted you — "
+                       "the schedule can only be changed by the hiring team.",
+            "cta": "See my applications",
+            "outro": "Good luck!",
+        },
+        "hi": {
+            "subject": f"{job_title} के लिए आपका इंटरव्यू शेड्यूल",
+            "pre": "आपके सभी इंटरव्यू, एक जगह।",
+            "lead": (f"<strong>{orge}</strong> के साथ <strong>{jt}</strong> के लिए आपका इंटरव्यू शेड्यूल यह है।"
+                     if org else f"<strong>{jt}</strong> के लिए आपका इंटरव्यू शेड्यूल यह है।"),
+            "tz": f"समय {tz} में दिखाया गया है।",
+            "updated": "आपका शेड्यूल बदल गया है। यह पहले भेजे गए शेड्यूल की जगह लेता है।",
+            "cal": "आप इन्हें अपने आवेदन पेज से अपने कैलेंडर में जोड़ सकते हैं।",
+            "resched": "यदि कोई समय आपके लिए उपयुक्त नहीं है, तो उस रिक्रूटर को उत्तर दें जिसने आपसे संपर्क किया — "
+                       "शेड्यूल केवल हायरिंग टीम बदल सकती है।",
+            "cta": "मेरे आवेदन देखें",
+            "outro": "शुभकामनाएँ!",
+        },
+        "te": {
+            "subject": f"{job_title} కోసం మీ ఇంటర్వ్యూ షెడ్యూల్",
+            "pre": "మీ అన్ని ఇంటర్వ్యూలు, ఒకే చోట.",
+            "lead": (f"<strong>{orge}</strong>తో <strong>{jt}</strong> కోసం మీ ఇంటర్వ్యూ షెడ్యూల్ ఇది."
+                     if org else f"<strong>{jt}</strong> కోసం మీ ఇంటర్వ్యూ షెడ్యూల్ ఇది."),
+            "tz": f"సమయాలు {tz}లో చూపబడ్డాయి.",
+            "updated": "మీ షెడ్యూల్ మారింది. ఇది ముందు పంపిన దాని స్థానంలో ఉంటుంది.",
+            "cal": "మీ దరఖాస్తుల పేజీ నుండి వీటిని మీ క్యాలెండర్‌కు జోడించవచ్చు.",
+            "resched": "ఏదైనా సమయం మీకు అనుకూలం కాకపోతే, మిమ్మల్ని సంప్రదించిన రిక్రూటర్‌కు జవాబు ఇవ్వండి — "
+                       "షెడ్యూల్‌ను నియామక బృందం మాత్రమే మార్చగలదు.",
+            "cta": "నా దరఖాస్తులు చూడండి",
+            "outro": "శుభాకాంక్షలు!",
+        },
+    })
+    items_html, items_text = _session_lines(ctx.get("sessions") or [], lang)
+    subject = ("[Updated] " if updated else "") + loc["subject"]
+    inner = _p(_greeting(lang, name))
+    if updated:
+        inner += _p(f"<strong>{loc['updated']}</strong>")
+    inner += _p(loc["lead"]) + items_html
+    if tz:
+        inner += _p(loc["tz"])
+    inner += _p(loc["cal"]) + _p(loc["resched"])
+    if cta_url:
+        inner += _button(cta_url, loc["cta"])
+    inner += _p(loc["outro"])
+    text = [_greeting(lang, name), ""]
+    if updated:
+        text.append(loc["updated"])
+    text.append(loc["lead"].replace("<strong>", "").replace("</strong>", ""))
+    text += items_text
+    if tz:
+        text.append(loc["tz"])
+    text += [loc["cal"], loc["resched"]]
+    if cta_url:
+        text += ["", cta_url]
+    text += ["", loc["outro"]]
+    return subject, inner, "\n".join(text), loc["pre"]
+
+
+def _t_interview_slot_request(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    name = ctx.get("name")
+    job_title = ctx.get("job_title", "the role")
+    org = (ctx.get("brand") or "").strip()
+    count = int(ctx.get("count") or 1)
+    cta_url = ctx.get("cta_url")
+    jt, orge = _esc(job_title), _esc(org)
+    loc = _loc(lang, {
+        "en": {
+            "subject": f"Choose your interview times for {job_title}",
+            "pre": "Pick the times that suit you.",
+            "lead": (f"<strong>{orge}</strong> would like to interview you for <strong>{jt}</strong>."
+                     if org else f"You're invited to interview for <strong>{jt}</strong>."),
+            "ask": (f"Please choose a time for each of your {count} interviews." if count > 1
+                    else "Please choose a time for your interview."),
+            "final": "Once you have chosen, the times are confirmed — to change one later, "
+                     "contact the hiring team.",
+            "cta": "Choose my times",
+            "fallback": "Or paste this link into your browser:",
+            "outro": "Good luck!",
+        },
+        "hi": {
+            "subject": f"{job_title} के लिए अपने इंटरव्यू का समय चुनें",
+            "pre": "अपने लिए सुविधाजनक समय चुनें।",
+            "lead": (f"<strong>{orge}</strong> आपका <strong>{jt}</strong> के लिए इंटरव्यू लेना चाहता है।"
+                     if org else f"आपको <strong>{jt}</strong> के इंटरव्यू के लिए आमंत्रित किया गया है।"),
+            "ask": (f"कृपया अपने {count} इंटरव्यू में से हर एक के लिए समय चुनें।" if count > 1
+                    else "कृपया अपने इंटरव्यू के लिए समय चुनें।"),
+            "final": "चुनने के बाद समय पक्का हो जाता है — बाद में बदलने के लिए हायरिंग टीम से संपर्क करें।",
+            "cta": "मेरा समय चुनें",
+            "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
+            "outro": "शुभकामनाएँ!",
+        },
+        "te": {
+            "subject": f"{job_title} కోసం మీ ఇంటర్వ్యూ సమయాలను ఎంచుకోండి",
+            "pre": "మీకు అనుకూలమైన సమయాలను ఎంచుకోండి.",
+            "lead": (f"<strong>{orge}</strong> మిమ్మల్ని <strong>{jt}</strong> కోసం ఇంటర్వ్యూ చేయాలనుకుంటోంది."
+                     if org else f"మీరు <strong>{jt}</strong> ఇంటర్వ్యూకి ఆహ్వానించబడ్డారు."),
+            "ask": (f"దయచేసి మీ {count} ఇంటర్వ్యూలలో ప్రతిదానికి ఒక సమయాన్ని ఎంచుకోండి." if count > 1
+                    else "దయచేసి మీ ఇంటర్వ్యూకి ఒక సమయాన్ని ఎంచుకోండి."),
+            "final": "ఎంచుకున్న తర్వాత సమయాలు నిర్ధారించబడతాయి — తర్వాత మార్చడానికి నియామక బృందాన్ని సంప్రదించండి.",
+            "cta": "నా సమయాలను ఎంచుకోండి",
+            "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
+            "outro": "శుభాకాంక్షలు!",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + _p(loc["ask"]) + _p(loc["final"])
+    if cta_url:
+        inner += _button(cta_url, loc["cta"]) + _fallback_link(loc["fallback"], cta_url)
+    inner += _p(loc["outro"])
+    text = [_greeting(lang, name), "",
+            loc["lead"].replace("<strong>", "").replace("</strong>", ""), loc["ask"], loc["final"]]
+    if cta_url:
+        text += ["", cta_url]
+    text += ["", loc["outro"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_interview_session_update(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """One session moved or was cancelled. ``cancelled`` picks the wording."""
+    name = ctx.get("name")
+    job_title = ctx.get("job_title", "the role")
+    cancelled = bool(ctx.get("cancelled"))
+    session = ctx.get("session") or {}
+    cta_url = ctx.get("cta_url")
+    jt = _esc(job_title)
+    st = _esc(session.get("title", ""))
+    loc = _loc(lang, {
+        "en": {
+            "subject": (f"Interview cancelled — {job_title}" if cancelled
+                        else f"Interview time changed — {job_title}"),
+            "pre": "An update to your interview schedule.",
+            "lead": (f"Your <strong>{st}</strong> interview for <strong>{jt}</strong> has been cancelled."
+                     if cancelled
+                     else f"Your <strong>{st}</strong> interview for <strong>{jt}</strong> has a new time:"),
+            "next": "The hiring team will be in touch about what happens next.",
+            "cta": "See my applications",
+        },
+        "hi": {
+            "subject": (f"इंटरव्यू रद्द — {job_title}" if cancelled
+                        else f"इंटरव्यू का समय बदला — {job_title}"),
+            "pre": "आपके इंटरव्यू शेड्यूल में बदलाव।",
+            "lead": (f"<strong>{jt}</strong> के लिए आपका <strong>{st}</strong> इंटरव्यू रद्द कर दिया गया है।"
+                     if cancelled
+                     else f"<strong>{jt}</strong> के लिए आपके <strong>{st}</strong> इंटरव्यू का नया समय:"),
+            "next": "आगे क्या होगा, इसके बारे में हायरिंग टीम आपसे संपर्क करेगी।",
+            "cta": "मेरे आवेदन देखें",
+        },
+        "te": {
+            "subject": (f"ఇంటర్వ్యూ రద్దు — {job_title}" if cancelled
+                        else f"ఇంటర్వ్యూ సమయం మారింది — {job_title}"),
+            "pre": "మీ ఇంటర్వ్యూ షెడ్యూల్‌లో మార్పు.",
+            "lead": (f"<strong>{jt}</strong> కోసం మీ <strong>{st}</strong> ఇంటర్వ్యూ రద్దు చేయబడింది."
+                     if cancelled
+                     else f"<strong>{jt}</strong> కోసం మీ <strong>{st}</strong> ఇంటర్వ్యూకి కొత్త సమయం:"),
+            "next": "తదుపరి ఏమి జరుగుతుందో నియామక బృందం మీకు తెలియజేస్తుంది.",
+            "cta": "నా దరఖాస్తులు చూడండి",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"])
+    text = [_greeting(lang, name), "", loc["lead"].replace("<strong>", "").replace("</strong>", "")]
+    if not cancelled:
+        items_html, items_text = _session_lines([session], lang)
+        inner += items_html
+        text += items_text
+    else:
+        inner += _p(loc["next"])
+        text.append(loc["next"])
+    if cta_url:
+        inner += _button(cta_url, loc["cta"])
+        text += ["", cta_url]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_interview_session_reminder(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """A scheduled interview is coming up (24h / 1h). The time is pre-formatted
+    in the candidate's timezone by the reminder sweep."""
+    name = ctx.get("name")
+    job_title = ctx.get("job_title", "the role")
+    soon = ctx.get("window") == "1h"
+    session = ctx.get("session") or {}
+    cta_url = ctx.get("cta_url")
+    jt, st = _esc(job_title), _esc(session.get("title", ""))
+    loc = _loc(lang, {
+        "en": {
+            "subject": (f"Starting within the hour: your interview for {job_title}" if soon
+                        else f"Tomorrow: your interview for {job_title}"),
+            "pre": "A reminder about your interview.",
+            "lead": f"A reminder: your <strong>{st}</strong> interview for <strong>{jt}</strong> is coming up.",
+            "cta": "See my schedule",
+        },
+        "hi": {
+            "subject": (f"एक घंटे के भीतर: {job_title} के लिए आपका इंटरव्यू" if soon
+                        else f"कल: {job_title} के लिए आपका इंटरव्यू"),
+            "pre": "आपके इंटरव्यू का रिमाइंडर।",
+            "lead": f"रिमाइंडर: <strong>{jt}</strong> के लिए आपका <strong>{st}</strong> इंटरव्यू जल्द है।",
+            "cta": "मेरा शेड्यूल देखें",
+        },
+        "te": {
+            "subject": (f"ఒక గంటలోపు: {job_title} కోసం మీ ఇంటర్వ్యూ" if soon
+                        else f"రేపు: {job_title} కోసం మీ ఇంటర్వ్యూ"),
+            "pre": "మీ ఇంటర్వ్యూ గురించి రిమైండర్.",
+            "lead": f"రిమైండర్: <strong>{jt}</strong> కోసం మీ <strong>{st}</strong> ఇంటర్వ్యూ త్వరలో ఉంది.",
+            "cta": "నా షెడ్యూల్ చూడండి",
+        },
+    })
+    items_html, items_text = _session_lines([session], lang)
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + items_html
+    text = [_greeting(lang, name), "", loc["lead"].replace("<strong>", "").replace("</strong>", ""),
+            *items_text]
+    if cta_url:
+        inner += _button(cta_url, loc["cta"])
+        text += ["", cta_url]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+
 _BUILDERS = {
     "welcome": _t_welcome,
     "email_verify": _t_email_verify,
@@ -1358,6 +1619,11 @@ _BUILDERS = {
     "interview_no_show": _t_interview_no_show,
     "link_expired": _t_link_expired,
     "results_ready": _t_results_ready,
+    # PH4-A2 interview loops.
+    "interview_itinerary": _t_interview_itinerary,
+    "interview_slot_request": _t_interview_slot_request,
+    "interview_session_update": _t_interview_session_update,
+    "interview_session_reminder": _t_interview_session_reminder,
     "generic": _t_generic,
 }
 

@@ -238,6 +238,22 @@ def test_every_branch_is_exercised_by_some_scenario() -> None:
     assert all(sc["id"].startswith("SIM-") for sc in scenarios)
 
 
+def test_with_auto_advance_off_the_dry_run_stops_where_the_runner_does() -> None:
+    """Found in the checklist pass: the dry run showed candidates moving on that
+    the runner would have left waiting for a person."""
+    from app.workflow_simulation import build_scenarios
+
+    a = _round("a", 0, on_pass_next_round_id="b", on_fail_next_round_id="b")
+    b = _round("b", 1)
+    scenarios = build_scenarios([a, b], auto_advance=False)
+    for sc in scenarios:
+        assert [s["round_id"] for s in sc["steps"]] == ["a"], sc  # nobody reaches b
+    ends = {sc["description"]: sc["end"] for sc in scenarios}
+    assert ends["passes every round"] == "waiting"
+    assert any(e == "held" for e in ends.values())  # a fail branch is not followed
+    assert {sc["end"] for sc in build_scenarios([a, b])} >= {"decision"}  # on: it is
+
+
 def test_scenario_count_stays_bounded() -> None:
     from app.workflow_simulation import MAX_SCENARIOS, build_scenarios
 

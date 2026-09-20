@@ -31,6 +31,7 @@ import { applicationKey } from '@/lib/applicationKey';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
+import { localInputToIso, toLocalInputValue } from '@/lib/localDatetime';
 import {
   GlassCard,
   Pill,
@@ -122,11 +123,11 @@ function InviteRow({
   const initials = initialsOf(inv.applicant_name);
   const gradient = gradientFor(seedFrom(inv.applicant_id));
   const [editingSched, setEditingSched] = useState(false);
-  const [schedDraft, setSchedDraft] = useState(
-    inv.scheduled_at
-      ? new Date(inv.scheduled_at).toISOString().slice(0, 16)
-      : '',
-  );
+  // toLocalInputValue reads the LOCAL wall-clock fields, unlike
+  // toISOString().slice(0, 16) — which is always UTC and, shown in a
+  // datetime-local input, silently displayed a UTC time as though it were
+  // the reader's own, off by their UTC offset.
+  const [schedDraft, setSchedDraft] = useState(toLocalInputValue(inv.scheduled_at));
 
   const canReschedule = inv.status === 'invited' || inv.status === 'consumed';
 
@@ -231,7 +232,7 @@ function InviteRow({
             className="flex h-7 w-7 items-center justify-center rounded-[8px] border border-[rgba(39,201,63,0.4)] text-[var(--ui-ok)] hover:bg-[rgba(39,201,63,0.12)] disabled:opacity-40 transition-colors"
             onClick={() => {
               if (!schedDraft) return;
-              onReschedule(inv.invite_id, new Date(schedDraft).toISOString());
+              onReschedule(inv.invite_id, localInputToIso(schedDraft));
               setEditingSched(false);
             }}
           >

@@ -5,7 +5,9 @@ What a simulation is
 Synthetic candidates (SIM-001, SIM-002, …) walked through a workflow version
 using :func:`app.workflows.route_after_result` — the function the runner calls
 for real candidates. A dry run therefore tests the logic that will run, not a
-second implementation of it that could quietly disagree.
+second implementation of it that could quietly disagree — including the
+runner's one rule outside that function: with "advance rounds automatically"
+off it moves nobody, so a simulated candidate stops where a real one would.
 
 The scenarios are chosen to cover every branch at least once: the path where
 everyone passes, and for each round and each of its exits (pass, fast-track,
@@ -126,13 +128,16 @@ def _walk(
     by_id: dict[str, dict[str, Any]],
     start: str,
     forced: dict[str, str],
+    auto_advance: bool = True,
 ) -> tuple[list[dict[str, Any]], str]:
     """Walk one synthetic candidate from ``start``. Returns (steps, end state).
 
     ``forced`` fixes the outcome at particular rounds; everywhere else the
     candidate passes. End state is ``decision`` (reached the final human
-    decision), ``held`` (stopped for a person), or ``error`` (the path ran into
-    a loop or a branch that points nowhere).
+    decision), ``held`` (stopped for a person), ``waiting`` (passed, and stays
+    on the round until a person moves them — rounds do not advance
+    automatically) or ``error`` (the path ran into a loop or a branch that
+    points nowhere).
     """
     steps: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -161,6 +166,17 @@ def _walk(
             "simulated_percent": percent,
             "branch": route.branch,
         }
+        if not auto_advance:
+            # workflow_runner: below the threshold the candidate is held (a fail
+            # branch is not followed); a pass leaves them on the round for a
+            # person to move. Either way the walk ends here.
+            if outcome == "fail":
+                step["next"] = {"kind": "hold"}
+                steps.append(step)
+                return steps, "held"
+            step["next"] = {"kind": "person"}
+            steps.append(step)
+            return steps, "waiting"
         if route.kind == "advance":
             nxt = by_id.get(route.next_round_id or "")
             step["next"] = {"kind": "round", "round_id": route.next_round_id,
@@ -200,7 +216,8 @@ def _shortest_prefix(by_id: dict[str, dict[str, Any]], first: str, target: str) 
     return None
 
 
-def build_scenarios(rounds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_scenarios(rounds: list[dict[str, Any]],
+                    auto_advance: bool = True) -> list[dict[str, Any]]:
     """One synthetic candidate per branch, plus the all-pass path. Pure."""
     if not rounds:
         return []
@@ -222,7 +239,7 @@ def build_scenarios(rounds: list[dict[str, Any]]) -> list[dict[str, Any]]:
     scenarios: list[dict[str, Any]] = []
     seen_paths: set[str] = set()
     for label, forced in plans:
-        steps, end = _walk(by_id, first, forced)
+        steps, end = _walk(by_id, first, forced, auto_advance)
         key = json.dumps([(s.get("round_id"), s.get("outcome")) for s in steps])
         if key in seen_paths:
             continue
@@ -409,7 +426,14 @@ def evaluate(ctx: dict[str, Any], profile_competencies: list[dict[str, Any]] | N
         for message in coverage_warnings:
             checks.warn(message)
 
-    scenarios = build_scenarios(rounds)
+    auto_advance = bool(ctx["workflow"]["auto_advance_rounds"])
+    if not auto_advance and rounds:
+        checks.warn(
+            "Rounds do not advance automatically, so nobody moves on by themselves: every "
+            "candidate stops after each round until a person moves them. The simulated "
+            "candidates below stop where real ones would."
+        )
+    scenarios = build_scenarios(rounds, auto_advance)
     for sc in scenarios:
         if sc["end"] == "error":
             checks.error(

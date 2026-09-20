@@ -116,6 +116,16 @@ vi.mock('../api/stageSla', () => ({
   listStageOwners: (...a: unknown[]) => stageSlaApi.listStageOwners(...a) as unknown,
 }));
 
+// PH4-A2 — the Interviews (loops) section always mounts alongside the human
+// interview section whenever an enrolmentId is present. Mocked to an empty
+// list so every existing drawer test stays deterministic.
+const schedulingApi = {
+  listLoopsForEnrolment: vi.fn(),
+};
+vi.mock('../api/scheduling', () => ({
+  listLoopsForEnrolment: (...a: unknown[]) => schedulingApi.listLoopsForEnrolment(...a) as unknown,
+}));
+
 import CandidateDrawer from '../components/CandidateDrawer';
 
 function applicant(over: Partial<Applicant> = {}): Applicant {
@@ -167,6 +177,7 @@ beforeEach(() => {
   workflowsApi.getWorkflow.mockResolvedValue(undefined);
   stageSlaApi.listExceptions.mockResolvedValue([]);
   stageSlaApi.listStageOwners.mockResolvedValue([]);
+  schedulingApi.listLoopsForEnrolment.mockResolvedValue([]);
 });
 
 describe('CandidateDrawer', () => {

@@ -203,12 +203,17 @@ async def assign(
     assigned_by: uuid.UUID,
     due_at: datetime | None,
     meta: RequestMeta,
+    notify: bool = True,
 ) -> dict[str, Any]:
     """Give each named interviewer an independent scorecard. Caller commits.
 
     Idempotent per interviewer: someone who already holds a live scorecard for
     this candidate and round is reported as ``already_assigned`` rather than
     refused, so re-sending the same panel is harmless.
+
+    ``notify=False`` is for a caller that tells the interviewer itself — PH4-A2
+    scheduling, whose message carries the interview's time, which this one
+    cannot. Every check and the audit row are the same either way.
     """
     ids = list(dict.fromkeys(interviewer_user_ids))
     if not ids:
@@ -368,6 +373,9 @@ async def assign(
         )
         person = eligible[str(interviewer_id)]
         link = f"/interviewer/scorecards/{card_id}"
+        created.append({"scorecard_id": str(card_id), "interviewer_user_id": str(interviewer_id)})
+        if not notify:
+            continue
         await create_notification(
             db, user_id=interviewer_id, kind="interview_assigned",
             title=f"You're interviewing {enrolment['full_name']}",
@@ -391,7 +399,6 @@ async def assign(
             to_user_id=interviewer_id, company_id=company_id,
             related_kind="interview_assigned", related_id=card_id,
         )
-        created.append({"scorecard_id": str(card_id), "interviewer_user_id": str(interviewer_id)})
 
     log.info(
         "scorecard.assigned", enrolment_id=str(enrolment_id), round_id=str(round_id),

@@ -94,6 +94,12 @@ _VIDEO_CONSENT_TYPE = "video_capture"
 _DOCUMENTS_CONSENT_TYPE = "preboarding_documents"
 _VALID_CONSENT_TYPES = frozenset({_CONSENT_TYPE, _VIDEO_CONSENT_TYPE,
                                   _DOCUMENTS_CONSENT_TYPE})
+# A consent is for a stated purpose (DPDP §6(1)), so what this route may GRANT
+# is narrower than what it may revoke: the documents consent is recorded when
+# an offer is accepted, for 'onboarding', and is never granted here — where the
+# only purpose on offer is 'interview'. Granting it here would file a row whose
+# purpose does not describe it and quietly re-open uploads.
+_GRANTABLE_CONSENT_TYPES = frozenset({_CONSENT_TYPE, _VIDEO_CONSENT_TYPE})
 _VALID_PURPOSES = frozenset({"interview"})
 
 # ---------------------------------------------------------------------------
@@ -219,12 +225,12 @@ async def record_consent(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid purpose '{body.purpose}'. Accepted values: {sorted(_VALID_PURPOSES)}",
         )
-    if body.consent_type not in _VALID_CONSENT_TYPES:
+    if body.consent_type not in _GRANTABLE_CONSENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"Invalid consent_type '{body.consent_type}'. "
-                f"Accepted values: {sorted(_VALID_CONSENT_TYPES)}"
+                f"Accepted values: {sorted(_GRANTABLE_CONSENT_TYPES)}"
             ),
         )
 

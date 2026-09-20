@@ -536,7 +536,8 @@ async def withdraw_consent(db: AsyncSession, *, raw: str | None, session: str | 
     ).all()
     if not revoked:
         raise OfferError(409, "Your consent to share documents is already withdrawn.")
-    _audit(db, actor=None, action="document.consent_withdrawn", resource_id=offer["id"],
+    _audit(db, actor=offer["candidate_user_id"], action="document.consent_withdrawn",
+           resource_id=offer["id"],
            details={"company_id": str(offer["company_id"]), "rows": len(revoked)},
            meta=meta, actor_type="candidate", resource_type="offer")
     for who in {offer["created_by_user_id"], offer["sent_by_user_id"]} - {None}:

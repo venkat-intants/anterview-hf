@@ -166,6 +166,8 @@ class SessionIn(BaseModel):
 class AcceptIn(BaseModel):
     code: str = Field(min_length=4, max_length=12)
     full_name: str = Field(min_length=2, max_length=200)
+    # The page's language when they accepted — a guest account made now takes it.
+    language: str | None = Field(default=None, pattern="^(en|hi|te)$")
 
 
 class DeclineIn(BaseModel):
@@ -264,13 +266,17 @@ async def create_enrolment_offer(enrolment_id: uuid.UUID, body: OfferCreateIn, r
 
 
 @hr_router.get("/offers/{offer_id}")
-async def get_offer(offer_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep) -> dict[str, Any]:
-    _uid, company_id = ctx
+async def get_offer(offer_id: uuid.UUID, request: Request, ctx: HrCtxDep,
+                    db: DbSessionDep) -> dict[str, Any]:
+    uid, company_id = ctx
     try:
         out = await svc.get_offer(db, company_id=company_id, offer_id=offer_id)
     except OfferError as exc:
         raise await _fail(db, exc) from exc
     out["history"] = await svc.history(db, company_id=company_id, offer_id=offer_id)
+    await svc.record_staff_view(db, company_id=company_id, offer_id=offer_id, actor=uid,
+                                meta=_meta(request), audience="hr")
+    await db.commit()
     return out
 
 
@@ -450,14 +456,17 @@ async def offer_approvals(ctx: SuperAdminCtxDep, db: DbSessionDep) -> list[dict[
 
 
 @admin_router.get("/offers/{offer_id}")
-async def admin_offer(offer_id: uuid.UUID, ctx: SuperAdminCtxDep,
+async def admin_offer(offer_id: uuid.UUID, request: Request, ctx: SuperAdminCtxDep,
                       db: DbSessionDep) -> dict[str, Any]:
-    _uid, company_id = ctx
+    uid, company_id = ctx
     try:
         out = await svc.get_offer(db, company_id=company_id, offer_id=offer_id)
     except OfferError as exc:
         raise await _fail(db, exc) from exc
     out["history"] = await svc.history(db, company_id=company_id, offer_id=offer_id)
+    await svc.record_staff_view(db, company_id=company_id, offer_id=offer_id, actor=uid,
+                                meta=_meta(request), audience="super_admin")
+    await db.commit()
     return out
 
 
@@ -514,7 +523,7 @@ async def accept_offer(body: AcceptIn, token: OfferTokenDep, request: Request,
                        db: CandidateDbDep) -> dict[str, Any]:
     try:
         out = await svc.answer(db, raw=token, accept=True, code=body.code, name=body.full_name,
-                               reason=None, meta=_meta(request))
+                               reason=None, meta=_meta(request), language=body.language)
     except OfferError as exc:
         raise await _fail(db, exc) from exc
     await db.commit()
@@ -550,6 +559,21 @@ async def open_documents_session(body: SessionIn, token: OfferTokenDep, request:
                                  db: CandidateDbDep) -> dict[str, Any]:
     try:
         out = await svc.open_documents_session(db, raw=token, code=body.code, meta=_meta(request))
+    except OfferError as exc:
+        raise await _fail(db, exc) from exc
+    await db.commit()
+    return out
+
+
+@public_router.post("/documents/consent/withdraw",
+                    dependencies=[rate_limit("offer_answer", 10)])
+async def withdraw_documents_consent(token: OfferTokenDep, session: OfferSessionDep,
+                                     request: Request, db: CandidateDbDep) -> dict[str, Any]:
+    """Withdraw consent to share documents — what the offer page promises, for
+    a candidate who has no account to withdraw from (PH4-A4, DPDP §11)."""
+    try:
+        out = await docs.withdraw_consent(db, raw=token, session=session,
+                                                 meta=_meta(request))
     except OfferError as exc:
         raise await _fail(db, exc) from exc
     await db.commit()

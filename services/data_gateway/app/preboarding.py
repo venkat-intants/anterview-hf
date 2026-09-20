@@ -64,9 +64,10 @@ async def _event(db: AsyncSession, *, company_id: Any, offer_id: Any, document_i
 
 
 def _audit(db: AsyncSession, *, actor: uuid.UUID | None, action: str, resource_id: uuid.UUID,
-           details: dict[str, Any], meta: RequestMeta, actor_type: str = "user") -> None:
+           details: dict[str, Any], meta: RequestMeta, actor_type: str = "user",
+           resource_type: str = "candidate_document") -> None:
     db.add(AuditLog(actor_id=actor, actor_type=actor_type, action=action,
-                    resource_type="candidate_document", resource_id=resource_id,
+                    resource_type=resource_type, resource_id=resource_id,
                     details=details, ip_address=meta.ip_address, user_agent=meta.user_agent,
                     event_ts=datetime.now(tz=UTC)))
 
@@ -262,6 +263,16 @@ async def upload(db: AsyncSession, *, raw: str | None, session: str | None,
     offer = await with_documents_session(db, raw=raw, session=session)
     if offer["preboarding_completed_at"] is not None:
         raise OfferError(409, "Your documents are complete; nothing more is needed.")
+    # Consent to share documents is recorded at acceptance; once withdrawn
+    # (DELETE /users/me/consent revokes it), nothing more is taken.
+    consented = await db.scalar(
+        text("SELECT bool_or(revoked_at IS NULL) FROM dpdp_consent_ledger"
+             " WHERE user_id = :u AND consent_type = 'preboarding_documents' AND granted"),
+        {"u": offer["candidate_user_id"]},
+    )
+    if not consented:
+        raise OfferError(409, "You have withdrawn your consent to share documents, so none can "
+                              "be uploaded. Contact the hiring team if you want to continue.")
     req = (
         await db.execute(
             text("SELECT * FROM document_requirements WHERE id = :i AND requisition_id = :r"
@@ -278,12 +289,18 @@ async def upload(db: AsyncSession, *, raw: str | None, session: str | None,
             raise OfferError(422, "This document has already expired. Upload a current one.")
     current = (
         await db.execute(
-            text("SELECT id, status, version FROM candidate_documents WHERE offer_id = :o"
-                 " AND requirement_id = :r AND superseded_at IS NULL FOR UPDATE"),
+            text("SELECT id, status, version, expires_on FROM candidate_documents"
+                 " WHERE offer_id = :o AND requirement_id = :r AND superseded_at IS NULL"
+                 " FOR UPDATE"),
             {"o": offer["id"], "r": requirement_id},
         )
     ).mappings().first()
-    if current is not None and current["status"] in ("submitted", "verified"):
+    # A verified document past its expiry date is shown to the candidate as
+    # expired, and they may send a current one without waiting to be asked.
+    lapsed = (current is not None and current["status"] == "verified"
+              and current["expires_on"] is not None
+              and current["expires_on"] <= datetime.now(tz=UTC).date())
+    if current is not None and current["status"] in ("submitted", "verified") and not lapsed:
         raise OfferError(409, "This document is already with the hiring team. You can replace it "
                               "if they ask you to.")
     try:
@@ -497,6 +514,42 @@ async def _signed(db: AsyncSession, offer: dict[str, Any], document_id: uuid.UUI
 # ---------------------------------------------------------------------------
 # Completion and the HRMS handoff
 # ---------------------------------------------------------------------------
+async def withdraw_consent(db: AsyncSession, *, raw: str | None, session: str | None,
+                           meta: RequestMeta) -> dict[str, Any]:
+    """The candidate withdraws their consent to share documents (DPDP §11).
+
+    Reachable with the same credential that authorises an upload — the offer
+    link and a live documents session — because most candidates here have no
+    account to sign in with: the identity made at acceptance is claimed by
+    email, and may never be. Nothing already sent is deleted by this; it stops
+    anything further being taken (`upload` refuses next), and the hiring team
+    is told so they can talk to the candidate. Caller commits.
+    """
+    offer = await with_documents_session(db, raw=raw, session=session)
+    revoked = (
+        await db.execute(
+            text("UPDATE dpdp_consent_ledger SET revoked_at = now()"
+                 " WHERE user_id = :u AND consent_type = 'preboarding_documents'"
+                 "   AND granted AND revoked_at IS NULL RETURNING id"),
+            {"u": offer["candidate_user_id"]},
+        )
+    ).all()
+    if not revoked:
+        raise OfferError(409, "Your consent to share documents is already withdrawn.")
+    _audit(db, actor=offer["candidate_user_id"], action="document.consent_withdrawn",
+           resource_id=offer["id"],
+           details={"company_id": str(offer["company_id"]), "rows": len(revoked)},
+           meta=meta, actor_type="candidate", resource_type="offer")
+    for who in {offer["created_by_user_id"], offer["sent_by_user_id"]} - {None}:
+        await create_notification(
+            db, user_id=who, kind="offer_update",
+            title=f"Documents consent withdrawn: {offer['candidate_name']}",
+            body="They can send no more documents until they agree again.",
+            link=f"/hr/offers/{offer['id']}",
+        )
+    return {"withdrawn": True}
+
+
 async def complete(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
                    actor: uuid.UUID, meta: RequestMeta) -> dict[str, Any]:
     offer = await _hr_offer(db, company_id, offer_id)
@@ -627,9 +680,12 @@ SELECT d.id, d.storage_key, d.offer_id, d.company_id
 
 
 async def purge_documents(db: AsyncSession, *, retention_days: int, dry_run: bool) -> int:
-    """Delete the files, and blank the rows, of documents whose purpose is over:
-    the offer ended without an acceptance, or preboarding completed (the HRMS
-    holds them from then) — ``retention_days`` ago. Honours RETENTION_DRY_RUN.
+    """Delete the files, and blank the rows, of documents whose purpose is over
+    (_PURGEABLE_DOCS_SQL): ``retention_days`` after the offer ended without an
+    acceptance, after preboarding completed (the HRMS holds them from then), or
+    after an acceptance whose preboarding never completed; and at the next run
+    once a hire is reversed by a rejection before preboarding completed.
+    Honours RETENTION_DRY_RUN.
 
     Files first, rows second, and only on a full count: a storage shortfall
     raises, nothing is committed, and the next nightly run retries the same set

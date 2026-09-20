@@ -14,6 +14,11 @@ interface ConfirmDeleteButtonProps {
   label?: string;
   /** Accessible label / tooltip for the icon-only variant. */
   title?: string;
+  /** The word on the confirming button — "Delete" unless the action is not a
+   *  deletion (withdrawing an offer keeps it, so it says "Withdraw"). */
+  confirmText?: string;
+  /** What the armed pair of buttons is called, for assistive tech. */
+  confirmGroupLabel?: string;
 }
 
 export function ConfirmDeleteButton({
@@ -21,12 +26,18 @@ export function ConfirmDeleteButton({
   pending = false,
   label,
   title = 'Delete',
+  confirmText = 'Delete',
+  confirmGroupLabel = 'Confirm deletion',
 }: ConfirmDeleteButtonProps) {
   const [armed, setArmed] = useState(false);
 
   if (armed) {
     return (
-      <span className="flex items-center gap-1.5" role="group" aria-label="Confirm deletion">
+      <span
+        className="flex items-center gap-1.5"
+        role="group"
+        aria-label={confirmGroupLabel}
+      >
         <span className="text-[11px] text-muted-foreground">Sure?</span>
         <button
           type="button"
@@ -38,7 +49,7 @@ export function ConfirmDeleteButton({
           aria-busy={pending}
           className="rounded-[7px] bg-[#e6714f]/20 px-2 py-1 text-[11px] font-semibold text-[#ff8a66] transition-colors hover:bg-[#e6714f]/30 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6714f]"
         >
-          {pending ? '…' : 'Delete'}
+          {pending ? '…' : confirmText}
         </button>
         <button
           type="button"

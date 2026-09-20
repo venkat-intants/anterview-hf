@@ -224,8 +224,10 @@ class Settings(BaseSettings):
     # candidate can still read what they agreed to.
     offer_link_grace_days: int = 30
     preboarding_document_max_bytes: int = 10 * 1024 * 1024
-    # Candidate documents are deleted this long after the offer ends without
-    # an acceptance, or after preboarding completes (the HRMS holds them then).
+    # Candidate documents are deleted this long after the offer ends without an
+    # acceptance, after preboarding completes (the HRMS holds them then), or after
+    # an acceptance whose preboarding never completes — and at the next purge
+    # once a hire is reversed before preboarding completes. See purge_documents.
     preboarding_document_retention_days: int = 90
 
     # --- PH4-D2: candidate accommodations ---

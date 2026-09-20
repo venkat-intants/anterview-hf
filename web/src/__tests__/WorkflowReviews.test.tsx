@@ -163,6 +163,27 @@ describe('WorkflowReviews — one version in full', () => {
     expect(screen.getByText(/^by Rekha HR$/)).toBeTruthy();
   });
 
+  it('says a candidate who waits for a person is not a failure (auto-advance off)', async () => {
+    getWorkflowReviewDetail.mockResolvedValue({
+      ...DETAIL,
+      simulation: {
+        ...DETAIL.simulation!,
+        scenarios: [
+          {
+            id: 'SIM-001', candidate: 'Simulated candidate 1', description: 'passes every round',
+            end: 'waiting', steps: [],
+          },
+        ],
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Fundamentals');
+    await user.click(screen.getByRole('button', { name: /show 1 scenario/i }));
+    expect(screen.getByText(/waits for a person to move them on/)).toBeTruthy();
+    expect(screen.queryByText(/could not finish/)).toBeNull();
+  });
+
   it('shows stage owners and SLAs, including the final decision', async () => {
     renderPage();
     await screen.findByText('Fundamentals');

@@ -453,3 +453,45 @@ def test_eligibility_is_checked_before_anyone_s_availability_is_read() -> None:
     assert src.index("list_assignable_interviewers") < src.index("_outside_availability(")
     for fn in (sch._availability_windows, sch._bookings):
         assert "company_id = :c" in inspect.getsource(fn)
+
+
+def test_calibration_looks_back_a_year_while_booking_windows_stay_short() -> None:
+    """The panel offers a 180-day calibration period; it used to be refused by
+    the 92-day cap that suits look-ahead windows (found in the checklist pass)."""
+    from datetime import UTC, datetime, timedelta
+
+    from fastapi import HTTPException
+
+    import app.routers.interview_scheduling as r
+
+    now = datetime.now(tz=UTC)
+    s, e = r._window(now - timedelta(days=180), now, days=90, max_days=r.CALIBRATION_MAX_DAYS)
+    assert e - s == timedelta(days=180)
+    with pytest.raises(HTTPException):
+        r._window(now, now + timedelta(days=180), days=28)
+    assert "max_days=CALIBRATION_MAX_DAYS" in inspect.getsource(r.hr_calibration)
+
+
+def test_a_cancelled_interview_releases_only_the_scorecards_it_alone_held() -> None:
+    """Found in the checklist pass: cancelling left scorecards open to turn late."""
+    import app.interview_scheduling as sch
+
+    sql = sch._RELEASABLE_SQL
+    assert "sc.status = 'assigned'" in sql          # never one the interviewer began
+    assert "sc.corrects_id IS NULL" in sql          # never an open correction
+    assert "os.id <> ALL(:s)" in sql and "'completed', 'no_show'" in sql  # still needed elsewhere
+    assert "sc.company_id = :c" in sql
+    assert "sc.created_at >= (SELECT min(fs.created_at)" in sql  # made by scheduling, not by hand
+    assert "created_at," in inspect.getsource(sch.add_session)    # one clock for both stamps
+    assert "cards.withdraw(" in inspect.getsource(sch._release_scorecards)  # A1's rules and audit
+    for fn in (sch.set_session_outcome, sch.cancel_loop, sch.close_for_decision):
+        assert "_release_scorecards(" in inspect.getsource(fn), fn.__name__
+
+
+def test_every_change_to_a_sent_schedule_raises_the_calendar_sequence() -> None:
+    import app.interview_scheduling as sch
+
+    for fn in (sch.reschedule_session, sch.set_session_outcome, sch.cancel_loop,
+               sch.close_for_decision):
+        assert "_bump_itinerary(" in inspect.getsource(fn), fn.__name__
+    assert "sent_at IS NOT NULL" in inspect.getsource(sch._bump_itinerary)

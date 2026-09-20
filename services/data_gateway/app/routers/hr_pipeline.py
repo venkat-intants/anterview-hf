@@ -79,6 +79,8 @@ class PipelineRow(BaseModel):
     interview_score: float | None
     scorecard_id: str | None
     updated_at: str
+    # PH4-A3 — offer_accepted | offer_declined | offer_expired | offer_withdrawn.
+    offer_outcome: str | None = None
 
 
 class PipelineResponse(BaseModel):
@@ -215,7 +217,12 @@ class DecisionIn(BaseModel):
 # the filtered total via a window COUNT(*) OVER ().
 _PIPELINE_SQL = text(
     """
-SELECT *, COUNT(*) OVER () AS total_count
+SELECT *,
+       -- PH4-A3: the offer's outcome sits beside the decision on the
+       -- application, not in the shared view (the copilot reads that).
+       (SELECT e.offer_outcome FROM enrolments e
+         WHERE e.id = application_progress.enrolment_id) AS offer_outcome,
+       COUNT(*) OVER () AS total_count
 FROM application_progress
 WHERE company_id = :cid
   AND (CAST(:status AS text) IS NULL OR status = CAST(:status AS text))
@@ -278,6 +285,7 @@ async def get_pipeline(
             interview_score=float(r["interview_score"]) if r["interview_score"] is not None else None,
             scorecard_id=str(r["scorecard_id"]) if r["scorecard_id"] else None,
             updated_at=r["updated_at"].isoformat(),
+            offer_outcome=r["offer_outcome"],
         )
         for r in rows
     ]
@@ -296,7 +304,14 @@ SELECT
   COUNT(DISTINCT applicant_id)                                        AS total_applicants,
   COUNT(*) FILTER (WHERE enrolment_id IS NOT NULL)                    AS total_applications,
   COUNT(*) FILTER (WHERE stored_status = 'shortlisted')               AS shortlisted,
-  COUNT(*) FILTER (WHERE stored_status = 'hired')                     AS hired,
+  -- PH4-A3: a hire whose offer was declined, expired or withdrawn has not
+  -- filled the role, and the two dashboards leave it out of their counts; the
+  -- funnel says the same number for the same data. The shared
+  -- application_progress view is left alone (the copilot reads it), so the
+  -- outcome is read from the application itself.
+  COUNT(*) FILTER (WHERE stored_status = 'hired' AND COALESCE(
+    (SELECT e.offer_outcome FROM enrolments e WHERE e.id = application_progress.enrolment_id),
+    '') NOT IN ('offer_declined', 'offer_expired', 'offer_withdrawn'))  AS hired,
   COUNT(*) FILTER (WHERE stored_status = 'rejected')                  AS rejected,
   COUNT(*) FILTER (WHERE total_exam_attempts > 0)                     AS exam_taken,
   COUNT(*) FILTER (WHERE exam_passed IS TRUE)                         AS exam_passed,

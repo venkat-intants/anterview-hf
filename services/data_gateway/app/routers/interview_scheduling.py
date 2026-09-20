@@ -49,7 +49,13 @@ from app.interview_scheduling import (
     set_session_outcome,
 )
 from app.interviewer_scorecards import RequestMeta
-from app.panel_workload import PanelError, calibration, set_capacity, workload
+from app.panel_workload import (
+    MAX_CALIBRATION_SPAN,
+    PanelError,
+    calibration,
+    set_capacity,
+    workload,
+)
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 
 hr_router = APIRouter(prefix="/hr", tags=["interview-scheduling"])
@@ -77,15 +83,22 @@ def _raise(exc: SchedulingError | PanelError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
-def _window(start: datetime | None, end: datetime | None, *, days: int) -> tuple[datetime, datetime]:
+def _window(start: datetime | None, end: datetime | None, *, days: int,
+            max_days: int = 92) -> tuple[datetime, datetime]:
     now = datetime.now(tz=UTC)
     start = start or now
     end = end or start + timedelta(days=days)
     if start.tzinfo is None or end.tzinfo is None:
         raise HTTPException(status_code=422, detail="Times need a timezone offset.")
-    if end <= start or end - start > timedelta(days=92):
-        raise HTTPException(status_code=422, detail="Choose a period of up to 92 days.")
+    if end <= start or end - start > timedelta(days=max_days):
+        raise HTTPException(status_code=422, detail=f"Choose a period of up to {max_days} days.")
     return start, end
+
+
+# Calibration looks BACK over scored interviews, and a quiet panel needs a
+# long period to reach the minimum number of candidates at all; the other
+# windows look ahead at bookings, where three months is plenty.
+CALIBRATION_MAX_DAYS = MAX_CALIBRATION_SPAN.days
 
 
 def _ics(body: str, name: str) -> Response:
@@ -373,7 +386,8 @@ async def hr_calibration(
 ) -> dict[str, Any]:
     actor, company_id = ctx
     now = datetime.now(tz=UTC)
-    s, e = _window(start or now - timedelta(days=90), end or now, days=90)
+    s, e = _window(start or now - timedelta(days=90), end or now, days=90,
+                   max_days=CALIBRATION_MAX_DAYS)
     try:
         out = await calibration(db, company_id=company_id, start=s, end=e,
                                 requisition_id=requisition_id, round_id=round_id,

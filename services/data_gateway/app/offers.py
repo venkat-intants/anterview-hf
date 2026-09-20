@@ -497,9 +497,37 @@ async def create_offer(
             raise OfferError(409, "This application already has an offer in progress.") from exc
         raise
     offer = await _load(db, company_id=company_id, offer_id=offer_id)
+    # A new offer is the application's current one: the outcome of an earlier
+    # (declined, expired or withdrawn) offer no longer describes it.
+    await db.execute(
+        text("UPDATE enrolments SET offer_outcome = NULL, updated_at = now()"
+             " WHERE id = :e AND offer_outcome IS NOT NULL"),
+        {"e": offer["enrolment_id"]},
+    )
     await _record(db, offer=offer, action="created", actor=actor, meta=meta,
                   details={"from_template": template_id is not None})
     return offer_out(offer)
+
+
+async def record_staff_view(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
+                            actor: uuid.UUID, meta: RequestMeta, audience: str) -> None:
+    """A member of staff reading an offer — its compensation included — is on the
+    audit log (PH4-A3 #16). Facts only: who, which offer, from which console.
+
+    Once an hour per person and offer: this is a page load, and a refresh or a
+    browser prefetch would otherwise write a row every time, burying the reads
+    that matter (security review of 2148ef1, INFO).
+    """
+    seen = await db.scalar(
+        text("SELECT 1 FROM audit_log WHERE action = 'offer.viewed_by_staff'"
+             "   AND resource_id = :o AND actor_id = :a"
+             "   AND event_ts > now() - interval '1 hour' LIMIT 1"),
+        {"o": offer_id, "a": actor},
+    )
+    if seen:
+        return
+    _audit(db, actor=actor, action="offer.viewed_by_staff", offer_id=offer_id,
+           details={"company_id": str(company_id), "audience": audience}, meta=meta)
 
 
 async def update_offer(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
@@ -550,7 +578,7 @@ async def submit(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID
             db, user_id=admin, kind="offer_review",
             title=f"Offer to approve: {offer['job_title']}",
             body=f"{offer['candidate_name']} · {offer['currency']} {_money(offer['base_salary'])}",
-            link=f"/superadmin/offers/{offer_id}",
+            link=f"/superadmin/offer-approvals/{offer_id}",
         )
     return offer_out(await _load(db, company_id=company_id, offer_id=offer_id))
 
@@ -861,7 +889,8 @@ async def _check_code(db: AsyncSession, offer: dict[str, Any], purpose: str, cod
                      {"i": row["id"]})
 
 
-async def _ensure_candidate_identity(db: AsyncSession, offer: dict[str, Any]) -> uuid.UUID:
+async def _ensure_candidate_identity(db: AsyncSession, offer: dict[str, Any],
+                                     language: str | None = None) -> uuid.UUID:
     """The person accepting needs an identity the consent ledger and erasure can
     key on. An applicant HR added has none: a guest one is made, as interview
     redemption does."""
@@ -878,8 +907,11 @@ async def _ensure_candidate_identity(db: AsyncSession, offer: dict[str, Any]) ->
         text("INSERT INTO users (id, email, password_hash, full_name, company_id,"
              " preferred_language, is_active, notify_login_email, must_change_password,"
              " created_at, updated_at)"
-             " VALUES (:i, :e, NULL, :n, NULL, 'en', true, false, false, now(), now())"),
-        {"i": uid, "e": f"guest+{uid}@applicants.invalid", "n": offer["candidate_name"]},
+             " VALUES (:i, :e, NULL, :n, NULL, :lang, true, false, false, now(), now())"),
+        # The language they read and accepted the offer in, so the activation
+        # email that follows is in it too.
+        {"i": uid, "e": f"guest+{uid}@applicants.invalid", "n": offer["candidate_name"],
+         "lang": language if language in ("en", "hi", "te") else "en"},
     )
     await db.execute(
         text("INSERT INTO user_roles (user_id, role_id, assigned_at) VALUES"
@@ -948,7 +980,8 @@ async def _tell_hr(db: AsyncSession, offer: dict[str, Any], title: str) -> None:
 
 
 async def answer(db: AsyncSession, *, raw: str | None, accept: bool, code: str,
-                 name: str | None, reason: str | None, meta: RequestMeta) -> dict[str, Any]:
+                 name: str | None, reason: str | None, meta: RequestMeta,
+                 language: str | None = None) -> dict[str, Any]:
     """Accept or decline, with the emailed code. Final either way."""
     offer = await by_token(db, raw)
     purpose = "accept" if accept else "decline"
@@ -962,7 +995,7 @@ async def answer(db: AsyncSession, *, raw: str | None, accept: bool, code: str,
         signed = (name or "").strip()
         if not 2 <= len(signed) <= 200:
             raise OfferError(422, "Type your full name to accept.")
-        user_id = await _ensure_candidate_identity(db, offer)
+        user_id = await _ensure_candidate_identity(db, offer, language)
         await db.execute(
             text("UPDATE offers SET status = 'accepted', responded_at = now(),"
                  " accepted_name = :n, updated_at = now() WHERE id = :o"),
@@ -1007,7 +1040,8 @@ async def _expire(db: AsyncSession, offer: dict[str, Any]) -> None:
     if changed is None:
         return
     await _set_outcome(db, offer, "offer_expired")
-    await _event(db, offer=offer, action="expired", actor_type="system", actor=None)
+    await _record(db, offer=offer, action="expired", actor=None, meta=RequestMeta(),
+                  actor_type="system")
     await _tell_hr(db, offer, "Offer expired")
 
 

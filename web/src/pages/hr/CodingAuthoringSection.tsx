@@ -8,7 +8,7 @@
 
 import { Suspense, lazy, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Loader2, Lock, Code2, Pencil, Sparkles, X } from '@/design/components/icons';
+import { Plus, Trash2, Loader2, Lock, Code2, Library, Pencil, Sparkles, X } from '@/design/components/icons';
 import {
   listSectionCodingQuestions,
   addSectionCodingQuestion,
@@ -20,10 +20,13 @@ import {
   type ExamLanguage,
   type GeneratedCodingQuestion,
 } from '@/api/exams';
+import { saveCodingQuestionToBank, type SaveToBankInput } from '@/api/questionBanks';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { Pill, StatusTag } from '@/design/components/primitives';
 import { Stagger, StaggerItem } from '@/design/components/Reveal';
+import { BankQuestionPicker } from '@/components/bank/BankQuestionPicker';
+import { SaveToBankButton } from '@/components/bank/SaveToBankButton';
 
 const CodeEditor = lazy(() => import('@/components/CodeEditor'));
 
@@ -60,6 +63,23 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
   });
 
   const refresh = () => void qc.invalidateQueries({ queryKey: qKey });
+
+  // PH4-D1 — the bank picker, and per-row "Save to bank".
+  const [showBankPicker, setShowBankPicker] = useState(false);
+  const [savingToBankId, setSavingToBankId] = useState<string | null>(null);
+
+  const saveToBankMut = useMutation({
+    mutationFn: ({ qid, body }: { qid: string; body: SaveToBankInput }) =>
+      saveCodingQuestionToBank(examId, qid, body),
+    onSuccess: () => {
+      toast.success('Saved to bank as a new draft');
+      setSavingToBankId(null);
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : 'Could not save this question to a bank');
+      setSavingToBankId(null);
+    },
+  });
 
   // Composer state
   const [composerTab, setComposerTab] = useState<'manual' | 'ai'>('manual');
@@ -187,10 +207,17 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                       {i + 1}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="whitespace-pre-wrap text-[13px] font-medium leading-snug text-foreground">
-                        {q.prompt}{' '}
-                        <span className="font-normal text-muted-foreground">({q.points} pt)</span>
-                      </p>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <p className="whitespace-pre-wrap text-[13px] font-medium leading-snug text-foreground">
+                          {q.prompt}{' '}
+                          <span className="font-normal text-muted-foreground">({q.points} pt)</span>
+                        </p>
+                        {q.source_bank_root_id ? (
+                          <StatusTag tone="electric" className="text-[10px]">
+                            From bank · v{q.source_bank_version}
+                          </StatusTag>
+                        ) : null}
+                      </div>
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         {q.allowed_languages.map((l) => (
                           <StatusTag key={l} tone="neutral" className="text-[10.5px]">
@@ -202,6 +229,22 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                           {sampleN} sample
                         </span>
                       </div>
+                      {savingToBankId === q.id ? (
+                        <div className="mt-2">
+                          <SaveToBankButton
+                            saving={saveToBankMut.isPending}
+                            onSave={(body) => saveToBankMut.mutate({ qid: q.id, body })}
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setSavingToBankId(q.id)}
+                          className="mt-2 text-[11.5px] text-[var(--ui-info)] hover:underline"
+                        >
+                          Save to bank
+                        </button>
+                      )}
                     </div>
                     {!locked && (
                       <button
@@ -221,10 +264,30 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
         </Stagger>
       )}
 
+      {/* PH4-D1 — add an approved coding question straight from a bank */}
+      {!locked && (
+        <button
+          type="button"
+          onClick={() => setShowBankPicker(true)}
+          className="inline-flex items-center gap-1.5 rounded-[10px] border border-border px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:border-[var(--ui-line-strong)]"
+        >
+          <Library size={13} aria-hidden="true" /> Add from bank
+        </button>
+      )}
+      {showBankPicker && (
+        <BankQuestionPicker
+          examId={examId}
+          sectionId={sectionId}
+          sectionKind="coding"
+          onClose={() => setShowBankPicker(false)}
+          onAdded={refresh}
+        />
+      )}
+
       {/* Composer */}
       {locked ? (
         <div className="flex items-center gap-2 rounded-[14px] border border-border bg-[rgba(28,29,31,0.3)] px-3.5 py-2.5 text-[12.5px] text-muted-foreground">
-          <Lock size={14} aria-hidden="true" /> Questions are locked once attempts exist.
+          <Lock size={14} aria-hidden="true" /> Questions are locked — see the banner above.
         </div>
       ) : (
         <div className="rounded-[14px] border border-dashed border-border bg-[rgba(28,29,31,0.3)] p-3.5">

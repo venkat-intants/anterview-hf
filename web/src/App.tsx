@@ -70,6 +70,8 @@ const ApprovalQueue = lazy(() => import('./pages/superadmin/ApprovalQueue'));
 const DecisionReasons = lazy(() => import('./pages/superadmin/DecisionReasons'));
 // PH4-O6 — the queue of workflow versions waiting for the super admin's review.
 const WorkflowReviews = lazy(() => import('./pages/superadmin/WorkflowReviews'));
+// PH4-D1 — the super admin's mirror of the bank-question review queue.
+const SuperAdminQuestionReviews = lazy(() => import('./pages/superadmin/QuestionReviews'));
 // D4-1 — the interviewer console: assignments and one scorecard at a time.
 const InterviewerConsole = lazy(() => import('./pages/interviewer/InterviewerConsole'));
 const InterviewerScorecard = lazy(() => import('./pages/interviewer/InterviewerScorecard'));
@@ -79,6 +81,10 @@ const Exams = lazy(() => import('./pages/hr/Exams'));
 const ExamEditor = lazy(() => import('./pages/hr/ExamEditor'));
 const ExamResults = lazy(() => import('./pages/hr/ExamResults'));
 const ExamAttemptDetail = lazy(() => import('./pages/hr/ExamAttemptDetail'));
+// PH4-D1 — reusable question banks, and locking published exam content.
+const QuestionBanks = lazy(() => import('./pages/hr/QuestionBanks'));
+const QuestionBankDetail = lazy(() => import('./pages/hr/QuestionBankDetail'));
+const QuestionReviews = lazy(() => import('./pages/hr/QuestionReviews'));
 const HRInterviews = lazy(() => import('./pages/hr/HRInterviews'));
 // PH4 Wave 3 — panel workload, availability and calibration (O5).
 const InterviewPanel = lazy(() => import('./pages/hr/InterviewPanel'));
@@ -222,6 +228,11 @@ export default function App() {
                 path="/superadmin/workflow-reviews/:workflowId"
                 element={<WorkflowReviews />}
               />
+              {/* PH4-D1 — the bank-question review mirror (D4-2). */}
+              <Route
+                path="/superadmin/question-reviews"
+                element={<SuperAdminQuestionReviews />}
+              />
             </Route>
           </Route>
 
@@ -249,6 +260,12 @@ export default function App() {
                 path="/hr/exams/:examId/attempts/:attemptId"
                 element={<ExamAttemptDetail />}
               />
+              {/* PH4-D1 — reusable question banks. /reviews before /:bankId so
+                  the literal wins the match, matching the /hr/requisitions
+                  pattern above. */}
+              <Route path="/hr/question-banks" element={<QuestionBanks />} />
+              <Route path="/hr/question-banks/reviews" element={<QuestionReviews />} />
+              <Route path="/hr/question-banks/:bankId" element={<QuestionBankDetail />} />
               <Route path="/hr/interviews" element={<HRInterviews />} />
               <Route path="/hr/panel" element={<InterviewPanel />} />
               <Route path="/hr/pipeline" element={<HRPipeline />} />

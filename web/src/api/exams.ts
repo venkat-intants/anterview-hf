@@ -27,6 +27,11 @@ export interface ExamQuestion {
   correct_index: number;
   points: number;
   position: number;
+  // PH4-D1 provenance — present once QuestionOut on the server carries them
+  // (see the question-banks API gap noted in the PH4-D1 handoff). Optional so
+  // this type stays correct against the API as it exists today.
+  source_bank_root_id?: string | null;
+  source_bank_version?: number | null;
 }
 
 export type ExamKind = 'mcq' | 'coding';
@@ -321,6 +326,9 @@ export interface CodingQuestion {
   time_limit_ms: number;
   points: number;
   position: number;
+  // PH4-D1 provenance — see the matching note on ExamQuestion above.
+  source_bank_root_id?: string | null;
+  source_bank_version?: number | null;
 }
 
 export interface CodingQuestionInput {
@@ -409,6 +417,14 @@ export function deleteRound(examId: string, roundId: string): Promise<void> {
 
 export function reorderRounds(examId: string, ids: string[]): Promise<Round[]> {
   return apiPut<Round[]>(`/hr/exams/${examId}/rounds/order`, { ids });
+}
+
+/** PH4-D1 — the way forward once a round is locked (published, or taken):
+ *  a new, editable draft round with copies of its sections and questions.
+ *  Deliberately does not carry bank provenance onto the copies — see the
+ *  server-side comment on `duplicate_round` in hr_rounds.py. */
+export function duplicateRound(examId: string, roundId: string): Promise<Round> {
+  return apiPost<Round>(`/hr/exams/${examId}/rounds/${roundId}/duplicate`, {});
 }
 
 // ── Sections ──────────────────────────────────────────────────────────────────

@@ -31,7 +31,9 @@ import {
   FileText,
   History,
   LayoutDashboard,
+  Library,
   ListChecks,
+  ShieldCheck,
   TrendingUp,
   Upload,
   Users,
@@ -80,6 +82,8 @@ const HR_NAV: NavItem[] = [
   { to: '/hr/requisitions', label: 'Openings', icon: <Kanban className={ICON} aria-hidden="true" /> },
   { to: '/hr/applicants', label: 'Applicants', icon: <FileSearch className={ICON} aria-hidden="true" /> },
   { to: '/hr/exams', label: 'Exams', icon: <ClipboardList className={ICON} aria-hidden="true" /> },
+  // PH4-D1 — reusable question banks, shared across every exam.
+  { to: '/hr/question-banks', label: 'Question banks', icon: <Library className={ICON} aria-hidden="true" /> },
   { to: '/hr/interviews', label: 'Interviews', icon: <Video className={ICON} aria-hidden="true" /> },
   // PH4 Wave 3 (O5) — panel workload, availability and calibration.
   { to: '/hr/panel', label: 'Interview panel', icon: <Gauge className={ICON} aria-hidden="true" /> },
@@ -120,6 +124,9 @@ const SUPER_NAV: NavItem[] = [
   // PH4-O6: workflow versions waiting for this super admin's approval before
   // HR can publish them (D4-2).
   { to: '/superadmin/workflow-reviews', label: 'Workflow reviews', icon: <FileCheck2 className={ICON} aria-hidden="true" /> },
+  // PH4-D1 — the mirror of HR's bank-question review queue (D4-2), so a
+  // single-HR company is never blocked on a second HR approver.
+  { to: '/superadmin/question-reviews', label: 'Question reviews', icon: <ShieldCheck className={ICON} aria-hidden="true" /> },
 ];
 
 // interviewer — company staff who see ONLY interviews assigned to them (D4-1).

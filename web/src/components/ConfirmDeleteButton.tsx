@@ -17,6 +17,8 @@ interface ConfirmDeleteButtonProps {
   /** The word on the confirming button — "Delete" unless the action is not a
    *  deletion (withdrawing an offer keeps it, so it says "Withdraw"). */
   confirmText?: string;
+  /** What the armed pair of buttons is called, for assistive tech. */
+  confirmGroupLabel?: string;
 }
 
 export function ConfirmDeleteButton({
@@ -25,6 +27,7 @@ export function ConfirmDeleteButton({
   label,
   title = 'Delete',
   confirmText = 'Delete',
+  confirmGroupLabel = 'Confirm deletion',
 }: ConfirmDeleteButtonProps) {
   const [armed, setArmed] = useState(false);
 
@@ -33,7 +36,7 @@ export function ConfirmDeleteButton({
       <span
         className="flex items-center gap-1.5"
         role="group"
-        aria-label={`Confirm: ${confirmText}`}
+        aria-label={confirmGroupLabel}
       >
         <span className="text-[11px] text-muted-foreground">Sure?</span>
         <button

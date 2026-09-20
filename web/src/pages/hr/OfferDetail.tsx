@@ -503,6 +503,7 @@ function ActionsPanel({ offer }: { offer: OfferDetailShape }) {
           <ConfirmDeleteButton
             label="Withdraw offer"
             confirmText="Withdraw"
+            confirmGroupLabel="Confirm withdrawal"
             pending={withdrawMut.isPending}
             onConfirm={() => withdrawMut.mutate()}
           />

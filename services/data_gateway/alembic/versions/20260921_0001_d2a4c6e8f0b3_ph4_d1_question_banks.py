@@ -142,6 +142,14 @@ BEGIN
         RAISE EXCEPTION 'bank question % keeps its original author', OLD.id;
     END IF;
 
+    -- Who submitted it, and when, are the record the approval is judged against;
+    -- once it leaves draft they are as fixed as the content (W5-L1).
+    IF OLD.status <> 'draft'
+       AND (NEW.submitted_by_user_id IS DISTINCT FROM OLD.submitted_by_user_id
+            OR NEW.submitted_at IS DISTINCT FROM OLD.submitted_at) THEN
+        RAISE EXCEPTION 'bank question % keeps who submitted it, and when', OLD.id;
+    END IF;
+
     IF NEW.status IS DISTINCT FROM OLD.status THEN
         IF NOT (
                (OLD.status = 'draft' AND NEW.status = 'in_review')
@@ -157,7 +165,9 @@ BEGIN
         END IF;
         IF OLD.status = 'in_review' AND NEW.status = 'draft' AND NEW.reviewed_by_user_id IS NOT NULL THEN
             -- Changes requested (rather than withdrawn): a named reviewer who is not the submitter.
-            IF NEW.reviewed_by_user_id IS NOT DISTINCT FROM NEW.submitted_by_user_id THEN
+            -- Compared against OLD: a single statement must not be able to name a
+            -- different submitter and approve in the same breath (security review W5-L1).
+            IF NEW.reviewed_by_user_id IS NOT DISTINCT FROM OLD.submitted_by_user_id THEN
                 RAISE EXCEPTION
                     'bank question % must have changes requested by someone other than its submitter',
                     OLD.id;
@@ -170,8 +180,8 @@ BEGIN
             IF NEW.reviewed_by_user_id IS NULL OR NEW.reviewed_at IS NULL THEN
                 RAISE EXCEPTION 'bank question % needs a named reviewer', OLD.id;
             END IF;
-            IF NEW.reviewed_by_user_id IS NOT DISTINCT FROM NEW.created_by_user_id
-               OR NEW.reviewed_by_user_id IS NOT DISTINCT FROM NEW.submitted_by_user_id THEN
+            IF NEW.reviewed_by_user_id IS NOT DISTINCT FROM OLD.created_by_user_id
+               OR NEW.reviewed_by_user_id IS NOT DISTINCT FROM OLD.submitted_by_user_id THEN
                 RAISE EXCEPTION
                     'bank question % must be approved by someone other than its author and submitter',
                     OLD.id;
@@ -278,6 +288,16 @@ BEGIN
     -- row (which has no such column) and raise "record has no field ...".
     -- Nested IFs are separate statements, so the outer one is fully resolved
     -- — and the table excluded — before the inner one ever names the field.
+    IF TG_TABLE_NAME IN ('exam_questions', 'coding_questions') AND TG_OP = 'UPDATE' THEN
+        -- Where a copy came from is a fact about the copy, checked when it is
+        -- made; repointing it afterwards could only misstate it (W5-L2).
+        IF NEW.source_bank_question_id IS DISTINCT FROM OLD.source_bank_question_id
+           OR NEW.source_bank_root_id IS DISTINCT FROM OLD.source_bank_root_id
+           OR NEW.source_bank_version IS DISTINCT FROM OLD.source_bank_version THEN
+            RAISE EXCEPTION
+                'question % keeps the bank provenance it was copied with', OLD.id;
+        END IF;
+    END IF;
     IF TG_TABLE_NAME IN ('exam_questions', 'coding_questions') AND TG_OP = 'INSERT' THEN
         IF NEW.source_bank_question_id IS NOT NULL THEN
             SELECT company_id, kind, status INTO bq_company, bq_kind, bq_status

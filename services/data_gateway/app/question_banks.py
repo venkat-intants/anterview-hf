@@ -778,13 +778,17 @@ async def add_to_section(
         (
             await db.execute(
                 text(
+                    # Company-scoped as well as exam-scoped: every query here
+                    # carries the company, whatever the join already implies.
                     "SELECT source_bank_root_id FROM exam_questions"
-                    " WHERE exam_id = :x AND deleted_at IS NULL AND source_bank_root_id IS NOT NULL"
+                    " WHERE exam_id = :x AND company_id = :c AND deleted_at IS NULL"
+                    "   AND source_bank_root_id IS NOT NULL"
                     " UNION"
                     " SELECT source_bank_root_id FROM coding_questions"
-                    " WHERE exam_id = :x AND deleted_at IS NULL AND source_bank_root_id IS NOT NULL"
+                    " WHERE exam_id = :x AND company_id = :c AND deleted_at IS NULL"
+                    "   AND source_bank_root_id IS NOT NULL"
                 ),
-                {"x": exam_id},
+                {"x": exam_id, "c": company_id},
             )
         ).scalars().all()
     )

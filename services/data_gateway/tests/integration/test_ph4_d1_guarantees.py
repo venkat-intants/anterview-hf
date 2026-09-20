@@ -665,3 +665,53 @@ async def test_bank_question_events_are_append_only(db: AsyncSession) -> None:
     await _refused(db, "UPDATE bank_question_events SET action = 'retired' WHERE id = :i",
                    {"i": ev}, "append-only")
     await _refused(db, "DELETE FROM bank_question_events WHERE id = :i", {"i": ev}, "append-only")
+
+
+# ===========================================================================
+# The review is judged against the row as it stands (security review W5-L1/L2)
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_a_submitter_cannot_rewrite_the_record_and_approve_in_one_breath(
+    db: AsyncSession,
+) -> None:
+    """The check used to read the incoming row, so one statement could name
+    somebody else as the submitter and approve at the same time."""
+    f = await _build(db)
+    qid = await _new_draft(db, f)
+    await db.execute(text(SUBMIT_Q), {"u": f.hr2, "q": qid})
+    await _refused(
+        db,
+        "UPDATE bank_questions SET status = 'approved', reviewed_by_user_id = :me,"
+        " submitted_by_user_id = :other, reviewed_at = now() WHERE id = :q",
+        {"me": f.hr2, "other": f.hr, "q": qid},
+        "keeps who submitted it",
+    )
+    # Nor quietly, without approving.
+    await _refused(db, "UPDATE bank_questions SET submitted_by_user_id = :other WHERE id = :q",
+                   {"other": f.hr, "q": qid}, "keeps who submitted it")
+    # The author cannot approve either, however the row is dressed up.
+    await _refused(db, APPROVE_Q, {"u": f.hr, "q": qid}, "someone other than its author")
+    await _allowed(db, APPROVE_Q, {"u": f.hr3, "q": qid})
+
+
+@pytest.mark.asyncio
+async def test_a_copied_question_keeps_the_provenance_it_was_made_with(db: AsyncSession) -> None:
+    """Where a copy came from is checked when it is made; repointing it later
+    could only misstate it, so it is refused."""
+    f = await _build(db)
+    qid = await _new_draft(db, f)
+    await db.execute(text(SUBMIT_Q), {"u": f.hr2, "q": qid})
+    await db.execute(text(APPROVE_Q), {"u": f.hr3, "q": qid})
+    copy = uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO exam_questions (id, exam_id, section_id, company_id, prompt, options,"
+             " correct_index, position, source_bank_question_id, source_bank_root_id,"
+             " source_bank_version) VALUES (:i, :x, :s, :c, 'x', '[\"a\",\"b\"]'::jsonb,"
+             " 0, 1, :q, :q, 1)"),
+        {"i": copy, "x": f.exam, "s": f.section, "c": f.company, "q": qid},
+    )
+    draft = await _new_draft(db, f)
+    await _refused(db, "UPDATE exam_questions SET source_bank_question_id = :d WHERE id = :i",
+                   {"d": draft, "i": copy}, "keeps the bank provenance")
+    await _refused(db, "UPDATE exam_questions SET source_bank_version = 9 WHERE id = :i",
+                   {"i": copy}, "keeps the bank provenance")

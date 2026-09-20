@@ -287,7 +287,8 @@ EXCLUDED_TABLES: dict[str, str] = {
     "bank_questions": "PH4-D1 — one version of a reusable question: prompt, options or test "
                       "cases, difficulty, tags. Company-authored content, on the exam_questions "
                       "precedent. created_by_user_id / submitted_by_user_id / "
-                      "reviewed_by_user_id / retired_by_user_id are HR staff, not candidates.",
+                      "reviewed_by_user_id / retired_by_user_id are HR staff, not candidates, and "
+                      "review_note is a reviewer's comment on the question itself.",
     "bank_question_events": "PH4-D1 — append-only history of a bank question (created, "
                             "submitted, approved, copied into an exam, ...): action, actor "
                             "(HR staff) and facts (ids), never question text.",

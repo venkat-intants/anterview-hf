@@ -58,6 +58,11 @@ regexes = [
   # even if the constant is renamed, because git history is immutable and the
   # scanner walks every commit.
   '''test-secret-at-least-32-bytes-long-xxxx''',
+  # web/e2e/interview-scheduling.spec.ts, commit c510aa5 — the password of a
+  # candidate account that spec creates on a disposable local stack and nowhere
+  # else. The spec now generates one per run; the literal stays allowlisted
+  # because the scanner walks history and that commit is published.
+  '''E2e-Scheduling-Cand-9''',
 
   '''change-me-to-random-64-char-hex''',
   '''sk-ant-your-key-here''',

@@ -484,16 +484,16 @@ async def review(
     q = await _get_question(db, company_id, qid)
     if q.status != "in_review":
         raise QuestionBankError(409, "Only a submitted question can be reviewed.")
-    # 409, not 403: this is a conflict with the question's own review state
-    # (who may act on it next), the same family as every other lock refusal
-    # here — not a missing permission, which the role gate already covers.
+    # 403, as offers.decide() answers the identical rule (an offer is approved
+    # by someone other than whoever wrote or submitted it): this person may not
+    # act on this question, whatever its state.
     if action == "approve" and actor in (q.created_by_user_id, q.submitted_by_user_id):
         raise QuestionBankError(
-            409, "You wrote or submitted this question — another reviewer must approve it."
+            403, "You wrote or submitted this question — another reviewer must approve it."
         )
     if action == "request_changes" and actor == q.submitted_by_user_id:
         raise QuestionBankError(
-            409, "You submitted this question — another reviewer must request changes."
+            403, "You submitted this question — another reviewer must request changes."
         )
     now = datetime.now(tz=UTC)
     if action == "approve":

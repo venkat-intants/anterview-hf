@@ -121,7 +121,8 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
         print("\nPH4-D1 — review: not the author or submitter")
         r = await c.post(f"/hr/bank-questions/{qid}/approve", json={})
-        check("HR A's own approval is refused with 409", r.status_code == 409, r.text[:200])
+        check("HR A's own approval is refused, as an offer's is", r.status_code == 403,
+              r.text[:200])
         acting["hr"] = hr_a2
         r = await c.post(f"/hr/bank-questions/{qid}/approve", json={"note": "Looks good"})
         check("HR B (a second HR manager) approves", r.status_code == 200

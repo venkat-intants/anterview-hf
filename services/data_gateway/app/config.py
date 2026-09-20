@@ -211,6 +211,25 @@ class Settings(BaseSettings):
     # (see app.auth_tokens) so the feature works out-of-the-box without a new
     # required env var, while still never reusing jwt_secret verbatim. Set these
     # explicitly in production for independent rotation.
+    # --- PH4-A3/A4: offers, preboarding documents, HRMS handoff ---
+    # Same convention as the auth email tokens above: blank means a namespaced
+    # secret DERIVED from jwt_secret (app.offer_security), never jwt_secret
+    # itself; set explicitly in production for independent rotation.
+    offer_link_secret: str = ""
+    # The HMAC key an HRMS uses to verify an exported payload. Rotating it
+    # changes key_id, so a receiver can tell which key signed which export.
+    hrms_export_secret: str = ""
+    offer_code_ttl_minutes: int = 10
+    # How long the offer link keeps working after preboarding completes, so the
+    # candidate can still read what they agreed to.
+    offer_link_grace_days: int = 30
+    preboarding_document_max_bytes: int = 10 * 1024 * 1024
+    # Candidate documents are deleted this long after the offer ends without an
+    # acceptance, after preboarding completes (the HRMS holds them then), or after
+    # an acceptance whose preboarding never completes — and at the next purge
+    # once a hire is reversed before preboarding completes. See purge_documents.
+    preboarding_document_retention_days: int = 90
+
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""

@@ -45,7 +45,11 @@ export interface PipelineRow {
   interview_score: number | null; // 0-10 composite
   scorecard_id: string | null;
   updated_at: string;
+  /** PH4-A3 — how the offer ended, beside the decision; never the decision itself. */
+  offer_outcome?: OfferOutcome | null;
 }
+
+export type OfferOutcome = 'offer_accepted' | 'offer_declined' | 'offer_expired' | 'offer_withdrawn';
 
 export interface PipelineResponse {
   items: PipelineRow[];

@@ -52,6 +52,9 @@ _TRANSPORT_HEADERS: frozenset[str] = frozenset(
         # Caddy access-log filter.
         "x-exam-token",
         "x-interview-token",
+        "x-draft-token",
+        "x-offer-token",
+        "x-offer-session",
     }
 )
 

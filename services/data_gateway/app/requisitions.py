@@ -51,6 +51,20 @@ VALID_STATUSES: frozenset[str] = frozenset(
 # Statuses that end a candidacy. Only a person may write these (D-05).
 TERMINAL_STATUSES: frozenset[str] = frozenset({"hired", "rejected"})
 
+HIRE_UNDONE_ONLY_BY_REJECTION = (
+    "A hire is undone only by recording a rejection, with a reason — from the "
+    "decision queue. It cannot be moved back into the pipeline."
+)
+
+
+class StatusRefusedError(ValueError):
+    """A status move the rules forbid, with the sentence to show."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
 _WS = re.compile(r"\s+")
 
 
@@ -114,6 +128,11 @@ async def record_transition(
     previous, applicant_id = row[0], row[1]
     if previous == to_status:
         return None
+    # PH4-A3: an offer rests on a hire. Moving a hired application back into
+    # the pipeline used to need no reason and no decision; now a hire is undone
+    # only by a recorded rejection (the database refuses the rest too).
+    if previous == "hired" and to_status != "rejected":
+        raise StatusRefusedError(409, HIRE_UNDONE_ONLY_BY_REJECTION)
 
     now = datetime.now(tz=UTC)
     await db.execute(

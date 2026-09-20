@@ -30,6 +30,7 @@ import {
   FileCheck2,
   FileSearch,
   FileText,
+  Handshake,
   History,
   LayoutDashboard,
   ListChecks,
@@ -87,6 +88,9 @@ const HR_NAV: NavItem[] = [
   // PH4-O1 — every application against its stage SLA.
   { to: '/hr/stages-at-risk', label: 'Stages at risk', icon: <AlertTriangle className={ICON} aria-hidden="true" /> },
   { to: '/hr/pipeline', label: 'Pipeline', icon: <TrendingUp className={ICON} aria-hidden="true" /> },
+  // PH4 Wave 4 (A3/A4) — offers, and the reusable templates behind them.
+  { to: '/hr/offers', label: 'Offers', icon: <Handshake className={ICON} aria-hidden="true" /> },
+  { to: '/hr/offer-templates', label: 'Offer templates', icon: <FileText className={ICON} aria-hidden="true" /> },
   { to: '/hr/analytics', label: 'Analytics', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
   // D4-1: an HR manager can ALSO be assigned as an interviewer. Kept as an item
   // in THIS section (not a new one) so idsFor(['hr_manager']) still resolves to
@@ -123,6 +127,8 @@ const SUPER_NAV: NavItem[] = [
   // PH4-O6: workflow versions waiting for this super admin's approval before
   // HR can publish them (D4-2).
   { to: '/superadmin/workflow-reviews', label: 'Workflow reviews', icon: <FileCheck2 className={ICON} aria-hidden="true" /> },
+  // PH4-A3: offers waiting for this super admin's approval (D4-2).
+  { to: '/superadmin/offer-approvals', label: 'Offer approvals', icon: <Handshake className={ICON} aria-hidden="true" /> },
 ];
 
 // interviewer — company staff who see ONLY interviews assigned to them (D4-1).

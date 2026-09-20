@@ -23,6 +23,7 @@
 import { useMemo } from 'react';
 import type { PipelineRow, PipelineStatus } from '@/api/pipeline';
 import { applicationKey } from '@/lib/applicationKey';
+import { offerOutcomeTag } from '@/lib/offerOutcome';
 import { Avatar, StatusTag, type TagTone } from '@/design/components/primitives';
 import { cn } from '@/lib/utils';
 
@@ -96,6 +97,7 @@ function Card({
   onOpen: () => void;
 }) {
   const score = headlineScore(row);
+  const offerTag = offerOutcomeTag(row.offer_outcome);
   return (
     <button
       type="button"
@@ -116,6 +118,7 @@ function Card({
         {showOutcome ? (
           <StatusTag tone={DECIDED_TONE[row.status] ?? 'neutral'}>{row.status}</StatusTag>
         ) : null}
+        {offerTag ? <StatusTag tone={offerTag.tone}>{offerTag.label}</StatusTag> : null}
         {score ? (
           <span className="text-[11.5px] text-muted-foreground">
             {score.label} <span className="text-[var(--ui-soft)]">{score.value}</span>

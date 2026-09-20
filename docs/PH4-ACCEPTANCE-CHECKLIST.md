@@ -11,8 +11,8 @@ after CI, a code review and a security sign-off.
 | 1 | A1 Human interview scorecards · A5 Interview kits · O4 Decision reason codes | **Live.** See the deployment line below. |
 | 2 | O6 Workflow review & approval · O3 Branching workflows · O2 Workflow simulation & dry run · O1 Stage owners, SLAs & exceptions | **Built and signed off** (code review and security). PR #29, CI green; its migrations are on shared Neon. Waiting to merge. |
 | 3 | A2 Interview scheduling & loops · O5 Panel workload & calibration | **Built and signed off.** PR #30, stacked on #29, CI green. Its migrations go to Neon just before it merges. |
-| 4 | A3 Offer lifecycle · A4 Documents & preboarding | **In progress.** The backend is built and signed off (code review and security); the screens are being built. No criterion is marked done until its screen exists. |
-| 5 | D1 Question banks · D2 Accommodations · D3 Code quality & similarity · D4 Job simulations & portfolio | **In progress.** Designed; being built one story at a time, D1 first. |
+| 4 | A3 Offer lifecycle · A4 Documents & preboarding | **Built and signed off** — backend, screens and browser journey, with security's production sign-off unconditional. PR #31, stacked on #30, CI green. Its migrations go to Neon just before it merges. |
+| 5 | D1 Question banks · D2 Accommodations · D3 Code quality & similarity · D4 Job simulations & portfolio | **In progress.** Being built one story at a time: D1 question banks has its backend built and signed off, its screens under way; D2 accommodations is next. |
 
 **Deployment:** Wave 1 is **live** since 2026-09-17: PR #27 merged as `c3fb463`, its three migrations applied to shared Neon (`f4b6d8e0a2c3`), and the Space verified serving it (the interviewer and decision-reason routes answer, and the web bundle carries the new screens).
 
@@ -22,11 +22,11 @@ after CI, a code review and a security sign-off.
 only through the API. Phase 3 was marked against a looser bar and had to be corrected.
 
 **How each line was verified.** Tests live under `services/data_gateway/tests/` and `web/`.
-- `unit`: `unit/test_ph4_wave1.py`, `test_ph4_wave1_hardening.py`, `test_ph4_wave2.py`, `test_ph4_wave3.py`.
-- `db`: `integration/test_ph4_scorecard_guarantees.py`, `test_ph4_wave2_guarantees.py`, `test_ph4_wave3_guarantees.py`. These run against a real migrated Postgres, and every refusal is checked for its *reason*, not just for failing.
-- `smoke`: real Postgres through the real endpoints — `smoke_ph4_scorecards.py` (Wave 1, 109/109), `smoke_ph4_wave2.py` (57/57), `smoke_ph4_wave3.py` (81/81).
-- `ui`: the web test suite, 1216 tests, and the screen named on the line.
-- `e2e`: the Playwright browser suite against a local stack, 24 passed — including `interview-scorecard.spec.ts` (A1/A5), `workflow.spec.ts` (O6 review and approval), `interview-scheduling.spec.ts` (A2/O5) and the decision journeys (O4).
+- `unit`: `unit/test_ph4_wave1.py`, `test_ph4_wave1_hardening.py`, `test_ph4_wave2.py`, `test_ph4_wave3.py`, `test_ph4_wave4.py` — 2142 in data_gateway, with 172 in admin_ops and 430 in `shared/`.
+- `db`: `integration/test_ph4_scorecard_guarantees.py`, `test_ph4_wave2_guarantees.py`, `test_ph4_wave3_guarantees.py`, `test_ph4_wave4_guarantees.py`. These run against a real migrated Postgres, and every refusal is checked for its *reason*, not just for failing.
+- `smoke`: real Postgres through the real endpoints — `smoke_ph4_scorecards.py` (Wave 1, 109/109), `smoke_ph4_wave2.py` (57/57), `smoke_ph4_wave3.py` (82/82), `smoke_ph4_wave4.py` (108/108, with MinIO for the documents).
+- `ui`: the web test suite, 1313 tests, and the screen named on the line.
+- `e2e`: the Playwright browser suite against a local stack, 25 passed — including `interview-scorecard.spec.ts` (A1/A5), `workflow.spec.ts` (O6 review and approval), `interview-scheduling.spec.ts` (A2/O5), `offer-preboarding.spec.ts` (A3/A4, hire through to the HRMS handoff) and the decision journeys (O4).
 
 ---
 
@@ -43,17 +43,18 @@ only through the API. Phase 3 was marked against a looser bar and had to be corr
 | PH4-O1 Stage Owners, SLAs & Exception Paths | 2 | 13 | 12 | 1 ⚠️ |
 | PH4-A2 Interview Scheduling + Loops | 3 | 29 | 26 | 3 ⚠️ |
 | PH4-O5 Panel Workload & Calibration | 3 | 15 | 15 |  |
-| PH4-A3 Offer Lifecycle | 4 | 35 | 0 | ⏳ in progress |
-| PH4-A4 Documents & Preboarding | 4 | 33 | 0 | ⏳ in progress |
+| PH4-A3 Offer Lifecycle | 4 | 35 | 35 |  |
+| PH4-A4 Documents & Preboarding | 4 | 33 | 33 |  |
 | PH4-D1 Reusable Question Banks | 5 | 15 | 0 | ⏳ in progress |
 | PH4-D2 Candidate Accommodations | 5 | 13 | 0 | ⏳ in progress |
 | PH4-D3 Code Quality & Similarity Evidence | 5 | 30 | 0 | ⏳ in progress |
 | PH4-D4 Job Simulations & Portfolio | 5 | 31 | 0 | ⏳ in progress |
-| **Total** | | **317** | **153** | **7 ⚠️, 0 ❌, 157 ⏳** |
+| **Total** | | **317** | **221** | **7 ⚠️, 0 ❌, 89 ⏳** |
 
 **Wave 1:** 43 criteria — 42 ✅, 1 ⚠️, 0 ❌.  
 **Wave 2:** 73 criteria — 70 ✅, 3 ⚠️, 0 ❌.  
 **Wave 3:** 44 criteria — 41 ✅, 3 ⚠️, 0 ❌.  
+**Wave 4:** 68 criteria — 68 ✅, 0 ⚠️, 0 ❌.  
 
 ---
 
@@ -373,96 +374,121 @@ The security review rated view auditing as future work rather than a blocker: in
 
 ## PH4-A3 — Offer Lifecycle  ·  Wave 4
 
-| # | Acceptance criterion | |
-|---|---|---|
-| | **Offer Creation** | |
-| 1 | An authorized HR user can create an offer for a candidate with a human-approved hiring decision | ⏳ |
-| 2 | An offer is associated with the correct requisition and candidate/enrolment | ⏳ |
-| 3 | An offer can use an existing offer template | ⏳ |
-| 4 | Offer details can include compensation and relevant employment terms | ⏳ |
-| 5 | Draft offers are editable by authorized users | ⏳ |
-| 6 | Candidate compensation information is protected by appropriate permissions | ⏳ |
-| | **Approval** | |
-| 7 | An offer can be submitted for approval | ⏳ |
-| 8 | Authorized approvers can approve or reject the offer | ⏳ |
-| 9 | Approval actions record the approver and timestamp | ⏳ |
-| 10 | An unapproved offer cannot be sent to the candidate | ⏳ |
-| 11 | Approval/rejection actions are auditable | ⏳ |
-| | **Candidate Delivery** | |
-| 12 | An approved offer can be sent securely to the candidate | ⏳ |
-| 13 | Candidate receives a secure offer link | ⏳ |
-| 14 | Candidate can access the offer without exposing the offer to unauthorized users | ⏳ |
-| 15 | Offer delivery uses the existing secure magic-link pattern where appropriate | ⏳ |
-| 16 | Offer access and important actions are audit logged | ⏳ |
-| | **Acceptance / Decline** | |
-| 17 | Candidate can accept an offer | ⏳ |
-| 18 | Candidate can decline an offer | ⏳ |
-| 19 | Acceptance/decline requires appropriate secure authentication | ⏳ |
-| 20 | Acceptance records timestamp and relevant audit information | ⏳ |
-| 21 | Decline records timestamp and reason where collected | ⏳ |
-| 22 | An accepted offer cannot silently be changed to declined | ⏳ |
-| 23 | A declined offer cannot silently be changed to accepted | ⏳ |
-| | **Lifecycle** | |
-| 24 | Offers support explicit states | ⏳ |
-| 25 | Offer expiry can be configured | ⏳ |
-| 26 | Expired offers cannot be accepted | ⏳ |
-| 27 | Authorized HR users can withdraw an offer before acceptance | ⏳ |
-| 28 | Offer state transitions are validated server-side | ⏳ |
-| 29 | Candidate hiring status is updated appropriately after final offer outcome | ⏳ |
-| 30 | Existing decision records remain immutable | ⏳ |
-| | **Safety / Governance** | |
-| 31 | AI cannot create, approve, send, accept or decline offers on behalf of users | ⏳ |
-| 32 | Offer actions are company-scoped | ⏳ |
-| 33 | Compensation data is only available to authorized users | ⏳ |
-| 34 | Offer records participate in existing retention/erasure mechanisms | ⏳ |
-| 35 | Tests cover all major state transitions and authorization boundaries | ⏳ |
+| # | Acceptance criterion | | Evidence |
+|---|---|---|---|
+| | **Offer Creation** | | |
+| 1 | An authorized HR user can create an offer for a candidate with a human-approved hiring decision | ✅ | HR: candidate drawer → **Offer → Create offer**, shown only once the application is *hired*; the server refuses any other status (409, *Record the decision to hire first*) and a candidate erased or being erased. HR managers only; `ui` `smoke` `e2e` |
+| 2 | An offer is associated with the correct requisition and candidate/enrolment | ✅ | the offer takes its application, applicant and opening from the enrolment itself, never from the request; composite FKs `(enrolment_id, company_id)` and `(applicant_id, company_id)`; one offer in play per application (partial unique index). The document checklist resolves through the offer's opening; `db` `smoke` |
+| 3 | An offer can use an existing offer template | ✅ | HR: **Offer templates** (create, edit, delete; names unique per company), then the drawer's **Template** picker, which fills the currency and the terms from it. A template carries employment type, currency, pay period, probation, notice, benefits, terms and validity — **never base salary**, so HR types the pay on every offer; `ui` `smoke` |
+| 4 | Offer details can include compensation and relevant employment terms | ✅ | HR: **Offers → offer → Offer details** — job title, employment type, start date, location, base salary, currency, pay period, bonus, equity, benefits, terms, probation, notice, validity; refused in words and by CHECKs (salary above zero, three-letter currency, 1–60 days); `ui` `unit` `db` |
+| 5 | Draft offers are editable by authorized users | ✅ | HR: **Offer details → Save changes**, only as a draft or once sent back; the fields are disabled otherwise and the `offers_lifecycle` trigger freezes the content from submission. **Reopen for editing** takes an approved, unsent offer back to draft, to be approved again; `ui` `smoke` `db` |
+| 6 | Candidate compensation information is protected by appropriate permissions | ✅ | compensation is returned only by the HR routes (HR managers of the company), the super admin's approval routes, and to the candidate by link or portal. The company offer list carries none, no other module names `base_salary` (unit test), no email carries pay, and audit rows list changed field names, never values; `unit` `smoke` |
+| | **Approval** | | |
+| 7 | An offer can be submitted for approval | ✅ | HR: **Offer → Actions → Submit for approval** (draft or sent back); **Recall** takes it back, **Reopen** an approved one for editing. Every active super admin is notified, and the notice opens that offer on **Offer approvals**; `ui` `smoke` `e2e` |
+| 8 | Authorized approvers can approve or reject the offer | ✅ | Super admin: **Offer approvals → offer → Approve** (optional note) or **Send back** (a note of at least 10 characters, in the UI and on the server). Only a super admin approves (D4-2); a sent-back offer is editable and can be resubmitted or withdrawn — there is no terminal reject; `ui` `smoke` `db` `e2e` |
+| 9 | Approval actions record the approver and timestamp | ✅ | `decided_by_user_id` / `decided_at` on the row — the trigger refuses an approval with no approver, or by the offer's author or submitter — and an `offer_events` row per decision; both **History** cards read *Approved — <name> <time>*. A resubmission clears the row's pair; the history keeps every decision; `smoke` (*approval records who and when*) `db` |
+| 10 | An unapproved offer cannot be sent to the candidate | ✅ | `send()` refuses anything not approved, in words; the trigger allows `sent` only from `approved`, and only with a link and a future deadline; **Send to candidate** appears only on an approved offer; `smoke` `db` `ui` |
+| 11 | Approval/rejection actions are auditable | ✅ | `offer.approved` / `offer.rejected` audit rows (whether a note was given and its length, never its text) and append-only `offer_events`; a separation-of-duties refusal is a 403 shown as worded; `smoke` `db` `ui` |
+| | **Candidate Delivery** | | |
+| 12 | An approved offer can be sent securely to the candidate | ✅ | HR: **Offer → Send to candidate** — a fresh 256-bit link, stored only as a keyed hash, and a deadline of *valid days* from now; the email carries no pay and goes out in the candidate's language (English for an applicant with no account); `smoke` `unit` `e2e` |
+| 13 | Candidate receives a secure offer link | ✅ | the email's link is `/offer#<token>`: the token rides in the URL fragment, never a path or query, so no request or access log carries it; the page reads it once and strips it from the address bar; the email says *This link is personal to you*; `smoke` `ui` `e2e` |
+| 14 | Candidate can access the offer without exposing the offer to unauthorized users | ✅ | the page sends the token only as the `X-Offer-Token` header (both Caddyfiles delete it from access logs); every failure is the same 404; the public routes are rate-limited; a re-send, or the candidate's **Open offer** in the portal, retires the old link. Reading needs only the link — see below; `unit` `smoke` `ui` |
+| 15 | Offer delivery uses the existing secure magic-link pattern where appropriate | ✅ | the same shape as `/exam` and `/interview-invite` — fragment token, header credential, hashed at rest — plus an emailed one-time code before anything changes state; `unit` `ui` `e2e` |
+| 16 | Offer access and important actions are audit logged | ✅ | every change and every candidate action lands in `offer_events` and in the audit log with IP and user agent: created, updated, submitted, recalled, approved, sent back, reopened, sent, re-sent, viewed, code requested, accepted, declined, withdrawn, expired, preboarding completed, exported — and a member of staff opening an offer, its pay included, writes `offer.viewed_by_staff` naming the console they read it from. A candidate's own repeat views are recorded once an hour; `smoke` |
+| | **Acceptance / Decline** | | |
+| 17 | Candidate can accept an offer | ✅ | Candidate: offer link → **Accept offer → Send me a code** → the code and their typed full name → **Confirm acceptance**. A candidate with no account is given one and emailed a link to claim it; `ui` `smoke` `e2e` |
+| 18 | Candidate can decline an offer | ✅ | Candidate: offer link → **Decline offer → Send me a code** → the code and an optional reason → **Confirm decline**. The decline request is not run end to end through the API — see criterion 35; `ui` `db` |
+| 19 | Acceptance/decline requires appropriate secure authentication | ✅ | the link plus a six-digit code emailed when the candidate chooses: hashed, bound to the offer and to *accept* or *decline*, ten minutes, five tries per code, three codes per 15 minutes; 20 wrong codes over the offer's life lock it until HR re-sends. No sign-in is needed; `unit` `smoke` `ui` `db` |
+| 20 | Acceptance records timestamp and relevant audit information | ✅ | `responded_at` and the name typed (`accepted_name`) — the trigger refuses an acceptance without either — plus `offer.accepted` with IP and user agent, and a DPDP consent entry for the documents that follow; `smoke` `db` |
+| 21 | Decline records timestamp and reason where collected | ✅ | `responded_at` (required by the trigger) and the optional reason, up to 1000 characters; the audit row records only that a reason was given and its length. HR reads it on the offer page (*Decline reason: …*); `db` `ui` |
+| 22 | An accepted offer cannot silently be changed to declined | ✅ | accepted, declined, expired and withdrawn are final at the database, and an answer (time, name, reason) cannot be rewritten; asking for a decline code on an accepted offer is refused (409); `db` (`test_an_answer_is_final`) `smoke` |
+| 23 | A declined offer cannot silently be changed to accepted | ✅ | the same trigger (*offer … is declined and final*); the service answers *This offer is already declined*; the candidate's page shows a declined offer with no action; `db` (`test_a_declined_offer_cannot_be_accepted`) `ui` |
+| | **Lifecycle** | | |
+| 24 | Offers support explicit states | ✅ | nine states — draft, pending approval, approved, sent back (`rejected`), sent, accepted, declined, expired, withdrawn — a CHECK plus the transition table in `offers_lifecycle`; each is a tag and a filter on **Offers**; `db` `ui` |
+| 25 | Offer expiry can be configured | ✅ | HR: **Offer details → Offer valid for (days)**, 1–60 (a template's value, or 7); the deadline is fixed when the offer is sent and cannot move afterwards, a re-send included; `ui` `unit` `db` |
+| 26 | Expired offers cannot be accepted | ✅ | the trigger refuses an acceptance once `expires_at` has passed, by the database's clock; opening the link or asking for a code expires a past-due offer, and the reminder sweep expires the rest and tells HR; the candidate sees *This offer has expired*; `db` `ui` `unit` (sweep stage) |
+| 27 | Authorized HR users can withdraw an offer before acceptance | ✅ | HR: **Offer → Withdraw offer** (optional reason, then a confirm) from draft, pending approval, approved, sent back or sent; the candidate is emailed if it had been sent; never after an answer (trigger). The confirm button reads *Delete* — see below; `ui` `smoke` `db` |
+| 28 | Offer state transitions are validated server-side | ✅ | every step checks the state in the service and again in the `offers_lifecycle` trigger, whoever writes; a skipped step is refused naming both states; `db` (`test_no_step_can_be_skipped`) `smoke` |
+| 29 | Candidate hiring status is updated appropriately after final offer outcome | ✅ | the outcome is written to `enrolments.offer_outcome` (accepted / declined / expired / withdrawn) and shown beside the decision on **Pipeline** (list and board). The decision itself stands — a hire is undone only by recording a rejection — but a hire whose offer was declined, expired or withdrawn stops counting towards the opening's target on the **Opening dashboard** and the company **Hiring board**, and a new offer clears the old outcome; `smoke` `ui` `e2e` |
+| 30 | Existing decision records remain immutable | ✅ | offers never write a status or the stage ledger (AST test; the smoke counts the ledger before and after); a hire is now undone only by recording a rejection, in the service and by trigger; `unit` `smoke` `db` |
+| | **Safety / Governance** | | |
+| 31 | AI cannot create, approve, send, accept or decline offers on behalf of users | ✅ | no agent tool or model reaches `app.offers` or `app.preboarding` (unit test); every HR and super-admin route needs a person's session, and answering needs the candidate's emailed code; `unit` |
+| 32 | Offer actions are company-scoped | ✅ | the company comes from the session on every HR and super-admin route; every query filters by it and the child tables carry composite FKs; another company's HR lists none of these offers; `smoke` `db` `unit` |
+| 33 | Compensation data is only available to authorized users | ✅ | no compensation in the company list, the audit log, any email, or HR's notifications; only the approval notification shows the amount, to super admins; the HRMS payload goes only to HR managers; `unit` `smoke` |
+| 34 | Offer records participate in existing retention/erasure mechanisms | ✅ | offers are kept with the application, as applications are (the retention job purges neither); on erasure an offer in play is withdrawn and its link killed, the typed name and every reason or note are redacted, and its codes, sessions and HRMS payloads are deleted (step 5f); `unit` (erasure inventory) `db` (an HRMS payload leaves only with erasure) |
+| 35 | Tests cover all major state transitions and authorization boundaries | ✅ | `test_ph4_wave4.py`, `test_ph4_wave4_guarantees.py` (lifecycle, separation of duties, expiry, finality, frozen terms), `smoke_ph4_wave4.py` — 105 checks, including recall, reopen, a decline with its reason, the expiry sweep actually running, and every authorisation boundary — the `OfferDetail` / `OfferApprovals` / `OfferSection` / `OfferTemplates` / `Offers` / `PublicOffer` / `YourOffers` / `PipelineBoard` UI tests, and `offer-preboarding.spec.ts` end to end |
+
+**Worth knowing.**
+
+- **Reading an offer needs only the link.** Anyone the link is forwarded to can read the offer, pay included, until it is re-sent or retired; accepting or declining needs the emailed code. The link stops working 30 days after the offer ends, or 90 days after an acceptance whose preboarding never completes.
+- **Opening an offer from the portal retires the emailed link.** **My applications → Your offers → Open offer** mints a fresh link; the one in the email then reads as invalid.
+- **Twenty wrong codes lock the offer**, for answering and documents alike, until HR presses **Re-send**, which also retires the link and closes open sessions. HR is told once when it locks. The portal's fresh link does not unlock it.
+- **A candidate with no account** (an applicant HR added) is given one at acceptance and emailed a link to claim it, in the language they accepted in; someone who already has an account is not.
+- **Only a super admin approves** (D4-2). HR managers cannot approve each other's offers, and nobody approves an offer they wrote or submitted. A company with no active super admin can submit an offer but never get it approved, and nobody is told that.
+- **A template is terms, not pay.** It carries employment type, currency, pay period, probation, notice, benefits, terms and validity; base salary is typed on every offer.
+- **The name the candidate typed to accept is stored but not shown to HR**; the history names the candidate's account.
+- **A hire is undone only by recording a rejection.** Moving a hired application back into the pipeline used to be possible; this wave refuses it in the service and by trigger. Reversing a hire after an acceptance closes the candidate's offer link.
+- **The decision stands whatever the answer.** A declined, expired or withdrawn offer never rewrites the decision; it is recorded beside it, shown on the pipeline, and left out of the opening's hire count.
 
 ---
 
 ## PH4-A4 — Documents & Preboarding  ·  Wave 4
 
-| # | Acceptance criterion | |
-|---|---|---|
-| | **Document Requirements** | |
-| 1 | Authorized HR users can define document requirements for a requisition/preboarding process | ⏳ |
-| 2 | Each requirement specifies the expected document type | ⏳ |
-| 3 | Requirements can be marked mandatory or optional | ⏳ |
-| 4 | Requirements can define expiry requirements where applicable | ⏳ |
-| 5 | The system identifies which documents are outstanding | ⏳ |
-| | **Candidate Upload** | |
-| 6 | Candidates can securely upload required documents after offer acceptance | ⏳ |
-| 7 | Uploads are associated with the correct candidate/enrolment | ⏳ |
-| 8 | Candidate can see required, submitted, verified and rejected documents | ⏳ |
-| 9 | Candidate can re-upload a rejected document | ⏳ |
-| 10 | Candidate-facing document status is clearly communicated | ⏳ |
-| 11 | Candidate cannot access another candidate's documents | ⏳ |
-| | **HR Review** | |
-| 12 | Authorized HR users can view submitted documents | ⏳ |
-| 13 | HR can mark a document as verified | ⏳ |
-| 14 | HR can reject a document | ⏳ |
-| 15 | Rejection can include a reason | ⏳ |
-| 16 | HR can request a replacement/re-upload | ⏳ |
-| 17 | Verification actions record reviewer and timestamp | ⏳ |
-| 18 | Document verification history is auditable | ⏳ |
-| | **Preboarding** | |
-| 19 | The system can determine when all mandatory documents are complete | ⏳ |
-| 20 | A candidate cannot be marked preboarding-complete while mandatory documents remain unresolved | ⏳ |
-| 21 | HR can see overall preboarding status | ⏳ |
-| 22 | Preboarding status is associated with the accepted offer/candidate | ⏳ |
-| | **Security / Compliance** | |
-| 23 | Document access is permission-controlled | ⏳ |
-| 24 | Documents participate in consent and retention rules | ⏳ |
-| 25 | Document data participates in the existing erasure workflow | ⏳ |
-| 26 | Document storage uses the existing secure object-storage/upload mechanism where possible | ⏳ |
-| 27 | Document metadata is company-scoped | ⏳ |
-| 28 | Unauthorized users cannot download/view protected documents | ⏳ |
-| | **HRMS Handoff** | |
-| 29 | Once preboarding requirements are complete, the system can prepare a signed export/webhook payload | ⏳ |
-| 30 | The handoff contains only the required authorized information | ⏳ |
-| 31 | Handoff activity is auditable | ⏳ |
-| 32 | No vendor-specific HRMS integration is required for this phase | ⏳ |
-| | **Tests** | |
-| 33 | Tests cover upload, review, rejection, re-upload, verification, permissions, expiry and completion | ⏳ |
+| # | Acceptance criterion | | Evidence |
+|---|---|---|---|
+| | **Document Requirements** | | |
+| 1 | Authorized HR users can define document requirements for a requisition/preboarding process | ✅ | HR: opening dashboard → **Preboarding documents → Add requirement** — set per opening, by HR managers (hidden on the super admin's read-only view); `ui` `smoke` `e2e` |
+| 2 | Each requirement specifies the expected document type | ✅ | **Kind**: identity, address, education, employment, tax, bank, photo, medical or other — refused in words otherwise, and by CHECK; `ui` `smoke` |
+| 3 | Requirements can be marked mandatory or optional | ✅ | **Mandatory** at creation, **Make optional / Make mandatory** afterwards; only mandatory ones block completion; `ui` `smoke` `db` (the optional photo does not block) |
+| 4 | Requirements can define expiry requirements where applicable | ✅ | **Needs an expiry date** at creation: the candidate must give a future expiry date to upload, an expired document cannot be verified (service and trigger), and completion needs every mandatory one in date. The flag cannot be changed from the screen afterwards — see below; `ui` `smoke` `db` |
+| 5 | The system identifies which documents are outstanding | ✅ | each requirement's state on the offer — *outstanding*, submitted, verified, rejected, replacement requested, expired — and the list of unresolved mandatory names; **Offers** shows *Documents 1/2 · 1 awaiting review*; `smoke` `ui` |
+| | **Candidate Upload** | | |
+| 6 | Candidates can securely upload required documents after offer acceptance | ✅ | Candidate: offer link, once accepted → **Your documents → Get a code → Continue → Upload**. The link alone opens nothing: an emailed code opens an hour-long session held only in the page's memory, and the candidate is emailed on every upload. Closed once preboarding completes; `ui` `smoke` `e2e` |
+| 7 | Uploads are associated with the correct candidate/enrolment | ✅ | the upload's offer and application come from the link, and its requirement must belong to that offer's opening (404 otherwise); composite FKs; one current document per requirement (unique index); `smoke` `db` |
+| 8 | Candidate can see required, submitted, verified and rejected documents | ✅ | **Your documents**: each requirement, *Required* or *Optional*, and its state in words — *Not uploaded yet*, *Submitted — awaiting review*, *Verified*, *Rejected*, *Replacement requested*, *Expired* — in EN / HI / TE; `ui` `smoke` |
+| 9 | Candidate can re-upload a rejected document | ✅ | **Upload a replacement** on a rejected document (or one HR asked to replace): a new version supersedes the old, which is kept; `ui` `smoke` `e2e` |
+| 10 | Candidate-facing document status is clearly communicated | ✅ | states in words in three languages, HR's reason (*The hiring team said: …*), and emails on every upload and on every rejection or replacement request. An *Expired* document says its date has passed and takes a current one; an opening that asks for nothing says so; `ui` `smoke` `e2e` |
+| 11 | Candidate cannot access another candidate's documents | ✅ | there is no candidate route by document id: the link names one offer, the session is bound to that offer, and an upload takes only that offer's requirements; a re-send retires the old link and closes its sessions; `unit` `smoke` |
+| | **HR Review** | | |
+| 12 | Authorized HR users can view submitted documents | ✅ | HR: **Offers → offer → Documents → Download** — a five-minute signed link that downloads rather than renders, every open recorded; the row shows version, file name and expiry. There is no in-app preview; `smoke` `ui` |
+| 13 | HR can mark a document as verified | ✅ | HR: **Documents → Verify → Confirm**; the trigger requires a named reviewer and refuses an expired document; `ui` `smoke` `db` `e2e` |
+| 14 | HR can reject a document | ✅ | HR: **Documents → Reject → Confirm**, with a reason; `ui` `smoke` `e2e` |
+| 15 | Rejection can include a reason | ✅ | required: 5 to 1000 characters, in the UI and on the server; shown to the candidate and emailed in their language; the audit row keeps only its length; `ui` `smoke` |
+| 16 | HR can request a replacement/re-upload | ✅ | HR: **Documents → Ask for a replacement** on a submitted or verified document, with a reason; the candidate is emailed, sees the reason, and uploads again — run end to end in `smoke_ph4_wave4.py`, alongside rejection in `offer-preboarding.spec.ts`; `ui` `smoke` `e2e` |
+| 17 | Verification actions record reviewer and timestamp | ✅ | `reviewed_by_user_id` and `reviewed_at` on the row — the trigger refuses a review without both; HR reads *verified — <name> <time>* under **Document activity**; `smoke` (*verification records who and when*) `db` (`test_a_review_names_its_reviewer`) |
+| 18 | Document verification history is auditable | ✅ | `document_events`, append-only (uploaded, verified, rejected, replacement requested, downloaded, deleted — who and when, never a reason's text), and `document.*` audit rows; every version is kept and frozen once superseded; **Document activity (N)** on the offer. The append-only test runs on `hrms_exports`, which shares the trigger; `smoke` `db` |
+| | **Preboarding** | | |
+| 19 | The system can determine when all mandatory documents are complete | ✅ | a mandatory requirement is unresolved until it has a current, verified, in-date document; **Offers** counts *verified / required*; the `offers_preboarding_complete` trigger makes the same count; `db` `smoke` |
+| 20 | A candidate cannot be marked preboarding-complete while mandatory documents remain unresolved | ✅ | HR: **Offer → Preboarding → Mark preboarding complete** is refused naming the documents still missing — by the service, and by the trigger whoever writes; completion is recorded once, with who; `db` `smoke` `ui` `e2e` |
+| 21 | HR can see overall preboarding status | ✅ | HR: **Offers → Status: In preboarding** (accepted, not yet complete), each with its document progress; the offer page's **Documents** and **Preboarding** cards (*Preboarding completed on …*). The list row does not mark a completion — see below; `ui` `smoke` |
+| 22 | Preboarding status is associated with the accepted offer/candidate | ✅ | `preboarding_completed_at` / `_by` live on the offer row, allowed only on an accepted offer (CHECK); documents carry the offer and the application; `db` (`test_preboarding_follows_an_accepted_offer`) |
+| | **Security / Compliance** | | |
+| 23 | Document access is permission-controlled | ✅ | HR: HR managers of the company only (session gate, company-filtered queries); candidate: the link **and** a code-opened session, for listing and for uploading; super admins and interviewers have no document route; `unit` `smoke` |
+| 24 | Documents participate in consent and retention rules | ✅ | consent: the accept step says what sharing documents means — what is asked for, that the store may be outside India, that it is deleted when it has served its purpose, and that consent can be withdrawn (EN/HI/TE) — then accepting writes a `preboarding_documents` / `onboarding` entry to `dpdp_consent_ledger`. Withdrawing it refuses any further upload — from the documents step itself (**Withdraw my consent**, POST /offer/documents/consent/withdraw), which most candidates here need because the account made at acceptance may never be claimed, or from a signed-in account (DELETE /users/me/consent). It is held per candidate, so it stops every offer they hold, the hiring team is told, and nothing re-grants it automatically. Retention: files and rows are purged 90 days after the offer ends unaccepted, after completion, or after an acceptance that never completes, and at the next run once the hire is reversed — proven in `smoke_ph4_wave4.py`, dry run and real. Note that `RETENTION_DRY_RUN` is true by default, so a deployment deletes nothing until it is switched off; `ui` `smoke` |
+| 25 | Document data participates in the existing erasure workflow | ✅ | erasure collects every version's file key and lists each offer's storage prefix (so an orphaned file goes too) in step 1, deletes the files in step 8, and blanks the rows — key, file name, review note — in step 5f; the listing refuses when storage is not configured; `unit` (`test_new_tables_are_in_the_erasure_inventory_and_documents_leave_storage`; admin_ops `test_objects_under_an_offer_prefix_are_erased_even_when_no_row_names_them`) |
+| 26 | Document storage uses the existing secure object-storage/upload mechanism where possible | ✅ | the existing uploads bucket through `s3_upload.upload_file`, under `preboarding/{company}/{offer}/{document}` (no person named), stored with the detected type and out only by a pre-signed link; PDF, JPEG and PNG only, checked by content; 10 MB. No virus scanner (AR-6); `smoke` (MinIO, SigV4, five minutes, `attachment`) `unit` |
+| 27 | Document metadata is company-scoped | ✅ | `candidate_documents` carries `company_id`, with composite FKs to its offer, requirement and application; HR reads filter by the session's company; `db` `smoke` |
+| 28 | Unauthorized users cannot download/view protected documents | ✅ | no public route serves a file (unit test) and the candidate has no download, by design (security review H1); HR gets a five-minute link with `Content-Disposition: attachment` and `no-store`, every open recorded; the link alone lists nothing (401); `unit` `smoke` |
+| | **HRMS Handoff** | | |
+| 29 | Once preboarding requirements are complete, the system can prepare a signed export/webhook payload | ✅ | HR: **Offer → Preboarding → Prepare HRMS export**, offered only once preboarding is complete (refused before): a JSON payload signed HMAC-SHA256 over its canonical form, with `key_id`, shown on the page with **Download JSON**. Nothing is sent to an HRMS — HR carries the file; `ui` `smoke` `e2e` `unit` |
+| 30 | The handoff contains only the required authorized information | ✅ | the candidate's name and email; the company; job title, type, start date, location, base pay, currency, period, probation, notice and acceptance time; each verified document as facts (type, name, version, content type, SHA-256, expiry, verified at). No files, storage keys, scores, reasons, bonus, equity, benefits or terms; `unit` (`test_the_hrms_payload_is_minimal`) `smoke` |
+| 31 | Handoff activity is auditable | ✅ | every export is kept, append-only, in `hrms_exports` (payload, signature, key id, who, when), with an `exported` offer event (*HRMS export prepared — <name>* in **History**) and `offer.hrms_exported` in the audit log; `db` `smoke` |
+| 32 | No vendor-specific HRMS integration is required for this phase | ✅ | one generic, versioned schema (`anthire.preboarding.v1`); no vendor code; `unit` |
+| | **Tests** | | |
+| 33 | Tests cover upload, review, rejection, re-upload, verification, permissions, expiry and completion | ✅ | upload, rejection, re-upload, verification and completion run end to end in `smoke_ph4_wave4.py` (108 checks) and `offer-preboarding.spec.ts`; and with them the replacement request, consent withdrawn from the documents step and, once a fresh entry is written, given again, a verified document passing its expiry and being replaced, the retention purge dry and real, and another company's HR reaching neither the documents nor a download. Permissions in the unit gate tests and the smoke; the review rules in `test_ph4_wave4_guarantees.py`; the screens in the `OfferDetail` / `PublicOffer` / `DocumentRequirementsSection` UI tests |
+
+**Worth knowing.**
+
+- **Documents need a second factor.** After accepting, the candidate asks for a code, which opens an hour-long session held only in the page's memory; the emailed link alone lists nothing and uploads nothing.
+- **There is deliberately no candidate download.** They can see each document's state and send a new version; the file itself is only served to HR, through a five-minute signed link.
+- **No virus scanner.** Uploads are limited to PDF, JPEG and PNG by content, and a PDF that can run or carry something is refused — but nothing scans for malware (AR-6).
+- **The files leave India in the demo tier** (Cloudflare R2, AR-1). The accept step says so before the candidate agrees.
+- **Aadhaar guidance.** Any identity requirement asks for a masked copy, with the reason, in all three languages.
+- **Completion is enforced by the database**, not only by the screen: every mandatory requirement needs a current, verified, unexpired document.
+- **The HRMS handoff is a signed JSON payload** (HMAC-SHA256 with a key id) that HR downloads; there is no vendor integration, and nothing is pushed anywhere.
+- **Retention deletes nothing until it is switched on.** `RETENTION_DRY_RUN` is true by default, so a deployment counts what it would remove and removes none of it until the flag is set to false.
+- **Withdrawing consent is a button, not only a promise.** The documents step carries **Withdraw my consent**, behind the same credential as an upload, because the candidate may have no account to sign in with. It stops further uploads for every offer that candidate holds and tells the hiring team; it deletes nothing already sent, and nothing re-grants it — the candidate must agree again, which today only happens on a new acceptance.
+- **Erasure covers the files, the rows, the codes, the sessions and the exports**, including an object left behind under the offer's prefix by a failed upload commit; it fails closed if object storage is not configured.
 
 ---
 

@@ -52,10 +52,26 @@ if not Path(PY_EXE).exists():  # POSIX layout
 PRE_GROUP_B = "c5e7a9b1d3f6"
 BACKFILL_PAIR = ["smoke_group_b_api.py", "smoke_group_b_requisitions.py"]
 
-# These two do not run on the shared database, so the main loop leaves them
-# alone; each is handled by its own stage below, and each is skipped with a
-# reason rather than silently, so "32/34" can never be mistaken for health.
-SPECIAL = {"smoke_group_a_scorecard_retry.py", "smoke_ph3_apply.py"}
+# These do not run in the main loop; each is handled by its own stage below,
+# and each is skipped with a reason rather than silently, so "32/34" can never
+# be mistaken for health.
+SPECIAL = {
+    "smoke_group_a_scorecard_retry.py",
+    "smoke_ph3_apply.py",
+    "smoke_ph4_wave4.py",
+}
+
+# smoke_ph4_wave4 puts offer documents in object storage, so it needs a bucket.
+# Without one, boto3 falls back to Amazon's default endpoint and the smoke dies
+# on a network error that reads like a product failure — which is exactly how
+# the 2026-09-22 pipeline test first reported it. Named here, skipped with a
+# reason when absent. (data_gateway reads S3_ENDPOINT, not S3_ENDPOINT_URL.)
+S3_FOR_DOCUMENTS = {
+    "S3_ENDPOINT": os.environ.get("S3_ENDPOINT", ""),
+    "S3_ACCESS_KEY_ID": os.environ.get("S3_ACCESS_KEY_ID", ""),
+    "S3_SECRET_ACCESS_KEY": os.environ.get("S3_SECRET_ACCESS_KEY", ""),
+    "S3_BUCKET_NAME": os.environ.get("S3_BUCKET_NAME", ""),
+}
 
 # smoke_ph3_apply seeds a whole tenant of its own and wants its own database.
 PH3_DB = os.environ.get("SMOKE_PH3_DB", "ph3_smoke")
@@ -85,6 +101,15 @@ ENV = {
     "PYTHONUTF8": "1",
     "PYTHONPATH": f".{os.pathsep}..{os.sep}..",
     "DATABASE_URL": DB_URL,
+    # The PH4 smokes read SMOKE_DATABASE_URL, and each defaults to a database
+    # of its own (ph4_w5, ph4_dev, ph4_w4) as the `ph3` role — databases this
+    # runner never created, so a clean run reported eight failures that were
+    # not failures. They run on the shared clean database like everything else
+    # now. As the postgres user rather than `ph3`: nothing in the schema uses
+    # row-level security and no PH4 smoke asserts a permission, and
+    # smoke_ph4_wave4's backdate() needs superuser to set
+    # session_replication_role.
+    "SMOKE_DATABASE_URL": DB_URL,
 }
 
 Result = tuple[str, bool, str, str]
@@ -188,6 +213,18 @@ def _run_scorecard_retry() -> None:
          {**ENV, "FEEDBACK_BILLING_URL": FEEDBACK_BILLING_URL, **S3_FOR_SCORECARDS})
 
 
+def _run_wave4() -> None:
+    """Offers and preboarding, which store candidate documents in a bucket."""
+    missing = [k for k, v in S3_FOR_DOCUMENTS.items() if not v]
+    if missing:
+        skipped.append(
+            "smoke_ph4_wave4.py — object storage is not configured "
+            f"({', '.join(missing)} unset). See README.md."
+        )
+        return
+    _run(["smoke_ph4_wave4.py"], {**ENV, **S3_FOR_DOCUMENTS})
+
+
 def main() -> int:
     for name in BACKFILL_PAIR:
         _seeded_at_head()
@@ -204,6 +241,7 @@ def main() -> int:
     # The scorecard smoke shares this database with feedback_billing, so it goes
     # after the rest rather than on a database of its own.
     _run_scorecard_retry()
+    _run_wave4()
     _run_ph3()
 
     failed = [r for r in results if not r[1]]

@@ -52,9 +52,9 @@ opening and creates another; the requisitions smoke merges applicants):
 Seeded after head instead, the backfill has already run, there is nothing for it
 to collapse, and both fail with empty results.
 
-## The two that need more than a database
+## The three that need more than a database
 
-`run_all.py` handles both. Neither is skipped silently — each prints the reason
+`run_all.py` handles all three. None is skipped silently — each prints the reason
 it did not run, so a green "32/34" can never be mistaken for health.
 
 **`smoke_ph3_apply`** needs a database of its own (it seeds a whole tenant).
@@ -83,6 +83,30 @@ $env:S3_SCORECARD_BUCKET = 'intants-interview-scorecards'
 $env:FEEDBACK_BILLING_URL = 'http://127.0.0.1:8013'
 .\.venv\Scripts\python tests/integration/run_all.py
 ```
+
+**`smoke_ph4_wave4`** — offers and preboarding — stores candidate documents in a
+bucket, so it needs object storage under `data_gateway`'s names, which are not
+`feedback_billing`'s: `S3_ENDPOINT` (no `_URL`) and `S3_BUCKET_NAME`. Without
+them it is listed as not run. Set them in the same shell as above:
+
+```powershell
+docker exec intants-minio mc mb -p local/intants-uploads   # once
+$env:S3_ENDPOINT = 'http://127.0.0.1:9000'; $env:S3_BUCKET_NAME = 'intants-uploads'
+```
+
+Before 2026-09-22 it did not skip — boto3 fell back to Amazon's endpoint and the
+smoke died on a network error that read like a broken offer flow.
+
+### The PH4 smokes and their databases
+
+Each PH4 smoke's header shows it run against a database of its own (`ph4_w5`,
+`ph4_dev`, `ph4_w4`) as the `ph3` role. `run_all.py` never created those, so a
+clean run reported eight failures that were not failures. It now points them at
+the shared clean database through `SMOKE_DATABASE_URL`, as the postgres user:
+nothing in the schema uses row-level security, no PH4 smoke asserts a permission,
+and `smoke_ph4_wave4`'s `backdate()` needs superuser to set
+`session_replication_role`. The standalone commands in each smoke's header still
+work if you would rather run one on its own database.
 
 It makes one model call per run — locally that is whatever `LLM_PROVIDER` is set
 to in `services/feedback_billing/.env` (Groq at the time of writing), not a

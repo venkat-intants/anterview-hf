@@ -14,7 +14,7 @@
 //     the states the state machine actually allows them from.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -471,6 +471,38 @@ describe('PublicOffer — documents, once accepted', () => {
         undefined,
       ),
     );
+  });
+
+  // The full pipeline test saw a 500 on this upload and the row still reading
+  // "Not uploaded yet" with no message — a candidate would believe their PAN
+  // card had gone through. These pin that a failure is said out loud, for a
+  // server error and for a request that never reached the server at all.
+  it.each([
+    ['the server fails', new Error('Internal server error.'), /Internal server error/],
+    ['the request never arrives', new TypeError('Failed to fetch'), /Failed to fetch/],
+  ])('tells the candidate when an upload fails because %s', async (_why, failure, shown) => {
+    requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
+    openDocumentsSession.mockResolvedValue({
+      session_token: 'sess_tok',
+      expires_at: '2026-09-18T02:00:00.000Z',
+    });
+    getMyDocuments.mockResolvedValue(CHECKLIST);
+    uploadMyDocument.mockRejectedValue(failure);
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Your documents');
+    await user.click(screen.getByRole('button', { name: 'Get a code' }));
+    await screen.findByText(/Code sent/);
+    await user.type(screen.getByLabelText(/enter the code/i), '111111');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('PAN card');
+
+    const panRow = screen.getByText('PAN card').closest('li') as HTMLElement;
+    const input = panRow.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(['%PDF-1.4 test'], 'pan.pdf', { type: 'application/pdf' }));
+
+    expect(await within(panRow).findByText(shown)).toBeInTheDocument();
   });
 
   it('shows the completed state once preboarding is done, with no code step', async () => {

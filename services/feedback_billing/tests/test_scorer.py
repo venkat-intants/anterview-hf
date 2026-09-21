@@ -775,3 +775,47 @@ async def test_scorer_rejects_a_json_array_with_a_readable_error() -> None:
 
     assert "list" in excinfo.value.message
     mock_db.commit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The scorecard records the model that actually scored it
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_scorecard_records_the_model_that_was_called_not_gemini() -> None:
+    """Under Groq the scorecard must say Groq's model.
+
+    The scorer calls ``settings.llm_model`` — whichever provider LLM_PROVIDER
+    names — but it used to store ``settings.gemini_model`` in ``scorer_model``.
+    The full pipeline test found every Groq-scored scorecard labelled
+    ``gemini-2.5-flash``. Which AI evaluated a candidate is audit data; a wrong
+    value there is worse than none.
+    """
+    mock_db = _make_db_session()
+    groq_settings = Settings(
+        database_url="postgresql+asyncpg://test:test@localhost:5432/test",
+        redis_url="redis://localhost:6379/0",
+        llm_provider="groq",
+        groq_api_key="test-groq-key",
+        groq_model="openai/gpt-oss-120b",
+        gemini_api_key="",
+        gemini_model="gemini-2.5-flash",
+        jwt_secret="test-secret-that-is-at-least-32-chars-long!!",
+    )
+
+    with patch("app.scorer.call_llm_json", AsyncMock(return_value=_GOOD_GEMINI_RESPONSE)) as llm:
+        await score_session(
+            session_id=str(uuid.uuid4()),
+            job_title="Junior Java Developer",
+            experience_level="entry",
+            language="en",
+            turns=_SAMPLE_TURNS,
+            db_session=mock_db,
+            settings=groq_settings,
+        )
+
+    assert llm.await_args.kwargs["model"] == "openai/gpt-oss-120b", "the call went to Groq"
+    stored = mock_db.execute.await_args.args[1]
+    assert stored["scorer_model"] == "openai/gpt-oss-120b", (
+        "the scorecard must record the model that scored it"
+    )
+    assert "gemini" not in stored["scorer_model"]

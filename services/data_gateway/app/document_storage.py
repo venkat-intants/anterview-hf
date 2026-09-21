@@ -26,6 +26,7 @@ import uuid
 from dataclasses import dataclass
 
 import structlog
+from botocore.exceptions import BotoCoreError, ClientError
 from shared.s3 import s3_client
 
 from app.config import Settings
@@ -52,6 +53,23 @@ _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 class DocumentRejectedError(ValueError):
     """The file is not one we accept, in words a candidate can act on."""
+
+
+class StorageUnavailableError(RuntimeError):
+    """The document could not be stored — nothing the candidate did.
+
+    Callers turn this into a 503 with "try again" wording, the way the CV path
+    already does, instead of letting it reach the 500 handler. Before this, an
+    environment with no object storage configured sent documents to boto3's
+    default endpoint (``s3.auto.amazonaws.com``), which failed on the network
+    and surfaced as a bare 500 — while a CV in the same environment got a 503
+    naming the setting to fix.
+
+    Deliberately NOT a local-disk fallback, unlike CVs: these are identity
+    documents, downloads go out as signed URLs a disk cannot issue, and DPDP
+    erasure reaches a bucket, not a directory. See ``local_storage`` for why
+    even CVs are fenced off from that path in production.
+    """
 
 
 @dataclass(frozen=True)
@@ -108,7 +126,25 @@ def storage_key(company_id: uuid.UUID, offer_id: uuid.UUID, document_id: uuid.UU
 
 
 async def store(settings: Settings, key: str, data: bytes, content_type: str) -> None:
-    await upload_file(settings.s3_bucket_name, key, data, content_type, settings=settings)
+    """Put a checked document in the uploads bucket, or raise StorageUnavailableError.
+
+    Checked for configuration FIRST: with no credentials there is nothing to
+    try, and trying means a network call to Amazon that fails slowly and says
+    nothing useful. The operator gets the fix in the log; the caller gets one
+    exception type to map, whatever went wrong underneath.
+    """
+    if not (settings.s3_access_key_id and settings.s3_secret_access_key):
+        log.warning(
+            "document_storage.not_configured",
+            hint="set S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY and S3_BUCKET_NAME",
+        )
+        raise StorageUnavailableError("object storage is not configured")
+    try:
+        await upload_file(settings.s3_bucket_name, key, data, content_type, settings=settings)
+    except (BotoCoreError, ClientError) as exc:
+        # The key names no person, so it is safe to log; the bytes never are.
+        log.warning("document_storage.upload_failed", key=key, error_type=type(exc).__name__)
+        raise StorageUnavailableError(type(exc).__name__) from exc
 
 
 async def signed_download(settings: Settings, key: str, filename: str) -> str:

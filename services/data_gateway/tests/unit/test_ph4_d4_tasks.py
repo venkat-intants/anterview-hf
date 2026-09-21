@@ -56,6 +56,43 @@ def test_dot_boundary_suffix_match() -> None:
         svc.validate_link("https://evilgithub.com/x", ["github.com"])
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        # Python keeps "\" in the hostname; a browser treats it as a path
+        # separator. This passed as a github.com subdomain and opened
+        # attacker.example -- the security review's H1.
+        "https://attacker.example\\.github.com/x",
+        # U+FF3C FULLWIDTH REVERSE SOLIDUS: IDNA maps it to "\", so the stored
+        # "canonical" URL carried the same bypass.
+        "https://attacker.example＼.github.com/x",
+        # Percent-encoded delimiters and NUL in the host.
+        "https://attacker.example%2f.github.com/x",
+        "https://attacker.example%00.github.com/x",
+    ],
+)
+def test_a_host_that_a_browser_would_read_differently_is_refused(url: str) -> None:
+    with pytest.raises(svc.TaskError):
+        svc.validate_link(url, ["github.com"])
+
+
+@pytest.mark.parametrize("url", ["https://github.com:abc/x", "https://github.com:99999/x"])
+def test_an_unparseable_port_is_refused_not_a_500(url: str) -> None:
+    """``parsed.port`` raises ValueError on these, and it was uncaught."""
+    with pytest.raises(svc.TaskError):
+        svc.validate_link(url, ["github.com"])
+
+
+@pytest.mark.parametrize(
+    "url", ["https://github.com/a\x00b", "https://git hub.com/x", "https://github.com/a\tb"],
+)
+def test_control_characters_and_whitespace_are_refused_not_stripped(url: str) -> None:
+    """Refused rather than silently stripped, so what is stored is exactly
+    what the candidate typed and the reviewer will be shown."""
+    with pytest.raises(svc.TaskError):
+        svc.validate_link(url, ["github.com"])
+
+
 def test_idna_hostname_is_normalised() -> None:
     out = svc.validate_link("https://GitHub.com/x", ["github.com"])
     assert out.startswith("https://github.com")

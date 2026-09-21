@@ -48,7 +48,7 @@ import unicodedata
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
 from sqlalchemy import text
@@ -149,15 +149,35 @@ def submission_prefix(company_id: uuid.UUID, submission_id: uuid.UUID) -> str:
 # ---------------------------------------------------------------------------
 # Pure functions
 # ---------------------------------------------------------------------------
+# Characters no link we accept may contain anywhere. A backslash is the one
+# that mattered: Python's urlsplit keeps it inside the hostname, while a
+# browser treats it as a path separator -- so
+# https://attacker.example\.github.com/x read as a github.com subdomain here
+# and opened attacker.example there. C0/C1 controls and whitespace are refused
+# rather than stripped, so what is stored is exactly what was typed.
+_LINK_FORBIDDEN_RE = re.compile(r"[\\\s\x00-\x1f\x7f-\x9f]")
+
+
 def validate_link(url: str, allowed_domains: list[str] | None) -> str:
-    """https only; no userinfo; no IP literal host; no port but 443; IDNA
+    r"""https only; no userinfo; no IP literal host; no port but 443; IDNA
     hostname; a suffix match on a DOT BOUNDARY against ``allowed_domains``
     (or ``DEFAULT_LINK_DOMAINS``) — so ``evilgithub.com`` is refused for
     ``github.com``. Returns the canonical URL, with any fragment dropped.
-    Never fetches the link (that would be a server-side request)."""
+    Never fetches the link (that would be a server-side request).
+
+    THE HOST MUST MEAN THE SAME THING TO US AND TO THE BROWSER. Python's URL
+    parser and the WHATWG parser browsers use disagree about ``\``: a
+    security review showed ``https://attacker.example\.github.com/x`` passing
+    as a github.com subdomain while a browser opened ``attacker.example``. The
+    fullwidth ``＼`` (U+FF3C) did the same after IDNA mapped it to ``\``. So a
+    backslash, whitespace or a control character anywhere is refused, and the
+    host AFTER IDNA must be nothing but letters, digits, hyphens and dots.
+    """
     raw = (url or "").strip()
     if not raw or len(raw) > 2000:
         raise TaskError(422, "Give a link of up to 2000 characters.")
+    if _LINK_FORBIDDEN_RE.search(raw):
+        raise TaskError(422, "That link contains characters a web address cannot have.")
     try:
         parsed = urlsplit(raw)
     except ValueError as exc:
@@ -171,18 +191,31 @@ def validate_link(url: str, allowed_domains: list[str] | None) -> str:
         raise TaskError(422, "That link has no address.")
     if _IP_LITERAL_RE.match(host) or ":" in host:
         raise TaskError(422, "Links to a bare IP address are not accepted.")
-    if parsed.port not in (None, 443):
+    try:
+        port = parsed.port
+    except ValueError as exc:  # ":abc" or ":99999" -- was an uncaught 500
+        raise TaskError(422, "Links may only use the standard https port.") from exc
+    if port not in (None, 443):
         raise TaskError(422, "Links may only use the standard https port.")
     try:
         idna_host = host.encode("idna").decode("ascii").lower()
     except UnicodeError as exc:
         raise TaskError(422, "That link's address is not valid.") from exc
+    # After IDNA the host is ASCII, so this is the check that closes the
+    # fullwidth-backslash route (U+FF3C maps to "\\") along with "%" and NUL.
+    if not _DOMAIN_RE.fullmatch(idna_host):
+        raise TaskError(422, "That link's address is not valid.")
     domains = tuple((d or "").strip().lower() for d in (allowed_domains or DEFAULT_LINK_DOMAINS) if d)
     if not any(idna_host == d or idna_host.endswith("." + d) for d in domains):
         raise TaskError(
             422, f"Links to {host} are not on the approved list for this task."
         )
-    return urlunsplit(("https", idna_host, parsed.path or "", parsed.query, ""))
+    return urlunsplit((
+        "https", idna_host,
+        quote(parsed.path or "", safe="/-._~!$&'()*+,;=:@%"),
+        quote(parsed.query, safe="/-._~!$&'()*+,;=:@%?"),
+        "",
+    ))
 
 
 def _clean_domain(raw: str) -> str:

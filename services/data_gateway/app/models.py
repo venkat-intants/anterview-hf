@@ -503,6 +503,9 @@ class CodingQuestion(Base):
             "jsonb_array_length(test_cases) >= 1", name="ck_coding_questions_test_cases_count"
         ),
         CheckConstraint("time_limit_ms >= 100", name="ck_coding_questions_time_limit"),
+        # PH4-D3: composite FK target for code_quality_reports / code_fingerprints /
+        # code_similarity_signals / code_integrity_findings.
+        UniqueConstraint("id", "company_id", name="uq_coding_questions_id_company"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -622,6 +625,8 @@ class ExamAttempt(Base):
         CheckConstraint(
             "status IN ('in_progress','submitted','expired')", name="ck_exam_attempts_status"
         ),
+        # PH4-D3: composite FK target for the code-evidence tables (below).
+        UniqueConstraint("id", "company_id", name="uq_exam_attempts_id_company"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -654,6 +659,11 @@ class ExamAttempt(Base):
     accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     extra_time_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     auto_submit_relaxed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # PH4-D3: set once, together with redacting `answers`/`graded_snapshot`'s
+    # coding source and program output (retention or DPDP erasure) — the ONE
+    # exception exam_attempts_submission_frozen allows on a submitted/expired
+    # attempt. NULL means the coding source has not been redacted.
+    code_redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="in_progress", nullable=False)
     started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -2043,4 +2053,233 @@ class AccommodationEvent(Base):
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# PH4-D3: code quality + similarity evidence — a signal is never a finding.
+#
+# code_quality_reports / code_fingerprints / code_similarity_signals are
+# SYSTEM evidence: written only by app/code_evidence.py's analysis sweep,
+# immutable once inserted (UPDATE refused by trigger; DELETE stays legal for
+# retention and erasure). code_integrity_findings is the only one of the four
+# a PERSON writes to, and only via a mandatory, non-empty rationale.
+# ---------------------------------------------------------------------------
+class CodeQualityReport(Base):
+    """One static-analysis pass over one coding answer. Never runs candidate
+    code: ``analyser='python-ast'`` uses stdlib ``ast``; every other language
+    (and any Python source ``ast.parse`` cannot parse) is
+    ``analyser='pygments-tokens'`` — a labelled approximation.
+
+    ``coverage`` is always ``{"available": false, "reason": ...}`` — coverage
+    needs instrumented execution, which this analyser deliberately never does.
+    """
+
+    __tablename__ = "code_quality_reports"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_quality_reports_attempt", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["coding_question_id", "company_id"],
+            ["coding_questions.id", "coding_questions.company_id"],
+            name="fk_code_quality_reports_question", ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "attempt_id", "coding_question_id", "analyser_version",
+            name="uq_code_quality_reports_attempt_question_version",
+        ),
+        CheckConstraint(
+            "analyser IN ('python-ast','pygments-tokens')", name="ck_code_quality_reports_analyser"
+        ),
+        CheckConstraint(
+            "status IN ('complete','unsupported','failed','skipped')",
+            name="ck_code_quality_reports_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    coding_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    exam_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    language: Mapped[str] = mapped_column(Text, nullable=False)
+    analyser: Mapped[str] = mapped_column(Text, nullable=False)
+    analyser_version: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    findings: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    coverage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # Never the source — see app/code_evidence.py::analyse_pending.
+    error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class CodeFingerprint(Base):
+    """One submission's winnowed k-gram hashes (the MOSS approach) — GIN-indexed
+    so the sweep's overlap query (``hashes && other.hashes``) stays cheap as
+    the question accumulates submissions."""
+
+    __tablename__ = "code_fingerprints"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_fingerprints_attempt", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["coding_question_id", "company_id"],
+            ["coding_questions.id", "coding_questions.company_id"],
+            name="fk_code_fingerprints_question", ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "attempt_id", "coding_question_id", "algorithm_version",
+            name="uq_code_fingerprints_attempt_question_version",
+        ),
+        CheckConstraint("token_count >= 0", name="ck_code_fingerprints_token_count"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    coding_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    hashes: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False)
+    lines: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class CodeSimilaritySignal(Base):
+    """SYSTEM evidence: a pair of submissions (or one submission against the
+    question's reference solution) whose fingerprints overlap enough to be
+    worth a look. NEVER read by grading, the workflow runner or the final
+    decision path — a signal is evidence for a human reviewer, not a finding.
+
+    Composite FKs from BOTH ``attempt_low_id`` and ``attempt_high_id`` to
+    ``exam_attempts(id, company_id)`` make a cross-tenant pair
+    unrepresentable: both must resolve through the SAME ``company_id`` on
+    this row.
+    """
+
+    __tablename__ = "code_similarity_signals"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["coding_question_id", "company_id"],
+            ["coding_questions.id", "coding_questions.company_id"],
+            name="fk_code_similarity_signals_question", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["attempt_low_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_similarity_signals_attempt_low", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["attempt_high_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_similarity_signals_attempt_high", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "reference_kind IN ('submission','reference_solution')",
+            name="ck_code_similarity_signals_reference_kind",
+        ),
+        CheckConstraint(
+            "(attempt_high_id IS NOT NULL AND attempt_low_id < attempt_high_id)"
+            " OR (reference_kind = 'reference_solution' AND attempt_high_id IS NULL)",
+            name="ck_code_similarity_signals_pair_order",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(matched_regions) = 'array' AND jsonb_array_length(matched_regions) <= 20",
+            name="ck_code_similarity_signals_regions_cap",
+        ),
+        UniqueConstraint("id", "company_id", name="uq_code_similarity_signals_id_company"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    coding_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    exam_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    attempt_low_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    attempt_high_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    reference_kind: Mapped[str] = mapped_column(Text, default="submission", nullable=False)
+    containment_low: Mapped[float] = mapped_column(NUMERIC(5, 4), nullable=False)
+    containment_high: Mapped[float | None] = mapped_column(NUMERIC(5, 4), nullable=True)
+    jaccard: Mapped[float] = mapped_column(NUMERIC(5, 4), nullable=False)
+    shared_fingerprints: Mapped[int] = mapped_column(Integer, nullable=False)
+    tokens_low: Mapped[int] = mapped_column(Integer, nullable=False)
+    tokens_high: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    matched_regions: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    thresholds: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class CodeIntegrityFinding(Base):
+    """HUMAN evidence: a named ``hr_manager``'s own judgement call, recorded
+    against a mandatory rationale. This is the only one of the four
+    code-evidence tables a person writes to, and the only column that could
+    ever read like a verdict (``outcome``) is never read by grading, the
+    workflow runner or the final-decision path — ``decision_authority`` stays
+    structurally ``human_only`` regardless of what this table holds.
+    """
+
+    __tablename__ = "code_integrity_findings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_integrity_findings_attempt", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["coding_question_id", "company_id"],
+            ["coding_questions.id", "coding_questions.company_id"],
+            name="fk_code_integrity_findings_question", ondelete="CASCADE",
+        ),
+        # RESTRICT: a composite FK's ON DELETE SET NULL nulls every column it
+        # names, including company_id (NOT NULL here) — see the migration's
+        # docstring for the bug that caught. app/code_evidence.py::purge and
+        # admin_ops's erasure step 5h null signal_id themselves before
+        # deleting a signal, so RESTRICT never actually fires.
+        ForeignKeyConstraint(
+            ["signal_id", "company_id"],
+            ["code_similarity_signals.id", "code_similarity_signals.company_id"],
+            name="fk_code_integrity_findings_signal", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["enrolment_id", "company_id"], ["enrolments.id", "enrolments.company_id"],
+            name="fk_code_integrity_findings_enrolment", ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "outcome IN ('no_concern','follow_up','confirmed')",
+            name="ck_code_integrity_findings_outcome",
+        ),
+        # The redaction marker '[redacted]' (11 chars) is shorter than the
+        # 20-char floor a human-authored rationale must clear.
+        CheckConstraint(
+            "rationale = '[redacted]' OR char_length(rationale) BETWEEN 20 AND 2000",
+            name="ck_code_integrity_findings_rationale_len",
+        ),
+        UniqueConstraint("id", "company_id", name="uq_code_integrity_findings_id_company"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    coding_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    signal_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    recorded_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

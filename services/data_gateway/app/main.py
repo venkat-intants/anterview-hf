@@ -41,6 +41,7 @@ from shared.observability.sentry import init_sentry
 from app import reconciliation, reminders, scheduled_publishing
 from app.accommodations import purge as purge_accommodations
 from app.application_drafts import purge_expired as purge_expired_drafts
+from app.code_evidence import purge as purge_code_evidence
 from app.config import settings
 from app.database import dispose_engine, get_db_session, get_session_factory, init_engine
 from app.dependencies import set_auth_provider
@@ -55,6 +56,7 @@ from app.routers.agent import router as agent_router
 from app.routers.auth import router as auth_router
 from app.routers.candidate_applications import router as candidate_applications_router
 from app.routers.careers import router as careers_router
+from app.routers.code_evidence import hr_router as code_evidence_hr_router
 from app.routers.company_board import router as company_board_router
 from app.routers.consent import router as consent_router
 from app.routers.decision_reasons import admin_router as decision_reasons_admin_router
@@ -253,6 +255,24 @@ async def _run_retention_job() -> None:
     except Exception as exc:  # broad — never let this cleanup kill the scheduler
         log.error(
             "accommodation.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
+    # Same tick: candidate coding-round source and program output whose
+    # purpose is over (PH4-D3) — the application has been decided (or the
+    # attempt has no application) long enough ago. Scores are kept; only the
+    # source and stdout/stderr go. Honours RETENTION_DRY_RUN like every purge
+    # above.
+    try:
+        async with factory() as session:
+            purged_code = await purge_code_evidence(
+                session, retention_days=settings.code_evidence_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("code_evidence.retention.done", purged=purged_code, dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "code_evidence.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
         )
 
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft
@@ -508,6 +528,7 @@ app.include_router(question_banks_hr_router)
 app.include_router(question_banks_admin_router)
 # PH4-D2: candidate accommodations — HR only, no super-admin/interviewer route.
 app.include_router(accommodations_hr_router)
+app.include_router(code_evidence_hr_router)
 app.include_router(exam_take_router)
 app.include_router(hr_interviews_router)
 app.include_router(interview_take_router)

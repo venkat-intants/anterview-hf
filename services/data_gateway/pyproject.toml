@@ -50,6 +50,11 @@ pypdf = "6.14.2"
 aioboto3 = ">=13.0"
 # >=0.0.31 clears CVE-2024-53981 / CVE-2026-24486 / CVE-2026-42561 / CVE-2026-53539
 python-multipart = ">=0.0.31,<0.1"
+# PH4-D3: a deliberate RUNTIME dependency now, not just a pytest one — it
+# tokenises candidate code for the code-quality/similarity analysis
+# (app/code_quality.py, app/code_similarity.py). Pure Python, BSD-licensed,
+# never executes what it tokenises. Pin matches requirements.txt.
+pygments = "2.20.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"

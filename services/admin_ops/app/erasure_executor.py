@@ -127,6 +127,7 @@ migration; this cannot go stale without going red.
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -136,6 +137,7 @@ from sqlalchemy import text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.code_redaction import redact_coding_answers, redact_graded_snapshot
 from app.models import AuditLog, ErasureRequest
 from app.s3_client import StorageNotConfiguredError
 
@@ -240,6 +242,34 @@ ERASED_TABLES: dict[str, str] = {
                                 "scorecard precedent — but in step 5g every active row is "
                                 "REVOKED and both notes are REDACTED to NULL or "
                                 "'[redacted]'.",
+    "exam_attempts": "PH4-D3 — moved here from EXCLUDED_TABLES. Selections, timestamps and "
+                     "the score are the company's structural assessment record against an "
+                     "applicant row step 6 anonymises next (the reason it was excluded "
+                     "before); a coding submission's SOURCE and its program's OUTPUT are "
+                     "the candidate's own text, on the interviewer_notes precedent, and are "
+                     "not. Step 5h redacts `answers.coding[*].source` and "
+                     "`graded_snapshot.coding[*].tests[*].{actual_output,stderr}`, stamping "
+                     "`code_redacted_at` — the ONE shape `exam_attempts_submission_frozen` "
+                     "permits on an already-submitted/expired attempt. The row, and its "
+                     "score, is otherwise kept.",
+    "code_quality_reports": "PH4-D3 — a static-analysis pass over one coding answer: "
+                            "metrics and smells computed FROM the candidate's source, "
+                            "which step 5h has just redacted from the attempt it describes. "
+                            "Deleted outright in step 5h — there is no structural residue "
+                            "worth keeping once the source it analysed is gone.",
+    "code_fingerprints": "PH4-D3 — winnowed hashes of one submission's normalised token "
+                        "stream. Deleted outright in step 5h alongside the reports.",
+    "code_similarity_signals": "PH4-D3 — SYSTEM evidence that a pair of submissions (or a "
+                               "submission and the question's reference solution) "
+                               "overlapped. Deleted outright in step 5h: it names an "
+                               "erased attempt on one or both sides, and the evidence it "
+                               "summarises is gone with the source.",
+    "code_integrity_findings": "PH4-D3 — a NAMED HR manager's own judgement call, kept as "
+                               "the company's record that a review happened and what it "
+                               "concluded (outcome), on the interviewer_scorecards "
+                               "precedent. Step 5h redacts only `rationale` to "
+                               "'[redacted]', which can quote or name the candidate; "
+                               "`outcome`, who recorded it and when are kept.",
 }
 
 #: Tables deliberately left standing, each with the reason it is defensible.
@@ -301,22 +331,25 @@ EXCLUDED_TABLES: dict[str, str] = {
                             "submitted, approved, copied into an exam, ...): action, actor "
                             "(HR staff) and facts (ids), never question text.",
     # --- Candidate-DERIVED, but reached through applicants ------------------
-    # These four are the judgement call in this list, so the reasoning is
+    # These three are the judgement call in this list, so the reasoning is
     # written out rather than asserted: they hang off `applicants`, which step 6
     # anonymises rather than deletes. Once full_name is '[redacted]', email is
-    # NULL and user_id is NULL, an attempt and its proctoring events belong to
+    # NULL and user_id is NULL, an assignment or a proctoring event belongs to
     # an applicant that identifies nobody — they are the COMPANY's assessment
     # record, not the erased user's. Deleting them would destroy a fiduciary's
     # own hiring evidence to no privacy gain. This is why they differ from
     # `integrity_events` above, which hangs off `sessions` — a session is the
     # user's own practice run and is hard-deleted, so its events go with it.
+    # (`exam_attempts` itself used to be the fourth here; PH4-D3 moved it to
+    # ERASED_TABLES because a coding submission's source is NOT covered by
+    # this argument, even though everything else about the row still is.)
     "exam_assignments": "keys off applicants (anonymised in step 6); holds a "
                         "token hash and a schedule, no personal data.",
-    "exam_attempts": "the company's graded assessment record, attached to the "
-                     "anonymised applicant rather than to the erased user.",
-    "exam_integrity_events": "proctoring events for an exam_attempts row — see "
-                             "exam_attempts. Event type + timestamp only; raw "
-                             "camera/keystroke input never leaves the browser.",
+    "exam_integrity_events": "proctoring events for an exam_attempts row, which PH4-D3's "
+                             "step 5h redacts (coding source) but does not delete — the "
+                             "row this table's FK points at still exists. Event type + "
+                             "timestamp only; raw camera/keystroke input never leaves the "
+                             "browser.",
     "interview_invites": "keys off applicants/company. guest_user_id and "
                          "created_by_user_id resolve to anonymised users rows, "
                          "and session_id nulls itself (ON DELETE SET NULL) when "
@@ -1161,6 +1194,112 @@ async def _execute_one_erasure(
     )
 
     # ------------------------------------------------------------------
+    # Step 5h: Coding-round SOURCE and program OUTPUT (PH4-D3)
+    # ------------------------------------------------------------------
+    # A coding submission's source, and what it printed while being graded,
+    # are the candidate's own text and their program's own output — personal
+    # data on the interviewer_notes precedent, not the company's structural
+    # assessment record. The SCORE (raw, points, passed) IS that record and
+    # is kept, the round_results precedent.
+    #
+    # exam_attempts moves from EXCLUDED to ERASED for exactly this reason:
+    # every other column on it (selections, timestamps, the score) still
+    # describes only the company's own assessment against an applicant row
+    # step 6 anonymises next, same as before this feature. Only the coding
+    # source and program stdout/stderr are new personal data.
+    #
+    # The redaction UPDATE below touches ONLY answers / graded_snapshot /
+    # code_redacted_at — the one shape ``exam_attempts_submission_frozen``
+    # permits on an already-submitted/expired attempt. The transform itself
+    # is a PURE function (app/code_redaction.py) with its own unit test,
+    # because admin_ops cannot import data_gateway to reuse its copy of the
+    # same rule (services/data_gateway/app/code_evidence.py's retention path
+    # uses an independently-written one).
+    #
+    # MUST run before step 6: the join reaches these rows through
+    # applicants.user_id, which step 6 sets to NULL.
+    coding_attempts_result = await db.execute(
+        text(
+            "SELECT id, company_id, answers, graded_snapshot FROM exam_attempts"
+            " WHERE code_redacted_at IS NULL AND answers -> 'coding' IS NOT NULL"
+            "   AND applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    coding_attempt_rows = coding_attempts_result.fetchall()
+    code_attempts_redacted = 0
+    code_reports_deleted = 0
+    code_fingerprints_deleted = 0
+    code_signals_deleted = 0
+    code_findings_redacted = 0
+    for coding_attempt_id, coding_attempt_company_id, coding_answers, coding_graded_snapshot in (
+        coding_attempt_rows
+    ):
+        new_answers = redact_coding_answers(coding_answers)
+        new_snapshot = redact_graded_snapshot(coding_graded_snapshot)
+        redact_result = await db.execute(
+            text(
+                "UPDATE exam_attempts SET answers = CAST(:a AS jsonb),"
+                " graded_snapshot = CAST(:g AS jsonb), code_redacted_at = now(),"
+                " updated_at = now()"
+                " WHERE id = :id AND code_redacted_at IS NULL"
+            ),
+            {"a": json.dumps(new_answers), "g": json.dumps(new_snapshot), "id": coding_attempt_id},
+        )
+        code_attempts_redacted += getattr(redact_result, "rowcount", 0) or 0
+        # MUST run before the DELETE below: code_integrity_findings.signal_id
+        # is RESTRICT, not SET NULL -- a composite FK's ON DELETE SET NULL
+        # would null company_id (NOT NULL) along with it (see the PH4-D3
+        # migration's docstring). A finding can sit on either attempt of the
+        # pair, not just this one, so the match is on signal membership.
+        await db.execute(
+            text(
+                "UPDATE code_integrity_findings SET signal_id = NULL"
+                " WHERE company_id = :c AND signal_id IN ("
+                "   SELECT id FROM code_similarity_signals"
+                "    WHERE company_id = :c AND (attempt_low_id = :a OR attempt_high_id = :a)"
+                " )"
+            ),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        signals_result = await db.execute(
+            text(
+                "DELETE FROM code_similarity_signals WHERE company_id = :c"
+                " AND (attempt_low_id = :a OR attempt_high_id = :a)"
+            ),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_signals_deleted += getattr(signals_result, "rowcount", 0) or 0
+        fingerprints_result = await db.execute(
+            text("DELETE FROM code_fingerprints WHERE company_id = :c AND attempt_id = :a"),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_fingerprints_deleted += getattr(fingerprints_result, "rowcount", 0) or 0
+        reports_result = await db.execute(
+            text("DELETE FROM code_quality_reports WHERE company_id = :c AND attempt_id = :a"),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_reports_deleted += getattr(reports_result, "rowcount", 0) or 0
+        findings_result = await db.execute(
+            text(
+                "UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"
+                " WHERE company_id = :c AND attempt_id = :a AND redacted_at IS NULL"
+            ),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_findings_redacted += getattr(findings_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.code_evidence_redacted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        attempts_redacted=code_attempts_redacted,
+        reports_deleted=code_reports_deleted,
+        fingerprints_deleted=code_fingerprints_deleted,
+        signals_deleted=code_signals_deleted,
+        findings_redacted=code_findings_redacted,
+    )
+
+    # ------------------------------------------------------------------
     # Step 6: Anonymise applicant rows linked to this user_id
     # ------------------------------------------------------------------
     # embedding is NOT decoration on this list. applicants.embedding is a
@@ -1385,11 +1524,12 @@ async def _execute_one_erasure(
         # 1.3 → 1.4 when 5f took in stage exceptions (PH4-O1), 1.4 → 1.5
         # when it took in interview loops and sessions (PH4-A2), 1.5 → 1.6
         # when it took in offers and preboarding documents (PH4-A3/A4), and
-        # 1.6 → 1.7 when step 5g took in candidate accommodations (PH4-D2):
-        # the artifacts record is what an auditor reads to know WHAT a given
-        # completion covered, so two records with different coverage must not
-        # claim the same version.
-        "executor_version": "1.7",
+        # 1.6 → 1.7 when step 5g took in candidate accommodations (PH4-D2),
+        # and 1.7 → 1.8 when step 5h took in coding-round source and program
+        # output (PH4-D3): the artifacts record is what an auditor reads to
+        # know WHAT a given completion covered, so two records with
+        # different coverage must not claim the same version.
+        "executor_version": "1.8",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
@@ -1408,6 +1548,11 @@ async def _execute_one_erasure(
         "preboarding_documents_redacted": preboarding_documents_redacted,
         "accommodations_revoked": accommodations_revoked,
         "accommodations_redacted": accommodations_redacted,
+        "code_attempts_redacted": code_attempts_redacted,
+        "code_reports_deleted": code_reports_deleted,
+        "code_fingerprints_deleted": code_fingerprints_deleted,
+        "code_signals_deleted": code_signals_deleted,
+        "code_findings_redacted": code_findings_redacted,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
         # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,

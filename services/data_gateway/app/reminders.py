@@ -105,6 +105,11 @@ class SweepResult:
     sla_overdue: int = 0
     session_reminders: int = 0
     offers_expired: int = 0
+    # PH4-D3: static code-quality/similarity analysis. Zero on every field
+    # when CODE_ANALYSIS_ENABLED is false — the stage is then a documented
+    # no-op, not skipped silently.
+    code_reports: int = 0
+    similarity_signals: int = 0
     # "stage: ErrorType: message" for each stage that failed this sweep. The
     # sweep carries on past them; this is how the failure is still recorded.
     failed_stages: list[str] = field(default_factory=list)
@@ -121,6 +126,8 @@ class SweepResult:
             + self.sla_overdue
             + self.session_reminders
             + self.offers_expired
+            + self.code_reports
+            + self.similarity_signals
         )
 
 
@@ -833,6 +840,20 @@ async def _offer_expiry(db: AsyncSession, result: SweepResult) -> None:
     await db.commit()
 
 
+async def _code_analysis(db: AsyncSession, result: SweepResult) -> None:
+    """PH4-D3: static code-quality/similarity analysis over recently submitted
+    coding rounds. A documented no-op when ``CODE_ANALYSIS_ENABLED`` is false
+    — ``code_evidence.analyse_pending`` itself checks the flag and returns a
+    zero result, so disabling analysis is not "the stage silently vanished"
+    but "the stage ran and did nothing", visible the same way every other
+    stage's zero would be."""
+    from app.code_evidence import analyse_pending  # noqa: PLC0415 — keep the sweep import light
+
+    swept = await analyse_pending(db)
+    result.code_reports += swept.reports_written
+    result.similarity_signals += swept.signals_written
+
+
 async def _stage_sla(db: AsyncSession, result: SweepResult) -> None:
     """Notify stage owners about applications past their stage's SLA.
 
@@ -870,6 +891,9 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
             ("stage_sla", _stage_sla),
             ("sessions", _session_reminders),
             ("offers", _offer_expiry),
+            # PH4-D3: independent of every stage above — a failure here must
+            # never touch an enrolment, a notification or a decided status.
+            ("code_analysis", _code_analysis),
         ):
             try:
                 await fn(db, result)

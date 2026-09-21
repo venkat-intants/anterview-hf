@@ -237,6 +237,36 @@ class Settings(BaseSettings):
     # under. The numeric parameters are kept — the scorecard precedent.
     accommodation_retention_days: int = 180
 
+    # --- PH4-D3: code quality + similarity evidence ---
+    # Static analysis only — candidate code is never executed. See
+    # app/code_quality.py, app/code_similarity.py, app/code_sandbox.py,
+    # app/code_evidence.py. The escape hatch for the single-container Space,
+    # where the analysis worker adds one extra OS process.
+    code_analysis_enabled: bool = True
+    # Wall-clock cap per analysis run, enforced by app/code_sandbox.py. A
+    # timeout stores status='failed' and never touches the attempt.
+    code_analysis_timeout_seconds: int = 10
+    # Max attempts the sweep analyses per pass (app/code_evidence.py::analyse_pending).
+    code_analysis_batch: int = 50
+    # The sweep only picks up attempts submitted within this window; older
+    # ones are analysed on demand only (per attempt, from the HR console).
+    code_analysis_lookback_days: int = 30
+    # RLIMIT_AS cap for the analysis child process — Linux only (see
+    # app/code_sandbox.py; skipped and logged once on Windows dev machines).
+    code_analysis_memory_mb: int = 256
+    # Winnowing thresholds (app/code_similarity.py) — a pair is worth a
+    # signal when containment reaches this AND at least this many fingerprints
+    # are shared. A fingerprint present in more than this share of a
+    # question's submissions is treated as boilerplate and excluded first.
+    code_similarity_min_containment: float = 0.5
+    code_similarity_min_shared: int = 10
+    code_similarity_min_tokens: int = 50
+    code_similarity_max_df: float = 0.4
+    # Candidate source and program stdout/stderr are redacted this many days
+    # after the application is decided (or after submission, when there is no
+    # application) — the same policy shape as accommodation_retention_days.
+    code_evidence_retention_days: int = 180
+
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""

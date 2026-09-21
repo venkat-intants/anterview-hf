@@ -1370,7 +1370,7 @@ async def test_both_interval_loops_report_their_failed_stages(
 
     for stage in ("_exam_reminders", "_interview_reminders", "_no_shows", "_results_ready",
                   "_interview_completed", "_workflow_results", "_stage_sla",
-                  "_session_reminders", "_offer_expiry"):
+                  "_session_reminders", "_offer_expiry", "_code_analysis"):
         monkeypatch.setattr(rem, stage, _ok)
     monkeypatch.setattr(rem, "_expiry_notices", _boom)
 

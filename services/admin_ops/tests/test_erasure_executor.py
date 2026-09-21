@@ -20,6 +20,7 @@ PII note: no email / name / phone appears in any assertion or log call.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -83,7 +84,14 @@ def _make_key_collecting_db(
             result.fetchall.return_value = scorecard_keys or []
         elif "FROM resumes" in sql and sql.strip().startswith("SELECT"):
             result.fetchall.return_value = [(k,) for k in (resume_version_keys or [])]
-        elif "FROM applicants" in sql and sql.strip().startswith("SELECT"):
+        elif "resume_s3_key" in sql and "FROM applicants" in sql and sql.strip().startswith("SELECT"):
+            # Narrowed to the resume_s3_key SELECT specifically (not just "a
+            # SELECT that mentions applicants somewhere") — PH4-D3's step 5h
+            # added a SELECT ... FROM exam_attempts WHERE ... IN (SELECT id
+            # FROM applicants WHERE user_id = :uid) that used to match this
+            # branch on the old, looser condition and get handed BACK
+            # 1-column resume-key tuples, which its 4-column unpack then
+            # choked on. This is a test-fixture fix, not a production one.
             result.fetchall.return_value = [(k,) for k in (applicant_resume_keys or [])]
         elif "audio_s3_key" in sql and sql.strip().startswith("SELECT"):
             result.fetchall.return_value = [(k,) for k in (turn_audio_keys or [])]
@@ -253,12 +261,20 @@ async def test_execute_one_erasure_happy_path() -> None:
     executed_statements: list[str] = []
 
     async def _execute(stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
-        executed_statements.append(str(stmt).strip()[:80])
+        sql = str(stmt)
+        executed_statements.append(sql.strip()[:80])
         result = MagicMock()
         result.rowcount = 3
-        result.fetchall.return_value = [
-            ("s3://bucket/report.pdf", "s3://bucket/transcript.json")
-        ]
+        if "FROM exam_attempts" in sql and "graded_snapshot" in sql:
+            # PH4-D3 step 5h's own SELECT (id, company_id, answers,
+            # graded_snapshot) — a 4-column row, incompatible with every other
+            # SELECT this fixture answers uniformly with a 2-column tuple.
+            # No coding attempts for this fixture's user.
+            result.fetchall.return_value = []
+        else:
+            result.fetchall.return_value = [
+                ("s3://bucket/report.pdf", "s3://bucket/transcript.json")
+            ]
         result.fetchone.return_value = None
         return result
 
@@ -288,6 +304,8 @@ async def test_execute_one_erasure_happy_path() -> None:
     assert artifacts["applicants_anonymised"] == 3
     assert artifacts["accommodations_revoked"] == 3
     assert artifacts["accommodations_redacted"] == 3
+    assert artifacts["code_attempts_redacted"] == 0
+    assert artifacts["code_reports_deleted"] == 0
     assert "completed_at" in artifacts
     assert "scorecard_s3_keys" in artifacts
 
@@ -554,12 +572,13 @@ async def test_execute_one_erasure_stamps_completed() -> None:
     # since step 5f (human interview evidence, PH4-A1/A5), 1.4 since 5f took in
     # stage exceptions (PH4-O1), 1.5 since it took in interview loops and
     # sessions (PH4-A2), 1.6 since it took in offers and preboarding documents
-    # (PH4-A3/A4), 1.7 since step 5g took in candidate accommodations (PH4-D2).
-    # The version
+    # (PH4-A3/A4), 1.7 since step 5g took in candidate accommodations (PH4-D2),
+    # 1.8 since step 5h took in coding-round source and program output
+    # (PH4-D3). The version
     # is asserted rather than ignored because the artifacts blob is the auditor's
     # record of WHAT a completion covered, so widening coverage without moving
     # the version leaves two incomparable records claiming the same one.
-    assert artifacts["executor_version"] == "1.7"
+    assert artifacts["executor_version"] == "1.8"
 
 
 # ---------------------------------------------------------------------------
@@ -1436,3 +1455,95 @@ async def test_listing_an_offer_prefix_refuses_when_storage_is_not_configured() 
     settings.s3_endpoint_url = ""
     with pytest.raises(StorageNotConfiguredError):
         await keys_under("intants-uploads", "preboarding/c/o/", settings=settings)
+
+
+# ---------------------------------------------------------------------------
+# Step 5h — coding-round source and program output (PH4-D3)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_step_5h_redacts_coding_source_and_output_keeps_the_score() -> None:
+    """A coding attempt with real answers/graded_snapshot payloads is
+    redacted through the SAME pure transform used at request time
+    (``app/code_redaction.py``), and the reports/fingerprints/signals that
+    described the now-redacted source are deleted — never left pointing at
+    text that no longer exists."""
+    attempt_id = "a11ce000-0000-4000-8000-000000000099"
+    attempt_company = "c0ffee00-0000-4000-8000-000000000001"
+    answers = {"mcq": {"q0": 1}, "coding": {"q1": {"language": "python", "source": "print(1)"}}}
+    graded_snapshot = {
+        "coding": {"q1": {"points": 100, "raw": 100, "tests": [
+            {"index": 0, "passed": True, "actual_output": "1", "stderr": ""},
+        ]}},
+    }
+
+    executed: list[tuple[str, Any]] = []
+
+    async def _execute(stmt: Any, params: Any = None, *args: Any, **kwargs: Any) -> MagicMock:
+        sql = str(stmt)
+        executed.append((sql, params))
+        result = MagicMock()
+        result.rowcount = 1
+        result.fetchall.return_value = []
+        result.fetchone.return_value = None
+        if "FROM exam_attempts" in sql and "graded_snapshot" in sql and sql.strip().startswith("SELECT"):
+            result.fetchall.return_value = [(attempt_id, attempt_company, answers, graded_snapshot)]
+        return result
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.execute = _execute
+
+    with (
+        patch("app.s3_client.delete_objects", new=_fake_delete_objects()),
+        patch("app.s3_client.keys_under", new=AsyncMock(return_value=[])),
+    ):
+        artifacts = await _execute_one_erasure(
+            db=db, request=_make_erasure_request(), system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
+
+    assert artifacts["code_attempts_redacted"] == 1
+    # rowcount is stubbed to 1 for every statement (including each DELETE
+    # against the one coding attempt), so every count below is 1.
+    assert artifacts["code_reports_deleted"] == 1
+    assert artifacts["code_fingerprints_deleted"] == 1
+    assert artifacts["code_signals_deleted"] == 1
+    assert artifacts["code_findings_redacted"] == 1
+    redact_stmt = next(
+        (sql, p) for sql, p in executed
+        if "UPDATE exam_attempts" in sql and "code_redacted_at" in sql
+    )
+    _sql, params = redact_stmt
+    new_answers = json.loads(params["a"])
+    new_snapshot = json.loads(params["g"])
+    assert new_answers["coding"]["q1"]["source"] is None
+    assert new_answers["coding"]["q1"]["source_redacted"] is True
+    assert new_answers["mcq"] == {"q0": 1}  # MCQ untouched
+    test0 = new_snapshot["coding"]["q1"]["tests"][0]
+    assert test0["actual_output"] is None and test0["stderr"] is None
+    assert test0["passed"] is True  # the score survives
+
+    assert any("DELETE FROM code_similarity_signals" in sql for sql, _ in executed)
+    assert any("DELETE FROM code_fingerprints" in sql for sql, _ in executed)
+    assert any("DELETE FROM code_quality_reports" in sql for sql, _ in executed)
+    assert any(
+        "UPDATE code_integrity_findings SET rationale = '[redacted]'" in sql for sql, _ in executed
+    )
+
+
+@pytest.mark.asyncio
+async def test_step_5h_does_nothing_when_there_is_no_coding_attempt() -> None:
+    db, _ = _make_key_collecting_db()
+    with (
+        patch("app.s3_client.delete_objects", new=_fake_delete_objects()),
+        patch("app.s3_client.keys_under", new=AsyncMock(return_value=[])),
+    ):
+        artifacts = await _execute_one_erasure(
+            db=db, request=_make_erasure_request(), system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
+    assert artifacts["code_attempts_redacted"] == 0
+    assert artifacts["code_reports_deleted"] == 0
+    assert artifacts["code_fingerprints_deleted"] == 0
+    assert artifacts["code_signals_deleted"] == 0
+    assert artifacts["code_findings_redacted"] == 0

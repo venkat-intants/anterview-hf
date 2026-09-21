@@ -27,9 +27,13 @@
 // begins the clock (so a time limit, and any D2 extra time, is real rather
 // than advisory) and is the moment `dpdp_consent_ledger` gets its entry.
 // Submitting afterwards is a confirmation step, never a second consent gate.
-// While the task is in progress the candidate can withdraw that consent
-// (`withdrawTaskConsent`, POST /task/consent/withdraw) — this deletes
-// nothing already saved, it only refuses any further save/upload/submit.
+// The candidate can withdraw that consent (`withdrawTaskConsent`, POST
+// /task/consent/withdraw) either while the task is in progress OR after it
+// has been submitted (PH4-D4 wave 5) — `GET /task` reports which, via
+// `consent_withdrawn`. In progress, this deletes nothing already saved; it
+// only refuses any further save/upload/submit. After submitting, it deletes
+// nothing either, but the hiring team can no longer see the work and it
+// cannot be used to pass the round.
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -825,12 +829,14 @@ function TaskWorkspace({
 
   // Consent withdrawal (security review, PH4-D4 wave 5) — mirrors
   // PublicOffer.tsx's document-consent withdrawal: a plain link, a two-step
-  // confirm, then a done state. `withdrawn` is local to this render only
-  // (the server has no field on `GET /task` that says consent was pulled —
-  // it just starts refusing save/upload/submit with a 409), the same trade
-  // DocumentsSection already makes.
+  // confirm, then a done state. `GET /task` now reports whether consent was
+  // withdrawn (`consent_withdrawn`), so `withdrawn` starts from the server's
+  // own field — a reload of an already-withdrawn in-progress task shows the
+  // withdrawn state instead of losing it. It is still set locally on a
+  // successful withdrawal too, so the UI updates at once without waiting on
+  // a refetch.
   const [withdrawAsking, setWithdrawAsking] = useState(false);
-  const [withdrawn, setWithdrawn] = useState(false);
+  const [withdrawn, setWithdrawn] = useState(data.consent_withdrawn);
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
 
   const withdrawMut = useMutation({
@@ -1063,6 +1069,91 @@ function TaskWorkspace({
   );
 }
 
+/* ── After submitting: status message, plus a still-available withdrawal ──── */
+
+/**
+ * "Submitted — with the hiring team" is still the whole story for what
+ * happened to the work (never an evaluation, reviewer, score or note — see
+ * the file header). Below it, PH4-D4 wave 5 adds the one thing a candidate
+ * can still do here: withdraw consent for work already sent. Same two-step
+ * shape as TaskWorkspace's own control, with confirm/done wording written
+ * for work that has already left the candidate's hands — the hiring team
+ * loses the ability to see or use it, nothing is deleted by this alone.
+ */
+function SubmittedScreen({
+  token,
+  data,
+  onChanged,
+}: {
+  token: string;
+  data: PublicTaskShape;
+  onChanged: () => void;
+}) {
+  const { t } = useTranslation();
+  const [withdrawAsking, setWithdrawAsking] = useState(false);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+
+  const withdrawMut = useMutation({
+    mutationFn: () => withdrawTaskConsent(token),
+    onSuccess: () => {
+      setWithdrawAsking(false);
+      setWithdrawError(null);
+      onChanged();
+    },
+    onError: (e: unknown) => setWithdrawError(errText(e, t('task.errorGeneric'))),
+  });
+
+  return (
+    <>
+      <CenteredMessage
+        icon={<CheckCircle2 className="h-6 w-6" aria-hidden="true" />}
+        title={t('task.submittedTitle')}
+        desc={t('task.submittedDesc')}
+        tone="ok"
+      />
+      <GlassCard className="w-full p-5">
+        {data.consent_withdrawn ? (
+          <p className="text-[12.5px] text-muted-foreground">
+            {t('task.withdrawConsentSubmittedDone')}
+          </p>
+        ) : withdrawAsking ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-[12.5px] text-foreground">
+              {t('task.withdrawConsentSubmittedConfirm')}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={withdrawMut.isPending}
+                onClick={() => withdrawMut.mutate()}
+                className="rounded-[9px] border border-[var(--ui-danger)]/40 px-3 py-1.5 text-[12.5px] font-medium text-[var(--ui-danger)] disabled:opacity-40"
+              >
+                {t('task.withdrawConsentYes')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setWithdrawAsking(false)}
+                className="text-[12.5px] text-muted-foreground hover:text-foreground"
+              >
+                {t('task.cancel')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setWithdrawAsking(true)}
+            className="text-[12.5px] text-[var(--ui-info)] hover:underline"
+          >
+            {t('task.withdrawConsent')}
+          </button>
+        )}
+        {withdrawError ? <p className="mt-2 text-[12px] text-ember">{withdrawError}</p> : null}
+      </GlassCard>
+    </>
+  );
+}
+
 /* ── Page ───────────────────────────────────────────────────────────────── */
 
 export default function PublicTask(): JSX.Element {
@@ -1129,11 +1220,10 @@ export default function PublicTask(): JSX.Element {
   if (view.data.status === 'submitted') {
     return (
       <PageWrap>
-        <CenteredMessage
-          icon={<CheckCircle2 className="h-6 w-6" aria-hidden="true" />}
-          title={t('task.submittedTitle')}
-          desc={t('task.submittedDesc')}
-          tone="ok"
+        <SubmittedScreen
+          token={token}
+          data={view.data}
+          onChanged={() => void qc.invalidateQueries({ queryKey: ['public-task', token] })}
         />
       </PageWrap>
     );

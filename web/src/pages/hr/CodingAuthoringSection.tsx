@@ -6,6 +6,7 @@
 // This file is lazy-loaded by ExamEditor so the CodeEditor import doesn't
 // inflate the initial bundle.
 
+import BankProvenanceChip from '@/components/bank/BankProvenanceChip';
 import { Suspense, lazy, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Loader2, Lock, Code2, Library, Pencil, Sparkles, X } from '@/design/components/icons';
@@ -212,11 +213,10 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                           {q.prompt}{' '}
                           <span className="font-normal text-muted-foreground">({q.points} pt)</span>
                         </p>
-                        {q.source_bank_root_id ? (
-                          <StatusTag tone="electric" className="text-[10px]">
-                            From bank · v{q.source_bank_version}
-                          </StatusTag>
-                        ) : null}
+                        <BankProvenanceChip
+                          rootId={q.source_bank_root_id}
+                          version={q.source_bank_version}
+                        />
                       </div>
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         {q.allowed_languages.map((l) => (

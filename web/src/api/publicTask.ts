@@ -68,6 +68,11 @@ export interface PublicTask {
   time_limit_seconds: number | null;
   started_at: string | null;
   submitted_at: string | null;
+  /** PH4-D4 wave 5 — true once the candidate has withdrawn consent for this
+   *  task, whether that happened while it was still `in_progress` or after
+   *  it was `submitted`. Always false for `assigned` (nothing to withdraw
+   *  yet — consent is only given at `startTask`). */
+  consent_withdrawn: boolean;
   /** PH4-D2 — told as a fact only, the same rule publicExam.adjustmentNotice
    *  follows: never a percentage or a note. */
   adjustments: {
@@ -211,11 +216,16 @@ export interface WithdrawConsentResult {
  * The candidate withdraws their consent to send this task's work to the
  * hiring team (DPDP §11) — the same `X-Task-Token` credential as a save,
  * since most candidates here have no account to sign in with (mirrors
- * PublicOffer.tsx's document-consent withdrawal). Stops `saveTaskResponse`,
- * `addTaskArtifact` and `submitTask` from here on — the server refuses each
- * of those with a 409 once this has succeeded. Deletes nothing already
- * saved: that is what erasure and retention are for, not this call. A
- * repeat call, or a task never started, is a 409.
+ * PublicOffer.tsx's document-consent withdrawal). Succeeds from either of
+ * two states, each with a different effect:
+ * - `in_progress`: stops `saveTaskResponse`, `addTaskArtifact` and
+ *   `submitTask` from here on — the server refuses each of those with a 409
+ *   once this has succeeded.
+ * - `submitted` (PH4-D4 wave 5): the hiring team can no longer see the
+ *   work, and it cannot be used to pass the round.
+ * Either way, this deletes nothing already saved or sent: that is what
+ * erasure and retention are for, not this call. A repeat call, or a task
+ * never started, is a 409.
  */
 export async function withdrawTaskConsent(token: string): Promise<WithdrawConsentResult> {
   const res = await fetch(`${API_BASE}/task/consent/withdraw`, {

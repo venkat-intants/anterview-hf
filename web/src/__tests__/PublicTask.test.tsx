@@ -88,6 +88,7 @@ const ASSIGNED: PublicTaskShape = {
   time_limit_seconds: 1800,
   started_at: null,
   submitted_at: null,
+  consent_withdrawn: false,
   adjustments: { extra_time_seconds: null, deadline_extended: false },
   responses: [],
 };
@@ -415,6 +416,23 @@ describe('PublicTask — withdrawing consent', () => {
   });
 });
 
+// Security review, PH4-D4 wave 5: `GET /task` now reports whether consent
+// was withdrawn, so a reload of an already-withdrawn in-progress task must
+// show the withdrawn state immediately rather than losing it (the old
+// "local state only" behaviour this file's comments used to describe).
+describe('PublicTask — consent already withdrawn (e.g. after a reload)', () => {
+  it('shows the withdrawn state on load: no withdraw link, and the field disabled', async () => {
+    viewTask.mockResolvedValue({ ...IN_PROGRESS, consent_withdrawn: true });
+    renderPage();
+    await screen.findByText('Take-home simulation');
+
+    expect(
+      screen.queryByRole('button', { name: /withdraw my consent/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/write your answer/i)).toBeDisabled();
+  });
+});
+
 describe('PublicTask — after submitting', () => {
   it('shows "Submitted — with the hiring team" and never an evaluation', async () => {
     viewTask.mockResolvedValue(SUBMITTED);
@@ -425,5 +443,40 @@ describe('PublicTask — after submitting', () => {
     expect(screen.queryByText(/score/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/reviewer/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Describe your approach.')).not.toBeInTheDocument();
+  });
+
+  // Security review, PH4-D4 wave 5: POST /task/consent/withdraw now succeeds
+  // on a `submitted` task too. Same two-step control as the in-progress
+  // workspace; success invalidates/refetches so the page reflects the
+  // server's own `consent_withdrawn` afterwards.
+  it('offers to withdraw consent for already-submitted work, and refetches on success', async () => {
+    const user = userEvent.setup();
+    viewTask
+      .mockResolvedValueOnce({ ...SUBMITTED, consent_withdrawn: false })
+      .mockResolvedValueOnce({ ...SUBMITTED, consent_withdrawn: true });
+    withdrawTaskConsent.mockResolvedValue({ withdrawn: true });
+    renderPage();
+    await screen.findByText('Submitted');
+
+    await user.click(screen.getByRole('button', { name: /withdraw my consent/i }));
+    expect(withdrawTaskConsent).not.toHaveBeenCalled();
+    expect(screen.getByText(/no longer be able to see it/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /yes, withdraw consent/i }));
+    await waitFor(() => expect(withdrawTaskConsent).toHaveBeenCalledWith('task_tok_123456'));
+
+    expect(await screen.findByText(/no longer see this submission/i)).toBeInTheDocument();
+    expect(viewTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a done message, and no withdraw control, once consent is already withdrawn', async () => {
+    viewTask.mockResolvedValue({ ...SUBMITTED, consent_withdrawn: true });
+    renderPage();
+    await screen.findByText('Submitted');
+
+    expect(screen.getByText(/no longer see this submission/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /withdraw my consent/i }),
+    ).not.toBeInTheDocument();
   });
 });

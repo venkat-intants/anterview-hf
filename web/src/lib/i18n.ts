@@ -1150,6 +1150,15 @@ const en = {
       withdrawConsentYes: 'Yes, withdraw consent',
       withdrawConsentDone:
         'Your consent is withdrawn. Nothing more can be sent for this task. What you had already saved stays as it is.',
+      // PH4-D4 wave 5 — the same withdrawal, offered again after the work
+      // has already been sent (POST /task/consent/withdraw now succeeds on
+      // a `submitted` task too). Wording is written for work already in the
+      // hiring team's hands: nothing is deleted, but they lose the ability
+      // to see it or use it to decide this round.
+      withdrawConsentSubmittedConfirm:
+        'Withdraw consent for the work you already sent? The hiring team will no longer be able to see it, and it will not be used in their decision for this round. This does not delete what you have already saved.',
+      withdrawConsentSubmittedDone:
+        'Your consent is withdrawn. The hiring team can no longer see this submission, and it will not be used in their decision for this round.',
       beginButton: 'Begin',
       beginError: 'Could not start this task. Please try again.',
       submit: 'Submit',
@@ -2196,6 +2205,10 @@ const hi = {
       withdrawConsentYes: 'हां, सहमति वापस लें',
       withdrawConsentDone:
         'आपकी सहमति वापस ले ली गई है। इस टास्क के लिए अब कुछ और नहीं भेजा जा सकता। आपने पहले जो सहेजा था वह वैसे ही रहता है।',
+      withdrawConsentSubmittedConfirm:
+        'पहले से भेजे गए काम के लिए सहमति वापस लें? इसके बाद भर्ती टीम इसे नहीं देख पाएगी, और इसका उपयोग इस राउंड के फैसले में नहीं किया जाएगा। इससे आपने जो पहले से सहेजा है वह हटता नहीं है।',
+      withdrawConsentSubmittedDone:
+        'आपकी सहमति वापस ले ली गई है। भर्ती टीम अब यह सबमिशन नहीं देख सकती, और इसका उपयोग इस राउंड के फैसले में नहीं किया जाएगा।',
       beginButton: 'शुरू करें',
       beginError: 'यह टास्क शुरू नहीं हो सका। कृपया फिर कोशिश करें।',
       submit: 'सबमिट करें',
@@ -3253,6 +3266,10 @@ const te = {
       withdrawConsentYes: 'అవును, సమ్మతిని ఉపసంహరించు',
       withdrawConsentDone:
         'మీ సమ్మతి ఉపసంహరించబడింది. ఈ టాస్క్ కోసం ఇక ఏదీ పంపలేరు. మీరు ఇంతకుముందు సేవ్ చేసినది అలాగే ఉంటుంది.',
+      withdrawConsentSubmittedConfirm:
+        'మీరు ఇప్పటికే పంపిన పని కోసం సమ్మతిని ఉపసంహరించుకోవాలా? దీని తర్వాత నియామక బృందం దీన్ని చూడలేరు, మరియు ఇది ఈ రౌండ్ నిర్ణయంలో ఉపయోగించబడదు. దీని వల్ల మీరు ఇప్పటికే సేవ్ చేసినది తొలగించబడదు.',
+      withdrawConsentSubmittedDone:
+        'మీ సమ్మతి ఉపసంహరించబడింది. నియామక బృందం ఇక ఈ సమర్పణను చూడలేరు, మరియు ఇది ఈ రౌండ్ నిర్ణయంలో ఉపయోగించబడదు.',
       beginButton: 'ప్రారంభించండి',
       beginError: 'ఈ టాస్క్ ప్రారంభం కాలేదు. దయచేసి మళ్లీ ప్రయత్నించండి.',
       submit: 'సమర్పించండి',

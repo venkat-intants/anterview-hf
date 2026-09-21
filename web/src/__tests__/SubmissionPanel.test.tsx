@@ -8,16 +8,18 @@
 // anchor must carry rel="noopener noreferrer nofollow" and open in a new tab.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ScorecardSubmission } from '../api/jobTasks';
 
 const getScorecardSubmission = vi.fn();
 const downloadScorecardArtifact = vi.fn();
+const downloadScorecardMaterial = vi.fn();
 vi.mock('../api/jobTasks', () => ({
   getScorecardSubmission: (...a: unknown[]) => getScorecardSubmission(...a) as unknown,
   downloadScorecardArtifact: (...a: unknown[]) => downloadScorecardArtifact(...a) as unknown,
+  downloadScorecardMaterial: (...a: unknown[]) => downloadScorecardMaterial(...a) as unknown,
 }));
 
 vi.mock('../lib/toast', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -38,6 +40,8 @@ const BASE: ScorecardSubmission = {
   status: 'submitted',
   kind: 'portfolio',
   submitted_at: '2026-09-19T00:00:00.000Z',
+  brief: null,
+  items: [],
   materials: [],
   responses: [],
 };
@@ -265,6 +269,80 @@ describe('SubmissionPanel — evidence, not a verdict', () => {
     getScorecardSubmission.mockResolvedValue(BASE);
     renderPanel();
     expect(await screen.findByText(/evidence, not a verdict/i)).toBeInTheDocument();
+  });
+});
+
+// Gap 2/3 fixes: `submission_for_reviewer` now returns the round's brief and
+// item prompts, and a dedicated materials-download route — previously a
+// reviewer saw only a raw item key and an un-clickable material title.
+describe('SubmissionPanel — the round in context (gap 2/3 fixes)', () => {
+  it("shows the round's brief and an item's actual prompt, not its key", async () => {
+    getScorecardSubmission.mockResolvedValue({
+      ...BASE,
+      kind: 'job_simulation',
+      brief: 'Design a small feature end to end.',
+      items: [
+        {
+          key: 'design_doc',
+          prompt: 'Describe your approach to the assignment.',
+          response_type: 'text',
+          required: true,
+          max_chars: 2000,
+        },
+      ],
+      responses: [
+        {
+          id: 'r-1',
+          item_key: 'design_doc',
+          response_type: 'text',
+          text_value: 'My approach is...',
+          link_url: null,
+          link_kind: null,
+          title: null,
+          description: null,
+          original_name: null,
+          content_type: null,
+          size_bytes: null,
+        },
+      ],
+    });
+    renderPanel();
+
+    expect(await screen.findByText('Design a small feature end to end.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Describe your approach to the assignment.'),
+    ).toBeInTheDocument();
+    // The raw key must never leak through once a matching prompt exists.
+    expect(screen.queryByText('Design doc')).not.toBeInTheDocument();
+  });
+
+  it("downloads a reference material through the scorecard's own route", async () => {
+    const user = userEvent.setup();
+    downloadScorecardMaterial.mockResolvedValue({
+      url: 'https://files.example.com/spec.pdf',
+      expires_in: 300,
+    });
+    getScorecardSubmission.mockResolvedValue({
+      ...BASE,
+      materials: [
+        {
+          id: 'mat-1',
+          title: 'Reference spec',
+          original_name: 'spec.pdf',
+          content_type: 'application/pdf',
+          size_bytes: 1024,
+          position: 0,
+        },
+      ],
+    });
+    renderPanel();
+
+    const button = await screen.findByRole('button', { name: /reference spec/i });
+    await user.click(button);
+
+    await waitFor(() =>
+      expect(downloadScorecardMaterial).toHaveBeenCalledWith('sc-1', 'mat-1'),
+    );
   });
 });
 

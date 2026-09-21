@@ -23,16 +23,15 @@
 // insecurely, exactly the rule that helper already enforces — and renders
 // `url.href` from that same parse, never the raw candidate string.
 //
-// WHAT THIS CANNOT SHOW (backend gaps, not UI omissions — see
-// `app.job_tasks.submission_for_reviewer`):
-//   - An item's PROMPT. The endpoint returns each response's `item_key` and
-//     answer, never the round's `items`/`brief`, so a reviewer sees which
-//     item a text or link answers only by its key, not by the question HR
-//     wrote. This falls back to a prettified key.
-//   - Reference MATERIAL downloads. `materials` here carries title/filename
-//     metadata only (`_material_out`) — there is no
-//     `/interviewer/.../materials/{id}/download` route, only the HR and
-//     candidate ones. Titles are listed; there is nothing to click.
+// WHAT THIS SHOWS: `submission_for_reviewer` (gap 2/3 fixes) now returns the
+// round's `brief` and `items` alongside each response, and a dedicated
+// materials-download route — so an answer renders under the actual question
+// HR wrote (falling back to a prettified item key only if a matching item is
+// somehow missing), and reference materials are a click, not just a title.
+// The external-link path is unchanged: still ONLY `ExternalLinkGate`, never
+// a bare anchor — TaskSubmissionSection.tsx's HR read reuses this exact
+// component for its own read of the same candidate-supplied links, so there
+// is only ever one implementation of the last safeguard against them.
 //
 // English-only by design (CLAUDE.md — staff consoles are not translated).
 
@@ -40,7 +39,10 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   downloadScorecardArtifact,
+  downloadScorecardMaterial,
   getScorecardSubmission,
+  type RoundTaskMaterial,
+  type TaskItem,
   type TaskResponseOut,
 } from '@/api/jobTasks';
 import { downloadUrl } from '@/lib/safeUrl';
@@ -52,8 +54,9 @@ function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-/** An item's key, read as a label when there is nothing better — see the
- *  module note: the prompt itself never reaches this endpoint. */
+/** An item's key, read as a label only when no matching item prompt was
+ *  returned (should not happen once a round is configured — this is a
+ *  fallback, not the normal path). */
 function prettyKey(key: string): string {
   return key.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 }
@@ -63,8 +66,12 @@ function prettyKey(key: string): string {
  * it (`new URL(href).hostname`), never the candidate's own title for the
  * link — a mismatch between the two is precisely the thing worth a reviewer
  * seeing before they click through.
+ *
+ * Exported (PH4-D4 gap 4 fix) so TaskSubmissionSection.tsx's HR read of the
+ * same candidate-supplied links reuses this ONE interstitial rather than a
+ * second implementation of the last safeguard against them.
  */
-function ExternalLinkGate({ href }: { href: string }) {
+export function ExternalLinkGate({ href }: { href: string }) {
   const [confirming, setConfirming] = useState(false);
   // Parsed ONCE, https-only (see the module note): `safeHref` is what gets
   // rendered as the anchor's `href`, never the raw candidate string, and
@@ -172,18 +179,74 @@ function FileDownload({
   );
 }
 
+/** A reference material HR attached to the round — gap 3 fix: previously
+ *  just a title with nothing to click. */
+function MaterialRow({
+  scorecardId,
+  material,
+}: {
+  scorecardId: string;
+  material: RoundTaskMaterial;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function open(): Promise<void> {
+    setPending(true);
+    setError(null);
+    try {
+      const res = await downloadScorecardMaterial(scorecardId, material.id);
+      const url = downloadUrl(res.url);
+      if (!url) {
+        setError('That download link could not be opened.');
+        return;
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      setError(errText(e, 'Could not open that file'));
+      toast.error(errText(e, 'Could not open that file'));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => void open()}
+        disabled={pending}
+        className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--ui-info)] hover:underline disabled:opacity-50"
+      >
+        {pending ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        ) : (
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+        )}
+        {material.title}
+      </button>
+      {error ? <p className="mt-1 text-[11.5px] text-ember">{error}</p> : null}
+    </li>
+  );
+}
+
 function ResponseRow({
   scorecardId,
   response,
+  items,
 }: {
   scorecardId: string;
   response: TaskResponseOut;
+  items: TaskItem[];
 }) {
+  const item = response.item_key ? items.find((i) => i.key === response.item_key) : undefined;
+  const label = response.item_key
+    ? (item?.prompt ?? prettyKey(response.item_key))
+    : response.title || 'Portfolio artifact';
+
   return (
     <li className="rounded-[10px] border border-border p-3">
-      <p className="text-[12.5px] font-medium text-foreground">
-        {response.item_key ? prettyKey(response.item_key) : response.title || 'Portfolio artifact'}
-      </p>
+      <p className="whitespace-pre-wrap text-[12.5px] font-medium text-foreground">{label}</p>
       {response.description ? (
         <p className="mt-1 text-[12px] text-[var(--ui-soft)]">{response.description}</p>
       ) : null}
@@ -259,6 +322,17 @@ export default function SubmissionPanel({ scorecardId }: { scorecardId: string }
         {data.submitted_at ? `Submitted ${formatDate(data.submitted_at)}` : 'Submitted'}
       </p>
 
+      {data.brief ? (
+        <section>
+          <h3 className="text-[12px] font-semibold uppercase tracking-wide text-[var(--ui-faint)]">
+            Brief
+          </h3>
+          <p className="mt-1.5 whitespace-pre-wrap text-[12.5px] text-[var(--ui-soft)]">
+            {data.brief}
+          </p>
+        </section>
+      ) : null}
+
       {data.materials.length > 0 ? (
         <section>
           <h3 className="text-[12px] font-semibold uppercase tracking-wide text-[var(--ui-faint)]">
@@ -266,9 +340,7 @@ export default function SubmissionPanel({ scorecardId }: { scorecardId: string }
           </h3>
           <ul className="mt-1.5 flex flex-col gap-1">
             {data.materials.map((m) => (
-              <li key={m.id} className="text-[12.5px] text-[var(--ui-soft)]">
-                {m.title}
-              </li>
+              <MaterialRow key={m.id} scorecardId={scorecardId} material={m} />
             ))}
           </ul>
         </section>
@@ -281,7 +353,7 @@ export default function SubmissionPanel({ scorecardId }: { scorecardId: string }
           </h3>
           <ul className="flex flex-col gap-2">
             {items.map((r) => (
-              <ResponseRow key={r.id} scorecardId={scorecardId} response={r} />
+              <ResponseRow key={r.id} scorecardId={scorecardId} response={r} items={data.items} />
             ))}
           </ul>
         </section>
@@ -297,7 +369,7 @@ export default function SubmissionPanel({ scorecardId }: { scorecardId: string }
           ) : (
             <ul className="flex flex-col gap-2">
               {artifacts.map((r) => (
-                <ResponseRow key={r.id} scorecardId={scorecardId} response={r} />
+                <ResponseRow key={r.id} scorecardId={scorecardId} response={r} items={data.items} />
               ))}
             </ul>
           )}

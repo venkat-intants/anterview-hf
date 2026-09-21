@@ -358,6 +358,63 @@ describe('DecisionQueue — the decision itself', () => {
   });
 });
 
+// PH4-D4 — a job_simulation/portfolio round's own submission state, so "not
+// started" reads apart from "submitted, awaiting review" rather than both
+// looking like a bare "awaiting review" badge.
+describe('DecisionQueue — job-simulation/portfolio submission state (PH4-D4)', () => {
+  const AWAITING_SUBMITTED: DecisionQueueRow = {
+    ...FINISHED,
+    enrolment_id: 'en-task-1',
+    applicant_id: 'ap-task-1',
+    full_name: 'Divya Task',
+    held: false,
+    awaiting_review: true,
+    review_round_title: 'Take-home simulation',
+    task_submission: {
+      status: 'submitted',
+      due_at: '2026-09-10T00:00:00.000Z',
+      submitted_at: '2026-09-09T00:00:00.000Z',
+    },
+  };
+
+  const AWAITING_IN_PROGRESS: DecisionQueueRow = {
+    ...AWAITING_SUBMITTED,
+    enrolment_id: 'en-task-2',
+    applicant_id: 'ap-task-2',
+    full_name: 'Farhan Task',
+    task_submission: {
+      status: 'in_progress',
+      due_at: '2026-09-10T00:00:00.000Z',
+      submitted_at: null,
+    },
+  };
+
+  it('shows "Submission received" for a submitted job-simulation/portfolio round', async () => {
+    getDecisionQueue.mockResolvedValue([AWAITING_SUBMITTED]);
+    renderQueue();
+    await screen.findByText('Divya Task');
+
+    expect(within(cardFor('Divya Task')).getByText('Submission received')).toBeTruthy();
+  });
+
+  it('shows the submission\'s own lifecycle when it has not been submitted yet', async () => {
+    getDecisionQueue.mockResolvedValue([AWAITING_IN_PROGRESS]);
+    renderQueue();
+    await screen.findByText('Farhan Task');
+
+    expect(within(cardFor('Farhan Task')).getByText('Submission in progress')).toBeTruthy();
+    expect(within(cardFor('Farhan Task')).queryByText('Submission received')).toBeNull();
+  });
+
+  it('shows no submission tag for a round with no task_submission', async () => {
+    getDecisionQueue.mockResolvedValue([FINISHED]);
+    renderQueue();
+    await screen.findByText('Bhavya Nair');
+
+    expect(within(cardFor('Bhavya Nair')).queryByText(/^Submission/)).toBeNull();
+  });
+});
+
 describe('DecisionQueue — resolved or not', () => {
   it('says a closed opening still has people waiting, and that closing rejected nobody', async () => {
     getRequisition.mockResolvedValue({ id: 'req-1', title: 'Backend Engineer', status: 'closed',

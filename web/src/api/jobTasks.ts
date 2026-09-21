@@ -149,11 +149,38 @@ export interface TaskSubmissionSummary {
   submitted_at: string | null;
   attempt_no: number;
   created_at: string;
+  /** Null while this is the live row; set once a re-issue (or an expiry
+   *  followed by one) supersedes it. */
+  superseded_at: string | null;
+  /** The live row for this (enrolment, round) — PH4-D4 gap 4 fix. Use this,
+   *  never list position, to decide which row offers re-issue/withdraw:
+   *  `for_enrolment` orders newest first, which used to be the same thing,
+   *  but the field exists precisely so a component never has to assume so. */
+  is_current: boolean;
+  /** PH4-D4 wave 5 — true once the candidate has withdrawn consent for this
+   *  submission, whether that happened while it was open or after it was
+   *  submitted. `responses` is always `[]` when this is true. */
+  consent_withdrawn: boolean;
+  /** The round's brief and item prompts, so an answer below reads in
+   *  context. Set ONLY when `responses` is readable (the same gate) —
+   *  `null` / `[]` otherwise, never a stale or partial copy. */
+  brief: string | null;
+  items: TaskItem[];
+  /** PH4-D4 gap 4 fix — the candidate's own answers, readable through THIS
+   *  endpoint now: non-empty only when `status === 'submitted'` AND
+   *  `consent_withdrawn` is false (M1 — a submission's content is evidence,
+   *  readable only once it exists and consent for it still stands). A
+   *  `file` response carries no inline content; download it with
+   *  `downloadTaskArtifact(submissionId, responseId)`. Reading a non-empty
+   *  list here is audited server-side (`submission_viewed`), the same as a
+   *  reviewer's own read (`getScorecardSubmission`). */
+  responses: TaskResponseOut[];
 }
 
-/** Every submission ever issued for this application, newest attempt first —
- *  a re-issue supersedes rather than replaces, so a withdrawn or expired
- *  attempt is kept in the list, not silently dropped. */
+/** Every submission ever issued for this application, newest attempt first.
+ *  A re-issue supersedes rather than replaces, so a withdrawn or expired
+ *  attempt is kept in the list, not silently dropped — use `is_current`,
+ *  never list position, to find the live one. */
 export function listEnrolmentTasks(enrolmentId: string): Promise<TaskSubmissionSummary[]> {
   return apiGet<TaskSubmissionSummary[]>(`/hr/enrolments/${pathId(enrolmentId)}/tasks`);
 }
@@ -214,6 +241,12 @@ export interface ScorecardSubmission {
   status: TaskSubmissionStatus;
   kind: TaskKind;
   submitted_at: string | null;
+  /** Gap 2 fix — the round's brief and item prompts, so a reviewer reads an
+   *  answer in context rather than by its raw item key. This endpoint only
+   *  ever returns a `submitted`, consented attempt (M1), so these are always
+   *  populated when the call succeeds at all. */
+  brief: string | null;
+  items: TaskItem[];
   materials: RoundTaskMaterial[];
   responses: TaskResponseOut[];
 }
@@ -230,5 +263,17 @@ export function downloadScorecardArtifact(
 ): Promise<SignedDownload> {
   return apiGet<SignedDownload>(
     `/interviewer/scorecards/${pathId(scorecardId)}/submission/artifacts/${pathId(responseId)}/download`,
+  );
+}
+
+/** Gap 3 fix — a reviewer previously had no way to read a round's reference
+ *  materials at all, only titles with nothing to click. Owned through the
+ *  same scorecard check as the artifact download above. */
+export function downloadScorecardMaterial(
+  scorecardId: string,
+  materialId: string,
+): Promise<SignedDownload> {
+  return apiGet<SignedDownload>(
+    `/interviewer/scorecards/${pathId(scorecardId)}/submission/materials/${pathId(materialId)}/download`,
   );
 }

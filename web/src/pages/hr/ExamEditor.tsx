@@ -7,6 +7,7 @@
 // with round_id + optional scheduled_at.
 // Legacy single-round/single-section exams render gracefully from GET /structure.
 
+import BankProvenanceChip from '@/components/bank/BankProvenanceChip';
 import { Suspense, lazy, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -269,11 +270,10 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                         {q.prompt}{' '}
                         <span className="font-normal text-muted-foreground">({q.points} pt)</span>
                       </p>
-                      {q.source_bank_root_id ? (
-                        <StatusTag tone="electric" className="text-[10px]">
-                          From bank · v{q.source_bank_version}
-                        </StatusTag>
-                      ) : null}
+                      <BankProvenanceChip
+                        rootId={q.source_bank_root_id}
+                        version={q.source_bank_version}
+                      />
                     </div>
                     <ul className="mt-2 space-y-0.5 pl-0">
                       {q.options.map((opt, oi) => (

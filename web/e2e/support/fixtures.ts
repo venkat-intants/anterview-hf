@@ -140,8 +140,18 @@ export async function runBackgroundPasses(
     );
   }
   for (const pass of which) {
-    const res = await request.post(`${API_URL}/test-hooks/${pass}`, {
-      headers: { 'X-Test-Hooks-Token': TEST_HOOKS_TOKEN },
+    const send = () =>
+      request.post(`${API_URL}/test-hooks/${pass}`, {
+        headers: { 'X-Test-Hooks-Token': TEST_HOOKS_TOKEN },
+      });
+    // One retry on a dropped connection. The request context reuses keep-alive
+    // connections, and uvicorn closes an idle one after 5 seconds, so a call
+    // that lands on a connection the server is closing fails with ECONNRESET
+    // before the server sees it. A pass is safe to run twice; a lost call is
+    // not, because the spec then waits on work that never started.
+    const res = await send().catch(async (err: unknown) => {
+      if (!String(err).includes('ECONNRESET')) throw err;
+      return send();
     });
     expect(
       res.ok(),

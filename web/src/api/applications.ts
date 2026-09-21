@@ -52,6 +52,22 @@ export interface MyApplication {
   task_submission_id: string | null;
   task_due_at: string | null;
   task_status: string | null;
+  /**
+   * A live assessment for this application, if one is waiting or under way.
+   * An id to ask for a fresh link with, never the link itself — same rule as
+   * the interview invite above.
+   */
+  exam_assignment_id: string | null;
+  /** True once the candidate has begun, so the page says "resume". */
+  exam_in_progress: boolean;
+  exam_expires_at: string | null;
+  /**
+   * Set only for a scheduled round, and then it is the date that matters: the
+   * round opens then and shuts a short window later, both long before
+   * `exam_expires_at`. Showing the link's expiry for a scheduled round states
+   * a deadline the candidate does not have.
+   */
+  exam_scheduled_at: string | null;
 }
 
 export interface StageEvent {
@@ -139,4 +155,33 @@ export function mintMyInterviewLink(inviteId: string): Promise<InterviewLink> {
  *  issued link, including the emailed one, stops working. */
 export function mintMyTaskLink(submissionId: string): Promise<{ url: string }> {
   return apiPost<{ url: string }>(`/users/me/tasks/${submissionId}/link`, {});
+}
+
+/** A freshly minted link to an assessment this candidate was sent. */
+export interface ExamLink {
+  exam_url: string;
+  expires_at: string;
+}
+
+/**
+ * Mint a working link to the candidate's own assessment — the path that does
+ * not depend on the emailed one arriving.
+ *
+ * Each call ROTATES the token, so the emailed link, and any tab already open on
+ * this assessment, stops working. An attempt already under way is resumed, not
+ * restarted: it keeps its original deadline.
+ *
+ * Which is why `resumeAnyway` exists. With an attempt already open the server
+ * answers 409 rather than rotating, because killing the tab someone is sitting
+ * their assessment in should not be one stray press away — a second tab on
+ * this page or a double click would otherwise do it, while the clock kept
+ * running. Pass true only for a press that followed the question.
+ */
+export function mintMyExamLink(
+  assignmentId: string,
+  resumeAnyway = false,
+): Promise<ExamLink> {
+  return apiPost<ExamLink>(`/users/me/exams/${assignmentId}/link`, {
+    resume_anyway: resumeAnyway,
+  });
 }

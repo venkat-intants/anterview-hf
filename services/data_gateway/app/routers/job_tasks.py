@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import job_tasks as svc
 from app.config import settings
 from app.database import DbSessionDep, get_db_session
-from app.dependencies import HrCtxDep, InterviewerCtxDep, get_current_user
+from app.dependencies import HrCtxDep, InterviewerCtxDep, get_current_user, reject_role
 from app.interviewer_scorecards import RequestMeta, ScorecardError
 from app.job_tasks import TaskError
 from app.rate_limit import rate_limit_task
@@ -50,7 +50,14 @@ from app.utils.request_ip import extract_client_ip, extract_user_agent
 hr_router = APIRouter(prefix="/hr", tags=["job-tasks"])
 iv_router = APIRouter(prefix="/interviewer", tags=["job-tasks"])
 public_router = APIRouter(prefix="/task", tags=["job-tasks-public"])
-me_router = APIRouter(prefix="/users/me", tags=["job-tasks"])
+me_router = APIRouter(
+    prefix="/users/me",
+    tags=["job-tasks"],
+    # A guest token from an interview link must not act as the account —
+    # see ``dependencies.reject_role``. On the router, so a route added here
+    # later inherits it.
+    dependencies=[Depends(reject_role("guest_candidate", "service"))],
+)
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
 CandidateDbDep = Annotated[AsyncSession, Depends(get_db_session)]

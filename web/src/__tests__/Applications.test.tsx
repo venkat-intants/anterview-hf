@@ -22,16 +22,19 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MyApplication, MyApplicationDetail } from '../api/applications';
+import { ApiError } from '../api/client';
 
 const listMyApplications = vi.fn();
 const getMyApplication = vi.fn();
 const mintMyInterviewLink = vi.fn();
 const mintMyTaskLink = vi.fn();
+const mintMyExamLink = vi.fn();
 vi.mock('../api/applications', () => ({
   listMyApplications: (...a: unknown[]) => listMyApplications(...a) as unknown,
   getMyApplication: (...a: unknown[]) => getMyApplication(...a) as unknown,
   mintMyInterviewLink: (...a: unknown[]) => mintMyInterviewLink(...a) as unknown,
   mintMyTaskLink: (...a: unknown[]) => mintMyTaskLink(...a) as unknown,
+  mintMyExamLink: (...a: unknown[]) => mintMyExamLink(...a) as unknown,
 }));
 
 // Starting an interview navigates the tab. jsdom's location is not writable, so
@@ -82,6 +85,11 @@ function app(over: Partial<MyApplication> = {}): MyApplication {
     task_submission_id: null,
     task_due_at: null,
     task_status: null,
+    // Likewise no waiting assessment; the assessment tests set it.
+    exam_assignment_id: null,
+    exam_in_progress: false,
+    exam_expires_at: null,
+    exam_scheduled_at: null,
     ...over,
   };
 }
@@ -278,7 +286,7 @@ describe('Applications — a waiting interview', () => {
 
   it('sends the candidate to the link it is given', async () => {
     mintMyInterviewLink.mockResolvedValue({
-      interview_url: 'http://localhost:5174/interview-invite#tok',
+      interview_url: `${window.location.origin}/interview-invite#tok`,
       expires_at: '2026-09-11T00:00:00Z',
     });
     listMyApplications.mockResolvedValue([app({ interview_invite_id: 'inv-1' })]);
@@ -288,7 +296,7 @@ describe('Applications — a waiting interview', () => {
 
     await vi.waitFor(() => expect(mintMyInterviewLink).toHaveBeenCalledWith('inv-1'));
     await vi.waitFor(() =>
-      expect(assign).toHaveBeenCalledWith('http://localhost:5174/interview-invite#tok'),
+      expect(assign).toHaveBeenCalledWith(`${window.location.origin}/interview-invite#tok`),
     );
   });
 
@@ -359,5 +367,113 @@ describe('Applications — a waiting task', () => {
 
     expect(await screen.findByText('Could not open your task.')).toBeTruthy();
     expect(assign).not.toHaveBeenCalled();
+  });
+});
+
+// The assessment a candidate was sent
+// ---------------------------------------------------------------------------
+// The same gap as the interview, one round earlier: the card named the round —
+// "Round 1 of 1 · Aptitude" — and the only way into it was the emailed link.
+
+describe('Applications — a waiting assessment', () => {
+  const waiting = { exam_assignment_id: 'asn-1', exam_expires_at: '2026-09-25T00:00:00Z' };
+
+  it('offers to start it, with the date it closes', async () => {
+    listMyApplications.mockResolvedValue([app(waiting)]);
+    renderPage();
+
+    expect(await screen.findByText('Your assessment is ready')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Start assessment' })).toBeTruthy();
+    expect(screen.getByText(/Take it before/)).toBeTruthy();
+  });
+
+  it('offers to resume once begun', async () => {
+    listMyApplications.mockResolvedValue([app({ ...waiting, exam_in_progress: true })]);
+    renderPage();
+
+    expect(await screen.findByText('Your assessment is in progress')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Resume assessment' })).toBeTruthy();
+    expect(screen.getByText(/pick up where you left off/)).toBeTruthy();
+  });
+
+  it('names the window for a scheduled round, not the link expiry', async () => {
+    // A scheduled round opens at a time and shuts a short while later, both
+    // long before the link expires. Showing the expiry states a deadline the
+    // candidate does not have — and missing the real one costs the attempt.
+    listMyApplications.mockResolvedValue([
+      app({ ...waiting, exam_scheduled_at: '2026-09-22T09:00:00Z' }),
+    ]);
+    renderPage();
+
+    expect(await screen.findByText(/This round opens on/)).toBeTruthy();
+    expect(screen.queryByText(/Take it before/)).toBeNull();
+  });
+
+  it('shows nothing when no assessment is waiting', async () => {
+    listMyApplications.mockResolvedValue([app()]);
+    renderPage();
+
+    await screen.findByText('Backend Engineer');
+    expect(screen.queryByTestId('exam-cta')).toBeNull();
+  });
+
+  it('does not ask for a link until the candidate presses the button', async () => {
+    // Minting rotates the token. Doing it on render would break the emailed link
+    // of every candidate who merely opened this page.
+    listMyApplications.mockResolvedValue([app(waiting)]);
+    renderPage();
+
+    await screen.findByText('Your assessment is ready');
+    expect(mintMyExamLink).not.toHaveBeenCalled();
+  });
+
+  it('sends the candidate to the link it is given', async () => {
+    mintMyExamLink.mockResolvedValue({
+      exam_url: `${window.location.origin}/exam#tok`,
+      expires_at: '2026-09-25T00:00:00Z',
+    });
+    listMyApplications.mockResolvedValue([app(waiting)]);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Start assessment' }));
+
+    // false: an unprompted first press may not close a tab someone is sitting
+    // their assessment in.
+    await vi.waitFor(() => expect(mintMyExamLink).toHaveBeenCalledWith('asn-1', false));
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith(`${window.location.origin}/exam#tok`));
+  });
+
+  it('asks before closing an assessment open in another tab', async () => {
+    // The server answers 409 rather than rotating, because rotating kills that
+    // tab — it 404s from then on while the clock keeps running. A second tab
+    // on this page, a back button or a double click would each have been
+    // enough to lose a timed assessment to a press nobody thought about.
+    const conflict = new ApiError('This assessment is already open in another tab.', 409);
+    mintMyExamLink.mockRejectedValueOnce(conflict).mockResolvedValueOnce({
+      exam_url: `${window.location.origin}/exam#tok2`,
+      expires_at: '2026-09-25T00:00:00Z',
+    });
+    listMyApplications.mockResolvedValue([app({ ...waiting, exam_in_progress: true })]);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Resume assessment' }));
+
+    // The question, and nothing opened.
+    expect(await screen.findByText(/already open in another tab/)).toBeTruthy();
+    expect(assign).not.toHaveBeenCalled();
+
+    // The answer, and only now may it close the other tab.
+    await userEvent.click(screen.getByRole('button', { name: 'Open it here' }));
+    await vi.waitFor(() => expect(mintMyExamLink).toHaveBeenLastCalledWith('asn-1', true));
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith(`${window.location.origin}/exam#tok2`));
+  });
+
+  it('explains a failure instead of appearing to do nothing', async () => {
+    mintMyExamLink.mockRejectedValue(new Error('No assessment is waiting on this application.'));
+    listMyApplications.mockResolvedValue([app(waiting)]);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Start assessment' }));
+    expect(await screen.findByText('No assessment is waiting on this application.')).toBeTruthy();
   });
 });

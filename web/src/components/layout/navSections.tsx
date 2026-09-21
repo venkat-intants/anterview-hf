@@ -64,8 +64,18 @@ const ICON = 'h-[18px] w-[18px]';
 
 export const PRIVILEGED_ROLES = ['platform_owner', 'super_admin', 'admin', 'hr_manager', 'interviewer'];
 
-/** True when the user holds no privileged role (plain candidate). */
+/** True when the user holds no privileged role (plain candidate).
+ *
+ * A guest session is NOT one. Redeeming an interview invitation makes a
+ * `guest_candidate` token the app's session, and that token may not read the
+ * account's own pages — the server refuses it (`dependencies.reject_role`)
+ * because it is minted from a link, not from a sign-in. Without this the
+ * sidebar offered a guest "My applications" and "Resume" mid-interview, and
+ * the authorization decision arrived as a 403 where an absent menu item
+ * belongs.
+ */
 export function isCandidateOnly(roles: string[]): boolean {
+  if (roles.includes('guest_candidate')) return false;
   return !roles.some((r) => PRIVILEGED_ROLES.includes(r));
 }
 

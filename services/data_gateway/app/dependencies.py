@@ -121,6 +121,60 @@ def require_role(*allowed: str) -> Callable[[User], Awaitable[User]]:
     return _dep
 
 
+def reject_role(*denied: str) -> Callable[[User], Awaitable[User]]:
+    """Dependency factory: refuse a caller holding any of *denied* roles.
+
+    The inverse of :func:`require_role`, and it exists for one shape of
+    surface: where the legitimate callers cannot be named by a single role but
+    the illegitimate ones can.
+
+    That is the candidate surface. Every account-CREATION path does grant
+    ``candidate`` — local signup, both SSO paths, activation — so the reason is
+    not the one an earlier version of this docstring gave. It is
+    ``apply_activation._link_to_existing``: when an applicant activates onto an
+    account that already exists, the applicant row is re-pointed and NO role is
+    granted. An HR user who also applied for a job therefore holds
+    ``hr_manager`` and nothing else, and ``require_role("candidate")`` would
+    refuse them their own applications page.
+
+    Why any gate at all: an interview magic link is redeemable for an access
+    token whose ``sub`` is the applicant's ``user_id`` — which, once they have
+    activated, IS their real account id — carrying the role
+    ``guest_candidate`` (``interview_take._issue_guest_token``).
+    :func:`get_current_user` verifies the signature, the issuer, the audience
+    and the revocation epoch, and does not look at roles. So without this,
+    possession of a forwarded interview link is possession of the candidate's
+    account for every route that authenticates with ``get_current_user`` alone.
+
+    KNOW WHAT A DENY-LIST BUYS. Refusing a role admits every credential that is
+    not on the list, so the list has to name every token type that must not
+    pass — not only the one that prompted it. ``service`` is on it for that
+    reason: service tokens carry the same ``jwt_secret``, issuer and audience
+    (``embedding_client``, ``scoring_client``, ``exam_ai_client``), so they
+    already satisfy :func:`get_current_user`, and on a candidate route the only
+    thing standing between one and the account's data is that its ``sub`` is a
+    service name rather than a UUID — which fails as a 500, not as a refusal.
+    A new token type is a new entry here; there is no default-deny to fall back
+    on. Where the legitimate callers CAN be named, prefer :func:`require_role`.
+
+    Usage:
+        router = APIRouter(
+            ...,
+            dependencies=[Depends(reject_role("guest_candidate", "service"))],
+        )
+    """
+
+    async def _dep(user: Annotated[User, Depends(get_current_user)]) -> User:
+        if set(denied) & set(user.roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions for this action.",
+            )
+        return user
+
+    return _dep
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap-password gate
 # ---------------------------------------------------------------------------

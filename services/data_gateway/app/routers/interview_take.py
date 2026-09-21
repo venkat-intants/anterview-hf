@@ -14,8 +14,13 @@ HARD GUARANTEES:
   - Re-enterable within validity: a started ('consumed') invite may be redeemed again to
     reconnect to the SAME session until a scorecard exists or the link expires; the join
     window gates only the FIRST start (closing the tab / a mid-interview drop can rejoin).
-  - The guest token's role is 'guest_candidate' ONLY (rejected by candidate/HR routes)
-    and carries a session_id claim interview_core binds to one room.
+  - The guest token's role is 'guest_candidate' ONLY and carries a session_id claim
+    interview_core binds to one room. Note what that role does and does not buy: the
+    HR routes reject it because they require a role, but `get_current_user` does NOT
+    check roles, so until 2026-09-21 every candidate route accepted it — and this
+    token's `sub` is the applicant's `user_id`, i.e. their real account after
+    activation. The candidate router now rejects the role explicitly
+    (`dependencies.reject_role`); any new candidate surface must do the same.
   - Consent is the applicant's own act (consent_granted flag) — no server-asserted consent.
 """
 

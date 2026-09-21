@@ -43,7 +43,7 @@ from app import offers as svc
 from app import preboarding as docs
 from app.config import settings
 from app.database import DbSessionDep, get_db_session
-from app.dependencies import HrCtxDep, SuperAdminCtxDep, get_current_user
+from app.dependencies import HrCtxDep, SuperAdminCtxDep, get_current_user, reject_role
 from app.interviewer_scorecards import RequestMeta
 from app.offers import OfferError
 from app.rate_limit import rate_limit
@@ -52,7 +52,14 @@ from app.utils.request_ip import extract_client_ip, extract_user_agent
 hr_router = APIRouter(prefix="/hr", tags=["offers"])
 admin_router = APIRouter(prefix="/admin", tags=["offers"])
 public_router = APIRouter(prefix="/offer", tags=["offer-public"])
-me_router = APIRouter(prefix="/users/me", tags=["offers"])
+me_router = APIRouter(
+    prefix="/users/me",
+    tags=["offers"],
+    # A guest token from an interview link must not act as the account —
+    # see ``dependencies.reject_role``. On the router, so a route added here
+    # later inherits it.
+    dependencies=[Depends(reject_role("guest_candidate", "service"))],
+)
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
 CandidateDbDep = Annotated[AsyncSession, Depends(get_db_session)]

@@ -171,13 +171,50 @@ function SectionStepper({ sections, currentIndex }: SectionStepperProps) {
   );
 }
 
+// Per tab, and only for as long as the tab lives. Holding the exam token here
+// is what lets the address bar be cleared without a reload costing a candidate
+// their attempt.
+const EXAM_TOKEN_KEY = 'anthire.exam.token';
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PublicExam() {
   const { t } = useTranslation();
 
   // SECURITY: token from #fragment — never from a path param.
-  const [token] = useState(() => window.location.hash.replace(/^#/, '').trim());
+  //
+  // Then out of the address bar, and into this tab's sessionStorage. The
+  // fragment keeps it off the wire, out of access logs and out of Referer —
+  // that part was always right — but it stayed on screen and in the history
+  // entry for the whole attempt: a live credential in the address bar of a
+  // session that is fullscreened, proctored and routinely screen-shared, left
+  // behind in history on a shared machine.
+  //
+  // sessionStorage rather than state alone, because this page is not one you
+  // pass through: a reload with the hash already stripped would have locked a
+  // candidate out of an attempt whose clock was still running. Per tab, and
+  // gone when the tab closes.
+  const [token] = useState(() => {
+    const fromHash = window.location.hash.replace(/^#/, '').trim();
+    if (fromHash) {
+      try {
+        sessionStorage.setItem(EXAM_TOKEN_KEY, fromHash);
+      } catch {
+        // Private mode, or storage blocked. The token is in state either way;
+        // only surviving a reload is lost, and the emailed link still works.
+      }
+      return fromHash;
+    }
+    try {
+      return sessionStorage.getItem(EXAM_TOKEN_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  });
   const [consent, setConsent] = useState(false);
+
+  useEffect(() => {
+    if (window.location.hash) window.history.replaceState(null, '', '/exam');
+  }, []);
 
   const examQ = useQuery({
     queryKey: ['public-exam', token],
@@ -234,6 +271,15 @@ export default function PublicExam() {
     onSuccess: (r) => {
       setResult(r);
       setPhase('result');
+      // The credential has done its job. Leaving it in sessionStorage would
+      // keep a live exam token readable by script on any page of this origin
+      // for the rest of the tab's life, long after the attempt is graded.
+      try {
+        sessionStorage.removeItem(EXAM_TOKEN_KEY);
+      } catch {
+        // Blocked or unavailable — it was never written either. The token is
+        // still in state, which is what the result screen renders from.
+      }
     },
     onError: () => {
       submittedRef.current = false;
@@ -503,7 +549,12 @@ export default function PublicExam() {
               <StatusTag tone="forest" dot>
                 {t('publicExam.liveExam')}
               </StatusTag>
-              <span className="font-mono text-[11px] text-fog">#{token.slice(0, 10)}</span>
+              {/* The exam id, not the token. This used to print the first ten
+                  characters of the raw secret — roughly 60 of its 256 bits,
+                  in the DOM, on a screen that gets shared and captured. The
+                  remainder is still infeasible to guess, so it was never
+                  exploitable on its own; it simply bought nothing. */}
+              <span className="font-mono text-[11px] text-fog">#{exam.exam_id.slice(0, 8)}</span>
             </div>
 
             <h1 className="mt-4 text-[26px] font-semibold tracking-[-0.8px] text-foreground">

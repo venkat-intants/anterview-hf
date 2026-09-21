@@ -20,8 +20,12 @@ import {
   signIn,
   test,
 } from './support/fixtures';
-import { aCandidate, applyThroughPublicForm, shortlistFromApplicants } from './support/journeys';
-import { linkIn, waitForMail } from './support/mail';
+import {
+  aCandidate,
+  applyThroughPublicForm,
+  emailedExamToken,
+  shortlistFromApplicants,
+} from './support/journeys';
 
 const SOLUTION = 'a, b = map(int, input().split())\nprint(a + b)\n';
 
@@ -34,6 +38,23 @@ test.describe('a coding round', () => {
       `No code runner at ${runner}. Start one with scripts/piston-up.ps1 and run ` +
         'data_gateway with EXECUTION_PROVIDER=piston (see e2e/README.md).',
     );
+
+    // Warm it. The first executions in a freshly started Piston container are
+    // many times slower than the rest, and after a restart that alone pushed the
+    // exam's verdict past its budget — while the server log showed the solution
+    // graded 100% and passed. What this spec measures is the grading, not how
+    // long a container takes to wake up.
+    const python = ((await res!.json()) as { language: string; version: string }[]).find(
+      (r) => r.language === 'python',
+    );
+    if (python) {
+      await request
+        .post(runner.replace(/\/runtimes$/, '/execute'), {
+          data: { language: 'python', version: python.version, files: [{ content: 'print(1)' }] },
+          timeout: 120_000,
+        })
+        .catch(() => null);
+    }
   });
 
   test('runs the candidate’s own code against hidden tests and advances them on the result', async ({
@@ -58,8 +79,7 @@ test.describe('a coding round', () => {
     await shortlistFromApplicants(page, candidate, opening.title);
 
     // ── The candidate opens the emailed link and writes code ────────────────
-    const invite = await waitForMail(candidate.email, /assessment|exam/i, 60_000);
-    await candidatePage.goto(`/exam#${linkIn(invite, /\/exam#([A-Za-z0-9_-]{16,})/)}`);
+    await candidatePage.goto(`/exam#${await emailedExamToken(candidate)}`);
     const start = candidatePage.getByRole('button', { name: 'Start exam' });
     await start.waitFor();
     await candidatePage.locator('input[type="checkbox"]').first().check();

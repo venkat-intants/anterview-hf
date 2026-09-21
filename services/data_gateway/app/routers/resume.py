@@ -45,12 +45,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import local_storage
 from app.config import settings
 from app.database import get_db_session
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, reject_role
 from app.models import Resume
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/users/me", tags=["resume"])
+router = APIRouter(
+    prefix="/users/me",
+    tags=["resume"],
+    # A guest token from an interview link must not act as the account —
+    # see ``dependencies.reject_role``. On the router, so a route added here
+    # later inherits it.
+    dependencies=[Depends(reject_role("guest_candidate", "service"))],
+)
 
 # ---------------------------------------------------------------------------
 # Dependency shortcuts

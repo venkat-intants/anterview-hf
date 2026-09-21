@@ -45,6 +45,10 @@ def _row(**kw: object) -> MagicMock:
         "task_id": None,
         "task_due_at": None,
         "task_status": None,
+        "exam_assignment_id": None,
+        "exam_status": None,
+        "exam_expires_at": None,
+        "exam_scheduled_at": None,
     }
     for k, v in {**defaults, **kw}.items():
         setattr(row, k, v)
@@ -86,6 +90,43 @@ def _user(uid: str | None = None) -> MagicMock:
     u = MagicMock()
     u.user_id = uid or str(uuid.uuid4())
     return u
+
+
+def _exam_check(
+    *,
+    in_window: bool = True,
+    attempt_open: bool = False,
+    scheduled_at: datetime | None = None,
+) -> MagicMock:
+    """One row of the exam mint's pre-check: may this rotate, and what is open."""
+    row = MagicMock()
+    row.id = uuid.uuid4()
+    row.scheduled_at = scheduled_at
+    row.in_window = in_window
+    row.attempt_open = attempt_open
+    return row
+
+
+def _mint_db(check: MagicMock | None, rotated: MagicMock | None = None) -> AsyncMock:
+    """A session for the exam mint: pre-check, then the UPDATE, then the audit row.
+
+    Three calls, in that order, and the order is the point — a pre-check that
+    ran after the rotation would be checking a link it had already destroyed.
+    """
+    def _res(item: object | None) -> MagicMock:
+        r = MagicMock()
+        r.first = MagicMock(return_value=item)
+        return r
+
+    db = AsyncMock()
+    queue = [_res(check), _res(rotated), _res(None)]
+
+    async def _execute(*_a: object, **_k: object) -> MagicMock:
+        return queue.pop(0) if queue else _res(None)
+
+    db.execute = AsyncMock(side_effect=_execute)
+    db.commit = AsyncMock()
+    return db
 
 
 # ===========================================================================
@@ -473,6 +514,7 @@ def test_a_waiting_invite_replaces_the_watch_your_email_advice() -> None:
 
     row = MagicMock()
     row.invite_id = uuid.uuid4()
+    row.exam_assignment_id = None
     step = _next_step_for(row, "shortlisted")
     assert "interview" in step.lower()
     assert "email" not in step.lower()
@@ -484,6 +526,7 @@ def test_without_an_invite_the_status_wording_still_applies() -> None:
     row = MagicMock()
     row.invite_id = None
     row.task_id = None
+    row.exam_assignment_id = None
     assert _next_step_for(row, "shortlisted") == _NEXT_STEPS["shortlisted"]
 
 
@@ -517,3 +560,304 @@ def test_the_link_carries_its_token_in_the_fragment() -> None:
     src = inspect.getsource(mint_my_interview_link)
     assert "/interview-invite#" in src
     assert "?token=" not in src
+
+
+
+# ===========================================================================
+# The assessment a candidate was sent
+# ===========================================================================
+# The same gap as the interview above, one round earlier: the assessment reached
+# the candidate only by email, and the applications page named the round —
+# "Round 1 of 1 · Aptitude" — with no way to open it.
+def test_a_waiting_assessment_is_visible_on_the_application() -> None:
+    from app.routers.candidate_applications import ApplicationOut
+
+    for field in ("exam_assignment_id", "exam_in_progress", "exam_expires_at"):
+        assert field in ApplicationOut.model_fields
+
+
+def test_the_list_never_returns_a_usable_exam_token() -> None:
+    from app.routers.candidate_applications import ApplicationOut
+
+    for leaky in ("exam_url", "exam_token", "token", "token_hash"):
+        assert leaky not in ApplicationOut.model_fields
+
+
+def test_an_assessment_belongs_to_its_own_application() -> None:
+    """Selected by the enrolment, corroborated on the applicant and company.
+
+    The enrolment is the right SELECTOR: one person applying to two openings
+    holds an exam for each, and each belongs on its own card. But it is a soft
+    column behind a single-column FK, with nothing tying it to an enrolment of
+    the same person, so on its own it is one bad write away from putting
+    somebody else's assessment on this card.
+
+    This assertion used to read ``"ea.applicant_id" not in clause``, which did
+    not describe a property worth having — it locked the defence out.
+    """
+    from app.routers.candidate_applications import _LIST_SQL
+
+    clause = _LIST_SQL[_LIST_SQL.index("exam_assignments ea") :]
+    assert "ea.enrolment_id = e.id" in clause, "the enrolment is the selector"
+    assert "ea.applicant_id = a.id" in clause, "and the applicant corroborates it"
+    assert "ea.company_id = e.company_id" in clause, "as does the company"
+
+
+def test_a_scheduled_round_is_only_offered_inside_its_join_window() -> None:
+    """The gate whose absence was not cosmetic.
+
+    Pressing the button rotates the token, and only the HMAC is stored. So
+    offering an assessment that /exam/start will refuse does not merely fail —
+    it destroys the emailed link on the way. Both queries carry the window, and
+    both exempt an attempt already open, because that is what exam_take does:
+    the window gates the FIRST start only.
+    """
+    from app.routers.candidate_applications import _EXAM_LINK_PRECHECK_SQL, _LIST_SQL
+
+    clause = _LIST_SQL[_LIST_SQL.index("exam_assignments ea") :]
+    for sql in (clause, _EXAM_LINK_PRECHECK_SQL):
+        assert "ea.scheduled_at IS NULL" in sql
+        assert "make_interval(mins => :join_window)" in sql
+    assert "status = 'in_progress'" in clause, "an open attempt is exempt from the window"
+
+
+def test_only_an_open_assessment_is_offered() -> None:
+    """Invited or under way, not lapsed, and only when the round is published
+    and the exam not closed — the gates the exam page itself applies — so the
+    page never offers a button that leads to "not available"."""
+    from app.routers.candidate_applications import _LIST_SQL
+
+    clause = _LIST_SQL[_LIST_SQL.index("exam_assignments ea") :]
+    assert "ea.status IN ('invited', 'started')" in clause
+    assert "ea.expires_at > now()" in clause
+    assert "ea.deleted_at IS NULL" in clause
+    assert "er.status = 'published'" in clause
+    assert "ex.status <> 'closed'" in clause
+
+
+def test_the_list_says_start_or_resume() -> None:
+    from app.routers.candidate_applications import _to_out
+
+    waiting = _to_out(_row(exam_assignment_id=uuid.uuid4(), exam_status="invited",
+                           exam_expires_at=datetime(2026, 9, 20, tzinfo=UTC)))
+    assert waiting["exam_assignment_id"] and waiting["exam_in_progress"] is False
+    begun = _to_out(_row(exam_assignment_id=uuid.uuid4(), exam_status="started",
+                         exam_expires_at=datetime(2026, 9, 20, tzinfo=UTC)))
+    assert begun["exam_in_progress"] is True
+    nothing = _to_out(_row())
+    assert nothing["exam_assignment_id"] is None and nothing["exam_expires_at"] is None
+
+
+@pytest.mark.parametrize(("status", "word"), [("invited", "start"), ("started", "resume")])
+def test_a_waiting_assessment_replaces_the_watch_your_email_advice(status: str, word: str) -> None:
+    from app.routers.candidate_applications import _next_step_for
+
+    row = MagicMock()
+    row.invite_id = None
+    # Explicit, because a MagicMock attribute is truthy: an unset task_id would
+    # silently take the branch above and this would assert nothing.
+    row.task_id = None
+    row.exam_assignment_id = uuid.uuid4()
+    row.exam_status = status
+    step = _next_step_for(row, "shortlisted").lower()
+    assert "assessment" in step and word in step
+    assert "email" not in step
+
+
+def test_an_interview_still_outranks_an_assessment() -> None:
+    from app.routers.candidate_applications import _next_step_for
+
+    row = MagicMock()
+    row.invite_id = uuid.uuid4()
+    row.exam_assignment_id = uuid.uuid4()
+    row.exam_status = "invited"
+    assert "interview" in _next_step_for(row, "shortlisted").lower()
+
+
+def test_minting_an_exam_link_authorises_inside_the_update() -> None:
+    """Ownership is the WHERE clause, so the UPDATE cannot rotate somebody
+    else's token, and it repeats the list's gates so the button and the link
+    cannot disagree."""
+    from app.routers.candidate_applications import _ROTATE_EXAM_SQL
+
+    assert "a.user_id = :uid" in _ROTATE_EXAM_SQL
+    assert "ea.applicant_id = a.id" in _ROTATE_EXAM_SQL
+    assert "ea.status IN ('invited', 'started')" in _ROTATE_EXAM_SQL
+    assert "ea.expires_at > now()" in _ROTATE_EXAM_SQL
+    assert "er.status = 'published'" in _ROTATE_EXAM_SQL
+    assert "ex.status <> 'closed'" in _ROTATE_EXAM_SQL
+
+
+def test_minting_an_exam_link_takes_no_identity_parameter() -> None:
+    import inspect
+
+    from app.routers.candidate_applications import mint_my_exam_link
+
+    params = set(inspect.signature(mint_my_exam_link).parameters)
+    assert not params & {"user_id", "company_id", "applicant_id", "email"}
+
+
+def test_the_exam_link_carries_its_token_in_the_fragment() -> None:
+    import inspect
+
+    from app.routers.candidate_applications import mint_my_exam_link
+
+    src = inspect.getsource(mint_my_exam_link)
+    assert "/exam#" in src
+    assert "?token=" not in src
+
+
+async def test_someone_elses_assessment_is_a_404_and_nothing_is_committed() -> None:
+    """The UPDATE matching nothing covers "not yours", "finished", "expired" and
+    "not open" alike — one answer, so it reveals nothing about what exists."""
+    from fastapi import HTTPException
+
+    from app.routers.candidate_applications import mint_my_exam_link
+
+    db = _mint_db(None)
+    with pytest.raises(HTTPException) as exc:
+        await mint_my_exam_link(uuid.uuid4(), _user(), db)
+    assert exc.value.status_code == 404
+    db.commit.assert_not_awaited()
+
+
+def _rotated() -> MagicMock:
+    row = MagicMock()
+    row.expires_at = datetime(2026, 9, 25, tzinfo=UTC)
+    return row
+
+
+async def test_the_new_link_is_built_from_a_fresh_token_never_the_stored_hash() -> None:
+    from app.routers.candidate_applications import mint_my_exam_link
+
+    db = _mint_db(_exam_check(), _rotated())
+    out = await mint_my_exam_link(uuid.uuid4(), _user(), db)
+
+    token = out.exam_url.split("/exam#", 1)[1]
+    # The UPDATE is the second call; the first is the pre-check.
+    sent = db.execute.await_args_list[1].args[1]
+    assert token and sent["th"] != token, "the link carries the raw token, the database only its hash"
+    assert out.expires_at == "2026-09-25T00:00:00+00:00"
+    db.commit.assert_awaited_once()
+
+
+async def test_a_closed_join_window_refuses_without_rotating_anything() -> None:
+    """The finding this test exists for.
+
+    A scheduled round whose window has shut is a 403 from /exam/start. Before
+    this, the button was still offered, the press still rotated the token, and
+    the candidate was left holding a dead emailed link and a new one the exam
+    page also refuses. Nothing is rotated and nothing is committed.
+    """
+    from fastapi import HTTPException
+
+    from app.routers.candidate_applications import mint_my_exam_link
+
+    db = _mint_db(
+        _exam_check(in_window=False, scheduled_at=datetime(2026, 1, 1, tzinfo=UTC))
+    )
+    with pytest.raises(HTTPException) as exc:
+        await mint_my_exam_link(uuid.uuid4(), _user(), db)
+
+    assert exc.value.status_code == 403
+    assert "window" in str(exc.value.detail)
+    assert db.execute.await_count == 1, "refused on the pre-check, before the UPDATE"
+    db.commit.assert_not_awaited()
+
+
+async def test_an_attempt_already_open_is_a_409_the_candidate_has_to_answer() -> None:
+    """Losing a timed assessment must not be one stray press away.
+
+    Rotating kills whatever tab holds the old token: it 404s from then on while
+    the clock keeps running. A second tab on this page, a back button or a
+    double click would each have been enough.
+    """
+    from fastapi import HTTPException
+
+    from app.routers.candidate_applications import mint_my_exam_link
+
+    db = _mint_db(_exam_check(attempt_open=True))
+    with pytest.raises(HTTPException) as exc:
+        await mint_my_exam_link(uuid.uuid4(), _user(), db)
+
+    assert exc.value.status_code == 409
+    assert db.execute.await_count == 1, "nothing was rotated"
+    db.commit.assert_not_awaited()
+
+
+async def test_confirming_resumes_the_open_attempt() -> None:
+    """And the answer is honoured: the resume path the feature exists for."""
+    from app.routers.candidate_applications import ExamLinkIn, mint_my_exam_link
+
+    db = _mint_db(_exam_check(attempt_open=True), _rotated())
+    out = await mint_my_exam_link(
+        uuid.uuid4(), _user(), db, ExamLinkIn(resume_anyway=True)
+    )
+
+    assert out.exam_url.split("/exam#", 1)[1]
+    db.commit.assert_awaited_once()
+
+
+async def test_an_open_attempt_is_exempt_from_the_join_window() -> None:
+    """Same rule as exam_take: the window gates the FIRST start only.
+
+    A candidate who started inside the window and lost the tab is not shut out
+    by the window having since closed — start_attempt returns their open
+    attempt without ever reaching its window check.
+    """
+    from app.routers.candidate_applications import ExamLinkIn, mint_my_exam_link
+
+    db = _mint_db(
+        _exam_check(
+            in_window=False, attempt_open=True, scheduled_at=datetime(2026, 1, 1, tzinfo=UTC)
+        ),
+        _rotated(),
+    )
+    out = await mint_my_exam_link(
+        uuid.uuid4(), _user(), db, ExamLinkIn(resume_anyway=True)
+    )
+    assert out.exam_url.split("/exam#", 1)[1]
+
+
+async def test_minting_writes_an_audit_row_naming_the_actor_and_no_token() -> None:
+    """A credential was issued for a scored assessment.
+
+    After an incident the first question is who asked for it, and a log line a
+    retention sweep can remove is not the answer. The audit_log is append-only
+    at the database level, so this is the record that survives.
+    """
+    from app.routers.candidate_applications import mint_my_exam_link
+
+    uid = str(uuid.uuid4())
+    assignment = uuid.uuid4()
+    db = _mint_db(_exam_check(), _rotated())
+    out = await mint_my_exam_link(assignment, _user(uid), db)
+
+    sql, params = db.execute.await_args_list[2].args
+    assert "INSERT INTO audit_log" in str(sql)
+    assert params["aid"] == uuid.UUID(uid), "the actor, which the log line lacked"
+    assert params["rid"] == assignment
+    token = out.exam_url.split("/exam#", 1)[1]
+    assert token not in str(params), "never the token, raw or hashed"
+
+
+def test_both_candidate_mint_routes_are_rate_limited() -> None:
+    """Every other credential-issuing route in this service carries one.
+
+    Each call writes a new token_hash and retires the previous link, so
+    unbounded rotation is a cheap way to keep somebody out of their own
+    assessment — and the limiter fails open on a Redis error, so it is a
+    control to add rather than a boundary to lean on.
+    """
+    from app.routers.candidate_applications import router
+
+    limited = {
+        route.path
+        for route in router.routes
+        if any(
+            "rate_limit" in getattr(d.dependency, "__qualname__", "")
+            for d in getattr(route, "dependencies", [])
+        )
+    }
+    assert "/users/me/exams/{assignment_id}/link" in limited
+    assert "/users/me/interviews/{invite_id}/link" in limited

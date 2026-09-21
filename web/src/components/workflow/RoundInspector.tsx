@@ -21,13 +21,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import {
-  AlertTriangle,
-  ChevronDown,
-  ExternalLink,
-  Info,
-  Loader2,
-} from '@/design/components/icons';
+import { AlertTriangle, ChevronDown, ExternalLink, Info, Loader2 } from '@/design/components/icons';
 import { StatusTag } from '@/design/components/primitives';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -41,10 +35,11 @@ import type {
   Round,
   RoundPatch,
 } from '@/api/workflows';
-import { MAX_CRITERIA_PER_ROUND } from '@/api/workflows';
+import { MAX_CRITERIA_PER_ROUND, TASK_KINDS } from '@/api/workflows';
 import { ROUND_KIND_META, ROUND_KIND_ORDER } from './roundKinds';
 import RoundRouting from './RoundRouting';
 import StageSettings from './StageSettings';
+import TaskEditor from './TaskEditor';
 
 interface Props {
   round: Round;
@@ -99,9 +94,7 @@ function ExamPicker({
     <div className="flex flex-col gap-2.5">
       {value ? (
         <div className="flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-ok-wash)] px-3 py-2 text-[12.5px] text-foreground">
-          <span className="truncate">
-            Questions attached{chosen ? `: ${chosen.title}` : ''}
-          </span>
+          <span className="truncate">Questions attached{chosen ? `: ${chosen.title}` : ''}</span>
           {editable ? (
             <button
               type="button"
@@ -120,7 +113,10 @@ function ExamPicker({
           </div>
           {editable ? (
             <>
-              <label className="text-[12px] font-medium text-[var(--ui-soft)]" htmlFor="exam-select">
+              <label
+                className="text-[12px] font-medium text-[var(--ui-soft)]"
+                htmlFor="exam-select"
+              >
                 Take questions from
               </label>
               <select
@@ -238,10 +234,7 @@ function CriteriaPicker({
   onCriteria: (criteria: CriterionInput[]) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const selected = useMemo(
-    () => new Map(round.criteria.map((c) => [c.id, c])),
-    [round.criteria],
-  );
+  const selected = useMemo(() => new Map(round.criteria.map((c) => [c.id, c])), [round.criteria]);
 
   const total = round.criteria.reduce((n, c) => n + c.weight, 0) || 1;
 
@@ -305,8 +298,7 @@ function CriteriaPicker({
 
       {atCap ? (
         <span className="text-[11.5px] text-[var(--ui-warn)]">
-          A round assesses at most {MAX_CRITERIA_PER_ROUND} competencies — deselect one to
-          swap.
+          A round assesses at most {MAX_CRITERIA_PER_ROUND} competencies — deselect one to swap.
         </span>
       ) : null}
 
@@ -477,7 +469,9 @@ function KitEditor({
         interviewer_notes_from_hr: notes.trim() || null,
         criteria: criteria.map((c) => ({
           competency_id: c.id,
-          what_to_evaluate: (rows[c.id]?.what_to_evaluate ?? []).map((x) => x.trim()).filter(Boolean),
+          what_to_evaluate: (rows[c.id]?.what_to_evaluate ?? [])
+            .map((x) => x.trim())
+            .filter(Boolean),
           look_for: (rows[c.id]?.look_for ?? []).map((x) => x.trim()).filter(Boolean),
           probes: (rows[c.id]?.probes ?? []).map((x) => x.trim()).filter(Boolean),
         })),
@@ -647,14 +641,17 @@ export default function RoundInspector({
               <StatusTag tone={meta.tone}>{meta.label}</StatusTag>
             )}
             {saving ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--ui-faint)]" aria-hidden="true" />
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin text-[var(--ui-faint)]"
+                aria-hidden="true"
+              />
             ) : null}
           </div>
           <p className="mt-1 text-[11.5px] leading-snug text-muted-foreground">{meta.blurb}</p>
           {editable ? (
             <p className="mt-1 text-[11px] leading-snug text-[var(--ui-faint)]">
-              Changing the type clears what no longer applies — questions, threshold or time
-              limit — and keeps the rest.
+              Changing the type clears what no longer applies — questions, threshold or time limit —
+              and keeps the rest.
             </p>
           ) : null}
         </div>
@@ -679,7 +676,10 @@ export default function RoundInspector({
 
         <div className="grid grid-cols-2 gap-2.5">
           <div>
-            <label htmlFor="deadline" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
+            <label
+              htmlFor="deadline"
+              className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+            >
               Days to complete
             </label>
             <input
@@ -697,7 +697,10 @@ export default function RoundInspector({
             />
           </div>
           <div>
-            <label htmlFor="timelimit" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
+            <label
+              htmlFor="timelimit"
+              className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+            >
               Time limit (min)
             </label>
             <input
@@ -731,10 +734,26 @@ export default function RoundInspector({
         </section>
       ) : null}
 
+      {/* PH4-D4 — a job simulation or portfolio's brief, items and (for a
+          portfolio) artifact settings. Frozen the same way ExamPicker's
+          `exam_round_id` is: `editable` already reflects the workflow's own
+          published/in-review lock. */}
+      {(TASK_KINDS as readonly string[]).includes(round.kind) ? (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">Task</h3>
+          <TaskEditor
+            key={round.id}
+            roundId={round.id}
+            kind={round.kind as 'job_simulation' | 'portfolio'}
+            editable={editable}
+          />
+        </section>
+      ) : null}
+
       {meta.supportsCriteria ? (
         <section className="flex flex-col gap-2">
           <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">
-            {round.kind === 'human_review'
+            {round.kind === 'human_review' || (TASK_KINDS as readonly string[]).includes(round.kind)
               ? `Reviewer’s checklist (${round.criteria.length})`
               : `What this round assesses (${round.criteria.length})`}
           </h3>
@@ -753,8 +772,8 @@ export default function RoundInspector({
         <section className="flex flex-col gap-2">
           <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">Interview kit</h3>
           <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-            What the interviewer sees alongside the checklist above: instructions, your notes,
-            and per-criterion guidance. Criteria themselves are frozen — set them above.
+            What the interviewer sees alongside the checklist above: instructions, your notes, and
+            per-criterion guidance. Criteria themselves are frozen — set them above.
           </p>
           {/* Editable on a PUBLISHED workflow too, deliberately. The kit is
               guidance, not the rubric — the criteria above stay frozen — and the
@@ -768,7 +787,10 @@ export default function RoundInspector({
       {/* 3. What it means */}
       {meta.needsThreshold ? (
         <section>
-          <label htmlFor="threshold" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
+          <label
+            htmlFor="threshold"
+            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+          >
             Advance at or above
           </label>
           <div className="flex items-center gap-2">
@@ -791,15 +813,15 @@ export default function RoundInspector({
           <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
             {/* Said plainly because it is the single most common thing people
                 assume a threshold does, and it does not. */}
-            Scoring below this does not reject anyone. It puts the candidate in your
-            decision queue for a person to look at.
+            Scoring below this does not reject anyone. It puts the candidate in your decision queue
+            for a person to look at.
           </p>
         </section>
       ) : (
         <section className="rounded-[10px] border border-border p-3 text-[11.5px] leading-relaxed text-muted-foreground">
-          A human review round has no threshold — nothing here is scored. Candidates
-          who reach it appear in your decision queue with the checklist above; someone
-          passes them on or holds them for a decision. Nobody is rejected automatically.
+          {meta.decidedBy === 'person'
+            ? 'Nothing here is scored automatically — a threshold has nothing to compare against. Candidates who reach it appear in your decision queue with the checklist above; someone passes them on or holds them for a decision. Nobody is rejected automatically.'
+            : 'This round kind has no threshold.'}
         </section>
       )}
 

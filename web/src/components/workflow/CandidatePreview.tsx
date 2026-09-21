@@ -39,6 +39,22 @@ function whatHappens(round: Round): { receive: string; asked: string } {
           round.deadline_days === 1 ? '' : 's'
         }.`,
       };
+    case 'job_simulation':
+      return {
+        receive:
+          'An email with a private link to a brief and a set of written items, in their language where you gave a translation.',
+        asked: `Complete it within ${round.deadline_days} day${
+          round.deadline_days === 1 ? '' : 's'
+        }${limit ? `, with ${limit} once they start` : ''}. They see the brief, never a score.`,
+      };
+    case 'portfolio':
+      return {
+        receive:
+          'An email with a private link asking for files and approved links as evidence of their work.',
+        asked: `Submit their portfolio within ${round.deadline_days} day${
+          round.deadline_days === 1 ? '' : 's'
+        }. They see the brief, never a score.`,
+      };
     default:
       return {
         receive: 'Nothing — this round is a person on your team reviewing them.',
@@ -65,8 +81,8 @@ export default function CandidatePreview({
         <li className="rounded-[12px] border border-border p-3">
           <p className="text-[13px] font-medium text-foreground">They apply</p>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            A confirmation email. Their application page reads “Application received”, and
-            nothing more happens until you shortlist them.
+            A confirmation email. Their application page reads “Application received”, and nothing
+            more happens until you shortlist them.
           </p>
         </li>
 
@@ -103,16 +119,16 @@ export default function CandidatePreview({
         <li className="rounded-[12px] border border-border p-3">
           <p className="text-[13px] font-medium text-foreground">If they fall short</p>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            Their page reads “Under review”. They are not told they failed, and nobody is
-            rejected automatically — a person decides.
+            Their page reads “Under review”. They are not told they failed, and nobody is rejected
+            automatically — a person decides.
           </p>
         </li>
 
         <li className="rounded-[12px] border border-border p-3">
           <p className="text-[13px] font-medium text-foreground">Your decision</p>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            They hear from you only when a person decides: “Selected” or “Not progressing”,
-            with an email saying so.
+            They hear from you only when a person decides: “Selected” or “Not progressing”, with an
+            email saying so.
           </p>
         </li>
       </ol>

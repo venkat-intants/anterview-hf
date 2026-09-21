@@ -60,7 +60,9 @@ function errText(e: unknown, fallback: string): string {
  * do here, it just says where to look first. Worded with the due time and
  * owner, never colour alone.
  */
-function slaBadge(row: DecisionQueueRow): { tone: 'ember' | 'amber' | 'forest'; text: string } | null {
+function slaBadge(
+  row: DecisionQueueRow,
+): { tone: 'ember' | 'amber' | 'forest'; text: string } | null {
   const sla = row.sla;
   if (!sla) return null;
   const due = new Date(sla.due_at).toLocaleString();
@@ -119,7 +121,11 @@ function QueueCard({
 
   const decideMut = useMutation({
     mutationFn: (decision: 'hired' | 'rejected') =>
-      recordFinalDecision(row.enrolment_id, { decision, reason: rationale, reason_code: reasonCode }),
+      recordFinalDecision(row.enrolment_id, {
+        decision,
+        reason: rationale,
+        reason_code: reasonCode,
+      }),
     onSuccess: (_r, decision) => {
       toast.success(decision === 'hired' ? `${row.full_name} hired` : `${row.full_name} rejected`);
       setPending(null);
@@ -165,9 +171,23 @@ function QueueCard({
               <StatusTag tone="amber" dot>
                 {row.review_round_title ?? 'your review'}
               </StatusTag>
-            ) : (
+            ) : null}
+            {/* PH4-D4 — a job_simulation/portfolio round's own state, so
+                "not started" reads apart from "submitted, awaiting review"
+                rather than both looking like a bare "awaiting review". */}
+            {row.awaiting_review && row.task_submission ? (
+              <StatusTag
+                tone={row.task_submission.status === 'submitted' ? 'forest' : 'neutral'}
+                dot
+              >
+                {row.task_submission.status === 'submitted'
+                  ? 'Submission received'
+                  : `Submission ${row.task_submission.status.replace('_', ' ')}`}
+              </StatusTag>
+            ) : null}
+            {!row.held && !row.awaiting_review ? (
               <StatusTag tone="forest">finished the workflow</StatusTag>
-            )}
+            ) : null}
             {/* PH4-O1 — where this application stands against its stage SLA.
                 Informational: it never changes what a reviewer can do here. */}
             {(() => {
@@ -192,8 +212,8 @@ function QueueCard({
             {row.waiting_days != null ? (
               <span className="text-muted-foreground">
                 {' '}
-                · waiting {Math.max(0, Math.round(row.waiting_days))}{' '}
-                day{Math.round(row.waiting_days) === 1 ? '' : 's'}
+                · waiting {Math.max(0, Math.round(row.waiting_days))} day
+                {Math.round(row.waiting_days) === 1 ? '' : 's'}
               </span>
             ) : null}
           </div>
@@ -235,7 +255,10 @@ function QueueCard({
       </div>
 
       {rounds.length > 0 ? (
-        <ul className="mt-3 flex flex-wrap gap-2" aria-label={`Completed rounds for ${row.full_name}`}>
+        <ul
+          className="mt-3 flex flex-wrap gap-2"
+          aria-label={`Completed rounds for ${row.full_name}`}
+        >
           {rounds.map((r) => (
             <li
               key={`${r.round_id}-${r.position}`}
@@ -243,7 +266,11 @@ function QueueCard({
             >
               {r.title}{' '}
               <span className="text-foreground">
-                {r.percent === null ? (r.graded_by === 'human' ? 'reviewed' : '—') : `${Math.round(r.percent)}%`}
+                {r.percent === null
+                  ? r.graded_by === 'human'
+                    ? 'reviewed'
+                    : '—'
+                  : `${Math.round(r.percent)}%`}
               </span>
               {r.passed !== null ? (
                 <span className={r.passed ? 'text-[var(--ui-ok)]' : 'text-[var(--ui-warn)]'}>
@@ -294,7 +321,10 @@ function QueueCard({
         </div>
       ) : null}
 
-      <label htmlFor={`why-${row.enrolment_id}`} className="mt-4 block text-[12px] text-[var(--ui-soft)]">
+      <label
+        htmlFor={`why-${row.enrolment_id}`}
+        className="mt-4 block text-[12px] text-[var(--ui-soft)]"
+      >
         Why (recorded against your name)
       </label>
       <input
@@ -376,7 +406,10 @@ function QueueCard({
             </button>
             <button
               type="button"
-              onClick={() => { setPending(null); setReasonCode(''); }}
+              onClick={() => {
+                setPending(null);
+                setReasonCode('');
+              }}
               className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground"
             >
               Cancel
@@ -386,7 +419,10 @@ function QueueCard({
           <>
             <button
               type="button"
-              onClick={() => { setPending('hired'); setReasonCode(''); }}
+              onClick={() => {
+                setPending('hired');
+                setReasonCode('');
+              }}
               className="inline-flex items-center gap-1.5 rounded-[12px] border border-[var(--ui-ok)]/35 px-4 py-2 text-[13px] font-medium text-[var(--ui-ok)] hover:bg-[var(--ui-ok)]/10"
             >
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
@@ -394,7 +430,10 @@ function QueueCard({
             </button>
             <button
               type="button"
-              onClick={() => { setPending('rejected'); setReasonCode(''); }}
+              onClick={() => {
+                setPending('rejected');
+                setReasonCode('');
+              }}
               className="inline-flex items-center gap-1.5 rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-muted-foreground hover:border-[var(--ui-danger)]/40 hover:text-[var(--ui-danger)]"
             >
               <XCircle className="h-4 w-4" aria-hidden="true" />
@@ -462,7 +501,9 @@ export default function DecisionQueue(): JSX.Element {
 
   const rows = queue.data ?? [];
   const held = rows.filter((r) => r.held).length;
-  const atRisk = rows.filter((r) => r.sla?.state === 'overdue' || r.sla?.state === 'due_soon').length;
+  const atRisk = rows.filter(
+    (r) => r.sla?.state === 'overdue' || r.sla?.state === 'due_soon',
+  ).length;
   const visibleRows = slaOnly
     ? rows.filter((r) => r.sla?.state === 'overdue' || r.sla?.state === 'due_soon')
     : rows;
@@ -493,8 +534,8 @@ export default function DecisionQueue(): JSX.Element {
             Decisions — {req.data?.title ?? 'this opening'}
           </h1>
           <p className="mt-1.5 max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">
-            Everyone the workflow has taken as far as it can. Scores rank and explain; nothing
-            here was decided automatically, and nothing here moves until you move it.
+            Everyone the workflow has taken as far as it can. Scores rank and explain; nothing here
+            was decided automatically, and nothing here moves until you move it.
           </p>
           {held > 0 ? (
             <div className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] text-[var(--ui-warn)]">
@@ -564,7 +605,12 @@ export default function DecisionQueue(): JSX.Element {
       ) : (
         <div className="flex flex-col gap-3">
           {visibleRows.map((r) => (
-            <QueueCard key={r.enrolment_id} row={r} requisitionId={requisitionId} onOpen={setOpen} />
+            <QueueCard
+              key={r.enrolment_id}
+              row={r}
+              requisitionId={requisitionId}
+              onOpen={setOpen}
+            />
           ))}
         </div>
       )}

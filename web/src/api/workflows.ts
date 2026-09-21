@@ -22,11 +22,34 @@
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './client';
 import type { StageSla } from './stageSla';
 
-/** The four things a round can be. `human_review` is a deliberate pause. */
-export type RoundKind = 'mcq' | 'coding' | 'ai_interview' | 'human_review';
+/**
+ * The six things a round can be. `human_review` is a deliberate pause;
+ * `job_simulation` and `portfolio` (PH4-D4) are also decided by a person —
+ * they just arrive with evidence to look at (a candidate's written work, or
+ * a portfolio of files and links) rather than nothing at all.
+ */
+export type RoundKind =
+  | 'mcq'
+  | 'coding'
+  | 'ai_interview'
+  | 'human_review'
+  | 'job_simulation'
+  | 'portfolio';
 
 /** Rounds whose questions come from an exam — those need an exam attached. */
 export const EXAM_BACKED_KINDS: readonly RoundKind[] = ['mcq', 'coding'];
+
+/** PH4-D4 — a round a candidate does asynchronous work for, by magic link. */
+export const TASK_KINDS: readonly RoundKind[] = ['job_simulation', 'portfolio'];
+
+/**
+ * Every round kind a PERSON decides, never a threshold — mirrors
+ * `app.workflows.HUMAN_EVALUATED_KINDS` on the server EXACTLY. Used to widen
+ * the same UI a `human_review` round already gets: the decision queue, the
+ * reviewer-assignment picker in the candidate drawer, and the interviewer
+ * scorecard machinery.
+ */
+export const HUMAN_EVALUATED_KINDS: readonly RoundKind[] = ['human_review', ...TASK_KINDS];
 
 export const MAX_ROUNDS = 12;
 
@@ -326,9 +349,7 @@ export function setRoundCriteria(
  * ValidationReport — see `validationFromError`, which the builder uses to
  * render those errors inline rather than as a bare failure toast.
  */
-export function publishWorkflow(
-  workflowId: string,
-): Promise<
+export function publishWorkflow(workflowId: string): Promise<
   Workflow & {
     validation: ValidationReport;
     attached_candidates?: number;
@@ -341,10 +362,7 @@ export function publishWorkflow(
       attached_candidates?: number;
       started_candidates?: number;
     }
-  >(
-    `/hr/workflows/${workflowId}/publish`,
-    {},
-  );
+  >(`/hr/workflows/${workflowId}/publish`, {});
 }
 
 /** Open a published workflow for editing as version n+1. The original is untouched. */
@@ -423,6 +441,17 @@ export interface DecisionQueueRow {
   sla?: StageSla | null;
   stage_owner_name?: string | null;
   open_exceptions?: number;
+  /**
+   * PH4-D4 — when the candidate is sitting on a `job_simulation`/`portfolio`
+   * round, the submission's own lifecycle, so "not started" reads apart from
+   * "submitted, awaiting review" rather than both showing as a bare
+   * `awaiting_review`. Null for every other round, and null once held.
+   */
+  task_submission?: {
+    status: 'assigned' | 'in_progress' | 'submitted' | 'expired' | 'withdrawn';
+    due_at: string | null;
+    submitted_at: string | null;
+  } | null;
 }
 
 /** One completed round, as the queue summarises it. Criteria and evidence are in the drawer. */

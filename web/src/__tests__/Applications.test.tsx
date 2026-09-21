@@ -26,10 +26,12 @@ import type { MyApplication, MyApplicationDetail } from '../api/applications';
 const listMyApplications = vi.fn();
 const getMyApplication = vi.fn();
 const mintMyInterviewLink = vi.fn();
+const mintMyTaskLink = vi.fn();
 vi.mock('../api/applications', () => ({
   listMyApplications: (...a: unknown[]) => listMyApplications(...a) as unknown,
   getMyApplication: (...a: unknown[]) => getMyApplication(...a) as unknown,
   mintMyInterviewLink: (...a: unknown[]) => mintMyInterviewLink(...a) as unknown,
+  mintMyTaskLink: (...a: unknown[]) => mintMyTaskLink(...a) as unknown,
 }));
 
 // Starting an interview navigates the tab. jsdom's location is not writable, so
@@ -75,6 +77,11 @@ function app(over: Partial<MyApplication> = {}): MyApplication {
     // No waiting invitation is the ordinary case; the invite tests set it.
     interview_invite_id: null,
     interview_scheduled_at: null,
+    // PH4-D4 — no open task submission is the ordinary case; the task tests
+    // set it.
+    task_submission_id: null,
+    task_due_at: null,
+    task_status: null,
     ...over,
   };
 }

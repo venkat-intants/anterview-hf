@@ -147,8 +147,7 @@ const en = {
       // Goal → encouragement line
       goalCampusPlacement: 'Placement season rewards reps — keep the streak going.',
       goalFirstJob: 'First interviews are won on practice, not luck.',
-      goalSwitchingField:
-        'New field, new vocabulary — practise talking about the work you want.',
+      goalSwitchingField: 'New field, new vocabulary — practise talking about the work you want.',
       goalInterviewSoon: 'You have one coming up. Run a full mock before the real thing.',
       goalGeneralPractice: 'Getting comfortable talking is most of the battle.',
       // Arrival banner from the onboarding wizard
@@ -252,7 +251,8 @@ const en = {
       featureScorecardTitle: 'Instant scorecard',
       featureScorecardDesc: 'Get a detailed PDF report with strengths, gaps and actionable tips.',
       featurePrivacyTitle: 'Private & secure',
-      featurePrivacyDesc: 'DPDP Act 2023 compliant. Your data is processed securely by the platform and its listed sub-processors solely for conducting your interview.',
+      featurePrivacyDesc:
+        'DPDP Act 2023 compliant. Your data is processed securely by the platform and its listed sub-processors solely for conducting your interview.',
       trustBadge: 'Trusted by engineering colleges & skill universities',
       ctaTitle: 'Ready to practice?',
       ctaSubtitle: 'Create a free account and start your first AI interview today.',
@@ -271,8 +271,7 @@ const en = {
       mockupAiName: 'Aarav — AI Interviewer',
       mockupAiStatus: 'Speaking',
       mockupYouName: 'You',
-      mockupQuestionText:
-        '“Walk me through a project you’re proud of — what was your exact role?”',
+      mockupQuestionText: '“Walk me through a project you’re proud of — what was your exact role?”',
       mockupScoreLabel: 'Live scorecard',
       compatCaption: 'BUILT FOR EVERY CANDIDATE',
       compatMore: '+22 Indian languages coming soon',
@@ -504,14 +503,14 @@ const en = {
       retentionValue: 'Voice recordings and transcripts are deleted after',
       retentionDays: '90 days',
       rightsLabel: 'Your rights under DPDP Act 2023:',
-      rightsValue:
-        'You can request deletion or a copy of your data at any time by emailing',
+      rightsValue: 'You can request deletion or a copy of your data at any time by emailing',
       // Cross-border disclosure — DPDP Act 2023 / IT (Amendment) Rules requirement.
       // This note must remain visible and accurate. Do NOT change wording to imply
       // India residency until Tier-2 (AWS Mumbai) deployment is confirmed live.
       dataFlowNote:
         'Data disclosure: your voice, transcript, and profile are currently processed by sub-processors located outside India (Singapore, United States). India-resident storage is planned but not yet active. Full sub-processor list: intants.com/data-flow',
-      footerNote: 'By clicking "I Agree", you grant consent for the above processing, including cross-border transfer as described above.',
+      footerNote:
+        'By clicking "I Agree", you grant consent for the above processing, including cross-border transfer as described above.',
       agree: 'I Agree',
       saving: 'Saving…',
       decline: 'Decline',
@@ -686,8 +685,7 @@ const en = {
       sectionProgress: 'Section {{current}}/{{total}}: {{title}}',
       sectionTimeRemaining: 'Section time remaining: {{time}}',
       nextSection: 'Next section',
-      violationWarning:
-        'Violation {{count}} recorded. {{remaining}} remaining before auto-submit.',
+      violationWarning: 'Violation {{count}} recorded. {{remaining}} remaining before auto-submit.',
       // PH4-D2: shown instead of the countdown when this attempt's
       // auto-submit is relaxed -- the event is still recorded, but no
       // threshold will end the round, so promising one would be false.
@@ -718,7 +716,8 @@ const en = {
     },
     // Interview page (pre-room guard)
     interviewPage: {
-      missingSession: 'No interview session found. Please start a new interview from the dashboard.',
+      missingSession:
+        'No interview session found. Please start a new interview from the dashboard.',
     },
     // Errors
     error: {
@@ -981,7 +980,8 @@ const en = {
       expiredDesc:
         'This offer is no longer open. Contact the hiring team if you would still like to be considered.',
       withdrawnTitle: 'This offer has been withdrawn',
-      withdrawnDesc: 'The hiring team has withdrawn this offer. Contact them if you have questions.',
+      withdrawnDesc:
+        'The hiring team has withdrawn this offer. Contact them if you have questions.',
       declinedTitle: 'You declined this offer',
       declinedDesc: 'Thank you for letting us know. You can close this window.',
       acceptedTitle: 'Offer accepted',
@@ -1062,6 +1062,86 @@ const en = {
         wrongType: 'Please upload a PDF, JPEG or PNG file.',
         needExpiry: 'Give the date this document expires.',
       },
+    },
+    // ── PH4-D4: the public task page (job simulation / portfolio, magic
+    // link, no login) ──────────────────────────────────────────────────
+    task: {
+      invalidTitle: "This task link isn't valid",
+      invalidDesc:
+        'It may have expired, been withdrawn, or already been submitted. Please ask the hiring team for a fresh link.',
+      networkTitle: "Couldn't load your task",
+      networkDesc:
+        'We had trouble reaching the server — your link is probably fine. Check your connection and try again.',
+      retry: 'Try again',
+      loading: 'Loading your task…',
+      errorGeneric: 'Something went wrong. Please try again.',
+      kind: {
+        job_simulation: 'Job simulation',
+        portfolio: 'Portfolio',
+      },
+      submittedTitle: 'Submitted',
+      submittedDesc: 'Submitted — with the hiring team. You can close this window now.',
+      dueBy: 'Due {{date}}',
+      timeLimitNotice: 'Time limit: {{time}} once you start.',
+      timeRemaining: 'Time remaining: {{time}}',
+      // PH4-D2 — told as a fact only, same rule as publicExam.adjustmentNotice:
+      // never a percentage, never a note.
+      adjustmentNotice: 'Your time for this task includes an adjustment.',
+      materialsHeading: 'Reference materials',
+      download: 'Download',
+      downloadError: 'Could not open that file.',
+      itemRequired: 'Required',
+      itemOptional: 'Optional',
+      textPlaceholder: 'Write your answer…',
+      charsRemaining: '{{count}} characters left',
+      linkLabel: 'Link',
+      linkPlaceholder: 'https://…',
+      linkDomainsHint: 'Links to: {{domains}}',
+      fileItemUnavailable:
+        "This item can't be answered from this link yet — contact the hiring team if it needs a file.",
+      saved: 'Saved',
+      saving: 'Saving…',
+      saveError: 'Could not save that answer.',
+      portfolioHeading: 'Your portfolio',
+      portfolioRange: 'Add between {{min}} and {{max}} items — files or links.',
+      addFile: 'Add a file',
+      addLink: 'Add a link',
+      uploading: 'Uploading…',
+      addError: 'Could not add that.',
+      remove: 'Remove',
+      removeError: 'Could not remove that.',
+      artifactTitleLabel: 'Title (optional)',
+      artifactDescLabel: 'Description (optional)',
+      linkKindLabel: 'Type',
+      linkKinds: {
+        repository: 'Repository',
+        design: 'Design',
+        document: 'Document',
+        video: 'Video',
+        website: 'Website',
+        other: 'Other',
+      },
+      tooLarge: 'That file is over 10 MB. Please upload a smaller one.',
+      wrongType: 'Please upload a PDF, JPEG or PNG file.',
+      // Security review, PH4-D4: consent is given BEFORE any answer or file
+      // is ever stored, not at submit — a candidate reads this and ticks the
+      // box before `beginButton` is enabled, in the house voice of
+      // offer.acceptConsent (what is shared, with whom, where it is kept,
+      // and that it can be withdrawn).
+      consentNotice:
+        'By starting, you agree to share your answers and any files or links you add with the hiring team, for this application. They are kept securely — with a storage provider that may be outside India — and used only to assess this application. You can withdraw this consent at any time by contacting the hiring team.',
+      consentLabel: 'I agree to share this work with the hiring team, as described above.',
+      beginButton: 'Begin',
+      beginError: 'Could not start this task. Please try again.',
+      submit: 'Submit',
+      submitting: 'Submitting…',
+      submitError: 'Could not submit. Please try again.',
+      confirmSubmitTitle: 'Send this to the hiring team?',
+      confirmSubmitDesc: "Once submitted you can't make further changes.",
+      confirmYes: 'Yes, submit',
+      cancel: 'Cancel',
+      notReadyRequired: 'Answer every required item before submitting.',
+      notReadyArtifacts: 'Add at least {{count}} item(s) to your portfolio before submitting.',
     },
   },
 };
@@ -1174,11 +1254,13 @@ const hi = {
       nextStepsTitle: 'अगले कदम',
       thisWeekTitle: 'इस सप्ताह',
       nudgeResumeTitle: 'अपना रेज़्यूमे अपलोड करें',
-      nudgeResumeBody: 'रेज़्यूमे इंटरव्यू प्रश्नों को आपके अनुभव और skills के अनुसार personalize करता है।',
+      nudgeResumeBody:
+        'रेज़्यूमे इंटरव्यू प्रश्नों को आपके अनुभव और skills के अनुसार personalize करता है।',
       nudgePracticeTitle: 'जारी रखें',
       nudgePracticeBody: 'आपका आखिरी session अच्छा रहा। एक और रन करें और जवाब और बेहतर बनाएं।',
       nudgeFirstTitle: 'पहले इंटरव्यू के लिए तैयार?',
-      nudgeFirstBody: 'कोई job role चुनें और voice interview शुरू करें — इसमें लगभग 10 मिनट लगते हैं।',
+      nudgeFirstBody:
+        'कोई job role चुनें और voice interview शुरू करें — इसमें लगभग 10 मिनट लगते हैं।',
       nudgeJobsTitle: 'अभ्यास के लिए role खोजें',
       quickActionsTitle: 'त्वरित कार्य',
       quickActionsDesc: 'प्रैक्टिस के लिए तैयार हैं? किसी भी पद के लिए इंटरव्यू शुरू करें।',
@@ -1256,11 +1338,13 @@ const hi = {
       featureVoiceTitle: 'Voice-first अनुभव',
       featureVoiceDesc: '3D AI avatar के साथ natural बातचीत — कोई typing नहीं, कोई MCQ नहीं।',
       featureLanguageTitle: 'आपकी भाषा',
-      featureLanguageDesc: 'English, Hindi या Telugu में इंटरव्यू दें। 22 Indian languages जल्द आ रही हैं।',
+      featureLanguageDesc:
+        'English, Hindi या Telugu में इंटरव्यू दें। 22 Indian languages जल्द आ रही हैं।',
       featureScorecardTitle: 'तुरंत scorecard',
       featureScorecardDesc: 'strengths, gaps और actionable tips के साथ detailed PDF report पाएं।',
       featurePrivacyTitle: 'Private और secure',
-      featurePrivacyDesc: 'DPDP Act 2023 के अनुसार। आपका data platform और उसके listed sub-processors द्वारा केवल इंटरव्यू संचालन के लिए सुरक्षित रूप से process किया जाता है।',
+      featurePrivacyDesc:
+        'DPDP Act 2023 के अनुसार। आपका data platform और उसके listed sub-processors द्वारा केवल इंटरव्यू संचालन के लिए सुरक्षित रूप से process किया जाता है।',
       trustBadge: 'Engineering colleges और skill universities पर भरोसेमंद',
       ctaTitle: 'Practice के लिए तैयार?',
       ctaSubtitle: 'Free अकाउंट बनाएं और आज ही पहला AI इंटरव्यू शुरू करें।',
@@ -1308,7 +1392,8 @@ const hi = {
     },
     startInterview: {
       pageTitle: 'इंटरव्यू शुरू करें',
-      pageDesc: 'पद के बारे में बताएं। AI इंटरव्यूअर job और आपके resume के अनुसार प्रश्न तैयार करेगा।',
+      pageDesc:
+        'पद के बारे में बताएं। AI इंटरव्यूअर job और आपके resume के अनुसार प्रश्न तैयार करेगा।',
       resumeOnFile: 'आपका resume file में है।',
       resumeOnFileDesc: 'प्रश्न आपकी profile के अनुसार personalize होंगे।',
       noResume: 'कोई resume file में नहीं है — इसके बिना भी इंटरव्यू होता है, लेकिन',
@@ -1323,11 +1408,13 @@ const hi = {
       optional: 'वैकल्पिक',
       companyPlaceholder: 'जैसे: Acme Corp',
       jdLabel: 'Job description / JD',
-      jdPlaceholder: 'यहाँ job description paste करें — AI इसे role-specific प्रश्न पूछने के लिए उपयोग करेगा।',
+      jdPlaceholder:
+        'यहाँ job description paste करें — AI इसे role-specific प्रश्न पूछने के लिए उपयोग करेगा।',
       step2Title: 'अपना इंटरव्यूअर चुनें',
       step2Desc: 'वह avatar चुनें जो आपका session conduct करेगा।',
       loadingInterviewers: 'इंटरव्यूअर लोड हो रहे हैं…',
-      avatarLoadError: 'Avatar list लोड नहीं हो सका — आप फिर भी शुरू कर सकते हैं; default इंटरव्यूअर उपयोग होगा।',
+      avatarLoadError:
+        'Avatar list लोड नहीं हो सका — आप फिर भी शुरू कर सकते हैं; default इंटरव्यूअर उपयोग होगा।',
       maleGroup: 'पुरुष',
       femaleGroup: 'महिला',
       step3Title: 'प्राथमिकताएं',
@@ -1390,11 +1477,13 @@ const hi = {
       defaultMessage: 'आपके जवाब record हो गए हैं।',
       sessionLabel: 'Session {{id}}',
       earlyExitTitle: 'Session पूरा होने से पहले बंद हुआ',
-      earlyExitDesc: 'इस session के लिए scorecard नहीं बनेगा। तैयार होने पर नया इंटरव्यू शुरू करें।',
+      earlyExitDesc:
+        'इस session के लिए scorecard नहीं बनेगा। तैयार होने पर नया इंटरव्यू शुरू करें।',
       preparingScorecard: 'आपका scorecard तैयार हो रहा है…',
       scorecardDesc: 'आपका AI scorecard generate हो रहा है। इसमें आमतौर पर 10–30 सेकंड लगते हैं।',
       scorecardTimeout: 'Scorecard सामान्य से अधिक समय ले रहा है',
-      scorecardTimeoutDesc: 'यह अभी भी process हो रहा हो सकता है। कुछ मिनट बाद interview history देखें।',
+      scorecardTimeoutDesc:
+        'यह अभी भी process हो रहा हो सकता है। कुछ मिनट बाद interview history देखें।',
       checkAgain: 'फिर जाँचें',
       backToDashboard: 'डैशबोर्ड पर वापस जाएं',
       history: 'इतिहास',
@@ -1451,7 +1540,8 @@ const hi = {
     },
     resume: {
       pageTitle: 'Resume Manager',
-      pageDesc: 'अपने resume versions manage करें। वर्तमान version आपके AI interviews personalize करने के लिए उपयोग होता है।',
+      pageDesc:
+        'अपने resume versions manage करें। वर्तमान version आपके AI interviews personalize करने के लिए उपयोग होता है।',
       noResumeTitle: 'कोई resume file में नहीं',
       noResumeDesc: 'AI interviews personalize करने के लिए PDF resume अपलोड करें।',
       activeResumeTitle: 'सक्रिय Resume',
@@ -1466,7 +1556,8 @@ const hi = {
       setAsCurrent: 'Current बनाएं',
       setting: 'सेट हो रहा है…',
       deleteTitle: 'Resume version हटाएं?',
-      deleteDesc: 'यह {{filename}} को आपके अकाउंट से permanently हटा देगा। यह क्रिया पूर्ववत नहीं की जा सकती।',
+      deleteDesc:
+        'यह {{filename}} को आपके अकाउंट से permanently हटा देगा। यह क्रिया पूर्ववत नहीं की जा सकती।',
       cancel: 'रद्द करें',
       delete: 'हटाएं',
       deleting: 'हटाया जा रहा है…',
@@ -1497,7 +1588,8 @@ const hi = {
       // Cross-border disclosure (DPDP) — IMPORTANT: must receive legal review before govt-bid launch.
       dataFlowNote:
         'डेटा प्रकटीकरण: आपकी आवाज़, transcript और प्रोफ़ाइल वर्तमान में भारत से बाहर स्थित sub-processors (Singapore, United States) द्वारा process की जाती है। India-resident storage की योजना है लेकिन अभी सक्रिय नहीं है। पूरी sub-processor सूची: intants.com/data-flow',
-      footerNote: '"मैं सहमत हूँ" क्लिक करके आप उपरोक्त processing के लिए सहमति देते हैं, जिसमें ऊपर वर्णित cross-border transfer शामिल है।',
+      footerNote:
+        '"मैं सहमत हूँ" क्लिक करके आप उपरोक्त processing के लिए सहमति देते हैं, जिसमें ऊपर वर्णित cross-border transfer शामिल है।',
       agree: 'मैं सहमत हूँ',
       saving: 'सहेजा जा रहा है…',
       decline: 'अस्वीकार करें',
@@ -1518,7 +1610,8 @@ const hi = {
     },
     jobs: {
       pageTitle: 'खुले पद',
-      pageSubtitle: 'किसी भी पद के लिए AI इंटरव्यू दें — स्वतंत्र रूप से practice करें या असली के लिए submit करें।',
+      pageSubtitle:
+        'किसी भी पद के लिए AI इंटरव्यू दें — स्वतंत्र रूप से practice करें या असली के लिए submit करें।',
       searchPlaceholder: 'पद खोजें…',
       interviewLanguage: 'इंटरव्यू भाषा',
       filterByLevel: 'स्तर के अनुसार फ़िल्टर करें',
@@ -1530,7 +1623,8 @@ const hi = {
       positionsCount_other: '{{count}} पद',
       filteredFrom: '({{count}} में से फ़िल्टर किए गए)',
       noPositionsTitle: 'कोई पद नहीं मिला',
-      noPositionsFiltered: 'कोई दूसरा स्तर फ़िल्टर आज़माएं या सभी रिक्तियां देखने के लिए इसे हटाएं।',
+      noPositionsFiltered:
+        'कोई दूसरा स्तर फ़िल्टर आज़माएं या सभी रिक्तियां देखने के लिए इसे हटाएं।',
       noPositionsEmpty: 'इस समय कोई खुला पद उपलब्ध नहीं है।',
       clearFilter: 'फ़िल्टर हटाएं',
       declineBanner: 'इंटरव्यू सुविधा का उपयोग करने के लिए आपको सहमति देनी होगी।',
@@ -1632,7 +1726,8 @@ const hi = {
       resultThanks: 'परीक्षा पूरी करने के लिए धन्यवाद। अब आप यह विंडो बंद कर सकते हैं।',
       questionsCount: '{{count}} प्रश्न',
       minutes: '{{count}} मिनट',
-      timerNote: 'जब आप शुरू करते हैं तब टाइमर चालू हो जाता है और समय समाप्त होने पर परीक्षा स्वतः सबमिट हो जाती है।',
+      timerNote:
+        'जब आप शुरू करते हैं तब टाइमर चालू हो जाता है और समय समाप्त होने पर परीक्षा स्वतः सबमिट हो जाती है।',
       startExam: 'परीक्षा शुरू करें',
       couldNotStart: 'शुरू नहीं हो सका।',
       answered: '{{answered}}/{{total}} उत्तर दिए',
@@ -1643,7 +1738,8 @@ const hi = {
       liveExam: 'लाइव परीक्षा',
       factQuestions: 'प्रश्न',
       factDuration: 'अवधि',
-      consentLabel: 'मैं DPDP-अनुपालन गोपनीयता नीति के अनुसार AI स्कोरिंग के लिए इस परीक्षा की रिकॉर्डिंग की सहमति देता/देती हूं।',
+      consentLabel:
+        'मैं DPDP-अनुपालन गोपनीयता नीति के अनुसार AI स्कोरिंग के लिए इस परीक्षा की रिकॉर्डिंग की सहमति देता/देती हूं।',
       timeRemaining: 'शेष समय: {{time}}',
       // Round / section additions (Phase 2+)
       roundLabel: 'राउंड {{n}}: {{title}}',
@@ -1658,8 +1754,7 @@ const hi = {
       sectionProgress: 'अनुभाग {{current}}/{{total}}: {{title}}',
       sectionTimeRemaining: 'अनुभाग का शेष समय: {{time}}',
       nextSection: 'अगला अनुभाग',
-      violationWarning:
-        'उल्लंघन {{count}} दर्ज किया गया। auto-submit से पहले {{remaining}} बचे।',
+      violationWarning: 'उल्लंघन {{count}} दर्ज किया गया। auto-submit से पहले {{remaining}} बचे।',
       violationNoted: 'उल्लंघन {{count}} दर्ज किया गया।',
       violationBadgeLabel: '{{count}} integrity उल्लंघन',
       codingProblems: '{{count}} coding समस्याएं',
@@ -1978,7 +2073,8 @@ const hi = {
         intro: 'शुरू करने से पहले भर्ती टीम को आपसे कुछ दस्तावेज़ चाहिए।',
         none: 'भेजने के लिए कुछ नहीं — भर्ती टीम ने कोई दस्तावेज़ नहीं माँगा है।',
         getCode: 'कोड प्राप्त करें',
-        codeIntro: 'आप अपने दस्तावेज़ सुरक्षित रूप से प्रबंधित कर सकें, इसके लिए हम आपको ईमेल पर एक बार का कोड भेजेंगे।',
+        codeIntro:
+          'आप अपने दस्तावेज़ सुरक्षित रूप से प्रबंधित कर सकें, इसके लिए हम आपको ईमेल पर एक बार का कोड भेजेंगे।',
         openChecklist: 'आगे बढ़ें',
         sessionExpired: 'वह सत्र समाप्त हो गया है। जारी रखने के लिए नया कोड माँगें।',
         loading: 'आपके दस्तावेज़ लोड हो रहे हैं…',
@@ -2014,6 +2110,77 @@ const hi = {
         wrongType: 'कृपया PDF, JPEG या PNG फ़ाइल अपलोड करें।',
         needExpiry: 'यह दस्तावेज़ किस तिथि को समाप्त होता है, वह बताएं।',
       },
+    },
+    task: {
+      invalidTitle: 'यह टास्क लिंक मान्य नहीं है',
+      invalidDesc:
+        'यह समाप्त हो गया हो, वापस ले लिया गया हो, या पहले ही सबमिट किया जा चुका हो। कृपया भर्ती टीम से नया लिंक मांगें।',
+      networkTitle: 'आपका टास्क लोड नहीं हो सका',
+      networkDesc:
+        'सर्वर से संपर्क करने में समस्या हुई — आपका लिंक शायद ठीक है। अपना कनेक्शन जांचें और फिर कोशिश करें।',
+      retry: 'फिर कोशिश करें',
+      loading: 'आपका टास्क लोड हो रहा है…',
+      errorGeneric: 'कुछ गड़बड़ हो गई। कृपया फिर कोशिश करें।',
+      kind: {
+        job_simulation: 'जॉब सिमुलेशन',
+        portfolio: 'पोर्टफोलियो',
+      },
+      submittedTitle: 'सबमिट किया गया',
+      submittedDesc: 'सबमिट किया गया — भर्ती टीम के पास पहुंच गया। अब आप यह विंडो बंद कर सकते हैं।',
+      dueBy: '{{date}} तक देय',
+      timeLimitNotice: 'समय सीमा: शुरू करने पर {{time}}।',
+      timeRemaining: 'शेष समय: {{time}}',
+      adjustmentNotice: 'इस टास्क के लिए आपके समय में एक समायोजन शामिल है।',
+      materialsHeading: 'संदर्भ सामग्री',
+      download: 'डाउनलोड करें',
+      downloadError: 'वह फ़ाइल नहीं खोली जा सकी।',
+      itemRequired: 'आवश्यक',
+      itemOptional: 'वैकल्पिक',
+      textPlaceholder: 'अपना उत्तर लिखें…',
+      charsRemaining: '{{count}} अक्षर शेष',
+      linkLabel: 'लिंक',
+      linkPlaceholder: 'https://…',
+      linkDomainsHint: 'इन पर लिंक: {{domains}}',
+      fileItemUnavailable:
+        'यह आइटम अभी इस लिंक से पूरा नहीं किया जा सकता — यदि इसके लिए फ़ाइल चाहिए तो भर्ती टीम से संपर्क करें।',
+      saved: 'सहेजा गया',
+      saving: 'सहेजा जा रहा है…',
+      saveError: 'वह उत्तर सहेजा नहीं जा सका।',
+      portfolioHeading: 'आपका पोर्टफोलियो',
+      portfolioRange: '{{min}} से {{max}} आइटम जोड़ें — फ़ाइलें या लिंक।',
+      addFile: 'फ़ाइल जोड़ें',
+      addLink: 'लिंक जोड़ें',
+      uploading: 'अपलोड हो रहा है…',
+      addError: 'वह जोड़ा नहीं जा सका।',
+      remove: 'हटाएं',
+      removeError: 'वह हटाया नहीं जा सका।',
+      artifactTitleLabel: 'शीर्षक (वैकल्पिक)',
+      artifactDescLabel: 'विवरण (वैकल्पिक)',
+      linkKindLabel: 'प्रकार',
+      linkKinds: {
+        repository: 'रिपॉज़िटरी',
+        design: 'डिज़ाइन',
+        document: 'दस्तावेज़',
+        video: 'वीडियो',
+        website: 'वेबसाइट',
+        other: 'अन्य',
+      },
+      tooLarge: 'वह फ़ाइल 10 MB से बड़ी है। कृपया छोटी फ़ाइल अपलोड करें।',
+      wrongType: 'कृपया PDF, JPEG या PNG फ़ाइल अपलोड करें।',
+      consentNotice:
+        'शुरू करके, आप इस आवेदन के लिए अपने उत्तर और आपके द्वारा जोड़ी गई कोई भी फ़ाइल या लिंक भर्ती टीम के साथ साझा करने के लिए सहमत होते हैं। वे सुरक्षित रखे जाते हैं — ऐसे स्टोरेज प्रदाता के पास जो भारत के बाहर हो सकता है — और केवल इस आवेदन के मूल्यांकन के लिए उपयोग किए जाते हैं। आप भर्ती टीम से संपर्क करके यह सहमति कभी भी वापस ले सकते हैं।',
+      consentLabel: 'मैं ऊपर बताए अनुसार यह काम भर्ती टीम के साथ साझा करने के लिए सहमत हूं।',
+      beginButton: 'शुरू करें',
+      beginError: 'यह टास्क शुरू नहीं हो सका। कृपया फिर कोशिश करें।',
+      submit: 'सबमिट करें',
+      submitting: 'सबमिट हो रहा है…',
+      submitError: 'सबमिट नहीं हो सका। कृपया फिर कोशिश करें।',
+      confirmSubmitTitle: 'क्या यह भर्ती टीम को भेजें?',
+      confirmSubmitDesc: 'सबमिट करने के बाद आप और बदलाव नहीं कर सकेंगे।',
+      confirmYes: 'हां, सबमिट करें',
+      cancel: 'रद्द करें',
+      notReadyRequired: 'सबमिट करने से पहले हर आवश्यक आइटम का उत्तर दें।',
+      notReadyArtifacts: 'सबमिट करने से पहले अपने पोर्टफोलियो में कम से कम {{count}} आइटम जोड़ें।',
     },
   },
 };
@@ -2086,8 +2253,10 @@ const te = {
     dashboard: {
       welcome: 'స్వాగతం, {{name}}',
       signedInAs: 'ఈ పేరుతో సైన్ ఇన్ అయ్యారు',
-      readinessSub: 'మీరు {{score}}% interview-ready గా ఉన్నారు. స్కోరు పెంచుకోవడానికి సాధన చేయండి.',
-      readinessSubNoData: 'ఇంకా ఇంటర్వ్యూలు లేవు — readiness స్కోరు చూడటానికి మొదటిది మొదలుపెట్టండి.',
+      readinessSub:
+        'మీరు {{score}}% interview-ready గా ఉన్నారు. స్కోరు పెంచుకోవడానికి సాధన చేయండి.',
+      readinessSubNoData:
+        'ఇంకా ఇంటర్వ్యూలు లేవు — readiness స్కోరు చూడటానికి మొదటిది మొదలుపెట్టండి.',
       avgScoreRingLabel: 'సగటు',
       avgScoreTitle: 'సగటు ఇంటర్వ్యూ స్కోరు',
       readinessDesc: '{{count}} ప్రయత్నాల ఆధారంగా',
@@ -2126,11 +2295,13 @@ const te = {
       nextStepsTitle: 'తదుపరి అడుగులు',
       thisWeekTitle: 'ఈ వారం',
       nudgeResumeTitle: 'మీ రెజ్యూమే అప్‌లోడ్ చేయండి',
-      nudgeResumeBody: 'రెజ్యూమే ఇంటర్వ్యూ ప్రశ్నలను మీ అనుభవం మరియు skills కి అనుగుణంగా personalize చేస్తుంది.',
+      nudgeResumeBody:
+        'రెజ్యూమే ఇంటర్వ్యూ ప్రశ్నలను మీ అనుభవం మరియు skills కి అనుగుణంగా personalize చేస్తుంది.',
       nudgePracticeTitle: 'కొనసాగించండి',
       nudgePracticeBody: 'మీ చివరి session బాగా జరిగింది. మరో రన్ మీ సమాధానాలను మెరుగుపరుస్తుంది.',
       nudgeFirstTitle: 'మొదటి ఇంటర్వ్యూకి సిద్ధంగా ఉన్నారా?',
-      nudgeFirstBody: 'ఒక job role ఎంచుకుని voice interview ప్రారంభించండి — దాదాపు 10 నిమిషాలు పడుతుంది.',
+      nudgeFirstBody:
+        'ఒక job role ఎంచుకుని voice interview ప్రారంభించండి — దాదాపు 10 నిమిషాలు పడుతుంది.',
       nudgeJobsTitle: 'సాధన కోసం role కనుగొనండి',
       quickActionsTitle: 'త్వరిత చర్యలు',
       quickActionsDesc: 'సాధన చేయడానికి సిద్ధంగా ఉన్నారా? ఏదైనా పదవి కోసం ఇంటర్వ్యూ మొదలుపెట్టండి.',
@@ -2140,7 +2311,8 @@ const te = {
       recentInterviewsEmpty: 'ఇంకా ఇంటర్వ్యూలు లేవు. పై నుండి మొదటిది మొదలుపెట్టండి.',
       viewAllHistory: 'అన్ని చరిత్ర చూడండి',
       resumeCardTitle: 'మీ రెజ్యూమే',
-      resumeCardDesc: 'AI ఇంటర్వ్యూయర్ ప్రశ్నలు personalize చేయగలిగేలా మీ రెజ్యూమే అప్‌లోడ్ చేయండి.',
+      resumeCardDesc:
+        'AI ఇంటర్వ్యూయర్ ప్రశ్నలు personalize చేయగలిగేలా మీ రెజ్యూమే అప్‌లోడ్ చేయండి.',
       resumeOnFile: 'రెజ్యూమే ఫైల్‌లో ఉంది — కొత్తది అప్‌లోడ్ చేసి మార్చండి',
       noResumeYet: 'ఫైల్‌లో రెజ్యూమే లేదు',
       uploadedOn: '{{date}} న అప్‌లోడ్ చేయబడింది',
@@ -2208,11 +2380,13 @@ const te = {
       featureVoiceTitle: 'Voice-first అనుభవం',
       featureVoiceDesc: '3D AI avatar తో natural సంభాషణ — typing లేదు, MCQ లేదు.',
       featureLanguageTitle: 'మీ భాష',
-      featureLanguageDesc: 'English, Hindi లేదా Telugu లో ఇంటర్వ్యూ ఇవ్వండి. 22 Indian languages త్వరలో.',
+      featureLanguageDesc:
+        'English, Hindi లేదా Telugu లో ఇంటర్వ్యూ ఇవ్వండి. 22 Indian languages త్వరలో.',
       featureScorecardTitle: 'తక్షణ scorecard',
       featureScorecardDesc: 'strengths, gaps మరియు actionable tips తో detailed PDF report పొందండి.',
       featurePrivacyTitle: 'Private మరియు secure',
-      featurePrivacyDesc: 'DPDP Act 2023 అనుసారం. మీ data platform మరియు దాని listed sub-processors ద్వారా ఇంటర్వ్యూ నిర్వహణ కోసం మాత్రమే సురక్షితంగా process చేయబడుతుంది.',
+      featurePrivacyDesc:
+        'DPDP Act 2023 అనుసారం. మీ data platform మరియు దాని listed sub-processors ద్వారా ఇంటర్వ్యూ నిర్వహణ కోసం మాత్రమే సురక్షితంగా process చేయబడుతుంది.',
       trustBadge: 'Engineering colleges మరియు skill universities విశ్వాసం',
       ctaTitle: 'Practice కు సిద్ధంగా ఉన్నారా?',
       ctaSubtitle: 'ఉచిత అకౌంట్ సృష్టించి నేడే మొదటి AI ఇంటర్వ్యూ ప్రారంభించండి.',
@@ -2260,7 +2434,8 @@ const te = {
     },
     startInterview: {
       pageTitle: 'ఇంటర్వ్యూ ప్రారంభించండి',
-      pageDesc: 'పదవి గురించి చెప్పండి. AI ఇంటర్వ్యూయర్ job మరియు మీ resume ఆధారంగా ప్రశ్నలు తయారు చేస్తాడు.',
+      pageDesc:
+        'పదవి గురించి చెప్పండి. AI ఇంటర్వ్యూయర్ job మరియు మీ resume ఆధారంగా ప్రశ్నలు తయారు చేస్తాడు.',
       resumeOnFile: 'మీ resume ఫైల్‌లో ఉంది.',
       resumeOnFileDesc: 'ప్రశ్నలు మీ profile కి అనుగుణంగా personalize అవుతాయి.',
       noResume: 'రెజ్యూమే ఫైల్‌లో లేదు — దానితో కూడా ఇంటర్వ్యూ జరుగుతుంది, కానీ',
@@ -2275,11 +2450,13 @@ const te = {
       optional: 'ఐచ్ఛికం',
       companyPlaceholder: 'ఉదా: Acme Corp',
       jdLabel: 'Job description / JD',
-      jdPlaceholder: 'ఇక్కడ job description paste చేయండి — AI దాన్ని role-specific ప్రశ్నలు అడగడానికి ఉపయోగిస్తుంది.',
+      jdPlaceholder:
+        'ఇక్కడ job description paste చేయండి — AI దాన్ని role-specific ప్రశ్నలు అడగడానికి ఉపయోగిస్తుంది.',
       step2Title: 'మీ ఇంటర్వ్యూయర్‌ని ఎంచుకోండి',
       step2Desc: 'మీ session నిర్వహించే avatar ఎంచుకోండి.',
       loadingInterviewers: 'ఇంటర్వ్యూయర్లు లోడవుతున్నారు…',
-      avatarLoadError: 'Avatar list లోడ్ అవ్వలేదు — మీరు ఇంకా ప్రారంభించవచ్చు; default ఇంటర్వ్యూయర్ ఉపయోగించబడతారు.',
+      avatarLoadError:
+        'Avatar list లోడ్ అవ్వలేదు — మీరు ఇంకా ప్రారంభించవచ్చు; default ఇంటర్వ్యూయర్ ఉపయోగించబడతారు.',
       maleGroup: 'పురుషులు',
       femaleGroup: 'మహిళలు',
       step3Title: 'ప్రాధాన్యతలు',
@@ -2329,7 +2506,8 @@ const te = {
       calibrating: 'కాలిబ్రేట్ అవుతోంది — దయచేసి స్క్రీన్‌ను చూస్తూ కొద్దిసేపు స్థిరంగా ఉండండి.',
       warn_face_absent: 'మీరు కనిపించడం లేదు — దయచేసి కెమెరా ముందుకు తిరిగి రండి.',
       warn_gaze_away: 'దయచేసి స్క్రీన్‌ను చూడండి, ఇంటర్వ్యూపై దృష్టి పెట్టండి.',
-      warn_multiple_faces: 'ఒకరి కంటే ఎక్కువ మంది కనిపిస్తున్నారు — దయచేసి ఇంటర్వ్యూ కోసం ఒంటరిగా ఉండండి.',
+      warn_multiple_faces:
+        'ఒకరి కంటే ఎక్కువ మంది కనిపిస్తున్నారు — దయచేసి ఇంటర్వ్యూ కోసం ఒంటరిగా ఉండండి.',
       endButton: 'ముగించు',
       fullscreenExitTitle: 'మీరు ఫుల్‌స్క్రీన్ నుండి బయటకు వచ్చారు',
       fullscreenExitSub:
@@ -2342,11 +2520,13 @@ const te = {
       defaultMessage: 'మీ సమాధానాలు రికార్డ్ అయ్యాయి.',
       sessionLabel: 'Session {{id}}',
       earlyExitTitle: 'Session పూర్తికాకుండా మూసివేయబడింది',
-      earlyExitDesc: 'ఈ session కి scorecard రాదు. సిద్ధంగా ఉన్నప్పుడు కొత్త ఇంటర్వ్యూ ప్రారంభించండి.',
+      earlyExitDesc:
+        'ఈ session కి scorecard రాదు. సిద్ధంగా ఉన్నప్పుడు కొత్త ఇంటర్వ్యూ ప్రారంభించండి.',
       preparingScorecard: 'మీ scorecard తయారవుతోంది…',
       scorecardDesc: 'మీ AI scorecard generate అవుతోంది. సాధారణంగా 10–30 సెకన్లు పడుతుంది.',
       scorecardTimeout: 'Scorecard సాధారణం కంటే ఎక్కువ సమయం తీసుకుంటోంది',
-      scorecardTimeoutDesc: 'ఇంకా process అవుతూ ఉండవచ్చు. కొన్ని నిమిషాల తర్వాత interview history చూడండి.',
+      scorecardTimeoutDesc:
+        'ఇంకా process అవుతూ ఉండవచ్చు. కొన్ని నిమిషాల తర్వాత interview history చూడండి.',
       checkAgain: 'మళ్ళీ తనిఖీ చేయండి',
       backToDashboard: 'డాష్‌బోర్డ్‌కి తిరిగి వెళ్ళండి',
       history: 'చరిత్ర',
@@ -2403,13 +2583,15 @@ const te = {
     },
     resume: {
       pageTitle: 'Resume Manager',
-      pageDesc: 'మీ resume versions నిర్వహించండి. ప్రస్తుత version మీ AI interviews personalize చేయడానికి ఉపయోగించబడుతుంది.',
+      pageDesc:
+        'మీ resume versions నిర్వహించండి. ప్రస్తుత version మీ AI interviews personalize చేయడానికి ఉపయోగించబడుతుంది.',
       noResumeTitle: 'ఫైల్‌లో రెజ్యూమే లేదు',
       noResumeDesc: 'AI interviews personalize చేయడానికి PDF రెజ్యూమే అప్‌లోడ్ చేయండి.',
       activeResumeTitle: 'యాక్టివ్ రెజ్యూమే',
       activeResumeDesc: 'ఈ version మీ తదుపరి interview session లో ఉపయోగించబడుతుంది.',
       uploadTitle: 'కొత్త Version అప్‌లోడ్ చేయండి',
-      uploadDesc: 'PDF అప్‌లోడ్ చేయండి (గరిష్టంగా 5 MB). కొత్త version మీ current రెజ్యూమే అవుతుంది.',
+      uploadDesc:
+        'PDF అప్‌లోడ్ చేయండి (గరిష్టంగా 5 MB). కొత్త version మీ current రెజ్యూమే అవుతుంది.',
       versionHistory: 'Version History ({{count}})',
       uploaded: 'అప్‌లోడ్ చేయబడింది',
       extracted: 'extracted',
@@ -2418,7 +2600,8 @@ const te = {
       setAsCurrent: 'Current గా చేయండి',
       setting: 'సెట్ అవుతోంది…',
       deleteTitle: 'Resume version తొలగించాలా?',
-      deleteDesc: 'ఇది {{filename}} ను మీ అకౌంట్ నుండి శాశ్వతంగా తొలగిస్తుంది. ఈ చర్యను రద్దు చేయలేరు.',
+      deleteDesc:
+        'ఇది {{filename}} ను మీ అకౌంట్ నుండి శాశ్వతంగా తొలగిస్తుంది. ఈ చర్యను రద్దు చేయలేరు.',
       cancel: 'రద్దు చేయండి',
       delete: 'తొలగించండి',
       deleting: 'తొలగించబడుతోంది…',
@@ -2449,7 +2632,8 @@ const te = {
       // Cross-border disclosure (DPDP) — IMPORTANT: must receive legal review before govt-bid launch.
       dataFlowNote:
         'డేటా వెల్లడి: మీ వాయిస్, transcript మరియు ప్రొఫైల్ ప్రస్తుతం భారతదేశం వెలుపల ఉన్న sub-processors (Singapore, United States) ద్వారా process చేయబడుతున్నాయి. India-resident storage ప్రణాళికలో ఉంది కానీ ఇంకా సక్రియం కాలేదు. పూర్తి sub-processor జాబితా: intants.com/data-flow',
-      footerNote: '"నేను అంగీకరిస్తున్నాను" క్లిక్ చేయడం ద్వారా మీరు పై processing కి సమ్మతిస్తున్నారు, పై వివరించిన cross-border transfer తో సహా.',
+      footerNote:
+        '"నేను అంగీకరిస్తున్నాను" క్లిక్ చేయడం ద్వారా మీరు పై processing కి సమ్మతిస్తున్నారు, పై వివరించిన cross-border transfer తో సహా.',
       agree: 'నేను అంగీకరిస్తున్నాను',
       saving: 'సేవ్ అవుతోంది…',
       decline: 'తిరస్కరించండి',
@@ -2470,7 +2654,8 @@ const te = {
     },
     jobs: {
       pageTitle: 'అందుబాటులో ఉన్న పదవులు',
-      pageSubtitle: 'ఏ పదవికైనా AI ఇంటర్వ్యూ ఇవ్వండి — స్వేచ్ఛగా practice చేయండి లేదా నిజంగా submit చేయండి.',
+      pageSubtitle:
+        'ఏ పదవికైనా AI ఇంటర్వ్యూ ఇవ్వండి — స్వేచ్ఛగా practice చేయండి లేదా నిజంగా submit చేయండి.',
       searchPlaceholder: 'పదవులు వెతకండి…',
       interviewLanguage: 'ఇంటర్వ్యూ భాష',
       filterByLevel: 'స్థాయి ఆధారంగా ఫిల్టర్ చేయండి',
@@ -2482,7 +2667,8 @@ const te = {
       positionsCount_other: '{{count}} పదవులు',
       filteredFrom: '({{count}} నుండి ఫిల్టర్ చేయబడింది)',
       noPositionsTitle: 'ఏ పదవులు కనుగొనబడలేదు',
-      noPositionsFiltered: 'వేరే స్థాయి ఫిల్టర్ ప్రయత్నించండి లేదా అన్ని ఖాళీలను చూడటానికి దాన్ని తీసివేయండి.',
+      noPositionsFiltered:
+        'వేరే స్థాయి ఫిల్టర్ ప్రయత్నించండి లేదా అన్ని ఖాళీలను చూడటానికి దాన్ని తీసివేయండి.',
       noPositionsEmpty: 'ప్రస్తుతం ఏ ఖాళీ పదవులు అందుబాటులో లేవు.',
       clearFilter: 'ఫిల్టర్ తీసివేయండి',
       declineBanner: 'ఇంటర్వ్యూ ఫీచర్‌ను ఉపయోగించడానికి మీరు సమ్మతించాలి.',
@@ -2584,7 +2770,8 @@ const te = {
       resultThanks: 'పరీక్ష పూర్తి చేసినందుకు ధన్యవాదాలు. మీరు ఇప్పుడు ఈ విండోను మూసివేయవచ్చు.',
       questionsCount: '{{count}} ప్రశ్నలు',
       minutes: '{{count}} నిమి',
-      timerNote: 'మీరు ప్రారంభించినప్పుడు టైమర్ మొదలవుతుంది మరియు సమయం ముగిసినప్పుడు పరీక్ష స్వయంచాలకంగా సబ్మిట్ అవుతుంది.',
+      timerNote:
+        'మీరు ప్రారంభించినప్పుడు టైమర్ మొదలవుతుంది మరియు సమయం ముగిసినప్పుడు పరీక్ష స్వయంచాలకంగా సబ్మిట్ అవుతుంది.',
       startExam: 'పరీక్ష ప్రారంభించండి',
       couldNotStart: 'ప్రారంభించలేకపోయాం.',
       answered: '{{answered}}/{{total}} సమాధానమిచ్చారు',
@@ -2595,7 +2782,8 @@ const te = {
       liveExam: 'లైవ్ పరీక్ష',
       factQuestions: 'ప్రశ్నలు',
       factDuration: 'వ్యవధి',
-      consentLabel: 'DPDP-అనుగుణ గోప్యతా విధానం ప్రకారం AI స్కోరింగ్ కోసం ఈ పరీక్ష రికార్డ్ చేయబడటానికి నేను సమ్మతిస్తున్నాను.',
+      consentLabel:
+        'DPDP-అనుగుణ గోప్యతా విధానం ప్రకారం AI స్కోరింగ్ కోసం ఈ పరీక్ష రికార్డ్ చేయబడటానికి నేను సమ్మతిస్తున్నాను.',
       timeRemaining: 'మిగిలిన సమయం: {{time}}',
       // Round / section additions (Phase 2+)
       roundLabel: 'రౌండ్ {{n}}: {{title}}',
@@ -2610,8 +2798,7 @@ const te = {
       sectionProgress: 'విభాగం {{current}}/{{total}}: {{title}}',
       sectionTimeRemaining: 'విభాగం మిగిలిన సమయం: {{time}}',
       nextSection: 'తదుపరి విభాగం',
-      violationWarning:
-        'ఉల్లంఘన {{count}} నమోదైంది. auto-submit కు ముందు {{remaining}} మిగిలాయి.',
+      violationWarning: 'ఉల్లంఘన {{count}} నమోదైంది. auto-submit కు ముందు {{remaining}} మిగిలాయి.',
       violationNoted: 'ఉల్లంఘన {{count}} నమోదైంది.',
       violationBadgeLabel: '{{count}} integrity ఉల్లంఘనలు',
       codingProblems: '{{count}} coding సమస్యలు',
@@ -2636,7 +2823,8 @@ const te = {
       runningAllTests: 'మీ code అన్ని test cases పై నడుస్తోంది — ఇది కొంత సమయం తీసుకోవచ్చు…',
     },
     interviewPage: {
-      missingSession: 'ఇంటర్వ్యూ session కనుగొనబడలేదు. దయచేసి డ్యాష్‌బోర్డ్ నుండి కొత్త ఇంటర్వ్యూ ప్రారంభించండి.',
+      missingSession:
+        'ఇంటర్వ్యూ session కనుగొనబడలేదు. దయచేసి డ్యాష్‌బోర్డ్ నుండి కొత్త ఇంటర్వ్యూ ప్రారంభించండి.',
     },
     error: {
       generic: 'ఏదో తప్పు జరిగింది. దయచేసి మళ్ళీ ప్రయత్నించండి.',
@@ -2727,7 +2915,8 @@ const te = {
       positions_one: '{{count}} ఖాళీ',
       positions_other: '{{count}} ఖాళీలు',
       noMatchTitle: 'ఈ ఫిల్టర్లకు సరిపోయే ఉద్యోగాలు లేవు',
-      noMatchDesc: 'మీ శోధనను విస్తృతం చేయండి — ఒక ఫిల్టర్ తొలగిస్తే సాధారణంగా మరిన్ని కనిపిస్తాయి.',
+      noMatchDesc:
+        'మీ శోధనను విస్తృతం చేయండి — ఒక ఫిల్టర్ తొలగిస్తే సాధారణంగా మరిన్ని కనిపిస్తాయి.',
       noRolesTitle: 'ప్రస్తుతం ఖాళీ ఉద్యోగాలు లేవు',
       noRolesDesc: '{{company}} ప్రస్తుతం ఏ ఉద్యోగాన్నీ ప్రకటించడం లేదు. తర్వాత చూడండి.',
       notFoundTitle: 'ఇక్కడ కెరీర్ పేజీ లేదు',
@@ -2912,10 +3101,13 @@ const te = {
       expiresOn: '{{date}} లోపు సమాధానం ఇవ్వండి',
       accept: 'ఆఫర్‌ను అంగీకరించండి',
       decline: 'ఆఫర్‌ను తిరస్కరించండి',
-      acceptCodeIntro: 'మీ అంగీకారాన్ని నిర్ధారించడానికి మేము మీకు ఈమెయిల్‌లో ఒకసారి-వాడే కోడ్ పంపుతాము.',
-      declineCodeIntro: 'మీ నిర్ణయాన్ని నిర్ధారించడానికి మేము మీకు ఈమెయిల్‌లో ఒకసారి-వాడే కోడ్ పంపుతాము.',
+      acceptCodeIntro:
+        'మీ అంగీకారాన్ని నిర్ధారించడానికి మేము మీకు ఈమెయిల్‌లో ఒకసారి-వాడే కోడ్ పంపుతాము.',
+      declineCodeIntro:
+        'మీ నిర్ణయాన్ని నిర్ధారించడానికి మేము మీకు ఈమెయిల్‌లో ఒకసారి-వాడే కోడ్ పంపుతాము.',
       sendCode: 'నాకు కోడ్ పంపండి',
-      codeSent: 'కోడ్ పంపబడింది — మీ ఈమెయిల్‌ను తనిఖీ చేయండి. ఇది {{minutes}} నిమిషాల్లో గడువు ముగుస్తుంది.',
+      codeSent:
+        'కోడ్ పంపబడింది — మీ ఈమెయిల్‌ను తనిఖీ చేయండి. ఇది {{minutes}} నిమిషాల్లో గడువు ముగుస్తుంది.',
       codeLabel: 'మేము మీకు పంపిన కోడ్‌ను నమోదు చేయండి',
       fullNameLabel: 'అంగీకరించడానికి మీ పూర్తి పేరు టైప్ చేయండి',
       fullNamePlaceholder: 'మీ పూర్తి పేరు',
@@ -2930,7 +3122,8 @@ const te = {
         intro: 'మీరు ప్రారంభించే ముందు నియామక బృందానికి మీ నుండి కొన్ని పత్రాలు అవసరం.',
         none: 'పంపడానికి ఏమీ లేదు — నియామక బృందం ఏ పత్రాలనూ అడగలేదు.',
         getCode: 'కోడ్ పొందండి',
-        codeIntro: 'మీరు మీ పత్రాలను సురక్షితంగా నిర్వహించగలిగేలా మేము మీకు ఈమెయిల్‌లో ఒకసారి-వాడే కోడ్ పంపుతాము.',
+        codeIntro:
+          'మీరు మీ పత్రాలను సురక్షితంగా నిర్వహించగలిగేలా మేము మీకు ఈమెయిల్‌లో ఒకసారి-వాడే కోడ్ పంపుతాము.',
         openChecklist: 'కొనసాగించండి',
         sessionExpired: 'ఆ సెషన్ ముగిసింది. కొనసాగించడానికి కొత్త కోడ్ కోసం అడగండి.',
         loading: 'మీ పత్రాలు లోడ్ అవుతున్నాయి…',
@@ -2966,6 +3159,78 @@ const te = {
         wrongType: 'దయచేసి PDF, JPEG లేదా PNG ఫైల్‌ను అప్‌లోడ్ చేయండి.',
         needExpiry: 'ఈ పత్రం ఏ తేదీన గడువు ముగుస్తుందో తెలియజేయండి.',
       },
+    },
+    task: {
+      invalidTitle: 'ఈ టాస్క్ లింక్ చెల్లదు',
+      invalidDesc:
+        'ఇది గడువు ముగిసి ఉండవచ్చు, ఉపసంహరించుకుని ఉండవచ్చు, లేదా ఇప్పటికే సమర్పించి ఉండవచ్చు. దయచేసి నియామక బృందాన్ని కొత్త లింక్ కోసం అడగండి.',
+      networkTitle: 'మీ టాస్క్‌ను లోడ్ చేయలేకపోయాము',
+      networkDesc:
+        'సర్వర్‌ను చేరుకోవడంలో సమస్య వచ్చింది — మీ లింక్ బహుశా సరిగ్గానే ఉంది. మీ కనెక్షన్‌ను తనిఖీ చేసి మళ్లీ ప్రయత్నించండి.',
+      retry: 'మళ్లీ ప్రయత్నించండి',
+      loading: 'మీ టాస్క్ లోడ్ అవుతోంది…',
+      errorGeneric: 'ఏదో తప్పు జరిగింది. దయచేసి మళ్లీ ప్రయత్నించండి.',
+      kind: {
+        job_simulation: 'జాబ్ సిమ్యులేషన్',
+        portfolio: 'పోర్ట్‌ఫోలియో',
+      },
+      submittedTitle: 'సమర్పించారు',
+      submittedDesc: 'సమర్పించారు — నియామక బృందానికి చేరింది. మీరు ఇప్పుడు ఈ విండోను మూసివేయవచ్చు.',
+      dueBy: '{{date}} నాటికి గడువు',
+      timeLimitNotice: 'సమయ పరిమితి: ప్రారంభించిన తర్వాత {{time}}.',
+      timeRemaining: 'మిగిలిన సమయం: {{time}}',
+      adjustmentNotice: 'ఈ టాస్క్ కోసం మీ సమయంలో ఒక సర్దుబాటు చేర్చబడింది.',
+      materialsHeading: 'సూచన సామగ్రి',
+      download: 'డౌన్‌లోడ్ చేయండి',
+      downloadError: 'ఆ ఫైల్‌ను తెరవలేకపోయాము.',
+      itemRequired: 'తప్పనిసరి',
+      itemOptional: 'ఐచ్ఛికం',
+      textPlaceholder: 'మీ సమాధానం రాయండి…',
+      charsRemaining: '{{count}} అక్షరాలు మిగిలి ఉన్నాయి',
+      linkLabel: 'లింక్',
+      linkPlaceholder: 'https://…',
+      linkDomainsHint: 'వీటికి లింక్‌లు: {{domains}}',
+      fileItemUnavailable:
+        'ఈ ఐటెమ్‌కు ఈ లింక్ నుండి ఇంకా సమాధానం ఇవ్వలేరు — దీనికి ఫైల్ అవసరమైతే నియామక బృందాన్ని సంప్రదించండి.',
+      saved: 'సేవ్ చేయబడింది',
+      saving: 'సేవ్ అవుతోంది…',
+      saveError: 'ఆ సమాధానాన్ని సేవ్ చేయలేకపోయాము.',
+      portfolioHeading: 'మీ పోర్ట్‌ఫోలియో',
+      portfolioRange: '{{min}} నుండి {{max}} ఐటెమ్‌లు జోడించండి — ఫైళ్లు లేదా లింక్‌లు.',
+      addFile: 'ఫైల్ జోడించండి',
+      addLink: 'లింక్ జోడించండి',
+      uploading: 'అప్‌లోడ్ అవుతోంది…',
+      addError: 'దాన్ని జోడించలేకపోయాము.',
+      remove: 'తీసివేయండి',
+      removeError: 'దాన్ని తీసివేయలేకపోయాము.',
+      artifactTitleLabel: 'శీర్షిక (ఐచ్ఛికం)',
+      artifactDescLabel: 'వివరణ (ఐచ్ఛికం)',
+      linkKindLabel: 'రకం',
+      linkKinds: {
+        repository: 'రిపాజిటరీ',
+        design: 'డిజైన్',
+        document: 'పత్రం',
+        video: 'వీడియో',
+        website: 'వెబ్‌సైట్',
+        other: 'ఇతరం',
+      },
+      tooLarge: 'ఆ ఫైల్ 10 MB కంటే పెద్దది. దయచేసి చిన్న ఫైల్‌ను అప్‌లోడ్ చేయండి.',
+      wrongType: 'దయచేసి PDF, JPEG లేదా PNG ఫైల్‌ను అప్‌లోడ్ చేయండి.',
+      consentNotice:
+        'ప్రారంభించడం ద్వారా, ఈ దరఖాస్తు కోసం మీ సమాధానాలను మరియు మీరు జోడించే ఏవైనా ఫైళ్లు లేదా లింక్‌లను నియామక బృందంతో పంచుకోవడానికి మీరు అంగీకరిస్తారు. అవి సురక్షితంగా ఉంచబడతాయి — భారతదేశం వెలుపల ఉండే అవకాశం ఉన్న నిల్వ ప్రదాత వద్ద — మరియు ఈ దరఖాస్తును మదింపు చేయడానికి మాత్రమే ఉపయోగించబడతాయి. నియామక బృందాన్ని సంప్రదించడం ద్వారా మీరు ఈ సమ్మతిని ఎప్పుడైనా ఉపసంహరించుకోవచ్చు.',
+      consentLabel:
+        'పైన వివరించినట్లుగా ఈ పనిని నియామక బృందంతో పంచుకోవడానికి నేను అంగీకరిస్తున్నాను.',
+      beginButton: 'ప్రారంభించండి',
+      beginError: 'ఈ టాస్క్ ప్రారంభం కాలేదు. దయచేసి మళ్లీ ప్రయత్నించండి.',
+      submit: 'సమర్పించండి',
+      submitting: 'సమర్పిస్తోంది…',
+      submitError: 'సమర్పించలేకపోయాము. దయచేసి మళ్లీ ప్రయత్నించండి.',
+      confirmSubmitTitle: 'దీన్ని నియామక బృందానికి పంపాలా?',
+      confirmSubmitDesc: 'సమర్పించిన తర్వాత మీరు ఇక మార్పులు చేయలేరు.',
+      confirmYes: 'అవును, సమర్పించండి',
+      cancel: 'రద్దు చేయండి',
+      notReadyRequired: 'సమర్పించే ముందు ప్రతి తప్పనిసరి ఐటెమ్‌కు సమాధానం ఇవ్వండి.',
+      notReadyArtifacts: 'సమర్పించే ముందు మీ పోర్ట్‌ఫోలియోకు కనీసం {{count}} ఐటెమ్‌లు జోడించండి.',
     },
   },
 };

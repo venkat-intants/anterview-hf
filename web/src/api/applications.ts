@@ -43,6 +43,15 @@ export interface MyApplication {
    */
   interview_invite_id: string | null;
   interview_scheduled_at: string | null;
+  /**
+   * PH4-D4 — an open job_simulation/portfolio submission, the task
+   * equivalent of `interview_invite_id` above: null once submitted, expired,
+   * withdrawn, or while nothing has been issued yet. Carries no token, the
+   * same reason: the raw link is never stored, only its hash.
+   */
+  task_submission_id: string | null;
+  task_due_at: string | null;
+  task_status: string | null;
 }
 
 export interface StageEvent {
@@ -123,4 +132,11 @@ export interface InterviewLink {
  */
 export function mintMyInterviewLink(inviteId: string): Promise<InterviewLink> {
   return apiPost<InterviewLink>(`/users/me/interviews/${inviteId}/link`, {});
+}
+
+/** A freshly minted link to the candidate's own job simulation / portfolio
+ *  task. Same rotate-on-mint rule as `mintMyInterviewLink`: any previously
+ *  issued link, including the emailed one, stops working. */
+export function mintMyTaskLink(submissionId: string): Promise<{ url: string }> {
+  return apiPost<{ url: string }>(`/users/me/tasks/${submissionId}/link`, {});
 }

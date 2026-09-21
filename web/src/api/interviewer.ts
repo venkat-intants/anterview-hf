@@ -31,6 +31,9 @@ export interface InterviewerAssignment {
   job_title: string;
   round_title: string;
   is_correction: boolean;
+  /** PH4-D4 — 'job_simulation' and 'portfolio' get a "Simulation review" /
+   *  "Portfolio review" label instead of the bare round title's kind. */
+  round_kind?: string;
 }
 
 /** Already sorted server-side: late first, then due soonest, submitted last. */
@@ -61,6 +64,9 @@ export interface ScorecardDetail {
   candidate_name: string;
   job_title: string;
   round_title: string;
+  /** PH4-D4 — when this is 'job_simulation' or 'portfolio', the page offers
+   *  a third "Submission" tab (SubmissionPanel) alongside Kit and Scorecard. */
+  round_kind?: string;
   due_at: string | null;
   submitted_at: string | null;
   summary: string | null;
@@ -119,7 +125,10 @@ export function submitScorecard(
   scorecardId: string,
   body: ScorecardSaveBody,
 ): Promise<ScorecardSubmitResult> {
-  return apiPost<ScorecardSubmitResult>(`/interviewer/scorecards/${pathId(scorecardId)}/submit`, body);
+  return apiPost<ScorecardSubmitResult>(
+    `/interviewer/scorecards/${pathId(scorecardId)}/submit`,
+    body,
+  );
 }
 
 export interface CorrectionResult {

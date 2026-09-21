@@ -8,8 +8,10 @@
 // refuse at publish time — the worst possible moment to find out.
 
 import {
+  Briefcase,
   ClipboardList,
   Code2,
+  Library,
   Video,
   Users,
   type LucideIcon,
@@ -91,7 +93,40 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     supportsCriteria: true,
     decidedBy: 'person',
   },
+  // PH4-D4 — a candidate does asynchronous work by magic link; a person on
+  // your team reviews what comes back. Neither has a threshold: there is
+  // nothing here for a machine to score.
+  job_simulation: {
+    kind: 'job_simulation',
+    label: 'Job simulation',
+    blurb:
+      'A brief and written items a candidate completes by a private link. Reviewed by your team.',
+    icon: Briefcase,
+    tone: 'lavender',
+    needsExam: false,
+    needsThreshold: false,
+    supportsCriteria: true,
+    decidedBy: 'person',
+  },
+  portfolio: {
+    kind: 'portfolio',
+    label: 'Portfolio',
+    blurb:
+      'Files and approved links a candidate submits as evidence of their work. Reviewed by your team.',
+    icon: Library,
+    tone: 'pink',
+    needsExam: false,
+    needsThreshold: false,
+    supportsCriteria: true,
+    decidedBy: 'person',
+  },
 };
 
-export const ROUND_KIND_ORDER: RoundKind[] = ['mcq', 'coding', 'ai_interview', 'human_review'];
-
+export const ROUND_KIND_ORDER: RoundKind[] = [
+  'mcq',
+  'coding',
+  'ai_interview',
+  'human_review',
+  'job_simulation',
+  'portfolio',
+];

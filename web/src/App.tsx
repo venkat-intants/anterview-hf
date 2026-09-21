@@ -39,6 +39,8 @@ const Careers = lazy(() => import('./pages/Careers'));
 // PH4 Wave 4 (A3/A4) — the candidate's own offer, magic-link token in the
 // URL #fragment, same rule as /exam and /interview-invite.
 const PublicOffer = lazy(() => import('./pages/PublicOffer'));
+// PH4-D4 — a job simulation / portfolio task, same magic-link rule.
+const PublicTask = lazy(() => import('./pages/PublicTask'));
 
 // ── Authenticated shell pages ─────────────────────────────────────────────────
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -169,6 +171,8 @@ export default function App() {
           <Route path="/careers/:companySlug" element={<Careers />} />
           {/* Public offer — magic-link token in the URL #fragment, no login. */}
           <Route path="/offer" element={<PublicOffer />} />
+          {/* Public job simulation / portfolio task — same rule. */}
+          <Route path="/task" element={<PublicTask />} />
 
           {/* Authenticated routes rendered INSIDE AppShell */}
           <Route element={<ProtectedRoute />}>
@@ -241,16 +245,10 @@ export default function App() {
                 element={<WorkflowReviews />}
               />
               {/* PH4-D1 — the bank-question review mirror (D4-2). */}
-              <Route
-                path="/superadmin/question-reviews"
-                element={<SuperAdminQuestionReviews />}
-              />
+              <Route path="/superadmin/question-reviews" element={<SuperAdminQuestionReviews />} />
               {/* PH4-A3 — offers awaiting this super admin's approval (D4-2). */}
               <Route path="/superadmin/offer-approvals" element={<OfferApprovals />} />
-              <Route
-                path="/superadmin/offer-approvals/:offerId"
-                element={<OfferApprovals />}
-              />
+              <Route path="/superadmin/offer-approvals/:offerId" element={<OfferApprovals />} />
             </Route>
           </Route>
 
@@ -274,10 +272,7 @@ export default function App() {
               <Route path="/hr/exams" element={<Exams />} />
               <Route path="/hr/exams/:examId" element={<ExamEditor />} />
               <Route path="/hr/exams/:examId/results" element={<ExamResults />} />
-              <Route
-                path="/hr/exams/:examId/attempts/:attemptId"
-                element={<ExamAttemptDetail />}
-              />
+              <Route path="/hr/exams/:examId/attempts/:attemptId" element={<ExamAttemptDetail />} />
               {/* PH4-D1 — reusable question banks. /reviews before /:bankId so
                   the literal wins the match, matching the /hr/requisitions
                   pattern above. */}
@@ -297,18 +292,12 @@ export default function App() {
               {/* /review before /:requisitionId so the literal wins the match. */}
               <Route path="/hr/requisitions" element={<Requisitions />} />
               <Route path="/hr/requisitions/review" element={<RequisitionReview />} />
-              <Route
-                path="/hr/requisitions/:requisitionId"
-                element={<RequisitionDashboard />}
-              />
+              <Route path="/hr/requisitions/:requisitionId" element={<RequisitionDashboard />} />
               <Route
                 path="/hr/requisitions/:requisitionId/workflow"
                 element={<WorkflowBuilder />}
               />
-              <Route
-                path="/hr/requisitions/:requisitionId/decisions"
-                element={<DecisionQueue />}
-              />
+              <Route path="/hr/requisitions/:requisitionId/decisions" element={<DecisionQueue />} />
               <Route path="/hr/analytics" element={<HRAnalyticsPage />} />
             </Route>
           </Route>

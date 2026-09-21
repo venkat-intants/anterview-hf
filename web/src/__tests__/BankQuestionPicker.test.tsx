@@ -3,7 +3,7 @@
 // own skip reasons are reported back for whatever could not be added.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { BankQuestionSearchRow } from '../api/questionBanks';
@@ -113,7 +113,6 @@ describe('BankQuestionPicker — rows already in the exam', () => {
 
 describe('BankQuestionPicker — selection cap', () => {
   it('refuses to select a 101st question and shows why', async () => {
-    const user = userEvent.setup();
     const rows = Array.from({ length: 101 }, (_, i) =>
       row({ id: `q-${i}`, prompt: `Question ${i}` }),
     );
@@ -121,8 +120,12 @@ describe('BankQuestionPicker — selection cap', () => {
     renderPicker();
 
     await screen.findByText('Question 0');
+    // Selecting the first hundred is SETUP, not the behaviour under test, so
+    // it uses fireEvent: a hundred sequential userEvent clicks took ~9 s on
+    // their own and crossed the 15 s test timeout under full-suite load --
+    // a flaky test CI would have hit. What is under test is the 101st row.
     for (let i = 0; i < 100; i++) {
-      await user.click(screen.getByLabelText(`Select Question ${i}`));
+      fireEvent.click(screen.getByLabelText(`Select Question ${i}`));
     }
     expect(screen.getByText('100/100 selected · 101 available')).toBeInTheDocument();
 

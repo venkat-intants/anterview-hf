@@ -25,7 +25,7 @@ import { getApplicant, listApplications } from '@/api/applicants';
 import { listAnswers, type ApplicationAnswer } from '@/api/questions';
 import { listRoundResults, type RoundResult } from '@/api/applicants';
 import { getEnrolmentHistory } from '@/api/requisitions';
-import { getWorkflow, listWorkflows } from '@/api/workflows';
+import { getWorkflow, HUMAN_EVALUATED_KINDS, listWorkflows } from '@/api/workflows';
 import {
   assignInterviewers,
   getEnrolmentScorecards,
@@ -39,6 +39,7 @@ import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import AccommodationsSection from '@/components/hr/AccommodationsSection';
+import TaskSubmissionSection from '@/components/hr/TaskSubmissionSection';
 import ExceptionsSection from '@/components/ExceptionsSection';
 import InterviewLoopsSection from '@/components/InterviewLoopsSection';
 import OfferSection from '@/components/OfferSection';
@@ -256,8 +257,7 @@ function AssignInterviewersForm({
       setSelected([]);
       onAssigned();
     },
-    onError: (e) =>
-      toast.error(e instanceof Error ? e.message : 'Could not assign interviewers'),
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not assign interviewers'),
   });
 
   return (
@@ -289,7 +289,10 @@ function AssignInterviewersForm({
           <span className="text-[12px] text-muted-foreground">No interviewers set up yet.</span>
         ) : (
           (interviewers.data ?? []).map((iv) => (
-            <label key={iv.user_id} className="flex items-center gap-2 text-[12.5px] text-foreground">
+            <label
+              key={iv.user_id}
+              className="flex items-center gap-2 text-[12.5px] text-foreground"
+            >
               <input
                 type="checkbox"
                 checked={selected.includes(iv.user_id)}
@@ -364,8 +367,14 @@ function HumanInterviewSection({
     queryFn: () => getWorkflow(publishedId as string),
     enabled: Boolean(publishedId),
   });
+  // PH4-D4: reviewers are assigned the same way for a job_simulation or
+  // portfolio round as for a human_review one — through the SAME scorecard
+  // machinery (interviewer_scorecards, widened server-side to these kinds).
+  // The name `humanReviewRounds` is kept: this section's own heading and
+  // copy ("Human interview" / "has no human interview round") are unchanged
+  // on purpose, and a `human_review` round is still the common case.
   const humanReviewRounds = (workflow.data?.rounds ?? [])
-    .filter((r) => r.kind === 'human_review')
+    .filter((r) => (HUMAN_EVALUATED_KINDS as readonly string[]).includes(r.kind))
     .map((r) => ({ id: r.id, title: r.title }));
   // Why assigning is not possible right now, or null when it is. Kept apart
   // from "no rounds": a failed fetch and a workflow with no interview round
@@ -390,7 +399,8 @@ function HumanInterviewSection({
       toast.success('Assignment withdrawn');
       invalidate();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not withdraw this assignment'),
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : 'Could not withdraw this assignment'),
   });
 
   const rounds = scorecards.data?.rounds ?? [];
@@ -480,8 +490,8 @@ function HumanInterviewSection({
                       ) : null}
                       {sc.redacted ? (
                         <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
-                          Written evidence removed after a data-erasure request. The scores
-                          are kept.
+                          Written evidence removed after a data-erasure request. The scores are
+                          kept.
                         </p>
                       ) : null}
                       {sc.scores ? (
@@ -506,7 +516,10 @@ function HumanInterviewSection({
                               {round.criteria
                                 .filter((c) => sc.scores?.[c.competency_id]?.evidence)
                                 .map((c) => (
-                                  <li key={c.competency_id} className="text-[11px] text-[var(--ui-faint)]">
+                                  <li
+                                    key={c.competency_id}
+                                    className="text-[11px] text-[var(--ui-faint)]"
+                                  >
                                     {c.competency_name}: {sc.scores?.[c.competency_id]?.evidence}
                                   </li>
                                 ))}
@@ -528,7 +541,9 @@ function HumanInterviewSection({
                             : 'Submitted.'}
                         </p>
                       ) : sc.state !== 'withdrawn' ? (
-                        <p className="mt-1 text-[11.5px] text-muted-foreground">Not submitted yet.</p>
+                        <p className="mt-1 text-[11.5px] text-muted-foreground">
+                          Not submitted yet.
+                        </p>
                       ) : null}
                       {/* Not on an open correction: the server refuses, because it would
                           leave that interviewer with no current scorecard. */}
@@ -550,8 +565,7 @@ function HumanInterviewSection({
                           <ConfirmDeleteButton
                             label="Withdraw"
                             pending={
-                              withdrawMut.isPending &&
-                              withdrawMut.variables?.id === sc.scorecard_id
+                              withdrawMut.isPending && withdrawMut.variables?.id === sc.scorecard_id
                             }
                             onConfirm={() =>
                               withdrawMut.mutate({
@@ -700,8 +714,7 @@ export default function CandidateDrawer({
   if (!applicantId) return null;
 
   const nameDiffers =
-    Boolean(candidate?.parsed_full_name) &&
-    candidate?.parsed_full_name !== candidate?.full_name;
+    Boolean(candidate?.parsed_full_name) && candidate?.parsed_full_name !== candidate?.full_name;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -745,196 +758,212 @@ export default function CandidateDrawer({
 
         {candidate ? (
           <>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {candidate.status ? (
-            <StatusTag tone={STATUS_TONE[candidate.status] ?? 'neutral'} dot>
-              {candidate.status}
-            </StatusTag>
-          ) : null}
-          {candidate.current_round_title ? (
-            <span className="text-[12px] text-muted-foreground">
-              on {candidate.current_round_title}
-            </span>
-          ) : null}
-        </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {candidate.status ? (
+                <StatusTag tone={STATUS_TONE[candidate.status] ?? 'neutral'} dot>
+                  {candidate.status}
+                </StatusTag>
+              ) : null}
+              {candidate.current_round_title ? (
+                <span className="text-[12px] text-muted-foreground">
+                  on {candidate.current_round_title}
+                </span>
+              ) : null}
+            </div>
 
-        {/* The discrepancy nobody else can see. Stated plainly rather than as a
+            {/* The discrepancy nobody else can see. Stated plainly rather than as a
             warning: neither name is wrong, they simply disagree, and only a
             person can decide which the candidate meant. */}
-        {nameDiffers ? (
-          <p className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3 text-[12px] leading-relaxed text-[var(--ui-soft)]">
-            <Info size={13} className="mt-0.5 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
-            <span>
-              Their CV reads{' '}
-              <span className="text-foreground">{candidate.parsed_full_name}</span>. The name
-              above is what
-              {candidate.full_name_source === 'candidate' ? ' they typed' : ' is on file'}.
-            </span>
-          </p>
-        ) : null}
-
-        {candidate.ats_overall != null ? (
-          <div className="mt-5">
-            <div className="flex items-baseline justify-between">
-              <h3 className="text-[13px] font-medium text-foreground">Resume match</h3>
-              <span className="text-[20px] font-semibold text-foreground">
-                {candidate.ats_overall}
-                <span className="text-[13px] text-[var(--ui-faint)]">/100</span>
-              </span>
-            </div>
-            {candidate.ats_summary ? (
-              <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
-                {candidate.ats_summary}
+            {nameDiffers ? (
+              <p className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3 text-[12px] leading-relaxed text-[var(--ui-soft)]">
+                <Info
+                  size={13}
+                  className="mt-0.5 shrink-0 text-[var(--ui-info)]"
+                  aria-hidden="true"
+                />
+                <span>
+                  Their CV reads{' '}
+                  <span className="text-foreground">{candidate.parsed_full_name}</span>. The name
+                  above is what
+                  {candidate.full_name_source === 'candidate' ? ' they typed' : ' is on file'}.
+                </span>
               </p>
             ) : null}
-            {candidate.ats_strengths?.length ? (
-              <ul className="mt-2 flex flex-col gap-1">
-                {candidate.ats_strengths.map((s) => (
-                  <li key={s} className="text-[12.5px] text-[var(--ui-soft)]">
-                    ✓ {s}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {candidate.ats_concerns?.length ? (
-              <ul className="mt-1.5 flex flex-col gap-1">
-                {candidate.ats_concerns.map((c) => (
-                  <li
-                    key={c}
-                    className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-soft)]"
-                  >
-                    <AlertTriangle
-                      size={12}
-                      className="mt-0.5 shrink-0 text-[var(--ui-warn)]"
-                      aria-hidden="true"
-                    />
-                    {c}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
 
-        {/* The prop, not candidate.applicant_id: GET /hr/applicants/{id} returns
+            {candidate.ats_overall != null ? (
+              <div className="mt-5">
+                <div className="flex items-baseline justify-between">
+                  <h3 className="text-[13px] font-medium text-foreground">Resume match</h3>
+                  <span className="text-[20px] font-semibold text-foreground">
+                    {candidate.ats_overall}
+                    <span className="text-[13px] text-[var(--ui-faint)]">/100</span>
+                  </span>
+                </div>
+                {candidate.ats_summary ? (
+                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
+                    {candidate.ats_summary}
+                  </p>
+                ) : null}
+                {candidate.ats_strengths?.length ? (
+                  <ul className="mt-2 flex flex-col gap-1">
+                    {candidate.ats_strengths.map((s) => (
+                      <li key={s} className="text-[12.5px] text-[var(--ui-soft)]">
+                        ✓ {s}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {candidate.ats_concerns?.length ? (
+                  <ul className="mt-1.5 flex flex-col gap-1">
+                    {candidate.ats_concerns.map((c) => (
+                      <li
+                        key={c}
+                        className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-soft)]"
+                      >
+                        <AlertTriangle
+                          size={12}
+                          className="mt-0.5 shrink-0 text-[var(--ui-warn)]"
+                          aria-hidden="true"
+                        />
+                        {c}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* The prop, not candidate.applicant_id: GET /hr/applicants/{id} returns
             the id as `id`, so that field was always undefined and the round
             scores never loaded. */}
-        <RoundScores applicantId={applicantId} enrolmentId={enrolmentId} />
+            <RoundScores applicantId={applicantId} enrolmentId={enrolmentId} />
 
-        {/* PH4-D2 — recorded adjustments to how this applicant is assessed.
+            {/* PH4-D2 — recorded adjustments to how this applicant is assessed.
             Scoped to the applicant, so shown regardless of whether the drawer
             was opened from a specific application. */}
-        <AccommodationsSection
-          applicantId={applicantId}
-          enrolmentId={enrolmentId}
-          requisitionId={app?.requisition_id ?? null}
-        />
+            <AccommodationsSection
+              applicantId={applicantId}
+              enrolmentId={enrolmentId}
+              requisitionId={app?.requisition_id ?? null}
+            />
 
-        {enrolmentId ? (
-          <HumanInterviewSection enrolmentId={enrolmentId} requisitionId={app?.requisition_id ?? null} />
-        ) : null}
+            {enrolmentId ? (
+              <HumanInterviewSection
+                enrolmentId={enrolmentId}
+                requisitionId={app?.requisition_id ?? null}
+              />
+            ) : null}
 
-        {/* PH4-A2 — scheduling the human interview(s) above: the loop(s), each
+            {/* PH4-D4 — a job simulation or portfolio round's own submission(s):
+            lifecycle, re-issue and withdraw. Reviewers for these rounds are
+            assigned in "Human interview" above, through the same scorecard
+            machinery; the pass/hold verdict is recorded on the decision
+            queue, through the existing round-review action — nothing here
+            does either. */}
+            {enrolmentId ? <TaskSubmissionSection enrolmentId={enrolmentId} /> : null}
+
+            {/* PH4-A2 — scheduling the human interview(s) above: the loop(s), each
             session's time in both zones, and the controls to create, send,
             move and close them out. */}
-        {enrolmentId ? (
-          <InterviewLoopsSection enrolmentId={enrolmentId} requisitionId={app?.requisition_id ?? null} />
-        ) : null}
+            {enrolmentId ? (
+              <InterviewLoopsSection
+                enrolmentId={enrolmentId}
+                requisitionId={app?.requisition_id ?? null}
+              />
+            ) : null}
 
-        {/* PH4-O1 — what is blocking this application, for a person to see and
+            {/* PH4-O1 — what is blocking this application, for a person to see and
             act on. Scoped to this enrolment/application, same as the rest of
             the drawer. */}
-        {enrolmentId ? <ExceptionsSection enrolmentId={enrolmentId} /> : null}
+            {enrolmentId ? <ExceptionsSection enrolmentId={enrolmentId} /> : null}
 
-        {/* PH4-A3 — the offer, once this application is a hire. */}
-        {enrolmentId ? (
-          <OfferSection
-            enrolmentId={enrolmentId}
-            jobTitle={candidate.target_job_title}
-            applicationStatus={candidate.status}
-          />
-        ) : null}
-
-        <div className="mt-5">
-          <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">
-            <User size={13} aria-hidden="true" />
-            Details
-          </h3>
-          <Row label="Phone" value={candidate.phone} />
-          <Row
-            label="Experience"
-            value={
-              candidate.years_experience != null
-                ? `${candidate.years_experience} years`
-                : null
-            }
-          />
-          <Row label="Current company" value={candidate.current_company} />
-          <Row label="Current role" value={candidate.current_title} />
-          <Row label="LinkedIn" value={candidate.linkedin_url} />
-          <Row label="GitHub" value={candidate.github_url} />
-        </div>
-
-        {/* Otherwise write-only: candidates fill these in and nobody reads them. */}
-        {enrolmentId ? (
-          <div className="mt-5">
-            <h3 className="mb-2 text-[13px] font-medium text-foreground">
-              Application answers
-            </h3>
-            {answers.isLoading ? (
-              <p className="text-[12.5px] text-muted-foreground">Loading…</p>
+            {/* PH4-A3 — the offer, once this application is a hire. */}
+            {enrolmentId ? (
+              <OfferSection
+                enrolmentId={enrolmentId}
+                jobTitle={candidate.target_job_title}
+                applicationStatus={candidate.status}
+              />
             ) : null}
-            {!answers.isLoading && (answers.data?.length ?? 0) === 0 ? (
-              <p className="text-[12.5px] text-muted-foreground">
-                This opening did not ask any questions.
-              </p>
-            ) : null}
-            <div className="flex flex-col gap-3">
-              {answers.data?.map((a) => (
-                <div key={a.question_id}>
-                  <p
-                    className={cn(
-                      'text-[12px]',
-                      a.retired ? 'text-[var(--ui-faint)]' : 'text-muted-foreground',
-                    )}
-                  >
-                    {a.prompt}
-                    {/* An answer to a question no longer asked still counts —
+
+            <div className="mt-5">
+              <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+                <User size={13} aria-hidden="true" />
+                Details
+              </h3>
+              <Row label="Phone" value={candidate.phone} />
+              <Row
+                label="Experience"
+                value={
+                  candidate.years_experience != null ? `${candidate.years_experience} years` : null
+                }
+              />
+              <Row label="Current company" value={candidate.current_company} />
+              <Row label="Current role" value={candidate.current_title} />
+              <Row label="LinkedIn" value={candidate.linkedin_url} />
+              <Row label="GitHub" value={candidate.github_url} />
+            </div>
+
+            {/* Otherwise write-only: candidates fill these in and nobody reads them. */}
+            {enrolmentId ? (
+              <div className="mt-5">
+                <h3 className="mb-2 text-[13px] font-medium text-foreground">
+                  Application answers
+                </h3>
+                {answers.isLoading ? (
+                  <p className="text-[12.5px] text-muted-foreground">Loading…</p>
+                ) : null}
+                {!answers.isLoading && (answers.data?.length ?? 0) === 0 ? (
+                  <p className="text-[12.5px] text-muted-foreground">
+                    This opening did not ask any questions.
+                  </p>
+                ) : null}
+                <div className="flex flex-col gap-3">
+                  {answers.data?.map((a) => (
+                    <div key={a.question_id}>
+                      <p
+                        className={cn(
+                          'text-[12px]',
+                          a.retired ? 'text-[var(--ui-faint)]' : 'text-muted-foreground',
+                        )}
+                      >
+                        {a.prompt}
+                        {/* An answer to a question no longer asked still counts —
                         hiding it would leave a decision partly based on
                         something nobody can see. */}
-                    {a.retired ? (
-                      <span className="ml-1.5 text-[11px] italic">no longer asked</span>
-                    ) : null}
-                  </p>
-                  <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-[var(--ui-soft)]">
-                    {answerText(a)}
-                  </p>
+                        {a.retired ? (
+                          <span className="ml-1.5 text-[11px] italic">no longer asked</span>
+                        ) : null}
+                      </p>
+                      <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-[var(--ui-soft)]">
+                        {answerText(a)}
+                      </p>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
+              </div>
+            ) : null}
 
-        {enrolmentId && (history.data?.length ?? 0) > 0 ? (
-          <div className="mt-5">
-            <h3 className="mb-2 text-[13px] font-medium text-foreground">History</h3>
-            <ol className="flex flex-col gap-2 border-l border-border pl-3">
-              {history.data?.map((h, i) => (
-                <li key={`${h.occurred_at}-${i}`} className="text-[12.5px]">
-                  <p className="text-[var(--ui-soft)]">{describeMove(h)}</p>
-                  <p className="text-[11.5px] text-[var(--ui-faint)]">
-                    {new Date(h.occurred_at).toLocaleString()}
-                    {/* O4: the structured reason label, when this move recorded
+            {enrolmentId && (history.data?.length ?? 0) > 0 ? (
+              <div className="mt-5">
+                <h3 className="mb-2 text-[13px] font-medium text-foreground">History</h3>
+                <ol className="flex flex-col gap-2 border-l border-border pl-3">
+                  {history.data?.map((h, i) => (
+                    <li key={`${h.occurred_at}-${i}`} className="text-[12.5px]">
+                      <p className="text-[var(--ui-soft)]">{describeMove(h)}</p>
+                      <p className="text-[11.5px] text-[var(--ui-faint)]">
+                        {new Date(h.occurred_at).toLocaleString()}
+                        {/* O4: the structured reason label, when this move recorded
                         one, alongside the free-text reason. Historical rows
                         have neither and render exactly as before. */}
-                    {h.reason_label ? ` — ${h.reason_label}` : ''}
-                    {h.reason ? `${h.reason_label ? ': ' : ' — '}${h.reason}` : ''}
-                  </p>
-                </li>
-              ))}
-            </ol>
-          </div>
-        ) : null}
+                        {h.reason_label ? ` — ${h.reason_label}` : ''}
+                        {h.reason ? `${h.reason_label ? ': ' : ' — '}${h.reason}` : ''}
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ) : null}
           </>
         ) : null}
       </aside>

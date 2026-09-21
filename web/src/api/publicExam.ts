@@ -88,6 +88,11 @@ export interface AttemptStart {
   attempt_id: string;
   started_at: string;
   deadline: string | null;
+  /** PH4-D2: null when this attempt never auto-submits on violation count
+   *  alone. Frozen on the attempt at /start, so it is settled before the
+   *  candidate can trigger a single violation -- unlike the integrity-event
+   *  response, which arrives only after one and is lost on a flaky link. */
+  max_violations: number | null;
 }
 
 export interface ExamResult {

@@ -360,6 +360,20 @@ class AttemptStartOut(BaseModel):
     attempt_id: str
     started_at: str
     deadline: str | None
+    # PH4-D2. None means this attempt never auto-submits on violation count
+    # alone, exactly as on IntegrityIngestOut. It is frozen on the attempt at
+    # /start, so it is the same answer for the life of the attempt.
+    #
+    # It is here, and not only on the integrity-event response, because the
+    # client otherwise learns it only AFTER a violation -- and the event POST
+    # swallows network failures, so on a poor connection a candidate with a
+    # relax-auto-submit accommodation never learns it at all and is cut off at
+    # the global threshold. That is the accommodation failing the one person
+    # it exists for, on exactly the connections our market has.
+    #
+    # It discloses nothing new: the same value already goes to the same client
+    # on the first violation, and it is the candidate's own accommodation.
+    max_violations: int | None
 
 
 class ExamResultOut(BaseModel):
@@ -605,6 +619,14 @@ async def get_take_exam(ctx: ExamTakeCtxDep, db: DbSessionDep) -> TakeExamOut:
     )
 
 
+def _max_violations_for(attempt: ExamAttempt) -> int | None:
+    """None when this attempt's auto-submit is relaxed (PH4-D2), otherwise the
+    configured threshold. Read from the attempt, which froze the allowance at
+    /start, so revoking the accommodation mid-attempt cannot shorten a clock
+    the candidate has already been shown."""
+    return None if attempt.auto_submit_relaxed else settings.exam_integrity_max_violations
+
+
 @router.post("/start", response_model=AttemptStartOut)
 async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOut:
     # Idempotent: return the existing in-progress attempt if one is open.
@@ -615,6 +637,7 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
             attempt_id=str(existing.id),
             started_at=existing.started_at.isoformat(),
             deadline=d.isoformat() if d else None,
+            max_violations=_max_violations_for(existing),
         )
     # Block a fresh attempt on a single-shot round already submitted.
     if await _has_submitted(db, ctx) and not ctx.exam.allow_retake:
@@ -694,6 +717,7 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
             attempt_id=str(existing.id),
             started_at=existing.started_at.isoformat(),
             deadline=d.isoformat() if d else None,
+            max_violations=_max_violations_for(existing),
         )
     if adj_row is not None:
         await accommodations.record_applied(
@@ -706,6 +730,7 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
         attempt_id=str(attempt.id),
         started_at=attempt.started_at.isoformat(),
         deadline=d.isoformat() if d else None,
+        max_violations=_max_violations_for(attempt),
     )
 
 

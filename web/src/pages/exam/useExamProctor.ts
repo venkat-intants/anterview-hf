@@ -30,8 +30,10 @@ interface UseExamProctorArgs {
   attemptId: string;
   /** The magic-link token forwarded as X-Exam-Token. */
   token: string;
-  /** Max combined fullscreen_exit + tab_blur violations before auto-submit. */
-  maxViolations: number;
+  /** Max combined fullscreen_exit + tab_blur violations before auto-submit,
+   *  or null when this attempt is relaxed and never auto-submits on count
+   *  (PH4-D2). Never compare a null numerically: `n >= null` is `n >= 0`. */
+  maxViolations: number | null;
   /** Called exactly once when the violation count reaches maxViolations. */
   onAutoSubmit: () => void;
 }
@@ -114,7 +116,16 @@ export function useExamProctor({
         const next = violationRef.current + 1;
         violationRef.current = next;
         setViolationCount(next);
-        if (!autoSubmittedRef.current && !autoSubmitRelaxedRef.current && next >= maxViolations) {
+        // `maxViolations === null` is the attempt's own frozen answer from
+        // /exam/start: relaxed, so the local counter must never auto-submit.
+        // Checked BEFORE the comparison, because `next >= null` coerces to
+        // `next >= 0` and would fire on the very first violation.
+        if (
+          !autoSubmittedRef.current &&
+          !autoSubmitRelaxedRef.current &&
+          maxViolations !== null &&
+          next >= maxViolations
+        ) {
           autoSubmittedRef.current = true;
           onAutoSubmit();
         }

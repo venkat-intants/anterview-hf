@@ -688,6 +688,10 @@ const en = {
       nextSection: 'Next section',
       violationWarning:
         'Violation {{count}} recorded. {{remaining}} remaining before auto-submit.',
+      // PH4-D2: shown instead of the countdown when this attempt's
+      // auto-submit is relaxed -- the event is still recorded, but no
+      // threshold will end the round, so promising one would be false.
+      violationNoted: 'Violation {{count}} recorded.',
       violationBadgeLabel: '{{count}} integrity violations',
       // Coding section additions
       codingProblems_one: '{{count}} coding problem',
@@ -1656,6 +1660,7 @@ const hi = {
       nextSection: 'अगला अनुभाग',
       violationWarning:
         'उल्लंघन {{count}} दर्ज किया गया। auto-submit से पहले {{remaining}} बचे।',
+      violationNoted: 'उल्लंघन {{count}} दर्ज किया गया।',
       violationBadgeLabel: '{{count}} integrity उल्लंघन',
       codingProblems: '{{count}} coding समस्याएं',
       codingInputLabel: 'Input',
@@ -2607,6 +2612,7 @@ const te = {
       nextSection: 'తదుపరి విభాగం',
       violationWarning:
         'ఉల్లంఘన {{count}} నమోదైంది. auto-submit కు ముందు {{remaining}} మిగిలాయి.',
+      violationNoted: 'ఉల్లంఘన {{count}} నమోదైంది.',
       violationBadgeLabel: '{{count}} integrity ఉల్లంఘనలు',
       codingProblems: '{{count}} coding సమస్యలు',
       codingInputLabel: 'Input',

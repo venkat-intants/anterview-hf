@@ -112,4 +112,37 @@ describe('useExamProctor — PH4-D2 relaxed auto-submit', () => {
 
     expect(onAutoSubmit).not.toHaveBeenCalled();
   });
+
+  it('never auto-submits a relaxed attempt, even when every event POST fails', async () => {
+    // The gap the security review found: the client used to learn "relaxed"
+    // ONLY from an integrity-event response, and sendIntegrityEvent swallows
+    // network failures. On a poor connection the candidate never learned it
+    // and was cut off at the global threshold — the original bug, reproduced
+    // by packet loss. The threshold now comes from /exam/start, frozen on the
+    // attempt, so it is known before any violation and survives a dead link.
+    sendIntegrityEvent.mockResolvedValue(null); // every POST fails
+    const onAutoSubmit = vi.fn();
+    const { result } = renderHook(() =>
+      useExamProctor({
+        enabled: true,
+        attemptId: 'a1',
+        token: 'tok',
+        maxViolations: null, // relaxed, straight from /exam/start
+        onAutoSubmit,
+      }),
+    );
+
+    tabBlur();
+    await waitFor(() => expect(result.current.violationCount).toBe(1));
+    fullscreenExit();
+    await waitFor(() => expect(result.current.violationCount).toBe(2));
+    // Past the 100 ms per-event-type debounce, so this is a third counted
+    // violation rather than a collapsed repeat — one more than the global
+    // threshold of 3 would allow if the relaxation were not honoured.
+    await new Promise((r) => setTimeout(r, 150));
+    tabBlur();
+    await waitFor(() => expect(result.current.violationCount).toBe(3));
+
+    expect(onAutoSubmit).not.toHaveBeenCalled();
+  });
 });

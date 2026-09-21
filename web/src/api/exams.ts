@@ -555,6 +555,21 @@ export interface CodingResult {
 }
 
 /**
+ * PH4-D2 — what THIS attempt was actually given, read off the attempt itself
+ * (never re-resolved from the applicant's accommodation history, which may
+ * have been revised or revoked since). Facts only: no note, no basis, no
+ * recorder — this is what the attempt got, not why.
+ */
+export interface AttemptAdjustment {
+  /** `null` when the attempt carries extra time but the accommodation row it
+   *  points at could not be read back (legacy data) — fall back to
+   *  `extra_time_seconds` in that case rather than hiding the badge. */
+  extra_time_percent: number | null;
+  extra_time_seconds: number;
+  auto_submit_relaxed: boolean;
+}
+
+/**
  * HR-only per-question breakdown for a single attempt.
  * `per_question` maps an MCQ question_id → whether it was answered correctly.
  * `coding` maps a coding question_id → its graded result.
@@ -565,6 +580,9 @@ export interface AttemptBreakdown {
   passed: boolean | null;
   per_question: Record<string, boolean>;
   coding: Record<string, CodingResult>;
+  /** `null` when nothing was adjusted for this attempt. Optional only so
+   *  fixtures written before PH4-D2 still type-check. */
+  adjustment?: AttemptAdjustment | null;
 }
 
 export function getAttemptBreakdown(

@@ -73,6 +73,8 @@ function row(over: Partial<Accommodation> = {}): Accommodation {
     status: 'active',
     recorded_by_user_id: 'u-hr-1',
     revoked_by_user_id: null,
+    recorded_by_name: 'Priya HR',
+    revoked_by_name: null,
     revoked_at: null,
     revoke_reason: null,
     supersedes_id: null,
@@ -445,5 +447,46 @@ describe('AccommodationsSection — revise and revoke', () => {
       expect(accApi.revokeAccommodation).toHaveBeenCalledWith('acc-1', 'No longer needed'),
     );
     expect(toastSuccess).toHaveBeenCalledWith('Accommodation revoked');
+  });
+});
+
+describe('AccommodationsSection — who recorded and revoked (PH4-D2)', () => {
+  it('shows who recorded the adjustment', async () => {
+    accApi.listAccommodations.mockResolvedValue([row({ recorded_by_name: 'Priya HR' })]);
+    renderSection();
+
+    expect(await screen.findByText(/Recorded .* by Priya HR/)).toBeInTheDocument();
+  });
+
+  it('shows who revoked it, when a person did', async () => {
+    accApi.listAccommodations.mockResolvedValue([
+      row({
+        status: 'revoked',
+        revoked_at: '2026-09-10T00:00:00.000Z',
+        revoked_by_name: 'Asha HR',
+        revoke_reason: 'Candidate withdrew the request',
+      }),
+    ]);
+    renderSection();
+
+    expect(await screen.findByText(/Revoked .* by Asha HR: Candidate withdrew the request/)).toBeInTheDocument();
+  });
+
+  it('says the platform ended it, not a blank, when nobody revoked it', async () => {
+    // recorded_by_user_id is NULL in exactly this case — retention or an
+    // erasure request ended the row, not a named person.
+    accApi.listAccommodations.mockResolvedValue([
+      row({
+        status: 'revoked',
+        revoked_at: '2026-09-10T00:00:00.000Z',
+        revoked_by_name: null,
+      }),
+    ]);
+    renderSection();
+
+    expect(
+      await screen.findByText(/ended by the platform \(retention or an erasure request\), not a person/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/by null/)).not.toBeInTheDocument();
   });
 });

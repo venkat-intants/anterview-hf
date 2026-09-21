@@ -38,6 +38,14 @@ export interface Accommodation {
   status: AccommodationStatus;
   recorded_by_user_id: string | null;
   revoked_by_user_id: string | null;
+  /** The name (or email, when no name is on file) of whoever recorded this
+   *  row — resolved server-side, same precedent as the offer history. `null`
+   *  only if that user's own account was later erased. */
+  recorded_by_name: string | null;
+  /** `null` on a revoked row means the PLATFORM ended it (retention or an
+   *  erasure request), not a person — `revoked_by_user_id` is NULL in exactly
+   *  that case. Say so; don't just leave the name blank. */
+  revoked_by_name: string | null;
   revoked_at: string | null;
   revoke_reason: string | null;
   supersedes_id: string | null;

@@ -670,6 +670,7 @@ function HistoryRow({
       <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
         {row.basis === 'candidate_request' ? 'Candidate request' : 'HR-initiated'} · Recorded{' '}
         {formatDate(row.created_at)}
+        {row.recorded_by_name ? ` by ${row.recorded_by_name}` : ''}
         {row.effective_until ? ` · effective until ${formatDate(row.effective_until)}` : ''}
       </p>
 
@@ -691,8 +692,14 @@ function HistoryRow({
           {row.internal_note}
         </p>
       ) : null}
-      {row.revoke_reason ? (
-        <p className="mt-1 text-[11.5px] text-muted-foreground">Revoked: {row.revoke_reason}</p>
+      {row.status === 'revoked' ? (
+        <p className="mt-1 text-[11.5px] text-muted-foreground">
+          {row.revoked_at ? `Revoked ${formatDate(row.revoked_at)}` : 'Revoked'}
+          {row.revoked_by_name
+            ? ` by ${row.revoked_by_name}`
+            : ' — ended by the platform (retention or an erasure request), not a person'}
+          {row.revoke_reason ? `: ${row.revoke_reason}` : ''}
+        </p>
       ) : null}
       {row.superseded_at ? (
         <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">

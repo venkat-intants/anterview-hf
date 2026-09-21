@@ -734,8 +734,13 @@ async def update_round(
     workflow_id: uuid.UUID,
     round_id: uuid.UUID,
     fields: dict[str, Any],
-) -> None:
+) -> list[str]:
     """Edit a draft round's own settings. Caller commits.
+
+    Returns the storage keys of reference materials this change orphaned
+    (moving a round away from a task kind), for the caller to remove from
+    object storage AFTER its commit — before it, a failed commit would bring
+    the rows back pointing at deleted files.
 
     Deliberately cannot change ``workflow_id``, ``position`` or
     ``on_pass_next_round_id`` — the chain is maintained by add/remove/reorder so
@@ -748,7 +753,7 @@ async def update_round(
                "deadline_days", "exam_round_id", *BRANCH_FIELDS}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
-        return
+        return []
     for key in ("on_fail_next_round_id", "on_fast_track_next_round_id"):
         target = updates.get(key)
         if target is None:
@@ -831,9 +836,28 @@ async def update_round(
         and updates.get("kind") is not None and updates["kind"] not in TASK_KINDS
     ):
         await db.execute(text("DELETE FROM round_tasks WHERE round_id = :r"), {"r": round_id})
-        await db.execute(
-            text("DELETE FROM round_task_materials WHERE round_id = :r"), {"r": round_id}
+        keys = list(
+            (
+                await db.execute(
+                    text("DELETE FROM round_task_materials WHERE round_id = :r"
+                         " RETURNING storage_key"),
+                    {"r": round_id},
+                )
+            ).scalars().all()
         )
+        # A cloned workflow version shares its materials' storage keys
+        # (clone_for_edit) — an object is orphaned only once nothing names it.
+        still_used = set(
+            (
+                await db.execute(
+                    text("SELECT storage_key FROM round_task_materials"
+                         " WHERE storage_key = ANY(:k)"),
+                    {"k": keys},
+                )
+            ).scalars().all()
+        ) if keys else set()
+        return [k for k in keys if k not in still_used]
+    return []
 
 
 async def remove_round(
@@ -1508,8 +1532,10 @@ async def workflow_fingerprint(db: AsyncSession, workflow_id: uuid.UUID) -> str:
         },
     }
     # PH4-D4: a task round's own configuration, keyed only when at least one
-    # exists — every fingerprint recorded before this feature shipped stays
-    # byte-for-byte identical (the golden-value unit test pins this).
+    # exists — so a workflow with no task round hashes exactly the input it
+    # did before this feature shipped, and every fingerprint recorded then
+    # still matches. (An earlier version of this comment cited a golden-value
+    # unit test; none existed.)
     task_round_ids = [r["id"] for r in rounds if r["kind"] in TASK_KINDS]
     if task_round_ids:
         task_rows = (

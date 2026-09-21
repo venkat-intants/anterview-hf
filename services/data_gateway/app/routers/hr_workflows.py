@@ -624,7 +624,9 @@ async def patch_round(
         (r for r in await load_rounds(db, workflow_id) if str(r["id"]) == str(round_id)), None
     )
     try:
-        await update_round(db, workflow_id=workflow_id, round_id=round_id, fields=fields)
+        orphaned_keys = await update_round(
+            db, workflow_id=workflow_id, round_id=round_id, fields=fields,
+        )
         # PH4-O3: a change to where a round sends people is audited, before
         # and after. The settings of a round are not; its routing is.
         if before is not None and any(k in fields for k in _BRANCH_KEYS):
@@ -651,6 +653,13 @@ async def patch_round(
     except WorkflowError as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if orphaned_keys:
+        # After the commit, never before (see update_round): a round moved
+        # away from a task kind used to leave its materials' files in storage.
+        from app.config import settings as _settings  # noqa: PLC0415
+        from app.document_storage import remove as _remove  # noqa: PLC0415
+
+        await _remove(_settings, orphaned_keys)
     return await get_workflow(workflow_id, ctx, db)
 
 

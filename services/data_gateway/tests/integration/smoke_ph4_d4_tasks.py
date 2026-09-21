@@ -301,17 +301,17 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post("/task/submit", json={"consent": True}, headers=headers_sim)
         check("a second submit is refused (already submitted)", r.status_code == 409, r.text[:200])
 
+        # The check here used to accept `granted is True OR None`, so it could
+        # not fail. Exactly one active row, for THIS submission.
         async with factory() as db:
-            consent = await db.scalar(
-                text("SELECT granted FROM dpdp_consent_ledger l"
-                     " JOIN task_submissions s ON true"
-                     " WHERE s.id = :i AND l.consent_type = 'assessment_submission'"
-                     "   AND l.purpose LIKE 'recruitment%'"
-                     "   OR l.evidence::text LIKE :pat LIMIT 1"),
-                {"i": sub_id, "pat": f"%{sub_id}%"},
+            consent_rows = await db.scalar(
+                text("SELECT count(*) FROM dpdp_consent_ledger"
+                     " WHERE consent_type = 'assessment_submission' AND purpose = 'recruitment'"
+                     "   AND evidence ->> 'submission_id' = :s AND granted AND revoked_at IS NULL"),
+                {"s": str(sub_id)},
             )
-        check("a DPDP consent row was booked for the submission", consent is True or consent is None,
-              "consent lookup best-effort")
+        check("exactly one active DPDP consent row was booked for the submission",
+              consent_rows == 1, str(consent_rows))
 
         r = await c.get(f"/hr/enrolments/{enrolment}/tasks")
         sim_entry = next((x for x in r.json() if x.get("round_id") == str(round_sim)), None) \
@@ -371,6 +371,10 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("GET /task opens the portfolio brief", r.status_code == 200
               and r.json()["kind"] == "portfolio", r.text[:200])
 
+        r = await c.post(f"/hr/enrolments/{enrolment}/round-review", json={"passed": True})
+        check("HR cannot pass a task round before anything is submitted", r.status_code == 409,
+              r.text[:200])
+
         r = await c.post("/task/start", json={"consent": True}, headers=headers_port)
         check("candidate starts the portfolio task", r.status_code == 200
               and r.json()["status"] == "in_progress", r.text[:200])
@@ -407,6 +411,48 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post("/task/submit", json={"consent": True}, headers=headers_port)
         check("candidate submits the portfolio", r.status_code == 200
               and r.json()["status"] == "submitted", r.text[:200])
+
+        # HR reads it with its prompts, and downloads the file; the download
+        # is audited. Then a reviewer assigned to THIS round downloads it too.
+        r = await c.get(f"/hr/enrolments/{enrolment}/tasks")
+        port_entry = next((x for x in r.json() if x.get("round_id") == str(round_portfolio)
+                           and x.get("is_current")), None) if r.status_code == 200 else None
+        check("HR's list carries the portfolio's brief and item prompts",
+              port_entry is not None and port_entry.get("brief")
+              and port_entry["items"][0]["prompt"] == "Attach your CV", str(port_entry)[:300])
+        cv = next((x for x in (port_entry or {}).get("responses", [])
+                   if x.get("item_key") == "cv"), None)
+        r = await c.get(f"/hr/task-submissions/{port_entry['id'] if port_entry else ''}"
+                        f"/artifacts/{cv['id'] if cv else ''}/download")
+        check("HR downloads the candidate's file", r.status_code == 200 and "url" in r.json(),
+              r.text[:200])
+        async with factory() as db:
+            audited = await db.scalar(
+                text("SELECT count(*) FROM audit_log WHERE action = 'task_response.downloaded'"
+                     "   AND resource_id = :r AND actor_id = :a"),
+                {"r": uuid.UUID(cv["id"]) if cv else uuid.uuid4(), "a": hr_a},
+            )
+            viewed = await db.scalar(
+                text("SELECT count(*) FROM task_events WHERE action = 'submission_viewed'"
+                     "   AND actor_user_id = :a AND submission_id = :s"),
+                {"a": hr_a, "s": uuid.UUID(port_entry["id"]) if port_entry else uuid.uuid4()},
+            )
+        check("…and the download is in the audit log, against HR", audited == 1, str(audited))
+        check("…and HR's read of the content is recorded", (viewed or 0) >= 1, str(viewed))
+
+        r = await c.post(
+            f"/hr/enrolments/{enrolment}/scorecards",
+            json={"round_id": str(round_portfolio), "interviewer_user_ids": [str(interviewer)]},
+        )
+        port_card = r.json()["created"][0]["scorecard_id"] if r.status_code == 201 else ""
+        r = await c.get(f"/interviewer/scorecards/{port_card}/submission/artifacts/"
+                        f"{cv['id'] if cv else ''}/download")
+        check("the portfolio round's reviewer downloads the file", r.status_code == 200
+              and "url" in r.json(), r.text[:200])
+        r = await c.get(f"/interviewer/scorecards/{scorecard_id}/submission/artifacts/"
+                        f"{cv['id'] if cv else ''}/download")
+        check("…but the SIMULATION round's reviewer cannot (not their round)",
+              r.status_code == 404, r.text[:200])
 
         # -------------------------------------------------------------
         # HR holds instead of passing — a hold is always legal
@@ -488,6 +534,85 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             )).first()
         check("the withdrawn submission's link is cleared and it is stamped redacted",
               row2 is not None and row2[0] is None and row2[1] is not None, str(row2))
+
+        # -------------------------------------------------------------
+        # HR authors a task round through the API. Everything above seeded
+        # round_tasks with SQL; these are the routes the builder calls.
+        # -------------------------------------------------------------
+        print("\nPH4-D4 — HR authors a task round: config, materials, a kind change")
+        new_cfg = {"brief": "Review this pull request.", "items": [
+            {"key": "review", "prompt": "What would you change?", "response_type": "text",
+             "required": True},
+            {"key": "proof", "prompt": "Attach an annotated PDF", "response_type": "file",
+             "required": False},
+        ]}
+        r = await c.put(f"/hr/rounds/{round_sim}/task", json=new_cfg)
+        check("a PUBLISHED round's task config cannot be changed", r.status_code == 409,
+              r.text[:200])
+
+        req2, wf2, draft_round = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        async with factory() as db:
+            await db.execute(
+                text("INSERT INTO job_requisitions (id, company_id, title, status, owner_user_id,"
+                     " created_at, updated_at) VALUES (:r,:c,'QA Engineer','open',:h,:n,:n)"),
+                {"r": req2, "c": cid, "h": hr_a, "n": now},
+            )
+            await db.execute(
+                text("INSERT INTO workflows (id, company_id, requisition_id, version, status,"
+                     " review_status, created_by_user_id, created_at, updated_at)"
+                     " VALUES (:w,:c,:r,1,'draft','draft',:h,:n,:n)"),
+                {"w": wf2, "c": cid, "r": req2, "h": hr_a, "n": now},
+            )
+            await db.execute(
+                text("INSERT INTO workflow_rounds (id, company_id, workflow_id, position, title,"
+                     " kind, deadline_days, created_at, updated_at)"
+                     " VALUES (:i,:c,:w,0,'Code review task','job_simulation',7,:n,:n)"),
+                {"i": draft_round, "c": cid, "w": wf2, "n": now},
+            )
+            await db.commit()
+
+        r = await c.put(f"/hr/rounds/{draft_round}/task", json=new_cfg)
+        check("HR saves a draft round's brief and items", r.status_code == 200, r.text[:300])
+        r = await c.get(f"/hr/rounds/{draft_round}/task")
+        check("…and reads them back", r.status_code == 200
+              and r.json().get("brief") == "Review this pull request."
+              and [i["key"] for i in r.json().get("items", [])] == ["review", "proof"],
+              r.text[:300])
+
+        r = await c.post(f"/hr/rounds/{draft_round}/task/materials", data={"title": "The PR"},
+                         files={"file": ("pr.pdf", b"%PDF-1.4\n%pr\n", "application/pdf")})
+        check("HR uploads a reference material", r.status_code == 201, r.text[:300])
+        mat = r.json() if r.status_code == 201 else {}
+        r = await c.get(f"/hr/rounds/{draft_round}/task/materials")
+        check("…it is listed", r.status_code == 200 and len(r.json()) == 1, r.text[:200])
+        r = await c.get(f"/hr/rounds/{draft_round}/task/materials/{mat.get('id')}/download")
+        check("…and downloads", r.status_code == 200 and "url" in r.json(), r.text[:200])
+        r = await c.post(f"/hr/rounds/{draft_round}/task/materials", data={"title": "Bad"},
+                         files={"file": ("x.pdf", b"MZ not a pdf", "application/pdf")})
+        check("a material that is not really a PDF/JPEG/PNG is refused", r.status_code == 422,
+              r.text[:200])
+        r = await c.delete(f"/hr/rounds/{draft_round}/task/materials/{mat.get('id')}")
+        check("HR removes the material", r.status_code == 204, r.text[:200])
+        check("…and its file is gone from storage",
+              not any(k.startswith(f"task_materials/{cid}/{draft_round}/") for k in fake_store.objects),
+              str(list(fake_store.objects))[:200])
+
+        # Moving a round AWAY from a task kind drops its config and materials —
+        # and, since this change, the materials' files too (after the commit).
+        r = await c.post(f"/hr/rounds/{draft_round}/task/materials", data={"title": "Again"},
+                         files={"file": ("pr2.pdf", b"%PDF-1.4\n%pr2\n", "application/pdf")})
+        check("HR uploads another material", r.status_code == 201, r.text[:200])
+        r = await c.patch(f"/hr/workflows/{wf2}/rounds/{draft_round}", json={"kind": "human_review"})
+        check("HR changes the round to a human review", r.status_code == 200, r.text[:300])
+        async with factory() as db:
+            left = await db.scalar(
+                text("SELECT count(*) FROM round_task_materials WHERE round_id = :r"),
+                {"r": draft_round},
+            )
+        check("…its task materials are gone", left == 0, str(left))
+        check("…and so are their files, not orphaned in storage",
+              not any(k.startswith(f"task_materials/{cid}/{draft_round}/") for k in fake_store.objects),
+              str(list(fake_store.objects))[:200])
 
     app.dependency_overrides.clear()
     await eng.dispose()

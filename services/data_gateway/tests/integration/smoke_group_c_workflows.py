@@ -109,8 +109,10 @@ async def main() -> None:
             " VALUES (:i,:c,'Screen',:u,now(),now())"), {"i": exam_id, "c": cid, "u": uid})
         await db.execute(text(
             "INSERT INTO exam_rounds (id,exam_id,company_id,round_number,title,position,"
-            " status) VALUES (:i,:e,:c,1,'Round 1',0,'published')"),
+            " status) VALUES (:i,:e,:c,1,'Round 1',0,'draft')"),
             {"i": exam_ref, "e": exam_id, "c": cid})
+        # Content in while it is a DRAFT, then publish: PH4-D1 locks a
+        # published round's content at the database.
         await db.execute(text(
             "INSERT INTO exam_sections (id,round_id,exam_id,company_id,title,kind,position)"
             " VALUES (:s,:r,:e,:c,'Section 1','mcq',0)"),
@@ -119,6 +121,8 @@ async def main() -> None:
             "INSERT INTO exam_questions (id,exam_id,section_id,company_id,prompt,options,"
             " correct_index,position) VALUES (:q,:e,:s,:c,'2 + 2?',CAST(:o AS jsonb),1,0)"),
             {"q": uuid.uuid4(), "e": exam_id, "s": sec, "c": cid, "o": '["3", "4"]'})
+        await db.execute(text("UPDATE exam_rounds SET status = 'published' WHERE id = :i"),
+                         {"i": exam_ref})
         await db.commit()
         r1 = await add_round(db, company_id=cid, workflow_id=wf, title="Aptitude",
                              kind="mcq", pass_threshold=60, exam_round_id=exam_ref,

@@ -491,6 +491,24 @@ async def review(
         raise QuestionBankError(
             403, "You wrote or submitted this question — another reviewer must approve it."
         )
+    # "Not the author" also means not anyone who changed the content. The
+    # check above sees only created_by/submitted_by, so a reviewer could edit
+    # someone else's draft -- its correct answer, say -- let them resubmit, and
+    # approve what they had written themselves (security review, D1 M4). The
+    # event log records every content change, and is append-only.
+    if action == "approve":
+        wrote = await db.scalar(
+            select(BankQuestionEvent.id).where(
+                BankQuestionEvent.bank_question_id == q.id,
+                BankQuestionEvent.company_id == company_id,
+                BankQuestionEvent.actor_user_id == actor,
+                BankQuestionEvent.action.in_(("created", "edited", "versioned", "saved_from_exam")),
+            ).limit(1)
+        )
+        if wrote is not None:
+            raise QuestionBankError(
+                403, "You changed this question's content — another reviewer must approve it."
+            )
     if action == "request_changes" and actor == q.submitted_by_user_id:
         raise QuestionBankError(
             403, "You submitted this question — another reviewer must request changes."

@@ -313,6 +313,32 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the audit log recorded the submission and approval",
               {"bank_question.submitted", "bank_question.approve"} <= acts, str(acts))
 
+        # Security review D1 M4: "not the author" was checked against
+        # created_by/submitted_by only, so a reviewer could edit someone
+        # else's draft (say, its correct answer), let them resubmit, and then
+        # approve content they wrote themselves.
+        print("\nPH4-D1 — whoever edited a question cannot approve it")
+        r = await c.post(
+            f"/hr/question-banks/{bank_id}/questions",
+            json={"kind": "mcq", "prompt": "What is 3 + 3?", "options": ["5", "6", "7"],
+                  "correct_index": 1, "points": 1, "difficulty": "easy", "language": "en",
+                  "competencies": [{"id": "numeracy", "name": "Numeracy"}], "tags": []},
+        )
+        q4 = r.json()["id"]
+        acting["hr"] = hr_a2
+        r = await c.patch(f"/hr/bank-questions/{q4}", json={"correct_index": 2})
+        check("a second HR manager edits HR A's draft", r.status_code == 200, r.text[:200])
+        acting["hr"] = hr_a1
+        r = await c.post(f"/hr/bank-questions/{q4}/submit")
+        check("HR A submits it", r.json().get("status") == "in_review", r.text[:200])
+        acting["hr"] = hr_a2
+        r = await c.post(f"/hr/bank-questions/{q4}/approve", json={})
+        check("…and the editor cannot approve it", r.status_code == 403, r.text[:200])
+        acting["hr"] = hr_a1
+        r = await c.post(f"/admin/bank-questions/{q4}/approve", json={})
+        check("…while someone who never touched it can", r.status_code == 200
+              and r.json()["status"] == "approved", r.text[:200])
+
     app.dependency_overrides.clear()
     await eng.dispose()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

@@ -640,3 +640,117 @@ async def test_an_in_progress_attempts_answers_are_not_yet_frozen(db: AsyncSessi
     await _allowed(
         db, "UPDATE exam_attempts SET answers = '{\"coding\":{}}'::jsonb WHERE id = :i", {"i": aid},
     )
+
+
+# ===========================================================================
+# Retention: only a DECIDED application's coding evidence is ever purged
+# ===========================================================================
+async def _attempt_on_an_application(
+    db: AsyncSession, f: F, *, status: str, decided_days_ago: int | None,
+) -> uuid.UUID:
+    """An attempt reached the ordinary way -- through an exam assignment that
+    belongs to an application -- submitted long ago, with coding answers.
+
+    The fixture above only ever built attempts with NO assignment, which is
+    why the broken branch was never exercised: those take the separate
+    "no application" branch of the purge predicate.
+    """
+    req, enr, asg, att = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    p: dict[str, Any] = {
+        "req": req, "enr": enr, "asg": asg, "att": att, "c": f.company, "a": f.applicant_a,
+        "x": f.exam, "r": f.round, "st": status, "tok": uuid.uuid4().hex,
+    }
+    for sql in (
+        "INSERT INTO job_requisitions (id, company_id, title, created_at, updated_at)"
+        " VALUES (:req, :c, 'Engineer', now(), now())",
+        "INSERT INTO enrolments (id, company_id, requisition_id, applicant_id, target_job_title,"
+        " status, created_at, updated_at)"
+        " VALUES (:enr, :c, :req, :a, 'Engineer', :st, now(), now())",
+        "INSERT INTO exam_assignments (id, company_id, exam_id, round_id, applicant_id,"
+        " enrolment_id, token_hash, expires_at, status, created_at, updated_at)"
+        " VALUES (:asg, :c, :x, :r, :a, :enr, :tok, now() + interval '7 days', 'completed',"
+        "         now() - interval '400 days', now())",
+        "INSERT INTO exam_attempts (id, company_id, exam_id, round_id, applicant_id,"
+        " assignment_id, attempt_no, status, started_at, submitted_at, score_raw, score_max,"
+        " score_percent, passed, answers, created_at, updated_at)"
+        # attempt 2: the fixture already gave this applicant attempt 1 on this round.
+        " VALUES (:att, :c, :x, :r, :a, :asg, 2, 'submitted', now() - interval '400 days',"
+        "         now() - interval '400 days', 100, 100, 100, true,"
+        "         '{\"coding\": {}}'::jsonb, now() - interval '400 days', now())",
+    ):
+        await db.execute(text(sql), p)
+    if decided_days_ago is not None:
+        await db.execute(
+            # id is a bigint sequence, not a uuid -- left to its default.
+            # A decision carries a reason code (PH4-O4's trigger refuses one
+            # without), so the fixture writes one, as the product would.
+            text("INSERT INTO stage_transitions (company_id, enrolment_id, to_status,"
+                 " automated, occurred_at, reason_code, reason_label)"
+                 " VALUES (:c, :enr, :st, false, now() - make_interval(days => :d),"
+                 "         'fixture', 'Fixture reason')"),
+            {"c": f.company, "enr": enr, "st": status, "d": decided_days_ago},
+        )
+    return att
+
+
+async def _purgeable_ids(db: AsyncSession, retention_days: int) -> set[uuid.UUID]:
+    from datetime import UTC, datetime, timedelta
+
+    from app.code_evidence import _PURGEABLE_ATTEMPTS_SQL
+
+    cutoff = datetime.now(tz=UTC) - timedelta(days=retention_days)
+    rows = (await db.execute(text(_PURGEABLE_ATTEMPTS_SQL),
+                             {"cutoff": cutoff, "lim": 10_000})).all()
+    return {r[0] for r in rows}
+
+
+@pytest.mark.asyncio
+async def test_retention_never_touches_an_application_still_waiting_on_hr(
+    db: AsyncSession,
+) -> None:
+    """Security review HIGH-3. The predicate read COALESCE(decision, 'epoch')
+    < cutoff, and 'epoch' < cutoff is TRUE -- so on the first real run every
+    application with NO decision yet would have had its source stripped and
+    its evidence deleted, before HR had decided anything. Irreversible."""
+    f = await _build(db)
+    undecided = await _attempt_on_an_application(
+        db, f, status="shortlisted", decided_days_ago=None,
+    )
+    assert undecided not in await _purgeable_ids(db, retention_days=180)
+
+
+@pytest.mark.asyncio
+async def test_retention_purges_a_decision_older_than_the_cutoff(db: AsyncSession) -> None:
+    f = await _build(db)
+    old = await _attempt_on_an_application(db, f, status="rejected", decided_days_ago=200)
+    assert old in await _purgeable_ids(db, retention_days=180)
+
+
+@pytest.mark.asyncio
+async def test_retention_keeps_a_decision_still_inside_the_cutoff(db: AsyncSession) -> None:
+    f = await _build(db)
+    recent = await _attempt_on_an_application(db, f, status="hired", decided_days_ago=30)
+    assert recent not in await _purgeable_ids(db, retention_days=180)
+
+
+@pytest.mark.asyncio
+async def test_retention_ignores_a_decision_that_was_later_reversed(db: AsyncSession) -> None:
+    """A rejection long ago, then moved back into the pipeline: the old
+    transition exists but the application is live again, so it is not over."""
+    f = await _build(db)
+    reopened = await _attempt_on_an_application(db, f, status="shortlisted", decided_days_ago=200)
+    # The stage_transitions row written above says 'shortlisted', not a
+    # decision; add the historical rejection that was later undone.
+    enr = await db.scalar(
+        text("SELECT e.id FROM exam_attempts a JOIN exam_assignments s ON s.id = a.assignment_id"
+             " JOIN enrolments e ON e.id = s.enrolment_id WHERE a.id = :a"),
+        {"a": reopened},
+    )
+    await db.execute(
+        text("INSERT INTO stage_transitions (company_id, enrolment_id, to_status, automated,"
+             " occurred_at, reason_code, reason_label)"
+             " VALUES (:c, :e, 'rejected', false, now() - interval '300 days',"
+             "         'fixture', 'Fixture reason')"),
+        {"c": f.company, "e": enr},
+    )
+    assert reopened not in await _purgeable_ids(db, retention_days=180)

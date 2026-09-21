@@ -37,7 +37,6 @@ import json
 import math
 import uuid
 from collections import Counter
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -47,7 +46,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.code_quality import ANALYSER_VERSION, analyse
-from app.code_sandbox import run_isolated
+from app.code_sandbox import (
+    AnalysisFailedError,
+    AnalysisTimeoutError,
+    SandboxUnavailableError,
+    run_isolated,
+)
 from app.code_similarity import (
     ALGORITHM_VERSION,
     PYGMENTS_LANGUAGE_ALIASES,
@@ -216,8 +220,17 @@ async def _analyse_one(
     coding_question_id: uuid.UUID, exam_id: uuid.UUID, language: str, source: str,
 ) -> bool:
     """One (attempt, question) pair -> one row in ``code_quality_reports``.
-    Never raises: any failure becomes ``status='failed'`` with only the
-    exception's type name recorded."""
+
+    Never raises. A failure caused by THIS INPUT -- too slow, or the analyser
+    raised, or its process died on it -- becomes ``status='failed'`` with only
+    a class name recorded. A sandbox that could not start at all is
+    infrastructure, not the input, and writes NO report, so the sweep picks
+    the submission up again next pass. (Returns False in that case.)
+
+    Recording infrastructure failures as permanent was how one dead worker
+    used to turn every later submission, across every tenant, into an
+    un-retried ``failed`` until the service restarted.
+    """
     source_sha256 = hashlib.sha256(source.encode("utf-8", errors="surrogatepass")).hexdigest()
     analyser = "python-ast" if language == "python" else "pygments-tokens"
     status = "unsupported"
@@ -232,8 +245,20 @@ async def _analyse_one(
         metrics = result["metrics"]
         findings = result["findings"]
         coverage = result["coverage"]
-    except FutureTimeoutError:
+    except SandboxUnavailableError:
+        log.warning(
+            "code_evidence.sandbox_unavailable", attempt_id=str(attempt_id),
+            coding_question_id=str(coding_question_id),
+        )
+        return False  # no report: retried on the next pass
+    except AnalysisTimeoutError:
         status, error_class = "failed", "TimeoutError"
+    except AnalysisFailedError as exc:
+        status, error_class = "failed", exc.error_class
+        log.warning(
+            "code_evidence.analysis_failed", attempt_id=str(attempt_id),
+            coding_question_id=str(coding_question_id), error_class=error_class,
+        )
     except Exception as exc:  # noqa: BLE001 -- analysis failure must never bubble up
         status, error_class = "failed", type(exc).__name__
         log.warning(
@@ -921,12 +946,18 @@ SELECT a.id, a.company_id, a.answers, a.graded_snapshot
    AND (
      (e.id IS NULL AND a.submitted_at IS NOT NULL AND a.submitted_at < :cutoff)
      OR (
+       -- Only a DECIDED application, and only once the decision is older than
+       -- the cutoff. The first version wrapped the decision time in
+       -- COALESCE(..., 'epoch'), so an application with NO decision read
+       -- 'epoch' < cutoff -- true -- and the first real run would have
+       -- stripped the source and deleted the evidence of every candidate
+       -- still waiting on HR. Now: no decision is NULL, and NULL < cutoff is
+       -- not true. The current status is checked as well, so a decision that
+       -- was later reversed does not count as one.
        e.id IS NOT NULL
-       AND COALESCE(
-         (SELECT max(t.occurred_at) FROM stage_transitions t
-           WHERE t.enrolment_id = e.id AND t.to_status IN ('hired', 'rejected')),
-         'epoch'::timestamptz
-       ) < :cutoff
+       AND e.status IN ('hired', 'rejected')
+       AND (SELECT max(t.occurred_at) FROM stage_transitions t
+             WHERE t.enrolment_id = e.id AND t.to_status IN ('hired', 'rejected')) < :cutoff
      )
    )
  LIMIT :lim

@@ -40,6 +40,7 @@ import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import AccommodationsSection from '@/components/hr/AccommodationsSection';
 import TaskSubmissionSection from '@/components/hr/TaskSubmissionSection';
+import CodeEvidenceCounts from '@/components/hr/CodeEvidenceCounts';
 import ExceptionsSection from '@/components/ExceptionsSection';
 import InterviewLoopsSection from '@/components/InterviewLoopsSection';
 import OfferSection from '@/components/OfferSection';
@@ -861,6 +862,9 @@ export default function CandidateDrawer({
             queue, through the existing round-review action — nothing here
             does either. */}
             {enrolmentId ? <TaskSubmissionSection enrolmentId={enrolmentId} /> : null}
+
+            {/* PH4-D3 -- counts only; the evidence is on the exam attempt. */}
+            {enrolmentId ? <CodeEvidenceCounts enrolmentId={enrolmentId} /> : null}
 
             {/* PH4-A2 — scheduling the human interview(s) above: the loop(s), each
             session's time in both zones, and the controls to create, send,

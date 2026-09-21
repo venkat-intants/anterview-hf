@@ -37,6 +37,7 @@ import {
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
 import CandidateDrawer from '@/components/CandidateDrawer';
+import { codeEvidenceLabel } from '@/lib/codeEvidenceLabel';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
@@ -239,6 +240,12 @@ function QueueCard({
                   <span className="text-[var(--ui-warn)]"> ({row.scorecards.late} late)</span>
                 ) : null}
               </span>
+            ) : null}
+            {row.code_evidence &&
+            (row.code_evidence.signal_count > 0 || row.code_evidence.finding_count > 0) ? (
+              // Counts only, and worded as what they are: a similarity SIGNAL
+              // is automated and unreviewed; a FINDING is a person's judgement.
+              <span>{codeEvidenceLabel(row.code_evidence)}</span>
             ) : null}
           </div>
         </div>

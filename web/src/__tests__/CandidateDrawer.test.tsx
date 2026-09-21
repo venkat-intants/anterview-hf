@@ -181,6 +181,13 @@ vi.mock('../api/jobTasks', () => ({
   withdrawTaskSubmission: (...a: unknown[]) => jobTasksApi.withdrawTaskSubmission(...a) as unknown,
 }));
 
+// PH4-D3 — the drawer reads an application's code-evidence counts. Without
+// this mock the call went out unmocked and failed quietly into "render
+// nothing", which passed but was a real request from a unit test.
+vi.mock('../api/codeEvidence', () => ({
+  getCodeEvidenceSummary: () => Promise.resolve({ signal_count: 0, finding_count: 0 }),
+}));
+
 import CandidateDrawer from '../components/CandidateDrawer';
 
 function applicant(over: Partial<Applicant> = {}): Applicant {

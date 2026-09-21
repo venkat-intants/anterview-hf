@@ -323,6 +323,19 @@ export function triggerCodeAnalysis(
 
 /** Every similarity signal for one exam — counts only are safe to surface on
  *  a list screen; the content lives behind `getSimilarityCompare`. */
+/** How much code evidence an application has: counts only -- no source, no
+ *  content, no names. Not audited: it reveals nothing about anyone's code. */
+export interface CodeEvidenceSummary {
+  signal_count: number;
+  finding_count: number;
+}
+
+export function getCodeEvidenceSummary(enrolmentId: string): Promise<CodeEvidenceSummary> {
+  return apiGet<CodeEvidenceSummary>(
+    `/hr/enrolments/${pathId(enrolmentId)}/code-evidence-summary`,
+  );
+}
+
 export function listSimilaritySignals(examId: string): Promise<ExamSimilaritySignal[]> {
   return apiGet<ExamSimilaritySignal[]>(`/hr/exams/${pathId(examId)}/similarity`);
 }

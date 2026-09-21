@@ -55,6 +55,7 @@ const FINISHED: DecisionQueueRow = {
   workflow_version: 2,
   composite_percent: 79.3,
   scorecards: { assigned: 3, submitted: 2, late: 1 },
+  code_evidence: { signal_count: 2, finding_count: 1 },
 };
 
 const REASONS = [
@@ -181,6 +182,19 @@ describe('DecisionQueue — one list', () => {
     expect(within(finished).getByText(/1 late/)).toBeTruthy();
     // Asha has no human_review round on her workflow — nothing to show.
     expect(within(cardFor('Asha Rao')).queryByText(/scorecards in/)).toBeNull();
+  });
+
+  it('shows code-evidence counts, keeping an unreviewed signal apart from a finding', async () => {
+    // PH4-D3. The queue payload carried these and no screen read them.
+    renderQueue();
+    await screen.findByText('Bhavya Nair');
+    expect(
+      within(cardFor('Bhavya Nair')).getByText(
+        '2 similarity signals (unreviewed) · 1 integrity finding recorded',
+      ),
+    ).toBeTruthy();
+    // No evidence, no line.
+    expect(within(cardFor('Asha Rao')).queryByText(/similarity signal/)).toBeNull();
   });
 });
 

@@ -452,6 +452,9 @@ export interface DecisionQueueRow {
     due_at: string | null;
     submitted_at: string | null;
   } | null;
+  /** PH4-D3 -- code evidence for this application, counts only. Null when
+   *  it has none. */
+  code_evidence?: { signal_count: number; finding_count: number } | null;
 }
 
 /** One completed round, as the queue summarises it. Criteria and evidence are in the drawer. */

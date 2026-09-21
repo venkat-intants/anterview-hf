@@ -746,7 +746,7 @@ async def evidence_for_attempt(
         ],
         # Existing sandbox TEST RESULTS, clearly labelled as results, never as
         # coverage — checklist #6.
-        "test_results": coding_results,
+        "test_results": _test_results_for_screen(coding_results),
         "integrity": {
             "integrity_score": attempt["integrity_score"],
             "proctoring_summary": attempt["proctoring_summary"],
@@ -874,9 +874,11 @@ async def compare_view(
     return {
         "signal_id": str(signal_id),
         "low": {"language": low_source["language"],
-                "excerpt": _excerpt_from_regions(low_source["text"], low_bounds)},
+                "excerpt": _excerpt_from_regions(low_source["text"], low_bounds),
+                "blocks": _excerpt_blocks(low_source["text"], low_bounds)},
         "high": {"language": high_source["language"],
-                 "excerpt": _excerpt_from_regions(high_source["text"], high_bounds)},
+                 "excerpt": _excerpt_from_regions(high_source["text"], high_bounds),
+                 "blocks": _excerpt_blocks(high_source["text"], high_bounds)},
         "matched_regions": matched,
         "caption": "Automated, unreviewed — similar code is not evidence of misconduct "
                    "on its own.",
@@ -938,11 +940,37 @@ def _excerpt_from_regions(text_: str | None, region_bounds: list[tuple[int, int]
     a second candidate's, so the whole-program exposure MEDIUM-3 is about
     does not apply to it.
     """
+    out: list[str] = []
+    for block in _excerpt_blocks(text_, region_bounds):
+        if out:
+            out.append("...")
+        out.extend(block["lines"])
+    return "\n".join(out)
+
+
+def _excerpt_blocks(
+    text_: str | None, region_bounds: list[tuple[int, int]],
+) -> list[dict[str, Any]]:
+    """The excerpt as blocks, each carrying the source line it starts on.
+
+    A security review found the screen numbering an excerpt's rows 1..N and
+    highlighting ``matched_regions`` -- which are ABSOLUTE source line
+    numbers -- against them. Once excerpts were cut around the matches
+    rather than taken from the top, that put the "matched" highlight on the
+    wrong lines, or on none, and showed the ``...`` separator as a numbered
+    line of code -- in the dialog where HR records a misconduct finding.
+    Each block now says where it starts, so the screen can number and
+    highlight by the source's own line numbers.
+
+    Same rules as before: +/-3 lines of context around each matched range,
+    merged where they touch, 200 lines in total; with nothing to cut around
+    -- a reference-solution side -- a capped head of the text.
+    """
     lines = (text_ or "").splitlines()
     if not lines:
-        return ""
+        return []
     if not region_bounds:
-        return "\n".join(lines[:_MAX_EXCERPT_LINES])
+        return [{"start_line": 1, "lines": lines[:_MAX_EXCERPT_LINES]}]
     padded = sorted(
         (max(1, start - _EXCERPT_CONTEXT_LINES), min(len(lines), end + _EXCERPT_CONTEXT_LINES))
         for start, end in region_bounds
@@ -953,14 +981,15 @@ def _excerpt_from_regions(text_: str | None, region_bounds: list[tuple[int, int]
             merged[-1][1] = max(merged[-1][1], hi)
         else:
             merged.append([lo, hi])
-    out: list[str] = []
+    blocks: list[dict[str, Any]] = []
+    budget = _MAX_EXCERPT_LINES
     for lo, hi in merged:
-        if out:
-            out.append("...")
-        out.extend(lines[lo - 1:hi])
-        if len(out) >= _MAX_EXCERPT_LINES:
+        if budget <= 0:
             break
-    return "\n".join(out[:_MAX_EXCERPT_LINES])
+        chunk = lines[lo - 1:hi][:budget]
+        blocks.append({"start_line": lo, "lines": chunk})
+        budget -= len(chunk)
+    return blocks
 
 
 # ---------------------------------------------------------------------------
@@ -1181,6 +1210,37 @@ def redact_coding_answers(answers: dict[str, Any] | None) -> dict[str, Any]:
             for qid, entry in coding.items()
         },
     }
+
+
+# The fields of a graded coding result the evidence screen actually shows.
+_SCREEN_RESULT_FIELDS = ("points", "raw", "language", "submitted", "error")
+
+
+def _test_results_for_screen(coding: dict[str, Any]) -> dict[str, Any]:
+    """Each coding result cut down to what the evidence tab renders: the
+    score, the language, whether it was submitted, a compile/runtime error,
+    and each test case reduced to whether it passed.
+
+    A security review found the whole ``graded_snapshot.coding`` going to the
+    browser -- every test's stdout and stderr, and the hidden test cases'
+    inputs and expected outputs -- where it sat in memory without ever being
+    displayed, since the screen shows only a count. Collect only what the
+    purpose needs (DPDP s.6(1)). If a screen ever needs the output, it should
+    get its own audited route, not this one.
+    """
+    out: dict[str, Any] = {}
+    for qid, entry in (coding or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        slim = {k: entry[k] for k in _SCREEN_RESULT_FIELDS if k in entry}
+        tests = entry.get("tests")
+        if isinstance(tests, list):
+            slim["tests"] = [
+                {"passed": bool(t.get("passed"))} if isinstance(t, dict) else {"passed": False}
+                for t in tests
+            ]
+        out[qid] = slim
+    return out
 
 
 def redact_graded_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:

@@ -703,6 +703,36 @@ def test_excerpt_from_regions_handles_empty_text() -> None:
     assert svc._excerpt_from_regions("", []) == ""  # noqa: SLF001
 
 
+def test_excerpt_blocks_carry_their_real_source_line_numbers() -> None:
+    """Security review D3-2: the screen numbered excerpt rows 1..N and
+    highlighted ``matched_regions`` -- ABSOLUTE source lines -- against them,
+    so a match at line 40 was highlighted as line 40 of a 7-line excerpt,
+    i.e. nowhere, in the dialog where HR records a finding. Each block now
+    says where it starts."""
+    text_ = "\n".join(f"line {n}" for n in range(1, 101))
+    blocks = svc._excerpt_blocks(text_, [(40, 41)])  # noqa: SLF001
+    assert len(blocks) == 1
+    assert blocks[0]["start_line"] == 37  # 40 minus three lines of context
+    assert blocks[0]["lines"][0] == "line 37"
+    # The matched line sits at its own number within the block.
+    assert blocks[0]["lines"][40 - blocks[0]["start_line"]] == "line 40"
+
+
+def test_separate_matches_are_separate_blocks_not_a_numbered_ellipsis() -> None:
+    """The "..." between regions is a gap, not a line of code: it lives
+    between blocks, and is never one of a block's numbered lines."""
+    text_ = "\n".join(f"line {n}" for n in range(1, 101))
+    blocks = svc._excerpt_blocks(text_, [(10, 10), (60, 60)])  # noqa: SLF001
+    assert [b["start_line"] for b in blocks] == [7, 57]
+    assert all("..." not in b["lines"] for b in blocks)
+
+
+def test_excerpt_blocks_stay_within_the_200_line_cap() -> None:
+    text_ = "\n".join(f"line {n}" for n in range(1, 1001))
+    blocks = svc._excerpt_blocks(text_, [(1, 150), (500, 650)])  # noqa: SLF001
+    assert sum(len(b["lines"]) for b in blocks) <= 200
+
+
 # ===========================================================================
 # MEDIUM-4: the pure comparison-scoring helpers run off the event loop
 # ===========================================================================
@@ -816,3 +846,26 @@ def test_the_on_demand_analysis_route_is_rate_limited_per_company() -> None:
     src = (APP / "routers" / "code_evidence.py").read_text(encoding="utf-8")
     assert "rate_limit_company(" in src
     assert "code_analysis_ondemand_per_minute" in src
+
+
+def test_the_evidence_tab_gets_scores_and_pass_flags_never_program_output() -> None:
+    """Security review D3-4: the whole graded snapshot went to the browser --
+    every test's stdout and stderr, and the hidden cases' inputs and expected
+    outputs -- to a screen that shows only a count."""
+    coding = {
+        "q1": {
+            "points": 10, "raw": 5, "language": "python", "submitted": True, "error": None,
+            "tests": [
+                {"passed": True, "stdin": "1 2", "expected_output": "3",
+                 "actual_output": "3", "stderr": "", "is_sample": True},
+                {"passed": False, "stdin": "HIDDEN-INPUT", "expected_output": "HIDDEN-ANSWER",
+                 "actual_output": "candidate printed this", "stderr": "Traceback ..."},
+            ],
+        },
+    }
+    out = svc._test_results_for_screen(coding)  # noqa: SLF001
+    assert out["q1"]["points"] == 10 and out["q1"]["raw"] == 5
+    assert out["q1"]["tests"] == [{"passed": True}, {"passed": False}]
+    flat = repr(out)
+    for leaked in ("HIDDEN-INPUT", "HIDDEN-ANSWER", "candidate printed this", "Traceback", "stdin"):
+        assert leaked not in flat, leaked

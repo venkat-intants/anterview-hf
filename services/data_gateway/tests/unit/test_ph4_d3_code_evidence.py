@@ -518,22 +518,58 @@ def test_no_module_here_imports_an_llm_client() -> None:
             assert not any(word in imp.lower() for imp in imported), (name, word, imported)
 
 
+# LOW-2: an ALLOW-list, not a deny-list -- a new import outside it fails this
+# test loudly instead of a deny-list silently missing something nobody added
+# to it. Every root actually used today by the four modules between a
+# request and an analysis result: the pure analysers (code_quality,
+# code_similarity), the isolation boundary (code_sandbox) and its caller
+# (code_evidence). None of the four executes candidate code, so none needs
+# subprocess, socket, importlib, runpy or the network stack.
+_ALLOWED_IMPORT_ROOTS = {
+    "__future__", "ast", "asyncio", "collections", "contextlib", "dataclasses",
+    "datetime", "hashlib", "json", "math", "multiprocessing", "os", "platform",
+    "resource", "typing", "uuid",
+    "pygments", "structlog", "sqlalchemy",
+    "app", "shared",
+}
+_FORBIDDEN_IMPORT_ROOTS = {"subprocess", "importlib", "runpy", "socket", "http", "urllib", "requests"}
+# Banned even in ATTRIBUTE form (``os.system(...)``, ``builtins.eval(...)``,
+# ``getattr(subprocess, "Popen")(...)``'s target name) -- a bare-name check
+# alone misses exactly the call shapes an execution path would actually use.
+_FORBIDDEN_CALL_NAMES = {"exec", "eval", "compile", "system", "popen", "__import__"}
+
+
 def test_pure_modules_never_execute_candidate_code() -> None:
-    """AST-level: code_quality.py / code_similarity.py never import
-    subprocess/importlib/runpy/socket/http/urllib, and never call
-    compile/exec/eval."""
-    forbidden_imports = {"subprocess", "importlib", "runpy", "socket", "http", "urllib", "requests"}
-    forbidden_calls = {"compile", "exec", "eval"}
-    for name in ("code_quality", "code_similarity"):
+    """AST-level, across code_quality.py / code_similarity.py / code_sandbox.py
+    / code_evidence.py (LOW-2 widened this from the first two alone)."""
+    for name in ("code_quality", "code_similarity", "code_sandbox", "code_evidence"):
         tree = ast.parse((APP / f"{name}.py").read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert alias.name.split(".")[0] not in forbidden_imports, (name, alias.name)
+                    root = alias.name.split(".")[0]
+                    assert root not in _FORBIDDEN_IMPORT_ROOTS, (name, alias.name)
+                    assert root in _ALLOWED_IMPORT_ROOTS, ("not on the allow-list", name, alias.name)
             elif isinstance(node, ast.ImportFrom) and node.module:
-                assert node.module.split(".")[0] not in forbidden_imports, (name, node.module)
-            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                assert node.func.id not in forbidden_calls, (name, node.func.id)
+                root = node.module.split(".")[0]
+                assert root not in _FORBIDDEN_IMPORT_ROOTS, (name, node.module)
+                assert root in _ALLOWED_IMPORT_ROOTS, ("not on the allow-list", name, node.module)
+            elif isinstance(node, ast.Call):
+                called = (
+                    node.func.id if isinstance(node.func, ast.Name)
+                    else node.func.attr if isinstance(node.func, ast.Attribute)
+                    else None
+                )
+                # The one legitimate hit: code_sandbox.py's own Windows check,
+                # ``platform.system()`` -- returns the OS name, nothing to do
+                # with ``os.system``. Named explicitly rather than dropping
+                # "system" from the banned set, which would also stop
+                # catching ``os.system(...)``.
+                is_platform_system = (
+                    isinstance(node.func, ast.Attribute) and node.func.attr == "system"
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "platform"
+                )
+                assert is_platform_system or called not in _FORBIDDEN_CALL_NAMES, (name, called)
 
 
 def test_code_sandbox_only_imports_resource_on_posix() -> None:
@@ -609,3 +645,174 @@ def test_exam_attempts_moved_from_excluded_to_erased() -> None:
                   "code_integrity_findings"):
         assert table in erased
         assert table not in excluded
+
+
+# ===========================================================================
+# MEDIUM-3: excerpts are built from the matched regions, not the whole file
+# ===========================================================================
+def test_excerpt_from_regions_pads_three_lines_around_a_match() -> None:
+    text_ = "\n".join(f"line{i}" for i in range(1, 51))  # lines 1..50
+    excerpt = svc._excerpt_from_regions(text_, [(20, 22)])  # noqa: SLF001
+    lines = excerpt.splitlines()
+    assert lines[0] == "line17"
+    assert lines[-1] == "line25"
+    assert len(lines) == 9  # 17..25 inclusive
+
+
+def test_excerpt_from_regions_merges_touching_context() -> None:
+    text_ = "\n".join(f"line{i}" for i in range(1, 51))
+    # (10,12) padded is (7,15); (14,16) padded is (11,19) -- these overlap,
+    # so the merged block is one run with no "..." separator.
+    excerpt = svc._excerpt_from_regions(text_, [(10, 12), (14, 16)])  # noqa: SLF001
+    assert "..." not in excerpt
+    assert excerpt.splitlines()[0] == "line7"
+    assert excerpt.splitlines()[-1] == "line19"
+
+
+def test_excerpt_from_regions_separates_distant_matches_with_an_ellipsis() -> None:
+    text_ = "\n".join(f"line{i}" for i in range(1, 51))
+    excerpt = svc._excerpt_from_regions(text_, [(1, 2), (40, 41)])  # noqa: SLF001
+    assert "..." in excerpt
+
+
+def test_excerpt_from_regions_is_capped_at_200_lines() -> None:
+    text_ = "\n".join(f"line{i}" for i in range(1, 1000))
+    excerpt = svc._excerpt_from_regions(text_, [(1, 900)])  # noqa: SLF001
+    assert len(excerpt.splitlines()) <= 200
+
+
+def test_excerpt_from_regions_falls_back_to_a_capped_head_with_no_regions() -> None:
+    text_ = "\n".join(f"line{i}" for i in range(1, 300))
+    excerpt = svc._excerpt_from_regions(text_, [])  # noqa: SLF001
+    lines = excerpt.splitlines()
+    assert len(lines) == 200
+    assert lines[0] == "line1"
+
+
+def test_excerpt_from_regions_never_returns_the_rest_of_a_long_program() -> None:
+    """MEDIUM-3's own scenario: a match near the top of a long program must
+    not pull the rest of the file in alongside it."""
+    text_ = "\n".join(f"line{i}" for i in range(1, 1000))
+    excerpt = svc._excerpt_from_regions(text_, [(5, 6)])  # noqa: SLF001
+    assert "line999" not in excerpt
+    assert len(excerpt.splitlines()) < 20
+
+
+def test_excerpt_from_regions_handles_empty_text() -> None:
+    assert svc._excerpt_from_regions(None, [(1, 2)]) == ""  # noqa: SLF001
+    assert svc._excerpt_from_regions("", []) == ""  # noqa: SLF001
+
+
+# ===========================================================================
+# MEDIUM-4: the pure comparison-scoring helpers run off the event loop
+# ===========================================================================
+_THRESHOLDS = {"min_containment": 0.5, "min_shared": 10, "max_df": 0.4, "k": 15, "w": 8}
+
+
+def test_score_new_attempt_finds_an_overlapping_candidate_above_threshold() -> None:
+    new_id, other_id = uuid.uuid4(), uuid.uuid4()
+    shared_hashes = set(range(1, 21))  # 20 shared -- clears min_shared=10
+    scored = svc._score_new_attempt(  # noqa: SLF001
+        new_id=new_id, new_hashes_filtered=shared_hashes, new_tokens=100,
+        candidates=[(other_id, list(shared_hashes), 100)], boilerplate=set(), thresholds=_THRESHOLDS,
+    )
+    assert len(scored) == 1
+    assert {scored[0]["low"], scored[0]["high"]} == {new_id, other_id}
+    assert scored[0]["shared"] == 20
+    assert scored[0]["clow"] == pytest.approx(1.0)
+
+
+def test_score_new_attempt_drops_a_candidate_below_the_shared_threshold() -> None:
+    scored = svc._score_new_attempt(  # noqa: SLF001
+        new_id=uuid.uuid4(), new_hashes_filtered={1, 2, 3}, new_tokens=100,
+        candidates=[(uuid.uuid4(), [1, 2, 3], 100)], boilerplate=set(), thresholds=_THRESHOLDS,
+    )
+    assert scored == []
+
+
+def test_score_new_attempt_subtracts_boilerplate_from_the_candidate_too() -> None:
+    shared = set(range(1, 21))
+    boilerplate = set(range(1, 15))  # leaves only 15..20 -- six shared, below min_shared
+    scored = svc._score_new_attempt(  # noqa: SLF001
+        new_id=uuid.uuid4(), new_hashes_filtered=shared - boilerplate, new_tokens=100,
+        candidates=[(uuid.uuid4(), list(shared), 100)], boilerplate=boilerplate, thresholds=_THRESHOLDS,
+    )
+    assert scored == []
+
+
+def test_score_new_attempt_orders_low_high_the_same_way_postgres_does() -> None:
+    a, b = uuid.uuid4(), uuid.uuid4()
+    shared = set(range(1, 21))
+    scored = svc._score_new_attempt(  # noqa: SLF001
+        new_id=a, new_hashes_filtered=shared, new_tokens=50,
+        candidates=[(b, list(shared), 70)], boilerplate=set(), thresholds=_THRESHOLDS,
+    )
+    low, high = sorted((a, b))
+    assert scored[0]["low"] == low
+    assert scored[0]["high"] == high
+    assert scored[0]["tlow"] == (50 if low == a else 70)
+    assert scored[0]["thigh"] == (70 if low == a else 50)
+
+
+def test_score_against_reference_matches_the_old_containment_semantics() -> None:
+    shared = set(range(1, 21))
+    result = svc._score_against_reference(  # noqa: SLF001
+        hashes_filtered=shared, token_count=80, ref_hashes=shared, ref_token_count=90,
+        thresholds=_THRESHOLDS,
+    )
+    assert result is not None
+    assert result["shared"] == 20
+    assert result["tokens"] == 80
+    assert result["ref_tokens"] == 90
+    assert result["containment"] == pytest.approx(1.0)
+
+
+def test_score_against_reference_drops_below_threshold() -> None:
+    assert svc._score_against_reference(  # noqa: SLF001
+        hashes_filtered={1, 2}, token_count=60, ref_hashes={1, 2}, ref_token_count=60,
+        thresholds=_THRESHOLDS,
+    ) is None
+
+
+def test_score_against_reference_handles_empty_sides() -> None:
+    assert svc._score_against_reference(  # noqa: SLF001
+        hashes_filtered=set(), token_count=60, ref_hashes={1, 2}, ref_token_count=60,
+        thresholds=_THRESHOLDS,
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_compare_question_is_a_noop_with_no_new_attempts() -> None:
+    """MEDIUM-4: nothing new this pass means zero DB round trips, not a
+    silent full re-scan."""
+    db = AsyncMock()
+    result = await svc._compare_question(  # noqa: SLF001
+        db, company_id=uuid.uuid4(), exam_id=uuid.uuid4(), coding_question_id=uuid.uuid4(),
+        new_attempt_ids=[],
+    )
+    assert result == 0
+    db.execute.assert_not_called()
+
+
+def test_compare_question_uses_the_gin_overlap_index_not_a_full_scan() -> None:
+    """Pins that the implementation actually runs the `hashes &&` query the
+    migration's docstring promises against ix_code_fingerprints_hashes — it
+    used to only be a promise (MEDIUM-4)."""
+    src = (APP / "code_evidence.py").read_text(encoding="utf-8")
+    assert "hashes && CAST(:new_hashes AS bigint[])" in src
+    assert "new_attempt_ids" in src
+    assert "code_similarity_max_candidates" in src
+
+
+def test_compare_question_runs_scoring_off_the_event_loop() -> None:
+    src = (APP / "code_evidence.py").read_text(encoding="utf-8")
+    assert src.count("await asyncio.to_thread(") == 2
+    assert "_score_new_attempt," in src
+    assert "_score_against_reference," in src
+
+
+def test_the_on_demand_analysis_route_is_rate_limited_per_company() -> None:
+    """MEDIUM-4."""
+    src = (APP / "routers" / "code_evidence.py").read_text(encoding="utf-8")
+    assert "rate_limit_company(" in src
+    assert "code_analysis_ondemand_per_minute" in src

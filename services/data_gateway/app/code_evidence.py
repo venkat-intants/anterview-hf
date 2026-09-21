@@ -32,6 +32,7 @@ composite FKs the schema itself enforces — belt and braces, not either/or.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
@@ -42,7 +43,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
+from shared.http_observability import _safe_exc_message
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.code_quality import ANALYSER_VERSION, analyse
@@ -170,7 +173,10 @@ async def analyse_pending(db: AsyncSession, *, limit: int | None = None) -> Swee
         )
     ).mappings().all()
 
-    touched: set[tuple[uuid.UUID, uuid.UUID, uuid.UUID]] = set()  # (company, exam, question)
+    # (company, exam, question) -> the attempts that got a NEW fingerprint
+    # this pass. MEDIUM-4: comparison below only ever looks at these, never
+    # re-diffing the question's whole history on every pass.
+    touched: dict[tuple[uuid.UUID, uuid.UUID, uuid.UUID], list[uuid.UUID]] = {}
     reports_written = 0
     fingerprints_written = 0
     for row in rows:
@@ -190,13 +196,18 @@ async def analyse_pending(db: AsyncSession, *, limit: int | None = None) -> Swee
                 coding_question_id=qid, language=language, source=source, starter_code=starter,
             )
             fingerprints_written += 1 if wrote_fp else 0
-        touched.add((row["company_id"], row["exam_id"], qid))
+            if wrote_fp:
+                touched.setdefault(
+                    (row["company_id"], row["exam_id"], qid), []
+                ).append(row["attempt_id"])
     await db.commit()
 
     signals_written = 0
-    for company_id, exam_id, qid in touched:
-        signals_written += await _compare_question(db, company_id=company_id, exam_id=exam_id,
-                                                    coding_question_id=qid)
+    for (company_id, exam_id, qid), new_attempt_ids in touched.items():
+        signals_written += await _compare_question(
+            db, company_id=company_id, exam_id=exam_id, coding_question_id=qid,
+            new_attempt_ids=new_attempt_ids,
+        )
     await db.commit()
     log.info(
         "code_evidence.sweep", attempts_scanned=len(rows), reports_written=reports_written,
@@ -318,6 +329,19 @@ SELECT attempt_id, hashes, token_count FROM code_fingerprints
  WHERE company_id = :c AND coding_question_id = :q AND algorithm_version = :v
 """
 
+# MEDIUM-4: candidates for ONE newly-fingerprinted submission, via the GIN
+# `&&` overlap index on code_fingerprints.hashes (ix_code_fingerprints_hashes)
+# -- not a scan of every submission to the question. Any pair that could ever
+# clear code_similarity_min_shared necessarily shares at least one hash, so
+# this drops no true positive; it may still return pairs the shared-count or
+# containment threshold below rejects. Capped at code_similarity_max_candidates.
+_CANDIDATES_FOR_FINGERPRINT_SQL = """
+SELECT attempt_id, hashes, token_count FROM code_fingerprints
+ WHERE company_id = :c AND coding_question_id = :q AND algorithm_version = :v
+   AND attempt_id <> :new_attempt AND hashes && CAST(:new_hashes AS bigint[])
+ LIMIT :cap
+"""
+
 _INSERT_SIGNAL_SQL = """
 INSERT INTO code_similarity_signals
   (id, company_id, coding_question_id, exam_id, attempt_low_id, attempt_high_id,
@@ -331,40 +355,113 @@ ON CONFLICT DO NOTHING
 """
 
 
+def _score_new_attempt(
+    *, new_id: uuid.UUID, new_hashes_filtered: set[int], new_tokens: int,
+    candidates: list[tuple[uuid.UUID, list[int], int]], boilerplate: set[int],
+    thresholds: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Pure, CPU-only ``compare()`` of one new fingerprint against its
+    GIN-filtered candidates. Run off the event loop (``asyncio.to_thread``,
+    MEDIUM-4) — the DB I/O that gathers ``candidates`` already is, this is
+    the part that never used to be."""
+    out: list[dict[str, Any]] = []
+    if not new_hashes_filtered:
+        return out
+    for attempt_id, hashes, token_count in candidates:
+        other = set(hashes) - boilerplate
+        if not other:
+            continue
+        sim = compare(list(new_hashes_filtered), list(other))
+        if sim.shared < thresholds["min_shared"]:
+            continue
+        if max(sim.containment_a, sim.containment_b) < thresholds["min_containment"]:
+            continue
+        # Python's uuid.UUID orders by .int (the 16 bytes as one big-endian
+        # integer), the same order Postgres's `uuid <` operator uses — so
+        # this matches ck_code_similarity_signals_pair_order exactly.
+        low_id, high_id = sorted((new_id, attempt_id))
+        containment_low, containment_high = (
+            (sim.containment_a, sim.containment_b) if low_id == new_id
+            else (sim.containment_b, sim.containment_a)
+        )
+        tokens_low, tokens_high = (
+            (new_tokens, token_count) if low_id == new_id else (token_count, new_tokens)
+        )
+        out.append({
+            "low": low_id, "high": high_id, "clow": containment_low, "chigh": containment_high,
+            "jaccard": sim.jaccard, "shared": sim.shared, "tlow": tokens_low, "thigh": tokens_high,
+        })
+    return out
+
+
+def _score_against_reference(
+    *, hashes_filtered: set[int], token_count: int, ref_hashes: set[int], ref_token_count: int,
+    thresholds: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Pure, CPU-only ``compare()`` of one new fingerprint against the
+    question's reference solution. Run off the event loop (MEDIUM-4)."""
+    if not hashes_filtered or not ref_hashes:
+        return None
+    sim = compare(list(hashes_filtered), list(ref_hashes))
+    if sim.shared < thresholds["min_shared"]:
+        return None
+    if sim.containment_a < thresholds["min_containment"]:
+        return None
+    return {
+        "containment": sim.containment_a, "jaccard": sim.jaccard, "shared": sim.shared,
+        "tokens": token_count, "ref_tokens": ref_token_count,
+    }
+
+
 async def _compare_question(
     db: AsyncSession, *, company_id: uuid.UUID, exam_id: uuid.UUID, coding_question_id: uuid.UUID,
+    new_attempt_ids: list[uuid.UUID],
 ) -> int:
-    """Pairwise comparison across every fingerprinted submission for one
-    coding question, plus a reference-solution comparison. Writes a signal
-    when containment and shared-fingerprint thresholds are both met.
+    """Compare only the NEWLY-fingerprinted submissions named in
+    ``new_attempt_ids`` against the rest of this question's submissions, plus
+    the reference solution. Writes a signal when containment and
+    shared-fingerprint thresholds are both met.
+
+    MEDIUM-4: the previous version re-compared every pair among every
+    fingerprinted submission to the question, in full, on every sweep pass
+    and every on-demand POST — roughly 24us/pair, about 12s blocking at 1,000
+    submissions to one question, five minutes at 5,000. A candidate pair is
+    now found with the GIN `hashes &&` overlap index
+    (``ix_code_fingerprints_hashes``) instead of a full scan — only
+    fingerprints sharing at least one k-gram hash with the NEW one are even
+    fetched, capped at ``code_similarity_max_candidates`` per new fingerprint
+    — and the actual ``compare()`` work runs off the event loop
+    (``asyncio.to_thread``). Total work per pass is bounded by
+    ``code_analysis_batch`` new attempts times that per-attempt cap, not by
+    the size of the question's history.
 
     A fingerprint shared by more than ``code_similarity_max_df`` of this
     question's OWN submissions is treated as boilerplate every candidate
     reaches independently and excluded before comparing — the reason many
     candidates using the same AI assistant does not, on its own, produce a
-    wall of signals.
+    wall of signals. That still needs one O(n) read of every submission's
+    hashes (not O(n^2) comparisons) to know what is common across the whole
+    question.
     """
+    if not new_attempt_ids:
+        return 0
     rows = (
         await db.execute(
             text(_FINGERPRINTS_FOR_QUESTION_SQL),
             {"c": company_id, "q": coding_question_id, "v": ALGORITHM_VERSION},
         )
     ).all()
-    fp_rows = [_FpRow(r.attempt_id, list(r.hashes), r.token_count) for r in rows]
-    if not fp_rows:
-        return 0
-
+    by_attempt: dict[uuid.UUID, _FpRow] = {}
     doc_freq: Counter[int] = Counter()
-    for fr in fp_rows:
+    for r in rows:
+        fr = _FpRow(r.attempt_id, list(r.hashes), r.token_count)
+        by_attempt[fr.attempt_id] = fr
         doc_freq.update(set(fr.hashes))
-    n = len(fp_rows)
+    if not by_attempt:
+        return 0
+    n = len(by_attempt)
     df_ceiling = max(1, math.ceil(settings.code_similarity_max_df * n))
     boilerplate = {h for h, c in doc_freq.items() if c > df_ceiling}
-
-    filtered: dict[uuid.UUID, set[int]] = {
-        fr.attempt_id: set(fr.hashes) - boilerplate for fr in fp_rows
-    }
-    tokens_by_attempt = {fr.attempt_id: fr.token_count for fr in fp_rows}
 
     thresholds = {
         "min_containment": settings.code_similarity_min_containment,
@@ -373,33 +470,42 @@ async def _compare_question(
         "k": 15, "w": 8,
     }
 
+    # Only the ones that actually have a fingerprint row (a submission below
+    # MIN_TOKENS never got one) and are genuinely new this pass.
+    new_rows: dict[uuid.UUID, _FpRow] = {
+        aid: by_attempt[aid] for aid in dict.fromkeys(new_attempt_ids) if aid in by_attempt
+    }
+
     written = 0
-    for i in range(len(fp_rows)):
-        for j in range(i + 1, len(fp_rows)):
-            a, b = fp_rows[i], fp_rows[j]
-            sim = compare(list(filtered[a.attempt_id]), list(filtered[b.attempt_id]))
-            if sim.shared < settings.code_similarity_min_shared:
-                continue
-            if max(sim.containment_a, sim.containment_b) < settings.code_similarity_min_containment:
-                continue
-            # Python's uuid.UUID orders by .int (the 16 bytes as one big-endian
-            # integer), the same order Postgres's `uuid <` operator uses — so
-            # this matches ck_code_similarity_signals_pair_order exactly.
-            low_id, high_id = sorted((a.attempt_id, b.attempt_id))
-            containment_low, containment_high = (
-                (sim.containment_a, sim.containment_b) if low_id == a.attempt_id
-                else (sim.containment_b, sim.containment_a)
+    for new_id, new_fp in new_rows.items():
+        new_hashes_filtered = set(new_fp.hashes) - boilerplate
+        if not new_hashes_filtered:
+            continue
+        candidate_rows = (
+            await db.execute(
+                text(_CANDIDATES_FOR_FINGERPRINT_SQL),
+                {
+                    "c": company_id, "q": coding_question_id, "v": ALGORITHM_VERSION,
+                    "new_attempt": new_id, "new_hashes": list(new_hashes_filtered),
+                    "cap": settings.code_similarity_max_candidates,
+                },
             )
-            tokens_low = tokens_by_attempt[low_id]
-            tokens_high = tokens_by_attempt[high_id]
+        ).all()
+        candidates = [(r.attempt_id, list(r.hashes), r.token_count) for r in candidate_rows]
+        scored = await asyncio.to_thread(
+            _score_new_attempt, new_id=new_id, new_hashes_filtered=new_hashes_filtered,
+            new_tokens=new_fp.token_count, candidates=candidates, boilerplate=boilerplate,
+            thresholds=thresholds,
+        )
+        for s in scored:
             await db.execute(
                 text(_INSERT_SIGNAL_SQL),
                 {
                     "id": uuid.uuid4(), "company_id": company_id,
                     "coding_question_id": coding_question_id, "exam_id": exam_id,
-                    "low": low_id, "high": high_id, "kind": "submission",
-                    "clow": containment_low, "chigh": containment_high, "jaccard": sim.jaccard,
-                    "shared": sim.shared, "tlow": tokens_low, "thigh": tokens_high,
+                    "low": s["low"], "high": s["high"], "kind": "submission",
+                    "clow": s["clow"], "chigh": s["chigh"], "jaccard": s["jaccard"],
+                    "shared": s["shared"], "tlow": s["tlow"], "thigh": s["thigh"],
                     "regions": json.dumps([]), "thresholds": json.dumps(thresholds),
                     "algorithm_version": ALGORITHM_VERSION,
                 },
@@ -408,16 +514,22 @@ async def _compare_question(
 
     written += await _compare_reference_solution(
         db, company_id=company_id, exam_id=exam_id, coding_question_id=coding_question_id,
-        filtered=filtered, tokens_by_attempt=tokens_by_attempt, thresholds=thresholds,
+        new_rows=new_rows, boilerplate=boilerplate, thresholds=thresholds,
     )
     return written
 
 
 async def _compare_reference_solution(
     db: AsyncSession, *, company_id: uuid.UUID, exam_id: uuid.UUID, coding_question_id: uuid.UUID,
-    filtered: dict[uuid.UUID, set[int]], tokens_by_attempt: dict[uuid.UUID, int],
-    thresholds: dict[str, Any],
+    new_rows: dict[uuid.UUID, _FpRow], boilerplate: set[int], thresholds: dict[str, Any],
 ) -> int:
+    """Compare only the NEWLY-fingerprinted attempts in ``new_rows`` against
+    the reference solution (MEDIUM-4) — an attempt already compared on an
+    earlier pass is not re-diffed against it again every pass. ``ON CONFLICT
+    DO NOTHING`` already made re-comparing harmless; this makes it
+    unnecessary, which is the actual cost this fixes."""
+    if not new_rows:
+        return 0
     row = (
         await db.execute(
             text(
@@ -445,22 +557,25 @@ async def _compare_reference_solution(
         return 0
     if not ref_fp.hashes:
         return 0
+    ref_hashes_filtered = set(ref_fp.hashes) - boilerplate
 
     written = 0
-    for attempt_id, hashes in filtered.items():
-        sim = compare(list(hashes), ref_fp.hashes)
-        if sim.shared < settings.code_similarity_min_shared:
-            continue
-        if sim.containment_a < settings.code_similarity_min_containment:
+    for attempt_id, fp in new_rows.items():
+        hashes_filtered = set(fp.hashes) - boilerplate
+        scored = await asyncio.to_thread(
+            _score_against_reference, hashes_filtered=hashes_filtered, token_count=fp.token_count,
+            ref_hashes=ref_hashes_filtered, ref_token_count=ref_fp.token_count, thresholds=thresholds,
+        )
+        if scored is None:
             continue
         await db.execute(
             text(_INSERT_SIGNAL_SQL),
             {
                 "id": uuid.uuid4(), "company_id": company_id, "coding_question_id": coding_question_id,
                 "exam_id": exam_id, "low": attempt_id, "high": None, "kind": "reference_solution",
-                "clow": sim.containment_a, "chigh": None, "jaccard": sim.jaccard,
-                "shared": sim.shared, "tlow": tokens_by_attempt[attempt_id],
-                "thigh": ref_fp.token_count, "regions": json.dumps([]),
+                "clow": scored["containment"], "chigh": None, "jaccard": scored["jaccard"],
+                "shared": scored["shared"], "tlow": scored["tokens"],
+                "thigh": scored["ref_tokens"], "regions": json.dumps([]),
                 "thresholds": json.dumps(thresholds), "algorithm_version": ALGORITHM_VERSION,
             },
         )
@@ -471,11 +586,17 @@ async def _compare_reference_solution(
 async def analyse_attempt(db: AsyncSession, *, company_id: uuid.UUID, attempt_id: uuid.UUID) -> SweepResult:
     """On-demand analysis for one attempt (an older submission outside the
     sweep's lookback window, or a re-run after a fix). Same idempotent
-    ``ON CONFLICT DO NOTHING`` writes as the sweep."""
+    ``ON CONFLICT DO NOTHING`` writes as the sweep.
+
+    Refuses an attempt whose code is already redacted (MEDIUM-1b) — there is
+    no source left to analyse, and a report written after redaction would
+    keep the sha256 and function/variable names the redaction was meant to
+    remove.
+    """
     row = (
         await db.execute(
             text(
-                "SELECT id, company_id, exam_id, answers FROM exam_attempts"
+                "SELECT id, company_id, exam_id, answers, code_redacted_at FROM exam_attempts"
                 " WHERE id = :a AND company_id = :c AND deleted_at IS NULL"
                 "   AND status IN ('submitted', 'expired')"
             ),
@@ -484,11 +605,15 @@ async def analyse_attempt(db: AsyncSession, *, company_id: uuid.UUID, attempt_id
     ).mappings().first()
     if row is None:
         raise CodeEvidenceError(404, "Attempt not found.")
+    if row["code_redacted_at"] is not None:
+        raise CodeEvidenceError(
+            409, "This attempt's coding source has been redacted; there is nothing left to analyse."
+        )
     coding = (row["answers"] or {}).get("coding") if isinstance(row["answers"], dict) else None
     if not isinstance(coding, dict) or not coding:
         return SweepResult()
     reports = fingerprints_ = 0
-    touched: set[uuid.UUID] = set()
+    touched: dict[uuid.UUID, list[uuid.UUID]] = {}
     for qid_str, entry in coding.items():
         qid = uuid.UUID(qid_str)
         language = str((entry or {}).get("language") or "")
@@ -499,16 +624,19 @@ async def analyse_attempt(db: AsyncSession, *, company_id: uuid.UUID, attempt_id
         ) else 0
         if language in PYGMENTS_LANGUAGE_ALIASES and source:
             starter = await _starter_code(db, row["company_id"], qid)
-            fingerprints_ += 1 if await _fingerprint_one(
+            wrote_fp = await _fingerprint_one(
                 db, company_id=row["company_id"], attempt_id=row["id"], coding_question_id=qid,
                 language=language, source=source, starter_code=starter,
-            ) else 0
-        touched.add(qid)
+            )
+            fingerprints_ += 1 if wrote_fp else 0
+            if wrote_fp:
+                touched.setdefault(qid, []).append(row["id"])
     await db.commit()
     signals = 0
-    for qid in touched:
+    for qid, new_attempt_ids in touched.items():
         signals += await _compare_question(
-            db, company_id=row["company_id"], exam_id=row["exam_id"], coding_question_id=qid
+            db, company_id=row["company_id"], exam_id=row["exam_id"], coding_question_id=qid,
+            new_attempt_ids=new_attempt_ids,
         )
     await db.commit()
     return SweepResult(
@@ -522,10 +650,15 @@ async def analyse_attempt(db: AsyncSession, *, company_id: uuid.UUID, attempt_id
 # ---------------------------------------------------------------------------
 async def evidence_for_attempt(
     db: AsyncSession, *, company_id: uuid.UUID, exam_id: uuid.UUID, attempt_id: uuid.UUID,
+    actor: uuid.UUID, meta: RequestMeta,
 ) -> dict[str, Any]:
     """Reports, test results (from ``graded_snapshot`` — labelled RESULTS, not
     coverage), an integrity summary, similarity signals and findings — for
-    every coding question in this attempt."""
+    every coding question in this attempt.
+
+    MEDIUM-3: audited every time, like the source and compare reads —
+    ``test_results`` carries the candidate's program stdout/stderr, which is
+    exactly the kind of read D3 #24 already requires an audit trail for."""
     attempt = (
         await db.execute(
             text(
@@ -592,6 +725,12 @@ async def evidence_for_attempt(
     graded_snapshot = attempt["graded_snapshot"] or {}
     coding_results = graded_snapshot.get("coding", {}) if isinstance(graded_snapshot, dict) else {}
 
+    _audit(
+        db, actor=actor, action="code_evidence.viewed", resource_id=attempt_id,
+        details={"company_id": str(company_id), "exam_id": str(exam_id)},
+        meta=meta,
+    )
+    await db.commit()
     return {
         "attempt_id": str(attempt_id),
         "code_redacted": attempt["code_redacted_at"] is not None,
@@ -680,8 +819,14 @@ async def compare_view(
     db: AsyncSession, *, company_id: uuid.UUID, signal_id: uuid.UUID, actor: uuid.UUID,
     meta: RequestMeta,
 ) -> dict[str, Any]:
-    """Excerpts of each matched region, ±3 lines, at most 200 lines per side.
-    Audited every time (D3 #24)."""
+    """Excerpts of each matched region, ±3 lines, at most 200 lines per side
+    (MEDIUM-3) — not the first 200 lines of the whole program regardless of
+    where the match is, which is what this returned before: ``matched``
+    was computed and returned alongside the excerpt but never used to cut
+    it, so a candidate-vs-candidate signal showed HR the OTHER candidate's
+    entire submission. Audited every time (D3 #24), naming both attempt ids
+    so the log still says whose code was viewed after the signal — and with
+    it the only column naming the pair — is deleted."""
     signal = (
         await db.execute(
             text(
@@ -714,16 +859,24 @@ async def compare_view(
         )
 
     matched = regions(low_fp, high_fp) if (low_fp and high_fp) else []
+    low_bounds = [(m["low_start"], m["low_end"]) for m in matched]
+    high_bounds = [(m["high_start"], m["high_end"]) for m in matched]
     _audit(
         db, actor=actor, action="code_similarity.viewed", resource_id=signal_id,
-        details={"company_id": str(company_id), "coding_question_id": str(signal["coding_question_id"])},
+        details={
+            "company_id": str(company_id), "coding_question_id": str(signal["coding_question_id"]),
+            "attempt_low_id": str(signal["attempt_low_id"]),
+            "attempt_high_id": str(signal["attempt_high_id"]) if signal["attempt_high_id"] else None,
+        },
         meta=meta,
     )
     await db.commit()
     return {
         "signal_id": str(signal_id),
-        "low": {"language": low_source["language"], "excerpt": _excerpt(low_source["text"])},
-        "high": {"language": high_source["language"], "excerpt": _excerpt(high_source["text"])},
+        "low": {"language": low_source["language"],
+                "excerpt": _excerpt_from_regions(low_source["text"], low_bounds)},
+        "high": {"language": high_source["language"],
+                 "excerpt": _excerpt_from_regions(high_source["text"], high_bounds)},
         "matched_regions": matched,
         "caption": "Automated, unreviewed — similar code is not evidence of misconduct "
                    "on its own.",
@@ -769,11 +922,45 @@ async def _raw_source(
 
 
 _MAX_EXCERPT_LINES = 200
+_EXCERPT_CONTEXT_LINES = 3
 
 
-def _excerpt(text_: str | None) -> str:
+def _excerpt_from_regions(text_: str | None, region_bounds: list[tuple[int, int]]) -> str:
+    """MEDIUM-3: an excerpt built from ONLY the matched line ranges, ±3 lines
+    of context each, merged where they overlap or touch, capped at 200 lines
+    total. Adjacent excerpted blocks are separated by an ``...`` marker.
+
+    When there is nothing to cut around — a reference-solution signal (no
+    fingerprint on the reference side to pair regions against), or a
+    fingerprint that is no longer available — this falls back to a capped
+    head of the text rather than nothing; that side is either HR's own
+    authored reference solution or the requesting candidate's own code, never
+    a second candidate's, so the whole-program exposure MEDIUM-3 is about
+    does not apply to it.
+    """
     lines = (text_ or "").splitlines()
-    return "\n".join(lines[:_MAX_EXCERPT_LINES])
+    if not lines:
+        return ""
+    if not region_bounds:
+        return "\n".join(lines[:_MAX_EXCERPT_LINES])
+    padded = sorted(
+        (max(1, start - _EXCERPT_CONTEXT_LINES), min(len(lines), end + _EXCERPT_CONTEXT_LINES))
+        for start, end in region_bounds
+    )
+    merged: list[list[int]] = []
+    for lo, hi in padded:
+        if merged and lo <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+    out: list[str] = []
+    for lo, hi in merged:
+        if out:
+            out.append("...")
+        out.extend(lines[lo - 1:hi])
+        if len(out) >= _MAX_EXCERPT_LINES:
+            break
+    return "\n".join(out[:_MAX_EXCERPT_LINES])
 
 
 # ---------------------------------------------------------------------------
@@ -787,32 +974,121 @@ async def record_finding(
 ) -> uuid.UUID:
     """Record a NAMED person's judgement call. ``rationale`` is mandatory
     (20-2000 chars, enforced by the CHECK constraint too) — there is no path
-    to record a finding without one."""
+    to record a finding without one.
+
+    MEDIUM-1(b): refuses an attempt whose code is already redacted — there is
+    no source left to review, and the finding's rationale (which can quote or
+    name the candidate) would otherwise outlive it forever.
+
+    MEDIUM-2: ``signal_id`` and ``supersedes_id`` arrive from the client and
+    were previously checked for company only. Validated here AND in the
+    INSERT guard trigger (belt and braces): a signal must be a signal on THIS
+    attempt and question; a superseded finding must be a LIVE finding on the
+    SAME attempt and question. ``supersedes_id``'s target row is locked
+    (``FOR UPDATE``) so two concurrent supersedes of the same old finding
+    cannot both see it as live — without that lock, both could insert, and
+    the supersede UPDATE below would silently update 0 rows for whichever
+    commits second, leaving two current findings.
+    """
     if outcome not in ("no_concern", "follow_up", "confirmed"):
         raise CodeEvidenceError(422, "outcome must be no_concern, follow_up or confirmed.")
     if len(rationale.strip()) < 20:
         raise CodeEvidenceError(422, "Give a rationale of at least 20 characters.")
-    fid = uuid.uuid4()
-    await db.execute(
-        text(
-            "INSERT INTO code_integrity_findings"
-            " (id, company_id, attempt_id, coding_question_id, signal_id, enrolment_id, outcome,"
-            "  rationale, recorded_by_user_id, supersedes_id, created_at)"
-            " VALUES (:id, :c, :a, :q, :s, :e, :o, :r, :actor, :sup, now())"
-        ),
-        {
-            "id": fid, "c": company_id, "a": attempt_id, "q": coding_question_id, "s": signal_id,
-            "e": enrolment_id, "o": outcome, "r": rationale.strip(), "actor": actor, "sup": supersedes_id,
-        },
-    )
+
+    attempt_row = (
+        await db.execute(
+            text("SELECT code_redacted_at FROM exam_attempts WHERE id = :a AND company_id = :c"),
+            {"a": attempt_id, "c": company_id},
+        )
+    ).first()
+    if attempt_row is None:
+        raise CodeEvidenceError(404, "Attempt not found.")
+    if attempt_row[0] is not None:
+        raise CodeEvidenceError(
+            409,
+            "This attempt's coding source has been redacted; a finding can no longer be recorded on it.",
+        )
+
+    if signal_id is not None:
+        signal_row = (
+            await db.execute(
+                text(
+                    "SELECT attempt_low_id, attempt_high_id, coding_question_id"
+                    "  FROM code_similarity_signals WHERE id = :s AND company_id = :c"
+                ),
+                {"s": signal_id, "c": company_id},
+            )
+        ).first()
+        if signal_row is None:
+            raise CodeEvidenceError(404, "Signal not found.")
+        sig_low, sig_high, sig_qid = signal_row
+        if sig_qid != coding_question_id or attempt_id not in (sig_low, sig_high):
+            raise CodeEvidenceError(
+                422, "That signal is not a signal on this attempt and this coding question."
+            )
+
     if supersedes_id is not None:
+        old_row = (
+            await db.execute(
+                text(
+                    "SELECT attempt_id, coding_question_id, superseded_at, redacted_at"
+                    "  FROM code_integrity_findings WHERE id = :old AND company_id = :c FOR UPDATE"
+                ),
+                {"old": supersedes_id, "c": company_id},
+            )
+        ).first()
+        if old_row is None:
+            raise CodeEvidenceError(404, "The finding to supersede was not found.")
+        old_attempt_id, old_qid, old_superseded_at, old_redacted_at = old_row
+        if old_attempt_id != attempt_id or old_qid != coding_question_id:
+            raise CodeEvidenceError(
+                422, "A finding can only supersede a finding on the same attempt and question."
+            )
+        if old_superseded_at is not None:
+            raise CodeEvidenceError(409, "That finding has already been superseded.")
+        if old_redacted_at is not None:
+            raise CodeEvidenceError(409, "That finding has been redacted and cannot be superseded.")
+
+    fid = uuid.uuid4()
+    try:
         await db.execute(
             text(
-                "UPDATE code_integrity_findings SET superseded_at = now()"
-                " WHERE id = :old AND company_id = :c AND superseded_at IS NULL"
+                "INSERT INTO code_integrity_findings"
+                " (id, company_id, attempt_id, coding_question_id, signal_id, enrolment_id, outcome,"
+                "  rationale, recorded_by_user_id, supersedes_id, created_at)"
+                " VALUES (:id, :c, :a, :q, :s, :e, :o, :r, :actor, :sup, now())"
             ),
-            {"old": supersedes_id, "c": company_id},
+            {
+                "id": fid, "c": company_id, "a": attempt_id, "q": coding_question_id, "s": signal_id,
+                "e": enrolment_id, "o": outcome, "r": rationale.strip(), "actor": actor, "sup": supersedes_id,
+            },
         )
+        if supersedes_id is not None:
+            result = await db.execute(
+                text(
+                    "UPDATE code_integrity_findings SET superseded_at = now()"
+                    " WHERE id = :old AND company_id = :c AND superseded_at IS NULL"
+                ),
+                {"old": supersedes_id, "c": company_id},
+            )
+            if (getattr(result, "rowcount", 0) or 0) == 0:
+                # MEDIUM-2's last defect: this used to update 0 rows silently,
+                # leaving two current findings. The FOR UPDATE lock above
+                # should make this unreachable; refuse loudly instead of
+                # trusting that.
+                raise CodeEvidenceError(409, "That finding was superseded by someone else just now.")
+    except DBAPIError as exc:
+        await db.rollback()
+        log.warning(
+            "code_integrity.finding_rejected", company_id=str(company_id), attempt_id=str(attempt_id),
+            reason=_safe_exc_message(exc),
+        )
+        raise CodeEvidenceError(
+            409,
+            "That finding could not be recorded — its attempt, question, signal or superseded "
+            "finding no longer match.",
+        ) from exc
+
     _audit(
         db, actor=actor, action="code_integrity.finding_recorded", resource_id=fid,
         details={
@@ -997,11 +1273,36 @@ async def purge(db: AsyncSession, *, retention_days: int, dry_run: bool) -> int:
             ),
             {"a": json.dumps(new_answers), "g": json.dumps(new_snapshot), "id": attempt_id, "c": company_id},
         )
+        # MEDIUM-1(c): redact the RATIONALE of every finding that names one of
+        # this attempt's signals -- BEFORE clearing signal_id below -- even
+        # one recorded against a SURVIVING candidate's own attempt (the other
+        # side of the pair). Without this, a finding on the pair's other
+        # attempt lost only its signal_id; its rationale -- which the
+        # executor's own inventory says "can quote or name the candidate" --
+        # was kept forever, because the OLD final redact step below only ever
+        # matched findings whose own attempt_id was the one being purged.
+        # MUST run before the signal_id nulling immediately below: once
+        # signal_id is NULL there is no way left to find these findings
+        # through the signal at all.
+        await db.execute(
+            text(
+                "UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"
+                " WHERE company_id = :c AND redacted_at IS NULL AND signal_id IN ("
+                "   SELECT id FROM code_similarity_signals"
+                "    WHERE company_id = :c AND (attempt_low_id = :a OR attempt_high_id = :a)"
+                " )"
+            ),
+            {"c": company_id, "a": attempt_id},
+        )
         # MUST run before the DELETE below: code_integrity_findings.signal_id
         # is RESTRICT, not SET NULL, because a composite FK's ON DELETE
         # SET NULL would null company_id (NOT NULL) along with it. A finding
         # can sit on either attempt of the pair, not just this one, so the
-        # match is on signal membership, not on attempt_id.
+        # match is on signal membership, not on attempt_id. Some of these
+        # rows were JUST redacted above (by this pass) and some may already
+        # have been redacted earlier for an unrelated reason -- the guard
+        # trigger allows signal_id -> NULL on a redacted row for exactly this
+        # (MEDIUM-2), so this never raises "is redacted and is fixed".
         await db.execute(
             text(
                 "UPDATE code_integrity_findings SET signal_id = NULL"
@@ -1025,6 +1326,10 @@ async def purge(db: AsyncSession, *, retention_days: int, dry_run: bool) -> int:
             text("DELETE FROM code_quality_reports WHERE company_id = :c AND attempt_id = :a"),
             {"c": company_id, "a": attempt_id},
         )
+        # The catch-all: every OTHER finding directly on this attempt (never
+        # referencing a signal, or referencing one that did not name this
+        # attempt's pair) still gets its rationale redacted once this
+        # attempt's own evidence is gone.
         await db.execute(
             text(
                 "UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"

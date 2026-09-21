@@ -29,12 +29,14 @@ Usage:
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 
 import structlog
 from fastapi import Depends, HTTPException, Request, status
 from prometheus_client import Counter
 
+from app.dependencies import get_hr_company
 from app.redis_client import get_redis
 from app.utils.request_ip import extract_client_ip
 
@@ -86,6 +88,45 @@ def rate_limit(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many requests. Please wait a minute and try again.",
+            )
+
+    return Depends(_dep)
+
+
+def rate_limit_company(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
+    """Cap a route at *per_minute* requests per COMPANY rather than per client
+    IP (MEDIUM-4, PH4-D3). ``rate_limit`` above keys on IP, which is the right
+    boundary for an anonymous or per-account route — but several HR seats at
+    one company hitting an on-demand analysis route each get their own IP and
+    so, keyed that way, effectively their own budget. ``get_hr_company`` is
+    already a dependency of the route this guards, so FastAPI resolves it
+    once per request and both call sites share the cached result.
+
+    Same fixed 60-second window and fail-open posture as ``rate_limit`` — see
+    its docstring; a cache blip must not lock every HR seat out of the
+    console.
+    """
+
+    async def _dep(ctx: tuple[uuid.UUID, uuid.UUID] = Depends(get_hr_company)) -> None:  # noqa: B008
+        _uid, company_id = ctx
+        try:
+            redis = get_redis()
+            key = f"rl:{bucket}:{company_id}"
+            count: int = await redis.incr(key)
+            if count == 1:
+                await redis.expire(key, 60)
+        except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
+            _rate_limit_skipped.labels(
+                bucket=bucket, error_type=type(exc).__name__
+            ).inc()
+            log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+            return
+        if count > per_minute:
+            _rate_limit_exceeded.labels(bucket=bucket).inc()
+            log.warning("rate_limit.exceeded", bucket=bucket)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests from your company. Please wait a minute and try again.",
             )
 
     return Depends(_dep)

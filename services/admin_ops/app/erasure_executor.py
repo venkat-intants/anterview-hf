@@ -1277,10 +1277,24 @@ async def _execute_one_erasure(
     #
     # MUST run before step 6: the join reaches these rows through
     # applicants.user_id, which step 6 sets to NULL.
+    #
+    # MEDIUM-1(b): this used to filter on ``code_redacted_at IS NULL``, same
+    # as the attempt UPDATE below -- so an attempt retention had ALREADY
+    # redacted (e.g. because its application was decided and the retention
+    # window had passed before this erasure ran) was skipped ENTIRELY here,
+    # evidence cleanup and finding-rationale redaction included. A finding
+    # recorded after that earlier redaction (record_finding now refuses one
+    # on a redacted attempt, but a legacy row, or one written in the race
+    # MEDIUM-1(a) closes, could still exist) would then keep its rationale
+    # forever, because erasure never looked at the attempt again. The SELECT
+    # below now reaches every one of this user's coding attempts regardless
+    # of ``code_redacted_at``; only the attempt UPDATE two lines down stays
+    # conditional on it being NULL, which is what makes it idempotent instead
+    # of the freeze trigger's "code_redacted_at is frozen once set" firing.
     coding_attempts_result = await db.execute(
         text(
             "SELECT id, company_id, answers, graded_snapshot FROM exam_attempts"
-            " WHERE code_redacted_at IS NULL AND answers -> 'coding' IS NOT NULL"
+            " WHERE answers -> 'coding' IS NOT NULL"
             "   AND applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
         ),
         {"uid": uid_str},
@@ -1306,11 +1320,36 @@ async def _execute_one_erasure(
             {"a": json.dumps(new_answers), "g": json.dumps(new_snapshot), "id": coding_attempt_id},
         )
         code_attempts_redacted += getattr(redact_result, "rowcount", 0) or 0
+        # MEDIUM-1(c): redact the RATIONALE of every finding that names one of
+        # this attempt's signals -- BEFORE clearing signal_id below -- even
+        # one recorded against a SURVIVING candidate's own attempt (the other
+        # side of the pair). A finding on the pair's other attempt otherwise
+        # lost only its signal_id; its rationale -- which this file's own
+        # inventory says "can quote or name the candidate" -- was kept
+        # forever, because the final redact step below only ever matched
+        # findings whose own attempt_id was this erased one. MUST run before
+        # the signal_id nulling immediately below: once signal_id is NULL
+        # there is no way left to find these findings through the signal.
+        cross_findings_result = await db.execute(
+            text(
+                "UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"
+                " WHERE company_id = :c AND redacted_at IS NULL AND signal_id IN ("
+                "   SELECT id FROM code_similarity_signals"
+                "    WHERE company_id = :c AND (attempt_low_id = :a OR attempt_high_id = :a)"
+                " )"
+            ),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_findings_redacted += getattr(cross_findings_result, "rowcount", 0) or 0
         # MUST run before the DELETE below: code_integrity_findings.signal_id
         # is RESTRICT, not SET NULL -- a composite FK's ON DELETE SET NULL
         # would null company_id (NOT NULL) along with it (see the PH4-D3
         # migration's docstring). A finding can sit on either attempt of the
-        # pair, not just this one, so the match is on signal membership.
+        # pair, not just this one, so the match is on signal membership. Some
+        # of these rows were just redacted above and some may already have
+        # been redacted earlier for an unrelated reason -- the guard trigger
+        # allows signal_id -> NULL on a redacted row for exactly this
+        # (MEDIUM-2), so this never raises "is redacted and is fixed".
         await db.execute(
             text(
                 "UPDATE code_integrity_findings SET signal_id = NULL"
@@ -1339,6 +1378,9 @@ async def _execute_one_erasure(
             {"c": coding_attempt_company_id, "a": coding_attempt_id},
         )
         code_reports_deleted += getattr(reports_result, "rowcount", 0) or 0
+        # The catch-all: every OTHER finding directly on this attempt (never
+        # referencing a signal, or referencing one that did not name this
+        # attempt's pair) still gets its rationale redacted here.
         findings_result = await db.execute(
             text(
                 "UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"

@@ -122,7 +122,29 @@ BEGIN
                 'redacting exam attempt % changes only answers, graded_snapshot and code_redacted_at',
                 OLD.id;
         END IF;
+        -- LOW-3: constrain the redaction to the CODING subtree specifically --
+        -- an MCQ selection in `answers`, or a non-coding test result in
+        -- `graded_snapshot`, is not this redaction's business. The `-` jsonb
+        -- operator drops the named top-level key, so this compares "the rest
+        -- of the document" byte for byte and is silent about what changed
+        -- INSIDE 'coding', which is exactly the part the redaction may touch.
+        IF (COALESCE(NEW.answers, '{}'::jsonb) - 'coding')
+             IS DISTINCT FROM (COALESCE(OLD.answers, '{}'::jsonb) - 'coding')
+           OR (COALESCE(NEW.graded_snapshot, '{}'::jsonb) - 'coding')
+             IS DISTINCT FROM (COALESCE(OLD.graded_snapshot, '{}'::jsonb) - 'coding') THEN
+            RAISE EXCEPTION
+                'redacting exam attempt % changes only the coding source and output', OLD.id;
+        END IF;
         RETURN NEW;
+    END IF;
+
+    -- LOW-3: code_redacted_at is frozen once set -- the block above is the
+    -- ONLY transition that may ever set it, from NULL. Without this, nothing
+    -- stopped a second UPDATE moving it to a LATER timestamp (the general
+    -- check below never names this column), which would silently relabel
+    -- when the one-time redaction "happened".
+    IF OLD.code_redacted_at IS NOT NULL AND NEW.code_redacted_at IS DISTINCT FROM OLD.code_redacted_at THEN
+        RAISE EXCEPTION 'exam attempt % code_redacted_at is frozen once set', OLD.id;
     END IF;
 
     IF NEW.answers IS DISTINCT FROM OLD.answers
@@ -143,6 +165,54 @@ $$ LANGUAGE plpgsql;
 """
 
 # ---------------------------------------------------------------------------
+# MEDIUM-1(a): analysis (the sweep, an on-demand re-run) reads an attempt,
+# spends seconds per row in the sandbox, and only then inserts. Nothing
+# locked or re-checked the attempt in between, so a report -- whose findings
+# name functions, variables and imports, plus a sha256 of the source -- or a
+# fingerprint/signal could be written AFTER retention or erasure committed
+# the redaction. `FOR SHARE` on the attempt row serialises the INSERT against
+# that UPDATE: whichever gets there first, the other waits, and an INSERT
+# that resumes after a redaction commit sees code_redacted_at set and is
+# refused, atomically, at the database.
+# ---------------------------------------------------------------------------
+CODE_EVIDENCE_ATTEMPT_NOT_REDACTED = """
+CREATE OR REPLACE FUNCTION code_evidence_attempt_not_redacted() RETURNS trigger AS $$
+DECLARE
+    low_redacted timestamptz;
+    high_redacted timestamptz;
+BEGIN
+    IF TG_TABLE_NAME = 'code_similarity_signals' THEN
+        SELECT code_redacted_at INTO low_redacted FROM exam_attempts
+         WHERE id = NEW.attempt_low_id FOR SHARE;
+        IF low_redacted IS NOT NULL THEN
+            RAISE EXCEPTION
+                'attempt % has redacted code -- % cannot record new evidence for it',
+                NEW.attempt_low_id, TG_TABLE_NAME;
+        END IF;
+        IF NEW.attempt_high_id IS NOT NULL THEN
+            SELECT code_redacted_at INTO high_redacted FROM exam_attempts
+             WHERE id = NEW.attempt_high_id FOR SHARE;
+            IF high_redacted IS NOT NULL THEN
+                RAISE EXCEPTION
+                    'attempt % has redacted code -- % cannot record new evidence for it',
+                    NEW.attempt_high_id, TG_TABLE_NAME;
+            END IF;
+        END IF;
+    ELSE
+        SELECT code_redacted_at INTO low_redacted FROM exam_attempts
+         WHERE id = NEW.attempt_id FOR SHARE;
+        IF low_redacted IS NOT NULL THEN
+            RAISE EXCEPTION
+                'attempt % has redacted code -- % cannot record new evidence for it',
+                NEW.attempt_id, TG_TABLE_NAME;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+# ---------------------------------------------------------------------------
 # Reports / fingerprints / signals: system evidence, immutable once written.
 # UPDATE is always refused; DELETE stays legal (retention, erasure).
 # ---------------------------------------------------------------------------
@@ -157,7 +227,10 @@ $$ LANGUAGE plpgsql;
 # ---------------------------------------------------------------------------
 # Findings: HUMAN evidence. No UPDATE except a controlled redaction, clearing
 # a followed-up signal_id, or a one-time supersede. DELETE only as a cascade
-# (the applicant/company itself going) -- there is no direct DELETE route.
+# (the applicant/company itself going) -- there is no direct DELETE route. On
+# INSERT, a referenced signal must be a signal on THIS attempt and question,
+# and a superseded finding must be a LIVE finding on the SAME attempt and
+# question -- MEDIUM-2: these previously arrived unchecked beyond company_id.
 # ---------------------------------------------------------------------------
 CODE_INTEGRITY_FINDINGS_GUARD = """
 CREATE OR REPLACE FUNCTION code_integrity_findings_guard() RETURNS trigger AS $$
@@ -176,11 +249,58 @@ BEGIN
         IF NEW.redacted_at IS NOT NULL OR NEW.superseded_at IS NOT NULL THEN
             RAISE EXCEPTION 'a code integrity finding arrives neither redacted nor superseded';
         END IF;
+        -- MEDIUM-2: signal_id, supersedes_id and coding_question_id arrive
+        -- from the client and were previously checked for company only. A
+        -- signal a finding follows up must be a signal ON THIS ATTEMPT AND
+        -- QUESTION -- never another pair's, and never another question's,
+        -- even one naming the same two attempts.
+        IF NEW.signal_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM code_similarity_signals s
+             WHERE s.id = NEW.signal_id AND s.company_id = NEW.company_id
+               AND s.coding_question_id = NEW.coding_question_id
+               AND (s.attempt_low_id = NEW.attempt_id OR s.attempt_high_id = NEW.attempt_id)
+        ) THEN
+            RAISE EXCEPTION
+                'code integrity finding signal % is not a signal on attempt % and its question',
+                NEW.signal_id, NEW.attempt_id;
+        END IF;
+        -- A finding this one supersedes must be a LIVE (not already
+        -- superseded, not redacted) finding on the SAME attempt and
+        -- question -- locked here (FOR UPDATE) so two concurrent supersedes
+        -- of the same old finding cannot both see it as live;
+        -- app/code_evidence.py::record_finding locks it again itself before
+        -- ever reaching this INSERT, belt and braces.
+        IF NEW.supersedes_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM code_integrity_findings f
+             WHERE f.id = NEW.supersedes_id AND f.company_id = NEW.company_id
+               AND f.attempt_id = NEW.attempt_id AND f.coding_question_id = NEW.coding_question_id
+               AND f.superseded_at IS NULL AND f.redacted_at IS NULL
+             FOR UPDATE
+        ) THEN
+            RAISE EXCEPTION
+                'code integrity finding % does not supersede a live finding on the same attempt and question',
+                NEW.supersedes_id;
+        END IF;
         RETURN NEW;
     END IF;
 
     -- UPDATE
     IF OLD.redacted_at IS NOT NULL THEN
+        -- One exception even here: clearing signal_id to NULL. A finding
+        -- already redacted (by an earlier pass, or for an unrelated reason)
+        -- can still reference a signal that a LATER purge/erasure deletes --
+        -- the delete-guard for that signal always clears every finding's
+        -- signal_id first, redacted or not (app/code_evidence.py::purge,
+        -- admin_ops step 5h). Refusing that here would raise 'is redacted
+        -- and is fixed' and block the purge/erasure transaction -- forever,
+        -- since the next tick reaches the exact same row the exact same way.
+        IF NEW.signal_id IS NULL AND OLD.signal_id IS NOT NULL
+           AND NEW.rationale IS NOT DISTINCT FROM OLD.rationale
+           AND NEW.outcome IS NOT DISTINCT FROM OLD.outcome
+           AND NEW.redacted_at IS NOT DISTINCT FROM OLD.redacted_at
+           AND NEW.superseded_at IS NOT DISTINCT FROM OLD.superseded_at THEN
+            RETURN NEW;
+        END IF;
         RAISE EXCEPTION 'code integrity finding % is redacted and is fixed', OLD.id;
     END IF;
 
@@ -478,10 +598,19 @@ def upgrade() -> None:
         # precedent is SET NULL only because THAT column is nullable.
         sa.ForeignKeyConstraint(["recorded_by_user_id"], ["users.id"],
                                 name="fk_code_integrity_findings_recorder", ondelete="RESTRICT"),
+        # MEDIUM-2: this was ``ondelete="SET NULL"`` -- the SAME composite-FK
+        # defect the signal FK's own comment above describes (Postgres's
+        # SET NULL for a composite FK nulls EVERY column it names, including
+        # company_id, which is NOT NULL here). NO ACTION (Postgres's default,
+        # named explicitly) plus DEFERRABLE never fires today: a finding is
+        # "kept, not deleted" while its attempt exists, so nothing ever
+        # deletes a superseded finding's row for this to react to; it exists,
+        # like the signal FK, to fail loudly rather than corrupt a row if
+        # that ever changes.
         sa.ForeignKeyConstraint(
             ["supersedes_id", "company_id"],
             ["code_integrity_findings.id", "code_integrity_findings.company_id"],
-            name="fk_code_integrity_findings_supersedes", ondelete="SET NULL",
+            name="fk_code_integrity_findings_supersedes", ondelete="NO ACTION",
             deferrable=True, initially="DEFERRED",
         ),
         sa.CheckConstraint(f"outcome IN {CODE_INTEGRITY_OUTCOMES}",
@@ -502,6 +631,7 @@ def upgrade() -> None:
 
     for sql in (
         EXAM_ATTEMPTS_SUBMISSION_FROZEN, CODE_EVIDENCE_IMMUTABLE, CODE_INTEGRITY_FINDINGS_GUARD,
+        CODE_EVIDENCE_ATTEMPT_NOT_REDACTED,
     ):
         op.execute(sql)
     op.execute(
@@ -520,9 +650,26 @@ def upgrade() -> None:
         " BEFORE INSERT OR UPDATE OR DELETE ON code_integrity_findings"
         " FOR EACH ROW EXECUTE FUNCTION code_integrity_findings_guard()"
     )
+    # MEDIUM-1(a): one BEFORE INSERT trigger per evidence table, serialising
+    # against the redaction UPDATE via the FOR SHARE lock inside the function.
+    for table in (
+        "code_quality_reports", "code_fingerprints", "code_similarity_signals",
+        "code_integrity_findings",
+    ):
+        op.execute(
+            f"CREATE TRIGGER {table}_attempt_not_redacted"
+            f" BEFORE INSERT ON {table}"
+            f" FOR EACH ROW EXECUTE FUNCTION code_evidence_attempt_not_redacted()"
+        )
 
 
 def downgrade() -> None:
+    for table in (
+        "code_quality_reports", "code_fingerprints", "code_similarity_signals",
+        "code_integrity_findings",
+    ):
+        op.execute(f"DROP TRIGGER IF EXISTS {table}_attempt_not_redacted ON {table}")
+    op.execute("DROP FUNCTION IF EXISTS code_evidence_attempt_not_redacted()")
     op.execute("DROP TRIGGER IF EXISTS code_integrity_findings_guard ON code_integrity_findings")
     op.execute("DROP FUNCTION IF EXISTS code_integrity_findings_guard()")
     for table in ("code_quality_reports", "code_fingerprints", "code_similarity_signals"):

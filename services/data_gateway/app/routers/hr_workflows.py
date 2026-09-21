@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field, field_validator
 from shared.intelligence import baseline_profile, compute_profile_id
 from sqlalchemy import text
 
+from app.code_evidence import summary_for_enrolments as code_evidence_summary_for_enrolments
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.interviewer_scorecards import summary_for_enrolments
@@ -847,6 +848,13 @@ async def get_decision_queue(
         db, company_id=company_id,
         enrolment_ids=[uuid.UUID(str(r["enrolment_id"])) for r in rows if r.get("enrolment_id")],
     )
+    # PH4-D3: counts of coding-round similarity signals and integrity findings
+    # — never source, never names. Wired the same way as scorecards above:
+    # informational only, nothing here reorders, filters or moves anyone.
+    code_evidence_counts = await code_evidence_summary_for_enrolments(
+        db, company_id=company_id,
+        enrolment_ids=[uuid.UUID(str(r["enrolment_id"])) for r in rows if r.get("enrolment_id")],
+    )
     # PH4-O1: where each candidate stands against their stage's SLA, who owns
     # it, and whether an exception is open. Also informational: nothing here
     # reorders, filters or moves anyone.
@@ -856,6 +864,7 @@ async def get_decision_queue(
     )
     for r in rows:
         r["scorecards"] = counts.get(str(r.get("enrolment_id")))
+        r["code_evidence"] = code_evidence_counts.get(str(r.get("enrolment_id")))
         info = slas.get(str(r.get("enrolment_id"))) or {}
         r["sla"] = info.get("sla")
         r["stage_owner_name"] = info.get("owner_name")

@@ -262,6 +262,14 @@ class Settings(BaseSettings):
     code_similarity_min_shared: int = 10
     code_similarity_min_tokens: int = 50
     code_similarity_max_df: float = 0.4
+    # MEDIUM-4: a pass only compares a NEWLY-fingerprinted submission against
+    # candidates the GIN `hashes &&` overlap query returns for it, capped at
+    # this many rows — bounded work per new submission instead of the whole
+    # question's history, and bounded per sweep pass by code_analysis_batch.
+    code_similarity_max_candidates: int = 300
+    # MEDIUM-4: the on-demand /code-analysis route, capped per COMPANY (not
+    # per IP — many HR seats at one company must share one budget).
+    code_analysis_ondemand_per_minute: int = 10
     # Candidate source and program stdout/stderr are redacted this many days
     # after the application is decided (or after submission, when there is no
     # application) — the same policy shape as accommodation_retention_days.

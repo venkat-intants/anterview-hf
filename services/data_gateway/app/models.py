@@ -2258,6 +2258,16 @@ class CodeIntegrityFinding(Base):
             ["enrolment_id", "company_id"], ["enrolments.id", "enrolments.company_id"],
             name="fk_code_integrity_findings_enrolment", ondelete="RESTRICT",
         ),
+        # MEDIUM-2: mirrors the migration -- NO ACTION (not SET NULL, which
+        # for a composite FK would null company_id, NOT NULL here, along with
+        # supersedes_id), deferrable. Never fires today: a finding is kept,
+        # not deleted, while its attempt exists.
+        ForeignKeyConstraint(
+            ["supersedes_id", "company_id"],
+            ["code_integrity_findings.id", "code_integrity_findings.company_id"],
+            name="fk_code_integrity_findings_supersedes", ondelete="NO ACTION",
+            deferrable=True, initially="DEFERRED",
+        ),
         CheckConstraint(
             "outcome IN ('no_concern','follow_up','confirmed')",
             name="ck_code_integrity_findings_outcome",

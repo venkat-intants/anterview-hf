@@ -266,17 +266,37 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 original_scores[aid] = (row[0], row[1])
 
         print("\nPH4-D3 — the sweep analyses all three and compares them")
+        # analyse_pending is GLOBAL and batched, by design: it is the
+        # platform's background job, not scoped to one exam. On a database
+        # with a backlog of other pending attempts -- which is what the full
+        # test suite leaves behind -- one pass can fill its batch before it
+        # reaches this run's three. The first version called it once and
+        # checked `reports_written >= 3`, which OTHER attempts' reports could
+        # satisfy, so the checks passed while this run's own work had not
+        # been analysed at all -- and then pair_signals[0] hit an empty list.
+        # So: sweep until THIS run's attempts are all reported, bounded, and
+        # assert on them by id.
+        own_ids = [uuid.UUID(a) for a in attempts.values()]
+        own_reported = 0
+        passes = 0
+        for passes in range(1, 31):  # noqa: B007 -- read after the loop
+            async with factory() as db:
+                await analyse_pending(db)
+                own_reported = await db.scalar(
+                    text("SELECT count(DISTINCT attempt_id) FROM code_quality_reports"
+                         " WHERE attempt_id = ANY(:ids)"),
+                    {"ids": own_ids},
+                ) or 0
+            if own_reported == len(own_ids):
+                break
+        check("the sweep reached and reported all three of this run's attempts",
+              own_reported == len(own_ids), f"{own_reported}/{len(own_ids)} after {passes} passes")
         async with factory() as db:
-            swept = await analyse_pending(db)
-        # >=, not ==: analyse_pending is a genuinely GLOBAL, cross-company
-        # sweep (by design — it is the platform's background job, not scoped
-        # to one exam), so on a persistent local Postgres shared across
-        # repeated smoke runs it may also pick up older attempts this run
-        # never created. This run's own three are proven below by name.
-        check("the sweep wrote at least three reports", swept.reports_written >= 3, str(swept))
-        check("the sweep wrote at least three fingerprints", swept.fingerprints_written >= 3, str(swept))
-        check("the sweep wrote at least two signals (A-B pair, at least one reference match)",
-              swept.signals_written >= 2, str(swept))
+            own_fingerprints = await db.scalar(
+                text("SELECT count(*) FROM code_fingerprints WHERE attempt_id = ANY(:ids)"),
+                {"ids": own_ids},
+            ) or 0
+        check("…and fingerprinted all three", own_fingerprints == len(own_ids), str(own_fingerprints))
 
         r = await c.get(f"/hr/exams/{exam_id}/similarity")
         signals = r.json()
@@ -287,6 +307,9 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               str(pair_signals))
         check("at least one reference-solution signal", len(reference_signals) >= 1,
               str(reference_signals))
+        if not pair_signals:
+            # Fail with a reason, not an IndexError that stops the smoke.
+            raise SystemExit("no submission-pair signal: nothing below can be checked")
         pair_attempt_ids = {pair_signals[0]["attempt_low_id"], pair_signals[0]["attempt_high_id"]}
         check("the pair signal is exactly (A, B), never C",
               pair_attempt_ids == {attempts[applicant_a], attempts[applicant_b]}, str(pair_attempt_ids))

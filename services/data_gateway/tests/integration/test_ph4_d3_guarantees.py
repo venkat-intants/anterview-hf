@@ -26,7 +26,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import code_evidence as svc
 from app.config import settings
+from app.interviewer_scorecards import RequestMeta
 
 pytestmark = pytest.mark.integration
 
@@ -218,19 +220,36 @@ def _finding_insert(
     f: F, fid: uuid.UUID, *, attempt_id: uuid.UUID | None = None, rationale: str = "x" * 30,
     company_id: uuid.UUID | None = None, recorder: uuid.UUID | None = None,
     superseded_at: str | None = None, redacted_at: str | None = None,
-    signal_id: uuid.UUID | None = None,
+    signal_id: uuid.UUID | None = None, supersedes_id: uuid.UUID | None = None,
 ) -> tuple[str, dict[str, Any]]:
     sql = (
         "INSERT INTO code_integrity_findings (id, company_id, attempt_id, coding_question_id,"
-        " signal_id, outcome, rationale, recorded_by_user_id, superseded_at, redacted_at,"
-        " created_at)"
-        " VALUES (:i, :c, :a, :q, :sig, 'follow_up', :r, :rec, :sat, :rdat, now())"
+        " signal_id, outcome, rationale, recorded_by_user_id, supersedes_id, superseded_at,"
+        " redacted_at, created_at)"
+        " VALUES (:i, :c, :a, :q, :sig, 'follow_up', :r, :rec, :sup, :sat, :rdat, now())"
     )
     return sql, {
         "i": fid, "c": company_id or f.company, "a": attempt_id or f.attempt_a, "q": f.question,
-        "sig": signal_id, "r": rationale, "rec": recorder or f.hr, "sat": superseded_at,
-        "rdat": redacted_at,
+        "sig": signal_id, "r": rationale, "rec": recorder or f.hr, "sup": supersedes_id,
+        "sat": superseded_at, "rdat": redacted_at,
     }
+
+
+async def _extra_attempt(db: AsyncSession, f: F) -> uuid.UUID:
+    """A THIRD same-company, same-question attempt outside the (attempt_a,
+    attempt_b) pair — applicant_a's retake — for testing that a signal or a
+    supersede reference must name an attempt actually involved."""
+    aid = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO exam_attempts (id, company_id, exam_id, round_id, applicant_id, attempt_no,"
+            " status, started_at, submitted_at, score_raw, score_max, score_percent, passed,"
+            " created_at, updated_at)"
+            " VALUES (:i, :c, :x, :r, :a, 2, 'submitted', now(), now(), 100, 100, 100, true, now(), now())"
+        ),
+        {"i": aid, "c": f.company, "x": f.exam, "r": f.round, "a": f.applicant_a},
+    )
+    return aid
 
 
 async def _new_finding(db: AsyncSession, f: F, **kw: Any) -> uuid.UUID:
@@ -754,3 +773,480 @@ async def test_retention_ignores_a_decision_that_was_later_reversed(db: AsyncSes
         {"c": f.company, "e": enr},
     )
     assert reopened not in await _purgeable_ids(db, retention_days=180)
+
+
+# ===========================================================================
+# MEDIUM-1(a): a BEFORE INSERT trigger refuses new evidence once an attempt's
+# code is redacted, on all four evidence tables.
+# ===========================================================================
+async def _redact(db: AsyncSession, attempt_id: uuid.UUID) -> None:
+    await db.execute(
+        text("UPDATE exam_attempts SET code_redacted_at = now() WHERE id = :i"), {"i": attempt_id},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_report_insert_is_refused_once_its_attempt_is_redacted(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _redact(db, f.attempt_a)
+    sql, params = _report_insert(f, uuid.uuid4())
+    await _refused(db, sql, params, "has redacted code")
+
+
+@pytest.mark.asyncio
+async def test_a_fingerprint_insert_is_refused_once_its_attempt_is_redacted(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _redact(db, f.attempt_a)
+    sql, params = _fingerprint_insert(f, uuid.uuid4())
+    await _refused(db, sql, params, "has redacted code")
+
+
+@pytest.mark.asyncio
+async def test_a_signal_insert_is_refused_when_the_low_attempt_is_redacted(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _redact(db, f.attempt_low)
+    sql, params = _signal_insert(f, uuid.uuid4())
+    await _refused(db, sql, params, "has redacted code")
+
+
+@pytest.mark.asyncio
+async def test_a_signal_insert_is_refused_when_the_high_attempt_is_redacted(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _redact(db, f.attempt_high)
+    sql, params = _signal_insert(f, uuid.uuid4())
+    await _refused(db, sql, params, "has redacted code")
+
+
+@pytest.mark.asyncio
+async def test_a_finding_insert_is_refused_once_its_attempt_is_redacted(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _redact(db, f.attempt_a)
+    sql, params = _finding_insert(f, uuid.uuid4())
+    await _refused(db, sql, params, "has redacted code")
+
+
+# ===========================================================================
+# MEDIUM-2: a finding's references are checked against its own attempt, both
+# in the service (below) and, belt and braces, at the database.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_a_finding_signal_must_be_on_the_same_attempt_and_question(db: AsyncSession) -> None:
+    f = await _build(db)
+    other_attempt = await _extra_attempt(db, f)
+    sid = uuid.uuid4()
+    sql, params = _signal_insert(f, sid)  # pairs attempt_low/attempt_high, not `other_attempt`
+    await db.execute(text(sql), params)
+    sql2, params2 = _finding_insert(f, uuid.uuid4(), attempt_id=other_attempt, signal_id=sid)
+    await _refused(db, sql2, params2, "is not a signal on attempt")
+
+
+@pytest.mark.asyncio
+async def test_a_finding_signal_on_its_own_attempt_is_allowed(db: AsyncSession) -> None:
+    f = await _build(db)
+    sid = uuid.uuid4()
+    sql, params = _signal_insert(f, sid)
+    await db.execute(text(sql), params)
+    sql2, params2 = _finding_insert(f, uuid.uuid4(), attempt_id=f.attempt_low, signal_id=sid)
+    await _allowed(db, sql2, params2)
+
+
+@pytest.mark.asyncio
+async def test_a_finding_cannot_supersede_a_finding_on_a_different_attempt(db: AsyncSession) -> None:
+    f = await _build(db)
+    other_attempt = await _extra_attempt(db, f)
+    old_fid = await _new_finding(db, f, attempt_id=other_attempt)
+    sql, params = _finding_insert(f, uuid.uuid4(), supersedes_id=old_fid)  # attempt_id defaults to attempt_a
+    await _refused(db, sql, params, "does not supersede a live finding")
+
+
+@pytest.mark.asyncio
+async def test_a_finding_cannot_supersede_an_already_superseded_finding_at_the_database(
+    db: AsyncSession,
+) -> None:
+    f = await _build(db)
+    old_fid = await _new_finding(db, f)
+    await db.execute(
+        text("UPDATE code_integrity_findings SET superseded_at = now() WHERE id = :i"), {"i": old_fid},
+    )
+    sql, params = _finding_insert(f, uuid.uuid4(), supersedes_id=old_fid)
+    await _refused(db, sql, params, "does not supersede a live finding")
+
+
+@pytest.mark.asyncio
+async def test_a_finding_cannot_supersede_a_redacted_finding(db: AsyncSession) -> None:
+    f = await _build(db)
+    old_fid = await _new_finding(db, f)
+    await db.execute(
+        text("UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"
+             " WHERE id = :i"),
+        {"i": old_fid},
+    )
+    sql, params = _finding_insert(f, uuid.uuid4(), supersedes_id=old_fid)
+    await _refused(db, sql, params, "does not supersede a live finding")
+
+
+@pytest.mark.asyncio
+async def test_a_finding_may_supersede_a_live_finding_on_the_same_attempt_and_question(
+    db: AsyncSession,
+) -> None:
+    f = await _build(db)
+    old_fid = await _new_finding(db, f)
+    sql, params = _finding_insert(f, uuid.uuid4(), supersedes_id=old_fid)
+    await _allowed(db, sql, params)
+
+
+@pytest.mark.asyncio
+async def test_signal_id_may_be_cleared_even_on_an_already_redacted_finding(db: AsyncSession) -> None:
+    """MEDIUM-2. Without this exception, a purge/erasure pass clearing
+    signal_id on a finding an EARLIER pass already redacted would raise 'is
+    redacted and is fixed' and block the whole transaction — forever, since
+    the next tick reaches the same row the same way."""
+    f = await _build(db)
+    sid = uuid.uuid4()
+    sql, params = _signal_insert(f, sid)
+    await db.execute(text(sql), params)
+    fid = await _new_finding(db, f, signal_id=sid)
+    await db.execute(
+        text("UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"
+             " WHERE id = :i"),
+        {"i": fid},
+    )
+    await _allowed(
+        db, "UPDATE code_integrity_findings SET signal_id = NULL WHERE id = :i", {"i": fid},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_redacted_finding_still_refuses_anything_other_than_clearing_signal_id(
+    db: AsyncSession,
+) -> None:
+    f = await _build(db)
+    sid = uuid.uuid4()
+    sql, params = _signal_insert(f, sid)
+    await db.execute(text(sql), params)
+    fid = await _new_finding(db, f, signal_id=sid)
+    await db.execute(
+        text("UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"
+             " WHERE id = :i"),
+        {"i": fid},
+    )
+    await _refused(
+        db, "UPDATE code_integrity_findings SET signal_id = NULL, outcome = 'confirmed' WHERE id = :i",
+        {"i": fid}, "is redacted and is fixed",
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_supersedes_fk_is_no_action_not_set_null(db: AsyncSession) -> None:
+    """MEDIUM-2. A composite FK's ON DELETE SET NULL nulls EVERY column it
+    names, including company_id (NOT NULL here) — the same defect already
+    fixed on the signal FK in the same migration. Checked against
+    information_schema so a future edit that reintroduces SET NULL fails
+    this test, not a production incident."""
+    rule = await db.scalar(
+        text(
+            "SELECT rc.delete_rule FROM information_schema.referential_constraints rc"
+            " WHERE rc.constraint_name = 'fk_code_integrity_findings_supersedes'"
+        )
+    )
+    assert rule == "NO ACTION", rule
+
+
+# ===========================================================================
+# LOW-3: code_redacted_at is frozen once set, and the redaction exception
+# touches only the coding subtree of answers/graded_snapshot.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_code_redacted_at_is_frozen_once_set(db: AsyncSession) -> None:
+    f = await _build(db)
+    await db.execute(
+        text(
+            "UPDATE exam_attempts SET answers = '{\"coding\":{}}'::jsonb,"
+            " graded_snapshot = '{\"coding\":{}}'::jsonb, code_redacted_at = now()"
+            " WHERE id = :i"
+        ),
+        {"i": f.attempt_a},
+    )
+    await _refused(
+        db,
+        "UPDATE exam_attempts SET code_redacted_at = '2031-01-01T00:00:00+00'::timestamptz"
+        " WHERE id = :i",
+        {"i": f.attempt_a}, "code_redacted_at is frozen once set",
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_redaction_cannot_introduce_a_non_coding_answer(db: AsyncSession) -> None:
+    """LOW-3. The redaction exception only ever touches the CODING answer's
+    source and the CODING test results' output — never an MCQ selection or
+    any other non-coding entry.
+
+    ``:9`` bound as a bind param (not a bind param, but SQLAlchemy's text()
+    cannot tell), so the JSONB payload is a bound parameter, not an inline
+    literal — the same reason every other JSONB payload in this file is.
+    """
+    f = await _build(db)
+    await _refused(
+        db,
+        "UPDATE exam_attempts SET answers = CAST(:ans AS jsonb),"
+        " code_redacted_at = now() WHERE id = :i",
+        {"i": f.attempt_a, "ans": json.dumps({"coding": {}, "mcq": {"q1": 9}})},
+        "changes only the coding source and output",
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_redaction_cannot_change_a_non_coding_test_result(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _refused(
+        db,
+        "UPDATE exam_attempts SET graded_snapshot = CAST(:snap AS jsonb),"
+        " code_redacted_at = now() WHERE id = :i",
+        {"i": f.attempt_a, "snap": json.dumps({"coding": {}, "mcq": {"raw": 1}})},
+        "changes only the coding source and output",
+    )
+
+
+# ===========================================================================
+# MEDIUM-1(b): the service refuses to write NEW evidence for an attempt
+# whose code is already redacted.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_record_finding_refuses_an_attempt_whose_code_is_redacted(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _redact(db, f.attempt_a)
+    with pytest.raises(svc.CodeEvidenceError) as exc_info:
+        await svc.record_finding(
+            db, company_id=f.company, attempt_id=f.attempt_a, coding_question_id=f.question,
+            outcome="follow_up", rationale="x" * 30, actor=f.hr, meta=RequestMeta(),
+        )
+    assert exc_info.value.status_code == 409
+    assert "redacted" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_analyse_attempt_refuses_an_attempt_whose_code_is_redacted(db: AsyncSession) -> None:
+    f = await _build(db)
+    await _redact(db, f.attempt_a)
+    with pytest.raises(svc.CodeEvidenceError) as exc_info:
+        await svc.analyse_attempt(db, company_id=f.company, attempt_id=f.attempt_a)
+    assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_record_finding_refuses_a_signal_not_on_this_attempt(db: AsyncSession) -> None:
+    f = await _build(db)
+    other_attempt = await _extra_attempt(db, f)
+    sid = uuid.uuid4()
+    sql, params = _signal_insert(f, sid)  # pairs attempt_low/attempt_high
+    await db.execute(text(sql), params)
+    with pytest.raises(svc.CodeEvidenceError) as exc_info:
+        await svc.record_finding(
+            db, company_id=f.company, attempt_id=other_attempt, coding_question_id=f.question,
+            outcome="follow_up", rationale="x" * 30, actor=f.hr, meta=RequestMeta(), signal_id=sid,
+        )
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_record_finding_refuses_superseding_a_finding_on_another_attempt(
+    db: AsyncSession,
+) -> None:
+    f = await _build(db)
+    other_attempt = await _extra_attempt(db, f)
+    old_fid = await _new_finding(db, f, attempt_id=other_attempt)
+    with pytest.raises(svc.CodeEvidenceError) as exc_info:
+        await svc.record_finding(
+            db, company_id=f.company, attempt_id=f.attempt_a, coding_question_id=f.question,
+            outcome="follow_up", rationale="x" * 30, actor=f.hr, meta=RequestMeta(),
+            supersedes_id=old_fid,
+        )
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_record_finding_refuses_superseding_an_already_superseded_finding(
+    db: AsyncSession,
+) -> None:
+    f = await _build(db)
+    old_fid = await _new_finding(db, f)
+    newer_fid = uuid.uuid4()
+    sql, params = _finding_insert(f, newer_fid)
+    await db.execute(text(sql), params)
+    await db.execute(
+        text("UPDATE code_integrity_findings SET superseded_at = now() WHERE id = :i"), {"i": old_fid},
+    )
+    with pytest.raises(svc.CodeEvidenceError) as exc_info:
+        await svc.record_finding(
+            db, company_id=f.company, attempt_id=f.attempt_a, coding_question_id=f.question,
+            outcome="follow_up", rationale="x" * 30, actor=f.hr, meta=RequestMeta(),
+            supersedes_id=old_fid,
+        )
+    assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_record_finding_supersedes_cleanly_end_to_end(db: AsyncSession) -> None:
+    f = await _build(db)
+    old_fid = await svc.record_finding(
+        db, company_id=f.company, attempt_id=f.attempt_a, coding_question_id=f.question,
+        outcome="follow_up", rationale="first look, seems fine so far", actor=f.hr,
+        meta=RequestMeta(),
+    )
+    new_fid = await svc.record_finding(
+        db, company_id=f.company, attempt_id=f.attempt_a, coding_question_id=f.question,
+        outcome="confirmed", rationale="on a closer look, this is a clear match", actor=f.hr,
+        meta=RequestMeta(), supersedes_id=old_fid,
+    )
+    row = (
+        await db.execute(
+            text("SELECT superseded_at FROM code_integrity_findings WHERE id = :i"), {"i": old_fid},
+        )
+    ).first()
+    assert row.superseded_at is not None
+    assert new_fid != old_fid
+
+
+# ===========================================================================
+# MEDIUM-1(c): purge() redacts a finding's rationale on the SURVIVING side of
+# a pair too, not just its own attempt's findings.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_purge_redacts_a_finding_recorded_against_the_surviving_side_of_a_pair(
+    db: AsyncSession,
+) -> None:
+    """The ERASED attempt has no application (immediately eligible for
+    retention); the SURVIVING attempt is tied to an application still
+    waiting on HR (never eligible) — so this one ``purge()`` pass redacts
+    only one side of the pair, and the finding on the OTHER, still-live side
+    must still lose its rationale."""
+    f = await _build(db)
+    source = "\n".join(f"line_{i} = {i}" for i in range(1, 60))
+    erased_attempt = await _attempt_with_answers(
+        db, f, applicant_id=f.applicant_b, attempt_no=2, source=source,
+    )
+    surviving_attempt = await _attempt_on_an_application(
+        db, f, status="shortlisted", decided_days_ago=None,
+    )
+    low_id, high_id = sorted((erased_attempt, surviving_attempt))
+    sid = uuid.uuid4()
+    sql, params = _signal_insert(f, sid, low=low_id, high=high_id)
+    await db.execute(text(sql), params)
+    finding_on_survivor = await _new_finding(db, f, attempt_id=surviving_attempt, signal_id=sid)
+
+    purged = await svc.purge(db, retention_days=0, dry_run=False)
+    assert purged >= 1
+
+    survivor_row = (
+        await db.execute(
+            text("SELECT code_redacted_at FROM exam_attempts WHERE id = :i"), {"i": surviving_attempt},
+        )
+    ).first()
+    assert survivor_row.code_redacted_at is None, "the surviving attempt is not itself purged yet"
+
+    row = (
+        await db.execute(
+            text("SELECT rationale, redacted_at, signal_id FROM code_integrity_findings WHERE id = :i"),
+            {"i": finding_on_survivor},
+        )
+    ).first()
+    assert row.rationale == "[redacted]"
+    assert row.redacted_at is not None
+    assert row.signal_id is None
+
+
+# ===========================================================================
+# MEDIUM-3: the compare view excerpts only the matched regions, and audits
+# both attempt ids.
+# ===========================================================================
+async def _attempt_with_answers(
+    db: AsyncSession, f: F, *, applicant_id: uuid.UUID, attempt_no: int, source: str,
+) -> uuid.UUID:
+    """A fresh attempt with a real coding answer set AT INSERT TIME. The
+    submission-freeze trigger only fires on UPDATE, so this is the only way
+    to give an attempt real ``answers`` without it already being 'submitted'
+    (which ``_build()``'s attempt_a/attempt_b already are, and updating
+    ``answers`` on a submitted attempt is exactly what that trigger refuses)."""
+    aid = uuid.uuid4()
+    answers = json.dumps({"coding": {str(f.question): {"language": "python", "source": source}}})
+    await db.execute(
+        text(
+            "INSERT INTO exam_attempts (id, company_id, exam_id, round_id, applicant_id, attempt_no,"
+            " status, started_at, submitted_at, score_raw, score_max, score_percent, passed,"
+            " answers, created_at, updated_at)"
+            " VALUES (:i, :c, :x, :r, :a, :n, 'submitted', now(), now(), 100, 100, 100, true,"
+            "         CAST(:ans AS jsonb), now(), now())"
+        ),
+        {
+            "i": aid, "c": f.company, "x": f.exam, "r": f.round, "a": applicant_id, "n": attempt_no,
+            "ans": answers,
+        },
+    )
+    return aid
+
+
+@pytest.mark.asyncio
+async def test_compare_view_excerpts_only_the_matched_region(db: AsyncSession) -> None:
+    from app.code_similarity import Fingerprint
+
+    f = await _build(db)
+    source = "\n".join(f"line_{i} = {i}" for i in range(1, 300))
+    attempt_x = await _attempt_with_answers(db, f, applicant_id=f.applicant_a, attempt_no=2, source=source)
+    attempt_y = await _attempt_with_answers(db, f, applicant_id=f.applicant_b, attempt_no=2, source=source)
+    low_id, high_id = sorted((attempt_x, attempt_y))
+
+    # A fingerprint pointing at line 5 on each side, so regions() computes a
+    # match there — nowhere near the rest of the 300-line file.
+    fp = Fingerprint(hashes=[42], lines=[5], token_count=60)
+    for attempt_id in (low_id, high_id):
+        await db.execute(
+            text(
+                "INSERT INTO code_fingerprints (id, company_id, attempt_id, coding_question_id,"
+                " hashes, lines, token_count, algorithm_version, created_at)"
+                " VALUES (:i, :c, :a, :q, CAST(:h AS bigint[]), CAST(:ln AS int[]), :tc, 'sim-winnow-1.0',"
+                " now())"
+            ),
+            {
+                "i": uuid.uuid4(), "c": f.company, "a": attempt_id, "q": f.question,
+                "h": fp.hashes, "ln": fp.lines, "tc": fp.token_count,
+            },
+        )
+    sid = uuid.uuid4()
+    sql, params = _signal_insert(f, sid, low=low_id, high=high_id)
+    await db.execute(text(sql), params)
+
+    result = await svc.compare_view(db, company_id=f.company, signal_id=sid, actor=f.hr, meta=RequestMeta())
+    for side in ("low", "high"):
+        excerpt = result[side]["excerpt"]
+        assert "line_5 " in excerpt, excerpt
+        assert "line_290" not in excerpt, excerpt
+        assert len(excerpt.splitlines()) < 20, excerpt
+
+    audit_details = (
+        await db.execute(
+            text(
+                "SELECT details FROM audit_log WHERE action = 'code_similarity.viewed'"
+                " AND resource_id = :i ORDER BY event_ts DESC LIMIT 1"
+            ),
+            {"i": sid},
+        )
+    ).scalar()
+    assert audit_details["attempt_low_id"] == str(low_id)
+    assert audit_details["attempt_high_id"] == str(high_id)
+
+
+@pytest.mark.asyncio
+async def test_evidence_for_attempt_audits_the_read(db: AsyncSession) -> None:
+    f = await _build(db)
+    await svc.evidence_for_attempt(
+        db, company_id=f.company, exam_id=f.exam, attempt_id=f.attempt_a, actor=f.hr,
+        meta=RequestMeta(),
+    )
+    count = await db.scalar(
+        text(
+            "SELECT count(*) FROM audit_log WHERE action = 'code_evidence.viewed'"
+            " AND resource_id = :i"
+        ),
+        {"i": f.attempt_a},
+    )
+    assert int(count or 0) >= 1

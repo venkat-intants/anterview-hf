@@ -16,10 +16,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app import code_evidence as svc
+from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.interviewer_scorecards import RequestMeta
-from app.models import Exam, ExamAttempt
+from app.models import Enrolment, Exam, ExamAttempt
+from app.rate_limit import rate_limit_company
 from app.utils.ownership import get_owned
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 
@@ -68,12 +70,18 @@ class FindingIn(BaseModel):
 # ---------------------------------------------------------------------------
 @hr_router.get("/exams/{exam_id}/attempts/{aid}/code-evidence")
 async def get_code_evidence(
-    exam_id: uuid.UUID, aid: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep,
+    exam_id: uuid.UUID, aid: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep, request: Request,
 ) -> dict[str, Any]:
-    _uid, company_id = ctx
+    """MEDIUM-3: audited every time — ``test_results`` carries the
+    candidate's program stdout/stderr, the same kind of read source and
+    compare views are already audited for (D3 #24)."""
+    uid, company_id = ctx
     await _owned_attempt(db, company_id, exam_id, aid)
     try:
-        return await svc.evidence_for_attempt(db, company_id=company_id, exam_id=exam_id, attempt_id=aid)
+        return await svc.evidence_for_attempt(
+            db, company_id=company_id, exam_id=exam_id, attempt_id=aid,
+            actor=uid, meta=_meta(request),
+        )
     except svc.CodeEvidenceError as exc:
         raise await _fail(exc) from exc
 
@@ -95,12 +103,22 @@ async def get_code_source(
         raise await _fail(exc) from exc
 
 
-@hr_router.post("/exams/{exam_id}/attempts/{aid}/code-analysis")
+@hr_router.post(
+    "/exams/{exam_id}/attempts/{aid}/code-analysis",
+    dependencies=[rate_limit_company("code_analysis_ondemand", settings.code_analysis_ondemand_per_minute)],
+)
 async def trigger_code_analysis(
     exam_id: uuid.UUID, aid: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep,
 ) -> dict[str, int]:
     """On-demand analysis for one attempt — the sweep already covers recent
-    submissions; this is for an older one, or a re-run."""
+    submissions; this is for an older one, or a re-run.
+
+    MEDIUM-4: rate-limited per COMPANY, not just guarded by the sandbox's own
+    concurrency cap — each call runs a full pairwise comparison pass for
+    every coding question the attempt touches, so an unthrottled HR console
+    (or a scripted loop against it) could still repeat that cost far more
+    often than the nightly sweep ever would.
+    """
     _uid, company_id = ctx
     await _owned_attempt(db, company_id, exam_id, aid)
     try:
@@ -111,6 +129,21 @@ async def trigger_code_analysis(
         "attempts_scanned": result.attempts_scanned, "reports_written": result.reports_written,
         "fingerprints_written": result.fingerprints_written, "signals_written": result.signals_written,
     }
+
+
+@hr_router.get("/enrolments/{enrolment_id}/code-evidence-summary")
+async def get_enrolment_code_evidence_summary(
+    enrolment_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep,
+) -> dict[str, int]:
+    """The one-enrolment read the candidate drawer calls — counts only, no
+    source, no content, no names. The decision queue gets the same counts in
+    bulk via ``summary_for_enrolments`` wired into ``get_decision_queue``
+    (``app/routers/hr_workflows.py``), exactly as ``interviewer_scorecards``'s
+    own summary is."""
+    _uid, company_id = ctx
+    await get_owned(db, Enrolment, company_id, enrolment_id, noun="Application")
+    counts = await svc.summary_for_enrolments(db, company_id=company_id, enrolment_ids=[enrolment_id])
+    return counts.get(str(enrolment_id)) or {"signal_count": 0, "finding_count": 0}
 
 
 @hr_router.get("/exams/{exam_id}/similarity")
@@ -157,12 +190,14 @@ async def record_code_integrity_finding(
 
 @hr_router.get("/exams/{exam_id}/attempts/{aid}/integrity-findings")
 async def list_integrity_findings(
-    exam_id: uuid.UUID, aid: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep,
+    exam_id: uuid.UUID, aid: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep, request: Request,
     include_redacted: bool = Query(default=False),
 ) -> list[dict[str, Any]]:
-    _uid, company_id = ctx
+    uid, company_id = ctx
     await _owned_attempt(db, company_id, exam_id, aid)
-    evidence = await svc.evidence_for_attempt(db, company_id=company_id, exam_id=exam_id, attempt_id=aid)
+    evidence = await svc.evidence_for_attempt(
+        db, company_id=company_id, exam_id=exam_id, attempt_id=aid, actor=uid, meta=_meta(request),
+    )
     findings = evidence["findings"]
     if not include_redacted:
         findings = [f for f in findings if not f["redacted"]]

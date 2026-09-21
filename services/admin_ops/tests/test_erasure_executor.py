@@ -1505,11 +1505,14 @@ async def test_step_5h_redacts_coding_source_and_output_keeps_the_score() -> Non
 
     assert artifacts["code_attempts_redacted"] == 1
     # rowcount is stubbed to 1 for every statement (including each DELETE
-    # against the one coding attempt), so every count below is 1.
+    # against the one coding attempt), so every count below is 1 -- except
+    # code_findings_redacted, which now runs TWO separate UPDATEs per
+    # attempt (MEDIUM-1c: the cross-candidate redact-by-signal pass, then the
+    # attempt's-own-findings catch-all), so it is 2.
     assert artifacts["code_reports_deleted"] == 1
     assert artifacts["code_fingerprints_deleted"] == 1
     assert artifacts["code_signals_deleted"] == 1
-    assert artifacts["code_findings_redacted"] == 1
+    assert artifacts["code_findings_redacted"] == 2
     redact_stmt = next(
         (sql, p) for sql, p in executed
         if "UPDATE exam_attempts" in sql and "code_redacted_at" in sql
@@ -1548,3 +1551,113 @@ async def test_step_5h_does_nothing_when_there_is_no_coding_attempt() -> None:
     assert artifacts["code_fingerprints_deleted"] == 0
     assert artifacts["code_signals_deleted"] == 0
     assert artifacts["code_findings_redacted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_step_5h_reaches_an_attempt_already_redacted_by_retention() -> None:
+    """MEDIUM-1(b). The SELECT used to filter on ``code_redacted_at IS
+    NULL`` — the same condition as the attempt UPDATE — so an attempt
+    retention had already redacted was skipped ENTIRELY here: evidence
+    cleanup and finding-rationale redaction never ran for it. Only the
+    attempt UPDATE stays conditional on ``code_redacted_at IS NULL`` now; the
+    SELECT reaches the attempt regardless, so a finding left over from before
+    that attempt was redacted still gets its rationale cleared."""
+    attempt_id = "a11ce000-0000-4000-8000-0000000000aa"
+    attempt_company = "c0ffee00-0000-4000-8000-000000000001"
+    answers = {"coding": {"q1": {"language": "python", "source": None, "source_redacted": True}}}
+    graded_snapshot = {"coding": {"q1": {"points": 100, "raw": 100, "tests": []}}}
+
+    executed: list[tuple[str, Any]] = []
+
+    async def _execute(stmt: Any, params: Any = None, *args: Any, **kwargs: Any) -> MagicMock:
+        sql = str(stmt)
+        executed.append((sql, params))
+        result = MagicMock()
+        result.rowcount = 0 if ("UPDATE exam_attempts" in sql and "code_redacted_at" in sql) else 1
+        result.fetchall.return_value = []
+        result.fetchone.return_value = None
+        if "FROM exam_attempts" in sql and "graded_snapshot" in sql and sql.strip().startswith("SELECT"):
+            assert "code_redacted_at IS NULL" not in sql, "the SELECT must not skip redacted attempts"
+            result.fetchall.return_value = [(attempt_id, attempt_company, answers, graded_snapshot)]
+        return result
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.execute = _execute
+
+    with (
+        patch("app.s3_client.delete_objects", new=_fake_delete_objects()),
+        patch("app.s3_client.keys_under", new=AsyncMock(return_value=[])),
+    ):
+        artifacts = await _execute_one_erasure(
+            db=db, request=_make_erasure_request(), system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
+
+    # The attempt UPDATE itself matched 0 rows (already redacted, stubbed
+    # above), but the evidence deletes and finding redaction still ran.
+    assert artifacts["code_attempts_redacted"] == 0
+    assert artifacts["code_reports_deleted"] == 1
+    assert artifacts["code_fingerprints_deleted"] == 1
+    assert artifacts["code_signals_deleted"] == 1
+    assert artifacts["code_findings_redacted"] == 2
+    assert any("DELETE FROM code_similarity_signals" in sql for sql, _ in executed)
+
+
+@pytest.mark.asyncio
+async def test_step_5h_redacts_a_finding_on_the_surviving_side_of_a_pair() -> None:
+    """MEDIUM-1(c). A finding on a SURVIVING candidate's attempt that cites a
+    signal naming the ERASED candidate must lose its rationale too, not just
+    its signal_id — the rationale can quote or name the erased candidate."""
+    attempt_id = "a11ce000-0000-4000-8000-0000000000bb"
+    attempt_company = "c0ffee00-0000-4000-8000-000000000002"
+    answers = {"coding": {"q1": {"language": "python", "source": "print(1)"}}}
+    graded_snapshot: dict[str, Any] = {"coding": {"q1": {"points": 100, "raw": 100, "tests": []}}}
+
+    executed: list[tuple[str, Any]] = []
+
+    async def _execute(stmt: Any, params: Any = None, *args: Any, **kwargs: Any) -> MagicMock:
+        sql = str(stmt)
+        executed.append((sql, params))
+        result = MagicMock()
+        result.rowcount = 1
+        result.fetchall.return_value = []
+        result.fetchone.return_value = None
+        if "FROM exam_attempts" in sql and "graded_snapshot" in sql and sql.strip().startswith("SELECT"):
+            result.fetchall.return_value = [(attempt_id, attempt_company, answers, graded_snapshot)]
+        return result
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.execute = _execute
+
+    with (
+        patch("app.s3_client.delete_objects", new=_fake_delete_objects()),
+        patch("app.s3_client.keys_under", new=AsyncMock(return_value=[])),
+    ):
+        await _execute_one_erasure(
+            db=db, request=_make_erasure_request(), system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
+
+    cross_redact = [
+        (sql, p) for sql, p in executed
+        if "UPDATE code_integrity_findings SET rationale = '[redacted]'" in sql
+        and "signal_id IN" in sql
+    ]
+    signal_null = [
+        (sql, p) for sql, p in executed
+        if "UPDATE code_integrity_findings SET signal_id = NULL" in sql
+    ]
+    assert cross_redact, "the cross-candidate redact-by-signal statement must run"
+    assert signal_null, "signal_id must still be cleared for the delete guard"
+    # The redact-by-signal statement does NOT filter on this attempt's own
+    # attempt_id -- it matches ANY finding naming one of this attempt's
+    # signals, which is what reaches a finding on the OTHER (surviving)
+    # attempt of the pair.
+    assert "attempt_id = :a" not in cross_redact[0][0]
+    # Ordering: redact before the signal_id is cleared, or a finding on the
+    # surviving side could no longer be found through the signal.
+    redact_idx = executed.index(cross_redact[0])
+    null_idx = executed.index(signal_null[0])
+    assert redact_idx < null_idx

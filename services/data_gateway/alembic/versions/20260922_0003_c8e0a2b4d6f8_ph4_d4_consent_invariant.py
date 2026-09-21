@@ -116,9 +116,12 @@ BEGIN
     -- A task consent revoked ANYWHERE -- the task link, an erasure request,
     -- any path added later -- stops that submission being processed now:
     -- every gate reads consented_at. A redacted submission is left alone
-    -- (the lifecycle trigger fixes it), and so is a malformed id, rather
-    -- than failing the revocation itself.
-    IF sid ~ '^[0-9a-fA-F-]{36}$' THEN
+    -- (the lifecycle trigger fixes it). So is any id not in the canonical
+    -- 8-4-4-4-12 shape, which is what guarantees the cast cannot fail: a
+    -- looser check once let 36 dashes through, and the failed cast then
+    -- failed the revocation itself -- and an erasure request revokes a
+    -- user's rows in one statement, so one bad row failed the whole request.
+    IF sid ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN
         UPDATE task_submissions SET consented_at = NULL, updated_at = now()
          WHERE id = sid::uuid AND consented_at IS NOT NULL AND redacted_at IS NULL;
     END IF;

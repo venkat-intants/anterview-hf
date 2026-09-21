@@ -1218,3 +1218,37 @@ async def test_hr_reads_are_recorded_once_an_hour_not_on_every_refetch(
         {"s": sub_id},
     )
     assert viewed == 1
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_ledger_row_never_fails_a_revocation(db: AsyncSession) -> None:
+    """Round-3 LOW: the ledger trigger's id check accepted strings like 36
+    dashes, whose ::uuid cast then raised -- failing the revocation, and an
+    erasure request revokes all of a user's rows in ONE statement. No app
+    path writes such a row, but a revocation must never depend on that."""
+    import json as _json
+
+    uid = uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO users (id, email) VALUES (:i, :e)"),
+        {"i": uid, "e": f"malformed-{uid.hex[:10]}@w5.test"},
+    )
+    for bad in ("-" * 36, "0" * 36, "not-a-uuid", None):
+        await db.execute(
+            text("INSERT INTO dpdp_consent_ledger (id, user_id, consent_type, granted,"
+                 " granted_at, purpose, evidence) VALUES (gen_random_uuid(), :u,"
+                 " 'assessment_submission', true, now(), 'recruitment', CAST(:ev AS jsonb))"),
+            {"u": uid, "ev": _json.dumps({"submission_id": bad})},
+        )
+    # Exactly the erasure request's statement; it must simply succeed.
+    await db.execute(
+        text("UPDATE dpdp_consent_ledger SET revoked_at = now()"
+             " WHERE user_id = :u AND revoked_at IS NULL"),
+        {"u": uid},
+    )
+    left = await db.scalar(
+        text("SELECT count(*) FROM dpdp_consent_ledger WHERE user_id = :u AND revoked_at IS NULL"),
+        {"u": uid},
+    )
+    assert left == 0
+

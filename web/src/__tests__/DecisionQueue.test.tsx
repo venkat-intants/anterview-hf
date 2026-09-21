@@ -55,7 +55,14 @@ const FINISHED: DecisionQueueRow = {
   workflow_version: 2,
   composite_percent: 79.3,
   scorecards: { assigned: 3, submitted: 2, late: 1 },
-  code_evidence: { signal_count: 2, finding_count: 1 },
+  code_evidence: {
+    signal_count: 2,
+    unreviewed_signal_count: 2,
+    finding_count: 1,
+    no_concern_count: 0,
+    follow_up_count: 1,
+    confirmed_count: 0,
+  },
 };
 
 const REASONS = [
@@ -190,7 +197,7 @@ describe('DecisionQueue — one list', () => {
     await screen.findByText('Bhavya Nair');
     expect(
       within(cardFor('Bhavya Nair')).getByText(
-        '2 similarity signals (unreviewed) · 1 integrity finding recorded',
+        '2 similarity signals awaiting review · 1 finding flagged for follow-up',
       ),
     ).toBeTruthy();
     // No evidence, no line.

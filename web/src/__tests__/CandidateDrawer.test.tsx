@@ -185,7 +185,15 @@ vi.mock('../api/jobTasks', () => ({
 // this mock the call went out unmocked and failed quietly into "render
 // nothing", which passed but was a real request from a unit test.
 vi.mock('../api/codeEvidence', () => ({
-  getCodeEvidenceSummary: () => Promise.resolve({ signal_count: 0, finding_count: 0 }),
+  getCodeEvidenceSummary: () =>
+    Promise.resolve({
+      signal_count: 0,
+      unreviewed_signal_count: 0,
+      finding_count: 0,
+      no_concern_count: 0,
+      follow_up_count: 0,
+      confirmed_count: 0,
+    }),
 }));
 
 import CandidateDrawer from '../components/CandidateDrawer';

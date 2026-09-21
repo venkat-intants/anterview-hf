@@ -1250,3 +1250,78 @@ async def test_evidence_for_attempt_audits_the_read(db: AsyncSession) -> None:
         {"i": f.attempt_a},
     )
     assert int(count or 0) >= 1
+
+
+# ===========================================================================
+# The evidence chip's counts (security review D3 M3)
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_a_cleared_signal_no_longer_counts_as_unreviewed(db: AsyncSession) -> None:
+    """The decision queue's chip counted every signal as "unreviewed" and
+    every finding as "recorded", whatever it said -- so a candidate HR had
+    reviewed and cleared still read as flagged where the hiring decision is
+    made. A signal is unreviewed only while no live finding covers it, and
+    findings are split by outcome."""
+    from app.code_evidence import summary_for_enrolments
+
+    f = await _build(db)
+    req, enrolment, assignment, attempt = (uuid.uuid4() for _ in range(4))
+    await db.execute(
+        text("INSERT INTO job_requisitions (id, company_id, title, created_at, updated_at)"
+             " VALUES (:r, :c, 'Engineer', now(), now())"),
+        {"r": req, "c": f.company},
+    )
+    await db.execute(
+        text("INSERT INTO enrolments (id, company_id, requisition_id, applicant_id,"
+             " target_job_title, status, created_at, updated_at)"
+             " VALUES (:e, :c, :r, :a, 'Engineer', 'shortlisted', now(), now())"),
+        {"e": enrolment, "c": f.company, "r": req, "a": f.applicant_a},
+    )
+    await db.execute(
+        text("INSERT INTO exam_assignments (id, company_id, exam_id, round_id, applicant_id,"
+             " created_by_user_id, enrolment_id, token_hash, expires_at, status,"
+             " created_at, updated_at)"
+             " VALUES (:g, :c, :x, :r, :a, :h, :e, :th, now() + interval '7 days', 'invited',"
+             " now(), now())"),
+        {"g": assignment, "c": f.company, "x": f.exam, "r": f.round, "a": f.applicant_a,
+         "h": f.hr, "e": enrolment, "th": uuid.uuid4().hex},
+    )
+    await db.execute(
+        text("INSERT INTO exam_attempts (id, company_id, exam_id, round_id, applicant_id,"
+             " assignment_id, attempt_no, status, started_at, submitted_at, score_raw,"
+             " score_max, score_percent, passed, created_at, updated_at)"
+             " VALUES (:t, :c, :x, :r, :a, :g, 3, 'submitted', now(), now(), 100, 100, 100,"
+             " true, now(), now())"),
+        {"t": attempt, "c": f.company, "x": f.exam, "r": f.round, "a": f.applicant_a,
+         "g": assignment},
+    )
+    partner = await _extra_attempt(db, f)
+    cleared, open_ = uuid.uuid4(), uuid.uuid4()
+    for sid, other in ((cleared, f.attempt_b), (open_, partner)):
+        low, high = sorted([attempt, other])
+        sql, params = _signal_insert(f, sid, low=low, high=high)
+        await db.execute(text(sql), params)
+
+    finding_sql = (
+        "INSERT INTO code_integrity_findings (id, company_id, attempt_id, coding_question_id,"
+        " signal_id, outcome, rationale, recorded_by_user_id, created_at)"
+        " VALUES (gen_random_uuid(), :c, :a, :q, :sig, :o, :r, :rec, now())"
+    )
+    # HR reviewed the first signal and found nothing; separately flagged the
+    # submission itself for a follow-up.
+    await db.execute(text(finding_sql), {
+        "c": f.company, "a": attempt, "q": f.question, "sig": cleared, "o": "no_concern",
+        "r": "Reviewed side by side; the overlap is the provided starter code.", "rec": f.hr,
+    })
+    await db.execute(text(finding_sql), {
+        "c": f.company, "a": attempt, "q": f.question, "sig": None, "o": "follow_up",
+        "r": "Ask about the approach in the panel interview, please.", "rec": f.hr,
+    })
+
+    counts = (await summary_for_enrolments(
+        db, company_id=f.company, enrolment_ids=[enrolment],
+    ))[str(enrolment)]
+    assert counts == {
+        "signal_count": 2, "unreviewed_signal_count": 1, "finding_count": 2,
+        "no_concern_count": 1, "follow_up_count": 1, "confirmed_count": 0,
+    }

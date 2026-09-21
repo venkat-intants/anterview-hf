@@ -327,7 +327,13 @@ export function triggerCodeAnalysis(
  *  content, no names. Not audited: it reveals nothing about anyone's code. */
 export interface CodeEvidenceSummary {
   signal_count: number;
+  /** Signals no live finding covers yet. A reviewed signal is not counted. */
+  unreviewed_signal_count: number;
+  /** Live findings, and the same split by outcome. */
   finding_count: number;
+  no_concern_count: number;
+  follow_up_count: number;
+  confirmed_count: number;
 }
 
 export function getCodeEvidenceSummary(enrolmentId: string): Promise<CodeEvidenceSummary> {

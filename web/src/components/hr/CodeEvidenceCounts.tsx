@@ -6,7 +6,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { getCodeEvidenceSummary } from '@/api/codeEvidence';
-import { codeEvidenceLabel } from '@/lib/codeEvidenceLabel';
+import { codeEvidenceLabel, hasCodeEvidence } from '@/lib/codeEvidenceLabel';
 
 export default function CodeEvidenceCounts({ enrolmentId }: { enrolmentId: string }) {
   const summary = useQuery({
@@ -14,7 +14,7 @@ export default function CodeEvidenceCounts({ enrolmentId }: { enrolmentId: strin
     queryFn: () => getCodeEvidenceSummary(enrolmentId),
   });
   const c = summary.data;
-  if (!c || (c.signal_count === 0 && c.finding_count === 0)) return null;
+  if (!c || !hasCodeEvidence(c)) return null;
   return (
     <section aria-label="Code evidence" className="rounded-[12px] border border-border p-3">
       <h3 className="text-[12.5px] font-semibold text-foreground">Code evidence</h3>

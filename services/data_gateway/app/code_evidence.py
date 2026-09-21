@@ -746,7 +746,7 @@ async def evidence_for_attempt(
         ],
         # Existing sandbox TEST RESULTS, clearly labelled as results, never as
         # coverage — checklist #6.
-        "test_results": _test_results_for_screen(coding_results),
+        "test_results": coding_results_for_screen(coding_results),
         "integrity": {
             "integrity_score": attempt["integrity_score"],
             "proctoring_summary": attempt["proctoring_summary"],
@@ -1158,20 +1158,44 @@ async def signals_for_exam(db: AsyncSession, *, company_id: uuid.UUID, exam_id: 
     ]
 
 
+EMPTY_SUMMARY: dict[str, int] = {
+    "signal_count": 0, "unreviewed_signal_count": 0, "finding_count": 0,
+    "no_concern_count": 0, "follow_up_count": 0, "confirmed_count": 0,
+}
+
+
 async def summary_for_enrolments(
     db: AsyncSession, *, company_id: uuid.UUID, enrolment_ids: list[uuid.UUID],
 ) -> dict[str, dict[str, int]]:
     """Counts only, for the decision-queue and applicant-drawer evidence chips
-    — never the content."""
+    — never the content.
+
+    A signal counts as UNREVIEWED only while no live finding covers it, and
+    live findings are split by outcome. An earlier version counted every
+    signal as "unreviewed" and every finding as "recorded" whatever it said,
+    so a candidate HR had reviewed and cleared ("no concern") still read as
+    flagged on the screen where the hiring decision is made (security review,
+    D3 M3)."""
     if not enrolment_ids:
         return {}
+    live = "f.superseded_at IS NULL AND f.redacted_at IS NULL"
     rows = (
         await db.execute(
             text(
                 "SELECT asg.enrolment_id,"
                 "       count(DISTINCT s.id) AS signal_count,"
-                "       count(DISTINCT f.id) FILTER (WHERE f.superseded_at IS NULL"
-                "                                       AND f.redacted_at IS NULL) AS finding_count"
+                "       count(DISTINCT s.id) FILTER (WHERE NOT EXISTS ("
+                "           SELECT 1 FROM code_integrity_findings rf"
+                "            WHERE rf.company_id = s.company_id AND rf.signal_id = s.id"
+                "              AND rf.superseded_at IS NULL AND rf.redacted_at IS NULL"
+                "       )) AS unreviewed_signal_count,"
+                f"       count(DISTINCT f.id) FILTER (WHERE {live}) AS finding_count,"
+                f"       count(DISTINCT f.id) FILTER (WHERE {live} AND f.outcome = 'no_concern')"
+                "           AS no_concern_count,"
+                f"       count(DISTINCT f.id) FILTER (WHERE {live} AND f.outcome = 'follow_up')"
+                "           AS follow_up_count,"
+                f"       count(DISTINCT f.id) FILTER (WHERE {live} AND f.outcome = 'confirmed')"
+                "           AS confirmed_count"
                 "  FROM exam_assignments asg"
                 "  JOIN exam_attempts a ON a.assignment_id = asg.id AND a.company_id = asg.company_id"
                 "  LEFT JOIN code_similarity_signals s ON s.company_id = a.company_id"
@@ -1183,10 +1207,10 @@ async def summary_for_enrolments(
             ),
             {"c": company_id, "ids": enrolment_ids},
         )
-    ).all()
+    ).mappings().all()
     return {
-        str(enrolment_id): {"signal_count": int(signal_count), "finding_count": int(finding_count)}
-        for enrolment_id, signal_count, finding_count in rows
+        str(r["enrolment_id"]): {key: int(r[key] or 0) for key in EMPTY_SUMMARY}
+        for r in rows
     }
 
 
@@ -1216,7 +1240,7 @@ def redact_coding_answers(answers: dict[str, Any] | None) -> dict[str, Any]:
 _SCREEN_RESULT_FIELDS = ("points", "raw", "language", "submitted", "error")
 
 
-def _test_results_for_screen(coding: dict[str, Any]) -> dict[str, Any]:
+def coding_results_for_screen(coding: dict[str, Any]) -> dict[str, Any]:
     """Each coding result cut down to what the evidence tab renders: the
     score, the language, whether it was submitted, a compile/runtime error,
     and each test case reduced to whether it passed.
@@ -1227,6 +1251,10 @@ def _test_results_for_screen(coding: dict[str, Any]) -> dict[str, Any]:
     displayed, since the screen shows only a count. Collect only what the
     purpose needs (DPDP s.6(1)). If a screen ever needs the output, it should
     get its own audited route, not this one.
+
+    Public because the exam ``/breakdown`` route uses it too: that route sent
+    the same unminimised snapshot, unaudited, to the same attempt page
+    (security review, D3 M2).
     """
     out: dict[str, Any] = {}
     for qid, entry in (coding or {}).items():

@@ -335,6 +335,17 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               all(rep["coverage"]["available"] is False for rep in evidence["reports"]),
               str(evidence["reports"]))
 
+        # Security review D3 M2: the attempt page's OTHER call, /breakdown,
+        # sent every test's stdout/stderr and the hidden cases' inputs and
+        # expected outputs, unaudited. It now carries only what the page shows.
+        r = await c.get(f"/hr/exams/{exam_id}/attempts/{aid_a}/breakdown")
+        coding = r.json().get("coding", {}) if r.status_code == 200 else {}
+        leaked = [k for k in ("actual_output", "stderr", "stdin", "expected_output")
+                  if f'"{k}"' in r.text]
+        check("the breakdown carries each coding score and pass/fail, never program output",
+              r.status_code == 200 and coding and not leaked
+              and all("points" in v for v in coding.values()), f"leaked={leaked} {r.text[:200]}")
+
         r = await c.get(f"/hr/exams/{exam_id}/attempts/{aid_a}/code/{question_id}")
         check("HR reads A's source", r.status_code == 200 and r.json()["source"] == SOURCE_A, r.text[:200])
         async with factory() as db:

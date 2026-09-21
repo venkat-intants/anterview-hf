@@ -20,6 +20,7 @@
 // Field names match services/data_gateway/app/routers/hr_workflows.py EXACTLY.
 
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './client';
+import type { CodeEvidenceSummary } from './codeEvidence';
 import type { StageSla } from './stageSla';
 
 /**
@@ -454,7 +455,7 @@ export interface DecisionQueueRow {
   } | null;
   /** PH4-D3 -- code evidence for this application, counts only. Null when
    *  it has none. */
-  code_evidence?: { signal_count: number; finding_count: number } | null;
+  code_evidence?: CodeEvidenceSummary | null;
 }
 
 /** One completed round, as the queue summarises it. Criteria and evidence are in the drawer. */

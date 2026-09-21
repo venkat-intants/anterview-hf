@@ -863,7 +863,7 @@ def test_the_evidence_tab_gets_scores_and_pass_flags_never_program_output() -> N
             ],
         },
     }
-    out = svc._test_results_for_screen(coding)  # noqa: SLF001
+    out = svc.coding_results_for_screen(coding)
     assert out["q1"]["points"] == 10 and out["q1"]["raw"] == 5
     assert out["q1"]["tests"] == [{"passed": True}, {"passed": False}]
     flat = repr(out)

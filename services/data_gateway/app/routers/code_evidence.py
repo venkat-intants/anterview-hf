@@ -143,7 +143,7 @@ async def get_enrolment_code_evidence_summary(
     _uid, company_id = ctx
     await get_owned(db, Enrolment, company_id, enrolment_id, noun="Application")
     counts = await svc.summary_for_enrolments(db, company_id=company_id, enrolment_ids=[enrolment_id])
-    return counts.get(str(enrolment_id)) or {"signal_count": 0, "finding_count": 0}
+    return counts.get(str(enrolment_id)) or dict(svc.EMPTY_SUMMARY)
 
 
 @hr_router.get("/exams/{exam_id}/similarity")

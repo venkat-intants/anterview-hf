@@ -32,6 +32,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import accommodations, exam_locks
+from app.code_evidence import coding_results_for_screen
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
@@ -1320,7 +1321,12 @@ async def attempt_breakdown(
         "score_percent": at.score_percent,
         "passed": at.passed,
         "per_question": per_question,
-        "coding": coding_snapshot,
+        # Cut down exactly as the code-evidence tab is: scores, language,
+        # submitted, error, and each test reduced to pass/fail. The attempt
+        # page shows nothing more, and the raw snapshot carried every test's
+        # stdout/stderr and the hidden cases' inputs and expected outputs
+        # (security review, D3 M2).
+        "coding": coding_results_for_screen(coding_snapshot),
         "adjustment": await _attempt_adjustment(db, company_id, at),
     }
 

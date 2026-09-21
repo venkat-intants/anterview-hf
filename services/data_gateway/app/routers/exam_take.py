@@ -32,10 +32,11 @@ from typing import Annotated
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import accommodations
 from app.coding_grader import run_tests, weighted_raw
 from app.config import settings
 from app.database import DbSessionDep
@@ -182,6 +183,14 @@ class PublicSectionOut(BaseModel):
     coding_questions: list[PublicCodingQuestionOut] = Field(default_factory=list)
 
 
+class AdjustmentsOut(BaseModel):
+    """PH4-D2 — told to the candidate so the page can explain the clock. Never
+    the notes, never which accommodation, never who recorded it."""
+
+    extra_time_percent: int | None = None
+    deadline_extended: bool = False
+
+
 class TakeExamOut(BaseModel):
     exam_id: str
     title: str
@@ -201,6 +210,7 @@ class TakeExamOut(BaseModel):
     deadline: str | None
     scheduled_at: str | None = None
     max_integrity_violations: int
+    adjustments: AdjustmentsOut | None = None
     sections: list[PublicSectionOut] = Field(default_factory=list)
     # Flattened, back-compat with the pre-rounds single-section taker.
     questions: list[PublicQuestionOut] = Field(default_factory=list)
@@ -339,7 +349,10 @@ class IntegrityEventIn(BaseModel):
 class IntegrityIngestOut(BaseModel):
     accepted: bool
     violation_count: int
-    max_violations: int
+    # None when this attempt's auto-submit is relaxed (PH4-D2): the client
+    # then never auto-submits on violation count alone. Events and the
+    # integrity score are still recorded either way.
+    max_violations: int | None
     integrity_score: int
 
 
@@ -347,6 +360,20 @@ class AttemptStartOut(BaseModel):
     attempt_id: str
     started_at: str
     deadline: str | None
+    # PH4-D2. None means this attempt never auto-submits on violation count
+    # alone, exactly as on IntegrityIngestOut. It is frozen on the attempt at
+    # /start, so it is the same answer for the life of the attempt.
+    #
+    # It is here, and not only on the integrity-event response, because the
+    # client otherwise learns it only AFTER a violation -- and the event POST
+    # swallows network failures, so on a poor connection a candidate with a
+    # relax-auto-submit accommodation never learns it at all and is cut off at
+    # the global threshold. That is the accommodation failing the one person
+    # it exists for, on exactly the connections our market has.
+    #
+    # It discloses nothing new: the same value already goes to the same client
+    # on the first violation, and it is the candidate's own accommodation.
+    max_violations: int | None
 
 
 class ExamResultOut(BaseModel):
@@ -466,10 +493,50 @@ async def _has_submitted(db: AsyncSession, ctx: ExamTakeCtx) -> bool:
     return int(n or 0) > 0
 
 
-def _deadline(rnd: ExamRound, started_at: datetime) -> datetime | None:
+def _deadline(rnd: ExamRound, started_at: datetime, extra_seconds: int = 0) -> datetime | None:
+    """The round's own formula, unchanged, plus whatever extra time (PH4-D2)
+    the attempt started with. ``extra_seconds=0`` — the default — is exactly
+    the old formula: no adjustment means nothing changes."""
     if rnd.time_limit_seconds is None:
         return None
-    return started_at + timedelta(seconds=rnd.time_limit_seconds)
+    return started_at + timedelta(seconds=rnd.time_limit_seconds + extra_seconds)
+
+
+async def _accommodation_scope(
+    db: AsyncSession, ctx: ExamTakeCtx
+) -> tuple[uuid.UUID | None, uuid.UUID | None]:
+    """``(enrolment_id, workflow_round_id)`` for resolving PH4-D2 accommodation
+    scope: the workflow round this exam round currently backs for this
+    applicant, when there is one (a workflow-run round can be reused, and the
+    same applicant can hold several applications — ``current_round_id`` is the
+    one this candidate was actually sent to), else the application the link
+    was minted for, when known (a hand-assigned exam)."""
+    pair = await enrolment_awaiting_exam_round(
+        db, applicant_id=ctx.applicant.id, exam_round_id=ctx.exam_round.id
+    )
+    if pair is not None:
+        return pair
+    return ctx.assignment.enrolment_id, None
+
+
+async def _accommodation_params(
+    db: AsyncSession, accommodation_id: uuid.UUID | None
+) -> tuple[int | None, int | None]:
+    """``(extra_time_percent, deadline_extension_days)`` for an accommodation
+    already on record — used to redisplay the adjustment an attempt or a link
+    was minted with, without a fresh (and possibly now-superseded) lookup."""
+    if accommodation_id is None:
+        return None, None
+    row = (
+        await db.execute(
+            text(
+                "SELECT extra_time_percent, deadline_extension_days"
+                "  FROM candidate_accommodations WHERE id = :i"
+            ),
+            {"i": accommodation_id},
+        )
+    ).first()
+    return (row[0], row[1]) if row else (None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -489,10 +556,29 @@ async def get_take_exam(ctx: ExamTakeCtxDep, db: DbSessionDep) -> TakeExamOut:
     for cq in coding:
         coding_by_section.setdefault(cq.section_id, []).append(cq)
 
+    in_prog = await _in_progress_attempt(db, ctx)
+    # PH4-D2: before an attempt exists, the currently effective accommodation
+    # (which can change up to the moment of /start); once started, whatever
+    # the attempt itself was frozen with — never a fresh, possibly-since-
+    # revised, lookup.
+    if in_prog is not None:
+        extra_pct, extra_days = await _accommodation_params(db, in_prog.accommodation_id)
+        deadline = _deadline(ctx.exam_round, in_prog.started_at, in_prog.extra_time_seconds)
+    else:
+        enrolment_id, workflow_round_id = await _accommodation_scope(db, ctx)
+        adj_row = await accommodations.effective_for(
+            db, company_id=ctx.company_id, applicant_id=ctx.applicant.id,
+            enrolment_id=enrolment_id, workflow_round_id=workflow_round_id,
+            exam_round_id=ctx.exam_round.id,
+        )
+        extra_pct = adj_row.extra_time_percent if adj_row else None
+        extra_days = adj_row.deadline_extension_days if adj_row else None
+        deadline = None
+
     section_out = [
         PublicSectionOut(
             id=str(s.id), title=s.title, kind=s.kind, position=s.position,
-            time_limit_seconds=s.time_limit_seconds,
+            time_limit_seconds=accommodations.scaled(s.time_limit_seconds, extra_pct),
             questions=[_public_question(q) for q in mcq_by_section.get(s.id, [])],
             coding_questions=[
                 _public_coding_question(q) for q in coding_by_section.get(s.id, [])
@@ -503,8 +589,11 @@ async def get_take_exam(ctx: ExamTakeCtxDep, db: DbSessionDep) -> TakeExamOut:
     kinds = {s.kind for s in sections}
     kind = next(iter(kinds)) if len(kinds) == 1 else "mixed"
 
-    in_prog = await _in_progress_attempt(db, ctx)
-    deadline = _deadline(ctx.exam_round, in_prog.started_at) if in_prog else None
+    adjustments = (
+        AdjustmentsOut(extra_time_percent=extra_pct, deadline_extended=bool(extra_days))
+        if extra_pct or extra_days
+        else None
+    )
     return TakeExamOut(
         exam_id=str(ctx.exam.id),
         title=ctx.exam.title,
@@ -513,7 +602,7 @@ async def get_take_exam(ctx: ExamTakeCtxDep, db: DbSessionDep) -> TakeExamOut:
         round_title=ctx.exam_round.title,
         round_number=ctx.exam_round.round_number,
         kind=kind,
-        time_limit_seconds=ctx.exam_round.time_limit_seconds,
+        time_limit_seconds=accommodations.scaled(ctx.exam_round.time_limit_seconds, extra_pct),
         total_questions=len(mcq) + len(coding),
         allow_retake=ctx.exam.allow_retake,
         already_submitted=await _has_submitted(db, ctx),
@@ -523,10 +612,19 @@ async def get_take_exam(ctx: ExamTakeCtxDep, db: DbSessionDep) -> TakeExamOut:
             ctx.assignment.scheduled_at.isoformat() if ctx.assignment.scheduled_at else None
         ),
         max_integrity_violations=settings.exam_integrity_max_violations,
+        adjustments=adjustments,
         sections=section_out,
         questions=[_public_question(q) for q in mcq],
         coding_questions=[_public_coding_question(q) for q in coding],
     )
+
+
+def _max_violations_for(attempt: ExamAttempt) -> int | None:
+    """None when this attempt's auto-submit is relaxed (PH4-D2), otherwise the
+    configured threshold. Read from the attempt, which froze the allowance at
+    /start, so revoking the accommodation mid-attempt cannot shorten a clock
+    the candidate has already been shown."""
+    return None if attempt.auto_submit_relaxed else settings.exam_integrity_max_violations
 
 
 @router.post("/start", response_model=AttemptStartOut)
@@ -534,11 +632,12 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
     # Idempotent: return the existing in-progress attempt if one is open.
     existing = await _in_progress_attempt(db, ctx)
     if existing is not None:
-        d = _deadline(ctx.exam_round, existing.started_at)
+        d = _deadline(ctx.exam_round, existing.started_at, existing.extra_time_seconds)
         return AttemptStartOut(
             attempt_id=str(existing.id),
             started_at=existing.started_at.isoformat(),
             deadline=d.isoformat() if d else None,
+            max_violations=_max_violations_for(existing),
         )
     # Block a fresh attempt on a single-shot round already submitted.
     if await _has_submitted(db, ctx) and not ctx.exam.allow_retake:
@@ -569,6 +668,19 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
             ExamAttempt.company_id == ctx.company_id,
         )
     )
+    # PH4-D2: resolve the effective accommodation NOW and freeze it onto the
+    # attempt. Whatever HR does to it afterwards, this attempt keeps the
+    # allowance it started with (exam_attempts_allowance_fixed).
+    enrolment_id, workflow_round_id = await _accommodation_scope(db, ctx)
+    adj_row = await accommodations.effective_for(
+        db, company_id=ctx.company_id, applicant_id=ctx.applicant.id,
+        enrolment_id=enrolment_id, workflow_round_id=workflow_round_id,
+        exam_round_id=ctx.exam_round.id,
+    )
+    extra_secs = (
+        accommodations.extra_seconds(ctx.exam_round.time_limit_seconds, adj_row.extra_time_percent)
+        if adj_row else 0
+    )
     attempt = ExamAttempt(
         id=uuid.uuid4(),
         company_id=ctx.company_id,
@@ -579,6 +691,9 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
         attempt_no=(int(max_no) + 1) if max_no is not None else 1,
         status="in_progress",
         started_at=now,
+        accommodation_id=adj_row.id if adj_row else None,
+        extra_time_seconds=extra_secs,
+        auto_submit_relaxed=bool(adj_row.relax_auto_submit) if adj_row else False,
         created_at=now,
         updated_at=now,
     )
@@ -590,22 +705,32 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
         await db.commit()
     except IntegrityError:
         # Concurrent /start lost the race against uix_exam_attempts_one_live —
-        # fall back to the attempt the winner created.
+        # fall back to the attempt the winner created (which already recorded
+        # its own "applied" event, if any — this request must not record a
+        # second one for the same accommodation).
         await db.rollback()
         existing = await _in_progress_attempt(db, ctx)
         if existing is None:
             raise
-        d = _deadline(ctx.exam_round, existing.started_at)
+        d = _deadline(ctx.exam_round, existing.started_at, existing.extra_time_seconds)
         return AttemptStartOut(
             attempt_id=str(existing.id),
             started_at=existing.started_at.isoformat(),
             deadline=d.isoformat() if d else None,
+            max_violations=_max_violations_for(existing),
         )
-    d = _deadline(ctx.exam_round, attempt.started_at)
+    if adj_row is not None:
+        await accommodations.record_applied(
+            db, company_id=ctx.company_id, accommodation_id=adj_row.id,
+            target_kind="exam_attempt", target_id=attempt.id,
+        )
+        await db.commit()
+    d = _deadline(ctx.exam_round, attempt.started_at, attempt.extra_time_seconds)
     return AttemptStartOut(
         attempt_id=str(attempt.id),
         started_at=attempt.started_at.isoformat(),
         deadline=d.isoformat() if d else None,
+        max_violations=_max_violations_for(attempt),
     )
 
 
@@ -716,7 +841,7 @@ async def _grade_and_finalize(
     fresh_attempt: ExamAttempt | None = None
 
     try:
-        deadline = _deadline(ctx.exam_round, attempt.started_at)
+        deadline = _deadline(ctx.exam_round, attempt.started_at, attempt.extra_time_seconds)
         expired = bool(
             deadline and now > deadline + timedelta(seconds=settings.exam_submit_grace_seconds)
         )
@@ -1146,6 +1271,11 @@ async def ingest_integrity_event(
     return IntegrityIngestOut(
         accepted=True,
         violation_count=violations,
-        max_violations=settings.exam_integrity_max_violations,
+        # PH4-D2: None tells the client never to auto-submit on violation count
+        # alone for this attempt. The events and the score above are recorded
+        # exactly the same either way.
+        max_violations=(
+            None if attempt.auto_submit_relaxed else settings.exam_integrity_max_violations
+        ),
         integrity_score=score,
     )

@@ -13,8 +13,10 @@ import pytest
 from app.workflows import (
     AI_GRADED_KINDS,
     EXAM_BACKED_KINDS,
+    HUMAN_EVALUATED_KINDS,
     MAX_ROUNDS,
     ROUND_KINDS,
+    TASK_KINDS,
     build_coverage,
     validate_chain,
 )
@@ -35,17 +37,30 @@ def _round(rid, pos, title="R", kind="mcq", nxt=None, threshold=50, exam="e"):
 
 
 # ===========================================================================
-# Round kinds — D-03
+# Round kinds — D-03, widened by PH4-D4
 # ===========================================================================
-def test_exactly_four_round_kinds_ship() -> None:
-    assert {"mcq", "coding", "ai_interview", "human_review"} == ROUND_KINDS
+def test_exactly_six_round_kinds_ship() -> None:
+    """D-03 deferred portfolio/file-submission rounds pending a grader and a
+    review of the prompt-injection surface candidate-authored content is to
+    an LLM. PH4-D4 answers both: there is no grader — a named person scores a
+    submission against the round's frozen round_criteria, exactly like
+    human_review — and no AI module may reference a task table at all
+    (AST-tested), so the surface a model could read from is closed by
+    construction rather than by policy."""
+    assert {
+        "mcq", "coding", "ai_interview", "human_review", "job_simulation", "portfolio",
+    } == ROUND_KINDS
 
 
-def test_portfolio_is_not_a_round_kind() -> None:
-    """Deferred to Phase 3: it needs a new grader and introduces a
-    prompt-injection surface on candidate-authored content."""
-    assert "portfolio" not in ROUND_KINDS
-    assert "file_upload" not in ROUND_KINDS
+def test_task_kinds_are_human_evaluated_never_ai_graded() -> None:
+    """job_simulation and portfolio join human_review in HUMAN_EVALUATED_KINDS
+    — scored by a person against frozen criteria — and are disjoint from the
+    model-graded and exam-backed sets."""
+    assert {"job_simulation", "portfolio"} == TASK_KINDS
+    assert TASK_KINDS <= HUMAN_EVALUATED_KINDS
+    assert {"human_review"} | TASK_KINDS == HUMAN_EVALUATED_KINDS
+    assert TASK_KINDS.isdisjoint(AI_GRADED_KINDS)
+    assert TASK_KINDS.isdisjoint(EXAM_BACKED_KINDS)
 
 
 def test_exam_backed_and_ai_graded_kinds_do_not_overlap() -> None:
@@ -120,7 +135,9 @@ def test_human_review_needs_no_threshold() -> None:
 
 
 def test_unknown_kind_is_refused() -> None:
-    rounds = [_round("a", 0, "R", kind="portfolio", exam=None)]
+    # "portfolio" is a legal kind as of PH4-D4; "file_upload" is the example
+    # of a kind that still is not.
+    rounds = [_round("a", 0, "R", kind="file_upload", exam=None)]
     assert any("unknown round type" in e for e in validate_chain(rounds))
 
 
@@ -224,7 +241,7 @@ def test_every_kind_can_form_a_valid_single_round_workflow(kind: str) -> None:
     rounds = [
         _round(
             "a", 0, "R", kind=kind,
-            threshold=None if kind == "human_review" else 50,
+            threshold=None if kind in HUMAN_EVALUATED_KINDS else 50,
             exam="e" if kind in EXAM_BACKED_KINDS else None,
         )
     ]

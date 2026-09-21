@@ -26,10 +26,12 @@ import type { MyApplication, MyApplicationDetail } from '../api/applications';
 const listMyApplications = vi.fn();
 const getMyApplication = vi.fn();
 const mintMyInterviewLink = vi.fn();
+const mintMyTaskLink = vi.fn();
 vi.mock('../api/applications', () => ({
   listMyApplications: (...a: unknown[]) => listMyApplications(...a) as unknown,
   getMyApplication: (...a: unknown[]) => getMyApplication(...a) as unknown,
   mintMyInterviewLink: (...a: unknown[]) => mintMyInterviewLink(...a) as unknown,
+  mintMyTaskLink: (...a: unknown[]) => mintMyTaskLink(...a) as unknown,
 }));
 
 // Starting an interview navigates the tab. jsdom's location is not writable, so
@@ -75,6 +77,11 @@ function app(over: Partial<MyApplication> = {}): MyApplication {
     // No waiting invitation is the ordinary case; the invite tests set it.
     interview_invite_id: null,
     interview_scheduled_at: null,
+    // PH4-D4 — no open task submission is the ordinary case; the task tests
+    // set it.
+    task_submission_id: null,
+    task_due_at: null,
+    task_status: null,
     ...over,
   };
 }
@@ -301,5 +308,56 @@ describe('Applications — a waiting interview', () => {
     renderPage();
 
     expect(await screen.findByText(/Scheduled for/)).toBeTruthy();
+  });
+});
+
+// PH4-D4 — the same reasoning as "a waiting interview" above, and the same
+// security review finding as YourOffers.tsx's "Open offer": the link carries
+// a fresh bearer token in its fragment, so it must be checked same-origin
+// before this ever navigates to it, never handed to `window.location.assign`
+// unchecked (safeUrl.ts's own header names this exact mistake).
+describe('Applications — a waiting task', () => {
+  it('offers to open it', async () => {
+    listMyApplications.mockResolvedValue([app({ task_submission_id: 'sub-1' })]);
+    renderPage();
+
+    expect(await screen.findByText('Your task is ready')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open task' })).toBeTruthy();
+  });
+
+  it('sends the candidate to a same-origin /task link', async () => {
+    mintMyTaskLink.mockResolvedValue({ url: `${window.location.origin}/task#tok` });
+    listMyApplications.mockResolvedValue([app({ task_submission_id: 'sub-1' })]);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Open task' }));
+
+    await vi.waitFor(() => expect(mintMyTaskLink).toHaveBeenCalledWith('sub-1'));
+    await vi.waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(`${window.location.origin}/task#tok`),
+    );
+  });
+
+  it('refuses a cross-origin link instead of navigating to it', async () => {
+    mintMyTaskLink.mockResolvedValue({ url: 'https://evil.example.com/task#tok' });
+    listMyApplications.mockResolvedValue([app({ task_submission_id: 'sub-1' })]);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Open task' }));
+
+    await vi.waitFor(() => expect(mintMyTaskLink).toHaveBeenCalledWith('sub-1'));
+    expect(await screen.findByText('Could not open your task.')).toBeTruthy();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('refuses a same-origin link to the wrong path', async () => {
+    mintMyTaskLink.mockResolvedValue({ url: `${window.location.origin}/offer#tok` });
+    listMyApplications.mockResolvedValue([app({ task_submission_id: 'sub-1' })]);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Open task' }));
+
+    expect(await screen.findByText('Could not open your task.')).toBeTruthy();
+    expect(assign).not.toHaveBeenCalled();
   });
 });

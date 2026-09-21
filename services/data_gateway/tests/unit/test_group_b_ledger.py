@@ -155,6 +155,15 @@ async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
         return 0
 
     monkeypatch.setattr(sch, "close_for_decision", _close)
+    import app.job_tasks as tasks
+
+    tasks_closed: list[dict] = []
+
+    async def _close_tasks(_db: object, **kw: object) -> int:
+        tasks_closed.append(kw)
+        return 0
+
+    monkeypatch.setattr(tasks, "close_for_decision", _close_tasks)
     db = _db()
     db.add = MagicMock()
     await hrp.decide_applicant(uuid.uuid4(),
@@ -164,6 +173,11 @@ async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
 
     # PH4-A2: the pipeline board's decision frees the panel too.
     assert closed and closed[0]["enrolment_id"] == eid and closed[0]["decision"] == "hired"
+    # PH4-D4 NEW-4: and closes the application's open task links, as
+    # final_decision does — this board used to skip it, so a rejected
+    # candidate's draft was later auto-submitted by the deadline sweep.
+    assert tasks_closed and tasks_closed[0]["enrolment_id"] == eid
+    assert tasks_closed[0]["actor"] == hr
     assert moves[0]["enrolment_id"] == eid and moves[0]["to_status"] == "hired"
     assert moves[0]["automated"] is False and moves[0]["actor_user_id"] == hr
     assert moves[0]["reason"] == "strong panel"

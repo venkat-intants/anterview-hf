@@ -7,17 +7,24 @@
 // renders the HR-only breakdown (GET /hr/exams/:examId/attempts/:aid/breakdown):
 // per-MCQ correctness + per-coding-question points, plus the score summary.
 
+import { Suspense, lazy, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   getExam,
   listAttempts,
   getAttemptBreakdown,
+  type AttemptAdjustment,
   type ExamQuestion,
 } from '@/api/exams';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { GlassCard, StatCard, StatusTag, Avatar } from '@/design/components/primitives';
-import { ArrowLeft, CheckCircle2, XCircle, Clock } from '@/design/components/icons';
+import { ArrowLeft, CheckCircle2, XCircle, Clock, Code2, Loader2 } from '@/design/components/icons';
+import { cn } from '@/lib/utils';
+
+// Code-split: the evidence tab pulls in the read-only CodeEditor (Prism +
+// language grammars), which most HR sessions on this page never open.
+const CodeEvidencePanel = lazy(() => import('@/components/hr/CodeEvidencePanel'));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -39,9 +46,30 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+/**
+ * PH4-D2 — what THIS attempt was given, in plain words. Facts only: no note,
+ * no basis, no recorder — `AttemptAdjustment` carries none of those, so there
+ * is nothing here to decorate with.
+ */
+function describeAdjustment(adj: AttemptAdjustment): string {
+  const parts: string[] = [];
+  if (adj.extra_time_percent != null) {
+    parts.push(`Time adjustment applied: +${adj.extra_time_percent}%`);
+  } else if (adj.extra_time_seconds > 0) {
+    parts.push(`Time adjustment applied: +${adj.extra_time_seconds}s`);
+  }
+  if (adj.auto_submit_relaxed) {
+    parts.push(parts.length > 0 ? 'auto-submit relaxed' : 'Auto-submit was relaxed for this attempt');
+  }
+  return parts.join(' · ');
+}
+
+type AttemptTab = 'overview' | 'code-evidence';
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function ExamAttemptDetail() {
   const { examId = '', attemptId = '' } = useParams<{ examId: string; attemptId: string }>();
+  const [tab, setTab] = useState<AttemptTab>('overview');
 
   const { data: exam } = useQuery({
     queryKey: ['hr', 'exam', examId],
@@ -131,6 +159,17 @@ export default function ExamAttemptDetail() {
         </div>
       </Reveal>
 
+      {/* ── PH4-D2 — what this attempt was actually given, read off the
+          attempt itself. Facts only: no note, no basis, no recorder. ── */}
+      {breakdown?.adjustment ? (
+        <Reveal delay={0.04}>
+          <div className="mt-4 inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-info)]/30 bg-[var(--ui-info)]/[0.06] px-3 py-1.5 text-[12.5px] text-[var(--ui-soft)]">
+            <Clock size={13} className="text-[var(--ui-info)]" aria-hidden="true" />
+            {describeAdjustment(breakdown.adjustment)}
+          </div>
+        </Reveal>
+      ) : null}
+
       {/* ── Loading / error ── */}
       {isLoading && (
         <GlassCard className="mt-6 p-8 text-center">
@@ -153,6 +192,61 @@ export default function ExamAttemptDetail() {
 
       {!isLoading && !isError && breakdown && (
         <>
+          {/* ── Tabs — the evidence tab only exists where there is a coding
+              question to have evidence about. ── */}
+          {codingEntries.length > 0 && (
+            <Reveal delay={0.05}>
+              <div className="mt-5 flex gap-1 border-b border-border" role="tablist" aria-label="Attempt views">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === 'overview'}
+                  onClick={() => setTab('overview')}
+                  className={cn(
+                    'border-b-2 px-3 py-2 text-[13px] font-medium',
+                    tab === 'overview'
+                      ? 'border-[var(--accent)] text-foreground'
+                      : 'border-transparent text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  Overview
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === 'code-evidence'}
+                  onClick={() => setTab('code-evidence')}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-medium',
+                    tab === 'code-evidence'
+                      ? 'border-[var(--accent)] text-foreground'
+                      : 'border-transparent text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <Code2 size={13} aria-hidden="true" />
+                  Code evidence
+                </button>
+              </div>
+            </Reveal>
+          )}
+
+          {tab === 'code-evidence' && codingEntries.length > 0 ? (
+            <div className="mt-5">
+              <Suspense
+                fallback={
+                  <GlassCard className="p-8 text-center">
+                    <Loader2
+                      className="mx-auto h-6 w-6 animate-spin text-[var(--ui-info)]"
+                      aria-hidden="true"
+                    />
+                  </GlassCard>
+                }
+              >
+                <CodeEvidencePanel examId={examId} attemptId={attemptId} />
+              </Suspense>
+            </div>
+          ) : (
+          <>
           {/* ── Stat strip ── */}
           <Reveal delay={0.06}>
             <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -293,6 +387,8 @@ export default function ExamAttemptDetail() {
                 No per-question breakdown is available for this attempt.
               </p>
             </GlassCard>
+          )}
+          </>
           )}
         </>
       )}

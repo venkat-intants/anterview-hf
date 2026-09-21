@@ -39,20 +39,25 @@ from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
 
 from app import reconciliation, reminders, scheduled_publishing
+from app.accommodations import purge as purge_accommodations
 from app.application_drafts import purge_expired as purge_expired_drafts
+from app.code_evidence import purge as purge_code_evidence
 from app.config import settings
 from app.database import dispose_engine, get_db_session, get_session_factory, init_engine
 from app.dependencies import set_auth_provider
 from app.health import router as health_router
 from app.interview_kits import purge_expired_notes
+from app.job_tasks import purge as purge_task_submissions
 from app.mailer import purge_old_email_events, start_email_worker, stop_email_worker
 from app.redis_client import close_redis, get_redis, init_redis
 from app.retention import purge_expired_sessions
+from app.routers.accommodations import hr_router as accommodations_hr_router
 from app.routers.admin_hr import router as admin_hr_router
 from app.routers.agent import router as agent_router
 from app.routers.auth import router as auth_router
 from app.routers.candidate_applications import router as candidate_applications_router
 from app.routers.careers import router as careers_router
+from app.routers.code_evidence import hr_router as code_evidence_hr_router
 from app.routers.company_board import router as company_board_router
 from app.routers.consent import router as consent_router
 from app.routers.decision_reasons import admin_router as decision_reasons_admin_router
@@ -75,6 +80,10 @@ from app.routers.interview_scheduling import me_router as scheduling_me_router
 from app.routers.interview_take import router as interview_take_router
 from app.routers.interviewer import router as interviewer_router
 from app.routers.jd import router as jd_router
+from app.routers.job_tasks import hr_router as job_tasks_hr_router
+from app.routers.job_tasks import iv_router as job_tasks_iv_router
+from app.routers.job_tasks import me_router as job_tasks_me_router
+from app.routers.job_tasks import public_router as job_tasks_public_router
 from app.routers.jobs import router as jobs_router
 from app.routers.notifications import router as notifications_router
 from app.routers.offers import admin_router as offers_admin_router
@@ -84,6 +93,8 @@ from app.routers.offers import public_router as offers_public_router
 from app.routers.onboarding import router as onboarding_router
 from app.routers.profile import router as profile_router
 from app.routers.public_apply import router as public_apply_router
+from app.routers.question_banks import admin_router as question_banks_admin_router
+from app.routers.question_banks import hr_router as question_banks_hr_router
 from app.routers.resume import _delete_from_s3
 from app.routers.resume import router as resume_router
 from app.routers.sso_google import router as sso_google_router
@@ -230,6 +241,60 @@ async def _run_retention_job() -> None:
     except Exception as exc:  # broad — never let document cleanup kill the scheduler
         log.error(
             "preboarding.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
+    # Same tick: candidate accommodations whose notes have outlived their
+    # purpose (PH4-D2) — every one of the applicant's applications at the
+    # company has been decided, or the adjustment's own window closed, 180
+    # days ago. The parameters (numbers) are kept; only the two notes go.
+    # Honours RETENTION_DRY_RUN like the purges above.
+    try:
+        async with factory() as session:
+            redacted = await purge_accommodations(
+                session, retention_days=settings.accommodation_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("accommodation.retention.done", redacted=redacted,
+                 dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "accommodation.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
+    # Same tick: candidate coding-round source and program output whose
+    # purpose is over (PH4-D3) — the application has been decided (or the
+    # attempt has no application) long enough ago. Scores are kept; only the
+    # source and stdout/stderr go. Honours RETENTION_DRY_RUN like every purge
+    # above.
+    try:
+        async with factory() as session:
+            purged_code = await purge_code_evidence(
+                session, retention_days=settings.code_evidence_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("code_evidence.retention.done", purged=purged_code, dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "code_evidence.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
+    # Same tick: task submissions and their responses whose purpose is over
+    # (PH4-D4) — the same shape as accommodations/code-evidence retention.
+    # Files first (inside purge_task_submissions), rows only on a full count;
+    # honours RETENTION_DRY_RUN.
+    try:
+        async with factory() as session:
+            purged_tasks = await purge_task_submissions(
+                session, retention_days=settings.task_submission_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("job_tasks.retention.done", purged=purged_tasks, dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "job_tasks.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
         )
 
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft
@@ -456,6 +521,9 @@ app.add_middleware(
         # decline, and preboarding document upload.
         "X-Offer-Token",
         "X-Offer-Session",
+        # PH4-D4: a job-simulation or portfolio task link -- open, save,
+        # upload an artifact, submit.
+        "X-Task-Token",
         # Only ever sent by the local browser-test runner. Inert in a
         # deployment: the router that reads it is mounted only under
         # TEST_HOOKS_ENABLED, which config refuses outside a local env, and
@@ -480,6 +548,12 @@ app.include_router(hr_applicants_router)
 app.include_router(hr_exams_router)
 app.include_router(hr_coding_router)
 app.include_router(hr_rounds_router)
+# PH4-D1: reusable question banks, and the locked-round unlock ("duplicate").
+app.include_router(question_banks_hr_router)
+app.include_router(question_banks_admin_router)
+# PH4-D2: candidate accommodations — HR only, no super-admin/interviewer route.
+app.include_router(accommodations_hr_router)
+app.include_router(code_evidence_hr_router)
 app.include_router(exam_take_router)
 app.include_router(hr_interviews_router)
 app.include_router(interview_take_router)
@@ -505,6 +579,10 @@ app.include_router(offers_hr_router)
 app.include_router(offers_admin_router)
 app.include_router(offers_public_router)
 app.include_router(offers_me_router)
+app.include_router(job_tasks_hr_router)
+app.include_router(job_tasks_iv_router)
+app.include_router(job_tasks_public_router)
+app.include_router(job_tasks_me_router)
 app.include_router(workflow_review_admin_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)

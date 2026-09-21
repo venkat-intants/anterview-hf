@@ -754,6 +754,10 @@ def _lapsed(**over: object) -> dict:
         "company_id": uuid.uuid4(), "owner_user_id": uuid.uuid4(),
         "full_name": "Anita", "email": "anita@example.com", "user_id": None,
         "what": "Technical Round", "mail_candidate": True,
+        # PH4-D4 wave 5 (H2(e)): whether the sweep is about to SUBMIT a task
+        # with saved work, rather than expire it — only kind='task' rows are
+        # ever true; irrelevant (and false) for exam/interview.
+        "has_work": False,
     }
     return {**row, **over}
 
@@ -1370,7 +1374,8 @@ async def test_both_interval_loops_report_their_failed_stages(
 
     for stage in ("_exam_reminders", "_interview_reminders", "_no_shows", "_results_ready",
                   "_interview_completed", "_workflow_results", "_stage_sla",
-                  "_session_reminders", "_offer_expiry"):
+                  "_session_reminders", "_offer_expiry", "_task_deadlines",
+                  "_code_analysis"):
         monkeypatch.setattr(rem, stage, _ok)
     monkeypatch.setattr(rem, "_expiry_notices", _boom)
 

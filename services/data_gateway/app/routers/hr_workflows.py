@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field, field_validator
 from shared.intelligence import baseline_profile, compute_profile_id
 from sqlalchemy import text
 
+from app.code_evidence import summary_for_enrolments as code_evidence_summary_for_enrolments
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.interviewer_scorecards import summary_for_enrolments
@@ -49,8 +50,10 @@ from app.workflow_runner import decision_queue, on_shortlisted, record_result, r
 from app.workflow_templates import TEMPLATES, build_template, template_summaries
 from app.workflows import (
     EXAM_BACKED_KINDS,
+    HUMAN_EVALUATED_KINDS,
     MAX_ROUNDS,
     ROUND_KINDS,
+    TASK_KINDS,
     WorkflowError,
     add_round,
     attach_waiting_candidates,
@@ -621,7 +624,9 @@ async def patch_round(
         (r for r in await load_rounds(db, workflow_id) if str(r["id"]) == str(round_id)), None
     )
     try:
-        await update_round(db, workflow_id=workflow_id, round_id=round_id, fields=fields)
+        orphaned_keys = await update_round(
+            db, workflow_id=workflow_id, round_id=round_id, fields=fields,
+        )
         # PH4-O3: a change to where a round sends people is audited, before
         # and after. The settings of a round are not; its routing is.
         if before is not None and any(k in fields for k in _BRANCH_KEYS):
@@ -648,6 +653,13 @@ async def patch_round(
     except WorkflowError as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if orphaned_keys:
+        # After the commit, never before (see update_round): a round moved
+        # away from a task kind used to leave its materials' files in storage.
+        from app.config import settings as _settings  # noqa: PLC0415
+        from app.document_storage import remove as _remove  # noqa: PLC0415
+
+        await _remove(_settings, orphaned_keys)
     return await get_workflow(workflow_id, ctx, db)
 
 
@@ -845,6 +857,13 @@ async def get_decision_queue(
         db, company_id=company_id,
         enrolment_ids=[uuid.UUID(str(r["enrolment_id"])) for r in rows if r.get("enrolment_id")],
     )
+    # PH4-D3: counts of coding-round similarity signals and integrity findings
+    # — never source, never names. Wired the same way as scorecards above:
+    # informational only, nothing here reorders, filters or moves anyone.
+    code_evidence_counts = await code_evidence_summary_for_enrolments(
+        db, company_id=company_id,
+        enrolment_ids=[uuid.UUID(str(r["enrolment_id"])) for r in rows if r.get("enrolment_id")],
+    )
     # PH4-O1: where each candidate stands against their stage's SLA, who owns
     # it, and whether an exception is open. Also informational: nothing here
     # reorders, filters or moves anyone.
@@ -854,6 +873,7 @@ async def get_decision_queue(
     )
     for r in rows:
         r["scorecards"] = counts.get(str(r.get("enrolment_id")))
+        r["code_evidence"] = code_evidence_counts.get(str(r.get("enrolment_id")))
         info = slas.get(str(r.get("enrolment_id"))) or {}
         r["sla"] = info.get("sla")
         r["stage_owner_name"] = info.get("owner_name")
@@ -905,7 +925,7 @@ async def post_round_review(
             status_code=409,
             detail="This candidate is not on a round — record the final decision instead.",
         )
-    if row["kind"] != "human_review":
+    if row["kind"] not in HUMAN_EVALUATED_KINDS:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -913,6 +933,24 @@ async def post_round_review(
                 "Its result arrives when the candidate completes it."
             ),
         )
+    # PH4-D4: a task round can be passed only once the candidate has actually
+    # submitted something to evaluate — but HOLDING is always allowed, the
+    # same as a human_review round where nobody has interviewed yet.
+    if row["kind"] in TASK_KINDS and body.passed:
+        submitted = await db.scalar(
+            text(
+                "SELECT 1 FROM task_submissions WHERE enrolment_id = :e AND round_id = :r"
+                "   AND superseded_at IS NULL AND status = 'submitted'"
+                "   AND consented_at IS NOT NULL"
+            ),
+            {"e": enrolment_id, "r": row["current_round_id"]},
+        )
+        if not submitted:
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{row['title']}' has no submitted work yet, so it cannot be passed. "
+                       "Hold the candidate instead.",
+            )
 
     outcome = await record_result(
         db,

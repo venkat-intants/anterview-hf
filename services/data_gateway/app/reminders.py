@@ -105,6 +105,15 @@ class SweepResult:
     sla_overdue: int = 0
     session_reminders: int = 0
     offers_expired: int = 0
+    # PH4-D3: static code-quality/similarity analysis. Zero on every field
+    # when CODE_ANALYSIS_ENABLED is false — the stage is then a documented
+    # no-op, not skipped silently.
+    code_reports: int = 0
+    similarity_signals: int = 0
+    # PH4-D4: task submissions the sweep auto-closed — a timed-out
+    # in-progress one becomes 'submitted' (closed_by='time_limit'); an
+    # untouched 'assigned' one past due becomes 'expired'.
+    task_closures: int = 0
     # "stage: ErrorType: message" for each stage that failed this sweep. The
     # sweep carries on past them; this is how the failure is still recorded.
     failed_stages: list[str] = field(default_factory=list)
@@ -121,6 +130,9 @@ class SweepResult:
             + self.sla_overdue
             + self.session_reminders
             + self.offers_expired
+            + self.code_reports
+            + self.similarity_signals
+            + self.task_closures
         )
 
 
@@ -363,7 +375,8 @@ SELECT * FROM (
   SELECT 'exam' AS kind, asg.id, asg.expires_at, asg.company_id,
          COALESCE(asg.created_by_user_id, wf.created_by_user_id) AS owner_user_id,
          a.full_name, a.email, a.user_id, COALESCE(r.title, e.title) AS what,
-         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate,
+         false AS has_work
     FROM exam_assignments asg
     JOIN applicants a ON a.id = asg.applicant_id AND a.deleted_at IS NULL
     JOIN exams       e ON e.id = asg.exam_id
@@ -376,7 +389,8 @@ SELECT * FROM (
   SELECT 'interview' AS kind, inv.id, inv.expires_at, inv.company_id,
          COALESCE(inv.created_by_user_id, wf.created_by_user_id) AS owner_user_id,
          a.full_name, a.email, a.user_id, j.title AS what,
-         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate,
+         false AS has_work
     FROM interview_invites inv
     JOIN applicants a ON a.id = inv.applicant_id AND a.deleted_at IS NULL
     LEFT JOIN jobs j ON j.id = inv.job_id
@@ -392,6 +406,30 @@ SELECT * FROM (
                       WHERE ee.dedupe_key = 'no_show:' || inv.id::text)
      AND NOT EXISTS (SELECT 1 FROM notifications n
                       WHERE n.dedupe_key = 'interview_no_show:' || inv.id::text)
+  UNION ALL
+  -- PH4-D4: a job_simulation/portfolio link nobody opened (or started but
+  -- never finished) before its due date. task_submissions carries its own
+  -- issuer, so there is no COALESCE dance like the exam/interview legs need.
+  SELECT 'task' AS kind, t.id, t.due_at AS expires_at, t.company_id,
+         t.issued_by_user_id AS owner_user_id,
+         a.full_name, a.email, a.user_id, wr.title AS what,
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate,
+         -- H2(e): the sweep (_task_deadlines, AFTER this stage) submits a
+         -- task that has saved work AND standing consent, rather than
+         -- expiring it -- so the notice must not tell every candidate their
+         -- work is gone, nor tell one who withdrew consent that it was sent
+         -- (NEW-3: the sweep expires that one). The same two conditions as
+         -- job_tasks.close_due.
+         (t.consented_at IS NOT NULL
+          AND EXISTS (SELECT 1 FROM task_responses tr
+                       WHERE tr.submission_id = t.id AND tr.redacted_at IS NULL)) AS has_work
+    FROM task_submissions t
+    JOIN applicants a ON a.id = t.applicant_id AND a.deleted_at IS NULL
+    JOIN workflow_rounds wr ON wr.id = t.round_id
+    LEFT JOIN enrolments en ON en.id = t.enrolment_id
+    LEFT JOIN workflows  wf ON wf.id = en.workflow_id
+   WHERE t.status IN ('assigned', 'in_progress') AND t.redacted_at IS NULL
+     AND t.due_at <= :now AND t.due_at > :floor
 ) lapsed
  WHERE (
          mail_candidate
@@ -442,6 +480,7 @@ async def _expiry_notices(db: AsyncSession, result: SweepResult) -> None:
                     "what": r["what"] or "",
                     "kind": r["kind"],
                     "expired": _fmt(r["expires_at"]),
+                    "has_work": bool(r["has_work"]),
                 },
                 company_id=r["company_id"],
                 related_kind=f"{r['kind']}_expiry",
@@ -833,6 +872,31 @@ async def _offer_expiry(db: AsyncSession, result: SweepResult) -> None:
     await db.commit()
 
 
+async def _task_deadlines(db: AsyncSession, result: SweepResult) -> None:
+    """PH4-D4: close timed-out task submissions. Runs AFTER ``_expiry_notices``
+    so a link that lapsed unopened is still ``assigned``/``in_progress`` when
+    the notice stage's ``_LAPSED_SQL`` looks for it — the same ordering
+    ``offers`` follows relative to ``expiry`` above."""
+    from app.job_tasks import close_due  # noqa: PLC0415 — keep the sweep import light
+
+    result.task_closures += await close_due(db)
+    await db.commit()
+
+
+async def _code_analysis(db: AsyncSession, result: SweepResult) -> None:
+    """PH4-D3: static code-quality/similarity analysis over recently submitted
+    coding rounds. A documented no-op when ``CODE_ANALYSIS_ENABLED`` is false
+    — ``code_evidence.analyse_pending`` itself checks the flag and returns a
+    zero result, so disabling analysis is not "the stage silently vanished"
+    but "the stage ran and did nothing", visible the same way every other
+    stage's zero would be."""
+    from app.code_evidence import analyse_pending  # noqa: PLC0415 — keep the sweep import light
+
+    swept = await analyse_pending(db)
+    result.code_reports += swept.reports_written
+    result.similarity_signals += swept.signals_written
+
+
 async def _stage_sla(db: AsyncSession, result: SweepResult) -> None:
     """Notify stage owners about applications past their stage's SLA.
 
@@ -870,6 +934,12 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
             ("stage_sla", _stage_sla),
             ("sessions", _session_reminders),
             ("offers", _offer_expiry),
+            # PH4-D4: after "expiry" (above), which still needs to see a
+            # lapsed task as assigned/in_progress; before "code_analysis".
+            ("tasks", _task_deadlines),
+            # PH4-D3: independent of every stage above — a failure here must
+            # never touch an enrolment, a notification or a decided status.
+            ("code_analysis", _code_analysis),
         ):
             try:
                 await fn(db, result)

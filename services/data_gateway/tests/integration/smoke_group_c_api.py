@@ -91,9 +91,12 @@ async def main() -> None:
         await db.execute(text(
             "INSERT INTO exam_rounds (id,exam_id,company_id,round_number,title,position,"
             " status,created_at,updated_at)"
-            " VALUES (:i,:e,:c,1,'Aptitude',0,'published',:t,:t)"),
+            " VALUES (:i,:e,:c,1,'Aptitude',0,'draft',:t,:t)"),
             {"i": er, "e": exam_id, "c": cid, "t": now})
-        # Publish validation refuses an exam round with no questions.
+        # Publish validation refuses an exam round with no questions. The
+        # questions go in while the round is a DRAFT and it is published after:
+        # PH4-D1 locks a published round's content at the database, so the old
+        # order (insert 'published', then add questions) is refused.
         sec = uuid.uuid4()
         await db.execute(text(
             "INSERT INTO exam_sections (id,round_id,exam_id,company_id,title,kind,position)"
@@ -103,6 +106,8 @@ async def main() -> None:
             "INSERT INTO exam_questions (id,exam_id,section_id,company_id,prompt,options,"
             " correct_index,position) VALUES (:q,:e,:s,:c,'2 + 2?',CAST(:o AS jsonb),1,0)"),
             {"q": uuid.uuid4(), "e": exam_id, "s": sec, "c": cid, "o": '["3", "4"]'})
+        await db.execute(text("UPDATE exam_rounds SET status = 'published' WHERE id = :i"),
+                         {"i": er})
         await db.commit()
 
     async def _db_override():
@@ -168,8 +173,11 @@ async def main() -> None:
               all(x.get("anchors") for x in wf["rounds"][2]["criteria"]),
               str(wf["rounds"][2]["criteria"])[:160])
 
+        # "portfolio" was the example here until PH4-D4 made it a real kind;
+        # this then created a fifth round and failed the checks below. pytest
+        # never collects smoke scripts, so the green suite hid it.
         r = await c.post(f"/hr/workflows/{wf_id}/rounds",
-                         json={"title": "Bad", "kind": "portfolio"})
+                         json={"title": "Bad", "kind": "carrier_pigeon"})
         check("an unsupported round kind -> 422", r.status_code == 422, str(r.status_code))
 
         # ── validate ─────────────────────────────────────────────────────

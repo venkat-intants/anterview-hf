@@ -7,6 +7,7 @@
 // with round_id + optional scheduled_at.
 // Legacy single-round/single-section exams render gracefully from GET /structure.
 
+import BankProvenanceChip from '@/components/bank/BankProvenanceChip';
 import { Suspense, lazy, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -35,6 +36,7 @@ import {
   ChevronRight,
   GripVertical,
   Code2,
+  Library,
 } from '@/design/components/icons';
 import {
   getExam,
@@ -48,6 +50,7 @@ import {
   updateRound,
   deleteRound,
   reorderRounds,
+  duplicateRound,
   // Section helpers
   createSection,
   updateSection,
@@ -70,8 +73,10 @@ import {
   type ExamQuestion,
   type QuestionInput,
 } from '@/api/exams';
+import { saveExamQuestionToBank, type SaveToBankInput } from '@/api/questionBanks';
 import { getPipeline, type PipelineRow } from '@/api/pipeline';
 import { applicationKey } from '@/lib/applicationKey';
+import { roundLockReason } from '@/lib/examLocks';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -80,6 +85,9 @@ import {
   StatusTag,
 } from '@/design/components/primitives';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
+import { LockBanner } from '@/components/bank/LockBanner';
+import { BankQuestionPicker } from '@/components/bank/BankQuestionPicker';
+import { SaveToBankButton } from '@/components/bank/SaveToBankButton';
 
 // Lazy-load CodingAuthoring to avoid importing the code-editor eagerly
 const CodingAuthoringSection = lazy(() => import('./CodingAuthoringSection'));
@@ -136,7 +144,24 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // PH4-D1 — the bank picker, and per-row "Save to bank".
+  const [showBankPicker, setShowBankPicker] = useState(false);
+  const [savingToBankId, setSavingToBankId] = useState<string | null>(null);
+
   const refresh = () => void qc.invalidateQueries({ queryKey: qKey });
+
+  const saveToBankMut = useMutation({
+    mutationFn: ({ qid, body }: { qid: string; body: SaveToBankInput }) =>
+      saveExamQuestionToBank(examId, qid, body),
+    onSuccess: () => {
+      toast.success('Saved to bank as a new draft');
+      setSavingToBankId(null);
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : 'Could not save this question to a bank');
+      setSavingToBankId(null);
+    },
+  });
 
   const addMut = useMutation({
     mutationFn: (q: QuestionInput) => addSectionQuestion(examId, sectionId, q),
@@ -240,10 +265,16 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                     {i + 1}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-medium leading-snug text-foreground">
-                      {q.prompt}{' '}
-                      <span className="font-normal text-muted-foreground">({q.points} pt)</span>
-                    </p>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="text-[13px] font-medium leading-snug text-foreground">
+                        {q.prompt}{' '}
+                        <span className="font-normal text-muted-foreground">({q.points} pt)</span>
+                      </p>
+                      <BankProvenanceChip
+                        rootId={q.source_bank_root_id}
+                        version={q.source_bank_version}
+                      />
+                    </div>
                     <ul className="mt-2 space-y-0.5 pl-0">
                       {q.options.map((opt, oi) => (
                         <li
@@ -264,6 +295,17 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                         </li>
                       ))}
                     </ul>
+                    {/* SaveToBankButton owns its own open/closed state and
+                        renders the "Save to bank" link itself, so gating it
+                        behind a second one made the user click twice. */}
+                    <SaveToBankButton
+                      className="mt-2"
+                      saving={saveToBankMut.isPending && savingToBankId === q.id}
+                      onSave={(body) => {
+                        setSavingToBankId(q.id);
+                        saveToBankMut.mutate({ qid: q.id, body });
+                      }}
+                    />
                   </div>
                   {!locked && (
                     <button
@@ -280,6 +322,26 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
             </StaggerItem>
           ))}
         </Stagger>
+      )}
+
+      {/* PH4-D1 — add an approved MCQ question straight from a bank */}
+      {!locked && (
+        <button
+          type="button"
+          onClick={() => setShowBankPicker(true)}
+          className="inline-flex items-center gap-1.5 rounded-[10px] border border-border px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:border-[var(--ui-line-strong)]"
+        >
+          <Library size={13} aria-hidden="true" /> Add from bank
+        </button>
+      )}
+      {showBankPicker && (
+        <BankQuestionPicker
+          examId={examId}
+          sectionId={sectionId}
+          sectionKind="mcq"
+          onClose={() => setShowBankPicker(false)}
+          onAdded={refresh}
+        />
       )}
 
       {/* Composer — three ways to add questions; hidden when locked */}
@@ -628,7 +690,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
 
       {locked && (
         <div className="flex items-center gap-2 rounded-[12px] border border-border bg-[rgba(28,29,31,0.3)] px-3 py-2 text-[12px] text-muted-foreground">
-          <Lock size={13} aria-hidden="true" /> Questions are locked — attempts exist.
+          <Lock size={13} aria-hidden="true" /> Questions are locked — see the banner above.
         </div>
       )}
     </div>
@@ -728,23 +790,27 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
                 {Math.round(section.time_limit_seconds / 60)} min
               </span>
             )}
-            <button
-              type="button"
-              aria-label={`Rename section ${section.title}`}
-              className="flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => setEditing(true)}
-            >
-              <Pencil size={13} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label={`Delete section ${section.title}`}
-              className="flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground hover:text-[var(--ui-danger)] transition-colors"
-              disabled={deleting}
-              onClick={() => onDelete(section.id)}
-            >
-              <Trash2 size={13} aria-hidden="true" />
-            </button>
+            {!locked && (
+              <>
+                <button
+                  type="button"
+                  aria-label={`Rename section ${section.title}`}
+                  className="flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => setEditing(true)}
+                >
+                  <Pencil size={13} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Delete section ${section.title}`}
+                  className="flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground hover:text-[var(--ui-danger)] transition-colors"
+                  disabled={deleting}
+                  onClick={() => onDelete(section.id)}
+                >
+                  <Trash2 size={13} aria-hidden="true" />
+                </button>
+              </>
+            )}
           </>
         )}
       </div>
@@ -1095,8 +1161,22 @@ function RoundPanel({
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Delete section failed'),
   });
 
+  // PH4-D1 — the way forward once this round is locked: duplicate it into a
+  // fresh, editable draft round.
+  const duplicateMut = useMutation({
+    mutationFn: () => duplicateRound(examId, round.id),
+    onSuccess: (created) => {
+      toast.success(`Duplicated as "${created.title}"`);
+      invalidateStructure();
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Could not duplicate this round'),
+  });
+
   const isPublished = round.status === 'published';
   const { label: statusLabel, tone: statusToneKey } = roundStatusTone(round.status);
+  // A round can only ever be locked BECAUSE it is published — see the module
+  // comment in lib/examLocks.ts for why "taken while draft" cannot occur here.
+  const lockReason = roundLockReason(round.status);
 
   return (
     <GlassCard className="p-0 overflow-hidden">
@@ -1216,6 +1296,19 @@ function RoundPanel({
 
       {expanded && (
         <div className="px-5 py-4 space-y-4">
+          {/* PH4-D1 — this round's content is fixed; here is why, and the two
+              ways forward. */}
+          {lockReason ? (
+            <LockBanner
+              reason={lockReason}
+              canUnpublish={isPublished}
+              onUnpublish={() => publishMut.mutate('draft')}
+              unpublishing={publishMut.isPending}
+              onDuplicate={() => duplicateMut.mutate()}
+              duplicating={duplicateMut.isPending}
+            />
+          ) : null}
+
           {/* Settings row */}
           <div className="flex flex-wrap items-end gap-4">
             <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
@@ -1259,18 +1352,20 @@ function RoundPanel({
               <p className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
                 Sections ({round.sections.length})
               </p>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
-                onClick={() => setAddingSection((v) => !v)}
-                aria-expanded={addingSection}
-              >
-                <Plus size={13} aria-hidden="true" /> Add section
-              </button>
+              {!lockReason && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
+                  onClick={() => setAddingSection((v) => !v)}
+                  aria-expanded={addingSection}
+                >
+                  <Plus size={13} aria-hidden="true" /> Add section
+                </button>
+              )}
             </div>
 
             {/* Add-section form */}
-            {addingSection && (
+            {addingSection && !lockReason && (
               <form
                 className="mb-3 flex flex-wrap items-end gap-2 rounded-[14px] border border-dashed border-border bg-[rgba(28,29,31,0.3)] p-3"
                 onSubmit={(e) => {
@@ -1349,7 +1444,7 @@ function RoundPanel({
                     key={section.id}
                     examId={examId}
                     section={section}
-                    locked={false}
+                    locked={Boolean(lockReason)}
                     onDelete={(sid) => deleteSectionMut.mutate(sid)}
                     deleting={deleteSectionMut.isPending}
                   />

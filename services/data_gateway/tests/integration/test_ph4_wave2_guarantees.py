@@ -339,29 +339,59 @@ async def test_changes_requested_is_editable(db: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_an_exam_edited_after_approval_stops_the_publish(db: AsyncSession) -> None:
     """Security L1: an exam round is its own object and stays editable, so the
-    fingerprint covers its content and publishing re-checks it."""
+    fingerprint covers its content and publishing re-checks it.
+
+    Deliberately rewritten for PH4-D1: a published round's content is now
+    frozen at the database (``exam_round_content_frozen``), so editing a
+    published round's question directly — which is what this test used to do
+    — is refused before it ever reaches the fingerprint. The build order also
+    changes: T2 fires on every INSERT too, so the section and question have to
+    exist BEFORE the round is published, not after (the original test inserted
+    them straight into an already-published round, which D1 now refuses on the
+    INSERT itself). The rest of the guarantee — the exam's content is in the
+    hash, and publishing re-checks it — is proved the D1 way: unpublish (no
+    attempts exist yet, so that is allowed), edit, and see the stale-fingerprint
+    refusal exactly as before.
+    """
     f = await _build(db)
     exam, er, sec, q = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     p = {"c": f.company, "x": exam, "er": er, "s": sec, "q": q, "r": f.r1}
     for sql in (
         "INSERT INTO exams (id, company_id, title) VALUES (:x, :c, 'Exam')",
         "INSERT INTO exam_rounds (id, exam_id, company_id, round_number, title, status, position)"
-        " VALUES (:er, :x, :c, 1, 'Written', 'published', 0)",
+        " VALUES (:er, :x, :c, 1, 'Written', 'draft', 0)",
         "INSERT INTO exam_sections (id, round_id, exam_id, company_id, title, position)"
         " VALUES (:s, :er, :x, :c, 'MCQ', 0)",
         "INSERT INTO exam_questions (id, exam_id, company_id, prompt, options, correct_index,"
         " position, section_id) VALUES (:q, :x, :c, 'Two plus two?',"
         " '[\"3\", \"4\"]'::jsonb, 1, 0, :s)",
+        "UPDATE exam_rounds SET status = 'published' WHERE id = :er",
         "UPDATE workflow_rounds SET kind = 'mcq', exam_round_id = :er WHERE id = :r",
     ):
         await db.execute(text(sql), p)
     before = await workflow_fingerprint(db, f.wf)
     await _move(db, f, "approved", fingerprint=before)
+
+    # PH4-D1: the round is published, so its content is fixed — at the
+    # database, whatever the caller.
+    await _refused(
+        db, "UPDATE exam_questions SET correct_index = 0 WHERE id = :q", {"q": q},
+        "is published; its content is fixed",
+    )
+
+    # Unpublishing is allowed while nobody has taken it — "duplicate round" is
+    # the way forward for a round already in front of candidates, but this one
+    # never was.
+    await _allowed(db, "UPDATE exam_rounds SET status = 'draft' WHERE id = :er", {"er": er})
     await db.execute(text("UPDATE exam_questions SET correct_index = 0 WHERE id = :q"), {"q": q})
     assert await workflow_fingerprint(db, f.wf) != before, "the exam's content is in the hash"
     with pytest.raises(WorkflowError, match="changed after it was approved"):
         await publish(db, company_id=f.company, workflow_id=f.wf)
+
+    # Restore both the content and the publish state: the fingerprint is pure
+    # content, not a side effect of the unpublish/republish round trip.
     await db.execute(text("UPDATE exam_questions SET correct_index = 1 WHERE id = :q"), {"q": q})
+    await db.execute(text("UPDATE exam_rounds SET status = 'published' WHERE id = :er"), {"er": er})
     assert await workflow_fingerprint(db, f.wf) == before, "timestamps are not content"
 
 

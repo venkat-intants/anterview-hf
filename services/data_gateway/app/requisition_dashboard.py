@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.watch_runner import gather_round_stalls
 from app.publishing import public_gate_open
+from app.workflows import HUMAN_EVALUATED_KINDS
 
 HELD_POOL_LIMIT = 25
 ACTIVITY_LIMIT = 25
@@ -71,7 +72,7 @@ SELECT count(*) AS applications,
        count(*) FILTER (WHERE e.status = 'rejected') AS rejected,
        count(*) FILTER (WHERE e.status = 'new' AND e.current_round_id IS NULL) AS not_started,
        count(*) FILTER (WHERE e.status NOT IN ('hired', 'rejected', 'held')
-                          AND wr.kind = 'human_review') AS awaiting_review,
+                          AND wr.kind = ANY(CAST(:human_kinds AS text[]))) AS awaiting_review,
        count(*) FILTER (WHERE e.status = 'interviewed' AND e.current_round_id IS NULL) AS finished,
        count(*) FILTER (WHERE e.status = 'new' AND e.current_round_id IS NULL
                           AND pub.thr IS NOT NULL AND e.ats_overall IS NOT NULL
@@ -430,7 +431,7 @@ async def gather_dashboard(
     rounds: list[Any],
 ) -> dict[str, Any]:
     """Everything the dashboard shows beyond the funnel. Read-only."""
-    params = {"r": requisition_id, "c": company_id}
+    params = {"r": requisition_id, "c": company_id, "human_kinds": list(HUMAN_EVALUATED_KINDS)}
     p = dict((await db.execute(text(_PROGRESS_SQL), params)).mappings().first() or {})
     wf = dict((await db.execute(text(_WORKFLOW_STATE_SQL), params)).mappings().first() or {})
     timing_rows = [dict(r) for r in (await db.execute(text(_TIMING_SQL), params)).mappings()]

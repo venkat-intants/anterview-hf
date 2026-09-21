@@ -59,10 +59,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger(__name__)
 
-# The four round types Phase 2 ships (D-03). Portfolio / file-submission is
-# deliberately absent: it needs a new grader and introduces a prompt-injection
-# surface on candidate-authored content, so it is a Phase 3 addition.
-ROUND_KINDS: frozenset[str] = frozenset({"mcq", "coding", "ai_interview", "human_review"})
+# Job simulations and portfolio rounds (PH4-D4) answer the two deferral
+# reasons Phase 2 gave for leaving them out: there is no grader, because a
+# named person scores a submission against the round's own FROZEN
+# round_criteria (interviewer_scorecards, widened to these two kinds — never
+# a threshold, never a model); and the prompt-injection surface a candidate's
+# own writing would be to an LLM is closed by construction, because no AI
+# module (shared/agents/*, app/agents/*) may reference round_tasks,
+# task_submissions or task_responses (AST-tested).
+ROUND_KINDS: frozenset[str] = frozenset(
+    {"mcq", "coding", "ai_interview", "human_review", "job_simulation", "portfolio"}
+)
 
 # Rounds whose content comes from the existing exam machinery, which already has
 # authoring, AI generation, CSV import and graders.
@@ -70,6 +77,18 @@ EXAM_BACKED_KINDS: frozenset[str] = frozenset({"mcq", "coding"})
 
 # Rounds graded by a model rather than by an answer key or a person.
 AI_GRADED_KINDS: frozenset[str] = frozenset({"ai_interview"})
+
+# Task-configured rounds (PH4-D4): a candidate submits work — text, a file or
+# a link — that a named person evaluates. app/job_tasks.py owns their config
+# and lifecycle.
+TASK_KINDS: frozenset[str] = frozenset({"job_simulation", "portfolio"})
+
+# Every round kind a threshold cannot decide: a person always records the
+# outcome, never a score against a pass mark. interviewer_scorecards.py's
+# SCORABLE_ROUND_KINDS is exactly this set, and the decision queue, the
+# requisition dashboard and enrolment_awaits_human all key on it (or its SQL
+# equivalent) rather than repeating 'human_review' three different ways.
+HUMAN_EVALUATED_KINDS: frozenset[str] = frozenset({"human_review"}) | TASK_KINDS
 
 WORKFLOW_STATUSES: frozenset[str] = frozenset({"draft", "published", "archived"})
 
@@ -231,9 +250,10 @@ def branch_errors(rounds: list[dict[str, Any]]) -> list[str]:
         if (fast_min is None) != (not fast_to):
             errors.append(f"{title}: a fast-track needs both a score and a destination.")
         if fast_to:
-            if r["kind"] == "human_review":
+            if r["kind"] in HUMAN_EVALUATED_KINDS:
                 errors.append(
-                    f"{title}: a human review has no score, so it cannot fast-track anyone."
+                    f"{title}: a round a person evaluates has no score, so it cannot "
+                    "fast-track anyone."
                 )
             elif r.get("pass_threshold") is not None and fast_min is not None and (
                 float(fast_min) <= float(r["pass_threshold"])
@@ -312,7 +332,7 @@ def validate_chain(rounds: list[dict[str, Any]]) -> list[str]:
             errors.append(f"{title}: unknown round type {r['kind']!r}.")
         if r["kind"] in EXAM_BACKED_KINDS and not r.get("exam_round_id"):
             errors.append(f"{title}: a {r['kind']} round needs questions before publishing.")
-        if r["kind"] != "human_review" and r.get("pass_threshold") is None:
+        if r["kind"] not in HUMAN_EVALUATED_KINDS and r.get("pass_threshold") is None:
             errors.append(f"{title}: needs an advance threshold.")
 
     edge_errors = branch_errors(rounds)
@@ -714,8 +734,13 @@ async def update_round(
     workflow_id: uuid.UUID,
     round_id: uuid.UUID,
     fields: dict[str, Any],
-) -> None:
+) -> list[str]:
     """Edit a draft round's own settings. Caller commits.
+
+    Returns the storage keys of reference materials this change orphaned
+    (moving a round away from a task kind), for the caller to remove from
+    object storage AFTER its commit — before it, a failed commit would bring
+    the rows back pointing at deleted files.
 
     Deliberately cannot change ``workflow_id``, ``position`` or
     ``on_pass_next_round_id`` — the chain is maintained by add/remove/reorder so
@@ -728,7 +753,7 @@ async def update_round(
                "deadline_days", "exam_round_id", *BRANCH_FIELDS}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
-        return
+        return []
     for key in ("on_fail_next_round_id", "on_fast_track_next_round_id"):
         target = updates.get(key)
         if target is None:
@@ -768,17 +793,27 @@ async def update_round(
         updates["on_fast_track_next_round_id"] = fast_to
     if "kind" in updates and updates["kind"] not in ROUND_KINDS:
         raise WorkflowError(f"Unknown round type {updates['kind']!r}.")
+    old_kind: str | None = None
     if "kind" in updates:
+        old_kind = await db.scalar(
+            text("SELECT kind FROM workflow_rounds WHERE id = :r AND workflow_id = :w"),
+            {"r": round_id, "w": workflow_id},
+        )
         # A new type clears what cannot apply to it, rather than leaving a
         # stale value the canvas no longer shows: an MCQ turned into a human
         # review kept its exam, threshold and time limit, invisible in the
         # panel and still sitting on the row. Nothing is INVENTED for the new
         # type — a scored round left without a threshold is flagged by
         # validation, which is where HR is told to set one.
-        if updates["kind"] == "human_review":
+        if updates["kind"] in HUMAN_EVALUATED_KINDS:
             updates["pass_threshold"] = None
             updates["exam_round_id"] = None
-            updates["time_limit_seconds"] = None
+            # PH4-D4: job_simulation keeps time_limit_seconds — it is the one
+            # timer a candidate sees while working; portfolio (no timer, only
+            # a due date) and human_review (no candidate-side clock at all)
+            # both clear it.
+            if updates["kind"] != "job_simulation":
+                updates["time_limit_seconds"] = None
             # No score, so nothing to fast-track on.
             updates["fast_track_min_percent"] = None
             updates["on_fast_track_next_round_id"] = None
@@ -792,6 +827,37 @@ async def update_round(
         ),
         {**updates, "r": round_id, "w": workflow_id, "n": datetime.now(tz=UTC)},
     )
+    # PH4-D4: moving AWAY from a task kind leaves no config behind for a kind
+    # that can no longer read it — round_tasks_no_edit_when_published would
+    # refuse this DELETE on a published/in-review workflow, but update_round
+    # already required a draft (_assert_draft, above), so it is never reached.
+    if (
+        old_kind is not None and old_kind in TASK_KINDS
+        and updates.get("kind") is not None and updates["kind"] not in TASK_KINDS
+    ):
+        await db.execute(text("DELETE FROM round_tasks WHERE round_id = :r"), {"r": round_id})
+        keys = list(
+            (
+                await db.execute(
+                    text("DELETE FROM round_task_materials WHERE round_id = :r"
+                         " RETURNING storage_key"),
+                    {"r": round_id},
+                )
+            ).scalars().all()
+        )
+        # A cloned workflow version shares its materials' storage keys
+        # (clone_for_edit) — an object is orphaned only once nothing names it.
+        still_used = set(
+            (
+                await db.execute(
+                    text("SELECT storage_key FROM round_task_materials"
+                         " WHERE storage_key = ANY(:k)"),
+                    {"k": keys},
+                )
+            ).scalars().all()
+        ) if keys else set()
+        return [k for k in keys if k not in still_used]
+    return []
 
 
 async def remove_round(
@@ -1013,6 +1079,27 @@ async def validate(
                 f"{r['title']}: an AI interview round must assess at least one competency."
             )
 
+    task_round_ids = [r["id"] for r in rounds if r["kind"] in TASK_KINDS]
+    if task_round_ids:
+        configured = set(
+            (
+                await db.execute(
+                    text("SELECT round_id FROM round_tasks WHERE round_id = ANY(:ids)"),
+                    {"ids": task_round_ids},
+                )
+            ).scalars().all()
+        )
+        for r in rounds:
+            if r["kind"] not in TASK_KINDS:
+                continue
+            if r["id"] not in configured:
+                report.errors.append(f"{r['title']}: needs a brief and its items before publishing.")
+            if not criteria.get(str(r["id"])):
+                report.errors.append(
+                    f"{r['title']}: needs at least one evaluation criterion — a reviewer scores "
+                    "a submission against the role's competencies, never a threshold."
+                )
+
     if profile_competencies:
         report.coverage, warnings = build_coverage(profile_competencies, criteria, titles)
         report.warnings.extend(warnings)
@@ -1223,6 +1310,65 @@ async def clone_for_edit(
                  "i": id_map[str(r["id"])]},
             )
 
+    # PH4-D4: a task round's config and materials travel with it. Materials
+    # SHARE their storage key with the original — the object itself is
+    # immutable HR reference material, not candidate content, and duplicating
+    # bytes for every clone would multiply storage for no benefit (open
+    # decision 21). Deleting one requires checking no other row still names
+    # the key, which app/job_tasks.py's material removal does.
+    old_task_rounds = [r for r in old_rounds if r["kind"] in TASK_KINDS]
+    if old_task_rounds:
+        tasks = (
+            await db.execute(
+                text(
+                    "SELECT round_id, kind, brief, brief_translations, items, min_artifacts,"
+                    " max_artifacts, allow_files, allow_links, allowed_link_domains"
+                    "  FROM round_tasks WHERE round_id = ANY(:ids)"
+                ),
+                {"ids": [r["id"] for r in old_task_rounds]},
+            )
+        ).mappings().all()
+        for t in tasks:
+            new_rid = id_map[str(t["round_id"])]
+            await db.execute(
+                text(
+                    "INSERT INTO round_tasks (id, company_id, round_id, kind, brief,"
+                    " brief_translations, items, min_artifacts, max_artifacts, allow_files,"
+                    " allow_links, allowed_link_domains, created_at, updated_at)"
+                    " VALUES (:i,:c,:r,:k,:b, CAST(:bt AS jsonb), CAST(:it AS jsonb), :mina,"
+                    " :maxa, :af, :al, :dom, :n, :n)"
+                ),
+                {"i": uuid.uuid4(), "c": company_id, "r": new_rid, "k": t["kind"],
+                 "b": t["brief"],
+                 "bt": json.dumps(t["brief_translations"]) if t["brief_translations"] else None,
+                 "it": json.dumps(t["items"]), "mina": t["min_artifacts"],
+                 "maxa": t["max_artifacts"], "af": t["allow_files"], "al": t["allow_links"],
+                 "dom": t["allowed_link_domains"], "n": now},
+            )
+        materials = (
+            await db.execute(
+                text(
+                    "SELECT round_id, title, storage_key, original_name, content_type,"
+                    " size_bytes, sha256, position FROM round_task_materials"
+                    " WHERE round_id = ANY(:ids)"
+                ),
+                {"ids": [r["id"] for r in old_task_rounds]},
+            )
+        ).mappings().all()
+        for m in materials:
+            new_rid = id_map[str(m["round_id"])]
+            await db.execute(
+                text(
+                    "INSERT INTO round_task_materials (id, company_id, round_id, title,"
+                    " storage_key, original_name, content_type, size_bytes, sha256, position,"
+                    " created_at, updated_at)"
+                    " VALUES (:i,:c,:r,:t,:k,:n,:ct,:sz,:sha,:p,:now,:now)"
+                ),
+                {"i": uuid.uuid4(), "c": company_id, "r": new_rid, "t": m["title"],
+                 "k": m["storage_key"], "n": m["original_name"], "ct": m["content_type"],
+                 "sz": m["size_bytes"], "sha": m["sha256"], "p": m["position"], "now": now},
+            )
+
     old_criteria = await load_criteria(db, [r["id"] for r in old_rounds])
     for old_rid, crits in old_criteria.items():
         for c in crits:
@@ -1301,6 +1447,14 @@ async def _assert_draft(db: AsyncSession, workflow_id: uuid.UUID) -> None:
 # stays editable — so without this an approved version could go live on an exam
 # its reviewer never saw. Timestamps are left out (they move without the content
 # moving); ``deleted_at`` is not, so removing a question changes the digest.
+#
+# PH4-D1: a question/coding row's three ``source_bank_*`` provenance columns are
+# also subtracted. Where a question came from is not what the reviewer approved
+# — the content is identical whether it was typed by hand or copied from an
+# approved bank question — and leaving them in would change every existing
+# workflow's fingerprint the moment D1 shipped, failing every approved-but-
+# unpublished version's publish with "changed after it was approved" and
+# marking every stored dry run stale, for a change nobody made.
 _EXAM_CONTENT_SQL = """
 SELECT er.id,
        md5((to_jsonb(er) - 'created_at' - 'updated_at')::text) AS round_digest,
@@ -1308,12 +1462,16 @@ SELECT er.id,
                                    ',' ORDER BY s.id)
                    FROM exam_sections s
                   WHERE s.round_id = er.id AND s.deleted_at IS NULL), '') AS sections,
-       COALESCE((SELECT string_agg(md5((to_jsonb(q) - 'created_at' - 'updated_at')::text),
+       COALESCE((SELECT string_agg(md5((to_jsonb(q) - 'created_at' - 'updated_at'
+                                        - 'source_bank_question_id' - 'source_bank_root_id'
+                                        - 'source_bank_version')::text),
                                    ',' ORDER BY q.id)
                    FROM exam_questions q
                    JOIN exam_sections s ON s.id = q.section_id AND s.deleted_at IS NULL
                   WHERE s.round_id = er.id AND q.deleted_at IS NULL), '') AS questions,
-       COALESCE((SELECT string_agg(md5((to_jsonb(c) - 'created_at' - 'updated_at')::text),
+       COALESCE((SELECT string_agg(md5((to_jsonb(c) - 'created_at' - 'updated_at'
+                                        - 'source_bank_question_id' - 'source_bank_root_id'
+                                        - 'source_bank_version')::text),
                                    ',' ORDER BY c.id)
                    FROM coding_questions c
                    JOIN exam_sections s ON s.id = c.section_id AND s.deleted_at IS NULL
@@ -1357,7 +1515,7 @@ async def workflow_fingerprint(db: AsyncSession, workflow_id: uuid.UUID) -> str:
                 )
             ).mappings().all()
         ]
-    payload = {
+    payload: dict[str, Any] = {
         "settings": dict(wf) if wf else {},
         "exams": exams,
         "rounds": [
@@ -1373,5 +1531,26 @@ async def workflow_fingerprint(db: AsyncSession, workflow_id: uuid.UUID) -> str:
             for rid, crits in sorted(criteria.items())
         },
     }
+    # PH4-D4: a task round's own configuration, keyed only when at least one
+    # exists — so a workflow with no task round hashes exactly the input it
+    # did before this feature shipped, and every fingerprint recorded then
+    # still matches. (An earlier version of this comment cited a golden-value
+    # unit test; none existed.)
+    task_round_ids = [r["id"] for r in rounds if r["kind"] in TASK_KINDS]
+    if task_round_ids:
+        task_rows = (
+            await db.execute(
+                text(
+                    "SELECT round_id, kind, brief, brief_translations, items, min_artifacts,"
+                    " max_artifacts, allow_files, allow_links, allowed_link_domains"
+                    "  FROM round_tasks WHERE round_id = ANY(:ids)"
+                ),
+                {"ids": task_round_ids},
+            )
+        ).mappings().all()
+        payload["tasks"] = {
+            str(t["round_id"]): {k: v for k, v in t.items() if k != "round_id"}
+            for t in task_rows
+        }
     blob = json.dumps(payload, sort_keys=True, default=str).encode()
     return hashlib.sha256(blob).hexdigest()

@@ -8,9 +8,11 @@
 //   Client-side CSV export from loaded attempts (no fake endpoint).
 //   No flagged/proctoring field (no backend field).
 
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getExam, listAttempts, type AttemptResult } from '@/api/exams';
+import { listSimilaritySignals } from '@/api/codeEvidence';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { GlassCard, StatCard, StatusTag, Avatar, Pill } from '@/design/components/primitives';
 import {
@@ -22,6 +24,11 @@ import {
   Clock,
 } from '@/design/components/icons';
 import { ACTIVE_POLL_MS } from '../../lib/polling';
+
+/** Every column's grid template, kept in one place so the header and every
+ *  row always agree on how many columns there are. */
+const GRID_COLS = 'grid-cols-[2fr_1fr_1fr_1fr_0.8fr]';
+const GRID_COLS_WITH_SIMILARITY = 'grid-cols-[2fr_1fr_1fr_1fr_1fr_0.8fr]';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -96,6 +103,24 @@ export default function ExamResults() {
     refetchInterval: ACTIVE_POLL_MS,
     queryFn: () => listAttempts(examId),
   });
+
+  // PH4-D3 — counts only, never the content: the compare view (matched
+  // regions, excerpts) lives one click away on the attempt itself.
+  const showSimilarity = exam?.kind === 'coding';
+  const { data: signals } = useQuery({
+    queryKey: ['hr', 'exam', examId, 'similarity'],
+    queryFn: () => listSimilaritySignals(examId),
+    enabled: Boolean(examId) && showSimilarity,
+  });
+  const similarityByAttempt = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of signals ?? []) {
+      m.set(s.attempt_low_id, (m.get(s.attempt_low_id) ?? 0) + 1);
+      if (s.attempt_high_id) m.set(s.attempt_high_id, (m.get(s.attempt_high_id) ?? 0) + 1);
+    }
+    return m;
+  }, [signals]);
+  const gridCols = showSimilarity ? GRID_COLS_WITH_SIMILARITY : GRID_COLS;
 
   const list = attempts ?? [];
   const completedList = list.filter((a) => a.score_percent !== null);
@@ -185,14 +210,21 @@ export default function ExamResults() {
       )}
 
       {/* ── Results table ── */}
+      {showSimilarity && (
+        <p className="mt-4 text-[12px] leading-relaxed text-muted-foreground">
+          Similarity signals are automated and unreviewed — similar code is not evidence of
+          misconduct on its own. See an attempt&rsquo;s own Code evidence tab for detail.
+        </p>
+      )}
       <Reveal delay={0.1}>
         <GlassCard className="mt-5 overflow-hidden p-0">
           {/* Table header */}
-          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_0.8fr] gap-3 border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
+          <div className={`grid ${gridCols} gap-3 border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]`}>
             <div>Candidate</div>
             <div>Score</div>
             <div>Submitted</div>
             <div>Status</div>
+            {showSimilarity && <div>Similarity signals</div>}
             <div>Action</div>
           </div>
 
@@ -222,7 +254,13 @@ export default function ExamResults() {
             <Stagger className="flex flex-col">
               {list.map((a) => (
                 <StaggerItem key={a.attempt_id}>
-                  <AttemptRow a={a} examId={examId} />
+                  <AttemptRow
+                    a={a}
+                    examId={examId}
+                    gridCols={gridCols}
+                    showSimilarity={showSimilarity}
+                    similarityCount={similarityByAttempt.get(a.attempt_id) ?? 0}
+                  />
                 </StaggerItem>
               ))}
             </Stagger>
@@ -234,11 +272,23 @@ export default function ExamResults() {
 }
 
 // ── Attempt row ───────────────────────────────────────────────────────────────
-function AttemptRow({ a, examId }: { a: AttemptResult; examId: string }) {
+function AttemptRow({
+  a,
+  examId,
+  gridCols,
+  showSimilarity,
+  similarityCount,
+}: {
+  a: AttemptResult;
+  examId: string;
+  gridCols: string;
+  showSimilarity: boolean;
+  similarityCount: number;
+}) {
   const inProgress = a.status === 'in_progress' || a.submitted_at === null;
 
   return (
-    <div className="grid grid-cols-[2fr_1fr_1fr_1fr_0.8fr] items-center gap-3 border-b border-border px-6 py-3.5 last:border-0">
+    <div className={`grid ${gridCols} items-center gap-3 border-b border-border px-6 py-3.5 last:border-0`}>
       {/* Candidate */}
       <div className="flex items-center gap-3">
         <Avatar
@@ -278,6 +328,17 @@ function AttemptRow({ a, examId }: { a: AttemptResult; examId: string }) {
           </StatusTag>
         )}
       </div>
+
+      {/* Similarity signals — counts only, never the content (PH4-D3). */}
+      {showSimilarity && (
+        <div className="font-mono text-[13px] text-muted-foreground">
+          {similarityCount > 0 ? (
+            <span className="text-[var(--ui-warn)]">{similarityCount}</span>
+          ) : (
+            '—'
+          )}
+        </div>
+      )}
 
       {/* Action */}
       <div>

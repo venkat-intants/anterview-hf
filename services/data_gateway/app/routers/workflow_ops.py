@@ -49,7 +49,7 @@ from app.workflow_review import (
     withdraw,
 )
 from app.workflow_simulation import SimulationError, latest_simulation, simulate
-from app.workflows import load_criteria, load_rounds, validate
+from app.workflows import TASK_KINDS, load_criteria, load_rounds, validate
 
 log = structlog.get_logger(__name__)
 
@@ -372,6 +372,26 @@ async def get_review_detail(
     def title_of(rid: Any) -> str | None:
         return titles.get(str(rid)) if rid else None
 
+    # PH4-D4: the approver sees a task round's own brief and items — what
+    # goes live is what they approved, the same reason exam content is
+    # already frozen for review.
+    task_round_ids = [r["id"] for r in rounds if r["kind"] in TASK_KINDS]
+    tasks: dict[str, Any] = {}
+    if task_round_ids:
+        tasks = {
+            str(t["round_id"]): dict(t)
+            for t in (
+                await db.execute(
+                    text(
+                        "SELECT round_id, kind, brief, brief_translations, items,"
+                        " min_artifacts, max_artifacts, allow_files, allow_links,"
+                        " allowed_link_domains FROM round_tasks WHERE round_id = ANY(:ids)"
+                    ),
+                    {"ids": task_round_ids},
+                )
+            ).mappings().all()
+        }
+
     return {
         "workflow_id": str(workflow_id),
         "requisition_id": str(req["requisition_id"]),
@@ -398,6 +418,10 @@ async def get_review_detail(
                     {"name": c["competency_name"], "weight": c["weight"]}
                     for c in criteria.get(str(r["id"]), [])
                 ],
+                "task": (
+                    {k: v for k, v in tasks[str(r["id"])].items() if k != "round_id"}
+                    if str(r["id"]) in tasks else None
+                ),
             }
             for r in rounds
         ],

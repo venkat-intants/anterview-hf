@@ -25,11 +25,21 @@ function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-const STATE_META: Record<ScorecardState, { label: string; tone: 'amber' | 'electric' | 'ember' | 'forest' }> = {
+const STATE_META: Record<
+  ScorecardState,
+  { label: string; tone: 'amber' | 'electric' | 'ember' | 'forest' }
+> = {
   assigned: { label: 'Assigned', tone: 'electric' },
   in_progress: { label: 'In progress', tone: 'amber' },
   late: { label: 'Late', tone: 'ember' },
   submitted: { label: 'Submitted', tone: 'forest' },
+};
+
+/** PH4-D4 — a job_simulation/portfolio round reads evidence, not an
+ *  interview; the label says which kind of review this is. */
+const ROUND_KIND_LABEL: Record<string, string> = {
+  job_simulation: 'Simulation review',
+  portfolio: 'Portfolio review',
 };
 
 function AssignmentRow({ a }: { a: InterviewerAssignment }) {
@@ -52,6 +62,11 @@ function AssignmentRow({ a }: { a: InterviewerAssignment }) {
             </div>
             <p className="mt-1 text-[12.5px] text-muted-foreground">
               {a.job_title} &middot; {a.round_title}
+              {a.round_kind && ROUND_KIND_LABEL[a.round_kind] ? (
+                <span className="ml-1.5 text-[var(--ui-faint)]">
+                  &middot; {ROUND_KIND_LABEL[a.round_kind]}
+                </span>
+              ) : null}
             </p>
           </div>
           <div className="shrink-0 text-right text-[12px] text-muted-foreground">
@@ -82,7 +97,10 @@ export default function InterviewerConsole(): JSX.Element {
     <div className="mx-auto w-full max-w-[900px] px-4 py-8">
       <Reveal>
         <header className="mb-6">
-          <h1 data-testid="page-title" className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
+          <h1
+            data-testid="page-title"
+            className="text-[26px] font-semibold tracking-[-0.8px] text-foreground"
+          >
             My interviews
           </h1>
           <p className="mt-1.5 max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">

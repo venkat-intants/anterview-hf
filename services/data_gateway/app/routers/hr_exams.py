@@ -31,6 +31,8 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import accommodations, exam_locks
+from app.code_evidence import coding_results_for_screen
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
@@ -232,6 +234,14 @@ class QuestionOut(BaseModel):
     correct_index: int
     points: int
     position: int
+    # PH4-D1 -- where this question came from, when it was copied from a bank.
+    # All three are NULL for a question written directly in the exam. The
+    # exam editor's "From bank - vN" chip reads these; the columns existed and
+    # the copy wrote them, but no response returned them, so the chip could
+    # never render -- found by the acceptance evidence pass, not by a test.
+    source_bank_question_id: str | None = None
+    source_bank_root_id: str | None = None
+    source_bank_version: int | None = None
 
 
 class ExamOut(BaseModel):
@@ -429,17 +439,6 @@ async def _get_owned_question(
     )
 
 
-async def _require_no_attempts(
-    db: AsyncSession, company_id: uuid.UUID, exam_id: uuid.UUID
-) -> None:
-    """Questions are immutable once any attempt exists (graded-exam integrity)."""
-    if await _attempt_count(db, company_id, exam_id) > 0:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This exam already has attempts — its questions are locked.",
-        )
-
-
 def _exam_out(e: Exam) -> ExamOut:
     return ExamOut(
         id=str(e.id),
@@ -464,6 +463,10 @@ def _question_out(q: ExamQuestion) -> QuestionOut:
         correct_index=q.correct_index,
         points=q.points,
         position=q.position,
+        source_bank_question_id=str(q.source_bank_question_id)
+        if q.source_bank_question_id else None,
+        source_bank_root_id=str(q.source_bank_root_id) if q.source_bank_root_id else None,
+        source_bank_version=q.source_bank_version,
     )
 
 
@@ -499,7 +502,7 @@ async def _bulk_insert_questions(
         )
         db.add(q)
         created.append(q)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return created
 
 
@@ -720,7 +723,7 @@ async def add_question(
 ) -> QuestionOut:
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     # Back-compat: target the exam's default MCQ section.
     section = await _default_section(db, company_id, exam_id, "mcq")
 
@@ -744,7 +747,7 @@ async def add_question(
         updated_at=now,
     )
     db.add(q)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return _question_out(q)
 
 
@@ -754,7 +757,7 @@ async def update_question(
 ) -> QuestionOut:
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     q = await _get_owned_question(db, company_id, exam_id, qid)
 
     new_options = body.options if body.options is not None else list(q.options or [])
@@ -769,7 +772,7 @@ async def update_question(
     if body.points is not None:
         q.points = body.points
     q.updated_at = datetime.now(tz=UTC)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return _question_out(q)
 
 
@@ -779,7 +782,7 @@ async def delete_question(
 ) -> Response:
     _hr_uid, company_id = ctx
     exam = await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     q = await _get_owned_question(db, company_id, exam_id, qid)
 
     live = await _live_questions(db, company_id, exam_id)
@@ -789,7 +792,7 @@ async def delete_question(
             detail="A published exam must keep at least one question. Unpublish first.",
         )
     q.deleted_at = datetime.now(tz=UTC)
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -799,7 +802,7 @@ async def reorder_questions(
 ) -> list[QuestionOut]:
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
 
     live = await _live_questions(db, company_id, exam_id)
     if {q.id for q in live} != set(body.question_ids):
@@ -816,7 +819,7 @@ async def reorder_questions(
     for idx, qid in enumerate(body.question_ids):
         by_id[qid].position = idx
         by_id[qid].updated_at = now
-    await db.commit()
+    await exam_locks.commit_or_conflict(db)
     return [_question_out(by_id[qid]) for qid in body.question_ids]
 
 
@@ -834,7 +837,7 @@ async def bulk_add_questions(
     """Append many questions at once (AI-generate 'add all', or a reviewed import)."""
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
     section = await _default_section(db, company_id, exam_id, "mcq")
     created = await _bulk_insert_questions(db, company_id, section, body.questions)
     log.info(
@@ -918,7 +921,7 @@ async def import_questions(
     """
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
-    await _require_no_attempts(db, company_id, exam_id)
+    await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
 
     content = await file.read()
     if not content:
@@ -1017,7 +1020,7 @@ async def assign_exam(
         raise HTTPException(status_code=422, detail="scheduled_at cannot be in the past.")
 
     ttl_hours = body.ttl_hours or settings.exam_link_ttl_hours
-    expires_at = now + timedelta(hours=ttl_hours)
+    base_expires_at = now + timedelta(hours=ttl_hours)
     base = settings.exam_link_base_url.rstrip("/")
 
     if not body.applicant_ids and not body.enrolment_ids:
@@ -1068,6 +1071,18 @@ async def assign_exam(
             prior.updated_at = now
             await db.flush()
 
+        resolved_enrolment_id = named_enrolment or await enrolment_for_exam_round(
+            db, applicant_id=applicant_id, company_id=company_id, exam_round_id=rnd.id
+        )
+        # PH4-D2: any recorded deadline extension applies to THIS applicant's
+        # link — the exam's own time limit is scaled separately, at /exam/start.
+        adj_row = await accommodations.effective_for(
+            db, company_id=company_id, applicant_id=applicant_id,
+            enrolment_id=resolved_enrolment_id, exam_round_id=rnd.id,
+        )
+        extra_days = adj_row.deadline_extension_days if adj_row else None
+        expires_at = base_expires_at + timedelta(days=extra_days or 0)
+
         raw_token = mint_exam_token()
         asn = ExamAssignment(
             id=uuid.uuid4(),
@@ -1077,19 +1092,23 @@ async def assign_exam(
             applicant_id=applicant_id,
             # B5: which application this exam is for, when that can be known
             # without guessing — so its result shows against that opening.
-            enrolment_id=named_enrolment or await enrolment_for_exam_round(
-                db, applicant_id=applicant_id, company_id=company_id, exam_round_id=rnd.id
-            ),
+            enrolment_id=resolved_enrolment_id,
             created_by_user_id=hr_uid,
             token_hash=hash_exam_token(raw_token, settings.exam_link_secret),
             expires_at=expires_at,
             scheduled_at=body.scheduled_at,
+            accommodation_id=adj_row.id if adj_row else None,
             status="invited",
             created_at=now,
             updated_at=now,
         )
         db.add(asn)
         await db.flush()
+        if adj_row is not None:
+            await accommodations.record_applied(
+                db, company_id=company_id, accommodation_id=adj_row.id,
+                target_kind="exam_assignment", target_id=asn.id,
+            )
         magic_link = f"{base}/exam#{raw_token}"  # raw token returned ONCE
         # Email the candidate their exam link (staged on this transaction →
         # atomic with the assignment, then delivered by the outbox worker). HR
@@ -1302,5 +1321,41 @@ async def attempt_breakdown(
         "score_percent": at.score_percent,
         "passed": at.passed,
         "per_question": per_question,
-        "coding": coding_snapshot,
+        # Cut down exactly as the code-evidence tab is: scores, language,
+        # submitted, error, and each test reduced to pass/fail. The attempt
+        # page shows nothing more, and the raw snapshot carried every test's
+        # stdout/stderr and the hidden cases' inputs and expected outputs
+        # (security review, D3 M2).
+        "coding": coding_results_for_screen(coding_snapshot),
+        "adjustment": await _attempt_adjustment(db, company_id, at),
+    }
+
+
+async def _attempt_adjustment(
+    db: AsyncSession, company_id: uuid.UUID, at: ExamAttempt
+) -> dict[str, Any] | None:
+    """What this attempt was actually given (PH4-D2), or None if nothing.
+
+    Read off the attempt, which froze the allowance when it started -- never
+    re-resolved from the applicant's history, which may have been revised or
+    revoked since and would show the wrong adjustment for this attempt. The
+    percentage comes from the exact accommodation row the attempt points at,
+    which is the version that was applied.
+
+    Facts only: no note, no basis, no recorder. This is what the attempt was
+    given, not why.
+    """
+    if at.accommodation_id is None and not at.extra_time_seconds and not at.auto_submit_relaxed:
+        return None
+    pct: int | None = None
+    if at.accommodation_id is not None:
+        pct = await db.scalar(
+            text("SELECT extra_time_percent FROM candidate_accommodations"
+                 " WHERE id = :i AND company_id = :c"),
+            {"i": at.accommodation_id, "c": company_id},
+        )
+    return {
+        "extra_time_percent": pct,
+        "extra_time_seconds": int(at.extra_time_seconds or 0),
+        "auto_submit_relaxed": bool(at.auto_submit_relaxed),
     }

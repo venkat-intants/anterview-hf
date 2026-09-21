@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.decision_reasons import ReasonError
 from app.decision_reasons import resolve as resolve_reason
+from app.interviewer_scorecards import RequestMeta
 from app.models import Applicant, AuditLog
 from app.requisitions import record_round_move, record_transition
 
@@ -183,6 +184,16 @@ async def record_final_decision(
     await close_for_decision(
         db, company_id=company_id, enrolment_id=enrolment_id, actor=actor_user_id,
         decision=decision,
+    )
+
+    # M5 (security review, PH4-D4 wave 5): a job-simulation/portfolio link
+    # otherwise outlives the application, the same problem A2's interviews
+    # had — the same precedent, applied here.
+    from app.job_tasks import close_for_decision as close_tasks_for_decision  # noqa: PLC0415
+
+    await close_tasks_for_decision(
+        db, company_id=company_id, enrolment_id=enrolment_id, actor=actor_user_id,
+        meta=RequestMeta(ip_address=ip_address, user_agent=user_agent),
     )
 
     now = datetime.now(tz=UTC)

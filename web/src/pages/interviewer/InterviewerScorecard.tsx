@@ -39,6 +39,10 @@ import {
   type ScorecardDetail,
   type ScoreInput,
 } from '@/api/interviewer';
+import SubmissionPanel from '@/components/interviewer/SubmissionPanel';
+
+/** PH4-D4 — only these two round kinds carry a submission to review. */
+const TASK_ROUND_KINDS = new Set(['job_simulation', 'portfolio']);
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -63,7 +67,11 @@ type ScoreState = Record<string, { score: number | null; not_assessed: boolean; 
 function initScores(detail: ScorecardDetail | undefined): ScoreState {
   const out: ScoreState = {};
   for (const c of detail?.criteria ?? []) {
-    out[c.competency_id] = { score: c.score, not_assessed: c.not_assessed, evidence: c.evidence ?? '' };
+    out[c.competency_id] = {
+      score: c.score,
+      not_assessed: c.not_assessed,
+      evidence: c.evidence ?? '',
+    };
   }
   return out;
 }
@@ -163,7 +171,9 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
           <div key={c.competency_id} className="rounded-[14px] border border-border p-3.5">
             <div className="flex items-baseline justify-between gap-3">
               <span className="text-[13.5px] font-medium text-foreground">{c.competency_name}</span>
-              <span className="text-[11px] text-[var(--ui-faint)]">weight {c.weight.toFixed(2)}</span>
+              <span className="text-[11px] text-[var(--ui-faint)]">
+                weight {c.weight.toFixed(2)}
+              </span>
             </div>
 
             {c.what_to_evaluate.length > 0 ? (
@@ -232,30 +242,30 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
           </p>
         ) : (
           <>
-        <textarea
-          id="private-notes"
-          value={notes}
-          maxLength={MAX_NOTES}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={6}
-          placeholder="Jot anything down while you interview — only you can see this."
-          className="mt-2 w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
-        />
-        <div className="mt-2 flex items-center justify-between">
-          <span className="text-[11px] text-[var(--ui-faint)]">
-            {notesQuery.data?.updated_at
-              ? `Saved ${new Date(notesQuery.data.updated_at).toLocaleString()}`
-              : 'Not saved yet'}
-          </span>
-          <button
-            type="button"
-            onClick={() => saveNotes.mutate()}
-            disabled={saveNotes.isPending}
-            className="rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-50"
-          >
-            {saveNotes.isPending ? 'Saving…' : 'Save notes'}
-          </button>
-        </div>
+            <textarea
+              id="private-notes"
+              value={notes}
+              maxLength={MAX_NOTES}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={6}
+              placeholder="Jot anything down while you interview — only you can see this."
+              className="mt-2 w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+            />
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-[11px] text-[var(--ui-faint)]">
+                {notesQuery.data?.updated_at
+                  ? `Saved ${new Date(notesQuery.data.updated_at).toLocaleString()}`
+                  : 'Not saved yet'}
+              </span>
+              <button
+                type="button"
+                onClick={() => saveNotes.mutate()}
+                disabled={saveNotes.isPending}
+                className="rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-50"
+              >
+                {saveNotes.isPending ? 'Saving…' : 'Save notes'}
+              </button>
+            </div>
           </>
         )}
       </section>
@@ -299,7 +309,11 @@ function ScoreControl({
 
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <div role="radiogroup" aria-label={`Score — ${competencyName}`} className="flex items-center gap-1.5">
+      <div
+        role="radiogroup"
+        aria-label={`Score — ${competencyName}`}
+        className="flex items-center gap-1.5"
+      >
         {[1, 2, 3, 4, 5].map((n) => {
           const checked = !value.not_assessed && value.score === n;
           return (
@@ -364,11 +378,14 @@ function ScorecardPanel({
           <div key={c.competency_id} className="rounded-[14px] border border-border p-4">
             <div className="flex items-baseline justify-between gap-3">
               <span className="text-[13.5px] font-medium text-foreground">{c.competency_name}</span>
-              <span className="text-[11px] text-[var(--ui-faint)]">weight {c.weight.toFixed(2)}</span>
+              <span className="text-[11px] text-[var(--ui-faint)]">
+                weight {c.weight.toFixed(2)}
+              </span>
             </div>
             {c.anchors ? (
               <p className="mt-1 text-[11.5px] leading-relaxed text-muted-foreground">
-                Weak: {c.anchors.low} &middot; Adequate: {c.anchors.mid} &middot; Strong: {c.anchors.high}
+                Weak: {c.anchors.low} &middot; Adequate: {c.anchors.mid} &middot; Strong:{' '}
+                {c.anchors.high}
               </p>
             ) : null}
 
@@ -382,7 +399,10 @@ function ScorecardPanel({
             </div>
 
             <div className="mt-3">
-              <label htmlFor={`evidence-${c.competency_id}`} className="text-[12px] font-medium text-[var(--ui-soft)]">
+              <label
+                htmlFor={`evidence-${c.competency_id}`}
+                className="text-[12px] font-medium text-[var(--ui-soft)]"
+              >
                 Evidence
               </label>
               <textarea
@@ -402,7 +422,10 @@ function ScorecardPanel({
       })}
 
       <div>
-        <label htmlFor="scorecard-summary" className="text-[12px] font-medium text-[var(--ui-soft)]">
+        <label
+          htmlFor="scorecard-summary"
+          className="text-[12px] font-medium text-[var(--ui-soft)]"
+        >
           Overall summary
         </label>
         <textarea
@@ -444,7 +467,7 @@ export default function InterviewerScorecard(): JSX.Element {
 function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'kit' | 'scorecard'>('kit');
+  const [tab, setTab] = useState<'kit' | 'scorecard' | 'submission'>('kit');
   const [scores, setScores] = useState<ScoreState>({});
   const [summary, setSummary] = useState('');
   const [hydrated, setHydrated] = useState(false);
@@ -474,7 +497,10 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
 
   const saveMut = useMutation({
     mutationFn: () =>
-      saveScorecard(scorecardId, { scores: toScoreInputs(scores), summary: summary.trim() || null }),
+      saveScorecard(scorecardId, {
+        scores: toScoreInputs(scores),
+        summary: summary.trim() || null,
+      }),
     onSuccess: () => {
       toast.success('Draft saved');
       setFormError(null);
@@ -489,7 +515,10 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
 
   const submitMut = useMutation({
     mutationFn: () =>
-      submitScorecard(scorecardId, { scores: toScoreInputs(scores), summary: summary.trim() || null }),
+      submitScorecard(scorecardId, {
+        scores: toScoreInputs(scores),
+        summary: summary.trim() || null,
+      }),
     onSuccess: (res) => {
       setConfirmSubmit(false);
       setFormError(null);
@@ -552,7 +581,11 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
               {detail.candidate_name}
             </h1>
             <StatusTag tone={detail.status === 'submitted' ? 'forest' : 'amber'} dot>
-              {detail.status === 'submitted' ? 'Submitted' : detail.state === 'late' ? 'Late' : 'In progress'}
+              {detail.status === 'submitted'
+                ? 'Submitted'
+                : detail.state === 'late'
+                  ? 'Late'
+                  : 'In progress'}
             </StatusTag>
           </div>
           <p className="mt-1 text-[13px] text-muted-foreground">
@@ -578,12 +611,34 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
         </div>
       ) : null}
 
+      {/* PH4-D2 — the ONE thing this page ever says about a candidate's
+          accommodations: the interviewer note, when one is effective for this
+          round. Nothing else about accommodations reaches this payload — no
+          basis, no internal note, no who recorded it — so there is nothing
+          else to render here. */}
+      {detail.adjustments_note ? (
+        <div
+          role="note"
+          aria-label="Adjustments"
+          className="mb-5 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
+        >
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
+          <span>
+            <span className="font-medium text-foreground">Adjustments: </span>
+            {detail.adjustments_note}
+          </span>
+        </div>
+      ) : null}
+
       {formError ? (
         <div
           role="alert"
           className="mb-5 flex items-start gap-2 rounded-[12px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-wash)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
         >
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]" aria-hidden="true" />
+          <AlertTriangle
+            className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]"
+            aria-hidden="true"
+          />
           {formError}
         </div>
       ) : null}
@@ -593,14 +648,19 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
           tabs={[
             { key: 'kit', label: 'Interview kit' },
             { key: 'scorecard', label: 'Scorecard' },
+            ...(detail.round_kind && TASK_ROUND_KINDS.has(detail.round_kind)
+              ? [{ key: 'submission', label: 'Submission' }]
+              : []),
           ]}
           active={tab}
-          onChange={(k) => setTab(k as 'kit' | 'scorecard')}
+          onChange={(k) => setTab(k as 'kit' | 'scorecard' | 'submission')}
           className="mb-5"
         />
 
         {tab === 'kit' ? (
           <KitPanel scorecardId={scorecardId} />
+        ) : tab === 'submission' ? (
+          <SubmissionPanel scorecardId={scorecardId} />
         ) : (
           <>
             <ScorecardPanel
@@ -617,7 +677,10 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
                 <div className="mt-5 border-t border-border pt-4">
                   {correcting ? (
                     <div className="flex flex-col gap-2">
-                      <label htmlFor="correction-reason" className="text-[12px] font-medium text-[var(--ui-soft)]">
+                      <label
+                        htmlFor="correction-reason"
+                        className="text-[12px] font-medium text-[var(--ui-soft)]"
+                      >
                         Why does this need correcting? (10&ndash;1000 characters)
                       </label>
                       <textarea
@@ -668,15 +731,17 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
                   disabled={saveMut.isPending || submitMut.isPending}
                   className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-50"
                 >
-                  {saveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                  {saveMut.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  ) : null}
                   Save draft
                 </button>
 
                 {confirmSubmit ? (
                   <div className="flex w-full flex-wrap items-center gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3">
                     <span className="flex-1 text-[12.5px] text-[var(--ui-soft)]">
-                      Submitted scorecards can&rsquo;t be edited — only corrected, with a reason, and
-                      the original is kept.
+                      Submitted scorecards can&rsquo;t be edited — only corrected, with a reason,
+                      and the original is kept.
                     </span>
                     <button
                       type="button"

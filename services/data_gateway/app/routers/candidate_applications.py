@@ -133,6 +133,12 @@ class ApplicationOut(BaseModel):
     # act rather than something a list endpoint hands out on every render.
     interview_invite_id: str | None = None
     interview_scheduled_at: str | None = None
+    # PH4-D4: an open job_simulation/portfolio submission, if the candidate is
+    # currently sitting on one — the task equivalent of interview_invite_id.
+    # Carries no token, the same reason: the raw link is never stored.
+    task_submission_id: str | None = None
+    task_due_at: str | None = None
+    task_status: str | None = None
 
 
 class StageEventOut(BaseModel):
@@ -188,7 +194,21 @@ SELECT e.id,
            AND i.deleted_at IS NULL
            AND i.status = 'invited'
            AND i.expires_at > now()
-         ORDER BY i.created_at DESC LIMIT 1) AS invite_scheduled_at
+         ORDER BY i.created_at DESC LIMIT 1) AS invite_scheduled_at,
+       -- PH4-D4: an open task submission (job_simulation/portfolio), the
+       -- task equivalent of the interview invite above.
+       (SELECT t.id FROM task_submissions t
+         WHERE t.enrolment_id = e.id AND t.superseded_at IS NULL
+           AND t.status IN ('assigned', 'in_progress')
+         ORDER BY t.created_at DESC LIMIT 1) AS task_id,
+       (SELECT t.due_at FROM task_submissions t
+         WHERE t.enrolment_id = e.id AND t.superseded_at IS NULL
+           AND t.status IN ('assigned', 'in_progress')
+         ORDER BY t.created_at DESC LIMIT 1) AS task_due_at,
+       (SELECT t.status FROM task_submissions t
+         WHERE t.enrolment_id = e.id AND t.superseded_at IS NULL
+           AND t.status IN ('assigned', 'in_progress')
+         ORDER BY t.created_at DESC LIMIT 1) AS task_status
   FROM applicants a
   JOIN enrolments e     ON e.applicant_id = a.id AND e.deleted_at IS NULL
   JOIN companies c      ON c.id = e.company_id AND c.deleted_at IS NULL
@@ -214,6 +234,8 @@ def _next_step_for(row: Any, status_: str) -> str:
     """
     if getattr(row, "invite_id", None):
         return "Your interview is ready. Start it from here."
+    if getattr(row, "task_id", None):
+        return "Your task is ready. Open it from here."
     return _NEXT_STEPS.get(status_, "The hiring team is reviewing your application.")
 
 
@@ -241,6 +263,9 @@ def _to_out(row: Any) -> dict[str, Any]:
         "interview_scheduled_at": (
             row.invite_scheduled_at.isoformat() if row.invite_scheduled_at else None
         ),
+        "task_submission_id": str(row.task_id) if row.task_id else None,
+        "task_due_at": row.task_due_at.isoformat() if row.task_due_at else None,
+        "task_status": row.task_status,
     }
 
 

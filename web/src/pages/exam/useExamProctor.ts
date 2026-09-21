@@ -30,8 +30,10 @@ interface UseExamProctorArgs {
   attemptId: string;
   /** The magic-link token forwarded as X-Exam-Token. */
   token: string;
-  /** Max combined fullscreen_exit + tab_blur violations before auto-submit. */
-  maxViolations: number;
+  /** Max combined fullscreen_exit + tab_blur violations before auto-submit,
+   *  or null when this attempt is relaxed and never auto-submits on count
+   *  (PH4-D2). Never compare a null numerically: `n >= null` is `n >= 0`. */
+  maxViolations: number | null;
   /** Called exactly once when the violation count reaches maxViolations. */
   onAutoSubmit: () => void;
 }
@@ -62,6 +64,12 @@ export function useExamProctor({
   const violationRef = useRef(0);
   // Guard: auto-submit fires at most once.
   const autoSubmittedRef = useRef(false);
+  // PH4-D2: set once an integrity-event response reveals this attempt's
+  // auto-submit is relaxed (max_violations: null) — the candidate never sees
+  // that fact directly (GET /exam does not expose relax_auto_submit), so this
+  // is the only way the client learns it, and only after the first violation
+  // round-trips. Once true, no path here may auto-submit again.
+  const autoSubmitRelaxedRef = useRef(false);
   // Per-event-type debounce timestamps.
   const lastEmitRef = useRef<Record<string, number>>({});
 
@@ -87,7 +95,15 @@ export function useExamProctor({
         if (res && typeof res.violation_count === 'number') {
           violationRef.current = res.violation_count;
           setViolationCount(res.violation_count);
-          if (!autoSubmittedRef.current && res.violation_count >= res.max_violations) {
+          if (res.max_violations === null) {
+            // PH4-D2: relaxed for this attempt — never auto-submit on
+            // violation count alone, no matter what a stale local count says.
+            autoSubmitRelaxedRef.current = true;
+          } else if (
+            !autoSubmittedRef.current &&
+            !autoSubmitRelaxedRef.current &&
+            res.violation_count >= res.max_violations
+          ) {
             autoSubmittedRef.current = true;
             onAutoSubmit();
           }
@@ -100,7 +116,16 @@ export function useExamProctor({
         const next = violationRef.current + 1;
         violationRef.current = next;
         setViolationCount(next);
-        if (!autoSubmittedRef.current && next >= maxViolations) {
+        // `maxViolations === null` is the attempt's own frozen answer from
+        // /exam/start: relaxed, so the local counter must never auto-submit.
+        // Checked BEFORE the comparison, because `next >= null` coerces to
+        // `next >= 0` and would fire on the very first violation.
+        if (
+          !autoSubmittedRef.current &&
+          !autoSubmitRelaxedRef.current &&
+          maxViolations !== null &&
+          next >= maxViolations
+        ) {
           autoSubmittedRef.current = true;
           onAutoSubmit();
         }

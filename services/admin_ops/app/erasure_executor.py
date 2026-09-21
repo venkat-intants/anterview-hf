@@ -127,6 +127,7 @@ migration; this cannot go stale without going red.
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -136,6 +137,7 @@ from sqlalchemy import text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.code_redaction import redact_coding_answers, redact_graded_snapshot
 from app.models import AuditLog, ErasureRequest
 from app.s3_client import StorageNotConfiguredError
 
@@ -232,6 +234,54 @@ ERASED_TABLES: dict[str, str] = {
                          "notes about the candidate: prose, never shown to HR, never "
                          "part of the submitted evidence (PH4-A5), so there is no "
                          "structural residue worth keeping.",
+    "candidate_accommodations": "PH4-D2 — a recorded adjustment (extra time, a deadline "
+                                "extension, relaxed auto-submit, or a free-text 'other' "
+                                "adjustment) and two notes about the candidate "
+                                "(interviewer-facing and HR-only). Kept as the company's "
+                                "record that an adjustment applied — the numbers, on the "
+                                "scorecard precedent — but in step 5g every active row is "
+                                "REVOKED and both notes are REDACTED to NULL or "
+                                "'[redacted]'.",
+    "exam_attempts": "PH4-D3 — moved here from EXCLUDED_TABLES. Selections, timestamps and "
+                     "the score are the company's structural assessment record against an "
+                     "applicant row step 6 anonymises next (the reason it was excluded "
+                     "before); a coding submission's SOURCE and its program's OUTPUT are "
+                     "the candidate's own text, on the interviewer_notes precedent, and are "
+                     "not. Step 5h redacts `answers.coding[*].source` and "
+                     "`graded_snapshot.coding[*].tests[*].{actual_output,stderr}`, stamping "
+                     "`code_redacted_at` — the ONE shape `exam_attempts_submission_frozen` "
+                     "permits on an already-submitted/expired attempt. The row, and its "
+                     "score, is otherwise kept.",
+    "code_quality_reports": "PH4-D3 — a static-analysis pass over one coding answer: "
+                            "metrics and smells computed FROM the candidate's source, "
+                            "which step 5h has just redacted from the attempt it describes. "
+                            "Deleted outright in step 5h — there is no structural residue "
+                            "worth keeping once the source it analysed is gone.",
+    "code_fingerprints": "PH4-D3 — winnowed hashes of one submission's normalised token "
+                        "stream. Deleted outright in step 5h alongside the reports.",
+    "code_similarity_signals": "PH4-D3 — SYSTEM evidence that a pair of submissions (or a "
+                               "submission and the question's reference solution) "
+                               "overlapped. Deleted outright in step 5h: it names an "
+                               "erased attempt on one or both sides, and the evidence it "
+                               "summarises is gone with the source.",
+    "code_integrity_findings": "PH4-D3 — a NAMED HR manager's own judgement call, kept as "
+                               "the company's record that a review happened and what it "
+                               "concluded (outcome), on the interviewer_scorecards "
+                               "precedent. Step 5h redacts only `rationale` to "
+                               "'[redacted]', which can quote or name the candidate; "
+                               "`outcome`, who recorded it and when are kept.",
+    "task_submissions": "PH4-D4 — a candidate's job-simulation/portfolio attempt: status, "
+                        "timing and the allowance snapshot are the company's structural "
+                        "assessment record, on the exam_attempts precedent, and are kept. "
+                        "Step 5i withdraws any row still open, then redacts every row of "
+                        "theirs: token_hash cleared and redacted_at stamped, together, in "
+                        "one statement — the only shape task_submissions_lifecycle permits "
+                        "once a row is not open.",
+    "task_responses": "PH4-D4 — what the candidate actually wrote, linked or uploaded: this "
+                      "IS the personal data, with no structural residue worth keeping, on "
+                      "the application_answers precedent. Step 5i clears text_value, "
+                      "link_url, title, description, storage_key and original_name and "
+                      "stamps redacted_at; the FILE a storage_key named is deleted in step 8.",
 }
 
 #: Tables deliberately left standing, each with the reason it is defensible.
@@ -282,23 +332,49 @@ EXCLUDED_TABLES: dict[str, str] = {
     "exam_sections": "company-authored assessment content. No candidate column.",
     "exam_questions": "company-authored assessment content. No candidate column.",
     "coding_questions": "company-authored assessment content. No candidate column.",
+    "question_banks": "PH4-D1 — a company's reusable question library. created_by_user_id "
+                      "is HR staff; no candidate column.",
+    "bank_questions": "PH4-D1 — one version of a reusable question: prompt, options or test "
+                      "cases, difficulty, tags. Company-authored content, on the exam_questions "
+                      "precedent. created_by_user_id / submitted_by_user_id / "
+                      "reviewed_by_user_id / retired_by_user_id are HR staff, not candidates, and "
+                      "review_note is a reviewer's comment on the question itself.",
+    "bank_question_events": "PH4-D1 — append-only history of a bank question (created, "
+                            "submitted, approved, copied into an exam, ...): action, actor "
+                            "(HR staff) and facts (ids), never question text.",
+    "round_tasks": "PH4-D4 — a company's authored task-round configuration: brief, items, "
+                   "portfolio settings. Company-authored content, the exam_questions "
+                   "precedent; no candidate column.",
+    "round_task_materials": "PH4-D4 — HR's own reference attachments for a task round. "
+                            "Company-authored content; no candidate column. The object stays "
+                            "in storage — it names no candidate, and a clone shares its key "
+                            "with the original (workflows.clone_for_edit), so deleting it "
+                            "here could break another round's copy.",
+    "task_events": "PH4-D4 — append-only history of a task submission (issued, started, "
+                   "saved, submitted, ...) or a round's configuration edit: action, actor "
+                   "and facts (ids, which fields), never response content. The submission "
+                   "and round it references may be redacted or gone; the append-only "
+                   "trigger already lets a DELETE through once its FK target is.",
     # --- Candidate-DERIVED, but reached through applicants ------------------
-    # These four are the judgement call in this list, so the reasoning is
+    # These three are the judgement call in this list, so the reasoning is
     # written out rather than asserted: they hang off `applicants`, which step 6
     # anonymises rather than deletes. Once full_name is '[redacted]', email is
-    # NULL and user_id is NULL, an attempt and its proctoring events belong to
+    # NULL and user_id is NULL, an assignment or a proctoring event belongs to
     # an applicant that identifies nobody — they are the COMPANY's assessment
     # record, not the erased user's. Deleting them would destroy a fiduciary's
     # own hiring evidence to no privacy gain. This is why they differ from
     # `integrity_events` above, which hangs off `sessions` — a session is the
     # user's own practice run and is hard-deleted, so its events go with it.
+    # (`exam_attempts` itself used to be the fourth here; PH4-D3 moved it to
+    # ERASED_TABLES because a coding submission's source is NOT covered by
+    # this argument, even though everything else about the row still is.)
     "exam_assignments": "keys off applicants (anonymised in step 6); holds a "
                         "token hash and a schedule, no personal data.",
-    "exam_attempts": "the company's graded assessment record, attached to the "
-                     "anonymised applicant rather than to the erased user.",
-    "exam_integrity_events": "proctoring events for an exam_attempts row — see "
-                             "exam_attempts. Event type + timestamp only; raw "
-                             "camera/keystroke input never leaves the browser.",
+    "exam_integrity_events": "proctoring events for an exam_attempts row, which PH4-D3's "
+                             "step 5h redacts (coding source) but does not delete — the "
+                             "row this table's FK points at still exists. Event type + "
+                             "timestamp only; raw camera/keystroke input never leaves the "
+                             "browser.",
     "interview_invites": "keys off applicants/company. guest_user_id and "
                          "created_by_user_id resolve to anonymised users rows, "
                          "and session_id nulls itself (ON DELETE SET NULL) when "
@@ -431,6 +507,12 @@ EXCLUDED_TABLES: dict[str, str] = {
                              "configuration; no candidate column.",
     "document_events": "PH4-A4 — append-only history of a candidate's documents: action, "
                        "actor, time and facts. No file content, name or reason text.",
+    "accommodation_events": "PH4-D2 — append-only history of an accommodation: action, "
+                            "actor and facts (scope, which fields are present, the "
+                            "target). Never the notes or the parameter values, so there "
+                            "is nothing here that identifies or describes the candidate "
+                            "beyond the accommodation row it names, which is redacted "
+                            "in step 5g.",
 }
 
 
@@ -617,6 +699,40 @@ async def _execute_one_erasure(
         for company_id, offer_id in offer_prefixes.fetchall():
             applicant_resume_keys += await keys_under(
                 settings.s3_bucket_name, f"preboarding/{company_id}/{offer_id}/",
+                settings=settings,
+            )
+
+    # 1c-ter — PH4-D4 task-round artifacts (job simulation / portfolio
+    # submissions), same uploads bucket. Reached through applicants.user_id,
+    # exactly like the preboarding documents above.
+    task_response_keys_result = await db.execute(
+        text(
+            "SELECT r.storage_key FROM task_responses r"
+            "  JOIN task_submissions t ON t.id = r.submission_id"
+            "  JOIN applicants a ON a.id = t.applicant_id"
+            " WHERE a.user_id = :uid AND r.storage_key IS NOT NULL"
+        ),
+        {"uid": uid_str},
+    )
+    applicant_resume_keys += [
+        str(row[0]) for row in task_response_keys_result.fetchall() if row[0]
+    ]
+    # ...and anything under those submissions' prefixes that no row names (an
+    # object a failed commit orphaned) — listed from storage itself, the same
+    # precedent as the offer prefixes just above.
+    task_submission_prefixes = await db.execute(
+        text(
+            "SELECT t.company_id, t.id FROM task_submissions t"
+            "  JOIN applicants a ON a.id = t.applicant_id WHERE a.user_id = :uid"
+        ),
+        {"uid": uid_str},
+    )
+    if settings is not None:
+        from app.s3_client import keys_under  # noqa: PLC0415 — see step 8's import note
+
+        for company_id, submission_id in task_submission_prefixes.fetchall():
+            applicant_resume_keys += await keys_under(
+                settings.s3_bucket_name, f"tasks/{company_id}/{submission_id}/",
                 settings=settings,
             )
 
@@ -1067,6 +1183,281 @@ async def _execute_one_erasure(
     )
 
     # ------------------------------------------------------------------
+    # Step 5g: Candidate accommodations (PH4-D2)
+    # ------------------------------------------------------------------
+    # Any accommodation still active is REVOKED — an erased candidate is not
+    # going to sit another assessment under it. The notes go: interviewer_note
+    # (the one thing an assigned interviewer ever saw) is set to NULL, and
+    # other_adjustment / internal_note / revoke_reason follow the
+    # CASE-WHEN-NULL pattern used everywhere else in this executor, so a
+    # column that was already empty stays empty rather than gaining a
+    # spurious '[redacted]'. revoke_reason is included because it is free text
+    # HR typed when withdrawing an adjustment — in practice the likeliest
+    # place a health or disability explanation gets written, and it is no more
+    # exempt from erasure than the other three notes just because it lives
+    # next to the revoke columns. The PARAMETERS (extra_time_percent,
+    # deadline_extension_days, relax_auto_submit) are kept — they are numbers,
+    # on the interviewer_scorecard_scores precedent, and they describe the
+    # company's assessment record (what was granted), not the candidate.
+    #
+    # MUST run before step 6: the join reaches these rows through
+    # applicants.user_id, which step 6 sets to NULL.
+    # revoked_at is set; revoked_by_user_id is deliberately left NULL (see
+    # the paragraph below). An earlier version of this comment said the
+    # revoke was attributed to the erasure's system actor -- it never was.
+    #
+    # BLOCKING 1: the revoke statement must not touch a row retention already
+    # redacted (accommodations.purge sets redacted_at but, before F8, left
+    # status='active' — an ordinary reachable row here). The guard trigger
+    # raises on ANY update to a redacted row, and this statement had no
+    # redacted_at guard, so the transaction rolled back and the erasure
+    # request retried forever, never reaching step 6 onward. The redaction
+    # statement below already carried the guard; this one did not.
+    # revoked_by_user_id stays NULL, which is how the guard trigger records
+    # "ended by the platform, not a person". system_actor_id cannot go here:
+    # that column is a real FK to users and the id this task runs under
+    # (00000000-...-0001) has no account, so naming it fails outright. It is
+    # still the actor on the audit row at the end of this function, where the
+    # column has no such constraint.
+    accommodations_revoked_result = await db.execute(
+        text(
+            "UPDATE candidate_accommodations SET status = 'revoked',"
+            " revoked_at = now(), updated_at = now()"
+            " WHERE status = 'active' AND redacted_at IS NULL AND applicant_id IN ("
+            "   SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    accommodations_revoked: int = getattr(accommodations_revoked_result, "rowcount", 0) or 0
+    accommodations_redacted_result = await db.execute(
+        text(
+            "UPDATE candidate_accommodations SET"
+            " other_adjustment = CASE WHEN other_adjustment IS NULL THEN NULL"
+            "                         ELSE '[redacted]' END,"
+            " revoke_reason = CASE WHEN revoke_reason IS NULL THEN NULL"
+            "                      ELSE '[redacted]' END,"
+            " interviewer_note = NULL, internal_note = NULL, redacted_at = now(),"
+            " updated_at = now()"
+            " WHERE redacted_at IS NULL AND applicant_id IN ("
+            "   SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    accommodations_redacted: int = getattr(accommodations_redacted_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.accommodations_redacted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        revoked=accommodations_revoked,
+        redacted=accommodations_redacted,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5h: Coding-round SOURCE and program OUTPUT (PH4-D3)
+    # ------------------------------------------------------------------
+    # A coding submission's source, and what it printed while being graded,
+    # are the candidate's own text and their program's own output — personal
+    # data on the interviewer_notes precedent, not the company's structural
+    # assessment record. The SCORE (raw, points, passed) IS that record and
+    # is kept, the round_results precedent.
+    #
+    # exam_attempts moves from EXCLUDED to ERASED for exactly this reason:
+    # every other column on it (selections, timestamps, the score) still
+    # describes only the company's own assessment against an applicant row
+    # step 6 anonymises next, same as before this feature. Only the coding
+    # source and program stdout/stderr are new personal data.
+    #
+    # The redaction UPDATE below touches ONLY answers / graded_snapshot /
+    # code_redacted_at — the one shape ``exam_attempts_submission_frozen``
+    # permits on an already-submitted/expired attempt. The transform itself
+    # is a PURE function (app/code_redaction.py) with its own unit test,
+    # because admin_ops cannot import data_gateway to reuse its copy of the
+    # same rule (services/data_gateway/app/code_evidence.py's retention path
+    # uses an independently-written one).
+    #
+    # MUST run before step 6: the join reaches these rows through
+    # applicants.user_id, which step 6 sets to NULL.
+    #
+    # MEDIUM-1(b): this used to filter on ``code_redacted_at IS NULL``, same
+    # as the attempt UPDATE below -- so an attempt retention had ALREADY
+    # redacted (e.g. because its application was decided and the retention
+    # window had passed before this erasure ran) was skipped ENTIRELY here,
+    # evidence cleanup and finding-rationale redaction included. A finding
+    # recorded after that earlier redaction (record_finding now refuses one
+    # on a redacted attempt, but a legacy row, or one written in the race
+    # MEDIUM-1(a) closes, could still exist) would then keep its rationale
+    # forever, because erasure never looked at the attempt again. The SELECT
+    # below now reaches every one of this user's coding attempts regardless
+    # of ``code_redacted_at``; only the attempt UPDATE two lines down stays
+    # conditional on it being NULL, which is what makes it idempotent instead
+    # of the freeze trigger's "code_redacted_at is frozen once set" firing.
+    coding_attempts_result = await db.execute(
+        text(
+            "SELECT id, company_id, answers, graded_snapshot FROM exam_attempts"
+            " WHERE answers -> 'coding' IS NOT NULL"
+            "   AND applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    coding_attempt_rows = coding_attempts_result.fetchall()
+    code_attempts_redacted = 0
+    code_reports_deleted = 0
+    code_fingerprints_deleted = 0
+    code_signals_deleted = 0
+    code_findings_redacted = 0
+    for coding_attempt_id, coding_attempt_company_id, coding_answers, coding_graded_snapshot in (
+        coding_attempt_rows
+    ):
+        new_answers = redact_coding_answers(coding_answers)
+        new_snapshot = redact_graded_snapshot(coding_graded_snapshot)
+        redact_result = await db.execute(
+            text(
+                "UPDATE exam_attempts SET answers = CAST(:a AS jsonb),"
+                " graded_snapshot = CAST(:g AS jsonb), code_redacted_at = now(),"
+                " updated_at = now()"
+                " WHERE id = :id AND code_redacted_at IS NULL"
+            ),
+            {"a": json.dumps(new_answers), "g": json.dumps(new_snapshot), "id": coding_attempt_id},
+        )
+        code_attempts_redacted += getattr(redact_result, "rowcount", 0) or 0
+        # MEDIUM-1(c): redact the RATIONALE of every finding that names one of
+        # this attempt's signals -- BEFORE clearing signal_id below -- even
+        # one recorded against a SURVIVING candidate's own attempt (the other
+        # side of the pair). A finding on the pair's other attempt otherwise
+        # lost only its signal_id; its rationale -- which this file's own
+        # inventory says "can quote or name the candidate" -- was kept
+        # forever, because the final redact step below only ever matched
+        # findings whose own attempt_id was this erased one. MUST run before
+        # the signal_id nulling immediately below: once signal_id is NULL
+        # there is no way left to find these findings through the signal.
+        cross_findings_result = await db.execute(
+            text(
+                "UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"
+                " WHERE company_id = :c AND redacted_at IS NULL AND signal_id IN ("
+                "   SELECT id FROM code_similarity_signals"
+                "    WHERE company_id = :c AND (attempt_low_id = :a OR attempt_high_id = :a)"
+                " )"
+            ),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_findings_redacted += getattr(cross_findings_result, "rowcount", 0) or 0
+        # MUST run before the DELETE below: code_integrity_findings.signal_id
+        # is RESTRICT, not SET NULL -- a composite FK's ON DELETE SET NULL
+        # would null company_id (NOT NULL) along with it (see the PH4-D3
+        # migration's docstring). A finding can sit on either attempt of the
+        # pair, not just this one, so the match is on signal membership. Some
+        # of these rows were just redacted above and some may already have
+        # been redacted earlier for an unrelated reason -- the guard trigger
+        # allows signal_id -> NULL on a redacted row for exactly this
+        # (MEDIUM-2), so this never raises "is redacted and is fixed".
+        await db.execute(
+            text(
+                "UPDATE code_integrity_findings SET signal_id = NULL"
+                " WHERE company_id = :c AND signal_id IN ("
+                "   SELECT id FROM code_similarity_signals"
+                "    WHERE company_id = :c AND (attempt_low_id = :a OR attempt_high_id = :a)"
+                " )"
+            ),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        signals_result = await db.execute(
+            text(
+                "DELETE FROM code_similarity_signals WHERE company_id = :c"
+                " AND (attempt_low_id = :a OR attempt_high_id = :a)"
+            ),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_signals_deleted += getattr(signals_result, "rowcount", 0) or 0
+        fingerprints_result = await db.execute(
+            text("DELETE FROM code_fingerprints WHERE company_id = :c AND attempt_id = :a"),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_fingerprints_deleted += getattr(fingerprints_result, "rowcount", 0) or 0
+        reports_result = await db.execute(
+            text("DELETE FROM code_quality_reports WHERE company_id = :c AND attempt_id = :a"),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_reports_deleted += getattr(reports_result, "rowcount", 0) or 0
+        # The catch-all: every OTHER finding directly on this attempt (never
+        # referencing a signal, or referencing one that did not name this
+        # attempt's pair) still gets its rationale redacted here.
+        findings_result = await db.execute(
+            text(
+                "UPDATE code_integrity_findings SET rationale = '[redacted]', redacted_at = now()"
+                " WHERE company_id = :c AND attempt_id = :a AND redacted_at IS NULL"
+            ),
+            {"c": coding_attempt_company_id, "a": coding_attempt_id},
+        )
+        code_findings_redacted += getattr(findings_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.code_evidence_redacted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        attempts_redacted=code_attempts_redacted,
+        reports_deleted=code_reports_deleted,
+        fingerprints_deleted=code_fingerprints_deleted,
+        signals_deleted=code_signals_deleted,
+        findings_redacted=code_findings_redacted,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5i: Job simulation / portfolio submissions (PH4-D4)
+    # ------------------------------------------------------------------
+    # A submission still open (assigned/in_progress) is WITHDRAWN — an erased
+    # candidate is not going to finish it — with its link killed in the same
+    # statement (task_submissions_lifecycle allows both together on this one
+    # transition; see the migration's docstring). Every submission of theirs,
+    # whatever its status, is then REDACTED: token_hash cleared (a no-op where
+    # it already is) and redacted_at stamped, together, in ONE statement — the
+    # only shape the trigger allows once a row is not open. task_responses
+    # content is cleared the same way; the FILES those rows named were
+    # collected in step 1 and are deleted in step 8.
+    #
+    # MUST run before step 6: the join reaches these rows through
+    # applicants.user_id, which step 6 sets to NULL.
+    task_submissions_withdrawn_result = await db.execute(
+        text(
+            "UPDATE task_submissions SET status = 'withdrawn', token_hash = NULL,"
+            " updated_at = now()"
+            " WHERE status IN ('assigned', 'in_progress') AND redacted_at IS NULL"
+            "   AND applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    task_submissions_withdrawn: int = (
+        getattr(task_submissions_withdrawn_result, "rowcount", 0) or 0
+    )
+    task_responses_redacted_result = await db.execute(
+        text(
+            "UPDATE task_responses SET text_value = NULL, link_url = NULL, title = NULL,"
+            " description = NULL, storage_key = NULL, original_name = NULL, redacted_at = now(),"
+            " updated_at = now()"
+            " WHERE redacted_at IS NULL AND submission_id IN ("
+            "   SELECT t.id FROM task_submissions t"
+            "     JOIN applicants a ON a.id = t.applicant_id WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    task_responses_redacted: int = getattr(task_responses_redacted_result, "rowcount", 0) or 0
+    task_submissions_redacted_result = await db.execute(
+        text(
+            "UPDATE task_submissions SET token_hash = NULL, redacted_at = now(), updated_at = now()"
+            " WHERE redacted_at IS NULL"
+            "   AND applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    task_submissions_redacted: int = getattr(task_submissions_redacted_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.task_submissions_redacted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        withdrawn=task_submissions_withdrawn,
+        submissions_redacted=task_submissions_redacted,
+        responses_redacted=task_responses_redacted,
+    )
+
+    # ------------------------------------------------------------------
     # Step 6: Anonymise applicant rows linked to this user_id
     # ------------------------------------------------------------------
     # embedding is NOT decoration on this list. applicants.embedding is a
@@ -1289,12 +1680,15 @@ async def _execute_one_erasure(
         # Bumped 1.1 → 1.2 when step 5b (notifications) joined the erasure, and
         # 1.2 → 1.3 when step 5f (human interview evidence, PH4-A1/A5) did, and
         # 1.3 → 1.4 when 5f took in stage exceptions (PH4-O1), 1.4 → 1.5
-        # when it took in interview loops and sessions (PH4-A2), and 1.5 → 1.6
-        # when it took in offers and preboarding documents (PH4-A3/A4): the
-        # artifacts record is what an auditor reads to know WHAT a given
-        # completion covered, so two records with different coverage must not
-        # claim the same version.
-        "executor_version": "1.6",
+        # when it took in interview loops and sessions (PH4-A2), 1.5 → 1.6
+        # when it took in offers and preboarding documents (PH4-A3/A4), and
+        # 1.6 → 1.7 when step 5g took in candidate accommodations (PH4-D2),
+        # 1.7 → 1.8 when step 5h took in coding-round source and program
+        # output (PH4-D3), and 1.8 → 1.9 when step 5i took in job simulation
+        # / portfolio submissions (PH4-D4): the artifacts record is what an
+        # auditor reads to know WHAT a given completion covered, so two
+        # records with different coverage must not claim the same version.
+        "executor_version": "1.9",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
@@ -1311,6 +1705,16 @@ async def _execute_one_erasure(
         "interview_loops_redacted": interview_loops_redacted,
         "offers_redacted": offers_redacted,
         "preboarding_documents_redacted": preboarding_documents_redacted,
+        "accommodations_revoked": accommodations_revoked,
+        "accommodations_redacted": accommodations_redacted,
+        "code_attempts_redacted": code_attempts_redacted,
+        "code_reports_deleted": code_reports_deleted,
+        "code_fingerprints_deleted": code_fingerprints_deleted,
+        "code_signals_deleted": code_signals_deleted,
+        "code_findings_redacted": code_findings_redacted,
+        "task_submissions_withdrawn": task_submissions_withdrawn,
+        "task_submissions_redacted": task_submissions_redacted,
+        "task_responses_redacted": task_responses_redacted,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
         # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,
@@ -1360,6 +1764,8 @@ async def _execute_one_erasure(
             "interview_loops_redacted": interview_loops_redacted,
             "offers_redacted": offers_redacted,
             "preboarding_documents_redacted": preboarding_documents_redacted,
+            "accommodations_revoked": accommodations_revoked,
+            "accommodations_redacted": accommodations_redacted,
         },
         ip_address=None,
         user_agent=None,

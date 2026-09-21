@@ -66,8 +66,8 @@ function ReviewQueue(): JSX.Element {
       <Reveal>
         <h1 className="text-[22px] font-semibold text-foreground">Workflow reviews</h1>
         <p className="mt-1 text-[13px] text-muted-foreground">
-          Hiring workflows your HR managers have submitted for approval before they can go
-          live. Oldest request first.
+          Hiring workflows your HR managers have submitted for approval before they can go live.
+          Oldest request first.
         </p>
       </Reveal>
 
@@ -133,12 +133,20 @@ function ReviewQueue(): JSX.Element {
 
 /* ── The dry run, read-only (the version's own submitted result) ─────────── */
 
-const STATE_WORD: Record<SimulationRound['state'], string> = { ok: 'OK', warning: 'Warning', error: 'Error' };
+const STATE_WORD: Record<SimulationRound['state'], string> = {
+  ok: 'OK',
+  warning: 'Warning',
+  error: 'Error',
+};
 
 function SimulationReadout({ simulation }: { simulation: SimulationResult | null }): JSX.Element {
   const [scenariosOpen, setScenariosOpen] = useState(false);
   if (!simulation) {
-    return <p className="text-[12.5px] text-muted-foreground">No dry run has been recorded for this version.</p>;
+    return (
+      <p className="text-[12.5px] text-muted-foreground">
+        No dry run has been recorded for this version.
+      </p>
+    );
   }
   return (
     <div className="flex flex-col gap-3">
@@ -147,19 +155,33 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
           role="status"
           className="flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-warn)]/30 bg-[var(--ui-warn)]/[0.06] px-3 py-2 text-[12px] text-[var(--ui-soft)]"
         >
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
+          <AlertTriangle
+            className="h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]"
+            aria-hidden="true"
+          />
           Stale — the workflow changed since this run.
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
         <StatusTag
-          tone={simulation.status === 'passed' ? 'forest' : simulation.status === 'warnings' ? 'amber' : 'ember'}
+          tone={
+            simulation.status === 'passed'
+              ? 'forest'
+              : simulation.status === 'warnings'
+                ? 'amber'
+                : 'ember'
+          }
           dot
         >
-          {simulation.status === 'passed' ? 'Passed' : simulation.status === 'warnings' ? 'Needs attention' : 'Failed'}
+          {simulation.status === 'passed'
+            ? 'Passed'
+            : simulation.status === 'warnings'
+              ? 'Needs attention'
+              : 'Failed'}
         </StatusTag>
         <span>
-          {simulation.errors} error{simulation.errors === 1 ? '' : 's'} &middot; {simulation.warnings} warning
+          {simulation.errors} error{simulation.errors === 1 ? '' : 's'} &middot;{' '}
+          {simulation.warnings} warning
           {simulation.warnings === 1 ? '' : 's'}
         </span>
         {simulation.run_by_name ? <span>by {simulation.run_by_name}</span> : null}
@@ -209,7 +231,10 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
         {scenariosOpen ? (
           <ol className="mt-2 flex flex-col gap-1.5">
             {simulation.scenarios.map((s) => (
-              <li key={s.id} className="rounded-[10px] border border-border p-2.5 text-[12px] text-[var(--ui-soft)]">
+              <li
+                key={s.id}
+                className="rounded-[10px] border border-border p-2.5 text-[12px] text-[var(--ui-soft)]"
+              >
                 <span className="font-medium text-foreground">{s.id}</span> — {s.description} —{' '}
                 {s.end === 'decision'
                   ? 'reaches a decision'
@@ -338,9 +363,42 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
                     Assesses: {r.criteria.map((c) => c.name).join(', ')}
                   </p>
                 ) : null}
+                {/* PH4-D4 — what goes live is what the approver approves, the
+                    same reason exam content is frozen for review. */}
+                {r.task ? (
+                  <div className="mt-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-2.5">
+                    <p className="whitespace-pre-wrap text-[12px] text-[var(--ui-soft)]">
+                      {r.task.brief}
+                    </p>
+                    {r.task.items.length > 0 ? (
+                      <ul className="mt-1.5 flex flex-col gap-1">
+                        {r.task.items.map((it) => (
+                          <li key={it.key} className="text-[11.5px] text-muted-foreground">
+                            {it.prompt}{' '}
+                            <span className="text-[var(--ui-faint)]">
+                              ({it.response_type}
+                              {it.required ? ', required' : ''})
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {r.task.kind === 'portfolio' ? (
+                      <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                        {r.task.min_artifacts}–{r.task.max_artifacts} artifacts &middot;{' '}
+                        {r.task.allow_files && r.task.allow_links
+                          ? 'files or links'
+                          : r.task.allow_files
+                            ? 'files only'
+                            : 'links only'}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="mt-1.5 flex flex-col gap-0.5 text-[12px] text-muted-foreground">
                   <span>
-                    If they pass &rarr; <span className="text-foreground">{r.on_pass ?? 'Final decision'}</span>
+                    If they pass &rarr;{' '}
+                    <span className="text-foreground">{r.on_pass ?? 'Final decision'}</span>
                   </span>
                   <span>
                     If below the threshold &rarr;{' '}
@@ -368,13 +426,19 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
           ) : (
             <ul className="flex flex-col gap-1.5">
               {wf.validation.errors.map((e) => (
-                <li key={e} className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-danger)]">
+                <li
+                  key={e}
+                  className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-danger)]"
+                >
                   <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   {e}
                 </li>
               ))}
               {wf.validation.warnings.map((w) => (
-                <li key={w} className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-warn)]">
+                <li
+                  key={w}
+                  className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-warn)]"
+                >
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   {w}
                 </li>
@@ -389,7 +453,9 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
         </GlassCard>
 
         <GlassCard className="p-5">
-          <h2 className="mb-3 text-[14px] font-semibold text-foreground">Stage owners &amp; SLAs</h2>
+          <h2 className="mb-3 text-[14px] font-semibold text-foreground">
+            Stage owners &amp; SLAs
+          </h2>
           {wf.stages.length === 0 ? (
             <p className="text-[12.5px] text-muted-foreground">No stages recorded.</p>
           ) : (
@@ -426,7 +492,9 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
                   <span className="ml-1.5 text-[11px] text-[var(--ui-faint)]">
                     {new Date(h.at).toLocaleString()}
                   </span>
-                  {h.note ? <span className="block text-[11.5px] text-muted-foreground">{h.note}</span> : null}
+                  {h.note ? (
+                    <span className="block text-[11.5px] text-muted-foreground">{h.note}</span>
+                  ) : null}
                 </li>
               ))}
             </ol>
@@ -457,14 +525,19 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                <label htmlFor="review-decision-note" className="text-[12px] font-medium text-[var(--ui-soft)]">
+                <label
+                  htmlFor="review-decision-note"
+                  className="text-[12px] font-medium text-[var(--ui-soft)]"
+                >
                   {mode === 'approve' ? 'Note (optional)' : 'What needs to change (required)'}
                 </label>
                 <input
                   id="review-decision-note"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder={mode === 'changes' ? `At least ${CHANGES_NOTE_MIN} characters` : undefined}
+                  placeholder={
+                    mode === 'changes' ? `At least ${CHANGES_NOTE_MIN} characters` : undefined
+                  }
                   className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
                 />
                 {mode === 'changes' && !changesReady ? (

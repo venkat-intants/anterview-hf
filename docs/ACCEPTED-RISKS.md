@@ -278,41 +278,91 @@ details, and accept the residue. (1) is the fix; (2) only reduces it.
 
 ---
 
-## AR-6 — Preboarding documents are not scanned for malware
+## AR-6 — Preboarding documents, task artifacts and materials are not scanned for malware
 
 | | |
 |---|---|
-| **Source finding** | PH4 decision D4-3 (Wave 4, A4), 2026-09-20 |
+| **Source finding** | PH4 decision D4-3 (Wave 4, A4), 2026-09-20; extended to job-simulation/portfolio uploads (PH4 Wave 5, D4), 2026-09-22 |
 | **Status** | **ACCEPTED — allow-listed and isolated, not scanned** |
 | **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` reviews when a trigger fires. |
 | **Trigger to revisit** | Any of: (a) a customer or bid that requires malware scanning of uploads; (b) any feature that renders an uploaded document in the browser or processes it server-side (thumbnails, OCR, conversion); (c) a single report of a malicious document; (d) the Tier-2 migration, where AWS offers a managed scanner |
 
 **The decision.** After an offer is accepted, a candidate uploads identity and
-other documents that HR managers then open. There is no antivirus scan (no
-ClamAV or managed equivalent) — decision D4-3 chose a strict allow-list now
-over a scanner later. What exists instead:
+other documents that HR managers then open. The same is now true of a
+job-simulation or portfolio round: a candidate's own file response
+(`app/job_tasks.py::add_artifact`) and an HR-attached reference material
+(`add_material`) both go through the same document check. There is no
+antivirus scan (no ClamAV or managed equivalent) anywhere in this chain —
+decision D4-3 chose a strict allow-list now over a scanner later, and PH4-D4
+reuses that decision rather than writing a second one. What exists instead:
 
 - **Content allow-list.** Only PDF, JPEG and PNG, recognised by their first bytes
-  (`app/document_storage.py`); the file name and the browser's Content-Type are
-  ignored. Anything else is refused before it is stored.
+  (`app/document_storage.py`, reused unchanged by `job_tasks.py`); the file name
+  and the browser's Content-Type are ignored. Anything else is refused before
+  it is stored.
 - **No active PDFs, as far as a byte scan sees.** A PDF whose names spell
   JavaScript, launch actions, embedded files, rich media or XFA — including
   when escaped as ``#xx`` — is refused.
-- **Isolation in delivery.** Documents are never served by the API or rendered
-  by the app. They leave storage only by a pre-signed link that lives five
-  minutes and forces `Content-Disposition: attachment`, stored under a key that
-  names no person.
-- **Size.** 10 MB, enforced at the edge and again in the handler.
+- **Isolation in delivery.** Documents, artifacts and materials are never
+  served by the API or rendered by the app. They leave storage only by a
+  pre-signed link that lives five minutes and forces
+  `Content-Disposition: attachment`, stored under a key that names no person.
+- **Size.** 10 MB, enforced at the edge and again in the handler (preboarding
+  documents, task artifacts and task materials each have their own limit
+  setting, all defaulting to the same 10 MB).
 
-**What is NOT true.** It is not true that an uploaded document is known to be
-safe. The PDF check reads raw bytes, so a marker inside a compressed object
-stream is not seen (escaped names ARE decoded); an image can still exploit a
-vulnerable viewer. The control
+**What is NOT true.** It is not true that an uploaded document, artifact or
+material is known to be safe. The PDF check reads raw bytes, so a marker
+inside a compressed object stream is not seen (escaped names ARE decoded); an
+image can still exploit a vulnerable viewer. The control
 is "only three well-understood formats, never opened by us", not "scanned".
 
-**Path to closure.** Scan on upload before a document is marked `submitted`
-(ClamAV in a sidecar, or the object store's managed scanner at Tier 2), with a
-`quarantined` state the review trigger refuses to verify.
+**Path to closure.** Scan on upload before a document, artifact or material is
+marked `submitted` (ClamAV in a sidecar, or the object store's managed
+scanner at Tier 2), with a `quarantined` state the review trigger refuses to
+verify.
+
+---
+
+## AR-7 — Portfolio external links are never fetched, and reviewers see them cold
+
+| | |
+|---|---|
+| **Source finding** | PH4 Wave 5 (D4), 2026-09-22 |
+| **Status** | **ACCEPTED — validated and stored, never fetched server-side** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` reviews when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a feature that previews, unfurls or screenshots a submitted link server-side; (b) a phishing or malware report traced to a portfolio link; (c) a customer requiring an allow-list stricter than a per-round domain list; (d) a request to fetch link metadata (title, favicon) for display |
+
+**The decision.** A portfolio round accepts a link instead of, or alongside, a
+file (a GitHub repo, a Figma file, a YouTube demo). Accepting an arbitrary
+URL from a candidate and having the SERVER fetch it is a classic SSRF surface
+(internal metadata endpoints, other tenants' presigned URLs, port-scanning the
+platform's own network) — PH4-D4 closes that surface by construction rather
+than by a scanner:
+
+- **The server never fetches a submitted link.** `app/job_tasks.py::validate_link`
+  checks scheme, host shape and the allow-list; it never opens a connection to
+  the URL. There is no preview, no thumbnail, no title fetched server-side.
+- **https only, no userinfo, no IP literal, no non-standard port.** Closes the
+  most common SSRF and credential-leak shapes (`http://169.254.169.254/`,
+  `https://user:pass@host/`, a bare IP, a link to an internal port).
+- **A per-round allow-list, defaulting to nine known developer/portfolio
+  domains**, matched on a dot boundary (`evilgithub.com` is refused for an
+  allow-list of `github.com`) so a look-alike subdomain trick does not pass.
+- **A reviewer sees an interstitial before following one** (frontend), so
+  clicking through is the reviewer's own act, in their own browser, against
+  their own network — not the platform's.
+
+**What is NOT true.** It is not true that an allow-listed link is safe to
+open. `github.com` and the other eight domains can host anything a candidate
+puts there (a malicious repository, a redirect, a fake login page mimicking
+the platform). The control is "the platform never becomes the requester",
+not "the destination is vetted".
+
+**Path to closure.** If link preview is ever wanted, fetch it from an
+isolated, egress-restricted worker with no access to internal networks or
+credentials, never from the request-serving process — and keep the interstitial
+regardless.
 
 ---
 
@@ -325,4 +375,5 @@ is "only three well-understood formats, never opened by us", not "scanned".
 | **AR-3** | Candidate code executes on JDoodle | AG-05 | `platform_owner` | Residency bid, confidential-IP customer, or free-tier exhaustion |
 | **AR-4** | No production avatar gate; `custom` unimplemented | AG-06 residue | `cto-architect` | Production `APP_ENV`, residency bid, or 2026-11-28 sunset review |
 | **AR-5** | Decision rationale in audit log / ledger not redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | Erasure grievance naming it, audit details shown to others, or Tier-2 |
-| **AR-6** | Preboarding documents are allow-listed, not malware-scanned | PH4 D4-3 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
+| **AR-6** | Preboarding documents, task artifacts and materials are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
+| **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |

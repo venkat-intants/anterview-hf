@@ -19,15 +19,30 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { getMyApplication,
+import {
+  getMyApplication,
   listMyApplications,
-  type MyApplication, mintMyInterviewLink } from '@/api/applications';
+  type MyApplication,
+  mintMyInterviewLink,
+  mintMyTaskLink,
+} from '@/api/applications';
+import { sameOriginUrl } from '@/lib/safeUrl';
 import { toast } from '@/lib/toast';
 import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
 import YourInterviews from '@/components/candidate/YourInterviews';
 import YourOffers from '@/components/candidate/YourOffers';
-import { AlertCircle, Briefcase, Building2, Check, ChevronDown, ChevronRight, Clock, User, Video } from '@/design/components/icons';
+import {
+  AlertCircle,
+  Briefcase,
+  Building2,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  User,
+  Video,
+} from '@/design/components/icons';
 
 /**
  * Stage → visual tone. Keyed on the candidate-facing label the server sends,
@@ -128,6 +143,58 @@ function InterviewCallToAction({
   );
 }
 
+/**
+ * The task equivalent of InterviewCallToAction — PH4-D4, the same reasoning:
+ * a job_simulation/portfolio link is emailed, and email is not dependable, so
+ * this is the path that does not need it. Fetched on click because asking for
+ * it ROTATES the token, the same trade as the interview link.
+ */
+function TaskCallToAction({ submissionId, dueAt }: { submissionId: string; dueAt: string | null }) {
+  const [error, setError] = useState<string | null>(null);
+
+  const mint = useMutation({
+    mutationFn: () => mintMyTaskLink(submissionId),
+    onSuccess: (link) => {
+      // The link carries a fresh bearer token in its fragment — never
+      // navigate to it unchecked (safeUrl.ts's own header names this exact
+      // mistake). Same guard as YourOffers.tsx's "Open offer".
+      const safe = sameOriginUrl(link.url, '/task');
+      if (!safe) {
+        setError('Could not open your task.');
+        return;
+      }
+      window.location.assign(safe);
+    },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Could not open your task.'),
+  });
+
+  return (
+    <div className="mt-4 rounded-[10px] border border-[rgba(var(--accent-rgb),0.35)] bg-[rgba(var(--accent-rgb),0.06)] p-3.5">
+      <p className="flex items-center gap-2 text-[13.5px] font-medium text-foreground">
+        <Briefcase size={14} className="shrink-0 text-[var(--accent)]" aria-hidden="true" />
+        Your task is ready
+      </p>
+      {dueAt ? (
+        <p className="mt-1 pl-[22px] text-[12.5px] text-muted-foreground">Due {dateOf(dueAt)}</p>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => {
+          setError(null);
+          mint.mutate();
+        }}
+        disabled={mint.isPending}
+        className="mt-3 ml-[22px] inline-flex items-center gap-1.5 rounded-[8px] bg-primary px-3.5 py-1.5 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        {mint.isPending ? 'Opening…' : 'Open task'}
+      </button>
+      {error ? (
+        <p className="mt-2 pl-[22px] text-[12.5px] text-[var(--ui-danger)]">{error}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ApplicationCard({ app }: { app: MyApplication }) {
   const [open, setOpen] = useState(false);
   const round = roundLine(app);
@@ -177,6 +244,8 @@ function ApplicationCard({ app }: { app: MyApplication }) {
           inviteId={app.interview_invite_id}
           scheduledAt={app.interview_scheduled_at}
         />
+      ) : app.task_submission_id ? (
+        <TaskCallToAction submissionId={app.task_submission_id} dueAt={app.task_due_at} />
       ) : null}
 
       <button
@@ -220,8 +289,8 @@ function ApplicationCard({ app }: { app: MyApplication }) {
                       {e.by_a_person && (
                         <>
                           {' '}
-                          <User size={10} className="inline align-baseline" aria-hidden="true" />{' '}
-                          by the hiring team
+                          <User size={10} className="inline align-baseline" aria-hidden="true" /> by
+                          the hiring team
                         </>
                       )}
                     </span>
@@ -246,8 +315,7 @@ function ErrorState() {
         Could not load your applications
       </h2>
       <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-muted-foreground">
-        Something went wrong on our side, not with your applications. Refresh
-        the page to try again.
+        Something went wrong on our side, not with your applications. Refresh the page to try again.
       </p>
     </GlassCard>
   );
@@ -261,14 +329,12 @@ function EmptyState() {
       </span>
       <h2 className="mt-5 text-[18px] font-semibold text-foreground">No applications yet</h2>
       <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-muted-foreground">
-        Jobs you apply to will appear here, with the stage you are at and what
-        happens next.
+        Jobs you apply to will appear here, with the stage you are at and what happens next.
       </p>
       <p className="mx-auto mt-4 max-w-md text-[13px] leading-relaxed text-muted-foreground">
-        Already applied somewhere? Your application is safe either way — but it
-        only shows up here once you have opened the “Set a password” link in the
-        confirmation email we sent you. Check that email, including its spam
-        folder.
+        Already applied somewhere? Your application is safe either way — but it only shows up here
+        once you have opened the “Set a password” link in the confirmation email we sent you. Check
+        that email, including its spam folder.
       </p>
     </GlassCard>
   );
@@ -286,9 +352,7 @@ export default function Applications() {
   // One toast per distinct error, never one per render.
   useEffect(() => {
     if (isError) {
-      toast.error(
-        error instanceof Error ? error.message : 'Could not load your applications.',
-      );
+      toast.error(error instanceof Error ? error.message : 'Could not load your applications.');
     }
   }, [isError, error]);
 

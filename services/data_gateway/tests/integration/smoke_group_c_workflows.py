@@ -16,6 +16,7 @@ criteria are a frozen copy rather than a live reference.
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -108,8 +109,10 @@ async def main() -> None:
             " VALUES (:i,:c,'Screen',:u,now(),now())"), {"i": exam_id, "c": cid, "u": uid})
         await db.execute(text(
             "INSERT INTO exam_rounds (id,exam_id,company_id,round_number,title,position,"
-            " status) VALUES (:i,:e,:c,1,'Round 1',0,'published')"),
+            " status) VALUES (:i,:e,:c,1,'Round 1',0,'draft')"),
             {"i": exam_ref, "e": exam_id, "c": cid})
+        # Content in while it is a DRAFT, then publish: PH4-D1 locks a
+        # published round's content at the database.
         await db.execute(text(
             "INSERT INTO exam_sections (id,round_id,exam_id,company_id,title,kind,position)"
             " VALUES (:s,:r,:e,:c,'Section 1','mcq',0)"),
@@ -118,6 +121,8 @@ async def main() -> None:
             "INSERT INTO exam_questions (id,exam_id,section_id,company_id,prompt,options,"
             " correct_index,position) VALUES (:q,:e,:s,:c,'2 + 2?',CAST(:o AS jsonb),1,0)"),
             {"q": uuid.uuid4(), "e": exam_id, "s": sec, "c": cid, "o": '["3", "4"]'})
+        await db.execute(text("UPDATE exam_rounds SET status = 'published' WHERE id = :i"),
+                         {"i": exam_ref})
         await db.commit()
         r1 = await add_round(db, company_id=cid, workflow_id=wf, title="Aptitude",
                              kind="mcq", pass_threshold=60, exam_round_id=exam_ref,
@@ -321,8 +326,18 @@ async def main() -> None:
         rk = (await db.execute(text(
             "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
             " WHERE conname='ck_workflow_rounds_kind'"))).scalar()
-        check("only the four agreed round kinds are legal",
-              all(k in rk for k in ("mcq", "coding", "ai_interview", "human_review")), str(rk))
+        # PH4-D4 widened this from four kinds to six (job_simulation and
+        # portfolio, both scored by a person against frozen round_criteria,
+        # never by a threshold or a model). Tightened to an EXACT set on
+        # purpose — this used to check only that the original four were
+        # present ("all(k in rk ...)"), which would have stayed green through
+        # an unreviewed widening too. pg_get_constraintdef renders this CHECK
+        # as "kind = ANY (ARRAY['mcq'::text, ...])", so the literals are read
+        # out with a regex rather than assumed to sit inside a plain "(...)".
+        agreed = ("mcq", "coding", "ai_interview", "human_review", "job_simulation", "portfolio")
+        found = set(re.findall(r"'([a-z_]+)'::text", rk))
+        check("exactly the six agreed round kinds are legal — no more, no fewer",
+              found == set(agreed), str(rk))
 
     await eng.dispose()
     print(f"\n{'=' * 64}\n  {len(PASS)} passed, {len(FAIL)} failed")

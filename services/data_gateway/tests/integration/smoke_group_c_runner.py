@@ -79,9 +79,11 @@ async def main() -> None:
         for n, (eid, title) in enumerate([(er1, "Aptitude"), (er2, "Technical")], start=1):
             await db.execute(text(
                 "INSERT INTO exam_rounds (id,exam_id,company_id,round_number,title,position,"
-                " status,created_at,updated_at) VALUES (:i,:e,:c,:n,:t,:p,'published',:ts,:ts)"),
+                " status,created_at,updated_at) VALUES (:i,:e,:c,:n,:t,:p,'draft',:ts,:ts)"),
                 {"i": eid, "e": exam_id, "c": cid, "n": n, "t": title, "p": n - 1, "ts": now})
-            # Publish validation refuses an exam round with no questions.
+            # Publish validation refuses an exam round with no questions. The
+            # question goes in while the round is a DRAFT, and it is published
+            # after: PH4-D1 locks a published round's content at the database.
             sec = uuid.uuid4()
             await db.execute(text(
                 "INSERT INTO exam_sections (id,round_id,exam_id,company_id,title,kind,position)"
@@ -91,6 +93,8 @@ async def main() -> None:
                 "INSERT INTO exam_questions (id,exam_id,section_id,company_id,prompt,options,"
                 " correct_index,position) VALUES (:q,:e,:s,:c,'2 + 2?',CAST(:o AS jsonb),1,0)"),
                 {"q": uuid.uuid4(), "e": exam_id, "s": sec, "c": cid, "o": '["3", "4"]'})
+            await db.execute(text("UPDATE exam_rounds SET status = 'published' WHERE id = :i"),
+                             {"i": eid})
         await db.commit()
 
         # Build and publish a four-round workflow.

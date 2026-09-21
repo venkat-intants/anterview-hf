@@ -16,7 +16,7 @@ from __future__ import annotations
 import inspect
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -166,7 +166,14 @@ async def test_the_exam_invite_is_sent_in_the_candidates_language(
     monkeypatch.setattr(wr, "candidate_language", _lang)
     monkeypatch.setattr(wr, "enqueue_email", _enqueue)
 
-    await wr._assign_round(_db(), enrolment=_enrolment(), round_=round_,
+    db = _db()
+    # PH4-D2: _assign_round also looks up an effective accommodation (none
+    # here) before minting the assignment — a plain SELECT, never db.scalar.
+    exec_result = MagicMock()
+    exec_result.mappings.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=exec_result)
+
+    await wr._assign_round(db, enrolment=_enrolment(), round_=round_,
                            workflow={"created_by_user_id": uuid.uuid4()})
 
     assert len(sent) == 1
@@ -273,14 +280,20 @@ def test_without_a_company_no_dangling_words_remain() -> None:
 
 
 # ===========================================================================
-# An exam round a live workflow uses cannot be unpublished
+# An exam round a live (or reviewed) workflow uses cannot be unpublished
 # ===========================================================================
 def test_unpublishing_a_round_used_by_a_live_workflow_is_refused() -> None:
+    """PH4-D1 widened this guard: an ARCHIVED workflow may still have a
+    candidate finishing on it, and an IN-REVIEW or APPROVED version was
+    reviewed against this round's exact content (the O6 fingerprint) — both
+    are now refused too, not just a currently PUBLISHED workflow."""
     from app.routers.hr_rounds import update_round
 
     src = " ".join(inspect.getsource(update_round).split())
     assert 'body.status == "draft" and rnd.status == "published"' in src
-    assert "w.status = 'published'" in src and "HTTP_409_CONFLICT" in src
+    assert "w.status IN ('published', 'archived')" in src
+    assert "w.review_status IN ('in_review', 'approved')" in src
+    assert "HTTP_409_CONFLICT" in src
 
 
 # ===========================================================================

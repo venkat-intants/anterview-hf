@@ -50,8 +50,10 @@ from app.models import AuditLog
 from app.workflows import (
     AI_GRADED_KINDS,
     EXAM_BACKED_KINDS,
+    HUMAN_EVALUATED_KINDS,
     MAX_ROUNDS,
     ROUND_KINDS,
+    TASK_KINDS,
     branch_errors,
     build_coverage,
     exam_round_problem,
@@ -104,7 +106,7 @@ class _Checks:
 # ---------------------------------------------------------------------------
 def _simulated_percent(round_: dict[str, Any], outcome: str) -> float | None:
     """A score that produces ``outcome`` on this round, or None for a person's verdict."""
-    if round_["kind"] == "human_review":
+    if round_["kind"] in HUMAN_EVALUATED_KINDS:
         return None
     threshold = round_.get("pass_threshold")
     if threshold is None:
@@ -270,7 +272,9 @@ def _round_checks(
     *,
     interviewers: int,
     auto_advance: bool,
+    task_configs: set[str] | None = None,
 ) -> None:
+    task_configs = task_configs or set()
     for r in rounds:
         rid = str(r["id"])
         kind = r["kind"]
@@ -287,11 +291,13 @@ def _round_checks(
                         f"The attached exam round {problem}, so candidates' links would not "
                         "open.", rid,
                     )
-        if kind != "human_review" and r.get("pass_threshold") is None:
+        if kind not in HUMAN_EVALUATED_KINDS and r.get("pass_threshold") is None:
             checks.error("Needs an advance threshold — without one nobody can pass it.", rid)
         if kind in AI_GRADED_KINDS and not criteria.get(rid):
             checks.error("An AI interview must assess at least one competency.", rid)
-        if kind == "human_review":
+        if kind in TASK_KINDS and rid not in task_configs:
+            checks.error(f"A {kind} round needs a brief and its items before it can run.", rid)
+        if kind in HUMAN_EVALUATED_KINDS:
             if not criteria.get(rid):
                 checks.warn(
                     "No evaluation criteria: a reviewer can pass or hold, but interviewers "
@@ -307,7 +313,7 @@ def _round_checks(
                     "interview for this round.", rid,
                 )
         threshold = r.get("pass_threshold")
-        if threshold is not None and kind != "human_review":
+        if threshold is not None and kind not in HUMAN_EVALUATED_KINDS:
             if float(threshold) <= 0:
                 checks.warn("An advance threshold of 0% passes everyone.", rid)
             elif float(threshold) >= 100:
@@ -379,6 +385,16 @@ async def _context(
             )
         ).scalars().all()
     } if round_ids else set()
+    # PH4-D4: which task rounds (job_simulation/portfolio) already have a
+    # brief and items configured — the same shape validate() checks at publish.
+    task_configs = {
+        str(x) for x in (
+            await db.execute(
+                text("SELECT round_id FROM round_tasks WHERE round_id = ANY(:ids)"),
+                {"ids": round_ids},
+            )
+        ).scalars().all()
+    } if round_ids else set()
     stage_rows = (
         await db.execute(
             text(
@@ -405,7 +421,7 @@ async def _context(
     )
     return {"workflow": dict(wf), "rounds": rounds, "criteria": criteria,
             "readiness": readiness, "kits": kits, "stage_settings": stage_settings,
-            "interviewers": interviewers}
+            "interviewers": interviewers, "task_configs": task_configs}
 
 
 def evaluate(ctx: dict[str, Any], profile_competencies: list[dict[str, Any]] | None) -> dict[str, Any]:
@@ -416,6 +432,7 @@ def evaluate(ctx: dict[str, Any], profile_competencies: list[dict[str, Any]] | N
     _round_checks(
         checks, rounds, ctx["criteria"], ctx["readiness"], ctx["kits"], ctx["stage_settings"],
         interviewers=ctx["interviewers"], auto_advance=bool(ctx["workflow"]["auto_advance_rounds"]),
+        task_configs=ctx.get("task_configs", set()),
     )
     decision = ctx["stage_settings"].get(None) or {}
     if decision.get("sla_hours") and not decision.get("owner_user_id"):

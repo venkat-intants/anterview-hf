@@ -25,7 +25,14 @@ export interface StageSla {
   hours_remaining: number;
 }
 
-export type StageKind = 'mcq' | 'coding' | 'ai_interview' | 'human_review' | 'decision';
+export type StageKind =
+  | 'mcq'
+  | 'coding'
+  | 'ai_interview'
+  | 'human_review'
+  | 'job_simulation'
+  | 'portfolio'
+  | 'decision';
 
 export interface StageSetting {
   /** null is the final-decision stage, after the last round. */

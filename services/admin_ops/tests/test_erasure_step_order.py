@@ -138,7 +138,7 @@ def test_the_steps_read_in_order() -> None:
     """Code review: 5f used to sit between 5c and 5d."""
     body = _body()
     positions = [_at(f"# Step {step}:", where=body)
-                 for step in ("5b", "5c", "5d", "5e", "5f", "6")]
+                 for step in ("5b", "5c", "5d", "5e", "5f", "5g", "6")]
     assert positions == sorted(positions)
 
 
@@ -166,3 +166,22 @@ def test_interview_sessions_are_cancelled_before_applicants_lose_their_user_id()
     cancel = _at("UPDATE interview_sessions SET status = 'cancelled'", where=body)
     loops = _at("UPDATE interview_loops SET", where=body)
     assert cancel < loops < _at("UPDATE applicants", where=body)
+
+
+# ===========================================================================
+# 4. Candidate accommodations (step 5g, PH4-D2)
+# ===========================================================================
+def test_step_5g_counts_reach_the_completion_record() -> None:
+    body = _body()
+    for key in ("accommodations_revoked", "accommodations_redacted"):
+        assert body.count(f'"{key}": {key}') == 2, key  # artifacts AND audit row
+
+
+def test_accommodations_are_revoked_before_applicants_lose_their_user_id() -> None:
+    """5g's join goes through applicants.user_id, which step 6 nulls."""
+    body = _body()
+    revoke = _at("UPDATE candidate_accommodations SET status = 'revoked'", where=body)
+    redact = _at("interviewer_note = NULL, internal_note = NULL, redacted_at = now()",
+                where=body)
+    anonymise = _at("UPDATE applicants", where=body)
+    assert revoke < redact < anonymise

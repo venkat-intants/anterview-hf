@@ -264,7 +264,8 @@ async def upload(db: AsyncSession, *, raw: str | None, session: str | None,
     if offer["preboarding_completed_at"] is not None:
         raise OfferError(409, "Your documents are complete; nothing more is needed.")
     # Consent to share documents is recorded at acceptance; once withdrawn
-    # (DELETE /users/me/consent revokes it), nothing more is taken.
+    # (the documents step's own POST /offer/documents/consent/withdraw, or a
+    # signed-in DELETE /consent), nothing more is taken.
     consented = await db.scalar(
         text("SELECT bool_or(revoked_at IS NULL) FROM dpdp_consent_ledger"
              " WHERE user_id = :u AND consent_type = 'preboarding_documents' AND granted"),
@@ -548,6 +549,38 @@ async def withdraw_consent(db: AsyncSession, *, raw: str | None, session: str | 
             link=f"/hr/offers/{offer['id']}",
         )
     return {"withdrawn": True}
+
+
+async def documents_consent_withdrawn_elsewhere(
+    db: AsyncSession, *, user_id: uuid.UUID, rows: int, meta: RequestMeta,
+) -> None:
+    """What a documents-consent withdrawal owes when it came through the
+    signed-in ``DELETE /consent`` rather than the documents step
+    (``withdraw_consent``): an audit row and a notice to the hiring team, for
+    every offer it stops. The consent is held per candidate, so that is every
+    accepted offer of theirs still in preboarding. Caller commits."""
+    offers = (
+        await db.execute(
+            text("SELECT o.id, o.company_id, o.created_by_user_id, o.sent_by_user_id,"
+                 "       a.full_name AS candidate_name"
+                 "  FROM offers o JOIN applicants a ON a.id = o.applicant_id"
+                 " WHERE a.user_id = :u AND o.status = 'accepted'"
+                 "   AND o.preboarding_completed_at IS NULL"),
+            {"u": user_id},
+        )
+    ).mappings().all()
+    for offer in offers:
+        _audit(db, actor=user_id, action="document.consent_withdrawn", resource_id=offer["id"],
+               details={"company_id": str(offer["company_id"]), "rows": rows,
+                        "via": "DELETE /consent"},
+               meta=meta, actor_type="candidate", resource_type="offer")
+        for who in {offer["created_by_user_id"], offer["sent_by_user_id"]} - {None}:
+            await create_notification(
+                db, user_id=who, kind="offer_update",
+                title=f"Documents consent withdrawn: {offer['candidate_name']}",
+                body="They can send no more documents until they agree again.",
+                link=f"/hr/offers/{offer['id']}",
+            )
 
 
 async def complete(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,

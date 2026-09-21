@@ -357,6 +357,11 @@ async def test_a_workflow_issued_exam_link_belongs_to_the_workflow_owner(
     monkeypatch.setattr(wr, "exam_round_readiness", _ready)
     owner = uuid.uuid4()
     db = _db()
+    # PH4-D2: _assign_round also looks up an effective accommodation (none
+    # here) before minting the assignment — a plain SELECT, never db.scalar.
+    exec_result = MagicMock()
+    exec_result.mappings.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=exec_result)
 
     await wr._assign_round(
         db,

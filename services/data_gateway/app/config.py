@@ -230,6 +230,67 @@ class Settings(BaseSettings):
     # once a hire is reversed before preboarding completes. See purge_documents.
     preboarding_document_retention_days: int = 90
 
+    # --- PH4-D2: candidate accommodations ---
+    # Notes (other_adjustment / interviewer_note / internal_note) are redacted
+    # this many days after every one of the applicant's applications at the
+    # company is decided, or after effective_until, whichever a row qualifies
+    # under. The numeric parameters are kept — the scorecard precedent.
+    accommodation_retention_days: int = 180
+
+    # --- PH4-D3: code quality + similarity evidence ---
+    # Static analysis only — candidate code is never executed. See
+    # app/code_quality.py, app/code_similarity.py, app/code_sandbox.py,
+    # app/code_evidence.py. The escape hatch for the single-container Space,
+    # where the analysis worker adds one extra OS process.
+    code_analysis_enabled: bool = True
+    # Wall-clock cap per analysis run, enforced by app/code_sandbox.py. A
+    # timeout stores status='failed' and never touches the attempt.
+    code_analysis_timeout_seconds: int = 10
+    # Max attempts the sweep analyses per pass (app/code_evidence.py::analyse_pending).
+    code_analysis_batch: int = 50
+    # The sweep only picks up attempts submitted within this window; older
+    # ones are analysed on demand only (per attempt, from the HR console).
+    code_analysis_lookback_days: int = 30
+    # RLIMIT_AS cap for the analysis child process — Linux only (see
+    # app/code_sandbox.py; skipped and logged once on Windows dev machines).
+    code_analysis_memory_mb: int = 256
+    # Winnowing thresholds (app/code_similarity.py) — a pair is worth a
+    # signal when containment reaches this AND at least this many fingerprints
+    # are shared. A fingerprint present in more than this share of a
+    # question's submissions is treated as boilerplate and excluded first.
+    code_similarity_min_containment: float = 0.5
+    code_similarity_min_shared: int = 10
+    code_similarity_min_tokens: int = 50
+    code_similarity_max_df: float = 0.4
+    # MEDIUM-4: a pass only compares a NEWLY-fingerprinted submission against
+    # candidates the GIN `hashes &&` overlap query returns for it, capped at
+    # this many rows — bounded work per new submission instead of the whole
+    # question's history, and bounded per sweep pass by code_analysis_batch.
+    code_similarity_max_candidates: int = 300
+    # MEDIUM-4: the on-demand /code-analysis route, capped per COMPANY (not
+    # per IP — many HR seats at one company must share one budget).
+    code_analysis_ondemand_per_minute: int = 10
+    # Candidate source and program stdout/stderr are redacted this many days
+    # after the application is decided (or after submission, when there is no
+    # application) — the same policy shape as accommodation_retention_days.
+    code_evidence_retention_days: int = 180
+
+    # --- PH4-D4: job simulations and portfolio rounds ---
+    # Same convention as offer_link_secret: blank means a namespaced secret
+    # DERIVED from jwt_secret (app.job_tasks), never jwt_secret itself; set
+    # explicitly in production for independent rotation.
+    task_link_secret: str = ""
+    # How long past a task's time limit (or due date, for an untimed one) a
+    # save is still accepted — a slow upload or a flaky connection should not
+    # cost a candidate their answer for arriving seconds late.
+    task_submit_grace_seconds: int = 120
+    task_material_max_bytes: int = 10 * 1024 * 1024
+    task_response_max_bytes: int = 10 * 1024 * 1024
+    # Task submissions and responses are redacted this many days after the
+    # application is decided, or after the submission expired or was
+    # withdrawn — the accommodation/code-evidence retention shape.
+    task_submission_retention_days: int = 180
+
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""

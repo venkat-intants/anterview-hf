@@ -20,12 +20,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type {
-  RoleModel,
-  ValidationReport,
-  Workflow,
-  WorkflowSummary,
-} from '../api/workflows';
+import type { RoleModel, ValidationReport, Workflow, WorkflowSummary } from '../api/workflows';
 
 const SETTINGS = {
   auto_score_on_apply: true,
@@ -183,10 +178,11 @@ const publishWorkflow = vi.fn();
 const cloneWorkflow = vi.fn();
 const discardDraft = vi.fn();
 
-vi.mock('../api/workflows', () => ({
-  MAX_ROUNDS: 12,
-  MAX_CRITERIA_PER_ROUND: 8,
-  EXAM_BACKED_KINDS: ['mcq', 'coding'],
+// The real constants (MAX_ROUNDS, the round-kind sets) come from the module
+// itself, so this test fails if they change -- a hard-coded copy here would
+// keep asserting against a stale duplicate. Only the network calls are stubbed.
+vi.mock('../api/workflows', async () => ({
+  ...(await vi.importActual<typeof import('../api/workflows')>('../api/workflows')),
   listWorkflows: (...a: unknown[]) => listWorkflows(...a) as unknown,
   getWorkflow: (...a: unknown[]) => getWorkflow(...a) as unknown,
   validateWorkflow: (...a: unknown[]) => validateWorkflow(...a) as unknown,
@@ -210,9 +206,7 @@ const getRequisition = vi.fn();
 // updateRequisition and EMPLOYMENT_TYPE_LABELS now, and a bare factory blanks
 // everything it does not list.
 vi.mock('../api/requisitions', async () => {
-  const actual = await vi.importActual<typeof import('../api/requisitions')>(
-    '../api/requisitions',
-  );
+  const actual = await vi.importActual<typeof import('../api/requisitions')>('../api/requisitions');
   return {
     ...actual,
     getRequisition: (...a: unknown[]) => getRequisition(...a) as unknown,
@@ -223,9 +217,7 @@ vi.mock('../api/requisitions', async () => {
 // module through and overriding only the calls keeps its constants (kind
 // labels, CHOICE_KINDS) working — a bare factory would blank them.
 vi.mock('../api/questions', async () => {
-  const actual = await vi.importActual<typeof import('../api/questions')>(
-    '../api/questions',
-  );
+  const actual = await vi.importActual<typeof import('../api/questions')>('../api/questions');
   return {
     ...actual,
     listQuestions: () => Promise.resolve([]),
@@ -236,7 +228,6 @@ vi.mock('../api/questions', async () => {
     listAnswers: () => Promise.resolve([]),
   };
 });
-
 
 const listExams = vi.fn();
 const getStructure = vi.fn();
@@ -406,9 +397,7 @@ describe('WorkflowBuilder — a published version is immutable', () => {
     await user.click(screen.getByText('Edit as new version'));
 
     await waitFor(() => expect(cloneWorkflow).toHaveBeenCalledWith('wf-live'));
-    expect(toastSuccess).toHaveBeenCalledWith(
-      'Editing as version 2 — version 1 stays live',
-    );
+    expect(toastSuccess).toHaveBeenCalledWith('Editing as version 2 — version 1 stays live');
   });
 });
 
@@ -479,8 +468,13 @@ describe('WorkflowBuilder — publishing', () => {
     validateWorkflow.mockResolvedValue(REPORT_READY);
     getWorkflow.mockResolvedValue(APPROVED_DRAFT);
     getReview.mockResolvedValue({
-      review_status: 'approved', submitted_at: null, submitted_by_name: null,
-      reviewed_at: null, reviewed_by_name: 'A Reviewer', note: null, history: [],
+      review_status: 'approved',
+      submitted_at: null,
+      submitted_by_name: null,
+      reviewed_at: null,
+      reviewed_by_name: 'A Reviewer',
+      note: null,
+      history: [],
     });
     renderBuilder();
     await screen.findByText('Fundamentals');
@@ -507,8 +501,13 @@ describe('WorkflowBuilder — publishing', () => {
     publishWorkflow.mockRejectedValue(new Error('This workflow is not ready to publish'));
     getWorkflow.mockResolvedValue(APPROVED_DRAFT);
     getReview.mockResolvedValue({
-      review_status: 'approved', submitted_at: null, submitted_by_name: null,
-      reviewed_at: null, reviewed_by_name: 'A Reviewer', note: null, history: [],
+      review_status: 'approved',
+      submitted_at: null,
+      submitted_by_name: null,
+      reviewed_at: null,
+      reviewed_by_name: 'A Reviewer',
+      note: null,
+      history: [],
     });
     renderBuilder();
     await screen.findByText('Fundamentals');
@@ -531,8 +530,13 @@ describe('WorkflowBuilder — publishing', () => {
     // the header must not let this be clicked regardless.
     getWorkflow.mockResolvedValue(APPROVED_DRAFT);
     getReview.mockResolvedValue({
-      review_status: 'approved', submitted_at: null, submitted_by_name: null,
-      reviewed_at: null, reviewed_by_name: 'A Reviewer', note: null, history: [],
+      review_status: 'approved',
+      submitted_at: null,
+      submitted_by_name: null,
+      reviewed_at: null,
+      reviewed_by_name: 'A Reviewer',
+      note: null,
+      history: [],
     });
     renderBuilder();
     await screen.findByText('Fundamentals');
@@ -551,12 +555,29 @@ describe('WorkflowBuilder — attaching exam questions', () => {
       { id: 'e1', title: 'Backend fundamentals', status: 'published', question_count: 12 },
     ]);
     const section = (n: number) => ({
-      id: `s-${n}`, round_id: 'x', title: 'S', kind: 'mcq', time_limit_seconds: null,
-      position: 0, question_count: n,
+      id: `s-${n}`,
+      round_id: 'x',
+      title: 'S',
+      kind: 'mcq',
+      time_limit_seconds: null,
+      position: 0,
+      question_count: n,
     });
-    const round = (id: string, title: string, status: 'draft' | 'published', questions: number) => ({
-      id, title, round_number: 1, pass_threshold: 60, time_limit_seconds: null,
-      advances_to_interview: false, status, position: 0, sections: [section(questions)],
+    const round = (
+      id: string,
+      title: string,
+      status: 'draft' | 'published',
+      questions: number,
+    ) => ({
+      id,
+      title,
+      round_number: 1,
+      pass_threshold: 60,
+      time_limit_seconds: null,
+      advances_to_interview: false,
+      status,
+      position: 0,
+      sections: [section(questions)],
     });
     getStructure.mockResolvedValue({
       exam_id: 'e1',
@@ -598,20 +619,46 @@ describe('WorkflowBuilder — attaching exam questions', () => {
 
 describe('WorkflowBuilder — starting from nothing', () => {
   const TEMPLATES = [
-    { key: 'technical', name: 'Technical', description: 'Aptitude, code, conversation, review.',
+    {
+      key: 'technical',
+      name: 'Technical',
+      description: 'Aptitude, code, conversation, review.',
       recommended: true,
       rounds: [
-        { title: 'Aptitude', kind: 'mcq', pass_threshold: 60, time_limit_seconds: 1800,
-          deadline_days: 5, competencies: ['Python', 'Software Lifecycle'] },
-        { title: 'Human Review', kind: 'human_review', pass_threshold: null,
-          time_limit_seconds: null, deadline_days: 5, competencies: ['Ownership'] },
-      ] },
-    { key: 'interview_only', name: 'Interview only', description: 'Straight to the conversation.',
+        {
+          title: 'Aptitude',
+          kind: 'mcq',
+          pass_threshold: 60,
+          time_limit_seconds: 1800,
+          deadline_days: 5,
+          competencies: ['Python', 'Software Lifecycle'],
+        },
+        {
+          title: 'Human Review',
+          kind: 'human_review',
+          pass_threshold: null,
+          time_limit_seconds: null,
+          deadline_days: 5,
+          competencies: ['Ownership'],
+        },
+      ],
+    },
+    {
+      key: 'interview_only',
+      name: 'Interview only',
+      description: 'Straight to the conversation.',
       recommended: false,
       rounds: [
-        { title: 'AI Interview', kind: 'ai_interview', pass_threshold: 60,
-          time_limit_seconds: null, deadline_days: 7, competencies: ['Communication'] },
-      ] },
+        {
+          title: 'AI Interview',
+          kind: 'ai_interview',
+          pass_threshold: 60,
+          time_limit_seconds: null,
+          deadline_days: 7,
+          competencies: ['Communication'],
+        },
+      ],
+    },
   ];
 
   it('offers templates built for this role, marking the one that suits it', async () => {

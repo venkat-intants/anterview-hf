@@ -53,6 +53,7 @@ from shared.intelligence import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import accommodations, job_tasks
 from app.application_source import SOURCES, UNTRACKED, normalise_detail
 from app.config import settings
 from app.exam_link import hash_exam_token, mint_exam_token
@@ -62,6 +63,8 @@ from app.requisitions import record_round_move, record_transition
 from app.workflows import (
     AI_GRADED_KINDS,
     EXAM_BACKED_KINDS,
+    HUMAN_EVALUATED_KINDS,
+    TASK_KINDS,
     Route,
     exam_round_problem,
     exam_round_readiness,
@@ -435,15 +438,23 @@ async def _assign_round(
             ),
             {"n": now, "r": round_["exam_round_id"], "a": enrolment["applicant_id"]},
         )
+        # PH4-D2: the link's deadline gains any recorded extension — the exam's
+        # own time limit is scaled separately, at /exam/start.
+        adj_row = await accommodations.effective_for(
+            db, company_id=company_id, applicant_id=enrolment["applicant_id"],
+            enrolment_id=enrolment["id"], workflow_round_id=round_["id"],
+            exam_round_id=round_["exam_round_id"],
+        )
+        extra_days = adj_row.deadline_extension_days if adj_row else None
         raw = mint_exam_token()
         asn_id = uuid.uuid4()
-        expires = now + timedelta(days=int(round_["deadline_days"] or 7))
+        expires = now + timedelta(days=int(round_["deadline_days"] or 7) + (extra_days or 0))
         await db.execute(
             text(
                 "INSERT INTO exam_assignments (id, company_id, exam_id, round_id, applicant_id,"
-                " enrolment_id, created_by_user_id, token_hash, expires_at, status,"
-                " created_at, updated_at)"
-                " VALUES (:i,:c,:e,:r,:a,:en,:cb,:th,:x,'invited',:n,:n)"
+                " enrolment_id, created_by_user_id, token_hash, expires_at, accommodation_id,"
+                " status, created_at, updated_at)"
+                " VALUES (:i,:c,:e,:r,:a,:en,:cb,:th,:x,:acc,'invited',:n,:n)"
             ),
             # Attributed to the workflow's owner, as the interview branch below
             # already does. Left NULL, the assignment had no owner, and a lapse
@@ -451,8 +462,14 @@ async def _assign_round(
             {"i": asn_id, "c": company_id, "e": exam_id, "r": round_["exam_round_id"],
              "a": enrolment["applicant_id"], "en": enrolment["id"],
              "cb": workflow.get("created_by_user_id"),
-             "th": hash_exam_token(raw, settings.exam_link_secret), "x": expires, "n": now},
+             "th": hash_exam_token(raw, settings.exam_link_secret), "x": expires,
+             "acc": adj_row.id if adj_row else None, "n": now},
         )
+        if adj_row is not None:
+            await accommodations.record_applied(
+                db, company_id=company_id, accommodation_id=adj_row.id,
+                target_kind="exam_assignment", target_id=asn_id,
+            )
         base = settings.exam_link_base_url.rstrip("/")
         await enqueue_email(
             db,
@@ -496,11 +513,20 @@ async def _assign_round(
             notify_user_id=workflow.get("created_by_user_id"),
             # Created linked to this application, and grounded in its role.
             enrolment_id=enrolment["id"],
+            # PH4-D2: this workflow round is the accommodation scope, when one
+            # was recorded against it specifically.
+            workflow_round_id=round_["id"],
         )
         log.info("runner.assigned.interview", enrolment_id=str(enrolment["id"]),
                  created=invite is not None)
 
-    else:  # human_review — nothing to mint; it appears in the reviewer's queue.
+    elif kind in TASK_KINDS:
+        # PH4-D4: a job simulation or portfolio round. app.job_tasks mints the
+        # link, scales the allowance with any D2 accommodation, and emails the
+        # candidate — the same shape the exam branch above follows.
+        await job_tasks.issue(db, enrolment=enrolment, round_=round_, workflow=workflow)
+
+    elif kind == "human_review":  # nothing to mint; it appears in the reviewer's queue.
         if workflow.get("created_by_user_id"):
             await create_notification(
                 db,
@@ -511,6 +537,13 @@ async def _assign_round(
                 link="/hr/requisitions",
             )
         log.info("runner.assigned.human_review", enrolment_id=str(enrolment["id"]))
+
+    else:
+        # An unknown kind should never reach here — validate_chain refuses it
+        # at publish. Logged rather than raised: the candidate is already on
+        # the round (record_round_move happened first), and raising here
+        # would leave them on a round the runner then never returns to.
+        log.warning("runner.assign.unknown_kind", round_id=str(round_["id"]), kind=kind)
 
 
 async def _move_to_round(
@@ -1025,14 +1058,26 @@ async def decision_queue(
                 "       (SELECT count(*) FROM round_results rr"
                 "         WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL) AS rounds_taken,"
                 "       (SELECT max(rr.percent) FROM round_results rr"
-                "         WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL) AS best_percent"
+                "         WHERE rr.enrolment_id = e.id AND rr.superseded_at IS NULL) AS best_percent,"
+                "       ts.task_submission"
                 "  FROM enrolments e"
                 "  JOIN applicants a ON a.id = e.applicant_id AND a.deleted_at IS NULL"
                 "  LEFT JOIN workflows w ON w.id = e.workflow_id"
                 "  LEFT JOIN workflow_rounds cur ON cur.id = e.current_round_id"
+                # PH4-D4: a task round (job_simulation/portfolio) is a person's
+                # decision exactly like human_review — :human_kinds is the
+                # three-member set app.workflows.HUMAN_EVALUATED_KINDS.
                 "  LEFT JOIN workflow_rounds wr ON wr.id = e.current_round_id"
-                "                              AND wr.kind = 'human_review'"
+                "                              AND wr.kind = ANY(CAST(:human_kinds AS text[]))"
                 "                              AND wr.deleted_at IS NULL"
+                "  LEFT JOIN LATERAL ("
+                "      SELECT json_build_object('status', s.status, 'due_at', s.due_at,"
+                "                                'submitted_at', s.submitted_at) AS task_submission"
+                "        FROM task_submissions s"
+                "       WHERE s.enrolment_id = e.id AND s.round_id = e.current_round_id"
+                "         AND s.superseded_at IS NULL"
+                "       ORDER BY s.created_at DESC LIMIT 1"
+                "  ) ts ON cur.kind = ANY(CAST(:task_kinds AS text[]))"
                 " WHERE e.company_id = :c AND e.requisition_id = :r"
                 "   AND e.deleted_at IS NULL"
                 # One definition, shared with the watcher and the requisition
@@ -1042,7 +1087,8 @@ async def decision_queue(
                 "   AND enrolment_awaits_human(e.status, e.current_round_id)"
                 " ORDER BY (e.status = 'held') DESC, e.ats_overall DESC NULLS LAST"
             ),
-            {"c": company_id, "r": requisition_id},
+            {"c": company_id, "r": requisition_id,
+             "human_kinds": list(HUMAN_EVALUATED_KINDS), "task_kinds": list(TASK_KINDS)},
         )
     ).mappings().all()
     return [
@@ -1099,6 +1145,15 @@ async def decision_queue(
                 _as_json(r["review_criteria"])
                 if r["review_round_id"] and r["status"] != "held"
                 else []
+            ),
+            # PH4-D4: the submission's own state, when the candidate is
+            # sitting on a job_simulation/portfolio round — so the queue
+            # tells "not started" apart from "submitted, awaiting review"
+            # rather than showing both as the same bare "awaiting_review".
+            "task_submission": (
+                _as_json(r["task_submission"])
+                if r["review_round_id"] and r["status"] != "held"
+                else None
             ),
         }
         for r in rows

@@ -55,6 +55,14 @@ const FINISHED: DecisionQueueRow = {
   workflow_version: 2,
   composite_percent: 79.3,
   scorecards: { assigned: 3, submitted: 2, late: 1 },
+  code_evidence: {
+    signal_count: 2,
+    unreviewed_signal_count: 2,
+    finding_count: 1,
+    no_concern_count: 0,
+    follow_up_count: 1,
+    confirmed_count: 0,
+  },
 };
 
 const REASONS = [
@@ -181,6 +189,19 @@ describe('DecisionQueue — one list', () => {
     expect(within(finished).getByText(/1 late/)).toBeTruthy();
     // Asha has no human_review round on her workflow — nothing to show.
     expect(within(cardFor('Asha Rao')).queryByText(/scorecards in/)).toBeNull();
+  });
+
+  it('shows code-evidence counts, keeping an unreviewed signal apart from a finding', async () => {
+    // PH4-D3. The queue payload carried these and no screen read them.
+    renderQueue();
+    await screen.findByText('Bhavya Nair');
+    expect(
+      within(cardFor('Bhavya Nair')).getByText(
+        '2 similarity signals awaiting review · 1 finding flagged for follow-up',
+      ),
+    ).toBeTruthy();
+    // No evidence, no line.
+    expect(within(cardFor('Asha Rao')).queryByText(/similarity signal/)).toBeNull();
   });
 });
 
@@ -341,6 +362,63 @@ describe('DecisionQueue — the decision itself', () => {
 
     await user.click(within(cardFor('Asha Rao')).getByText(/Scores, evidence & history/));
     expect(screen.getByTestId('drawer').textContent).toBe('ap-held:en-held');
+  });
+});
+
+// PH4-D4 — a job_simulation/portfolio round's own submission state, so "not
+// started" reads apart from "submitted, awaiting review" rather than both
+// looking like a bare "awaiting review" badge.
+describe('DecisionQueue — job-simulation/portfolio submission state (PH4-D4)', () => {
+  const AWAITING_SUBMITTED: DecisionQueueRow = {
+    ...FINISHED,
+    enrolment_id: 'en-task-1',
+    applicant_id: 'ap-task-1',
+    full_name: 'Divya Task',
+    held: false,
+    awaiting_review: true,
+    review_round_title: 'Take-home simulation',
+    task_submission: {
+      status: 'submitted',
+      due_at: '2026-09-10T00:00:00.000Z',
+      submitted_at: '2026-09-09T00:00:00.000Z',
+    },
+  };
+
+  const AWAITING_IN_PROGRESS: DecisionQueueRow = {
+    ...AWAITING_SUBMITTED,
+    enrolment_id: 'en-task-2',
+    applicant_id: 'ap-task-2',
+    full_name: 'Farhan Task',
+    task_submission: {
+      status: 'in_progress',
+      due_at: '2026-09-10T00:00:00.000Z',
+      submitted_at: null,
+    },
+  };
+
+  it('shows "Submission received" for a submitted job-simulation/portfolio round', async () => {
+    getDecisionQueue.mockResolvedValue([AWAITING_SUBMITTED]);
+    renderQueue();
+    await screen.findByText('Divya Task');
+
+    expect(within(cardFor('Divya Task')).getByText('Submission received')).toBeTruthy();
+  });
+
+  it('shows the submission\'s own lifecycle when it has not been submitted yet', async () => {
+    getDecisionQueue.mockResolvedValue([AWAITING_IN_PROGRESS]);
+    renderQueue();
+    await screen.findByText('Farhan Task');
+
+    expect(within(cardFor('Farhan Task')).getByText('Submission in progress')).toBeTruthy();
+    expect(within(cardFor('Farhan Task')).queryByText('Submission received')).toBeNull();
+  });
+
+  it('shows no submission tag for a round with no task_submission', async () => {
+    getDecisionQueue.mockResolvedValue([FINISHED]);
+    renderQueue();
+    await screen.findByText('Bhavya Nair');
+
+    expect(within(cardFor('Bhavya Nair')).queryByText(/^Submission/)).toBeNull();
   });
 });
 

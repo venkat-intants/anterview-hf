@@ -142,6 +142,18 @@
 		}
 		reverse_proxy data_gateway:8002
 	}
+	# /hr/rounds/*/task/materials* — PH4-D4: HR's reference-material upload for
+	# a job-simulation/portfolio round. More specific than /hr/* below (which
+	# must stay uncapped for bulk CV ingestion, up to 250 MB), so Caddy's
+	# longest-path-wins picks this narrower block first. docs/ACCEPTED-RISKS.md
+	# AR-6 says this upload is "enforced at the edge"; before this block it was
+	# not — L8, security review PH4-D4 wave 5.
+	handle /hr/rounds/*/task/materials* {
+		request_body {
+			max_size 11MB
+		}
+		reverse_proxy data_gateway:8002
+	}
 	handle /hr/* {
 		reverse_proxy data_gateway:8002
 	}
@@ -152,6 +164,14 @@
 	# reached by a magic link (X-Offer-Token). Uploads are one document at a
 	# time, 10 MB at most.
 	handle /offer* {
+		request_body {
+			max_size 11MB
+		}
+		reverse_proxy data_gateway:8002
+	}
+	# /task* — PH4-D4: a job-simulation or portfolio task, reached by a magic
+	# link (X-Task-Token). Artifacts are uploaded one at a time, 10 MB at most.
+	handle /task* {
 		request_body {
 			max_size 11MB
 		}
@@ -227,6 +247,7 @@
 				request>headers>X-Draft-Token delete
 				request>headers>X-Offer-Token delete
 				request>headers>X-Offer-Session delete
+				request>headers>X-Task-Token delete
 				request>headers>X-Test-Hooks-Token delete
 				request>uri query {
 					replace code REDACTED

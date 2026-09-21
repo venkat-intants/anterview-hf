@@ -192,6 +192,30 @@ export function listPendingWorkflowReviews(): Promise<PendingWorkflowReview[]> {
   return apiGet<PendingWorkflowReview[]>('/admin/workflow-reviews');
 }
 
+/**
+ * PH4-D4 — a job_simulation/portfolio round's own config, as the approver
+ * sees it: what goes live is what they approved, the same reason exam
+ * content is already frozen for review. Field names match
+ * `app/routers/workflow_ops.py::get_review_detail` EXACTLY.
+ */
+export interface ReviewRoundTask {
+  kind: 'job_simulation' | 'portfolio';
+  brief: string;
+  brief_translations: { hi?: string; te?: string } | null;
+  items: {
+    key: string;
+    prompt: string;
+    response_type: string;
+    required: boolean;
+    max_chars: number | null;
+  }[];
+  min_artifacts: number | null;
+  max_artifacts: number | null;
+  allow_files: boolean;
+  allow_links: boolean;
+  allowed_link_domains: string[] | null;
+}
+
 export interface ReviewRound {
   round_id: string;
   position: number;
@@ -205,6 +229,8 @@ export interface ReviewRound {
   fast_track_min_percent: number | null;
   on_fast_track: string | null;
   criteria: { name: string; weight: number }[];
+  /** Absent or null for every round kind except job_simulation/portfolio. */
+  task?: ReviewRoundTask | null;
 }
 
 export interface WorkflowReviewDetail {

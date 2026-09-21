@@ -77,7 +77,9 @@ function PageWrap({ children }: { children: React.ReactNode }) {
 // ── Fullscreen-exit blocking overlay ─────────────────────────────────────────
 interface FullscreenOverlayProps {
   violationCount: number;
-  maxViolations: number;
+  /** null when this attempt's auto-submit is relaxed (PH4-D2) — there is no
+   *  threshold to count down to, so we do not invent one. */
+  maxViolations: number | null;
   onReturn: () => void;
 }
 
@@ -104,7 +106,7 @@ function FullscreenOverlay({ violationCount, maxViolations, onReturn }: Fullscre
             {t('publicExam.fullscreenExitTitle')}
           </h2>
           <p className="text-body-sm text-muted-foreground">{t('publicExam.fullscreenExitSub')}</p>
-          {maxViolations > 0 && (
+          {maxViolations !== null && maxViolations > 0 && (
             <p className="text-caption text-amber-glow">
               {t('publicExam.violationsRemaining', {
                 remaining: Math.max(0, maxViolations - violationCount),
@@ -221,6 +223,7 @@ export default function PublicExam() {
     onSuccess: (s) => {
       setAttemptId(s.attempt_id);
       setDeadline(s.deadline);
+      setAttemptMaxViolations(s.max_violations);
       setPhase('taking');
     },
   });
@@ -244,7 +247,17 @@ export default function PublicExam() {
   }, [attemptId, submitMut]);
 
   // ── Proctoring ───────────────────────────────────────────────────────────
-  const maxViolations = examQ.data?.max_integrity_violations ?? 3;
+  // The attempt's own frozen value wins once /exam/start has answered:
+  // `null` means relaxed (PH4-D2) and must never be compared numerically --
+  // `count >= null` coerces to `count >= 0`, which is true from the first
+  // event. Before the attempt exists there is nothing to relax yet.
+  const [attemptMaxViolations, setAttemptMaxViolations] = useState<number | null | undefined>(
+    undefined,
+  );
+  const maxViolations =
+    attemptMaxViolations !== undefined
+      ? attemptMaxViolations
+      : (examQ.data?.max_integrity_violations ?? 3);
 
   const { isFullscreen, fullscreenSupported, violationCount, enterFullscreen } = useExamProctor({
     enabled: phase === 'taking',
@@ -261,12 +274,14 @@ export default function PublicExam() {
       attempt_id: string;
       started_at: string;
       deadline: string | null;
+      max_violations: number | null;
     }>((resolve, reject) => {
       startMut.mutate(undefined, { onSuccess: resolve, onError: reject });
     });
     // Enter fullscreen after the phase changes (still within the gesture stack).
     setAttemptId(s.attempt_id);
     setDeadline(s.deadline);
+    setAttemptMaxViolations(s.max_violations);
     setPhase('taking');
     await enterFullscreen();
   }, [startMut, enterFullscreen]);
@@ -549,6 +564,15 @@ export default function PublicExam() {
               <p className="mt-4 text-caption text-amber-glow">{t('publicExam.timerNote')}</p>
             )}
 
+            {/* PH4-D2 — the fact only: never the percentage, never why. The
+                round/section limits below are already the scaled ones. */}
+            {exam.adjustments && (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
+              <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
+                <Clock size={14} className="mt-0.5 shrink-0 text-vivid-mint" aria-hidden="true" />
+                <span>{t('publicExam.adjustmentNotice')}</span>
+              </div>
+            ) : null}
+
             {/* Proctoring notice */}
             <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
               <ShieldCheck
@@ -628,6 +652,9 @@ export default function PublicExam() {
               })}
             </p>
           )}
+          {exam.adjustments && (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
+            <p className="text-caption text-vivid-mint">{t('publicExam.adjustmentNotice')}</p>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2">
@@ -690,10 +717,12 @@ export default function PublicExam() {
             role="alert"
           >
             <AlertTriangle size={13} aria-hidden="true" />
-            {t('publicExam.violationWarning', {
-              count: violationCount,
-              remaining: Math.max(0, maxViolations - violationCount),
-            })}
+            {maxViolations === null
+              ? t('publicExam.violationNoted', { count: violationCount })
+              : t('publicExam.violationWarning', {
+                  count: violationCount,
+                  remaining: Math.max(0, maxViolations - violationCount),
+                })}
           </motion.div>
         )}
       </AnimatePresence>

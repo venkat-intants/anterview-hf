@@ -854,18 +854,29 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     what = ctx.get("what", "")
     kind = ctx.get("kind", "exam")
     expired = ctx.get("expired")
+    # H2(e): the sweep (app.job_tasks.close_due) SUBMITS a task that has any
+    # saved work rather than expiring it, so "closed without a submission"
+    # was simply false whenever there was work to submit.
+    has_work = bool(ctx.get("has_work"))
     whate = _esc(what)
     loc = _loc(lang, {
         "en": {
             "subject": (
                 "Your interview window has closed" if kind == "interview"
+                else "Your task window has closed" if kind == "task"
                 else "Your assessment window has closed"
             ),
             "pre": (
                 "The window for your interview has closed." if kind == "interview"
+                else "The window for your task has closed." if kind == "task"
                 else "The window for your assessment has closed."
             ),
             "lead": (
+                f"The window for <strong>{whate}</strong> closed, and what you had saved "
+                "was sent to the hiring team."
+                if what and kind == "task" and has_work else
+                f"The window for <strong>{whate}</strong> closed without a submission."
+                if what and kind == "task" else
                 f"The window for <strong>{whate}</strong> closed without it being started."
                 if what else "Your scheduled window closed without being started."
             ),
@@ -879,13 +890,20 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
         "hi": {
             "subject": (
                 "आपके साक्षात्कार की अवधि समाप्त हो गई" if kind == "interview"
+                else "आपके टास्क की अवधि समाप्त हो गई" if kind == "task"
                 else "आपकी परीक्षा की अवधि समाप्त हो गई"
             ),
             "pre": (
                 "आपके साक्षात्कार की अवधि समाप्त हो गई है।" if kind == "interview"
+                else "आपके टास्क की अवधि समाप्त हो गई है।" if kind == "task"
                 else "आपकी परीक्षा की अवधि समाप्त हो गई है।"
             ),
             "lead": (
+                f"<strong>{whate}</strong> की अवधि समाप्त हो गई, और आपका सहेजा गया कार्य "
+                "भर्ती टीम को भेज दिया गया।"
+                if what and kind == "task" and has_work else
+                f"<strong>{whate}</strong> की अवधि बिना सबमिट किए समाप्त हो गई।"
+                if what and kind == "task" else
                 f"<strong>{whate}</strong> की अवधि बिना शुरू हुए समाप्त हो गई।"
                 if what else "आपकी निर्धारित अवधि बिना शुरू हुए समाप्त हो गई।"
             ),
@@ -899,13 +917,20 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
         "te": {
             "subject": (
                 "మీ ఇంటర్వ్యూ వ్యవధి ముగిసింది" if kind == "interview"
+                else "మీ టాస్క్ వ్యవధి ముగిసింది" if kind == "task"
                 else "మీ పరీక్ష వ్యవధి ముగిసింది"
             ),
             "pre": (
                 "మీ ఇంటర్వ్యూ వ్యవధి ముగిసింది." if kind == "interview"
+                else "మీ టాస్క్ వ్యవధి ముగిసింది." if kind == "task"
                 else "మీ పరీక్ష వ్యవధి ముగిసింది."
             ),
             "lead": (
+                f"<strong>{whate}</strong> వ్యవధి ముగిసింది, మీరు సేవ్ చేసిన పని నియామక "
+                "బృందానికి పంపబడింది."
+                if what and kind == "task" and has_work else
+                f"<strong>{whate}</strong> వ్యవధి సమర్పించకుండానే ముగిసింది."
+                if what and kind == "task" else
                 f"<strong>{whate}</strong> వ్యవధి ప్రారంభించకుండానే ముగిసింది."
                 if what else "మీ నిర్ణీత వ్యవధి ప్రారంభించకుండానే ముగిసింది."
             ),
@@ -1872,6 +1897,188 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     return loc["subject"], inner, "\n".join(text), plain
 
 
+def _t_accommodation_recorded(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """PH4-D2: an accommodation was recorded for the candidate's application.
+
+    ctx: name, extra_time_percent (int | None), deadline_extension_days
+    (int | None), relax_auto_submit (bool), has_other_adjustment (bool).
+    NEVER ``other_adjustment``'s text, ``interviewer_note`` or
+    ``internal_note`` — this email states only WHICH parameters were
+    recorded, never any note."""
+    name = ctx.get("name")
+    pct = ctx.get("extra_time_percent")
+    days = ctx.get("deadline_extension_days")
+    relaxed = bool(ctx.get("relax_auto_submit"))
+    has_other = bool(ctx.get("has_other_adjustment"))
+    loc = _loc(lang, {
+        "en": {
+            "subject": "An adjustment was recorded for your application",
+            "pre": "A hiring adjustment was recorded for you.",
+            "lead": "The hiring team recorded the following for your application:",
+            "extra_time": f"{pct}% extra time on timed assessments",
+            "extra_days": f"{days} extra day(s) to complete assessments",
+            "relaxed": "Assessments will not end early for proctoring flags",
+            "other": "Other adjustments recorded for your application",
+            "closing": "If anything here looks wrong, reply to the hiring team.",
+        },
+        "hi": {
+            "subject": "आपके आवेदन के लिए एक समायोजन दर्ज किया गया",
+            "pre": "आपके लिए एक भर्ती समायोजन दर्ज किया गया।",
+            "lead": "हायरिंग टीम ने आपके आवेदन के लिए निम्नलिखित दर्ज किया:",
+            "extra_time": f"समयबद्ध मूल्यांकन में {pct}% अतिरिक्त समय",
+            "extra_days": f"मूल्यांकन पूरा करने के लिए {days} अतिरिक्त दिन",
+            "relaxed": "प्रॉक्टरिंग फ़्लैग के कारण मूल्यांकन जल्दी समाप्त नहीं होगा",
+            "other": "आपके आवेदन के लिए अन्य समायोजन दर्ज किए गए",
+            "closing": "यदि यहाँ कुछ गलत लगे, तो हायरिंग टीम को उत्तर दें।",
+        },
+        "te": {
+            "subject": "మీ దరఖాస్తు కోసం ఒక సర్దుబాటు నమోదు చేయబడింది",
+            "pre": "మీ కోసం ఒక నియామక సర్దుబాటు నమోదు చేయబడింది.",
+            "lead": "మీ దరఖాస్తు కోసం నియామక బృందం ఈ క్రిందివి నమోదు చేసింది:",
+            "extra_time": f"సమయ-పరిమిత మూల్యాంకనాల్లో {pct}% అదనపు సమయం",
+            "extra_days": f"మూల్యాంకనాలు పూర్తి చేయడానికి {days} అదనపు రోజు(లు)",
+            "relaxed": "ప్రొక్టరింగ్ ఫ్లాగ్‌ల వల్ల మూల్యాంకనం ముందుగా ముగియదు",
+            "other": "మీ దరఖాస్తు కోసం ఇతర సర్దుబాట్లు నమోదు చేయబడ్డాయి",
+            "closing": "ఇక్కడ ఏదైనా తప్పుగా అనిపిస్తే, నియామక బృందానికి జవాబు ఇవ్వండి.",
+        },
+    })
+    items: list[str] = []
+    if pct:
+        items.append(loc["extra_time"])
+    if days:
+        items.append(loc["extra_days"])
+    if relaxed:
+        items.append(loc["relaxed"])
+    if has_other:
+        items.append(loc["other"])
+    list_html = "".join(f'<li style="margin:4px 0;">{_esc(i)}</li>' for i in items)
+    inner = (
+        _p(_greeting(lang, name))
+        + _p(loc["lead"])
+        + f'<ul style="margin:0 0 16px;padding-left:20px;">{list_html}</ul>'
+        + _p(loc["closing"])
+    )
+    text = [_greeting(lang, name), "", loc["lead"], *[f"- {i}" for i in items], "", loc["closing"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_task_assigned(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """PH4-D4: a job simulation or portfolio round was issued.
+
+    ctx: name, round_title, kind ('job_simulation'|'portfolio'), task_url, due.
+    """
+    name = ctx.get("name")
+    round_title = ctx.get("round_title", "")
+    due = ctx.get("due")
+    task_url = ctx["task_url"]
+    is_portfolio = ctx.get("kind") == "portfolio"
+    ttle = _esc(round_title)
+    loc = _loc(lang, {
+        "en": {
+            "subject": f"Your task: {round_title}" if round_title else "Your task is ready",
+            "pre": "A task is waiting for you.",
+            "lead": (
+                (f"You've been asked to complete <strong>{ttle}</strong>." if round_title
+                 else "You've been asked to complete a task.")
+                + (" Share a portfolio of your work — files or approved links."
+                   if is_portfolio else " Work through it in your own time, within the window.")
+            ),
+            "cta": "Open the task",
+            "choice": ("Before you begin, the task page asks whether you agree to share your "
+                       "work with the hiring team. That is your choice: you can decline, and "
+                       "you can withdraw later on the same page."),
+            "fallback": "Or paste this link into your browser:",
+            "due": "Due by:",
+            "outro": "All the best!",
+        },
+        "hi": {
+            "subject": f"आपका टास्क: {round_title}" if round_title else "आपका टास्क तैयार है",
+            "pre": "आपके लिए एक टास्क तैयार है।",
+            "lead": (
+                (f"आपसे <strong>{ttle}</strong> पूरा करने के लिए कहा गया है।" if round_title
+                 else "आपसे एक टास्क पूरा करने के लिए कहा गया है।")
+                + (" अपने काम का पोर्टफोलियो साझा करें — फ़ाइलें या स्वीकृत लिंक।"
+                   if is_portfolio else " अपने समय पर, दी गई अवधि के भीतर इसे पूरा करें।")
+            ),
+            "cta": "टास्क खोलें",
+            "choice": ("शुरू करने से पहले, टास्क पेज पूछेगा कि क्या आप अपना काम भर्ती टीम के साथ "
+                       "साझा करने के लिए सहमत हैं। यह आपकी पसंद है: आप मना कर सकते हैं, और बाद में "
+                       "उसी पेज पर अपनी सहमति वापस ले सकते हैं।"),
+            "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
+            "due": "अंतिम तिथि:",
+            "outro": "शुभकामनाएँ!",
+        },
+        "te": {
+            "subject": f"మీ టాస్క్: {round_title}" if round_title else "మీ టాస్క్ సిద్ధంగా ఉంది",
+            "pre": "మీ కోసం ఒక టాస్క్ సిద్ధంగా ఉంది.",
+            "lead": (
+                (f"మీరు <strong>{ttle}</strong> పూర్తి చేయమని అడగబడ్డారు." if round_title
+                 else "మీరు ఒక టాస్క్ పూర్తి చేయమని అడగబడ్డారు.")
+                + (" మీ పని పోర్ట్‌ఫోలియోను పంచుకోండి — ఫైళ్లు లేదా ఆమోదించిన లింక్‌లు."
+                   if is_portfolio else " మీ సమయంలో, ఇచ్చిన వ్యవధిలో దీన్ని పూర్తి చేయండి.")
+            ),
+            "cta": "టాస్క్ తెరవండి",
+            "choice": ("మీరు ప్రారంభించే ముందు, మీ పనిని నియామక బృందంతో పంచుకోవడానికి మీరు "
+                       "అంగీకరిస్తారా అని టాస్క్ పేజీ అడుగుతుంది. అది మీ ఎంపిక: మీరు తిరస్కరించవచ్చు, "
+                       "తర్వాత అదే పేజీలో మీ సమ్మతిని ఉపసంహరించుకోవచ్చు."),
+            "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
+            "due": "గడువు:",
+            "outro": "శుభాకాంక్షలు!",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + _button(task_url, loc["cta"])
+    inner += _fallback_link(loc["fallback"], task_url)
+    if due:
+        inner += _p(f'<span style="color:{_MUTED};font-size:13px;">'
+                    f'<strong>{_esc(loc["due"])}</strong> {_esc(due)}</span>')
+    # Consent must be free (DPDP §6(1)): the email says so before the page asks.
+    inner += _p(_esc(loc["choice"]))
+    inner += _p(loc["outro"])
+    text = [_greeting(lang, name), "",
+            html_lib.unescape(loc["lead"].replace("<strong>", "").replace("</strong>", "")),
+            "", task_url]
+    if due:
+        text += ["", f"{loc['due']} {due}"]
+    text += ["", loc["choice"], "", loc["outro"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
+def _t_task_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """PH4-D4: the candidate submitted their task. ctx: name, round_title."""
+    name = ctx.get("name")
+    round_title = ctx.get("round_title", "")
+    ttle = _esc(round_title)
+    loc = _loc(lang, {
+        "en": {
+            "subject": "We received your submission",
+            "pre": "Your task has been submitted.",
+            "lead": (f"We received your submission for <strong>{ttle}</strong>. The hiring "
+                     "team will review it." if round_title else
+                     "We received your submission. The hiring team will review it."),
+            "outro": "Thank you for your work on this.",
+        },
+        "hi": {
+            "subject": "हमें आपका सबमिशन मिल गया",
+            "pre": "आपका टास्क सबमिट हो गया है।",
+            "lead": (f"हमें <strong>{ttle}</strong> के लिए आपका सबमिशन मिल गया। हायरिंग टीम "
+                     "इसकी समीक्षा करेगी।" if round_title else
+                     "हमें आपका सबमिशन मिल गया। हायरिंग टीम इसकी समीक्षा करेगी।"),
+            "outro": "इस पर आपके काम के लिए धन्यवाद।",
+        },
+        "te": {
+            "subject": "మీ సమర్పణ మాకు అందింది",
+            "pre": "మీ టాస్క్ సమర్పించబడింది.",
+            "lead": (f"<strong>{ttle}</strong> కోసం మీ సమర్పణ మాకు అందింది. నియామక బృందం దాన్ని "
+                     "సమీక్షిస్తుంది." if round_title else
+                     "మీ సమర్పణ మాకు అందింది. నియామక బృందం దాన్ని సమీక్షిస్తుంది."),
+            "outro": "దీనిపై మీ కృషికి ధన్యవాదాలు.",
+        },
+    })
+    inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + _p(loc["outro"])
+    text = [_greeting(lang, name), "", loc["lead"], "", loc["outro"]]
+    return loc["subject"], inner, "\n".join(text), loc["pre"]
+
+
 _BUILDERS = {
     "welcome": _t_welcome,
     "email_verify": _t_email_verify,
@@ -1903,6 +2110,11 @@ _BUILDERS = {
     "document_update": _t_document_update,
     "document_received": _t_document_received,
     "offer_account": _t_offer_account,
+    # PH4-D2 — candidate accommodations.
+    "accommodation_recorded": _t_accommodation_recorded,
+    # PH4-D4 — job simulations and portfolio rounds.
+    "task_assigned": _t_task_assigned,
+    "task_received": _t_task_received,
     "generic": _t_generic,
 }
 

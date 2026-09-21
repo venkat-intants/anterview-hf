@@ -106,6 +106,15 @@ vi.mock('../api/exams', () => ({
   getExam: (...a: unknown[]) => getExam(...a) as unknown,
   listAttempts: (...a: unknown[]) => listAttempts(...a) as unknown,
   getAttemptBreakdown: (...a: unknown[]) => getAttemptBreakdown(...a) as unknown,
+  CODING_LANGUAGES: ['python', 'javascript'],
+}));
+
+// PH4-D3 — ExamResults' "Similarity signals" column. Counts only, sourced
+// from the exam-wide signal list; the content lives behind the attempt's own
+// Code evidence tab, not here.
+const listSimilaritySignals = vi.fn();
+vi.mock('../api/codeEvidence', () => ({
+  listSimilaritySignals: (...a: unknown[]) => listSimilaritySignals(...a) as unknown,
 }));
 
 import ExamResults from '../pages/hr/ExamResults';
@@ -142,6 +151,7 @@ beforeEach(() => {
   getExam.mockResolvedValue(EXAM);
   listAttempts.mockResolvedValue([PASSED, FAILED, IN_PROGRESS]);
   getAttemptBreakdown.mockResolvedValue(BREAKDOWN);
+  listSimilaritySignals.mockResolvedValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -259,5 +269,82 @@ describe('ExamAttemptDetail', () => {
     renderAttempt();
 
     expect(await screen.findByText(/could not load this attempt/i)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PH4-D3 — "Similarity signals" column. Counts only.
+// ---------------------------------------------------------------------------
+
+describe('ExamResults — similarity signals column', () => {
+  const CODING_EXAM: ExamDetail = { ...EXAM, id: 'e-2', kind: 'coding', questions: [] };
+  const CODED_A: AttemptResult = { ...PASSED, attempt_id: 'a-coded-1' };
+  const CODED_B: AttemptResult = { ...FAILED, attempt_id: 'a-coded-2' };
+
+  function renderCodingResults() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/hr/exams/e-2/results']}>
+          <Routes>
+            <Route path="/hr/exams/:examId/results" element={<ExamResults />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('does not show a similarity column for an MCQ exam', async () => {
+    renderResults();
+    await screen.findByText('Bhavya Nair');
+    expect(screen.queryByText('Similarity signals')).not.toBeInTheDocument();
+    expect(listSimilaritySignals).not.toHaveBeenCalled();
+  });
+
+  it('shows a count-only column for a coding exam, never the compared content', async () => {
+    getExam.mockResolvedValue(CODING_EXAM);
+    listAttempts.mockResolvedValue([CODED_A, CODED_B]);
+    listSimilaritySignals.mockResolvedValue([
+      {
+        id: 'sig-1',
+        coding_question_id: 'q-1',
+        attempt_low_id: 'a-coded-1',
+        attempt_high_id: 'a-coded-2',
+        reference_kind: 'submission',
+        containment_low: 0.9,
+        containment_high: 0.8,
+        jaccard: 0.7,
+        shared_fingerprints: 40,
+        created_at: '2026-08-05T00:00:00.000Z',
+      },
+    ]);
+    renderCodingResults();
+
+    expect(await screen.findByText('Similarity signals')).toBeInTheDocument();
+    // One signal touches both attempts — each gets a count of 1.
+    const rowFor = (name: string): HTMLElement => screen.getByText(name).parentElement!.parentElement!;
+    await screen.findByText('Bhavya Nair');
+    expect(within(rowFor('Bhavya Nair')).getByText('1')).toBeInTheDocument();
+    expect(within(rowFor('Chetan Iyer')).getByText('1')).toBeInTheDocument();
+
+    // Never the compared content on this screen — no containment/jaccard figures.
+    expect(screen.queryByText(/containment/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/jaccard/i)).not.toBeInTheDocument();
+
+    // Labelled as automated and unreviewed, per the checklist.
+    expect(
+      screen.getByText(/automated and unreviewed.*not evidence of misconduct on its own/i),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a dash rather than zero for an attempt with no signals', async () => {
+    getExam.mockResolvedValue(CODING_EXAM);
+    listAttempts.mockResolvedValue([CODED_A]);
+    listSimilaritySignals.mockResolvedValue([]);
+    renderCodingResults();
+
+    await screen.findByText('Bhavya Nair');
+    const row = screen.getByText('Bhavya Nair').parentElement!.parentElement!;
+    expect(within(row).getByText('—')).toBeInTheDocument();
   });
 });

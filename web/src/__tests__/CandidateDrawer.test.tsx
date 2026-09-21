@@ -37,11 +37,22 @@ describe('CandidateDrawer — opened from one application (B5)', () => {
     listAnswers.mockResolvedValue([]);
     listApplications.mockResolvedValue([
       {
-        enrolment_id: 'en-old', requisition_id: 'r1', opening_title: 'Data Analyst',
-        status: 'new', stored_status: 'new', ats_overall: 41, ats_breakdown: null,
-        ats_strengths: ['SQL'], ats_concerns: ['No dashboards'], ats_recommendation: 'maybe',
-        ats_summary: 'A partial fit for analysis.', best_exam_percent: null, exam_passed: null,
-        interview_score: null, scorecard_id: null, applied_at: '2026-09-01T00:00:00Z',
+        enrolment_id: 'en-old',
+        requisition_id: 'r1',
+        opening_title: 'Data Analyst',
+        status: 'new',
+        stored_status: 'new',
+        ats_overall: 41,
+        ats_breakdown: null,
+        ats_strengths: ['SQL'],
+        ats_concerns: ['No dashboards'],
+        ats_recommendation: 'maybe',
+        ats_summary: 'A partial fit for analysis.',
+        best_exam_percent: null,
+        exam_passed: null,
+        interview_score: null,
+        scorecard_id: null,
+        applied_at: '2026-09-01T00:00:00Z',
         is_latest: false,
       },
     ]);
@@ -73,7 +84,8 @@ const scorecardsApi = {
   listInterviewers: vi.fn(),
 };
 vi.mock('../api/scorecards', () => ({
-  getEnrolmentScorecards: (...a: unknown[]) => scorecardsApi.getEnrolmentScorecards(...a) as unknown,
+  getEnrolmentScorecards: (...a: unknown[]) =>
+    scorecardsApi.getEnrolmentScorecards(...a) as unknown,
   assignInterviewers: (...a: unknown[]) => scorecardsApi.assignInterviewers(...a) as unknown,
   withdrawScorecard: (...a: unknown[]) => scorecardsApi.withdrawScorecard(...a) as unknown,
   listInterviewers: (...a: unknown[]) => scorecardsApi.listInterviewers(...a) as unknown,
@@ -83,10 +95,17 @@ const workflowsApi = {
   listWorkflows: vi.fn(),
   getWorkflow: vi.fn(),
 };
-vi.mock('../api/workflows', () => ({
-  listWorkflows: (...a: unknown[]) => workflowsApi.listWorkflows(...a) as unknown,
-  getWorkflow: (...a: unknown[]) => workflowsApi.getWorkflow(...a) as unknown,
-}));
+vi.mock('../api/workflows', async () => {
+  // PH4-D4 — the real exports, not a hand-copied literal: HumanInterviewSection
+  // filters the round picker against HUMAN_EVALUATED_KINDS, and a literal here
+  // would keep passing even if that constant's own set ever changed.
+  const actual = await vi.importActual<typeof import('../api/workflows')>('../api/workflows');
+  return {
+    ...actual,
+    listWorkflows: (...a: unknown[]) => workflowsApi.listWorkflows(...a) as unknown,
+    getWorkflow: (...a: unknown[]) => workflowsApi.getWorkflow(...a) as unknown,
+  };
+});
 
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
@@ -126,6 +145,57 @@ vi.mock('../api/scheduling', () => ({
   listLoopsForEnrolment: (...a: unknown[]) => schedulingApi.listLoopsForEnrolment(...a) as unknown,
 }));
 
+// PH4-D2 — the Accommodations section always mounts alongside the rest of the
+// drawer once the applicant has loaded (it is scoped to the applicant, not
+// the application, so it renders even without an enrolmentId). Mocked to an
+// empty history so every existing drawer test stays deterministic; its own
+// behaviour is covered in AccommodationsSection.test.tsx.
+const accommodationsApi = {
+  listAccommodations: vi.fn(),
+  recordAccommodation: vi.fn(),
+  reviseAccommodation: vi.fn(),
+  revokeAccommodation: vi.fn(),
+  getEffectiveAccommodation: vi.fn(),
+};
+vi.mock('../api/accommodations', () => ({
+  listAccommodations: (...a: unknown[]) => accommodationsApi.listAccommodations(...a) as unknown,
+  recordAccommodation: (...a: unknown[]) => accommodationsApi.recordAccommodation(...a) as unknown,
+  reviseAccommodation: (...a: unknown[]) => accommodationsApi.reviseAccommodation(...a) as unknown,
+  revokeAccommodation: (...a: unknown[]) => accommodationsApi.revokeAccommodation(...a) as unknown,
+  getEffectiveAccommodation: (...a: unknown[]) =>
+    accommodationsApi.getEffectiveAccommodation(...a) as unknown,
+}));
+
+// PH4-D4 — the job simulation / portfolio submission section always mounts
+// alongside the rest of the drawer whenever an enrolmentId is present.
+// Mocked to an empty list so every existing drawer test stays deterministic;
+// its own behaviour is covered in TaskSubmissionSection.test.tsx.
+const jobTasksApi = {
+  listEnrolmentTasks: vi.fn(),
+  reissueTaskSubmission: vi.fn(),
+  withdrawTaskSubmission: vi.fn(),
+};
+vi.mock('../api/jobTasks', () => ({
+  listEnrolmentTasks: (...a: unknown[]) => jobTasksApi.listEnrolmentTasks(...a) as unknown,
+  reissueTaskSubmission: (...a: unknown[]) => jobTasksApi.reissueTaskSubmission(...a) as unknown,
+  withdrawTaskSubmission: (...a: unknown[]) => jobTasksApi.withdrawTaskSubmission(...a) as unknown,
+}));
+
+// PH4-D3 — the drawer reads an application's code-evidence counts. Without
+// this mock the call went out unmocked and failed quietly into "render
+// nothing", which passed but was a real request from a unit test.
+vi.mock('../api/codeEvidence', () => ({
+  getCodeEvidenceSummary: () =>
+    Promise.resolve({
+      signal_count: 0,
+      unreviewed_signal_count: 0,
+      finding_count: 0,
+      no_concern_count: 0,
+      follow_up_count: 0,
+      confirmed_count: 0,
+    }),
+}));
+
 import CandidateDrawer from '../components/CandidateDrawer';
 
 function applicant(over: Partial<Applicant> = {}): Applicant {
@@ -147,10 +217,12 @@ function applicant(over: Partial<Applicant> = {}): Applicant {
   } as Applicant;
 }
 
-function renderDrawer(props: {
-  applicantId?: string | null;
-  enrolmentId?: string | null;
-} = {}) {
+function renderDrawer(
+  props: {
+    applicantId?: string | null;
+    enrolmentId?: string | null;
+  } = {},
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onClose = vi.fn();
   const view = render(
@@ -178,6 +250,9 @@ beforeEach(() => {
   stageSlaApi.listExceptions.mockResolvedValue([]);
   stageSlaApi.listStageOwners.mockResolvedValue([]);
   schedulingApi.listLoopsForEnrolment.mockResolvedValue([]);
+  accommodationsApi.listAccommodations.mockResolvedValue([]);
+  accommodationsApi.getEffectiveAccommodation.mockResolvedValue({ effective: false });
+  jobTasksApi.listEnrolmentTasks.mockResolvedValue([]);
 });
 
 describe('CandidateDrawer', () => {
@@ -387,9 +462,7 @@ describe('CandidateDrawer', () => {
       // being made here is about the settled state.
       renderDrawer();
       await screen.findByText('Nadia Newbie');
-      await waitFor(() =>
-        expect(screen.queryByText('Assessment')).not.toBeInTheDocument(),
-      );
+      await waitFor(() => expect(screen.queryByText('Assessment')).not.toBeInTheDocument());
     });
 
     it('distinguishes "could not load" from "not assessed"', async () => {
@@ -417,7 +490,9 @@ describe('CandidateDrawer', () => {
             round_title: 'Panel interview',
             position: 1,
             hidden_until_you_submit: false,
-            criteria: [{ competency_id: 'c-sysdesign', competency_name: 'System design', weight: 0.6 }],
+            criteria: [
+              { competency_id: 'c-sysdesign', competency_name: 'System design', weight: 0.6 },
+            ],
             scorecards: [
               {
                 scorecard_id: 'sc-1',
@@ -432,7 +507,13 @@ describe('CandidateDrawer', () => {
                 withdrawn_reason: null,
                 redacted: false,
                 summary: 'Strong on system design.',
-                scores: { 'c-sysdesign': { score: 4, not_assessed: false, evidence: 'Handled the tradeoffs well.' } },
+                scores: {
+                  'c-sysdesign': {
+                    score: 4,
+                    not_assessed: false,
+                    evidence: 'Handled the tradeoffs well.',
+                  },
+                },
               },
               {
                 scorecard_id: 'sc-2',
@@ -512,7 +593,9 @@ describe('CandidateDrawer', () => {
             round_title: 'Panel interview',
             position: 1,
             hidden_until_you_submit: false,
-            criteria: [{ competency_id: 'c-sysdesign', competency_name: 'System design', weight: 1 }],
+            criteria: [
+              { competency_id: 'c-sysdesign', competency_name: 'System design', weight: 1 },
+            ],
             scorecards: [
               {
                 scorecard_id: 'sc-1',
@@ -536,7 +619,9 @@ describe('CandidateDrawer', () => {
       });
       renderDrawer({ enrolmentId: 'en-1' });
 
-      expect(await screen.findByText(/Written evidence removed after a data-erasure request/)).toBeInTheDocument();
+      expect(
+        await screen.findByText(/Written evidence removed after a data-erasure request/),
+      ).toBeInTheDocument();
       expect(screen.getByText('4')).toBeInTheDocument();
       expect(screen.queryByText(/Hidden until you submit/)).toBeNull();
     });
@@ -599,7 +684,18 @@ describe('CandidateDrawer', () => {
     });
 
     it('assigns interviewers to a human_review round and refetches', async () => {
-      workflowsApi.listWorkflows.mockResolvedValue([{ id: 'wf-1', version: 1, status: 'published', name: null, rounds: 1, enrolled_candidates: 1, published_at: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' }]);
+      workflowsApi.listWorkflows.mockResolvedValue([
+        {
+          id: 'wf-1',
+          version: 1,
+          status: 'published',
+          name: null,
+          rounds: 1,
+          enrolled_candidates: 1,
+          published_at: '2026-01-01T00:00:00Z',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ]);
       workflowsApi.getWorkflow.mockResolvedValue({
         id: 'wf-1',
         requisition_id: 'req-1',
@@ -611,12 +707,41 @@ describe('CandidateDrawer', () => {
         settings: {} as never,
         published_at: '2026-01-01T00:00:00Z',
         rounds: [
-          { id: 'r-panel', position: 0, title: 'Panel interview', kind: 'human_review', pass_threshold: null, time_limit_seconds: null, deadline_days: 5, on_pass_next_round_id: null, exam_round_id: null, needs_questions: false, criteria: [] },
-          { id: 'r-mcq', position: 1, title: 'Aptitude', kind: 'mcq', pass_threshold: 60, time_limit_seconds: null, deadline_days: 5, on_pass_next_round_id: null, exam_round_id: null, needs_questions: false, criteria: [] },
+          {
+            id: 'r-panel',
+            position: 0,
+            title: 'Panel interview',
+            kind: 'human_review',
+            pass_threshold: null,
+            time_limit_seconds: null,
+            deadline_days: 5,
+            on_pass_next_round_id: null,
+            exam_round_id: null,
+            needs_questions: false,
+            criteria: [],
+          },
+          {
+            id: 'r-mcq',
+            position: 1,
+            title: 'Aptitude',
+            kind: 'mcq',
+            pass_threshold: 60,
+            time_limit_seconds: null,
+            deadline_days: 5,
+            on_pass_next_round_id: null,
+            exam_round_id: null,
+            needs_questions: false,
+            criteria: [],
+          },
         ],
       });
       scorecardsApi.listInterviewers.mockResolvedValue([
-        { user_id: 'u-iv-1', full_name: 'Farah Khan', email: 'farah@acme.edu', role: 'interviewer' },
+        {
+          user_id: 'u-iv-1',
+          full_name: 'Farah Khan',
+          email: 'farah@acme.edu',
+          role: 'interviewer',
+        },
       ]);
       scorecardsApi.assignInterviewers.mockResolvedValue({
         created: [{ scorecard_id: 'sc-1', interviewer_user_id: 'u-iv-1' }],
@@ -673,7 +798,9 @@ describe('CandidateDrawer', () => {
       renderDrawer({ applicantId: 'ap-1', enrolmentId: 'en-1' });
       await screen.findByText('Nadia Newbie');
 
-      expect(await screen.findByText(/could not load this opening.s interview rounds/i)).toBeInTheDocument();
+      expect(
+        await screen.findByText(/could not load this opening.s interview rounds/i),
+      ).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /assign interviewers/i })).toBeDisabled();
     });
 
@@ -740,7 +867,10 @@ describe('CandidateDrawer', () => {
         { user_id: 'u-hr-1', full_name: 'Priya HR', email: 'priya@acme.edu' },
       ]);
       stageSlaApi.raiseException.mockResolvedValue({
-        exception_id: 'exc-1', status: 'open', stage: 'Fundamentals', owner_user_id: 'u-hr-1',
+        exception_id: 'exc-1',
+        status: 'open',
+        stage: 'Fundamentals',
+        owner_user_id: 'u-hr-1',
       });
       const user = userEvent.setup();
       renderDrawer({ enrolmentId: 'en-1' });
@@ -776,10 +906,17 @@ describe('CandidateDrawer', () => {
     it('resolves an open exception with an optional note', async () => {
       stageSlaApi.listExceptions.mockResolvedValue([
         {
-          exception_id: 'exc-1', enrolment_id: 'en-1', stage: 'Fundamentals',
-          reason: 'Interviewer had to reschedule twice', status: 'open',
-          owner_user_id: 'u-hr-1', owner_name: 'Priya HR', raised_by_name: 'Priya HR',
-          raised_at: '2026-09-01T00:00:00.000Z', resolved_by_name: null, resolved_at: null,
+          exception_id: 'exc-1',
+          enrolment_id: 'en-1',
+          stage: 'Fundamentals',
+          reason: 'Interviewer had to reschedule twice',
+          status: 'open',
+          owner_user_id: 'u-hr-1',
+          owner_name: 'Priya HR',
+          raised_by_name: 'Priya HR',
+          raised_at: '2026-09-01T00:00:00.000Z',
+          resolved_by_name: null,
+          resolved_at: null,
           resolution_note: null,
         },
       ]);
@@ -795,17 +932,27 @@ describe('CandidateDrawer', () => {
       await user.click(screen.getByRole('button', { name: /^resolve$/i }));
 
       await waitFor(() =>
-        expect(stageSlaApi.resolveException).toHaveBeenCalledWith('exc-1', 'Rescheduled and completed'),
+        expect(stageSlaApi.resolveException).toHaveBeenCalledWith(
+          'exc-1',
+          'Rescheduled and completed',
+        ),
       );
     });
 
     it('reassigns an open exception to another owner', async () => {
       stageSlaApi.listExceptions.mockResolvedValue([
         {
-          exception_id: 'exc-1', enrolment_id: 'en-1', stage: 'Fundamentals',
-          reason: 'Interviewer had to reschedule twice', status: 'open',
-          owner_user_id: 'u-hr-1', owner_name: 'Priya HR', raised_by_name: 'Priya HR',
-          raised_at: '2026-09-01T00:00:00.000Z', resolved_by_name: null, resolved_at: null,
+          exception_id: 'exc-1',
+          enrolment_id: 'en-1',
+          stage: 'Fundamentals',
+          reason: 'Interviewer had to reschedule twice',
+          status: 'open',
+          owner_user_id: 'u-hr-1',
+          owner_name: 'Priya HR',
+          raised_by_name: 'Priya HR',
+          raised_at: '2026-09-01T00:00:00.000Z',
+          resolved_by_name: null,
+          resolved_at: null,
           resolution_note: null,
         },
       ]);
@@ -813,7 +960,10 @@ describe('CandidateDrawer', () => {
         { user_id: 'u-hr-1', full_name: 'Priya HR', email: 'priya@acme.edu' },
         { user_id: 'u-hr-2', full_name: 'Ravi HR', email: 'ravi@acme.edu' },
       ]);
-      stageSlaApi.reassignException.mockResolvedValue({ exception_id: 'exc-1', owner_user_id: 'u-hr-2' });
+      stageSlaApi.reassignException.mockResolvedValue({
+        exception_id: 'exc-1',
+        owner_user_id: 'u-hr-2',
+      });
       const user = userEvent.setup();
       renderDrawer({ enrolmentId: 'en-1' });
 

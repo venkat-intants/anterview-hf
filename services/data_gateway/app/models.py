@@ -24,7 +24,7 @@ exists; this header is orientation, not an index.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -34,6 +34,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
@@ -459,6 +460,13 @@ class ExamQuestion(Base):
     correct_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     points: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
     position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # PH4-D1: where this question came from, if it was copied from a bank
+    # question rather than authored here directly. Nullable — every existing
+    # row, and the whole candidate take/grading path, is untouched. Copy-on-add:
+    # nothing about a later version of the bank question ever reaches this row.
+    source_bank_question_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_bank_root_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_bank_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -495,6 +503,9 @@ class CodingQuestion(Base):
             "jsonb_array_length(test_cases) >= 1", name="ck_coding_questions_test_cases_count"
         ),
         CheckConstraint("time_limit_ms >= 100", name="ck_coding_questions_time_limit"),
+        # PH4-D3: composite FK target for code_quality_reports / code_fingerprints /
+        # code_similarity_signals / code_integrity_findings.
+        UniqueConstraint("id", "company_id", name="uq_coding_questions_id_company"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -511,6 +522,10 @@ class CodingQuestion(Base):
     time_limit_ms: Mapped[int] = mapped_column(Integer, default=5000, nullable=False)
     points: Mapped[int] = mapped_column(SmallInteger, default=100, nullable=False)
     position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # PH4-D1: see ExamQuestion — the same bank provenance, copy-on-add.
+    source_bank_question_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_bank_root_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_bank_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -566,6 +581,9 @@ class ExamAssignment(Base):
     # enrolments, ON DELETE SET NULL) but not mapped until B5, so rows created
     # through the ORM never set it. NULL = recorded against no application.
     enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # PH4-D2: which accommodation, if any, extended this link's expiry. Nullable —
+    # every existing row is untouched, and most links have none.
+    accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="invited", nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
@@ -607,6 +625,8 @@ class ExamAttempt(Base):
         CheckConstraint(
             "status IN ('in_progress','submitted','expired')", name="ck_exam_attempts_status"
         ),
+        # PH4-D3: composite FK target for the code-evidence tables (below).
+        UniqueConstraint("id", "company_id", name="uq_exam_attempts_id_company"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -632,6 +652,18 @@ class ExamAttempt(Base):
     # no proctoring data. Rolling score maintained by /exam/integrity-event.
     integrity_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     proctoring_summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # PH4-D2: the allowance this attempt started with, frozen by the
+    # exam_attempts_allowance_fixed trigger the moment it is set at /exam/start.
+    # accommodation_id is nullable — most attempts have none — and, once set,
+    # may only ever become NULL (never repoint to a different accommodation).
+    accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    extra_time_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    auto_submit_relaxed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # PH4-D3: set once, together with redacting `answers`/`graded_snapshot`'s
+    # coding source and program output (retention or DPDP erasure) — the ONE
+    # exception exam_attempts_submission_frozen allows on a submitted/expired
+    # attempt. NULL means the coding source has not been redacted.
+    code_redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="in_progress", nullable=False)
     started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -731,6 +763,8 @@ class InterviewInvite(Base):
     # enrolments, ON DELETE SET NULL) but not mapped until B5, so rows created
     # through the ORM never set it. NULL = recorded against no application.
     enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # PH4-D2: which accommodation, if any, extended this invite's expiry.
+    accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="invited", nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
@@ -1604,7 +1638,12 @@ class WorkflowRound(Base):
         ),
         UniqueConstraint("id", "company_id", name="uq_workflow_rounds_id_company"),
         CheckConstraint(
-            "kind IN ('mcq','coding','ai_interview','human_review')",
+            # PH4-D4 widened this from the original four (mcq, coding,
+            # ai_interview, human_review) to include job_simulation and
+            # portfolio — both evaluated by a person against round_criteria,
+            # never by a model. See migration a5d7f9b1c3e8.
+            "kind IN ('mcq','coding','ai_interview','human_review',"
+            "'job_simulation','portfolio')",
             name="ck_workflow_rounds_kind",
         ),
         CheckConstraint(
@@ -1712,4 +1751,849 @@ class RoundResult(Base):
     # A retake supersedes rather than overwrites: the earlier attempt stays
     # readable, which an appeal or an audit will ask for.
     superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# Reusable question banks — PH4-D1 (migration d2a4c6e8f0b3)
+# ---------------------------------------------------------------------------
+
+
+class QuestionBank(Base):
+    """A company-scoped library of reusable questions, independent of any exam."""
+
+    __tablename__ = "question_banks"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_question_banks_id_company"),
+        CheckConstraint("char_length(name) BETWEEN 1 AND 120", name="ck_question_banks_name"),
+        CheckConstraint(
+            "description IS NULL OR char_length(description) <= 1000",
+            name="ck_question_banks_description",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class BankQuestion(Base):
+    """One version of a reusable question. ``root_id`` == ``id`` for version 1;
+    later versions share ``root_id`` and are numbered by ``version``.
+
+    The lifecycle (draft -> in_review -> approved -> retired, plus a new
+    version) is enforced at the database by the ``bank_questions_lifecycle``
+    trigger (migration d2a4c6e8f0b3) — this class only shapes the row.
+    """
+
+    __tablename__ = "bank_questions"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_bank_questions_id_company"),
+        UniqueConstraint("root_id", "version", name="uq_bank_questions_root_version"),
+        ForeignKeyConstraint(
+            ["bank_id", "company_id"], ["question_banks.id", "question_banks.company_id"],
+            name="fk_bank_questions_bank", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["root_id", "company_id"], ["bank_questions.id", "bank_questions.company_id"],
+            name="fk_bank_questions_root", deferrable=True, initially="DEFERRED",
+        ),
+        CheckConstraint("kind IN ('mcq','coding')", name="ck_bank_questions_kind"),
+        CheckConstraint(
+            "status IN ('draft','in_review','approved','retired')", name="ck_bank_questions_status"
+        ),
+        CheckConstraint(
+            "origin IN ('authored','ai_draft','from_exam')", name="ck_bank_questions_origin"
+        ),
+        CheckConstraint(
+            "difficulty IN ('easy','medium','hard')", name="ck_bank_questions_difficulty"
+        ),
+        CheckConstraint("language IN ('en','hi','te')", name="ck_bank_questions_language"),
+        CheckConstraint("char_length(prompt) BETWEEN 1 AND 20000", name="ck_bank_questions_prompt"),
+        CheckConstraint("points >= 1", name="ck_bank_questions_points"),
+        CheckConstraint("version >= 1", name="ck_bank_questions_version"),
+        CheckConstraint("content_hash ~ '^[0-9a-f]{64}$'", name="ck_bank_questions_content_hash"),
+        CheckConstraint(
+            "review_note IS NULL OR char_length(review_note) <= 1000",
+            name="ck_bank_questions_review_note",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    bank_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    root_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    version: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    points: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # none_as_null=True on every nullable JSONB column here: SQLAlchemy's JSONB
+    # otherwise persists a Python None as the JSON literal 'null' rather than a
+    # SQL NULL, and this table's shape CHECK constraints test IS NULL — a
+    # coding row's unset `options` must be a real SQL NULL, not a JSONB scalar
+    # `null` that `jsonb_array_length()` then raises on.
+    options: Mapped[list[Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    correct_index: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    starter_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reference_solution: Mapped[str | None] = mapped_column(Text, nullable=True)
+    allowed_languages: Mapped[list[Any] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    test_cases: Mapped[list[Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    time_limit_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    difficulty: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(Text, default="en", nullable=False)
+    competencies: Mapped[list[Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    competency_ids: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    status: Mapped[str] = mapped_column(Text, default="draft", nullable=False)
+    origin: Mapped[str] = mapped_column(Text, default="authored", nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retired_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class BankQuestionEvent(Base):
+    """Append-only: what happened to a bank question, never its content."""
+
+    __tablename__ = "bank_question_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["bank_question_id", "company_id"], ["bank_questions.id", "bank_questions.company_id"],
+            name="fk_bank_question_events_question", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "action IN ('created','edited','submitted','withdrawn','approved','changes_requested',"
+            "'retired','versioned','copied_to_exam','saved_from_exam')",
+            name="ck_bank_question_events_action",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    bank_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# Candidate accommodations — PH4-D2 (migration e3b5d7f9a1c5)
+# ---------------------------------------------------------------------------
+class CandidateAccommodation(Base):
+    """A recorded adjustment for one applicant: extra time, a deadline
+    extension, relaxed auto-submit, or a free-text "other" adjustment.
+
+    Scoped to the whole applicant (``enrolment_id``, ``round_id`` and
+    ``exam_round_id`` all NULL), one application, one workflow round, or one
+    hand-assigned exam round. ``interviewer_note`` is the only accommodation
+    text an assigned interviewer ever sees; ``internal_note`` is HR-only. A
+    revision is a NEW row (``supersedes_id`` / ``superseded_by_id``), never an
+    edit of the one it replaces — an attempt already taken keeps pointing at
+    what applied when it was taken.
+
+    The database enforces the guarantees this class only shapes: a row arrives
+    active, not superseded, not redacted, with a named recorder; its scope,
+    parameters, basis and dates never change after insert; its two notes
+    change only as part of one redaction; ``active`` only ever becomes
+    ``revoked`` (``candidate_accommodations_guard``, migration ``e3b5d7f9a1c5``).
+    """
+
+    __tablename__ = "candidate_accommodations"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_candidate_accommodations_id_company"),
+        ForeignKeyConstraint(
+            ["applicant_id", "company_id"], ["applicants.id", "applicants.company_id"],
+            name="fk_candidate_accommodations_applicant", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["enrolment_id", "company_id"], ["enrolments.id", "enrolments.company_id"],
+            name="fk_candidate_accommodations_enrolment", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_candidate_accommodations_round", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["exam_round_id", "company_id"], ["exam_rounds.id", "exam_rounds.company_id"],
+            name="fk_candidate_accommodations_exam_round", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "basis IN ('candidate_request','hr_initiated')", name="ck_candidate_accommodations_basis"
+        ),
+        CheckConstraint(
+            "status IN ('active','revoked')", name="ck_candidate_accommodations_status"
+        ),
+        CheckConstraint(
+            "extra_time_percent IS NULL OR extra_time_percent BETWEEN 10 AND 200",
+            name="ck_candidate_accommodations_extra_time_range",
+        ),
+        CheckConstraint(
+            "deadline_extension_days IS NULL OR deadline_extension_days BETWEEN 1 AND 30",
+            name="ck_candidate_accommodations_deadline_range",
+        ),
+        CheckConstraint(
+            "other_adjustment IS NULL OR char_length(other_adjustment) <= 500",
+            name="ck_candidate_accommodations_other_len",
+        ),
+        CheckConstraint(
+            "interviewer_note IS NULL OR char_length(interviewer_note) <= 500",
+            name="ck_candidate_accommodations_interviewer_note_len",
+        ),
+        CheckConstraint(
+            "internal_note IS NULL OR char_length(internal_note) <= 1000",
+            name="ck_candidate_accommodations_internal_note_len",
+        ),
+        CheckConstraint(
+            "revoke_reason IS NULL OR char_length(revoke_reason) <= 500",
+            name="ck_candidate_accommodations_revoke_reason_len",
+        ),
+        CheckConstraint(
+            "effective_until IS NULL OR effective_until > effective_from",
+            name="ck_candidate_accommodations_window",
+        ),
+        CheckConstraint(
+            "round_id IS NULL OR enrolment_id IS NOT NULL",
+            name="ck_candidate_accommodations_round_needs_enrolment",
+        ),
+        CheckConstraint(
+            "NOT (round_id IS NOT NULL AND exam_round_id IS NOT NULL)",
+            name="ck_candidate_accommodations_one_round_scope",
+        ),
+        CheckConstraint(
+            "redacted_at IS NOT NULL OR extra_time_percent IS NOT NULL"
+            " OR deadline_extension_days IS NOT NULL OR relax_auto_submit"
+            " OR other_adjustment IS NOT NULL",
+            name="ck_candidate_accommodations_at_least_one",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    applicant_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    exam_round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    extra_time_percent: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    deadline_extension_days: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    relax_auto_submit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    other_adjustment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The only accommodation text an assigned interviewer ever sees.
+    interviewer_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # HR-only — never shown to an interviewer, never in an event or an email.
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    basis: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_from: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    effective_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(Text, default="active", nullable=False)
+    recorded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    revoked_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    revoke_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class AccommodationEvent(Base):
+    """Append-only: what happened to an accommodation, never its notes or its
+    parameter values."""
+
+    __tablename__ = "accommodation_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["accommodation_id", "company_id"],
+            ["candidate_accommodations.id", "candidate_accommodations.company_id"],
+            name="fk_accommodation_events_accommodation", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "action IN ('recorded','revised','revoked','applied','redacted')",
+            name="ck_accommodation_events_action",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    accommodation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# PH4-D3: code quality + similarity evidence — a signal is never a finding.
+#
+# code_quality_reports / code_fingerprints / code_similarity_signals are
+# SYSTEM evidence: written only by app/code_evidence.py's analysis sweep,
+# immutable once inserted (UPDATE refused by trigger; DELETE stays legal for
+# retention and erasure). code_integrity_findings is the only one of the four
+# a PERSON writes to, and only via a mandatory, non-empty rationale.
+# ---------------------------------------------------------------------------
+class CodeQualityReport(Base):
+    """One static-analysis pass over one coding answer. Never runs candidate
+    code: ``analyser='python-ast'`` uses stdlib ``ast``; every other language
+    (and any Python source ``ast.parse`` cannot parse) is
+    ``analyser='pygments-tokens'`` — a labelled approximation.
+
+    ``coverage`` is always ``{"available": false, "reason": ...}`` — coverage
+    needs instrumented execution, which this analyser deliberately never does.
+    """
+
+    __tablename__ = "code_quality_reports"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_quality_reports_attempt", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["coding_question_id", "company_id"],
+            ["coding_questions.id", "coding_questions.company_id"],
+            name="fk_code_quality_reports_question", ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "attempt_id", "coding_question_id", "analyser_version",
+            name="uq_code_quality_reports_attempt_question_version",
+        ),
+        CheckConstraint(
+            "analyser IN ('python-ast','pygments-tokens')", name="ck_code_quality_reports_analyser"
+        ),
+        CheckConstraint(
+            "status IN ('complete','unsupported','failed','skipped')",
+            name="ck_code_quality_reports_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    coding_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    exam_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    language: Mapped[str] = mapped_column(Text, nullable=False)
+    analyser: Mapped[str] = mapped_column(Text, nullable=False)
+    analyser_version: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    findings: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    coverage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # Never the source — see app/code_evidence.py::analyse_pending.
+    error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class CodeFingerprint(Base):
+    """One submission's winnowed k-gram hashes (the MOSS approach) — GIN-indexed
+    so the sweep's overlap query (``hashes && other.hashes``) stays cheap as
+    the question accumulates submissions."""
+
+    __tablename__ = "code_fingerprints"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_fingerprints_attempt", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["coding_question_id", "company_id"],
+            ["coding_questions.id", "coding_questions.company_id"],
+            name="fk_code_fingerprints_question", ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "attempt_id", "coding_question_id", "algorithm_version",
+            name="uq_code_fingerprints_attempt_question_version",
+        ),
+        CheckConstraint("token_count >= 0", name="ck_code_fingerprints_token_count"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    coding_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    hashes: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False)
+    lines: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class CodeSimilaritySignal(Base):
+    """SYSTEM evidence: a pair of submissions (or one submission against the
+    question's reference solution) whose fingerprints overlap enough to be
+    worth a look. NEVER read by grading, the workflow runner or the final
+    decision path — a signal is evidence for a human reviewer, not a finding.
+
+    Composite FKs from BOTH ``attempt_low_id`` and ``attempt_high_id`` to
+    ``exam_attempts(id, company_id)`` make a cross-tenant pair
+    unrepresentable: both must resolve through the SAME ``company_id`` on
+    this row.
+    """
+
+    __tablename__ = "code_similarity_signals"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["coding_question_id", "company_id"],
+            ["coding_questions.id", "coding_questions.company_id"],
+            name="fk_code_similarity_signals_question", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["attempt_low_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_similarity_signals_attempt_low", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["attempt_high_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_similarity_signals_attempt_high", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "reference_kind IN ('submission','reference_solution')",
+            name="ck_code_similarity_signals_reference_kind",
+        ),
+        CheckConstraint(
+            "(attempt_high_id IS NOT NULL AND attempt_low_id < attempt_high_id)"
+            " OR (reference_kind = 'reference_solution' AND attempt_high_id IS NULL)",
+            name="ck_code_similarity_signals_pair_order",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(matched_regions) = 'array' AND jsonb_array_length(matched_regions) <= 20",
+            name="ck_code_similarity_signals_regions_cap",
+        ),
+        UniqueConstraint("id", "company_id", name="uq_code_similarity_signals_id_company"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    coding_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    exam_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    attempt_low_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    attempt_high_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    reference_kind: Mapped[str] = mapped_column(Text, default="submission", nullable=False)
+    containment_low: Mapped[float] = mapped_column(NUMERIC(5, 4), nullable=False)
+    containment_high: Mapped[float | None] = mapped_column(NUMERIC(5, 4), nullable=True)
+    jaccard: Mapped[float] = mapped_column(NUMERIC(5, 4), nullable=False)
+    shared_fingerprints: Mapped[int] = mapped_column(Integer, nullable=False)
+    tokens_low: Mapped[int] = mapped_column(Integer, nullable=False)
+    tokens_high: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    matched_regions: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    thresholds: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class CodeIntegrityFinding(Base):
+    """HUMAN evidence: a named ``hr_manager``'s own judgement call, recorded
+    against a mandatory rationale. This is the only one of the four
+    code-evidence tables a person writes to, and the only column that could
+    ever read like a verdict (``outcome``) is never read by grading, the
+    workflow runner or the final-decision path — ``decision_authority`` stays
+    structurally ``human_only`` regardless of what this table holds.
+    """
+
+    __tablename__ = "code_integrity_findings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id", "company_id"], ["exam_attempts.id", "exam_attempts.company_id"],
+            name="fk_code_integrity_findings_attempt", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["coding_question_id", "company_id"],
+            ["coding_questions.id", "coding_questions.company_id"],
+            name="fk_code_integrity_findings_question", ondelete="CASCADE",
+        ),
+        # RESTRICT: a composite FK's ON DELETE SET NULL nulls every column it
+        # names, including company_id (NOT NULL here) — see the migration's
+        # docstring for the bug that caught. app/code_evidence.py::purge and
+        # admin_ops's erasure step 5h null signal_id themselves before
+        # deleting a signal, so RESTRICT never actually fires.
+        ForeignKeyConstraint(
+            ["signal_id", "company_id"],
+            ["code_similarity_signals.id", "code_similarity_signals.company_id"],
+            name="fk_code_integrity_findings_signal", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["enrolment_id", "company_id"], ["enrolments.id", "enrolments.company_id"],
+            name="fk_code_integrity_findings_enrolment", ondelete="RESTRICT",
+        ),
+        # MEDIUM-2: mirrors the migration -- NO ACTION (not SET NULL, which
+        # for a composite FK would null company_id, NOT NULL here, along with
+        # supersedes_id), deferrable. Never fires today: a finding is kept,
+        # not deleted, while its attempt exists.
+        ForeignKeyConstraint(
+            ["supersedes_id", "company_id"],
+            ["code_integrity_findings.id", "code_integrity_findings.company_id"],
+            name="fk_code_integrity_findings_supersedes", ondelete="NO ACTION",
+            deferrable=True, initially="DEFERRED",
+        ),
+        CheckConstraint(
+            "outcome IN ('no_concern','follow_up','confirmed')",
+            name="ck_code_integrity_findings_outcome",
+        ),
+        # The redaction marker '[redacted]' (11 chars) is shorter than the
+        # 20-char floor a human-authored rationale must clear.
+        CheckConstraint(
+            "rationale = '[redacted]' OR char_length(rationale) BETWEEN 20 AND 2000",
+            name="ck_code_integrity_findings_rationale_len",
+        ),
+        UniqueConstraint("id", "company_id", name="uq_code_integrity_findings_id_company"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    coding_question_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    signal_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    enrolment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    recorded_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# PH4-D4: job simulations and portfolio rounds.
+#
+# round_tasks / round_task_materials are HR's authored configuration and
+# reuse workflow_children_immutable() (migration a2b4c6d8e0f1) unchanged —
+# frozen while their workflow is published, archived, in review or approved,
+# exactly like round_criteria. task_submissions is the lifecycle row (one
+# live row per (enrolment, round), superseded on re-issue); task_responses is
+# what the candidate actually wrote, linked or uploaded, frozen the moment
+# the parent submission is no longer open. task_events is append-only.
+#
+# No AI ever reads any of these five tables, and no module here may import an
+# LLM client (a person always scores a task round — see interviewer_scorecards).
+# ---------------------------------------------------------------------------
+class RoundTask(Base):
+    """One row per task-kind round: the brief, its items, and — for
+    ``portfolio`` — how many artifacts, files or links, and which link
+    domains are allowed. Frozen while the workflow is published, archived, in
+    review or approved (``round_tasks_no_edit_when_published``, migration
+    ``a5d7f9b1c3e8``, reusing ``workflow_children_immutable()``)."""
+
+    __tablename__ = "round_tasks"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_round_tasks_id_company"),
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_round_tasks_round", ondelete="CASCADE",
+        ),
+        CheckConstraint("kind IN ('job_simulation','portfolio')", name="ck_round_tasks_kind"),
+        CheckConstraint("char_length(brief) BETWEEN 1 AND 20000", name="ck_round_tasks_brief_len"),
+        CheckConstraint(
+            "brief_translations IS NULL OR (brief_translations - 'hi' - 'te') = '{}'::jsonb",
+            name="ck_round_tasks_brief_translations_keys",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(items) = 'array' AND jsonb_array_length(items) <= 20",
+            name="ck_round_tasks_items_shape",
+        ),
+        CheckConstraint(
+            "min_artifacts IS NULL OR (max_artifacts IS NOT NULL AND min_artifacts >= 0"
+            " AND max_artifacts >= min_artifacts AND max_artifacts <= 20)",
+            name="ck_round_tasks_artifact_range",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    round_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    brief: Mapped[str] = mapped_column(Text, nullable=False)
+    brief_translations: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    items: Mapped[list[Any]] = mapped_column(JSONB, default=list, nullable=False)
+    min_artifacts: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    max_artifacts: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    allow_files: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_links: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allowed_link_domains: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class RoundTaskMaterial(Base):
+    """One HR-attached reference file for a task round. Same content check
+    (PDF/JPEG/PNG by magic bytes) as ``candidate_documents``; frozen the same
+    way as the round's task configuration. ``storage_key`` is deliberately
+    NOT unique: cloning a workflow (``workflows.clone_for_edit``) copies this
+    row and shares the original's key rather than duplicating the bytes."""
+
+    __tablename__ = "round_task_materials"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_round_task_materials_round", ondelete="CASCADE",
+        ),
+        CheckConstraint("char_length(title) BETWEEN 1 AND 200",
+                        name="ck_round_task_materials_title_len"),
+        CheckConstraint(
+            "content_type IN ('application/pdf','image/jpeg','image/png')",
+            name="ck_round_task_materials_content_type",
+        ),
+        CheckConstraint("size_bytes BETWEEN 1 AND 10485760", name="ck_round_task_materials_size"),
+        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_round_task_materials_sha256"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    round_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    # Not unique: a clone shares the original's key (see the class docstring).
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    original_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    position: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class TaskSubmission(Base):
+    """One candidate's attempt at a task round — the lifecycle row.
+
+    One LIVE row per ``(enrolment_id, round_id)`` (partial unique index); a
+    re-issue supersedes and inserts a new row rather than editing this one, so
+    an attempt already scored keeps pointing at what it actually saw. The
+    allowance snapshot (``time_limit_seconds``, ``extra_time_seconds``,
+    ``deadline_extension_days``, ``accommodation_id``) is resolved once at
+    issue and frozen once the candidate starts
+    (``task_submissions_lifecycle``, migration ``a5d7f9b1c3e8``).
+    """
+
+    __tablename__ = "task_submissions"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_task_submissions_id_company"),
+        ForeignKeyConstraint(
+            ["enrolment_id", "company_id"], ["enrolments.id", "enrolments.company_id"],
+            name="fk_task_submissions_enrolment", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_task_submissions_round", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["applicant_id", "company_id"], ["applicants.id", "applicants.company_id"],
+            name="fk_task_submissions_applicant", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["accommodation_id", "company_id"],
+            ["candidate_accommodations.id", "candidate_accommodations.company_id"],
+            # RESTRICT, not SET NULL (L4): a composite SET NULL here would
+            # try to null company_id too, which is NOT NULL on this table.
+            name="fk_task_submissions_accommodation", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["superseded_by_id", "company_id"],
+            ["task_submissions.id", "task_submissions.company_id"],
+            name="fk_task_submissions_superseded_by", ondelete="RESTRICT",
+            deferrable=True, initially="DEFERRED",
+        ),
+        CheckConstraint("kind IN ('job_simulation','portfolio')", name="ck_task_submissions_kind"),
+        CheckConstraint(
+            "status IN ('assigned','in_progress','submitted','expired','withdrawn')",
+            name="ck_task_submissions_status",
+        ),
+        CheckConstraint("closed_by IS NULL OR closed_by IN ('candidate','time_limit')",
+                        name="ck_task_submissions_closed_by"),
+        CheckConstraint("config_digest ~ '^[0-9a-f]{64}$'", name="ck_task_submissions_digest"),
+        CheckConstraint("attempt_no >= 1", name="ck_task_submissions_attempt_no"),
+        CheckConstraint("extra_time_seconds >= 0", name="ck_task_submissions_extra_time"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    enrolment_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    round_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    applicant_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, default="assigned", nullable=False)
+    token_hash: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+    due_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    closed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    time_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    base_time_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extra_time_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    deadline_extension_days: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    config_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
+    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    issued_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    consented_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class TaskResponse(Base):
+    """What the candidate wrote, linked or uploaded against one item (or, for
+    a free-form portfolio artifact, ``item_key IS NULL``). Frozen the moment
+    the parent submission is no longer ``assigned``/``in_progress``
+    (``task_responses_frozen``); a new file is a new row."""
+
+    __tablename__ = "task_responses"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["submission_id", "company_id"], ["task_submissions.id", "task_submissions.company_id"],
+            name="fk_task_responses_submission", ondelete="CASCADE",
+        ),
+        CheckConstraint("response_type IN ('text','file','link')", name="ck_task_responses_type"),
+        CheckConstraint(
+            "link_kind IS NULL OR link_kind IN"
+            " ('repository','design','document','video','website','other')",
+            name="ck_task_responses_link_kind",
+        ),
+        CheckConstraint("item_key IS NULL OR char_length(item_key) <= 80",
+                        name="ck_task_responses_item_key_len"),
+        CheckConstraint("text_value IS NULL OR char_length(text_value) <= 20000",
+                        name="ck_task_responses_text_len"),
+        CheckConstraint("link_url IS NULL OR char_length(link_url) <= 2000",
+                        name="ck_task_responses_link_len"),
+        CheckConstraint("link_url IS NULL OR link_url LIKE 'https://%'",
+                        name="ck_task_responses_link_https"),
+        CheckConstraint("title IS NULL OR char_length(title) <= 200",
+                        name="ck_task_responses_title_len"),
+        CheckConstraint("description IS NULL OR char_length(description) <= 2000",
+                        name="ck_task_responses_description_len"),
+        CheckConstraint(
+            "content_type IS NULL OR content_type IN ('application/pdf','image/jpeg','image/png')",
+            name="ck_task_responses_content_type",
+        ),
+        CheckConstraint(
+            "redacted_at IS NOT NULL OR"
+            " (response_type = 'text' AND text_value IS NOT NULL"
+            "   AND storage_key IS NULL AND link_url IS NULL)"
+            " OR (response_type = 'file' AND storage_key IS NOT NULL"
+            "   AND text_value IS NULL AND link_url IS NULL)"
+            " OR (response_type = 'link' AND link_url IS NOT NULL"
+            "   AND storage_key IS NULL AND text_value IS NULL)",
+            name="ck_task_responses_shape",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    submission_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    item_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    response_type: Mapped[str] = mapped_column(Text, nullable=False)
+    text_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_key: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+    original_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class TaskEvent(Base):
+    """Append-only: what happened to a task submission (or, for
+    ``round_task_updated``, a round's configuration) — facts only, never
+    response content."""
+
+    __tablename__ = "task_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["submission_id", "company_id"], ["task_submissions.id", "task_submissions.company_id"],
+            name="fk_task_events_submission", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_task_events_round", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "action IN ('issued','opened','started','saved','artifact_added',"
+            "'artifact_removed','submitted','closed_at_time_limit','expired','withdrawn',"
+            "'reissued','link_rotated','artifact_downloaded','submission_viewed',"
+            "'round_task_updated')",
+            name="ck_task_events_action",
+        ),
+        CheckConstraint("actor_type IN ('candidate','user','system')",
+                        name="ck_task_events_actor_type"),
+        CheckConstraint("submission_id IS NOT NULL OR round_id IS NOT NULL",
+                        name="ck_task_events_target"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    submission_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_type: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

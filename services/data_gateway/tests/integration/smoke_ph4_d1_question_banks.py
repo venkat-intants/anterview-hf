@@ -157,6 +157,30 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         eq_id = copied["id"]
         check("the exam's copy carries the bank prompt and answer",
               copied["prompt"] == "What is 2 + 2?" and copied["correct_index"] == 1, r.text[:200])
+        # The exam editor's "From bank - vN" chip reads these. The copy always
+        # wrote them, but no response returned them, so the chip never
+        # rendered -- the acceptance evidence pass found it; no test had.
+        check("the exam's copy says which bank question and version it came from",
+              copied.get("source_bank_question_id") == qid
+              and copied.get("source_bank_root_id") == qid
+              and copied.get("source_bank_version") == 1, str(copied)[:300])
+
+        # Reuse ACROSS assessments -- the criterion's own words. The
+        # duplicate refusal above is per exam, so the same approved question
+        # must go into a second exam as a fresh copy.
+        r = await c.post("/hr/exams", json={"title": "Second screening", "kind": "mcq"})
+        exam2_id = r.json()["id"]
+        r = await c.get(f"/hr/exams/{exam2_id}/structure")
+        section2_id = r.json()["rounds"][0]["sections"][0]["id"]
+        r = await c.post(f"/hr/exams/{exam2_id}/sections/{section2_id}/bank-questions",
+                         json={"ids": [qid]})
+        check("the same approved question is reused in a second exam",
+              r.status_code == 200 and r.json().get("added") == 1, r.text[:200])
+        r = await c.get(f"/hr/exams/{exam2_id}")
+        copy2 = r.json()["questions"][0]
+        check("…as its own copy, with the same provenance",
+              copy2["id"] != eq_id and copy2.get("source_bank_root_id") == qid
+              and copy2.get("source_bank_version") == 1, str(copy2)[:300])
 
         print("\nPH4-D1 — publish, and a candidate takes it")
         r = await c.patch(f"/hr/exams/{exam_id}/rounds/{round_id}", json={"status": "published"})

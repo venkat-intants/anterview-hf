@@ -122,6 +122,14 @@ class CodingQuestionOut(BaseModel):
     time_limit_ms: int
     points: int
     position: int
+    # PH4-D1 -- where this question came from, when it was copied from a bank.
+    # All three are NULL for a question written directly in the exam. The
+    # exam editor's "From bank - vN" chip reads these; the columns existed and
+    # the copy wrote them, but no response returned them, so the chip could
+    # never render -- found by the acceptance evidence pass, not by a test.
+    source_bank_question_id: str | None = None
+    source_bank_root_id: str | None = None
+    source_bank_version: int | None = None
 
 
 class GenerateCodingQuestionsIn(BaseModel):
@@ -215,6 +223,10 @@ def _coding_out(q: CodingQuestion) -> CodingQuestionOut:
         time_limit_ms=q.time_limit_ms,
         points=q.points,
         position=q.position,
+        source_bank_question_id=str(q.source_bank_question_id)
+        if q.source_bank_question_id else None,
+        source_bank_root_id=str(q.source_bank_root_id) if q.source_bank_root_id else None,
+        source_bank_version=q.source_bank_version,
     )
 
 

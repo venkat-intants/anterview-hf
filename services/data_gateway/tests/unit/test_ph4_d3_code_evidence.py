@@ -572,7 +572,8 @@ def test_new_tables_are_in_the_erasure_inventory() -> None:
     assert "DELETE FROM code_fingerprints" in inv
     assert "DELETE FROM code_similarity_signals" in inv
     assert "UPDATE code_integrity_findings SET rationale = '[redacted]'" in inv
-    assert 'executor_version": "1.8"' in inv
+    # 1.8 when D3's step 5h joined; bumped to 1.9 when PH4-D4's step 5i did.
+    assert 'executor_version": "1.9"' in inv
 
 
 def _erasure_dict_keys(source: str, dict_name: str) -> set[str]:

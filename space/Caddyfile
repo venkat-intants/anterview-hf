@@ -157,6 +157,13 @@
 		}
 		reverse_proxy 127.0.0.1:8002
 	}
+	# PH4-D4 — a job-simulation or portfolio task (X-Task-Token).
+	handle /task* {
+		request_body {
+			max_size 11MB
+		}
+		reverse_proxy 127.0.0.1:8002
+	}
 	handle /jobs* {
 		reverse_proxy 127.0.0.1:8002
 	}
@@ -241,6 +248,7 @@
 				request>headers>X-Draft-Token delete
 				request>headers>X-Offer-Token delete
 				request>headers>X-Offer-Session delete
+				request>headers>X-Task-Token delete
 				request>headers>X-Test-Hooks-Token delete
 				request>uri query {
 					replace code REDACTED

@@ -286,6 +286,10 @@ def test_get_for_interviewer_returns_exactly_the_expected_keys() -> None:
 
     assert _return_dict_keys(get_for_interviewer) == {
         "scorecard_id", "state", "status", "candidate_name", "job_title", "round_title",
+        # PH4-D4: which kind of round this is (human_review / job_simulation /
+        # portfolio) — SCORABLE_ROUND_KINDS widened to all three, and the
+        # interviewer console needs to tell them apart.
+        "round_kind",
         "due_at", "submitted_at", "summary", "correction_reason", "is_correction",
         "superseded", "can_edit", "can_correct", "adjustments_note", "criteria",
     }

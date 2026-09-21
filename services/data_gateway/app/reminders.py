@@ -110,6 +110,10 @@ class SweepResult:
     # no-op, not skipped silently.
     code_reports: int = 0
     similarity_signals: int = 0
+    # PH4-D4: task submissions the sweep auto-closed — a timed-out
+    # in-progress one becomes 'submitted' (closed_by='time_limit'); an
+    # untouched 'assigned' one past due becomes 'expired'.
+    task_closures: int = 0
     # "stage: ErrorType: message" for each stage that failed this sweep. The
     # sweep carries on past them; this is how the failure is still recorded.
     failed_stages: list[str] = field(default_factory=list)
@@ -128,6 +132,7 @@ class SweepResult:
             + self.offers_expired
             + self.code_reports
             + self.similarity_signals
+            + self.task_closures
         )
 
 
@@ -399,6 +404,21 @@ SELECT * FROM (
                       WHERE ee.dedupe_key = 'no_show:' || inv.id::text)
      AND NOT EXISTS (SELECT 1 FROM notifications n
                       WHERE n.dedupe_key = 'interview_no_show:' || inv.id::text)
+  UNION ALL
+  -- PH4-D4: a job_simulation/portfolio link nobody opened (or started but
+  -- never finished) before its due date. task_submissions carries its own
+  -- issuer, so there is no COALESCE dance like the exam/interview legs need.
+  SELECT 'task' AS kind, t.id, t.due_at AS expires_at, t.company_id,
+         t.issued_by_user_id AS owner_user_id,
+         a.full_name, a.email, a.user_id, wr.title AS what,
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate
+    FROM task_submissions t
+    JOIN applicants a ON a.id = t.applicant_id AND a.deleted_at IS NULL
+    JOIN workflow_rounds wr ON wr.id = t.round_id
+    LEFT JOIN enrolments en ON en.id = t.enrolment_id
+    LEFT JOIN workflows  wf ON wf.id = en.workflow_id
+   WHERE t.status IN ('assigned', 'in_progress') AND t.redacted_at IS NULL
+     AND t.due_at <= :now AND t.due_at > :floor
 ) lapsed
  WHERE (
          mail_candidate
@@ -840,6 +860,17 @@ async def _offer_expiry(db: AsyncSession, result: SweepResult) -> None:
     await db.commit()
 
 
+async def _task_deadlines(db: AsyncSession, result: SweepResult) -> None:
+    """PH4-D4: close timed-out task submissions. Runs AFTER ``_expiry_notices``
+    so a link that lapsed unopened is still ``assigned``/``in_progress`` when
+    the notice stage's ``_LAPSED_SQL`` looks for it — the same ordering
+    ``offers`` follows relative to ``expiry`` above."""
+    from app.job_tasks import close_due  # noqa: PLC0415 — keep the sweep import light
+
+    result.task_closures += await close_due(db)
+    await db.commit()
+
+
 async def _code_analysis(db: AsyncSession, result: SweepResult) -> None:
     """PH4-D3: static code-quality/similarity analysis over recently submitted
     coding rounds. A documented no-op when ``CODE_ANALYSIS_ENABLED`` is false
@@ -891,6 +922,9 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> SweepResult:
             ("stage_sla", _stage_sla),
             ("sessions", _session_reminders),
             ("offers", _offer_expiry),
+            # PH4-D4: after "expiry" (above), which still needs to see a
+            # lapsed task as assigned/in_progress; before "code_analysis".
+            ("tasks", _task_deadlines),
             # PH4-D3: independent of every stage above — a failure here must
             # never touch an enrolment, a notification or a decided status.
             ("code_analysis", _code_analysis),

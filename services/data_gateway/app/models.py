@@ -1638,7 +1638,12 @@ class WorkflowRound(Base):
         ),
         UniqueConstraint("id", "company_id", name="uq_workflow_rounds_id_company"),
         CheckConstraint(
-            "kind IN ('mcq','coding','ai_interview','human_review')",
+            # PH4-D4 widened this from the original four (mcq, coding,
+            # ai_interview, human_review) to include job_simulation and
+            # portfolio — both evaluated by a person against round_criteria,
+            # never by a model. See migration a5d7f9b1c3e8.
+            "kind IN ('mcq','coding','ai_interview','human_review',"
+            "'job_simulation','portfolio')",
             name="ck_workflow_rounds_kind",
         ),
         CheckConstraint(
@@ -2282,4 +2287,301 @@ class CodeIntegrityFinding(Base):
     supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# PH4-D4: job simulations and portfolio rounds.
+#
+# round_tasks / round_task_materials are HR's authored configuration and
+# reuse workflow_children_immutable() (migration a2b4c6d8e0f1) unchanged —
+# frozen while their workflow is published, archived, in review or approved,
+# exactly like round_criteria. task_submissions is the lifecycle row (one
+# live row per (enrolment, round), superseded on re-issue); task_responses is
+# what the candidate actually wrote, linked or uploaded, frozen the moment
+# the parent submission is no longer open. task_events is append-only.
+#
+# No AI ever reads any of these five tables, and no module here may import an
+# LLM client (a person always scores a task round — see interviewer_scorecards).
+# ---------------------------------------------------------------------------
+class RoundTask(Base):
+    """One row per task-kind round: the brief, its items, and — for
+    ``portfolio`` — how many artifacts, files or links, and which link
+    domains are allowed. Frozen while the workflow is published, archived, in
+    review or approved (``round_tasks_no_edit_when_published``, migration
+    ``a5d7f9b1c3e8``, reusing ``workflow_children_immutable()``)."""
+
+    __tablename__ = "round_tasks"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_round_tasks_id_company"),
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_round_tasks_round", ondelete="CASCADE",
+        ),
+        CheckConstraint("kind IN ('job_simulation','portfolio')", name="ck_round_tasks_kind"),
+        CheckConstraint("char_length(brief) BETWEEN 1 AND 20000", name="ck_round_tasks_brief_len"),
+        CheckConstraint(
+            "brief_translations IS NULL OR (brief_translations - 'hi' - 'te') = '{}'::jsonb",
+            name="ck_round_tasks_brief_translations_keys",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(items) = 'array' AND jsonb_array_length(items) <= 20",
+            name="ck_round_tasks_items_shape",
+        ),
+        CheckConstraint(
+            "min_artifacts IS NULL OR (max_artifacts IS NOT NULL AND min_artifacts >= 0"
+            " AND max_artifacts >= min_artifacts AND max_artifacts <= 20)",
+            name="ck_round_tasks_artifact_range",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    round_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    brief: Mapped[str] = mapped_column(Text, nullable=False)
+    brief_translations: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    items: Mapped[list[Any]] = mapped_column(JSONB, default=list, nullable=False)
+    min_artifacts: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    max_artifacts: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    allow_files: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_links: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allowed_link_domains: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class RoundTaskMaterial(Base):
+    """One HR-attached reference file for a task round. Same content check
+    (PDF/JPEG/PNG by magic bytes) as ``candidate_documents``; frozen the same
+    way as the round's task configuration. ``storage_key`` is deliberately
+    NOT unique: cloning a workflow (``workflows.clone_for_edit``) copies this
+    row and shares the original's key rather than duplicating the bytes."""
+
+    __tablename__ = "round_task_materials"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_round_task_materials_round", ondelete="CASCADE",
+        ),
+        CheckConstraint("char_length(title) BETWEEN 1 AND 200",
+                        name="ck_round_task_materials_title_len"),
+        CheckConstraint(
+            "content_type IN ('application/pdf','image/jpeg','image/png')",
+            name="ck_round_task_materials_content_type",
+        ),
+        CheckConstraint("size_bytes BETWEEN 1 AND 10485760", name="ck_round_task_materials_size"),
+        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_round_task_materials_sha256"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    round_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    # Not unique: a clone shares the original's key (see the class docstring).
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    original_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    position: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class TaskSubmission(Base):
+    """One candidate's attempt at a task round — the lifecycle row.
+
+    One LIVE row per ``(enrolment_id, round_id)`` (partial unique index); a
+    re-issue supersedes and inserts a new row rather than editing this one, so
+    an attempt already scored keeps pointing at what it actually saw. The
+    allowance snapshot (``time_limit_seconds``, ``extra_time_seconds``,
+    ``deadline_extension_days``, ``accommodation_id``) is resolved once at
+    issue and frozen once the candidate starts
+    (``task_submissions_lifecycle``, migration ``a5d7f9b1c3e8``).
+    """
+
+    __tablename__ = "task_submissions"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_task_submissions_id_company"),
+        ForeignKeyConstraint(
+            ["enrolment_id", "company_id"], ["enrolments.id", "enrolments.company_id"],
+            name="fk_task_submissions_enrolment", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_task_submissions_round", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["applicant_id", "company_id"], ["applicants.id", "applicants.company_id"],
+            name="fk_task_submissions_applicant", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["accommodation_id", "company_id"],
+            ["candidate_accommodations.id", "candidate_accommodations.company_id"],
+            name="fk_task_submissions_accommodation", ondelete="SET NULL",
+        ),
+        ForeignKeyConstraint(
+            ["superseded_by_id", "company_id"],
+            ["task_submissions.id", "task_submissions.company_id"],
+            name="fk_task_submissions_superseded_by", ondelete="SET NULL",
+            deferrable=True, initially="DEFERRED",
+        ),
+        CheckConstraint("kind IN ('job_simulation','portfolio')", name="ck_task_submissions_kind"),
+        CheckConstraint(
+            "status IN ('assigned','in_progress','submitted','expired','withdrawn')",
+            name="ck_task_submissions_status",
+        ),
+        CheckConstraint("closed_by IS NULL OR closed_by IN ('candidate','time_limit')",
+                        name="ck_task_submissions_closed_by"),
+        CheckConstraint("config_digest ~ '^[0-9a-f]{64}$'", name="ck_task_submissions_digest"),
+        CheckConstraint("attempt_no >= 1", name="ck_task_submissions_attempt_no"),
+        CheckConstraint("extra_time_seconds >= 0", name="ck_task_submissions_extra_time"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    enrolment_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    round_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    applicant_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, default="assigned", nullable=False)
+    token_hash: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+    due_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    closed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    time_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    base_time_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extra_time_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    deadline_extension_days: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    config_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
+    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    issued_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    consented_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class TaskResponse(Base):
+    """What the candidate wrote, linked or uploaded against one item (or, for
+    a free-form portfolio artifact, ``item_key IS NULL``). Frozen the moment
+    the parent submission is no longer ``assigned``/``in_progress``
+    (``task_responses_frozen``); a new file is a new row."""
+
+    __tablename__ = "task_responses"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["submission_id", "company_id"], ["task_submissions.id", "task_submissions.company_id"],
+            name="fk_task_responses_submission", ondelete="CASCADE",
+        ),
+        CheckConstraint("response_type IN ('text','file','link')", name="ck_task_responses_type"),
+        CheckConstraint(
+            "link_kind IS NULL OR link_kind IN"
+            " ('repository','design','document','video','website','other')",
+            name="ck_task_responses_link_kind",
+        ),
+        CheckConstraint("item_key IS NULL OR char_length(item_key) <= 80",
+                        name="ck_task_responses_item_key_len"),
+        CheckConstraint("text_value IS NULL OR char_length(text_value) <= 20000",
+                        name="ck_task_responses_text_len"),
+        CheckConstraint("link_url IS NULL OR char_length(link_url) <= 2000",
+                        name="ck_task_responses_link_len"),
+        CheckConstraint("link_url IS NULL OR link_url LIKE 'https://%'",
+                        name="ck_task_responses_link_https"),
+        CheckConstraint("title IS NULL OR char_length(title) <= 200",
+                        name="ck_task_responses_title_len"),
+        CheckConstraint("description IS NULL OR char_length(description) <= 2000",
+                        name="ck_task_responses_description_len"),
+        CheckConstraint(
+            "content_type IS NULL OR content_type IN ('application/pdf','image/jpeg','image/png')",
+            name="ck_task_responses_content_type",
+        ),
+        CheckConstraint(
+            "redacted_at IS NOT NULL OR"
+            " (response_type = 'text' AND text_value IS NOT NULL"
+            "   AND storage_key IS NULL AND link_url IS NULL)"
+            " OR (response_type = 'file' AND storage_key IS NOT NULL"
+            "   AND text_value IS NULL AND link_url IS NULL)"
+            " OR (response_type = 'link' AND link_url IS NOT NULL"
+            "   AND storage_key IS NULL AND text_value IS NULL)",
+            name="ck_task_responses_shape",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    submission_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    item_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    response_type: Mapped[str] = mapped_column(Text, nullable=False)
+    text_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_key: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+    original_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class TaskEvent(Base):
+    """Append-only: what happened to a task submission (or, for
+    ``round_task_updated``, a round's configuration) — facts only, never
+    response content."""
+
+    __tablename__ = "task_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["submission_id", "company_id"], ["task_submissions.id", "task_submissions.company_id"],
+            name="fk_task_events_submission", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["round_id", "company_id"], ["workflow_rounds.id", "workflow_rounds.company_id"],
+            name="fk_task_events_round", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "action IN ('issued','opened','started','saved','artifact_added',"
+            "'artifact_removed','submitted','closed_at_time_limit','expired','withdrawn',"
+            "'reissued','link_rotated','artifact_downloaded','submission_viewed',"
+            "'round_task_updated')",
+            name="ck_task_events_action",
+        ),
+        CheckConstraint("actor_type IN ('candidate','user','system')",
+                        name="ck_task_events_actor_type"),
+        CheckConstraint("submission_id IS NOT NULL OR round_id IS NOT NULL",
+                        name="ck_task_events_target"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    submission_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_type: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

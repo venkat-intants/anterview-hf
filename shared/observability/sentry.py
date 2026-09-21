@@ -55,6 +55,11 @@ _TRANSPORT_HEADERS: frozenset[str] = frozenset(
         "x-draft-token",
         "x-offer-token",
         "x-offer-session",
+        "x-task-token",
+        # Test-only and never mounted outside a local env, but listed anyway so
+        # the rule has no exceptions: every magic-link credential header is
+        # scrubbed everywhere (tests/unit/test_credential_header_contract.py).
+        "x-test-hooks-token",
     }
 )
 

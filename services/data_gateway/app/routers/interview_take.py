@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import DbSessionDep
+from app.guest_identity import provision_guest_user
 from app.interview_link import hash_interview_token
 from app.models import Applicant, InterviewInvite, Job
 from app.rate_limit import rate_limit
@@ -299,34 +300,12 @@ async def redeem_invite(
     # --- provision-or-reuse the guest user (one per applicant) ---
     guest_user_id = applicant.user_id
     if guest_user_id is None:
-        guest_user_id = uuid.uuid4()
-        guest_email = f"invite+{guest_user_id}@guest.intants.local"
         try:
-            await db.execute(
-                text(
-                    "INSERT INTO users (id, email, password_hash, full_name, company_id, "
-                    "resume_text, preferred_language, is_active, must_change_password, "
-                    "created_at, updated_at) VALUES "
-                    "(:id, :email, NULL, :fn, :cid, :rt, :lang, true, false, :now, :now)"
-                ),
-                {
-                    "id": guest_user_id, "email": guest_email, "fn": applicant.full_name,
-                    "cid": inv.company_id, "rt": applicant.resume_text or "",
-                    "lang": inv.language, "now": now,
-                },
+            guest_user_id = await provision_guest_user(
+                db, applicant_id=applicant.id, full_name=applicant.full_name,
+                company_id=inv.company_id, language=inv.language,
+                resume_text=applicant.resume_text or "", email_prefix="invite", now=now,
             )
-            await db.execute(
-                text(
-                    "INSERT INTO user_roles (user_id, role_id, assigned_at) VALUES "
-                    "(:uid, (SELECT id FROM roles WHERE name = 'guest_candidate'), :now)"
-                ),
-                {"uid": guest_user_id, "now": now},
-            )
-            await db.execute(
-                text("UPDATE applicants SET user_id = :uid, updated_at = :now WHERE id = :aid"),
-                {"uid": guest_user_id, "aid": applicant.id, "now": now},
-            )
-            await db.flush()
         except IntegrityError:
             # Lost a race (uq_applicants_user_id) — reuse the winner's guest user.
             await db.rollback()

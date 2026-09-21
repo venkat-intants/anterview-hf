@@ -48,13 +48,22 @@ from app.agents.tools import registry
 from app.workflows import (
     EXAM_BACKED_KINDS,
     MAX_ROUNDS,
-    ROUND_KINDS,
     load_criteria,
     load_rounds,
     validate,
 )
 
 log = structlog.get_logger(__name__)
+
+#: PH4-D4 widened app.workflows.ROUND_KINDS to six values so job_simulation
+#: and portfolio rounds can be authored and run. The copilot stays pinned to
+#: the original four: candidate-authored task content is the prompt-injection
+#: surface D-03 deferred portfolio rounds for, and a copilot that could
+#: propose a task round would hand a model a path to it. Widening this needs
+#: a deliberate, reviewed change here — never inferred from ROUND_KINDS.
+COPILOT_ROUND_KINDS: frozenset[str] = frozenset(
+    {"mcq", "coding", "ai_interview", "human_review"}
+)
 
 # Mirrors the server cap in hr_workflows.put_criteria. A round that assesses
 # everything assesses nothing in particular.
@@ -431,7 +440,7 @@ def _normalise_rounds(
         if not isinstance(item, dict):
             continue
         kind = str(item.get("kind", "")).strip()
-        if kind not in ROUND_KINDS:
+        if kind not in COPILOT_ROUND_KINDS:
             notes.append(f"dropped a round with unknown type {kind!r}")
             continue
         title = str(item.get("title", "")).strip()[:200]

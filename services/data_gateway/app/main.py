@@ -47,6 +47,7 @@ from app.database import dispose_engine, get_db_session, get_session_factory, in
 from app.dependencies import set_auth_provider
 from app.health import router as health_router
 from app.interview_kits import purge_expired_notes
+from app.job_tasks import purge as purge_task_submissions
 from app.mailer import purge_old_email_events, start_email_worker, stop_email_worker
 from app.redis_client import close_redis, get_redis, init_redis
 from app.retention import purge_expired_sessions
@@ -79,6 +80,10 @@ from app.routers.interview_scheduling import me_router as scheduling_me_router
 from app.routers.interview_take import router as interview_take_router
 from app.routers.interviewer import router as interviewer_router
 from app.routers.jd import router as jd_router
+from app.routers.job_tasks import hr_router as job_tasks_hr_router
+from app.routers.job_tasks import iv_router as job_tasks_iv_router
+from app.routers.job_tasks import me_router as job_tasks_me_router
+from app.routers.job_tasks import public_router as job_tasks_public_router
 from app.routers.jobs import router as jobs_router
 from app.routers.notifications import router as notifications_router
 from app.routers.offers import admin_router as offers_admin_router
@@ -273,6 +278,23 @@ async def _run_retention_job() -> None:
     except Exception as exc:  # broad — never let this cleanup kill the scheduler
         log.error(
             "code_evidence.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
+    # Same tick: task submissions and their responses whose purpose is over
+    # (PH4-D4) — the same shape as accommodations/code-evidence retention.
+    # Files first (inside purge_task_submissions), rows only on a full count;
+    # honours RETENTION_DRY_RUN.
+    try:
+        async with factory() as session:
+            purged_tasks = await purge_task_submissions(
+                session, retention_days=settings.task_submission_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("job_tasks.retention.done", purged=purged_tasks, dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "job_tasks.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
         )
 
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft
@@ -499,6 +521,9 @@ app.add_middleware(
         # decline, and preboarding document upload.
         "X-Offer-Token",
         "X-Offer-Session",
+        # PH4-D4: a job-simulation or portfolio task link -- open, save,
+        # upload an artifact, submit.
+        "X-Task-Token",
         # Only ever sent by the local browser-test runner. Inert in a
         # deployment: the router that reads it is mounted only under
         # TEST_HOOKS_ENABLED, which config refuses outside a local env, and
@@ -554,6 +579,10 @@ app.include_router(offers_hr_router)
 app.include_router(offers_admin_router)
 app.include_router(offers_public_router)
 app.include_router(offers_me_router)
+app.include_router(job_tasks_hr_router)
+app.include_router(job_tasks_iv_router)
+app.include_router(job_tasks_public_router)
+app.include_router(job_tasks_me_router)
 app.include_router(workflow_review_admin_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)

@@ -49,8 +49,10 @@ from app.workflow_runner import decision_queue, on_shortlisted, record_result, r
 from app.workflow_templates import TEMPLATES, build_template, template_summaries
 from app.workflows import (
     EXAM_BACKED_KINDS,
+    HUMAN_EVALUATED_KINDS,
     MAX_ROUNDS,
     ROUND_KINDS,
+    TASK_KINDS,
     WorkflowError,
     add_round,
     attach_waiting_candidates,
@@ -905,7 +907,7 @@ async def post_round_review(
             status_code=409,
             detail="This candidate is not on a round — record the final decision instead.",
         )
-    if row["kind"] != "human_review":
+    if row["kind"] not in HUMAN_EVALUATED_KINDS:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -913,6 +915,23 @@ async def post_round_review(
                 "Its result arrives when the candidate completes it."
             ),
         )
+    # PH4-D4: a task round can be passed only once the candidate has actually
+    # submitted something to evaluate — but HOLDING is always allowed, the
+    # same as a human_review round where nobody has interviewed yet.
+    if row["kind"] in TASK_KINDS and body.passed:
+        submitted = await db.scalar(
+            text(
+                "SELECT 1 FROM task_submissions WHERE enrolment_id = :e AND round_id = :r"
+                "   AND superseded_at IS NULL AND status = 'submitted'"
+            ),
+            {"e": enrolment_id, "r": row["current_round_id"]},
+        )
+        if not submitted:
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{row['title']}' has no submitted work yet, so it cannot be passed. "
+                       "Hold the candidate instead.",
+            )
 
     outcome = await record_result(
         db,

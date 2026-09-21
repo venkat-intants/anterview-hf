@@ -267,6 +267,22 @@ class Settings(BaseSettings):
     # application) — the same policy shape as accommodation_retention_days.
     code_evidence_retention_days: int = 180
 
+    # --- PH4-D4: job simulations and portfolio rounds ---
+    # Same convention as offer_link_secret: blank means a namespaced secret
+    # DERIVED from jwt_secret (app.job_tasks), never jwt_secret itself; set
+    # explicitly in production for independent rotation.
+    task_link_secret: str = ""
+    # How long past a task's time limit (or due date, for an untimed one) a
+    # save is still accepted — a slow upload or a flaky connection should not
+    # cost a candidate their answer for arriving seconds late.
+    task_submit_grace_seconds: int = 120
+    task_material_max_bytes: int = 10 * 1024 * 1024
+    task_response_max_bytes: int = 10 * 1024 * 1024
+    # Task submissions and responses are redacted this many days after the
+    # application is decided, or after the submission expired or was
+    # withdrawn — the accommodation/code-evidence retention shape.
+    task_submission_retention_days: int = 180
+
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""

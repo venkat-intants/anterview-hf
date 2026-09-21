@@ -63,15 +63,21 @@ from app.mailer import enqueue_email
 from app.models import AuditLog
 from app.notifications_util import create_notification
 from app.requisitions import TERMINAL_STATUSES
-from app.workflows import load_criteria
+from app.workflows import HUMAN_EVALUATED_KINDS, TASK_KINDS, load_criteria
 
 log = structlog.get_logger(__name__)
 
 #: Company staff who may be assigned to interview. HR managers interview too.
 INTERVIEWER_ROLES: tuple[str, ...] = ("interviewer", "hr_manager")
 
-#: Round kinds a scorecard can hang off. PH4-A2's interview sessions extend this.
-SCORABLE_ROUND_KINDS: frozenset[str] = frozenset({"human_review"})
+#: Round kinds a scorecard can hang off. PH4-D4 widened this from
+#: {"human_review"} to every kind a person evaluates rather than a threshold
+#: — job_simulation and portfolio score exactly the same way: a named
+#: interviewer, one independent scorecard, against the round's frozen
+#: round_criteria. No database check gates it (migration d2f4a6c8e0b1); only
+#: this set does, so kits, the decision queue and the requisition dashboard
+#: all follow it automatically.
+SCORABLE_ROUND_KINDS: frozenset[str] = HUMAN_EVALUATED_KINDS
 
 EDITABLE: frozenset[str] = frozenset({"assigned", "in_progress"})
 SCORE_MIN, SCORE_MAX = 1, 5
@@ -622,16 +628,25 @@ async def list_for_interviewer(
                 "SELECT s.id, s.status, s.due_at, s.submitted_at, s.created_at, s.corrects_id,"
                 "       a.full_name AS candidate_name,"
                 "       COALESCE(jr.title, e.target_job_title) AS job_title,"
-                "       wr.title AS round_title"
+                "       wr.title AS round_title, wr.kind AS round_kind, ts.due_at AS task_due_at"
                 "  FROM interviewer_scorecards s"
                 "  JOIN enrolments e ON e.id = s.enrolment_id AND e.deleted_at IS NULL"
                 "  JOIN applicants a ON a.id = e.applicant_id"
                 "  JOIN workflow_rounds wr ON wr.id = s.round_id"
                 "  LEFT JOIN job_requisitions jr ON jr.id = e.requisition_id"
+                # PH4-D4: a task round's own due date, when the scorecard's
+                # own due_at was left to default (assign() sets it from the
+                # round's deadline_days the same for every kind).
+                "  LEFT JOIN LATERAL ("
+                "      SELECT t.due_at FROM task_submissions t"
+                "       WHERE t.enrolment_id = s.enrolment_id AND t.round_id = s.round_id"
+                "         AND t.superseded_at IS NULL"
+                "       ORDER BY t.created_at DESC LIMIT 1"
+                "  ) ts ON wr.kind = ANY(CAST(:task_kinds AS text[]))"
                 " WHERE s.interviewer_user_id = :iv AND s.company_id = :c"
                 "   AND s.superseded_at IS NULL AND s.status <> 'withdrawn'"
             ),
-            {"iv": interviewer_user_id, "c": company_id},
+            {"iv": interviewer_user_id, "c": company_id, "task_kinds": list(TASK_KINDS)},
         )
     ).mappings().all()
     now = datetime.now(tz=UTC)
@@ -640,11 +655,13 @@ async def list_for_interviewer(
             "scorecard_id": str(r["id"]),
             "state": derived_state(r["status"], r["due_at"], now),
             "status": r["status"],
-            "due_at": r["due_at"].isoformat() if r["due_at"] else None,
+            "due_at": (r["task_due_at"] or r["due_at"]).isoformat()
+            if (r["task_due_at"] or r["due_at"]) else None,
             "submitted_at": r["submitted_at"].isoformat() if r["submitted_at"] else None,
             "candidate_name": r["candidate_name"],
             "job_title": r["job_title"],
             "round_title": r["round_title"],
+            "round_kind": r["round_kind"],
             "is_correction": r["corrects_id"] is not None,
         }
         for r in rows
@@ -704,6 +721,7 @@ async def get_for_interviewer(
         "candidate_name": card["candidate_name"],
         "job_title": card["job_title"],
         "round_title": card["round_title"],
+        "round_kind": card["round_kind"],
         "due_at": card["due_at"].isoformat() if card["due_at"] else None,
         "submitted_at": card["submitted_at"].isoformat() if card["submitted_at"] else None,
         "summary": card["summary"],

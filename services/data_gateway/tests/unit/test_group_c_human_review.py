@@ -34,10 +34,14 @@ def test_the_queue_includes_candidates_sitting_on_a_review_round() -> None:
     from app.workflow_runner import decision_queue
 
     sql = " ".join(inspect.getsource(decision_queue).split())
-    assert "wr.kind = 'human_review'" in sql
-    # Who is awaiting a person is the shared database function, which counts a
-    # human_review round (migration a1c3e5f7b9d2; exercised against a real
-    # database in smoke_group_e_foundations).
+    # PH4-D4 widened the join from the literal 'human_review' to every kind a
+    # person evaluates (human_review, job_simulation, portfolio) — bound as
+    # :human_kinds so the SQL is parameterized rather than a literal.
+    assert "wr.kind = ANY(CAST(:human_kinds AS text[]))" in sql
+    # Who is awaiting a person is the shared database function, which counts
+    # every one of those kinds (migration a5d7f9b1c3e8, widening
+    # a1c3e5f7b9d2; exercised against a real database in
+    # smoke_group_e_foundations and test_ph4_d4_guarantees).
     assert "enrolment_awaits_human(e.status, e.current_round_id)" in sql, (
         "a candidate on a review round is still missing"
     )

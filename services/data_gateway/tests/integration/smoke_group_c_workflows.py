@@ -16,6 +16,7 @@ criteria are a frozen copy rather than a live reference.
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -321,8 +322,18 @@ async def main() -> None:
         rk = (await db.execute(text(
             "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
             " WHERE conname='ck_workflow_rounds_kind'"))).scalar()
-        check("only the four agreed round kinds are legal",
-              all(k in rk for k in ("mcq", "coding", "ai_interview", "human_review")), str(rk))
+        # PH4-D4 widened this from four kinds to six (job_simulation and
+        # portfolio, both scored by a person against frozen round_criteria,
+        # never by a threshold or a model). Tightened to an EXACT set on
+        # purpose — this used to check only that the original four were
+        # present ("all(k in rk ...)"), which would have stayed green through
+        # an unreviewed widening too. pg_get_constraintdef renders this CHECK
+        # as "kind = ANY (ARRAY['mcq'::text, ...])", so the literals are read
+        # out with a regex rather than assumed to sit inside a plain "(...)".
+        agreed = ("mcq", "coding", "ai_interview", "human_review", "job_simulation", "portfolio")
+        found = set(re.findall(r"'([a-z_]+)'::text", rk))
+        check("exactly the six agreed round kinds are legal — no more, no fewer",
+              found == set(agreed), str(rk))
 
     await eng.dispose()
     print(f"\n{'=' * 64}\n  {len(PASS)} passed, {len(FAIL)} failed")

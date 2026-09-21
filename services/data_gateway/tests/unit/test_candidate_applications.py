@@ -41,6 +41,10 @@ def _row(**kw: object) -> MagicMock:
         # of its life here. The tests that care set these explicitly.
         "invite_id": None,
         "invite_scheduled_at": None,
+        # PH4-D4: same shape as the invite fields, for an open task submission.
+        "task_id": None,
+        "task_due_at": None,
+        "task_status": None,
     }
     for k, v in {**defaults, **kw}.items():
         setattr(row, k, v)
@@ -479,6 +483,7 @@ def test_without_an_invite_the_status_wording_still_applies() -> None:
 
     row = MagicMock()
     row.invite_id = None
+    row.task_id = None
     assert _next_step_for(row, "shortlisted") == _NEXT_STEPS["shortlisted"]
 
 

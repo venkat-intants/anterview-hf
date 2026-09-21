@@ -100,8 +100,16 @@ class Settings(BaseSettings):
     # and resume files (s3_bucket_name) from object storage as part of §12 compliance.
     # Mirror the same env vars used by feedback_billing (S3_ENDPOINT_URL,
     # S3_SCORECARD_BUCKET) and data_gateway (S3_BUCKET_NAME).
-    # Leave all blank in local dev/CI — the executor skips S3 deletes when no
-    # endpoint is configured and logs a warning instead of failing the erasure.
+    # PRODUCTION MUST SET S3_ENDPOINT_URL AND S3_ACCESS_KEY_ID (and the secret).
+    # This comment used to say the executor "skips S3 deletes and logs a warning
+    # instead of failing the erasure". It does the opposite, deliberately:
+    # s3_client.delete_objects raises StorageNotConfiguredError when EITHER is
+    # missing and there are objects to delete, the transaction rolls back, and
+    # the request stays 'pending' and is retried -- because an erasure that
+    # claims completion while the candidate's files are still in the bucket is
+    # a DPDP s.12 failure we would then be reporting as a success. An erasure
+    # with no objects to delete completes without storage configured, which is
+    # why local dev and CI can leave these blank.
     s3_endpoint_url: str = ""          # e.g. https://<acct>.r2.cloudflarestorage.com
     s3_region: str = "auto"
     s3_access_key_id: str = ""

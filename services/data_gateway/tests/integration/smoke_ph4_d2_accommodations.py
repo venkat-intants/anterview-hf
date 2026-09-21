@@ -204,10 +204,17 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
         print("\nPH4-D2 — same answers score the same; only the deadline differs")
         r = await c.post("/exam/start", headers=headers_a)
-        attempt_a = r.json()["attempt_id"]
+        start_a = r.json()
+        attempt_a = start_a["attempt_id"]
         r = await c.post("/exam/start", headers=headers_b)
-        attempt_b = r.json()["attempt_id"]
+        start_b = r.json()
+        attempt_b = start_b["attempt_id"]
         check("both attempts start", bool(attempt_a) and bool(attempt_b))
+        # The threshold arrives with the attempt, so the client knows it before
+        # any violation -- not only from a later integrity-event response.
+        check("/exam/start reports the attempt's own violation threshold",
+              "max_violations" in start_a and "max_violations" in start_b
+              and isinstance(start_b["max_violations"], int), f"{start_a} / {start_b}")
 
         async with factory() as db:
             extra_a, extra_b = (await db.execute(
@@ -244,6 +251,30 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("identical answers score identically",
               result_a["score_percent"] == result_b["score_percent"]
               and result_a["passed"] == result_b["passed"], f"{result_a} vs {result_b}")
+
+        # HR sees what each PAST attempt was actually given, read off the
+        # attempt -- not re-resolved from today's history, which may since
+        # have been revised or revoked.
+        r = await c.get(f"/hr/exams/{exam_id}/attempts/{attempt_a}/breakdown")
+        adj_a = r.json().get("adjustment")
+        check("HR's attempt detail shows the adjustment that attempt was given",
+              r.status_code == 200 and adj_a is not None
+              and adj_a["extra_time_percent"] == 50 and adj_a["extra_time_seconds"] == 30,
+              r.text[:300])
+        check("…and carries no note, no basis and no recorder",
+              adj_a is not None and set(adj_a) == {
+                  "extra_time_percent", "extra_time_seconds", "auto_submit_relaxed"},
+              str(adj_a))
+        r = await c.get(f"/hr/exams/{exam_id}/attempts/{attempt_b}/breakdown")
+        check("an attempt given nothing shows no adjustment",
+              r.status_code == 200 and r.json().get("adjustment") is None, r.text[:300])
+
+        # The history names who recorded each row, resolved server-side the
+        # way the offer history resolves its actors.
+        r = await c.get(f"/hr/applicants/{applicant_a}/accommodations")
+        rows = r.json() if r.status_code == 200 else []
+        check("HR's history names who recorded the adjustment",
+              bool(rows) and bool(rows[0].get("recorded_by_name")), str(rows[:1])[:300])
 
         print("\nPH4-D2 — the interviewer sees only the interviewer note")
         req_id, wf_id, wround_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()

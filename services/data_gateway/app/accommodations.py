@@ -653,6 +653,8 @@ def _row_out(row: dict[str, Any]) -> dict[str, Any]:
             str(row["recorded_by_user_id"]) if row["recorded_by_user_id"] else None
         ),
         "revoked_by_user_id": str(row["revoked_by_user_id"]) if row["revoked_by_user_id"] else None,
+        "recorded_by_name": row.get("recorded_by_name"),
+        "revoked_by_name": row.get("revoked_by_name"),
         "revoked_at": row["revoked_at"].isoformat() if row["revoked_at"] else None,
         "revoke_reason": row["revoke_reason"],
         "supersedes_id": str(row["supersedes_id"]) if row["supersedes_id"] else None,
@@ -678,9 +680,17 @@ async def list_for_applicant(
     rows = (
         await db.execute(
             text(
-                "SELECT * FROM candidate_accommodations"
-                " WHERE company_id = :c AND applicant_id = :a"
-                " ORDER BY created_at DESC"
+                # Names are resolved here, as the offer history resolves its
+                # actors, so the console never has to look people up itself.
+                # revoked_by_user_id is NULL when the platform ended the row
+                # (retention or erasure) rather than a person.
+                "SELECT ca.*, COALESCE(ru.full_name, ru.email) AS recorded_by_name,"
+                "       COALESCE(vu.full_name, vu.email) AS revoked_by_name"
+                "  FROM candidate_accommodations ca"
+                "  LEFT JOIN users ru ON ru.id = ca.recorded_by_user_id"
+                "  LEFT JOIN users vu ON vu.id = ca.revoked_by_user_id"
+                " WHERE ca.company_id = :c AND ca.applicant_id = :a"
+                " ORDER BY ca.created_at DESC, ca.id"
             ),
             {"c": company_id, "a": applicant_id},
         )

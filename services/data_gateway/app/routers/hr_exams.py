@@ -1309,4 +1309,35 @@ async def attempt_breakdown(
         "passed": at.passed,
         "per_question": per_question,
         "coding": coding_snapshot,
+        "adjustment": await _attempt_adjustment(db, company_id, at),
+    }
+
+
+async def _attempt_adjustment(
+    db: AsyncSession, company_id: uuid.UUID, at: ExamAttempt
+) -> dict[str, Any] | None:
+    """What this attempt was actually given (PH4-D2), or None if nothing.
+
+    Read off the attempt, which froze the allowance when it started -- never
+    re-resolved from the applicant's history, which may have been revised or
+    revoked since and would show the wrong adjustment for this attempt. The
+    percentage comes from the exact accommodation row the attempt points at,
+    which is the version that was applied.
+
+    Facts only: no note, no basis, no recorder. This is what the attempt was
+    given, not why.
+    """
+    if at.accommodation_id is None and not at.extra_time_seconds and not at.auto_submit_relaxed:
+        return None
+    pct: int | None = None
+    if at.accommodation_id is not None:
+        pct = await db.scalar(
+            text("SELECT extra_time_percent FROM candidate_accommodations"
+                 " WHERE id = :i AND company_id = :c"),
+            {"i": at.accommodation_id, "c": company_id},
+        )
+    return {
+        "extra_time_percent": pct,
+        "extra_time_seconds": int(at.extra_time_seconds or 0),
+        "auto_submit_relaxed": bool(at.auto_submit_relaxed),
     }

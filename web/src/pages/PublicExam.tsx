@@ -271,6 +271,15 @@ export default function PublicExam() {
     onSuccess: (r) => {
       setResult(r);
       setPhase('result');
+      // The credential has done its job. Leaving it in sessionStorage would
+      // keep a live exam token readable by script on any page of this origin
+      // for the rest of the tab's life, long after the attempt is graded.
+      try {
+        sessionStorage.removeItem(EXAM_TOKEN_KEY);
+      } catch {
+        // Blocked or unavailable — it was never written either. The token is
+        // still in state, which is what the result screen renders from.
+      }
     },
     onError: () => {
       submittedRef.current = false;

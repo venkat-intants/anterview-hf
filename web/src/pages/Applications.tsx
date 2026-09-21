@@ -107,7 +107,13 @@ function InterviewCallToAction({
     onSuccess: (link) => {
       // Same tab: this is the candidate starting their interview, not opening a
       // reference. A popup here would also be the kind of thing a blocker eats.
-      window.location.assign(link.interview_url);
+      // Same origin guard as the task and exam CTAs.
+      const safe = sameOriginUrl(link.interview_url, '/interview-invite');
+      if (!safe) {
+        setError('Could not open your interview.');
+        return;
+      }
+      window.location.assign(safe);
     },
     onError: (e: unknown) =>
       setError(e instanceof Error ? e.message : 'Could not open your interview.'),
@@ -236,8 +242,17 @@ function ExamCallToAction({
     mutationFn: (resumeAnyway: boolean) => mintMyExamLink(assignmentId, resumeAnyway),
     onSuccess: (link) => {
       // Same tab, as with the interview: this is the candidate starting their
-      // assessment, and a popup is the kind of thing a blocker eats.
-      window.location.assign(link.exam_url);
+      // assessment, and a popup is the kind of thing a blocker eats. Checked
+      // first, as the task CTA does: the URL is built server-side from
+      // `exam_link_base_url`, so this is not attacker input — it is what stops
+      // a misconfigured base URL walking the candidate to another origin with
+      // a live exam token in the fragment.
+      const safe = sameOriginUrl(link.exam_url, '/exam');
+      if (!safe) {
+        setError('Could not open your assessment.');
+        return;
+      }
+      window.location.assign(safe);
     },
     onError: (e: unknown) => {
       // 409 is not a failure. It is the server declining to close a tab the

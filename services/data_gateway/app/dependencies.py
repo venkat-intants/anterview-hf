@@ -128,15 +128,17 @@ def reject_role(*denied: str) -> Callable[[User], Awaitable[User]]:
     surface: where the legitimate callers cannot be named by a single role but
     the illegitimate ones can.
 
-    That is exactly the candidate surface. ``candidate`` is granted by
-    activation and by Google SSO, so an account that reached its applications
-    some other way — an HR user who also applied, an account provisioned before
-    the role existed — may hold no candidate role at all, and
-    ``require_role("candidate")`` would lock them out of their own page. What
-    must never reach it is narrow and nameable: ``guest_candidate``.
+    That is the candidate surface. Every account-CREATION path does grant
+    ``candidate`` — local signup, both SSO paths, activation — so the reason is
+    not the one an earlier version of this docstring gave. It is
+    ``apply_activation._link_to_existing``: when an applicant activates onto an
+    account that already exists, the applicant row is re-pointed and NO role is
+    granted. An HR user who also applied for a job therefore holds
+    ``hr_manager`` and nothing else, and ``require_role("candidate")`` would
+    refuse them their own applications page.
 
-    Why that matters: an interview magic link is redeemable for an access token
-    whose ``sub`` is the applicant's ``user_id`` — which, once they have
+    Why any gate at all: an interview magic link is redeemable for an access
+    token whose ``sub`` is the applicant's ``user_id`` — which, once they have
     activated, IS their real account id — carrying the role
     ``guest_candidate`` (``interview_take._issue_guest_token``).
     :func:`get_current_user` verifies the signature, the issuer, the audience
@@ -144,8 +146,22 @@ def reject_role(*denied: str) -> Callable[[User], Awaitable[User]]:
     possession of a forwarded interview link is possession of the candidate's
     account for every route that authenticates with ``get_current_user`` alone.
 
+    KNOW WHAT A DENY-LIST BUYS. Refusing a role admits every credential that is
+    not on the list, so the list has to name every token type that must not
+    pass — not only the one that prompted it. ``service`` is on it for that
+    reason: service tokens carry the same ``jwt_secret``, issuer and audience
+    (``embedding_client``, ``scoring_client``, ``exam_ai_client``), so they
+    already satisfy :func:`get_current_user`, and on a candidate route the only
+    thing standing between one and the account's data is that its ``sub`` is a
+    service name rather than a UUID — which fails as a 500, not as a refusal.
+    A new token type is a new entry here; there is no default-deny to fall back
+    on. Where the legitimate callers CAN be named, prefer :func:`require_role`.
+
     Usage:
-        router = APIRouter(..., dependencies=[Depends(reject_role("guest_candidate"))])
+        router = APIRouter(
+            ...,
+            dependencies=[Depends(reject_role("guest_candidate", "service"))],
+        )
     """
 
     async def _dep(user: Annotated[User, Depends(get_current_user)]) -> User:

@@ -33,10 +33,19 @@ rotate their links.
 
 Two comments elsewhere asserted this was already prevented ("rejected by
 candidate/HR routes", "every candidate route rejects guest_candidate"). Only
-the HR routes rejected it; that is why nobody noticed. The router-level
-``reject_role("guest_candidate")`` below is what makes those sentences true.
-It refuses a role rather than requiring one deliberately — see
+the HR routes rejected it, because only they require a role; that is why
+nobody noticed. It refuses a role rather than requiring one deliberately — see
 ``dependencies.reject_role``.
+
+The gate below covers THIS router. It is not a property of the ``/users/me``
+prefix: FastAPI binds router dependencies to a router's own routes, and six
+routers are mounted there (tasks, offers, interview scheduling, onboarding,
+resumes and this one), each carrying its own copy. The first version of this
+fix gated one of them and said "so a candidate surface added later inherits
+it" — true within this file, and read by the next person as true of the
+prefix, which is the same mistake that let the hole live. What holds the line
+across all six is ``test_candidate_route_authz``, which walks the mounted
+application and asserts the gate for every route under ``/users/me``.
 
 WHAT IS DELIBERATELY NOT RETURNED
 ---------------------------------
@@ -80,16 +89,16 @@ from app.dependencies import get_current_user, reject_role
 from app.exam_link import hash_exam_token, mint_exam_token
 from app.interview_link import hash_interview_token, mint_interview_token
 from app.publishing import visible_sql
-from app.rate_limit import rate_limit
+from app.rate_limit import rate_limit_actor
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter(
     prefix="/users/me",
     tags=["candidate-applications"],
-    # On the router, not on each route, so a candidate surface added later
-    # inherits it rather than having to remember. See the module docstring.
-    dependencies=[Depends(reject_role("guest_candidate"))],
+    # On the router, not on each route, so a route added to THIS file inherits
+    # it. A new /users/me router needs its own copy — see the module docstring.
+    dependencies=[Depends(reject_role("guest_candidate", "service"))],
 )
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
@@ -614,7 +623,7 @@ RETURNING i.expires_at
     # link, so unbounded rotation is a cheap way to keep someone out of their
     # own interview. Note the limiter fails open on a Redis error by design —
     # a control to add, not a boundary to lean on.
-    dependencies=[rate_limit("candidate_interview_link", 6)],
+    dependencies=[rate_limit_actor("candidate_interview_link", 6)],
 )
 async def mint_my_interview_link(
     invite_id: uuid.UUID, user: CurrentUserDep, db: DbSessionDep
@@ -660,6 +669,18 @@ async def mint_my_interview_link(
             detail="No interview invitation is waiting on this application.",
         )
 
+    # The same immutable record as the exam mint below, and for the same
+    # reason: a credential was issued for a scored round, and "who asked for
+    # it" must not be answerable only by a log line a retention sweep removes.
+    await db.execute(
+        text(
+            "INSERT INTO audit_log "
+            "(actor_id, actor_type, action, resource_type, resource_id, details) "
+            "VALUES (:aid, 'candidate', 'candidate.interview_link.minted',"
+            " 'interview_invite', :rid, NULL)"
+        ),
+        {"aid": uuid.UUID(user.user_id), "rid": invite_id},
+    )
     await db.commit()
     # The actor too: without it a log line cannot say who minted.
     log.info(
@@ -775,7 +796,7 @@ RETURNING ea.expires_at
     "/exams/{assignment_id}/link",
     response_model=ExamLinkOut,
     summary="Mint a fresh link for an assessment this candidate was sent",
-    dependencies=[rate_limit("candidate_exam_link", 6)],
+    dependencies=[rate_limit_actor("candidate_exam_link", 6)],
 )
 async def mint_my_exam_link(
     assignment_id: uuid.UUID,

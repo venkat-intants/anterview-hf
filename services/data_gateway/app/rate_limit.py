@@ -39,8 +39,9 @@ from collections.abc import Awaitable, Callable
 import structlog
 from fastapi import Depends, HTTPException, Request, status
 from prometheus_client import Counter
+from shared.auth.base import User
 
-from app.dependencies import get_hr_company
+from app.dependencies import get_current_user, get_hr_company
 from app.redis_client import get_redis
 from app.utils.request_ip import extract_client_ip
 
@@ -131,6 +132,45 @@ def rate_limit_company(bucket: str, per_minute: int) -> Callable[..., Awaitable[
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many requests from your company. Please wait a minute and try again.",
+            )
+
+    return Depends(_dep)
+
+
+def rate_limit_actor(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
+    """Cap a route at *per_minute* requests per SIGNED-IN ACCOUNT.
+
+    For the candidate mint routes, where the abuse being bounded is targeted
+    rather than volumetric: somebody holding a candidate's credential rotating
+    their assessment or interview link repeatedly to keep them out of their own
+    round. Keyed on IP that is barely a control — the attacker gets a fresh
+    budget from every address, while a college computer lab, this product's
+    primary market, shares one between every candidate in the room.
+
+    Same fixed 60-second window and fail-open posture as ``rate_limit``; see
+    its docstring, and note that this and the JWT revocation-epoch check fail
+    open together.
+    """
+
+    async def _dep(user: User = Depends(get_current_user)) -> None:  # noqa: B008
+        try:
+            redis = get_redis()
+            key = f"rl:{bucket}:{user.user_id}"
+            count: int = await redis.incr(key)
+            if count == 1:
+                await redis.expire(key, 60)
+        except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
+            _rate_limit_skipped.labels(
+                bucket=bucket, error_type=type(exc).__name__
+            ).inc()
+            log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+            return
+        if count > per_minute:
+            _rate_limit_exceeded.labels(bucket=bucket).inc()
+            log.warning("rate_limit.exceeded", bucket=bucket, keyed="actor")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests. Please wait a minute and try again.",
             )
 
     return Depends(_dep)

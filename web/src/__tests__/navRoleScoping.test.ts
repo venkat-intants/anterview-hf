@@ -52,6 +52,15 @@ describe('nav role scoping', () => {
     expect(idsFor([])).toEqual(['candidate']);
   });
 
+  it('shows a guest session no candidate section', () => {
+    // Redeeming an interview invitation makes a `guest_candidate` token the
+    // app's session. The server refuses that token on the candidate routes —
+    // it is minted from a link, not from a sign-in, and its `sub` is the
+    // account's own id. Offering the menu item anyway put a 403 where an
+    // absent item belongs, in the middle of somebody's interview.
+    expect(idsFor(['guest_candidate'])).toEqual([]);
+  });
+
   it('gives an HR manager the hiring section and NOT the candidate section', () => {
     const ids = idsFor(['hr_manager']);
     expect(ids).toEqual(['hr']);

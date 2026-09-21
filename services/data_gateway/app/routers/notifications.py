@@ -17,10 +17,17 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, reject_role
 from app.models import Notification
 
-router = APIRouter(prefix="/notifications", tags=["notifications"])
+router = APIRouter(
+    prefix="/notifications",
+    tags=["notifications"],
+    # A guest token from an interview link must not act as the account —
+    # see ``dependencies.reject_role``. On the router, so a route added here
+    # later inherits it.
+    dependencies=[Depends(reject_role("guest_candidate", "service"))],
+)
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
 DbDep = Annotated[AsyncSession, Depends(get_db_session)]

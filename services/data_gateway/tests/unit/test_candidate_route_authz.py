@@ -91,26 +91,79 @@ async def test_reject_role_admits_an_account_that_holds_no_role_at_all() -> None
     assert await dep(_user("hr_manager")) is not None  # type: ignore[call-arg]
 
 
-def test_the_candidate_router_rejects_guest_candidate() -> None:
-    """The pin. Gated on the router, so a route added later inherits it."""
-    from app.routers.candidate_applications import router
+def _gate_covers(route: object) -> set[str]:
+    """The roles refused on this route, read out of its resolved dependency tree.
 
+    FastAPI flattens a router's ``dependencies`` into each route's dependant at
+    include time, so this sees the gate wherever it was declared — on the
+    router, on the route, or on a parent — rather than trusting where we think
+    we put it.
+    """
     denied: set[str] = set()
-    for dependant in router.dependencies:
-        denied |= _denied_roles(dependant)
+    stack = [getattr(route, "dependant", None)]
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
+        fn = getattr(node, "call", None)
+        for cell in getattr(fn, "__closure__", None) or ():
+            value = cell.cell_contents
+            if isinstance(value, tuple) and value and all(isinstance(v, str) for v in value):
+                denied |= set(value)
+        stack.extend(getattr(node, "dependencies", []))
+    return denied
 
-    assert "guest_candidate" in denied, (
-        "the candidate router must reject guest_candidate: an interview magic "
-        "link mints a token whose sub is the candidate's own account id"
+
+def test_every_route_under_users_me_refuses_a_guest_token() -> None:
+    """The pin that the first version of this fix did not have.
+
+    A router's dependencies bind to ITS routes, not to a URL prefix, and six
+    routers are mounted at ``/users/me``: tasks, offers, interview scheduling,
+    onboarding, resumes and applications. Gating one of them left a forwarded
+    interview link able to rotate the candidate's take-home credential, read
+    their CV and read their offer — the same hole, one door along.
+
+    So this walks the mounted application rather than any single router. A
+    seventh ``/users/me`` router added without the gate fails here.
+    """
+    from app.main import app
+
+    ungated = [
+        f"{getattr(r, 'name', '?')} {r.path}"
+        for r in app.routes
+        if getattr(r, "path", "").startswith("/users/me")
+        and "guest_candidate" not in _gate_covers(r)
+    ]
+    assert not ungated, (
+        "these /users/me routes accept a guest token, which carries the "
+        f"candidate's own account id as its sub: {ungated}"
     )
 
 
-def test_every_candidate_route_is_covered_by_the_router_gate() -> None:
-    """Router-level, not route-level, so nothing can be added outside it."""
-    from app.routers.candidate_applications import router
+def test_notifications_refuses_a_guest_token_too() -> None:
+    """Same credential, different prefix — it reads the account's notifications."""
+    from app.main import app
 
-    assert router.routes, "no routes found — this test would pass vacuously"
-    assert router.dependencies, (
-        "the gate is declared on the router so every route inherits it; a "
-        "per-route gate is one someone forgets on the next route"
-    )
+    routes = [r for r in app.routes if getattr(r, "path", "").startswith("/notifications")]
+    assert routes, "no notification routes found — this test would pass vacuously"
+    for r in routes:
+        assert "guest_candidate" in _gate_covers(r), r.path
+
+
+def test_consent_withdrawal_stays_reachable_by_a_guest() -> None:
+    """Deliberately NOT gated, and this says so out loud.
+
+    A guest token is an unactivated applicant's only credential — they have no
+    password — so gating ``/consent`` would leave the people whose data was
+    collected with no way to withdraw it. Refusing a role is a security
+    control; applying it here would remove a DPDP right.
+    """
+    from app.main import app
+
+    consent = [r for r in app.routes if getattr(r, "path", "") == "/consent"]
+    assert consent, "no /consent route found — this test would pass vacuously"
+    for r in consent:
+        assert "guest_candidate" not in _gate_covers(r), (
+            "withdrawal must stay reachable without an account; if this is "
+            "deliberately changing, give guests another route first"
+        )

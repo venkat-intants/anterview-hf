@@ -286,7 +286,7 @@ describe('Applications — a waiting interview', () => {
 
   it('sends the candidate to the link it is given', async () => {
     mintMyInterviewLink.mockResolvedValue({
-      interview_url: 'http://localhost:5174/interview-invite#tok',
+      interview_url: `${window.location.origin}/interview-invite#tok`,
       expires_at: '2026-09-11T00:00:00Z',
     });
     listMyApplications.mockResolvedValue([app({ interview_invite_id: 'inv-1' })]);
@@ -296,7 +296,7 @@ describe('Applications — a waiting interview', () => {
 
     await vi.waitFor(() => expect(mintMyInterviewLink).toHaveBeenCalledWith('inv-1'));
     await vi.waitFor(() =>
-      expect(assign).toHaveBeenCalledWith('http://localhost:5174/interview-invite#tok'),
+      expect(assign).toHaveBeenCalledWith(`${window.location.origin}/interview-invite#tok`),
     );
   });
 
@@ -429,7 +429,7 @@ describe('Applications — a waiting assessment', () => {
 
   it('sends the candidate to the link it is given', async () => {
     mintMyExamLink.mockResolvedValue({
-      exam_url: 'http://localhost:5174/exam#tok',
+      exam_url: `${window.location.origin}/exam#tok`,
       expires_at: '2026-09-25T00:00:00Z',
     });
     listMyApplications.mockResolvedValue([app(waiting)]);
@@ -440,7 +440,7 @@ describe('Applications — a waiting assessment', () => {
     // false: an unprompted first press may not close a tab someone is sitting
     // their assessment in.
     await vi.waitFor(() => expect(mintMyExamLink).toHaveBeenCalledWith('asn-1', false));
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('http://localhost:5174/exam#tok'));
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith(`${window.location.origin}/exam#tok`));
   });
 
   it('asks before closing an assessment open in another tab', async () => {
@@ -450,7 +450,7 @@ describe('Applications — a waiting assessment', () => {
     // enough to lose a timed assessment to a press nobody thought about.
     const conflict = new ApiError('This assessment is already open in another tab.', 409);
     mintMyExamLink.mockRejectedValueOnce(conflict).mockResolvedValueOnce({
-      exam_url: 'http://localhost:5174/exam#tok2',
+      exam_url: `${window.location.origin}/exam#tok2`,
       expires_at: '2026-09-25T00:00:00Z',
     });
     listMyApplications.mockResolvedValue([app({ ...waiting, exam_in_progress: true })]);
@@ -465,7 +465,7 @@ describe('Applications — a waiting assessment', () => {
     // The answer, and only now may it close the other tab.
     await userEvent.click(screen.getByRole('button', { name: 'Open it here' }));
     await vi.waitFor(() => expect(mintMyExamLink).toHaveBeenLastCalledWith('asn-1', true));
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('http://localhost:5174/exam#tok2'));
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith(`${window.location.origin}/exam#tok2`));
   });
 
   it('explains a failure instead of appearing to do nothing', async () => {

@@ -1,15 +1,23 @@
 # =============================================================================
-# Trivy accepted-risk exceptions (reviewed 2026-07-05; re-review each sprint).
+# Trivy accepted-risk exceptions (reviewed 2026-09-20; re-review each sprint).
 #
-# Every ID below is upgrade-blocked by a pinned major version. The pip-audit
-# --ignore-vuln list in .github/workflows/ci.yml covers the same ROOT CAUSES
-# (fastapi<0.47 starlette pin, langgraph 0.2 family, websockets ^13, pytest 9)
-# but the two scanners' advisory DBs emit different ID sets — do not expect a
-# 1:1 ID match; when unblocking a pin, prune BOTH lists.
+# Every ID below is upgrade-blocked by a pinned major version. The accepted
+# risks live in scripts/pip-audit-ignore.txt, which covers the same ROOT
+# CAUSES and is DELIBERATELY LONGER. The two scanners do name advisories
+# differently, but that is not why the lists differ in size: this step runs
+# with `--severity HIGH,CRITICAL --ignore-unfixed`, so anything MODERATE or
+# LOW, and anything with no patched release, never reaches this file at all.
+# That is why only 3 of the 7 starlette ids appear here — exactly the 3 HIGH
+# ones — and why ecdsa, which has no fix, is absent entirely. Check a
+# candidate id against those flags before assuming a list is out of sync, and
+# when unblocking a pin, prune BOTH lists.
 #
-# starlette 0.46.2 — all fixes land in starlette >=0.49.1/1.x, but
-# fastapi 0.115 pins starlette <0.47. Unblock = fastapi >=0.139 bump across
-# all 4 services (planned follow-up).
+# starlette 0.46.2 — all fixes land in starlette >=0.49.1/1.x. The block was
+# fastapi 0.115, which pins starlette <0.47 — but that condition has now
+# FIRED: fastapi >=0.139 declares `starlette>=0.46.0` with no upper bound
+# (PyPI metadata, checked 2026-09-20). Scheduled work, not a wait; it needs
+# its own PR across all 4 services. See pip-audit-ignore.txt for which of
+# these are actually reachable (two are, pre-auth, on the public apply form).
 CVE-2025-62727
 CVE-2026-48818
 CVE-2026-54283
@@ -20,13 +28,20 @@ CVE-2026-54283
 CVE-2026-34070
 #
 # langgraph-checkpoint 2.1.2 — fix is in 3.0.0, blocked by langgraph 0.2 pin
-# (langgraph <0.3 requires langgraph-checkpoint <3). The app does not enable
-# the vulnerable "json" serializer mode. Unblock = LangGraph 1.x migration.
+# (langgraph <0.3 requires langgraph-checkpoint <3). Not reachable, for a
+# reason stronger than the serializer mode this entry used to cite: the graph
+# is compiled with no checkpointer and no cache at all
+# (interview_core/app/graph/build.py:119), so no serializer path runs.
+# Unblock = LangGraph 1.x migration.
 CVE-2025-64439
 #
-# langsmith 0.8.5 — fix (0.8.18) requires websockets>=15; the voice/WS
-# pipeline pins websockets ^13. TracingMiddleware is not enabled (LangSmith
-# tracing off). Unblock = websockets 15 bump (planned follow-up).
+# langsmith 0.8.5 — not exploitable: langsmith is never imported, configured
+# or referenced anywhere in services/ or shared/, so TracingMiddleware is dead
+# code in our images. This entry previously said the fix was blocked because
+# "the voice/WS pipeline pins websockets ^13"; that describes our pin, not a
+# constraint — nothing in interview_core requires websockets<15 (checked
+# 2026-09-20). Unblock = langsmith 0.8.18 + websockets 15.x in interview_core,
+# which needs a real Sarvam streaming test. See pip-audit-ignore.txt.
 GHSA-f4xh-w4cj-qxq8
 #
 # -----------------------------------------------------------------------------
@@ -42,7 +57,11 @@ GHSA-f4xh-w4cj-qxq8
 # makes pip's resolver fail and the image stops building (verified empirically,
 # not assumed). Reachability: json_repair is used by livekit-agents to repair
 # LLM JSON output, and we never hand it an attacker-supplied JSON *Schema*,
-# which is the vulnerable input. Unblock = livekit-agents bump past the pin.
+# which is the vulnerable input. Unblock = livekit-agents bump past the pin —
+# and that bump now EXISTS: livekit-agents 1.8.2 declares
+# `json-repair==0.60.1` (PyPI metadata, checked 2026-09-20). It is scheduled
+# work rather than a wait, held only because 1.5.15 → 1.8.2 moves livekit and
+# all five plugins in lockstep and so needs a live-call test pass.
 # See the note at services/interview_core/requirements.txt:44.
 GHSA-xf7x-x43h-rpqh
 #

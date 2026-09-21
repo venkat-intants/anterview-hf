@@ -4,14 +4,22 @@
 #
 # This is the file .trivyignore's header has always claimed lives "in
 # .github/workflows/ci.yml" — it did not exist, because CI had no security
-# scanning at all. Keep the two in sync when a pin is unblocked: Trivy and
-# pip-audit use different advisory databases and emit DIFFERENT id sets for the
-# same root cause, so do not expect a 1:1 match — prune BOTH lists.
+# scanning at all. Keep the two in sync when a pin is unblocked — but expect
+# THIS list to be the longer one, for a reason you can check rather than
+# guess at: the Trivy step runs with `--severity HIGH,CRITICAL
+# --ignore-unfixed` (ci.yml, the "Scan the image for CVEs" step), so anything
+# MODERATE or LOW, and anything with no patched release, never reaches
+# .trivyignore at all. That is why 3 of the 7 starlette ids below are mirrored
+# there (exactly the 3 HIGH ones) and why ecdsa is absent from it entirely.
+# The header here previously blamed "different advisory databases"; the id
+# SETS do differ in naming, but the size difference is the flags.
 #
 # Every entry needs: why it is not exploitable HERE, and what unblocks it.
 # An entry with no fix available is still an entry — say so.
 #
-# Reviewed 2026-08-03. Re-review each sprint.
+# Reviewed 2026-09-20 (security-auditor sweep; every claim below re-checked
+# against PyPI metadata and the code, and several were wrong — see the
+# per-entry notes). Re-review each sprint.
 # =============================================================================
 
 # --- ecdsa 0.19.2 — NO FIX EXISTS ------------------------------------------
@@ -31,10 +39,27 @@ PYSEC-2026-1325
 # Unblock: pytest 9 migration.
 PYSEC-2026-1845
 
-# --- starlette 0.46.2 — UPGRADE-BLOCKED -------------------------------------
-# Fixes land in starlette >=0.47.2 / >=0.49.1 / 1.x, but fastapi 0.115 pins
-# starlette <0.47. Unblock = fastapi >=0.139 bump across ALL FOUR services
-# (they pin independently on purpose).
+# --- starlette 0.46.2 — SCHEDULED, NO LONGER BLOCKED ------------------------
+# Fixes land in starlette >=0.47.2 / >=0.49.1 / 1.x. The block was fastapi
+# 0.115.14, which declares `starlette<0.47.0,>=0.40.0`.
+#
+# THE UNBLOCK CONDITION HAS FIRED. Checked against PyPI metadata 2026-09-20:
+# fastapi 0.139.0 and 0.141.1 both declare `starlette>=0.46.0` with NO upper
+# bound. This is now scheduled work, not a wait — it needs its own PR and its
+# own test pass (starlette 1.x is a major, and 0.115 → 0.141 spans a lot of
+# fastapi), across ALL FOUR services, which pin independently on purpose.
+#
+# What is actually reachable meanwhile, so the next reader can weigh it:
+#  - CVE-2025-62727 (FileResponse Range DoS) and CVE-2026-48818 (StaticFiles
+#    UNC SSRF): NOT reachable — neither FileResponse nor StaticFiles appears
+#    anywhere in services/ or shared/.
+#  - CVE-2026-54283 and CVE-2025-54121 (form/multipart limits): reachable
+#    PRE-AUTH on POST /apply/{requisition_id} (public_apply.py, Form fields
+#    and an UploadFile), mitigated by rate_limit("public_apply_submit", 6).
+#  - CVE-2026-48710 (Host header poisons request.url.path, bypassing
+#    path-based checks): the one to look at hardest when this is picked up,
+#    because the consoles are separated by path behind Caddy. Whether any
+#    authz decision reads request.url.path is UNVERIFIED — check it.
 PYSEC-2026-161
 PYSEC-2026-248
 PYSEC-2026-249
@@ -48,28 +73,69 @@ PYSEC-2026-2281
 # langchain-core 1.2.22, and the 0.3.x line has no fix. The app never calls
 # load_prompt. Unblock = LangGraph 1.x migration.
 PYSEC-2026-2193
+# CVE-2026-26013 (LOW): SSRF through image_url while counting tokens, in
+# ChatOpenAI.get_num_tokens_from_messages. Given its own line because it has
+# a different root cause from the one above and was previously sharing that
+# heading with no reasoning of its own. Not reachable: get_num_tokens appears
+# nowhere in services/ or shared/. Fixed in 1.2.11, same upgrade block.
 PYSEC-2026-2562
 
 # --- langgraph / -checkpoint / -sdk — UPGRADE-BLOCKED (interview_core) ------
 # langgraph <0.3 requires langgraph-checkpoint <3, so the checkpoint fix in
-# 3.0.0 is unreachable without the major bump. The app does not enable the
-# vulnerable "json" serializer mode. Unblock = LangGraph 1.x migration.
+# 3.0.0 is unreachable without the major bump. Unblock = LangGraph 1.x
+# migration.
+#
+# The four deserialization ids (msgpack checkpoint loading, the "json"
+# serializer mode, JSON checkpoint loading, BaseCache) are unreachable for one
+# shared reason, which is stronger than the one this block used to give: the
+# graph is compiled with NO checkpointer and NO cache —
+# `build_graph(llm).compile()`, interview_core/app/graph/build.py:119, and the
+# file's own header records that checkpointing was deferred. With no
+# checkpointer configured, no serializer path runs at all. (The Redis
+# "checkpoint" in interview_worker.py is the app's own dict, unrelated.)
+# This previously read "the app does not enable the vulnerable 'json'
+# serializer mode" — true, but that sentence is about ONE of the four ids, and
+# the other three were inheriting a justification written for it.
 PYSEC-2026-83
-PYSEC-2026-2194
 PYSEC-2026-1527
 PYSEC-2026-2573
 PYSEC-2026-2574
+# langgraph-sdk, CVE-2026-48776: unsafe URL path construction. A DIFFERENT
+# root cause from the four above, which is why it now has its own line; it had
+# no reasoning at all before. Same upgrade block.
+PYSEC-2026-2194
 PYSEC-2026-2575
 
-# --- langsmith 0.8.5 — UPGRADE-BLOCKED (interview_core) ---------------------
-# The fix (0.8.18) requires websockets>=15; the voice/WS pipeline pins
-# websockets ^13. TracingMiddleware is not enabled (LangSmith tracing off).
-# Unblock = websockets 15 bump.
+# --- langsmith 0.8.5 — NOT EXPLOITABLE (interview_core) ---------------------
+# CVE-2026-59152: TracingMiddleware allows an arbitrary server-side file read.
+# Not exploitable here, and this is the WHOLE reason: langsmith is never
+# imported, configured or referenced anywhere in services/ or shared/ — no
+# `langsmith`, no LANGSMITH_*, no LANGCHAIN_TRACING. The middleware is dead
+# code in our images. It is present only as a transitive langchain dependency.
+#
+# The old entry's stated blocker does NOT hold up and has been removed rather
+# than left to mislead: it said "the fix (0.8.18) requires websockets>=15; the
+# voice/WS pipeline pins websockets ^13". The first half is true. The second
+# describes our pin, not a constraint — checked 2026-09-20, nothing pinned in
+# interview_core requires websockets<15 (livekit, livekit-api, livekit-protocol
+# and the plugins declare no websockets constraint; openai 2.38.0 wants
+# >=13,<16, and only under its optional `realtime` extra). The other three
+# services already ship websockets 16.0.
+# Unblock: langsmith 0.8.18 + websockets 15.x in interview_core — plausible
+# and cheap, but it is the Sarvam streaming STT path (p95 < 2s), so it needs a
+# real streaming test, not a successful resolve.
 GHSA-f4xh-w4cj-qxq8
 
-# --- json-repair 0.59.10 — UPGRADE-BLOCKED (interview_core ONLY) ------------
-# livekit-agents 1.5.15 hard-pins `json-repair==0.59.10`, so pinning the fixed
-# 0.60.1 in interview_core makes pip's resolver fail and breaks the Docker
-# build. feedback_billing has no livekit dependency and IS on 0.60.1.
-# Unblock = livekit-agents bump.
+# --- json-repair 0.59.10 — SCHEDULED, NO LONGER BLOCKED (interview_core) ----
+# livekit-agents 1.5.15, which we pin, hard-pins `json-repair==0.59.10`, so
+# pinning the fixed 0.60.1 alongside it makes pip's resolver fail and breaks
+# the Docker build. feedback_billing has no livekit dependency and IS on
+# 0.60.1.
+#
+# THE UNBLOCK CONDITION HAS FIRED. Checked against PyPI metadata 2026-09-20:
+# livekit-agents 1.8.2 (latest) declares `json-repair==0.60.1`. The pin that
+# blocks us is gone upstream, so this is scheduled work rather than a wait.
+# The cost is real, which is why it is not a drive-by: 1.5.15 → 1.8.2 also
+# moves livekit 1.1.8 → 1.1.18 and all five livekit-plugins-* in lockstep,
+# i.e. the whole real-time interview path. It needs a live-call test pass.
 GHSA-xf7x-x43h-rpqh

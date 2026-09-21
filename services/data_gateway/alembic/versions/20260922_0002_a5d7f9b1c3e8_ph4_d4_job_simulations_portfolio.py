@@ -160,6 +160,9 @@ BEGIN
         IF NEW.redacted_at IS NOT NULL THEN
             RAISE EXCEPTION 'a task submission arrives not redacted';
         END IF;
+        IF NEW.consented_at IS NOT NULL THEN
+            RAISE EXCEPTION 'a task submission arrives without consent; it is given at start';
+        END IF;
         RETURN NEW;
     END IF;
 
@@ -184,6 +187,20 @@ BEGIN
 
     IF OLD.redacted_at IS NOT NULL THEN
         RAISE EXCEPTION 'task submission % is redacted and is fixed', OLD.id;
+    END IF;
+
+    -- Consent (security re-review, NEW-1/NEW-2): `consented_at` is what
+    -- every gate reads. It is set exactly once, by the start transition, and
+    -- after that may only be CLEARED -- a withdrawal, in progress or after
+    -- submitting. Never set again, never moved: no code path can re-grant
+    -- over a withdrawal or backdate a consent, whatever the ledger says.
+    IF NEW.consented_at IS DISTINCT FROM OLD.consented_at AND NEW.consented_at IS NOT NULL THEN
+        IF NOT (OLD.consented_at IS NULL AND OLD.status = 'assigned'
+                AND NEW.status = 'in_progress') THEN
+            RAISE EXCEPTION
+                'task submission %: consent is given only at start, and afterwards only withdrawn',
+                OLD.id;
+        END IF;
     END IF;
 
     -- Identity, the frozen configuration and the allowance snapshot are fixed
@@ -233,11 +250,14 @@ BEGIN
             RAISE EXCEPTION 'task submission % cannot go from % to %', OLD.id, OLD.status, NEW.status;
         END IF;
     ELSIF OLD.status IN ('submitted', 'expired', 'withdrawn') THEN
-        -- Terminal: frozen except the once-only supersede pair and the link
-        -- being cleared (never replaced).
-        IF (to_jsonb(NEW) - 'superseded_at' - 'superseded_by_id' - 'token_hash' - 'updated_at')
+        -- Terminal: frozen except the once-only supersede pair, the link
+        -- being cleared (never replaced), and consent being withdrawn after
+        -- submitting (the consent rule above allows only clearing it).
+        IF (to_jsonb(NEW) - 'superseded_at' - 'superseded_by_id' - 'token_hash' - 'updated_at'
+                          - 'consented_at')
            IS DISTINCT FROM
-           (to_jsonb(OLD) - 'superseded_at' - 'superseded_by_id' - 'token_hash' - 'updated_at')
+           (to_jsonb(OLD) - 'superseded_at' - 'superseded_by_id' - 'token_hash' - 'updated_at'
+                          - 'consented_at')
         THEN
             RAISE EXCEPTION 'task submission % is %; it is fixed', OLD.id, OLD.status;
         END IF;

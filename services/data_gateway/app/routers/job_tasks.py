@@ -226,8 +226,10 @@ async def download_round_task_material(
 async def list_enrolment_tasks(
     enrolment_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep,
 ) -> list[dict[str, Any]]:
-    _uid, company_id = ctx
-    return await svc.for_enrolment(db, company_id=company_id, enrolment_id=enrolment_id)
+    uid, company_id = ctx
+    out = await svc.for_enrolment(db, company_id=company_id, enrolment_id=enrolment_id, actor=uid)
+    await db.commit()  # the `submission_viewed` events for every submission whose content was read
+    return out
 
 
 @hr_router.get("/requisitions/{requisition_id}/task-submissions")
@@ -432,14 +434,19 @@ async def add_task_artifact(
     except TaskError as exc:
         raise await _fail(db, exc) from exc
     key = out.pop("_storage_key", None)
+    replaced = out.pop("_replaced_key", None)
+    from app.document_storage import remove as _remove  # noqa: PLC0415
+
     try:
         await db.commit()
     except Exception:
         if key:
-            from app.document_storage import remove as _remove  # noqa: PLC0415
-
             await _remove(settings, [key])
         raise
+    if replaced:
+        # Only now: removed before the commit, a failure would have restored
+        # the old row with its object already gone (NEW-6).
+        await _remove(settings, [replaced])
     return out
 
 

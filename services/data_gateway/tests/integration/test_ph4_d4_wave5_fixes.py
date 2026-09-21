@@ -699,3 +699,332 @@ async def test_a_file_item_can_be_answered_and_replaced(
     assert key is not None
     empty = await svc._responses_for(db, sub_id)
     assert empty == []
+
+
+# ===========================================================================
+# Security re-review of 69435c0 (NEW-1 .. NEW-6)
+# ===========================================================================
+async def _active_ledger_rows(db: AsyncSession, sub_id: uuid.UUID) -> int:
+    return int(
+        await db.scalar(
+            text(
+                "SELECT count(*) FROM dpdp_consent_ledger"
+                " WHERE consent_type = 'assessment_submission' AND purpose = 'recruitment'"
+                "   AND evidence ->> 'submission_id' = :s AND granted AND revoked_at IS NULL"
+            ),
+            {"s": str(sub_id)},
+        )
+        or 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_withdrawal_on_one_submission_does_not_strand_the_next(db: AsyncSession) -> None:
+    """NEW-1: the ledger write refused if the candidate had EVER withdrawn on
+    any submission, after `start` had already set `consented_at` -- so the
+    next submission ran on a consent with no ledger row, and withdrawing it
+    was a 409 "already withdrawn" while processing carried on."""
+    f = await _build(db)
+    sub_a, raw_a = await _issue(db, f)
+    await svc.start(db, raw=raw_a, consent=True, meta=_META)
+    await svc.withdraw_task_consent(db, raw=raw_a, meta=_META)
+
+    round_b = await _add_round_with_file_item(db, f)
+    sub_b, raw_b = await _issue(db, f, round_id=round_b)
+    await svc.start(db, raw=raw_b, consent=True, meta=_META)
+
+    assert await _active_ledger_rows(db, sub_a) == 0
+    assert await _active_ledger_rows(db, sub_b) == 1
+    assert await svc.withdraw_task_consent(db, raw=raw_b, meta=_META) == {"withdrawn": True}
+    assert await _active_ledger_rows(db, sub_b) == 0
+    assert await db.scalar(
+        text("SELECT consented_at FROM task_submissions WHERE id = :i"), {"i": sub_b},
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_consent_can_be_withdrawn_after_submitting_and_hides_the_work(
+    db: AsyncSession,
+) -> None:
+    """NEW-2: the link refused once submitted ("no consent left to
+    withdraw") while the ledger row stayed active and reviewers kept reading."""
+    f = await _build(db)
+    iv = uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO users (id, email, company_id) VALUES (:i, :e, :c)"),
+        {"i": iv, "e": f"iv2-{f.company.hex[:8]}@w5.test", "c": f.company},
+    )
+    sub_id, raw = await _issue(db, f)
+    await svc.start(db, raw=raw, consent=True, meta=_META)
+    await svc.save_response(
+        db, raw=raw, item_key="q1", text_value="my answer", link_url=None, meta=_META,
+    )
+    await svc.submit(db, raw=raw, consent=True, meta=_META)
+    scorecard_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO interviewer_scorecards (id, company_id, enrolment_id, round_id,"
+            " interviewer_user_id, status) VALUES (:i, :c, :e, :r, :iv, 'in_progress')"
+        ),
+        {"i": scorecard_id, "c": f.company, "e": f.enrolment, "r": f.round, "iv": iv},
+    )
+    before = await svc.submission_for_reviewer(
+        db, company_id=f.company, scorecard_id=scorecard_id, interviewer_user_id=iv,
+    )
+    assert before["responses"]
+
+    assert await svc.withdraw_task_consent(db, raw=raw, meta=_META) == {"withdrawn": True}
+    assert await _active_ledger_rows(db, sub_id) == 0
+
+    # The reviewer no longer sees it, HR sees it as withdrawn (not as an
+    # empty submission), and a reload of the candidate's own page says so.
+    with pytest.raises(svc.TaskError) as exc:
+        await svc.submission_for_reviewer(
+            db, company_id=f.company, scorecard_id=scorecard_id, interviewer_user_id=iv,
+        )
+    assert exc.value.status_code == 404
+    [entry] = await svc.for_enrolment(
+        db, company_id=f.company, enrolment_id=f.enrolment, actor=f.hr,
+    )
+    assert entry["status"] == "submitted"
+    assert entry["consent_withdrawn"] is True
+    assert entry["responses"] == []
+    view = await svc.candidate_view(db, await svc.by_token(db, raw))
+    assert view["consent_withdrawn"] is True
+
+    with pytest.raises(svc.TaskError) as again:
+        await svc.withdraw_task_consent(db, raw=raw, meta=_META)
+    assert again.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_the_window_closed_notice_does_not_say_withdrawn_work_was_sent(
+    db: AsyncSession,
+) -> None:
+    """NEW-3: `has_work` looked only at saved answers, so a candidate who
+    withdrew consent was told their work "was sent to the hiring team" while
+    the sweep expired it. It now matches close_due: saved work AND consent."""
+    from datetime import UTC, datetime, timedelta
+
+    from app import reminders
+
+    f = await _build(db)
+    withdrawn_id, raw_w = await _issue(db, f)
+    await svc.start(db, raw=raw_w, consent=True, meta=_META)
+    await svc.save_response(
+        db, raw=raw_w, item_key="q1", text_value="an answer", link_url=None, meta=_META,
+    )
+    await svc.withdraw_task_consent(db, raw=raw_w, meta=_META)
+
+    kept_round = await _add_round_with_file_item(db, f)
+    kept_id, raw_k = await _issue(db, f, round_id=kept_round)
+    await svc.start(db, raw=raw_k, consent=True, meta=_META)
+    await svc.save_response(
+        db, raw=raw_k, item_key="q1", text_value="an answer", link_url=None, meta=_META,
+    )
+
+    # Read the lapsed stage as of a moment after both due dates, rather than
+    # moving due_at backwards (the lifecycle trigger refuses that).
+    now = datetime.now(tz=UTC)
+    rows = (
+        await db.execute(
+            text(reminders._LAPSED_SQL),
+            {"now": now + timedelta(days=8), "floor": now, "lim": 10000},
+        )
+    ).mappings().all()
+    has_work = {r["id"]: r["has_work"] for r in rows if r["kind"] == "task"}
+    assert has_work[withdrawn_id] is False
+    assert has_work[kept_id] is True
+
+
+@pytest.mark.asyncio
+async def test_a_lost_guest_identity_race_raises_instead_of_overwriting(
+    db: AsyncSession,
+) -> None:
+    """NEW-5: `uq_applicants_user_id` is on user_id, so a second, concurrent
+    link never collided with the first -- its UPDATE waited, then overwrote
+    applicants.user_id, orphaning the first identity and its consent row.
+    Run sequentially, this is exactly what the losing request's UPDATE sees."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy.exc import IntegrityError
+
+    from app.guest_identity import GuestIdentityRaceError, provision_guest_user
+
+    f = await _build(db)
+    now = datetime.now(tz=UTC)
+    winner = await provision_guest_user(
+        db, applicant_id=f.applicant, full_name="Asha", company_id=f.company,
+        language="en", email_prefix="task", now=now,
+    )
+    # The callers recover on IntegrityError; the race must arrive as one.
+    with pytest.raises(IntegrityError) as exc:
+        await provision_guest_user(
+            db, applicant_id=f.applicant, full_name="Asha", company_id=f.company,
+            language="en", email_prefix="invite", now=now,
+        )
+    assert isinstance(exc.value, GuestIdentityRaceError)
+    assert await db.scalar(
+        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": f.applicant},
+    ) == winner
+
+
+@pytest.mark.asyncio
+async def test_replacing_a_file_answer_leaves_the_old_object_until_commit(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NEW-6: the old object was deleted inside the service, before the
+    caller's commit -- a failed commit restored the old row pointing at a
+    file that no longer existed. The service now hands the old key back for
+    the router to remove after a successful commit."""
+    fake_store = _FakeStore()
+    monkeypatch.setattr(svc.store, "store", fake_store.store)
+    monkeypatch.setattr(svc.store, "remove", fake_store.remove)
+
+    f = await _build(db)
+    rid = await _add_round_with_file_item(db, f)
+    _sub_id, raw = await _issue(db, f, round_id=rid)
+    await svc.start(db, raw=raw, consent=True, meta=_META)
+    first = await svc.add_artifact(
+        db, raw=raw, kind="file", data=b"%PDF-1.4", filename="a.pdf",
+        link_url=None, link_kind=None, title=None, description=None, meta=_META,
+        item_key="proof",
+    )
+    assert first["_replaced_key"] is None
+    second = await svc.add_artifact(
+        db, raw=raw, kind="file", data=b"%PDF-1.4", filename="b.pdf",
+        link_url=None, link_kind=None, title=None, description=None, meta=_META,
+        item_key="proof",
+    )
+    assert second["_replaced_key"] == first["_storage_key"]
+    assert first["_storage_key"] in fake_store.objects  # not removed before commit
+    assert second["_storage_key"] in fake_store.objects
+
+
+@pytest.mark.asyncio
+async def test_the_database_allows_consent_only_at_start_and_then_only_withdrawal(
+    db: AsyncSession,
+) -> None:
+    """The trigger backstop behind NEW-1/NEW-2: whatever the application code
+    does, `consented_at` is set only by the start transition and afterwards
+    only cleared -- so a withdrawal can never be quietly re-granted."""
+    from sqlalchemy.exc import DBAPIError
+
+    f = await _build(db)
+    sub_id, raw = await _issue(db, f)
+    await svc.start(db, raw=raw, consent=True, meta=_META)
+    await svc.save_response(
+        db, raw=raw, item_key="q1", text_value="an answer", link_url=None, meta=_META,
+    )
+    await svc.withdraw_task_consent(db, raw=raw, meta=_META)
+
+    with pytest.raises(DBAPIError, match="consent is given only at start"):
+        async with db.begin_nested():
+            await db.execute(
+                text("UPDATE task_submissions SET consented_at = now() WHERE id = :i"),
+                {"i": sub_id},
+            )
+
+    with pytest.raises(DBAPIError, match="arrives without consent"):
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    "INSERT INTO task_submissions (id, company_id, enrolment_id, round_id,"
+                    " applicant_id, kind, status, token_hash, due_at, config_digest,"
+                    " consented_at, created_at, updated_at)"
+                    " VALUES (:i,:c,:e,:r,:a,'job_simulation','assigned',:th,"
+                    " now() + interval '7 days', 'x', now(), now(), now())"
+                ),
+                {"i": uuid.uuid4(), "c": f.company, "e": f.enrolment, "r": f.round,
+                 "a": f.applicant, "th": svc.hash_task_token(svc.mint_task_token())},
+            )
+
+
+@pytest.mark.asyncio
+async def test_hr_reads_submitted_work_with_its_prompts_and_the_read_is_recorded(
+    db: AsyncSession,
+) -> None:
+    """Gap 4, finished: HR's list carries the answers AND the brief and item
+    prompts they answer (the reviewer read has had these since gap 2), and
+    each read of a candidate's work is recorded against the HR user, as a
+    reviewer's read is."""
+    f = await _build(db)
+    sub_id, raw = await _issue(db, f)
+    await svc.start(db, raw=raw, consent=True, meta=_META)
+    await svc.save_response(
+        db, raw=raw, item_key="q1", text_value="my answer", link_url=None, meta=_META,
+    )
+
+    [draft] = await svc.for_enrolment(
+        db, company_id=f.company, enrolment_id=f.enrolment, actor=f.hr,
+    )
+    assert draft["responses"] == [] and draft["items"] == [] and draft["brief"] is None
+
+    await svc.submit(db, raw=raw, consent=True, meta=_META)
+    [entry] = await svc.for_enrolment(
+        db, company_id=f.company, enrolment_id=f.enrolment, actor=f.hr,
+    )
+    assert entry["brief"] == "Do the thing"
+    assert entry["items"][0]["prompt"] == "Explain your approach"
+    assert entry["responses"][0]["text_value"] == "my answer"
+    viewed = await db.scalar(
+        text(
+            "SELECT count(*) FROM task_events WHERE submission_id = :s"
+            " AND action = 'submission_viewed' AND actor_user_id = :u"
+        ),
+        {"s": sub_id, "u": f.hr},
+    )
+    assert viewed == 1  # the draft read above recorded nothing
+
+
+@pytest.mark.asyncio
+async def test_one_candidates_token_cannot_reach_another_candidates_work(
+    db: AsyncSession,
+) -> None:
+    """Criterion 27 (the evidence pass found no test of it): every public
+    task call resolves the submission from the caller's OWN token, so a
+    candidate holding a valid link cannot read or remove a second
+    candidate's answers by guessing or learning their ids."""
+    f = await _build(db)
+    portfolio_round = await _add_portfolio_round(db, f)
+
+    # A second candidate in the same company and round.
+    other_applicant, other_enrolment = uuid.uuid4(), uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO applicants (id, company_id, full_name, email, target_job_title)"
+             " VALUES (:a, :c, 'Bala', :e, 'Engineer')"),
+        {"a": other_applicant, "c": f.company, "e": f"bala-{f.company.hex[:8]}@w5.test"},
+    )
+    await db.execute(
+        text("INSERT INTO enrolments (id, company_id, requisition_id, applicant_id,"
+             " target_job_title, current_round_id, status, created_at, updated_at)"
+             " VALUES (:e, :c, :r, :a, 'Engineer', :rnd, 'shortlisted', now(), now())"),
+        {"e": other_enrolment, "c": f.company, "r": f.req, "a": other_applicant,
+         "rnd": portfolio_round},
+    )
+    _sub_a, raw_a = await _issue(db, f, round_id=portfolio_round)
+    other = F()
+    other.company, other.applicant, other.enrolment = f.company, other_applicant, other_enrolment
+    _sub_b, raw_b = await _issue(db, other, round_id=portfolio_round)
+
+    await svc.start(db, raw=raw_a, consent=True, meta=_META)
+    await svc.start(db, raw=raw_b, consent=True, meta=_META)
+    b_artifact = await svc.add_artifact(
+        db, raw=raw_b, kind="link", data=None, filename=None,
+        link_url="https://github.com/bala/private-work", link_kind="repository",
+        title="Bala's work", description=None, meta=_META,
+    )
+
+    view_a = await svc.candidate_view(db, await svc.by_token(db, raw_a))
+    assert view_a["responses"] == []
+    assert "bala" not in str(view_a).lower()
+
+    with pytest.raises(svc.TaskError) as exc:
+        await svc.remove_artifact(
+            db, raw=raw_a, response_id=uuid.UUID(b_artifact["id"]), meta=_META,
+        )
+    assert exc.value.status_code == 404
+    still = await db.scalar(
+        text("SELECT 1 FROM task_responses WHERE id = :i"), {"i": uuid.UUID(b_artifact["id"])},
+    )
+    assert still == 1

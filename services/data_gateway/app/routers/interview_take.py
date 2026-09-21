@@ -307,7 +307,7 @@ async def redeem_invite(
                 resume_text=applicant.resume_text or "", email_prefix="invite", now=now,
             )
         except IntegrityError:
-            # Lost a race (uq_applicants_user_id) — reuse the winner's guest user.
+            # Lost a race (guest_identity.GuestIdentityRaceError) — reuse the winner's guest user.
             await db.rollback()
             guest_user_id = await db.scalar(
                 select(Applicant.user_id).where(Applicant.id == inv.applicant_id)

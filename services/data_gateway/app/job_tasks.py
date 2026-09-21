@@ -846,6 +846,15 @@ def materials_withheld(sub: dict[str, Any]) -> bool:
     return sub["status"] == "submitted" or timed_task_locked(sub)
 
 
+def consent_withdrawn(sub: dict[str, Any]) -> bool:
+    """Started (which is when consent is given) and since withdrawn. Every
+    gate reads ``consented_at``; this is the same fact, named for the screens
+    — the candidate page, so a reload shows the withdrawn state rather than
+    offering to withdraw again, and HR's list, so hidden work reads as
+    withdrawn rather than as an empty submission."""
+    return sub.get("started_at") is not None and sub.get("consented_at") is None
+
+
 async def candidate_view(db: AsyncSession, sub: dict[str, Any]) -> dict[str, Any]:
     """The candidate's own read of their task.
 
@@ -868,6 +877,7 @@ async def candidate_view(db: AsyncSession, sub: dict[str, Any]) -> dict[str, Any
             "started_at": _iso(sub["started_at"]), "submitted_at": _iso(sub["submitted_at"]),
             "adjustments": {"extra_time_seconds": None, "deadline_extended": False},
             "responses": [],
+            "consent_withdrawn": consent_withdrawn(sub),
         }
     lang = await candidate_language(db, sub["applicant_id"])
     brief = sub["brief"]
@@ -891,6 +901,7 @@ async def candidate_view(db: AsyncSession, sub: dict[str, Any]) -> dict[str, Any
             "deadline_extended": bool(sub["deadline_extension_days"]),
         },
         "responses": [] if locked else await _responses_for(db, sub["id"]),
+        "consent_withdrawn": consent_withdrawn(sub),
     }
 
 
@@ -946,9 +957,9 @@ async def start(db: AsyncSession, *, raw: str | None, consent: bool, meta: Reque
                     email_prefix="task", now=now,
                 )
             except IntegrityError:
-                # Lost a race against another submission for the same
-                # applicant provisioning a guest identity at the same moment
-                # (uq_applicants_user_id) — L7. Recover exactly as
+                # Lost a race against another request for the same applicant
+                # linking a guest identity at the same moment
+                # (guest_identity.GuestIdentityRaceError) — L7. Recover exactly as
                 # interview_take.redeem does: roll back, reuse the winner's
                 # guest user, and re-acquire this submission's own lock (the
                 # rollback dropped it) before continuing.
@@ -965,6 +976,11 @@ async def start(db: AsyncSession, *, raw: str | None, consent: bool, meta: Reque
                     # started this exact submission while we recovered —
                     # nothing left to do.
                     return await candidate_view(db, sub)
+        # The ledger row FIRST: `consented_at` is what every gate reads, so it
+        # may only ever be set once this submission has an active row the
+        # candidate can later withdraw. If the row cannot be written, this
+        # raises and nothing below runs (NEW-1, security re-review).
+        await _record_submission_consent(db, user_id=user_id, sub=sub)
         await db.execute(
             text(
                 "UPDATE task_submissions SET status = 'in_progress', started_at = :n,"
@@ -972,7 +988,6 @@ async def start(db: AsyncSession, *, raw: str | None, consent: bool, meta: Reque
             ),
             {"n": now, "i": sub["id"]},
         )
-        await _record_submission_consent(db, user_id=user_id, sub=sub)
         await _event(
             db, company_id=sub["company_id"], submission_id=sub["id"], round_id=sub["round_id"],
             action="started", actor_type="candidate", actor=user_id,
@@ -1105,7 +1120,9 @@ async def add_artifact(
     object) is removed first, since a file's ``storage_key`` never changes in
     place (``task_responses_frozen``). Without ``item_key`` this is a
     free-form portfolio artifact, up to ``max_artifacts``, unchanged. Returns
-    ``_storage_key`` for the router on a file.
+    ``_storage_key`` (the new object, removed if the commit fails) and
+    ``_replaced_key`` (the old one, removed only once the commit succeeds)
+    for the router.
     """
     sub = await by_token(db, raw)
     if sub["status"] not in ("assigned", "in_progress"):
@@ -1207,15 +1224,19 @@ async def add_artifact(
     else:
         raise TaskError(422, "An artifact is a file or a link.")
 
-    if replaced_key and replaced_key != storage_key:
-        await store.remove(settings, [replaced_key])
-
+    # The replaced object is NOT removed here: if the caller's commit then
+    # failed, the old row would come back pointing at a file already deleted
+    # (NEW-6). The router removes it after a successful commit, the way
+    # ``remove_task_artifact`` does.
     await _event(
         db, company_id=sub["company_id"], submission_id=sub["id"], round_id=sub["round_id"],
         action="artifact_added", actor_type="candidate", actor=sub["candidate_user_id"],
         details={"kind": kind, "item_key": item_key} if item_key else {"kind": kind},
     )
-    return {"id": str(response_id), "_storage_key": storage_key}
+    return {
+        "id": str(response_id), "_storage_key": storage_key,
+        "_replaced_key": replaced_key if replaced_key != storage_key else None,
+    }
 
 
 async def remove_artifact(
@@ -1261,28 +1282,37 @@ async def _record_submission_consent(
     db: AsyncSession, *, user_id: uuid.UUID, sub: dict[str, Any],
 ) -> None:
     """DPDP: the candidate's consent to send THIS submission's work to the
-    hiring team. Booked against the candidate's own identity, at the moment
-    of the act (``start``) — ONE row per submission, so a second submission
-    (a re-issue, or a later round) gets a row of its own rather than being
-    silently covered by an earlier one. Never re-granted once this identity's
-    consent of this type has ever been revoked — the public_apply.py
-    precedent — regardless of which submission the revoked row named."""
+    hiring team, booked at the moment of the act (``start``) — ONE row per
+    submission, so a second submission (a re-issue, or a later round) gets a
+    row of its own rather than being silently covered by an earlier one.
+
+    Every lookup is by submission, never by user. An earlier version refused
+    to write a row if the candidate had EVER withdrawn on any submission
+    (copying public_apply.py's "never re-grant" rule) — but ``start`` had
+    already set ``consented_at``, so the new submission ran on a consent with
+    no ledger row, which the candidate could then not withdraw (NEW-1,
+    security re-review). public_apply's rule exists because its row can be
+    minted by anyone who types an email address; here the only way in is the
+    task token sent to the candidate, and ticking the box on a NEW submission
+    is the owner's own fresh consent — the re-grant route that precedent's
+    comment says a self-serve withdrawal needs. A withdrawal on THIS
+    submission, though, is final: that raises rather than re-granting."""
     rows = (
         await db.execute(
             text(
-                "SELECT revoked_at IS NOT NULL AS was_revoked,"
-                "       evidence ->> 'submission_id' AS submission_id"
-                "  FROM dpdp_consent_ledger"
-                " WHERE user_id = :u AND consent_type = :ct AND purpose = 'recruitment'"
+                "SELECT revoked_at IS NOT NULL AS was_revoked FROM dpdp_consent_ledger"
+                " WHERE consent_type = :ct AND purpose = 'recruitment'"
+                "   AND evidence ->> 'submission_id' = :s"
             ),
-            {"u": user_id, "ct": CONSENT_TYPE},
+            {"ct": CONSENT_TYPE, "s": str(sub["id"])},
         )
     ).mappings().all()
     if any(r["was_revoked"] for r in rows):
-        log.info("job_tasks.consent.not_regranted_after_withdrawal", user_id=str(user_id))
-        return
-    if any(r["submission_id"] == str(sub["id"]) for r in rows):
-        return  # idempotent: this submission already has its own row
+        raise TaskError(
+            409, "Consent for this task was withdrawn; ask the hiring team for a new link."
+        )
+    if rows:
+        return  # idempotent: this submission already has its active row
     await db.execute(
         text(
             "INSERT INTO dpdp_consent_ledger (id, user_id, consent_type, granted, granted_at,"
@@ -1304,18 +1334,25 @@ async def withdraw_task_consent(
     account to sign in with (the preboarding-documents precedent,
     ``app/preboarding.py::withdraw_consent``).
 
-    Nothing already stored is deleted by this — that is what erasure and
-    retention are for. It stops anything FURTHER: ``save``, ``add_artifact``
-    and ``submit`` all refuse once ``consented_at`` is cleared (mirrored onto
-    the submission row here so those checks need no ledger join), and the
-    issuer is told. A repeat call, or a submission that was never started, is
-    a 409. Caller commits.
+    Works while the task is in progress AND after it is submitted (NEW-2,
+    security re-review — the link used to refuse once submitted with "there
+    is no consent left to withdraw" while the ledger row was still active and
+    reviewers kept reading). Clearing ``consented_at`` is what every gate
+    reads: in progress, ``save``, ``add_artifact`` and ``submit`` refuse and
+    the deadline sweep expires rather than submits; once submitted, reviewer
+    and HR reads return no content, signed downloads refuse, and
+    ``post_round_review`` will not pass the round on it. A decision already
+    recorded on it stands — withdrawal is not retroactive (DPDP §6(4)).
+
+    Nothing already stored is deleted by this; retention and erasure do that
+    (``docs/DATA-FLOW.md``). The ledger row is found by SUBMISSION, never by
+    user: a guest identity can be replaced under a submission (NEW-5), and a
+    withdrawal must still find its row. A repeat call, or a task never
+    started, is a 409. Caller commits.
     """
     sub = await by_token(db, raw)
-    if sub["status"] not in ("assigned", "in_progress"):
-        raise TaskError(
-            409, "This task is no longer open; there is no consent left to withdraw."
-        )
+    if sub["status"] not in ("assigned", "in_progress", "submitted"):
+        raise TaskError(409, "This task is closed; there is no consent left to withdraw.")
     if sub["consented_at"] is None:
         if sub["status"] == "assigned":
             raise TaskError(409, "This task has not been started, so there is no consent yet.")
@@ -1325,16 +1362,17 @@ async def withdraw_task_consent(
         await db.execute(
             text(
                 "UPDATE dpdp_consent_ledger SET revoked_at = now()"
-                " WHERE user_id = :u AND consent_type = :ct AND purpose = 'recruitment'"
+                " WHERE consent_type = :ct AND purpose = 'recruitment'"
                 "   AND granted AND revoked_at IS NULL"
                 "   AND evidence ->> 'submission_id' = :s"
                 " RETURNING id"
             ),
-            {"u": user_id, "ct": CONSENT_TYPE, "s": str(sub["id"])},
+            {"ct": CONSENT_TYPE, "s": str(sub["id"])},
         )
     ).all()
-    if not revoked:
-        raise TaskError(409, "Consent for this task is already withdrawn.")
+    # `consented_at` is cleared even if no active row was found: the
+    # candidate asked for processing to stop, and the gates read this column,
+    # so it must never stay set because the ledger lookup came back empty.
     await db.execute(
         text("UPDATE task_submissions SET consented_at = NULL, updated_at = now() WHERE id = :i"),
         {"i": sub["id"]},
@@ -1350,7 +1388,13 @@ async def withdraw_task_consent(
         await create_notification(
             db, user_id=sub["issued_by_user_id"], kind="task_consent_withdrawn",
             title=f"{sub['candidate_name']} withdrew consent for {sub['round_title']}",
-            body="They can save, upload or submit no further work until they agree again.",
+            body=(
+                "Their submitted work is now hidden from reviewers and from you, and cannot be"
+                " used to pass the round. A decision already recorded stands."
+                if sub["status"] == "submitted" else
+                "They can save, upload or submit nothing more on this link. Re-issuing the task"
+                " sends a new link, which asks for their consent again."
+            ),
             link="/hr/requisitions",
         )
     return {"withdrawn": True}
@@ -1491,10 +1535,13 @@ def _submission_out(row: dict[str, Any]) -> dict[str, Any]:
         # first) because `_submission_out` carried no `superseded_at`.
         "superseded_at": _iso(row.get("superseded_at")),
         "is_current": row.get("superseded_at") is None,
+        "consent_withdrawn": consent_withdrawn(row),
     }
 
 
-async def for_enrolment(db: AsyncSession, *, company_id: uuid.UUID, enrolment_id: uuid.UUID) -> list[dict[str, Any]]:
+async def for_enrolment(
+    db: AsyncSession, *, company_id: uuid.UUID, enrolment_id: uuid.UUID, actor: uuid.UUID,
+) -> list[dict[str, Any]]:
     rows = (
         await db.execute(
             text(
@@ -1509,17 +1556,35 @@ async def for_enrolment(db: AsyncSession, *, company_id: uuid.UUID, enrolment_id
         )
     ).mappings().all()
     out = []
+    configs: dict[uuid.UUID, dict[str, Any] | None] = {}
     for r in rows:
         row = dict(r)
         entry = _submission_out(row)
         # Gap 4 closes "no content" — M1 says the content is submitted work
         # ONLY: an unsubmitted draft is not shown here either, so this list
         # cannot become a second way to watch autosaves live.
-        entry["responses"] = (
-            await _responses_for(db, row["id"])
-            if row["status"] == "submitted" and row.get("consented_at") is not None
-            else []
-        )
+        readable = row["status"] == "submitted" and row.get("consented_at") is not None
+        entry["responses"] = await _responses_for(db, row["id"]) if readable else []
+        # The brief and item prompts the answers respond to — the reviewer
+        # read has carried these since gap 2; HR's decision workspace needs
+        # them just as much to read an answer in context.
+        if readable:
+            if row["round_id"] not in configs:
+                configs[row["round_id"]] = await get_config(
+                    db, company_id=company_id, round_id=row["round_id"],
+                )
+            cfg = configs[row["round_id"]]
+            entry["brief"] = cfg["brief"] if cfg else None
+            entry["items"] = cfg["items"] if cfg else []
+            # Reading a candidate's work is recorded, the same as a reviewer's
+            # read (`submission_for_reviewer`) — the caller commits.
+            await _event(
+                db, company_id=company_id, submission_id=row["id"], round_id=row["round_id"],
+                action="submission_viewed", actor_type="user", actor=actor,
+            )
+        else:
+            entry["brief"] = None
+            entry["items"] = []
         out.append(entry)
     return out
 

@@ -415,10 +415,14 @@ SELECT * FROM (
          a.full_name, a.email, a.user_id, wr.title AS what,
          (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate,
          -- H2(e): the sweep (_task_deadlines, AFTER this stage) submits a
-         -- task that has any saved work, rather than expiring it -- so the
-         -- notice must not tell every candidate their work is gone.
-         EXISTS (SELECT 1 FROM task_responses tr
-                  WHERE tr.submission_id = t.id AND tr.redacted_at IS NULL) AS has_work
+         -- task that has saved work AND standing consent, rather than
+         -- expiring it -- so the notice must not tell every candidate their
+         -- work is gone, nor tell one who withdrew consent that it was sent
+         -- (NEW-3: the sweep expires that one). The same two conditions as
+         -- job_tasks.close_due.
+         (t.consented_at IS NOT NULL
+          AND EXISTS (SELECT 1 FROM task_responses tr
+                       WHERE tr.submission_id = t.id AND tr.redacted_at IS NULL)) AS has_work
     FROM task_submissions t
     JOIN applicants a ON a.id = t.applicant_id AND a.deleted_at IS NULL
     JOIN workflow_rounds wr ON wr.id = t.round_id

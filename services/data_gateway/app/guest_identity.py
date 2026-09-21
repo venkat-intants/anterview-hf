@@ -12,11 +12,20 @@ a second link for the same applicant reuses it rather than minting again.
 
 RACES
 Two links for the same applicant can be redeemed at once. This function does
-the INSERT and the link; it does NOT catch the ``IntegrityError`` a lost race
-raises on ``uq_applicants_user_id`` — the caller does, exactly as
-``interview_take.redeem`` and ``job_tasks.start`` each already need to: on a
-lost race the caller re-reads ``applicants.user_id`` for the winner's row and
-carries on with that, re-acquiring whatever lock it held before the insert.
+the INSERT and the link, and the link only ever fills an EMPTY
+``applicants.user_id``: a lost race raises ``GuestIdentityRaceError``, an
+``IntegrityError``, which the caller catches exactly as
+``interview_take.redeem`` and ``job_tasks.start`` already do — roll back
+(which discards this call's own users row), re-read ``applicants.user_id``
+for the winner's row, carry on with that, and re-acquire whatever lock it
+held before the insert.
+
+This used to rely on ``uq_applicants_user_id`` raising instead. It never
+did: that index is on ``user_id``, and two different guest ids for one
+applicant do not collide on it — the second UPDATE waited for the first to
+commit, then overwrote it, orphaning the first guest identity and anything
+already booked against it, such as a task's consent row (NEW-5, security
+re-review, PH4-D4 wave 5).
 (Provisioning moved from ``job_tasks.submit`` to ``job_tasks.start`` when
 consent moved there too, PH4-D4 wave 5 — consent needs an identity to be
 booked against, and that has to exist before anything is stored, not after.)
@@ -36,7 +45,19 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+class GuestIdentityRaceError(IntegrityError):
+    """Another request linked a user onto this applicant first. An
+    ``IntegrityError`` so the callers' existing race recovery handles it."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "UPDATE applicants SET user_id = ... WHERE user_id IS NULL", None,
+            Exception("applicants.user_id was already set by a concurrent request"),
+        )
 
 
 async def provision_guest_user(
@@ -52,8 +73,8 @@ async def provision_guest_user(
 ) -> uuid.UUID:
     """Insert a new ``guest_candidate`` user and link it onto the applicant.
 
-    Returns the new user's id. Raises ``sqlalchemy.exc.IntegrityError``
-    (uncaught) on a lost race against another redemption for the same
+    Returns the new user's id. Raises ``GuestIdentityRaceError`` (an
+    ``IntegrityError``) when another request already linked a user onto the
     applicant — the caller recovers, as documented above. Caller commits.
     """
     guest_user_id = uuid.uuid4()
@@ -77,9 +98,14 @@ async def provision_guest_user(
         ),
         {"uid": guest_user_id, "now": now},
     )
-    await db.execute(
-        text("UPDATE applicants SET user_id = :uid, updated_at = :now WHERE id = :aid"),
+    linked = await db.execute(
+        text(
+            "UPDATE applicants SET user_id = :uid, updated_at = :now"
+            " WHERE id = :aid AND user_id IS NULL RETURNING id"
+        ),
         {"uid": guest_user_id, "aid": applicant_id, "now": now},
     )
+    if linked.first() is None:
+        raise GuestIdentityRaceError()
     await db.flush()
     return guest_user_id

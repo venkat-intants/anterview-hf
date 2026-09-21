@@ -29,6 +29,7 @@ from app.database import DbSessionDep
 from app.decision_reasons import ReasonError
 from app.decision_reasons import resolve as resolve_reason
 from app.dependencies import HrCtxDep
+from app.interviewer_scorecards import RequestMeta
 from app.models import AuditLog
 from app.requisitions import ambiguous_decision_detail, choose_application, record_transition
 from app.routers.hr_applicants import (
@@ -577,6 +578,19 @@ async def decide_applicant(
         await close_for_decision(
             db, company_id=company_id, enrolment_id=app_.enrolment_id, actor=hr_uid,
             decision=body.decision,
+        )
+        # PH4-D4 M5, as app/final_decision.py does: an open task link must not
+        # outlive the application. This board records its decision without
+        # going through final_decision, so it has to close tasks itself —
+        # otherwise a rejected candidate's draft was later auto-submitted by
+        # the deadline sweep and they were emailed about it (NEW-4).
+        from app.job_tasks import close_for_decision as close_tasks_for_decision  # noqa: PLC0415
+
+        await close_tasks_for_decision(
+            db, company_id=company_id, enrolment_id=app_.enrolment_id, actor=hr_uid,
+            meta=RequestMeta(
+                ip_address=extract_client_ip(request), user_agent=extract_user_agent(request),
+            ),
         )
 
     db.add(

@@ -11,14 +11,16 @@ never signed in. One ``guest_candidate`` users row is minted and linked onto
 a second link for the same applicant reuses it rather than minting again.
 
 RACES
-Two links for the same applicant can be redeemed at once. This function does
-the INSERT and the link, and the link only ever fills an EMPTY
-``applicants.user_id``: a lost race raises ``GuestIdentityRaceError``, an
-``IntegrityError``, which the caller catches exactly as
-``interview_take.redeem`` and ``job_tasks.start`` already do — roll back
-(which discards this call's own users row), re-read ``applicants.user_id``
-for the winner's row, carry on with that, and re-acquire whatever lock it
-held before the insert.
+Two links for the same applicant can be redeemed at once. Callers use
+``link_or_reuse_guest``, which runs ``provision_guest_user`` inside a
+SAVEPOINT. The link only ever fills an EMPTY ``applicants.user_id``, so the
+request that loses the race raises ``GuestIdentityRaceError`` inside the
+savepoint. Rolling back the savepoint discards only this call's own users
+and user_roles rows, and the winner's user id is returned. The caller's
+transaction, its row locks and its loaded ORM objects are untouched. The
+earlier recovery rolled back the WHOLE session, which expired every loaded
+object, and the next attribute read in ``interview_take`` raised
+``MissingGreenlet`` (NEW-8, security re-review).
 
 This used to rely on ``uq_applicants_user_id`` raising instead. It never
 did: that index is on ``user_id``, and two different guest ids for one
@@ -109,3 +111,31 @@ async def provision_guest_user(
         raise GuestIdentityRaceError()
     await db.flush()
     return guest_user_id
+
+
+async def link_or_reuse_guest(
+    db: AsyncSession,
+    *,
+    applicant_id: uuid.UUID,
+    full_name: str | None,
+    company_id: uuid.UUID | None,
+    language: str | None,
+    resume_text: str = "",
+    email_prefix: str = "guest",
+    now: datetime,
+) -> uuid.UUID | None:
+    """The applicant's guest identity: provisioned now or, if a concurrent
+    request linked one first, that one. Returns ``None`` only if the
+    applicant turns out to have no user at all (e.g. it is gone). Runs the
+    provisioning in a SAVEPOINT; see RACES above. Caller commits."""
+    try:
+        async with db.begin_nested():
+            return await provision_guest_user(
+                db, applicant_id=applicant_id, full_name=full_name, company_id=company_id,
+                language=language, resume_text=resume_text, email_prefix=email_prefix, now=now,
+            )
+    except IntegrityError:
+        winner = await db.scalar(
+            text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id},
+        )
+        return winner  # asyncpg returns a uuid.UUID (or None)

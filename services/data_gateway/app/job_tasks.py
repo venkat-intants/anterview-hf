@@ -63,17 +63,17 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import accommodations
 from app import document_storage as store
 from app.config import settings
-from app.guest_identity import provision_guest_user
+from app.guest_identity import link_or_reuse_guest
 from app.interviewer_scorecards import RequestMeta
 from app.mailer import candidate_language, enqueue_email
 from app.models import AuditLog
 from app.notifications_util import create_notification
+from app.routers.consent import _hash_value
 
 log = structlog.get_logger(__name__)
 
@@ -949,38 +949,23 @@ async def start(db: AsyncSession, *, raw: str | None, consent: bool, meta: Reque
             )
         user_id = sub["candidate_user_id"]
         if user_id is None:
-            try:
-                user_id = await provision_guest_user(
-                    db, applicant_id=sub["applicant_id"], full_name=sub["candidate_name"],
-                    company_id=sub["company_id"],
-                    language=await candidate_language(db, sub["applicant_id"]),
-                    email_prefix="task", now=now,
-                )
-            except IntegrityError:
-                # Lost a race against another request for the same applicant
-                # linking a guest identity at the same moment
-                # (guest_identity.GuestIdentityRaceError) — L7. Recover exactly as
-                # interview_take.redeem does: roll back, reuse the winner's
-                # guest user, and re-acquire this submission's own lock (the
-                # rollback dropped it) before continuing.
-                await db.rollback()
-                user_id = await db.scalar(
-                    text("SELECT user_id FROM applicants WHERE id = :a"),
-                    {"a": sub["applicant_id"]},
-                )
-                if user_id is None:
-                    raise TaskError(404, NOT_AVAILABLE) from None
-                sub = await by_token(db, raw)
-                if sub["status"] != "assigned":
-                    # Someone else's request (or a second tab) already
-                    # started this exact submission while we recovered —
-                    # nothing left to do.
-                    return await candidate_view(db, sub)
+            # A lost race against another request for the same applicant
+            # (L7/NEW-5) rolls back only a SAVEPOINT inside the helper, so
+            # this submission's FOR UPDATE lock from `by_token` holds
+            # throughout -- nothing else can start it meanwhile (NEW-8).
+            user_id = await link_or_reuse_guest(
+                db, applicant_id=sub["applicant_id"], full_name=sub["candidate_name"],
+                company_id=sub["company_id"],
+                language=await candidate_language(db, sub["applicant_id"]),
+                email_prefix="task", now=now,
+            )
+            if user_id is None:
+                raise TaskError(404, NOT_AVAILABLE)
         # The ledger row FIRST: `consented_at` is what every gate reads, so it
         # may only ever be set once this submission has an active row the
         # candidate can later withdraw. If the row cannot be written, this
         # raises and nothing below runs (NEW-1, security re-review).
-        await _record_submission_consent(db, user_id=user_id, sub=sub)
+        await _record_submission_consent(db, user_id=user_id, sub=sub, meta=meta)
         await db.execute(
             text(
                 "UPDATE task_submissions SET status = 'in_progress', started_at = :n,"
@@ -1279,7 +1264,7 @@ CONSENT_NOTICE_VERSION = "1"
 
 
 async def _record_submission_consent(
-    db: AsyncSession, *, user_id: uuid.UUID, sub: dict[str, Any],
+    db: AsyncSession, *, user_id: uuid.UUID, sub: dict[str, Any], meta: RequestMeta,
 ) -> None:
     """DPDP: the candidate's consent to send THIS submission's work to the
     hiring team, booked at the moment of the act (``start``) — ONE row per
@@ -1296,7 +1281,12 @@ async def _record_submission_consent(
     task token sent to the candidate, and ticking the box on a NEW submission
     is the owner's own fresh consent — the re-grant route that precedent's
     comment says a self-serve withdrawal needs. A withdrawal on THIS
-    submission, though, is final: that raises rather than re-granting."""
+    submission, though, is final: that raises rather than re-granting.
+
+    The row carries salted hashes of the request's IP and user agent (the
+    public_apply shape), and the grant is in the audit log as well as the
+    ledger. Under DPDP §6(10) proving consent is on us, and until this change
+    the withdrawal was audited but the grant was not."""
     rows = (
         await db.execute(
             text(
@@ -1321,8 +1311,14 @@ async def _record_submission_consent(
         {"id": uuid.uuid4(), "u": user_id, "ct": CONSENT_TYPE,
          "ev": json.dumps({"source": "task_start", "submission_id": str(sub["id"]),
                           "company_id": str(sub["company_id"]),
-                          "notice_version": CONSENT_NOTICE_VERSION})},
+                          "notice_version": CONSENT_NOTICE_VERSION,
+                          "ip_hash": _hash_value(meta.ip_address or ""),
+                          "ua_hash": _hash_value(meta.user_agent or "")})},
     )
+    _audit(db, actor=user_id, action="task_submission.consent_given", resource_id=sub["id"],
+          details={"company_id": str(sub["company_id"]),
+                   "notice_version": CONSENT_NOTICE_VERSION},
+          meta=meta, actor_type="candidate")
 
 
 async def withdraw_task_consent(
@@ -1577,11 +1573,23 @@ async def for_enrolment(
             entry["brief"] = cfg["brief"] if cfg else None
             entry["items"] = cfg["items"] if cfg else []
             # Reading a candidate's work is recorded, the same as a reviewer's
-            # read (`submission_for_reviewer`) — the caller commits.
-            await _event(
-                db, company_id=company_id, submission_id=row["id"], round_id=row["round_id"],
-                action="submission_viewed", actor_type="user", actor=actor,
+            # read (`submission_for_reviewer`) — the caller commits. At most
+            # once an hour per reader and submission, as `open_submission`
+            # does: the drawer refetches on every window focus, and an event
+            # per refetch would bury the reads that matter.
+            seen = await db.scalar(
+                text(
+                    "SELECT 1 FROM task_events WHERE submission_id = :s"
+                    "   AND action = 'submission_viewed' AND actor_user_id = :u"
+                    "   AND created_at > now() - interval '1 hour' LIMIT 1"
+                ),
+                {"s": row["id"], "u": actor},
             )
+            if not seen:
+                await _event(
+                    db, company_id=company_id, submission_id=row["id"], round_id=row["round_id"],
+                    action="submission_viewed", actor_type="user", actor=actor,
+                )
         else:
             entry["brief"] = None
             entry["items"] = []

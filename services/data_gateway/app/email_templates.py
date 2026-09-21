@@ -1984,6 +1984,9 @@ def _t_task_assigned(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                    if is_portfolio else " Work through it in your own time, within the window.")
             ),
             "cta": "Open the task",
+            "choice": ("Before you begin, the task page asks whether you agree to share your "
+                       "work with the hiring team. That is your choice: you can decline, and "
+                       "you can withdraw later on the same page."),
             "fallback": "Or paste this link into your browser:",
             "due": "Due by:",
             "outro": "All the best!",
@@ -1998,6 +2001,9 @@ def _t_task_assigned(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                    if is_portfolio else " अपने समय पर, दी गई अवधि के भीतर इसे पूरा करें।")
             ),
             "cta": "टास्क खोलें",
+            "choice": ("शुरू करने से पहले, टास्क पेज पूछेगा कि क्या आप अपना काम भर्ती टीम के साथ "
+                       "साझा करने के लिए सहमत हैं। यह आपकी पसंद है: आप मना कर सकते हैं, और बाद में "
+                       "उसी पेज पर अपनी सहमति वापस ले सकते हैं।"),
             "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
             "due": "अंतिम तिथि:",
             "outro": "शुभकामनाएँ!",
@@ -2012,6 +2018,9 @@ def _t_task_assigned(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                    if is_portfolio else " మీ సమయంలో, ఇచ్చిన వ్యవధిలో దీన్ని పూర్తి చేయండి.")
             ),
             "cta": "టాస్క్ తెరవండి",
+            "choice": ("మీరు ప్రారంభించే ముందు, మీ పనిని నియామక బృందంతో పంచుకోవడానికి మీరు "
+                       "అంగీకరిస్తారా అని టాస్క్ పేజీ అడుగుతుంది. అది మీ ఎంపిక: మీరు తిరస్కరించవచ్చు, "
+                       "తర్వాత అదే పేజీలో మీ సమ్మతిని ఉపసంహరించుకోవచ్చు."),
             "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
             "due": "గడువు:",
             "outro": "శుభాకాంక్షలు!",
@@ -2022,13 +2031,15 @@ def _t_task_assigned(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     if due:
         inner += _p(f'<span style="color:{_MUTED};font-size:13px;">'
                     f'<strong>{_esc(loc["due"])}</strong> {_esc(due)}</span>')
+    # Consent must be free (DPDP §6(1)): the email says so before the page asks.
+    inner += _p(_esc(loc["choice"]))
     inner += _p(loc["outro"])
     text = [_greeting(lang, name), "",
             html_lib.unescape(loc["lead"].replace("<strong>", "").replace("</strong>", "")),
             "", task_url]
     if due:
         text += ["", f"{loc['due']} {due}"]
-    text += ["", loc["outro"]]
+    text += ["", loc["choice"], "", loc["outro"]]
     return loc["subject"], inner, "\n".join(text), loc["pre"]
 
 

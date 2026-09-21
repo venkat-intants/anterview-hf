@@ -31,12 +31,11 @@ from fastapi import APIRouter, Cookie, Header, HTTPException, Response, status
 from pydantic import BaseModel
 from shared.auth.jwt import issue_access_token
 from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import DbSessionDep
-from app.guest_identity import provision_guest_user
+from app.guest_identity import link_or_reuse_guest
 from app.interview_link import hash_interview_token
 from app.models import Applicant, InterviewInvite, Job
 from app.rate_limit import rate_limit
@@ -300,28 +299,18 @@ async def redeem_invite(
     # --- provision-or-reuse the guest user (one per applicant) ---
     guest_user_id = applicant.user_id
     if guest_user_id is None:
-        try:
-            guest_user_id = await provision_guest_user(
-                db, applicant_id=applicant.id, full_name=applicant.full_name,
-                company_id=inv.company_id, language=inv.language,
-                resume_text=applicant.resume_text or "", email_prefix="invite", now=now,
-            )
-        except IntegrityError:
-            # Lost a race (guest_identity.GuestIdentityRaceError) — reuse the winner's guest user.
-            await db.rollback()
-            guest_user_id = await db.scalar(
-                select(Applicant.user_id).where(Applicant.id == inv.applicant_id)
-            )
-            if guest_user_id is None:
-                raise _NOT_AVAILABLE from None
-            # Re-lock the invite after rollback dropped our transaction.
-            inv = await db.scalar(
-                select(InterviewInvite)
-                .where(InterviewInvite.id == inv.id, InterviewInvite.status == "invited")
-                .with_for_update()
-            )
-            if inv is None:
-                raise _NOT_AVAILABLE from None
+        # A lost race (another link for this applicant provisioning at the
+        # same moment) rolls back only a SAVEPOINT inside the helper, so the
+        # invite's row lock and the loaded `inv`/`applicant` objects survive
+        # it. The full rollback used here before expired them, and the next
+        # attribute read raised MissingGreenlet (NEW-8).
+        guest_user_id = await link_or_reuse_guest(
+            db, applicant_id=applicant.id, full_name=applicant.full_name,
+            company_id=inv.company_id, language=inv.language,
+            resume_text=applicant.resume_text or "", email_prefix="invite", now=now,
+        )
+        if guest_user_id is None:
+            raise _NOT_AVAILABLE
 
     # --- record the applicant's DPDP consent against the guest user (idempotent) ---
     has_consent = await db.scalar(

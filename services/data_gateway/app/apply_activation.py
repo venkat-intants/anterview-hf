@@ -375,17 +375,20 @@ async def _link_to_existing(
     )
     # Skip any (consent_type, purpose) the target already holds: the ledger has
     # a uniqueness rule per active consent, and the older grant is the one that
-    # matters.
+    # matters. EXCEPT a task consent ('assessment_submission'), which is one
+    # row per SUBMISSION, not per person: every one always moves. Skipping it
+    # left a submission's consent on the tombstoned guest, where erasing the
+    # real account (which revokes by user_id) never reached it (NEW-10).
     await db.execute(
         text(
             "UPDATE dpdp_consent_ledger SET user_id = :new"
             " WHERE user_id = :old"
-            "   AND NOT EXISTS ("
+            "   AND (consent_type = 'assessment_submission' OR NOT EXISTS ("
             "     SELECT 1 FROM dpdp_consent_ledger t"
             "      WHERE t.user_id = :new"
             "        AND t.consent_type = dpdp_consent_ledger.consent_type"
             "        AND t.purpose = dpdp_consent_ledger.purpose"
-            "        AND t.granted = true AND t.revoked_at IS NULL)"
+            "        AND t.granted = true AND t.revoked_at IS NULL))"
         ),
         {"new": target_user_id, "old": guest_user_id},
     )

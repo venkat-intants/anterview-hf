@@ -1028,3 +1028,193 @@ async def test_one_candidates_token_cannot_reach_another_candidates_work(
         text("SELECT 1 FROM task_responses WHERE id = :i"), {"i": uuid.UUID(b_artifact["id"])},
     )
     assert still == 1
+
+
+# ===========================================================================
+# Second security re-review (NEW-7 .. NEW-10) and its informational notes
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_an_erasure_request_stops_processing_at_once(db: AsyncSession) -> None:
+    """NEW-7: an erasure REQUEST revokes every ledger row for the user at
+    once (admin_ops step 3b-iii, the SQL below), but consented_at stayed set
+    until the executor ran 30 days later -- reviewers kept reading, and HR
+    could pass the round on it. Revoking a task consent anywhere now clears
+    consented_at in the same transaction (dpdp_task_consent_revoked)."""
+    from datetime import UTC, datetime
+
+    f = await _build(db)
+    iv = uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO users (id, email, company_id) VALUES (:i, :e, :c)"),
+        {"i": iv, "e": f"iv3-{f.company.hex[:8]}@w5.test", "c": f.company},
+    )
+    sub_id, raw = await _issue(db, f)
+    await svc.start(db, raw=raw, consent=True, meta=_META)
+    await svc.save_response(
+        db, raw=raw, item_key="q1", text_value="my answer", link_url=None, meta=_META,
+    )
+    await svc.submit(db, raw=raw, consent=True, meta=_META)
+    scorecard_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO interviewer_scorecards (id, company_id, enrolment_id, round_id,"
+            " interviewer_user_id, status) VALUES (:i, :c, :e, :r, :iv, 'in_progress')"
+        ),
+        {"i": scorecard_id, "c": f.company, "e": f.enrolment, "r": f.round, "iv": iv},
+    )
+    user_id = await db.scalar(
+        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": f.applicant},
+    )
+
+    # Exactly what admin_ops/app/routers/erasure.py step 3b-iii runs.
+    await db.execute(
+        text("UPDATE dpdp_consent_ledger SET revoked_at = :now"
+             " WHERE user_id = :user_id AND revoked_at IS NULL"),
+        {"user_id": user_id, "now": datetime.now(tz=UTC)},
+    )
+
+    assert await db.scalar(
+        text("SELECT consented_at FROM task_submissions WHERE id = :i"), {"i": sub_id},
+    ) is None
+    with pytest.raises(svc.TaskError) as exc:
+        await svc.submission_for_reviewer(
+            db, company_id=f.company, scorecard_id=scorecard_id, interviewer_user_id=iv,
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_database_refuses_consent_without_its_ledger_row(db: AsyncSession) -> None:
+    """The other direction (c8e0a2b4d6f8): consented_at can be set only when
+    this submission has an active ledger row -- so no code path can mark work
+    consented without the record that proves it."""
+    from sqlalchemy.exc import DBAPIError
+
+    f = await _build(db)
+    sub_id, _raw = await _issue(db, f)
+    with pytest.raises(DBAPIError, match="needs its dpdp_consent_ledger row first"):
+        async with db.begin_nested():
+            await db.execute(
+                text("UPDATE task_submissions SET status = 'in_progress', started_at = now(),"
+                     " consented_at = now() WHERE id = :i"),
+                {"i": sub_id},
+            )
+
+
+@pytest.mark.asyncio
+async def test_losing_the_guest_race_keeps_the_callers_transaction_and_objects(
+    db: AsyncSession,
+) -> None:
+    """NEW-8: the old recovery rolled back the WHOLE session, which expired
+    every loaded ORM object; interview_take's next attribute read then raised
+    MissingGreenlet (a 500 for the request that lost the race). The helper
+    rolls back only a SAVEPOINT."""
+    from datetime import UTC, datetime
+
+    from app.guest_identity import link_or_reuse_guest
+    from app.models import Applicant
+
+    f = await _build(db)
+    applicant = await db.get(Applicant, f.applicant)
+    assert applicant is not None
+    winner = uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO users (id, email, company_id) VALUES (:i, :e, :c)"),
+        {"i": winner, "e": f"winner-{winner.hex[:10]}@w5.test", "c": f.company},
+    )
+    # The other request won: the applicant is already linked.
+    await db.execute(
+        text("UPDATE applicants SET user_id = :u WHERE id = :a"),
+        {"u": winner, "a": f.applicant},
+    )
+
+    got = await link_or_reuse_guest(
+        db, applicant_id=f.applicant, full_name=applicant.full_name, company_id=f.company,
+        language="en", email_prefix="invite", now=datetime.now(tz=UTC),
+    )
+    assert got == winner
+    # Still loaded, still readable, and the transaction still usable.
+    assert applicant.full_name == "Asha"
+    assert await db.scalar(text("SELECT 1")) == 1
+
+
+@pytest.mark.asyncio
+async def test_claiming_a_guest_identity_moves_every_task_consent(db: AsyncSession) -> None:
+    """NEW-10: claiming a guest into an existing account skipped any consent
+    type the account already held -- right for per-person consents, wrong
+    for task consents, which are one per SUBMISSION. The skipped rows stayed
+    on the tombstoned guest, where erasing the account never reached them."""
+    import json as _json
+    from datetime import UTC, datetime
+
+    from app.apply_activation import _link_to_existing
+
+    guest, target = uuid.uuid4(), uuid.uuid4()
+    for uid in (guest, target):
+        await db.execute(
+            text("INSERT INTO users (id, email) VALUES (:i, :e)"),
+            {"i": uid, "e": f"claim-{uid.hex[:12]}@w5.test"},
+        )
+    ledger = (
+        "INSERT INTO dpdp_consent_ledger (id, user_id, consent_type, granted, granted_at,"
+        " purpose, evidence) VALUES (gen_random_uuid(), :u, 'assessment_submission', true,"
+        " now(), 'recruitment', CAST(:ev AS jsonb))"
+    )
+    for uid in (target, guest, guest):
+        await db.execute(
+            text(ledger), {"u": uid, "ev": _json.dumps({"submission_id": str(uuid.uuid4())})},
+        )
+
+    await _link_to_existing(db, guest_user_id=guest, target_user_id=target,
+                            now=datetime.now(tz=UTC))
+
+    count_sql = text("SELECT count(*) FROM dpdp_consent_ledger WHERE user_id = :u"
+                     " AND consent_type = 'assessment_submission'")
+    assert await db.scalar(count_sql, {"u": guest}) == 0
+    assert await db.scalar(count_sql, {"u": target}) == 3
+
+
+@pytest.mark.asyncio
+async def test_consent_at_start_records_its_evidence_and_is_audited(db: AsyncSession) -> None:
+    """Under DPDP §6(10) proving consent is on us. The grant now carries
+    salted hashes of the request's IP and user agent, and has an audit row,
+    as the withdrawal already did."""
+    f = await _build(db)
+    sub_id, raw = await _issue(db, f)
+    await svc.start(db, raw=raw, consent=True, meta=_META)
+    await db.flush()
+    evidence = await db.scalar(
+        text("SELECT evidence FROM dpdp_consent_ledger"
+             " WHERE consent_type = 'assessment_submission'"
+             "   AND evidence ->> 'submission_id' = :s"),
+        {"s": str(sub_id)},
+    )
+    assert len(evidence["ip_hash"]) == 64 and len(evidence["ua_hash"]) == 64
+    assert "127.0.0.1" not in str(evidence)
+    audited = await db.scalar(
+        text("SELECT count(*) FROM audit_log WHERE action = 'task_submission.consent_given'"
+             "   AND resource_id = :s"),
+        {"s": sub_id},
+    )
+    assert audited == 1
+
+
+@pytest.mark.asyncio
+async def test_hr_reads_are_recorded_once_an_hour_not_on_every_refetch(
+    db: AsyncSession,
+) -> None:
+    f = await _build(db)
+    sub_id, raw = await _issue(db, f)
+    await svc.start(db, raw=raw, consent=True, meta=_META)
+    await svc.save_response(
+        db, raw=raw, item_key="q1", text_value="an answer", link_url=None, meta=_META,
+    )
+    await svc.submit(db, raw=raw, consent=True, meta=_META)
+    for _ in range(3):
+        await svc.for_enrolment(db, company_id=f.company, enrolment_id=f.enrolment, actor=f.hr)
+    viewed = await db.scalar(
+        text("SELECT count(*) FROM task_events WHERE submission_id = :s"
+             " AND action = 'submission_viewed'"),
+        {"s": sub_id},
+    )
+    assert viewed == 1

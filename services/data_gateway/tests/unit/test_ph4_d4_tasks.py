@@ -492,6 +492,25 @@ def test_task_assigned_renders(lang: str) -> None:
     assert out.subject and out.html and out.text
 
 
+# The invitation says consent is the candidate's choice before the page asks
+# for it (DPDP §6(1): consent must be free). A marker phrase per language.
+@pytest.mark.parametrize(("lang", "marker"), [
+    ("en", "That is your choice"),
+    ("hi", "यह आपकी पसंद है"),
+    ("te", "అది మీ ఎంపిక"),
+])
+def test_task_assigned_says_consent_is_a_choice(lang: str, marker: str) -> None:
+    from app.email_templates import render
+
+    out = render(
+        "task_assigned", lang,
+        {"name": "Asha", "round_title": "Backend simulation", "kind": "portfolio",
+         "task_url": "https://x.example/task#tok", "due": None},
+    )
+    assert marker in out.text
+    assert marker in out.html
+
+
 @pytest.mark.parametrize("lang", ["en", "hi", "te"])
 def test_task_received_renders(lang: str) -> None:
     from app.email_templates import render

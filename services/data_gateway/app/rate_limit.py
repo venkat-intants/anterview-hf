@@ -23,8 +23,11 @@ TOGETHER. During an Upstash outage, login throttling and the "log out all
 devices" kill switch are both inactive at once. Alert on
 ``rate_limit_check_skipped_total``.
 
-Usage:
-    @router.post("/login", dependencies=[Depends(rate_limit("login", settings.rate_limit_login_per_minute))])
+Usage — note there is no ``Depends()`` around it; ``rate_limit`` returns one
+already, and wrapping it a second time fails at import with "a parameter-less
+dependency must have a callable dependency":
+
+    @router.post("/login", dependencies=[rate_limit("login", settings.rate_limit_login_per_minute)])
 """
 
 from __future__ import annotations

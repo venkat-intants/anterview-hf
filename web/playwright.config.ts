@@ -19,10 +19,15 @@ const channel = process.env.E2E_BROWSER_CHANNEL;
 export default defineConfig({
   testDir: './e2e',
   globalSetup: './e2e/global-setup.ts',
-  // A journey drives four screens, two people and a background pass, so a
-  // whole test is minutes rather than seconds. `test.slow()` triples this for
-  // the ones that need it.
-  timeout: 60_000,
+  // 2 minutes, and `test.slow()` triples it to 6 for the journeys. Headless, a
+  // journey takes about 50 seconds; the budget is for UI mode (`--ui`), which
+  // records a continuous video of every browser window. The candidate's exam
+  // page has a countdown that repaints every second, so its window alone wrote
+  // ~1,200 frames (37 MB), and saving them when the test closed that window
+  // took 63 seconds — which, at the old 3-minute limit, failed journey-hire
+  // one step after the hire had gone through. A passing test is not slowed by
+  // this; only a hung one takes longer to report.
+  timeout: 120_000,
   // 30s rather than Playwright's 5s. Every assertion here waits on real server
   // work — a shortlist that starts a workflow, an exam submit that grades it and
   // runs the runner. On a quiet machine those are well under a second and the

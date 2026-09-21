@@ -64,15 +64,36 @@ export async function sitTheExam(
   candidate: Candidate,
   opts: { answerCorrectly: boolean },
 ): Promise<string> {
+  const token = await emailedExamToken(candidate);
+  await page.goto(`/exam#${token}`);
+  return answerTheExam(page, opts);
+}
+
+/** The single-use token out of the exam invitation email. */
+export async function emailedExamToken(candidate: Candidate): Promise<string> {
   // 60s. The invitation is not sent when the shortlist button returns: a person
   // shortlists, the runner assigns the round and queues the email, and the
   // outbox worker delivers it on its own poll. That is about 5s on a quiet local
   // stack and comfortably more on a busy one, where the default 30s expired just
   // short of the email arriving — a failure that reads as a broken invitation.
-  const invite = await waitForMail(candidate.email, /assessment|exam/i, 60_000);
-  const token = linkIn(invite, /\/exam#([A-Za-z0-9_-]{16,})/);
+  // The invitation's own subject ("<company> · Your assessment: <round>"), not
+  // just the word "exam": that matched the shortlisting email too, whenever the
+  // opening's title contained "Exam", and that email carries no link.
+  const invite = await waitForMail(candidate.email, /Your (assessment|exam)\b/i, 60_000);
+  return linkIn(invite, /\/exam#([A-Za-z0-9_-]{16,})/);
+}
 
-  await page.goto(`/exam#${token}`);
+/**
+ * Take the exam that is already open on this page: consent, start, answer
+ * every question, submit, and return the verdict line.
+ *
+ * Split out of sitTheExam so a spec can reach the exam some other way than the
+ * email — from the candidate's own dashboard, say.
+ */
+export async function answerTheExam(
+  page: Page,
+  opts: { answerCorrectly: boolean },
+): Promise<string> {
   const start = page.getByRole('button', { name: 'Start exam' });
   await start.waitFor();
   await expect(start, 'the exam cannot start before consent').toBeDisabled();
@@ -111,4 +132,37 @@ export async function shortlistFromApplicants(
   const button = (await perOpening.count()) ? perOpening : single;
   await button.first().click();
   await expect(button.first()).toBeDisabled();
+}
+
+/**
+ * Claim the account the application-received email offered, and sign in.
+ *
+ * An applicant has no password until they follow that link: applying mints a
+ * placeholder account so consent has somewhere to live. Specs that look at the
+ * candidate's own pages go through this door, the one a real applicant uses.
+ */
+export async function claimAccountAndSignIn(
+  page: Page,
+  candidate: Candidate,
+  password: string,
+): Promise<void> {
+  const confirmation = await waitForMail(candidate.email, /have your application/i);
+  const token = linkIn(confirmation, /\/activate#([A-Za-z0-9_-]{16,})/);
+
+  await page.goto(`/activate#${token}`);
+  await expect(page.getByText('Track your application')).toBeVisible();
+  await expect(
+    page.getByText(candidate.email),
+    'the page names the address the account will use',
+  ).toBeVisible();
+  await page.locator('#ac-new').fill(password);
+  await page.locator('#ac-confirm').fill(password);
+  await page.getByRole('button', { name: 'Create my account' }).click();
+  await expect(page.getByRole('heading', { name: 'You’re all set' })).toBeVisible();
+
+  await page.goto('/login');
+  await page.getByTestId('login-email').fill(candidate.email);
+  await page.getByTestId('login-password').fill(password);
+  await page.getByTestId('login-submit').click();
+  await page.waitForURL((url) => !url.pathname.startsWith('/login'));
 }

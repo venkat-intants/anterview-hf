@@ -39,6 +39,12 @@ app is not answering.
 
 In PowerShell set variables first: `$env:E2E_SLOWMO = '500'; npm run e2e -- --headed`.
 
+UI mode is the heaviest of these: it records a continuous video of every browser
+window, and a journey writes over a thousand frames (the exam page's countdown
+repaints every second). Expect a journey to take two to three times as long there
+as headless — the config's timeout is sized for it. For a quick pass/fail, run
+headless; use UI mode to look at one test.
+
 | Variable | Default | What it changes |
 |---|---|---|
 | `E2E_WEB_URL` | `http://localhost:5174` | the app under test |
@@ -102,6 +108,7 @@ The full map — every Phase 2 item, where it is tested at each level, and the g
 | 1 | Sign-in and landing for every role, access refusals, creating an opening, the workflow builder (templates, human gates, publish blocked by issues, publish and read-only) | done — `auth`, `opening`, `workflow` specs |
 | 2 | The main journeys: public apply with consent → scored → shortlist → MCQ from the emailed link → decision queue → hire or reject with a reason; held-not-rejected; what the candidate is shown about themselves | done — the three `journey-*` specs |
 | 3 | Bulk upload, the human-review round, the company hiring board, one person applying twice, an opening dashboard with real candidates | done — `bulk-upload`, `review-round`, `company-board`, `same-person-two-openings`, `opening-dashboard` |
+| 3c | Starting an assessment from the candidate's own dashboard, without the email | done — `exam-from-dashboard` |
 | 3b | Coding rounds | done — `coding-round`. Needs a code runner: `scripts/piston-up.ps1`, then `EXECUTION_PROVIDER=piston`. The spec skips with that instruction when none is answering |
 | 3c | PH4 Wave 1: a human interview scored by a named interviewer — HR assigns from the candidate drawer, the interviewer reads the kit, keeps private notes, scores (by mouse and keyboard) and submits, HR reads the evidence, and nothing moves; decisions choose a reason category | done — `interview-scorecard`, and the reason category in the two decision journeys |
 | 4 | Live AI interview (fake media devices) | manual only — it spends real Tavus/Sarvam/LLM budget |

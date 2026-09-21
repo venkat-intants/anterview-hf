@@ -35,6 +35,7 @@ What is in the browser suite today (`E`):
 - `company-board.spec.ts` — the company super admin's read-only hiring board.
 - `same-person-two-openings.spec.ts` — one applicant, two applications, and a move on one leaving the other alone.
 - `opening-dashboard.spec.ts` — an opening with a real held candidate in it.
+- `exam-from-dashboard.spec.ts` — a candidate who never opens the invitation email signs in, starts the assessment from their own applications page, passes it, and the emailed link they never used is dead afterwards.
 - `coding-round.spec.ts` — a candidate writes Python, it is executed on the sandbox against hidden tests, and the result advances them. Skips with instructions when no code runner is up.
 - `interview-scheduling.spec.ts` (PH4-A2, PH4-O5) — the interviewer publishes availability; HR builds a loop the candidate books themselves, and a fixed time outside that availability is refused with the override offered, not taken; the candidate is emailed, sees only times inside the window, books one, and then has no control that moves or cancels it; the interviewer sees the booking; HR's panel shows the load.
 - **The main journeys**, each one run end to end against the local stack:

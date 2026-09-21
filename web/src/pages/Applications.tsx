@@ -23,9 +23,11 @@ import {
   getMyApplication,
   listMyApplications,
   type MyApplication,
+  mintMyExamLink,
   mintMyInterviewLink,
   mintMyTaskLink,
 } from '@/api/applications';
+import { ApiError } from '@/api/client';
 import { sameOriginUrl } from '@/lib/safeUrl';
 import { toast } from '@/lib/toast';
 import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
@@ -39,6 +41,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ClipboardCheck,
   Clock,
   User,
   Video,
@@ -195,6 +198,106 @@ function TaskCallToAction({ submissionId, dueAt }: { submissionId: string; dueAt
   );
 }
 
+/**
+ * The assessment, reachable from here as well as from the email.
+ *
+ * The same gap the interview button closed, one round earlier: the card named
+ * the round ("Round 1 of 1 · Aptitude") and the only way into it was a link in
+ * an email that may never have arrived. Fetched on click for the same reason
+ * too — asking ROTATES the token, which must be a deliberate press and never a
+ * side effect of the page rendering.
+ *
+ * "Resume" once they have begun: /exam/start picks up the attempt already open,
+ * with its original deadline, so coming back here costs no time and gains
+ * none. What it does cost is the tab that attempt may still be open in, whose
+ * link stops working the moment this one is minted.
+ *
+ * Which the server refuses to do unattended: with an attempt already open it
+ * answers 409, and this asks the question before pressing again. A candidate
+ * who has this page in a second tab, or who double-clicks, would otherwise
+ * lose a timed assessment to a press they did not think about — the clock
+ * keeps running in the tab that just went dead.
+ */
+function ExamCallToAction({
+  assignmentId,
+  inProgress,
+  expiresAt,
+  scheduledAt,
+}: {
+  assignmentId: string;
+  inProgress: boolean;
+  expiresAt: string | null;
+  scheduledAt: string | null;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+
+  const mint = useMutation({
+    mutationFn: (resumeAnyway: boolean) => mintMyExamLink(assignmentId, resumeAnyway),
+    onSuccess: (link) => {
+      // Same tab, as with the interview: this is the candidate starting their
+      // assessment, and a popup is the kind of thing a blocker eats.
+      window.location.assign(link.exam_url);
+    },
+    onError: (e: unknown) => {
+      // 409 is not a failure. It is the server declining to close a tab the
+      // candidate may still be working in, and handing the decision back.
+      if (e instanceof ApiError && e.status === 409) {
+        setConfirming(e.message);
+        return;
+      }
+      setError(e instanceof Error ? e.message : 'Could not open your assessment.');
+    },
+  });
+
+  return (
+    <div
+      className="mt-4 rounded-[10px] border border-[rgba(var(--accent-rgb),0.35)] bg-[rgba(var(--accent-rgb),0.06)] p-3.5"
+      data-testid="exam-cta"
+    >
+      <p className="flex items-center gap-2 text-[13.5px] font-medium text-foreground">
+        <ClipboardCheck size={14} className="shrink-0 text-[var(--accent)]" aria-hidden="true" />
+        {inProgress ? 'Your assessment is in progress' : 'Your assessment is ready'}
+      </p>
+      <p className="mt-1 pl-[22px] text-[12.5px] text-muted-foreground">
+        {confirming
+          ? confirming
+          : inProgress
+            ? 'You can pick up where you left off.'
+            : // A scheduled round's own window is the deadline that binds, and
+              // it closes long before the link expires. Naming the link's
+              // expiry instead would state a deadline they do not have.
+              scheduledAt
+              ? `This round opens on ${dateOf(scheduledAt)}. Start it soon after — the window is short.`
+              : expiresAt
+                ? `Take it before ${dateOf(expiresAt)}.`
+                : 'Take it whenever you are ready.'}
+      </p>
+      <button
+        type="button"
+        onClick={() => {
+          setError(null);
+          // Only a press that followed the question may close the other tab.
+          mint.mutate(confirming !== null);
+        }}
+        disabled={mint.isPending}
+        className="mt-3 ml-[22px] inline-flex items-center gap-1.5 rounded-[8px] bg-primary px-3.5 py-1.5 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        {mint.isPending
+          ? 'Opening…'
+          : confirming
+            ? 'Open it here'
+            : inProgress
+              ? 'Resume assessment'
+              : 'Start assessment'}
+      </button>
+      {error ? (
+        <p className="mt-2 pl-[22px] text-[12.5px] text-[var(--ui-danger)]">{error}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ApplicationCard({ app }: { app: MyApplication }) {
   const [open, setOpen] = useState(false);
   const round = roundLine(app);
@@ -246,6 +349,15 @@ function ApplicationCard({ app }: { app: MyApplication }) {
         />
       ) : app.task_submission_id ? (
         <TaskCallToAction submissionId={app.task_submission_id} dueAt={app.task_due_at} />
+      ) : null}
+
+      {app.exam_assignment_id ? (
+        <ExamCallToAction
+          assignmentId={app.exam_assignment_id}
+          inProgress={app.exam_in_progress}
+          expiresAt={app.exam_expires_at}
+          scheduledAt={app.exam_scheduled_at}
+        />
       ) : null}
 
       <button

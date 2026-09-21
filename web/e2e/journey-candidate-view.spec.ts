@@ -22,10 +22,10 @@ import {
 import {
   aCandidate,
   applyThroughPublicForm,
+  claimAccountAndSignIn,
   shortlistFromApplicants,
   sitTheExam,
 } from './support/journeys';
-import { linkIn, waitForMail } from './support/mail';
 
 const PASSWORD = 'E2e-Candidate-View-7';
 
@@ -60,23 +60,8 @@ test.describe('what a candidate sees about themselves', () => {
       .poll(async () => (await enrolmentFor(api, opening.id, candidate.name)).status)
       .toBe('held');
 
-    // ── The applicant claims the account the confirmation email offered ─────
-    const confirmation = await waitForMail(candidate.email, /have your application/i);
-    const token = linkIn(confirmation, /\/activate#([A-Za-z0-9_-]{16,})/);
-
-    await candidatePage.goto(`/activate#${token}`);
-    await expect(candidatePage.getByText('Track your application')).toBeVisible();
-    await expect(
-      candidatePage.getByText(candidate.email),
-      'the page names the address the account will use',
-    ).toBeVisible();
-    await candidatePage.locator('#ac-new').fill(PASSWORD);
-    await candidatePage.locator('#ac-confirm').fill(PASSWORD);
-    await candidatePage.getByRole('button', { name: 'Create my account' }).click();
-    await expect(candidatePage.getByRole('heading', { name: 'You’re all set' })).toBeVisible();
-
-    // ── Signed in as themselves, on their own applications page ─────────────
-    await signIn(candidatePage, { email: candidate.email, password: PASSWORD });
+    // ── The applicant claims their account and signs in as themselves ───────
+    await claimAccountAndSignIn(candidatePage, candidate, PASSWORD);
     await candidatePage.goto('/applications');
 
     const applications = candidatePage.locator('[aria-labelledby="applications-heading"]');

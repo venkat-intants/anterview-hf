@@ -264,7 +264,8 @@ async def upload(db: AsyncSession, *, raw: str | None, session: str | None,
     if offer["preboarding_completed_at"] is not None:
         raise OfferError(409, "Your documents are complete; nothing more is needed.")
     # Consent to share documents is recorded at acceptance; once withdrawn
-    # (DELETE /users/me/consent revokes it), nothing more is taken.
+    # (the documents step's own POST /offer/documents/consent/withdraw, or a
+    # signed-in DELETE /consent), nothing more is taken.
     consented = await db.scalar(
         text("SELECT bool_or(revoked_at IS NULL) FROM dpdp_consent_ledger"
              " WHERE user_id = :u AND consent_type = 'preboarding_documents' AND granted"),

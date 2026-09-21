@@ -92,24 +92,32 @@ _VIDEO_CONSENT_TYPE = "video_capture"
 # (app/preboarding.py `upload`). A candidate who has no account to sign in
 # with withdraws from the documents step itself (POST /offer/documents/consent).
 _DOCUMENTS_CONSENT_TYPE = "preboarding_documents"
-# PH4-D4 wave 5: submitting a job-simulation/portfolio task records consent to
-# send that work to the hiring team, for 'recruitment' — taken at
-# app/job_tasks.py `start`, one row per submission. Listed here only so DPDP's
-# "withdrawal must be as easy as giving it" has a place to check the type is
-# recognised; the actual withdrawal route is the task's own
-# ``POST /task/consent/withdraw`` (a magic-link credential, like the documents
-# case above), never this router's authenticated ``DELETE /consent``.
-_TASK_CONSENT_TYPE = "assessment_submission"
+# NOT listed here: PH4-D4's task consent ('assessment_submission'). It is one
+# row PER SUBMISSION, for 'recruitment', granted at app/job_tasks.py `start` and
+# withdrawn only through the task's own ``POST /task/consent/withdraw`` — in
+# progress or after submitting. This router looks up one row per type for
+# purpose 'interview', so listing the type here (as an earlier version did)
+# made ``DELETE /consent`` claim to revoke it while never finding the row, and
+# ``GET /consent/status`` always answer false (security re-review, NEW-2).
 _VALID_CONSENT_TYPES = frozenset({_CONSENT_TYPE, _VIDEO_CONSENT_TYPE,
-                                  _DOCUMENTS_CONSENT_TYPE, _TASK_CONSENT_TYPE})
+                                  _DOCUMENTS_CONSENT_TYPE})
 # A consent is for a stated purpose (DPDP §6(1)), so what this route may GRANT
 # is narrower than what it may revoke: the documents consent is recorded when
 # an offer is accepted, for 'onboarding', and is never granted here — where the
 # only purpose on offer is 'interview'. Granting it here would file a row whose
-# purpose does not describe it and quietly re-open uploads. The task consent
-# is the same shape: granted only at `job_tasks.start`, for 'recruitment'.
+# purpose does not describe it and quietly re-open uploads.
 _GRANTABLE_CONSENT_TYPES = frozenset({_CONSENT_TYPE, _VIDEO_CONSENT_TYPE})
 _VALID_PURPOSES = frozenset({"interview"})
+# The purpose each type is RECORDED under, which is what a lookup must match.
+# The documents consent is filed for 'onboarding' at offer acceptance
+# (app/offers.py), never 'interview' — and the lookup below used to be fixed
+# on 'interview', so ``DELETE /consent`` never found that row and left the
+# documents consent standing while this file said it revoked it.
+_PURPOSE_BY_TYPE = {
+    _CONSENT_TYPE: "interview",
+    _VIDEO_CONSENT_TYPE: "interview",
+    _DOCUMENTS_CONSENT_TYPE: "onboarding",
+}
 
 # ---------------------------------------------------------------------------
 # Dependency shortcuts
@@ -140,7 +148,8 @@ async def _find_active_consent(
     user_id: str,
     consent_type: str = _CONSENT_TYPE,
 ) -> DpdpConsent | None:
-    """Return the active (granted, not revoked) consent row for the given type.
+    """Return the active (granted, not revoked) consent row for the given type,
+    matched on the purpose that type is recorded under (``_PURPOSE_BY_TYPE``).
 
     consent_type defaults to the voice type so existing callers are unaffected.
     """
@@ -148,7 +157,7 @@ async def _find_active_consent(
     stmt = select(DpdpConsent).where(
         DpdpConsent.user_id == user_uuid,
         DpdpConsent.consent_type == consent_type,
-        DpdpConsent.purpose == "interview",
+        DpdpConsent.purpose == _PURPOSE_BY_TYPE.get(consent_type, "interview"),
         DpdpConsent.granted.is_(True),
         DpdpConsent.revoked_at.is_(None),
     )

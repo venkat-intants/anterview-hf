@@ -305,6 +305,13 @@ def validate_config(kind: str, cfg: dict[str, Any]) -> dict[str, Any]:
         allow_links = bool(cfg.get("allow_links", True))
         if not allow_files and not allow_links:
             raise TaskError(422, "A portfolio must accept files, links, or both.")
+        # `add_artifact` honours allow_files for an item's file answer too, so
+        # without this a file item on such a portfolio could never be answered
+        # and a required one would make the task impossible to submit.
+        if not allow_files and any(i["response_type"] == "file" for i in items):
+            raise TaskError(
+                422, "This portfolio does not accept files, so it cannot have a file item."
+            )
         domains_in = cfg.get("allowed_link_domains")
         domains = list(DEFAULT_LINK_DOMAINS) if domains_in is None else (
             [_clean_domain(d) for d in domains_in] if domains_in else

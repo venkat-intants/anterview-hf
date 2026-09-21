@@ -158,8 +158,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                  " min_artifacts, max_artifacts, allow_files, allow_links,"
                  " allowed_link_domains, created_at, updated_at)"
                  " VALUES (:i,:c,:r,'portfolio','Share up to two examples of your work.',"
-                 " '[]'::jsonb, 1, 2, true, true, ARRAY['github.com'], :n, :n)"),
-            {"i": uuid.uuid4(), "c": cid, "r": round_portfolio, "n": now},
+                 " CAST(:it AS jsonb), 1, 2, true, true, ARRAY['github.com'], :n, :n)"),
+            # Gap 1: one required FILE item, answered by an upload carrying
+            # its item_key -- counted toward the item, not the 1..2 artifacts.
+            {"i": uuid.uuid4(), "c": cid, "r": round_portfolio, "n": now,
+             "it": '[{"key":"cv","prompt":"Attach your CV","response_type":"file",'
+                   '"required":true,"max_chars":null}]'},
         )
         # Gap 3: a reference material HR attached to the simulation round, so
         # the reviewer's new materials-download route has something to fetch.
@@ -378,6 +382,27 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post("/task/artifacts", headers=headers_port,
                          data={"link_url": "https://evilgithub.com/x", "title": "bad"})
         check("a disallowed domain is refused", r.status_code == 422, r.text[:200])
+
+        r = await c.post("/task/submit", json={"consent": True}, headers=headers_port)
+        check("submit is refused while the required file item has no file",
+              r.status_code == 422, r.text[:200])
+
+        r = await c.post("/task/artifacts", headers=headers_port, data={"item_key": "cv"},
+                         files={"file": ("cv.txt", b"not a pdf at all", "application/pdf")})
+        check("a file item still gets the magic-byte check", r.status_code == 422, r.text[:200])
+
+        r = await c.post("/task/artifacts", headers=headers_port, data={"item_key": "cv"},
+                         files={"file": ("cv.pdf", b"%PDF-1.4\n%smoke\n", "application/pdf")})
+        check("candidate uploads a file against the CV item (multipart item_key)",
+              r.status_code == 201, r.text[:300])
+
+        r = await c.get("/task", headers=headers_port)
+        responses = r.json().get("responses", [])
+        item_files = [x for x in responses if x.get("item_key") == "cv"]
+        free_form = [x for x in responses if not x.get("item_key")]
+        check("…it answers the item and is not counted as a portfolio artifact",
+              len(item_files) == 1 and item_files[0]["response_type"] == "file"
+              and len(free_form) == 1, str(responses)[:300])
 
         r = await c.post("/task/submit", json={"consent": True}, headers=headers_port)
         check("candidate submits the portfolio", r.status_code == 200

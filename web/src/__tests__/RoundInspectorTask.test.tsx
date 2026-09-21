@@ -152,13 +152,27 @@ describe('RoundInspector — TaskEditor for job_simulation', () => {
     expect(body.brief).toBe('Design a feature.');
   });
 
-  it('never offers a "file" answer type, which no candidate endpoint can fulfil', async () => {
+  it('offers a file answer type and saves it', async () => {
+    // A candidate can now answer a file item (PublicTask.tsx's FileItemField
+    // uploads it with the item's key), so the editor offers it.
+    const user = userEvent.setup();
+    jobTasksApi.putRoundTask.mockResolvedValue({});
     renderInspector(baseRound({ kind: 'job_simulation' }));
-    await screen.findByLabelText('Brief');
-    await userEvent.setup().click(screen.getByRole('button', { name: /add item/i }));
+    await user.type(await screen.findByLabelText('Brief'), 'Send us your plan.');
+    await user.click(screen.getByRole('button', { name: /add item/i }));
+    await user.type(screen.getByLabelText('Prompt'), 'Upload your plan as a PDF.');
 
-    const typeSelect = await screen.findByLabelText('Answer type');
-    expect(within(typeSelect).queryByText(/file/i)).not.toBeInTheDocument();
+    const typeSelect = screen.getByLabelText('Answer type');
+    expect(within(typeSelect).getByText(/file upload/i)).toBeInTheDocument();
+    await user.selectOptions(typeSelect, 'file');
+    await user.click(screen.getByRole('button', { name: /save task/i }));
+
+    await waitFor(() => expect(jobTasksApi.putRoundTask).toHaveBeenCalledTimes(1));
+    const [, body] = jobTasksApi.putRoundTask.mock.calls[0] as [
+      string,
+      { items: { response_type: string }[] },
+    ];
+    expect(body.items[0].response_type).toBe('file');
   });
 });
 
@@ -169,6 +183,34 @@ describe('RoundInspector — TaskEditor for portfolio', () => {
     expect(await screen.findByText('Portfolio settings')).toBeInTheDocument();
     expect(screen.getByText('Minimum artifacts')).toBeInTheDocument();
     expect(screen.getByText('Maximum artifacts')).toBeInTheDocument();
+  });
+
+  it('will not save a file item on a portfolio that does not accept files', async () => {
+    // The server refuses every file on such a portfolio, an item's answer
+    // included, so a file item there could never be answered.
+    const user = userEvent.setup();
+    jobTasksApi.getRoundTask.mockResolvedValue({
+      round_id: 'round-1',
+      kind: 'portfolio',
+      brief: 'Show us your work.',
+      brief_translations: null,
+      items: [
+        { key: 'cv', prompt: 'Your CV', response_type: 'file', required: true, max_chars: null },
+      ],
+      min_artifacts: 0,
+      max_artifacts: 3,
+      allow_files: true,
+      allow_links: true,
+      allowed_link_domains: null,
+    });
+    renderInspector(baseRound({ kind: 'portfolio', title: 'Design portfolio' }));
+
+    const saveButton = await screen.findByRole('button', { name: /save task/i });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    await user.click(screen.getByLabelText('Accept files'));
+
+    expect(screen.getByText(/an item asks for a file/i)).toBeInTheDocument();
+    expect(saveButton).toBeDisabled();
   });
 });
 

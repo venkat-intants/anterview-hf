@@ -9,13 +9,11 @@
 // separate lock lookup, so this never drifts from what the exam picker next
 // to it already enforces.
 //
-// Response type is offered as text or link ONLY. The server's schema also
-// allows "file" on an item, but `PUT /task/responses/{item_key}` refuses a
-// file-type item outright ("upload it as an artifact instead") and
-// `POST /task/artifacts` — the only endpoint that stores a file — never
-// takes an `item_key`. An item built here as "file" could never be answered
-// by a candidate, so it is not offered (see PublicTask.tsx's
-// FileItemUnavailable for the candidate-side half of this note).
+// An item's answer is written text, a link, or a file. A file answer is
+// uploaded through `POST /task/artifacts` with the item's key (see
+// PublicTask.tsx's FileItemField). A portfolio with "Accept files" off cannot
+// have a file item — the server refuses every file there, an item's included
+// — so Save is blocked on that combination, mirroring validate_config.
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -100,6 +98,7 @@ function ItemRow({
           >
             <option value="text">Written answer</option>
             <option value="link">Link</option>
+            <option value="file">File upload (PDF, JPEG or PNG)</option>
           </select>
         </label>
       </div>
@@ -371,8 +370,9 @@ export default function TaskEditor({
 
   // Mirrors the server's own checks (app.job_tasks.validate_config) so a
   // click on Save never round-trips into a bare 422: an invalid key, an
-  // empty prompt, a duplicate key, a job simulation with no items, or a
-  // portfolio's minimum outrunning its maximum.
+  // empty prompt, a duplicate key, a job simulation with no items, a
+  // portfolio's minimum outrunning its maximum, or a file item on a portfolio
+  // that does not accept files.
   const hasInvalidItem = form.items.some(
     (it) => !ITEM_KEY_RE.test(it.key) || !it.prompt.trim(),
   );
@@ -380,12 +380,17 @@ export default function TaskEditor({
   const needsAtLeastOneItem = kind === 'job_simulation' && form.items.length === 0;
   const minMaxInvalid =
     kind === 'portfolio' && Number(form.minArtifacts) > Number(form.maxArtifacts);
+  const fileItemWithoutFiles =
+    kind === 'portfolio' &&
+    !form.allowFiles &&
+    form.items.some((it) => it.response_type === 'file');
   const canSave =
     Boolean(form.brief.trim()) &&
     !hasInvalidItem &&
     !hasDuplicateKey &&
     !needsAtLeastOneItem &&
-    !minMaxInvalid;
+    !minMaxInvalid &&
+    !fileItemWithoutFiles;
 
   return (
     <div className="flex flex-col gap-4">
@@ -536,6 +541,11 @@ export default function TaskEditor({
               Accept links
             </label>
           </div>
+          {fileItemWithoutFiles ? (
+            <p className="text-[11.5px] text-[var(--ui-warn)]">
+              An item asks for a file, so this portfolio must accept files.
+            </p>
+          ) : null}
           <label className="block">
             <span className={labelCls}>Approved link domains (comma-separated)</span>
             <input

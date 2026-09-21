@@ -107,8 +107,8 @@ export interface SaveResponseResult {
   saved: true;
 }
 
-/** Autosave one item's answer — a text answer or a link, never a file (files
- *  are artifacts, added separately). */
+/** Autosave one item's answer — a text answer or a link, never a file (a
+ *  file item's answer goes through `addTaskArtifact` with its `itemKey`). */
 export async function saveTaskResponse(
   token: string,
   itemKey: string,
@@ -130,12 +130,21 @@ export interface AddArtifactResult {
   id: string;
 }
 
-/** A free-form portfolio artifact — a file, or an approved link. Only a
- *  portfolio round accepts these; the server refuses otherwise. */
+/**
+ * A file or an approved link. Two different things share this endpoint:
+ *
+ * - Without `itemKey`: a free-form portfolio artifact, counted against the
+ *   round's `max_artifacts`. Only a portfolio round accepts these.
+ * - With `itemKey` (files only): the answer to ONE item whose
+ *   `response_type` is `"file"` — the one shape `saveTaskResponse` can never
+ *   carry. It counts toward that item, not `max_artifacts`, in either kind
+ *   of round, and uploading again REPLACES the item's earlier file (the
+ *   server deletes the old one) rather than adding a second.
+ */
 export async function addTaskArtifact(
   token: string,
   body:
-    | { kind: 'file'; file: File; title?: string; description?: string }
+    | { kind: 'file'; file: File; itemKey?: string; title?: string; description?: string }
     | {
         kind: 'link';
         link_url: string;
@@ -147,6 +156,7 @@ export async function addTaskArtifact(
   const form = new FormData();
   if (body.kind === 'file') {
     form.append('file', body.file);
+    if (body.itemKey) form.append('item_key', body.itemKey);
   } else {
     form.append('link_url', body.link_url);
     if (body.link_kind) form.append('link_kind', body.link_kind);

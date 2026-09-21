@@ -271,6 +271,91 @@ describe('PublicTask — working on it', () => {
   });
 });
 
+// A "file" item is answered through POST /task/artifacts carrying the item's
+// key — before that existed, the page could only say the item was
+// unanswerable, and a REQUIRED file item made the task impossible to submit.
+describe('PublicTask — a file item', () => {
+  const WITH_FILE_ITEM: PublicTaskShape = {
+    ...IN_PROGRESS,
+    items: [
+      {
+        key: 'plan',
+        prompt: 'Upload your plan.',
+        response_type: 'file',
+        required: true,
+        max_chars: null,
+      },
+    ],
+  };
+  const UPLOADED = {
+    id: 'r-file',
+    item_key: 'plan',
+    response_type: 'file' as const,
+    text_value: null,
+    link_url: null,
+    link_kind: null,
+    title: null,
+    description: null,
+    original_name: 'plan.pdf',
+    content_type: 'application/pdf',
+    size_bytes: 2048,
+  };
+
+  it('uploads the file against the item, not as a free-form artifact', async () => {
+    const user = userEvent.setup();
+    viewTask.mockResolvedValue(WITH_FILE_ITEM);
+    addTaskArtifact.mockResolvedValue({ id: 'r-file' });
+    renderPage();
+
+    const input = await screen.findByLabelText(/upload a file/i);
+    const file = new File(['%PDF-1.4'], 'plan.pdf', { type: 'application/pdf' });
+    await user.upload(input, file);
+
+    await waitFor(() =>
+      expect(addTaskArtifact).toHaveBeenCalledWith('task_tok_123456', {
+        kind: 'file',
+        file,
+        itemKey: 'plan',
+      }),
+    );
+  });
+
+  it('keeps Submit disabled until a required file item has its file', async () => {
+    viewTask.mockResolvedValue(WITH_FILE_ITEM);
+    renderPage();
+    await screen.findByLabelText(/upload a file/i);
+    expect(screen.getByRole('button', { name: /^submit$/i })).toBeDisabled();
+  });
+
+  it('shows the uploaded file, offers Replace, and lets the candidate remove it', async () => {
+    const user = userEvent.setup();
+    viewTask.mockResolvedValue({ ...WITH_FILE_ITEM, responses: [UPLOADED] });
+    removeTaskArtifact.mockResolvedValue(undefined);
+    renderPage();
+
+    expect(await screen.findByText('plan.pdf')).toBeInTheDocument();
+    expect(screen.getByLabelText(/replace/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^submit$/i })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: /remove plan\.pdf/i }));
+    await waitFor(() =>
+      expect(removeTaskArtifact).toHaveBeenCalledWith('task_tok_123456', 'r-file'),
+    );
+  });
+
+  it('refuses a file type the server would refuse, without uploading it', async () => {
+    const user = userEvent.setup({ applyAccept: false });
+    viewTask.mockResolvedValue(WITH_FILE_ITEM);
+    renderPage();
+
+    const input = await screen.findByLabelText(/upload a file/i);
+    await user.upload(input, new File(['hello'], 'notes.txt', { type: 'text/plain' }));
+
+    expect(await screen.findByText(/please upload a pdf, jpeg or png/i)).toBeInTheDocument();
+    expect(addTaskArtifact).not.toHaveBeenCalled();
+  });
+});
+
 // Security review, PH4-D4 wave 5: the consent notice says the candidate can
 // withdraw ON THIS PAGE, and `POST /task/consent/withdraw` needs a control
 // that actually calls it. Mirrors PublicOffer.test.tsx's document-consent

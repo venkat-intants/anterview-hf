@@ -417,17 +417,115 @@ function LinkItemField({
 }
 
 /**
- * An item the server accepts (`response_type` in the schema) but neither
- * candidate endpoint can actually fulfil: `PUT /task/responses/{item_key}`
- * refuses a "file" item outright ("upload it as an artifact instead"), and
- * `POST /task/artifacts` — the only endpoint that stores a file — never takes
- * an `item_key`, so it can only ever create a free-form (portfolio) artifact.
- * There is today no backend path that attaches a file to a specific item.
- * Rather than build a control that always ends in a bare 422, this says so.
+ * A "file" item's answer. `PUT /task/responses/{item_key}` never carries a
+ * file, so this goes through `POST /task/artifacts` with the item's key
+ * (`addTaskArtifact`'s `itemKey`), which ties the upload to THIS item rather
+ * than the free-form portfolio list. Uploading again replaces the earlier
+ * file server-side, so there is only ever one answer per item. Removing it
+ * uses the same DELETE as a portfolio artifact, and stays available after
+ * consent is withdrawn for the same reason ArtifactRow's does: a wrong
+ * upload must always be retractable, and the server never gates a removal
+ * on consent.
  */
-function FileItemUnavailable() {
+function FileItemField({
+  token,
+  item,
+  response,
+  disabled,
+  onSaved,
+}: {
+  token: string;
+  item: TaskItem;
+  response: TaskResponseOut | undefined;
+  disabled: boolean;
+  onSaved: () => void;
+}) {
   const { t } = useTranslation();
-  return <p className="text-[12.5px] text-muted-foreground">{t('task.fileItemUnavailable')}</p>;
+  const [error, setError] = useState<string | null>(null);
+  const current = response?.response_type === 'file' ? response : undefined;
+
+  const uploadMut = useMutation({
+    mutationFn: (file: File) => addTaskArtifact(token, { kind: 'file', file, itemKey: item.key }),
+    onSuccess: () => {
+      setError(null);
+      onSaved();
+    },
+    onError: (e: unknown) => setError(errText(e, t('task.addError'))),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (responseId: string) => removeTaskArtifact(token, responseId),
+    onSuccess: () => {
+      setError(null);
+      onSaved();
+    },
+    onError: (e: unknown) => setError(errText(e, t('task.removeError'))),
+  });
+
+  function pickFile(input: HTMLInputElement): void {
+    const file = input.files?.[0] ?? null;
+    // Cleared so choosing the SAME file again (after fixing whatever the
+    // server refused) still fires onChange.
+    input.value = '';
+    setError(null);
+    if (!file) return;
+    if (file.size > MAX_MATERIAL_BYTES) {
+      setError(t('task.tooLarge'));
+      return;
+    }
+    if (!ACCEPTED_ARTIFACT_TYPES.includes(file.type)) {
+      setError(t('task.wrongType'));
+      return;
+    }
+    uploadMut.mutate(file);
+  }
+
+  const busy = uploadMut.isPending || removeMut.isPending;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {current ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-border px-3 py-2">
+          <span className="min-w-0 truncate text-[13px] text-foreground">
+            {current.original_name}
+          </span>
+          <button
+            type="button"
+            onClick={() => removeMut.mutate(current.id)}
+            disabled={busy}
+            aria-label={`${t('task.remove')} ${current.original_name ?? ''}`}
+            className="inline-flex shrink-0 items-center gap-1 rounded-[8px] border border-[var(--ui-danger)]/30 px-2 py-1 text-[11.5px] text-[var(--ui-danger)] hover:bg-[var(--ui-danger)]/10 disabled:opacity-40"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('task.remove')}
+          </button>
+        </div>
+      ) : null}
+      {!disabled ? (
+        <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-[9px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12.5px] text-foreground hover:border-[var(--accent)]/60">
+          {uploadMut.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          {uploadMut.isPending
+            ? t('task.uploading')
+            : current
+              ? t('task.replaceFile')
+              : t('task.uploadFile')}
+          <input
+            type="file"
+            accept="application/pdf,image/jpeg,image/png"
+            className="sr-only"
+            disabled={busy}
+            onChange={(e) => pickFile(e.target)}
+          />
+        </label>
+      ) : null}
+      <p className="text-[11.5px] text-muted-foreground">{t('task.fileItemHint')}</p>
+      {error ? <p className="text-[11.5px] text-ember">{error}</p> : null}
+    </div>
+  );
 }
 
 function ItemCard({
@@ -473,7 +571,13 @@ function ItemCard({
             onSaved={onSaved}
           />
         ) : (
-          <FileItemUnavailable />
+          <FileItemField
+            token={token}
+            item={item}
+            response={response}
+            disabled={disabled}
+            onSaved={onSaved}
+          />
         )}
       </div>
     </GlassCard>
@@ -750,7 +854,7 @@ function TaskWorkspace({
     const r = responsesByItem.get(i.key);
     if (i.response_type === 'text') return !r?.text_value;
     if (i.response_type === 'link') return !r?.link_url;
-    return false; // 'file' items can never be answered — see FileItemUnavailable
+    return r?.response_type !== 'file';
   });
   const minArtifactsUnmet =
     data.kind === 'portfolio' &&

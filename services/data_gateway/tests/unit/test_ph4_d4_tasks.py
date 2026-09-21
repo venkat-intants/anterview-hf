@@ -166,6 +166,23 @@ def test_portfolio_must_accept_files_or_links() -> None:
         )
 
 
+def test_a_file_item_needs_a_portfolio_that_accepts_files() -> None:
+    """`add_artifact` refuses every file on a portfolio with allow_files off,
+    an item's answer included -- so a required file item there could never be
+    answered and the task could never be submitted."""
+    cfg = {"brief": "b", "items": [_item("cv", "file")], "min_artifacts": 0,
+           "max_artifacts": 2, "allow_files": False, "allow_links": True}
+    with pytest.raises(svc.TaskError, match="cannot have a file item"):
+        svc.validate_config("portfolio", cfg)
+    out = svc.validate_config("portfolio", {**cfg, "allow_files": True})
+    assert out["items"][0]["response_type"] == "file"
+
+
+def test_a_job_simulation_may_have_a_file_item() -> None:
+    out = svc.validate_config("job_simulation", {"brief": "b", "items": [_item("cv", "file")]})
+    assert out["allow_files"] is True
+
+
 def test_portfolio_defaults_link_domains() -> None:
     out = svc.validate_config(
         "portfolio", {"brief": "b", "items": [], "min_artifacts": 0, "max_artifacts": 5}

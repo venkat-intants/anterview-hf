@@ -1,6 +1,6 @@
 # PH4 — acceptance checklist against `docs/AntHire-Phase4.docx`
 
-**Built:** 2026-09-17. **Checked against:** every acceptance criterion in the Phase 4
+**Updated:** 2026-09-21 (first built 2026-09-17). **Checked against:** every acceptance criterion in the Phase 4
 document, in the document's own order and wording — all 317 of them across 15 stories.
 
 **Delivery (decision D4-4):** wave by wave. Each wave merges and deploys on its own, only
@@ -9,12 +9,12 @@ after CI, a code review and a security sign-off.
 | Wave | Stories | State |
 |---|---|---|
 | 1 | A1 Human interview scorecards · A5 Interview kits · O4 Decision reason codes | **Live.** See the deployment line below. |
-| 2 | O6 Workflow review & approval · O3 Branching workflows · O2 Workflow simulation & dry run · O1 Stage owners, SLAs & exceptions | **Built and signed off** (code review and security). PR #29, CI green; its migrations are on shared Neon. Waiting to merge. |
-| 3 | A2 Interview scheduling & loops · O5 Panel workload & calibration | **Built and signed off.** PR #30, stacked on #29, CI green. Its migrations go to Neon just before it merges. |
-| 4 | A3 Offer lifecycle · A4 Documents & preboarding | **Built and signed off** — backend, screens and browser journey, with security's production sign-off unconditional. PR #31, stacked on #30, CI green. Its migrations go to Neon just before it merges. |
-| 5 | D1 Question banks · D2 Accommodations · D3 Code quality & similarity · D4 Job simulations & portfolio | **In progress.** Being built one story at a time: D1 question banks has its backend built and signed off, its screens under way; D2 accommodations is next. |
+| 2 | O6 Workflow review & approval · O3 Branching workflows · O2 Workflow simulation & dry run · O1 Stage owners, SLAs & exceptions | **Live.** PR #29, merged 2026-09-20 as `e064968`. |
+| 3 | A2 Interview scheduling & loops · O5 Panel workload & calibration | **Live.** PR #30, merged 2026-09-20 as `fe154de`. |
+| 4 | A3 Offer lifecycle · A4 Documents & preboarding | **Live.** PR #31, merged 2026-09-20 as `fff4cbf`. |
+| 5 | D1 Question banks · D2 Accommodations · D3 Code quality & similarity · D4 Job simulations & portfolio | **Built and signed off** — security signed off all four stories for production (D4 after three rounds of review), and the code review approved. It ships in the same pull request as this version of the document. |
 
-**Deployment:** Wave 1 is **live** since 2026-09-17: PR #27 merged as `c3fb463`, its three migrations applied to shared Neon (`f4b6d8e0a2c3`), and the Space verified serving it (the interviewer and decision-reason routes answer, and the web bundle carries the new screens).
+**Deployment:** Waves 1–4 are **live** on the HF Space, which deploys `main` after CI passes; `space/entrypoint.sh` applies migrations (`alembic upgrade head`) on every boot. Wave 1 merged as `c3fb463` (2026-09-17); Waves 2–4 as `e064968`, `fe154de` and `fff4cbf` (2026-09-20). After each deploy the Space was checked: the new routes answer (401 without a session, not 404) and the web bundle carries the new screens.
 
 **Key:** ✅ done and verified · ⚠️ done, with something you should know · ❌ not done · ⏳ not done yet (a later wave, or its screen is still being built)
 
@@ -22,11 +22,11 @@ after CI, a code review and a security sign-off.
 only through the API. Phase 3 was marked against a looser bar and had to be corrected.
 
 **How each line was verified.** Tests live under `services/data_gateway/tests/` and `web/`.
-- `unit`: `unit/test_ph4_wave1.py`, `test_ph4_wave1_hardening.py`, `test_ph4_wave2.py`, `test_ph4_wave3.py`, `test_ph4_wave4.py` — 2142 in data_gateway, with 172 in admin_ops and 430 in `shared/`.
-- `db`: `integration/test_ph4_scorecard_guarantees.py`, `test_ph4_wave2_guarantees.py`, `test_ph4_wave3_guarantees.py`, `test_ph4_wave4_guarantees.py`. These run against a real migrated Postgres, and every refusal is checked for its *reason*, not just for failing.
-- `smoke`: real Postgres through the real endpoints — `smoke_ph4_scorecards.py` (Wave 1, 109/109), `smoke_ph4_wave2.py` (57/57), `smoke_ph4_wave3.py` (82/82), `smoke_ph4_wave4.py` (108/108, with MinIO for the documents).
-- `ui`: the web test suite, 1313 tests, and the screen named on the line.
-- `e2e`: the Playwright browser suite against a local stack, 25 passed — including `interview-scorecard.spec.ts` (A1/A5), `workflow.spec.ts` (O6 review and approval), `interview-scheduling.spec.ts` (A2/O5), `offer-preboarding.spec.ts` (A3/A4, hire through to the HRMS handoff) and the decision journeys (O4).
+- `unit`: `unit/test_ph4_wave1.py`, `test_ph4_wave1_hardening.py`, `test_ph4_wave2.py`, `test_ph4_wave3.py`, `test_ph4_wave4.py`, `test_ph4_d1_*`–`test_ph4_d4_*`. At the Wave 5 branch head, on a database built from nothing: 2596 in data_gateway, 178 in admin_ops and 685 in `shared/` (the command CI runs).
+- `db`: `integration/test_ph4_scorecard_guarantees.py`, `test_ph4_wave2_guarantees.py`, `test_ph4_wave3_guarantees.py`, `test_ph4_wave4_guarantees.py`, `test_ph4_d{1,2,3,4}_guarantees.py`, `test_ph4_d4_wave5_fixes.py`. These run against a real migrated Postgres, and every refusal is checked for its *reason*, not just for failing.
+- `smoke`: real Postgres through the real endpoints — `smoke_ph4_scorecards.py` (Wave 1, 109/109), `smoke_ph4_wave2.py` (57/57), `smoke_ph4_wave3.py` (82/82), `smoke_ph4_wave4.py` (108/108, with MinIO for the documents), `smoke_ph4_d1_question_banks.py` (41/41), `smoke_ph4_d2_accommodations.py` (36/36), `smoke_ph4_d3_code_evidence.py` (43/43), `smoke_ph4_d4_tasks.py` (60/60 with storage faked, 61/61 against a local MinIO). pytest never collects smoke scripts, so all 42 were run at the branch head, each on its own throwaway database: 41 pass. The one not run, `smoke_group_a_scorecard_retry`, needs a live LLM. Three had rotted since earlier waves and were fixed.
+- `ui`: the web test suite, 1495 tests, and the screen named on the line.
+- `e2e`: the Playwright browser suite against a local stack, 25 passed at Wave 4, including `interview-scorecard.spec.ts` (A1/A5), `workflow.spec.ts` (O6 review and approval), `interview-scheduling.spec.ts` (A2/O5), `offer-preboarding.spec.ts` (A3/A4, hire through to the HRMS handoff) and the decision journeys (O4). No Wave 5 story has a browser spec yet, so no Wave 5 line carries this tag.
 
 ---
 
@@ -45,16 +45,17 @@ only through the API. Phase 3 was marked against a looser bar and had to be corr
 | PH4-O5 Panel Workload & Calibration | 3 | 15 | 15 |  |
 | PH4-A3 Offer Lifecycle | 4 | 35 | 35 |  |
 | PH4-A4 Documents & Preboarding | 4 | 33 | 33 |  |
-| PH4-D1 Reusable Question Banks | 5 | 15 | 0 | ⏳ in progress |
-| PH4-D2 Candidate Accommodations | 5 | 13 | 0 | ⏳ in progress |
-| PH4-D3 Code Quality & Similarity Evidence | 5 | 30 | 0 | ⏳ in progress |
-| PH4-D4 Job Simulations & Portfolio | 5 | 31 | 0 | ⏳ in progress |
-| **Total** | | **317** | **221** | **7 ⚠️, 0 ❌, 89 ⏳** |
+| PH4-D1 Reusable Question Banks | 5 | 15 | 15 |  |
+| PH4-D2 Candidate Accommodations | 5 | 13 | 13 |  |
+| PH4-D3 Code Quality & Similarity Evidence | 5 | 30 | 29 | 1 ⚠️ |
+| PH4-D4 Job Simulations & Portfolio | 5 | 31 | 30 | 1 ⚠️ |
+| **Total** | | **317** | **308** | **9 ⚠️, 0 ❌, 0 ⏳** |
 
 **Wave 1:** 43 criteria — 42 ✅, 1 ⚠️, 0 ❌.  
 **Wave 2:** 73 criteria — 70 ✅, 3 ⚠️, 0 ❌.  
 **Wave 3:** 44 criteria — 41 ✅, 3 ⚠️, 0 ❌.  
 **Wave 4:** 68 criteria — 68 ✅, 0 ⚠️, 0 ❌.  
+**Wave 5:** 89 criteria — 87 ✅, 2 ⚠️, 0 ❌.  
 
 ---
 
@@ -464,7 +465,7 @@ The security review rated view auditing as future work rather than a blocker: in
 | 22 | Preboarding status is associated with the accepted offer/candidate | ✅ | `preboarding_completed_at` / `_by` live on the offer row, allowed only on an accepted offer (CHECK); documents carry the offer and the application; `db` (`test_preboarding_follows_an_accepted_offer`) |
 | | **Security / Compliance** | | |
 | 23 | Document access is permission-controlled | ✅ | HR: HR managers of the company only (session gate, company-filtered queries); candidate: the link **and** a code-opened session, for listing and for uploading; super admins and interviewers have no document route; `unit` `smoke` |
-| 24 | Documents participate in consent and retention rules | ✅ | consent: the accept step says what sharing documents means — what is asked for, that the store may be outside India, that it is deleted when it has served its purpose, and that consent can be withdrawn (EN/HI/TE) — then accepting writes a `preboarding_documents` / `onboarding` entry to `dpdp_consent_ledger`. Withdrawing it refuses any further upload — from the documents step itself (**Withdraw my consent**, POST /offer/documents/consent/withdraw), which most candidates here need because the account made at acceptance may never be claimed, or from a signed-in account (DELETE /users/me/consent). It is held per candidate, so it stops every offer they hold, the hiring team is told, and nothing re-grants it automatically. Retention: files and rows are purged 90 days after the offer ends unaccepted, after completion, or after an acceptance that never completes, and at the next run once the hire is reversed — proven in `smoke_ph4_wave4.py`, dry run and real. Note that `RETENTION_DRY_RUN` is true by default, so a deployment deletes nothing until it is switched off; `ui` `smoke` |
+| 24 | Documents participate in consent and retention rules | ✅ | consent: the accept step says what sharing documents means — what is asked for, that it is kept by sub-processors outside India, naming them (Singapore, United States — the copy said "may be outside India" until `44daaaa`), that it is deleted when it has served its purpose, and that consent can be withdrawn (EN/HI/TE) — then accepting writes a `preboarding_documents` / `onboarding` entry to `dpdp_consent_ledger`. Withdrawing it refuses any further upload — from the documents step itself (**Withdraw my consent**, POST /offer/documents/consent/withdraw), which most candidates here need because the account made at acceptance may never be claimed, or, signed in, through `DELETE /consent` — which until the Wave 5 PR matched only purpose `interview` and so never found this `onboarding` row; no screen calls that route, and it now matches each type's own purpose (tested). It is held per candidate, so it stops every offer they hold, the hiring team is told, and nothing re-grants it automatically. Retention: files and rows are purged 90 days after the offer ends unaccepted, after completion, or after an acceptance that never completes, and at the next run once the hire is reversed — proven in `smoke_ph4_wave4.py`, dry run and real. Note that `RETENTION_DRY_RUN` is true by default, so a deployment deletes nothing until it is switched off; `ui` `smoke` |
 | 25 | Document data participates in the existing erasure workflow | ✅ | erasure collects every version's file key and lists each offer's storage prefix (so an orphaned file goes too) in step 1, deletes the files in step 8, and blanks the rows — key, file name, review note — in step 5f; the listing refuses when storage is not configured; `unit` (`test_new_tables_are_in_the_erasure_inventory_and_documents_leave_storage`; admin_ops `test_objects_under_an_offer_prefix_are_erased_even_when_no_row_names_them`) |
 | 26 | Document storage uses the existing secure object-storage/upload mechanism where possible | ✅ | the existing uploads bucket through `s3_upload.upload_file`, under `preboarding/{company}/{offer}/{document}` (no person named), stored with the detected type and out only by a pre-signed link; PDF, JPEG and PNG only, checked by content; 10 MB. No virus scanner (AR-6); `smoke` (MinIO, SigV4, five minutes, `attachment`) `unit` |
 | 27 | Document metadata is company-scoped | ✅ | `candidate_documents` carries `company_id`, with composite FKs to its offer, requirement and application; HR reads filter by the session's company; `db` `smoke` |
@@ -494,128 +495,238 @@ The security review rated view auditing as future work rather than a blocker: in
 
 ## PH4-D1 — Reusable Question Banks  ·  Wave 5
 
-| # | Acceptance criterion | |
-|---|---|---|
-| 1 | Authorized users can create reusable questions | ⏳ |
-| 2 | Questions can be organized into question banks | ⏳ |
-| 3 | Questions support existing assessment question types | ⏳ |
-| 4 | Questions can be associated with relevant competencies | ⏳ |
-| 5 | Questions can have difficulty metadata | ⏳ |
-| 6 | Questions can have appropriate review/approval status | ⏳ |
-| 7 | Approved questions can be reused across multiple assessments | ⏳ |
-| 8 | Reusing a question does not mutate previously published assessments | ⏳ |
-| 9 | Published assessment questions remain immutable | ⏳ |
-| 10 | Users can search/filter questions within authorized banks | ⏳ |
-| 11 | Users can select questions when configuring an assessment | ⏳ |
-| 12 | Duplicate/unwanted question selection is prevented where appropriate | ⏳ |
-| 13 | Question bank access respects company/tenant permissions | ⏳ |
-| 14 | Existing assessment questions continue to work | ⏳ |
-| 15 | Tests cover creation, reuse, permissions and immutability | ⏳ |
+| # | Acceptance criterion | | Evidence |
+|---|---|---|---|
+| 1 | Authorized users can create reusable questions | ✅ | HR: **Question banks → bank → New question** (`/hr/question-banks/:bankId`, `QuestionBankDetail.tsx`), gated by `HrCtxDep`; `POST /hr/question-banks/{bank_id}/questions` validates MCQ/coding shape by constructing the SAME `QuestionIn`/`CodingQuestionIn` Pydantic models `hr_exams.py`/`hr_coding.py` use for exam authoring, so a bank question and an exam question can never silently drift apart in what counts as well-formed; `ui` `unit` `smoke` |
+| 2 | Questions can be organized into question banks | ✅ | `question_banks` (company-scoped, name unique per company case-insensitively); HR: **Question banks** list (`/hr/question-banks`) to create/rename/archive one; every `bank_questions` row FK'd to `bank_id`; `ui` `db` `smoke` |
+| 3 | Questions support existing assessment question types | ✅ | `BankQuestionIn` reuses the existing MCQ/coding validators verbatim (see criterion 1) — mcq needs 2-6 options and a valid `correct_index`; coding needs ≥1 allowed language and ≥1 test case; `unit` |
+| 4 | Questions can be associated with relevant competencies | ✅ | `competencies`/`competency_ids` (≤8, each `{id, name}`, id matches `^[a-z0-9_]{1,80}$`), edited via `CompetencyTagger.tsx`; `/hr/bank-questions/competencies` seeds from the role-engine's baseline plus the company's own `round_criteria`, so a tag uses the same words a round's rubric does; `ui` `unit` |
+| 5 | Questions can have difficulty metadata | ✅ | `difficulty` (easy/medium/hard, CHECK-enforced) on every question, editable in `BankQuestionEditor.tsx`, filterable in the bank screen and in the picker; `ui` `db` |
+| 6 | Questions can have appropriate review/approval status | ✅ | draft → in_review → approved → retired, enforced by the `bank_questions_lifecycle` trigger at the database (approval needs a NAMED reviewer who is neither author nor submitter — a 403 worded exactly like an offer's separation-of-duties refusal — and, since a security review found the gap, never anyone who edited the content: the service checks the append-only event log). HR: **Submit for review**, **Question reviews** queue (`/hr/question-banks/reviews`); super admin mirror at **/superadmin/question-reviews**, so a single-HR company is never blocked on a second approver; `ui` `db` `unit` `smoke` |
+| 7 | Approved questions can be reused across multiple assessments | ✅ | HR: exam section → **Add from bank** puts an approved question into any exam as its own copy. The partial unique index `(exam_id, source_bank_root_id)` refuses the same question twice in ONE exam and allows it in others. The exam's own question list then shows **From bank · vN** (`BankProvenanceChip`, shared by `ExamEditor.tsx` and `CodingAuthoringSection.tsx`), fed by the `source_bank_*` fields on `QuestionOut`/`CodingQuestionOut`. Those fields were added in `d8d714c`: before that the API never sent them, so the chip could never render, and no test noticed. The D1 smoke now adds one approved question to a second exam and checks it is a separate copy with the same provenance; `ui` (`BankProvenanceChip`, `BankQuestionPicker`) `db` (schema) `smoke` |
+| 8 | Reusing a question does not mutate previously published assessments | ✅ | copy-on-add: `add_to_section` inserts an INDEPENDENT `exam_questions`/`coding_questions` row carrying the bank question's content, not a reference; the `exam_round_content_frozen` trigger's UPDATE branch refuses ever repointing a copy's `source_bank_question_id/root_id/version`; the D1 smoke test approves a v2 of a bank question and asserts "the exam's existing copy is unchanged byte for byte"; `db` (`test_a_copied_question_keeps_the_provenance_it_was_made_with`) `smoke` |
+| 9 | Published assessment questions remain immutable | ✅ | `exam_round_content_frozen`/`exam_rounds_frozen` triggers refuse INSERT/UPDATE/DELETE on `exam_sections`/`exam_questions`/`coding_questions`/grading fields once a round is `published` OR has an attempt; `app/exam_locks.py` (new this wave) turns that into a sentence BEFORE the write reaches the trigger, called from every writer in `hr_exams.py`/`hr_coding.py`/`hr_rounds.py` (AST-parametrised test). **Unpublish** (while untaken) or **Duplicate round** (`LockBanner.tsx` in `ExamEditor.tsx`) are the only ways forward; `ui` `db` (8 tests) `smoke` |
+| 10 | Users can search/filter questions within authorized banks | ✅ | HR: **Question bank → Search prompt / kind / difficulty / language / competency / tag / status** (`QuestionBankDetail.tsx`'s `FilterBar`, backed by `svc.search()`); the same filters reappear in the picker; `ui` `db` |
+| 11 | Users can select questions when configuring an assessment | ✅ | HR: exam section → **Add from bank** opens `BankQuestionPicker.tsx` (approved, same-kind questions across every bank in the company; anything already in THIS exam shown disabled with its reason) → **Add N questions** → `POST /hr/exams/{exam_id}/sections/{section_id}/bank-questions`; reachable from both `ExamEditor.tsx` (MCQ) and `CodingAuthoringSection.tsx` (coding); `ui` `smoke` |
+| 12 | Duplicate/unwanted question selection is prevented where appropriate | ✅ | `picker_skip_reason()` — not approved, wrong kind, same lineage already in this exam, or an identical question by content hash — is the ONE function both the picker's row-disable logic and the server's own skip list call, so what the screen shows as pickable is never something the server would then skip anyway; DB-backstopped by `uq_{table}_exam_source_root`; `ui` `unit` `db` (`test_the_same_bank_lineage_cannot_land_in_one_exam_twice`) `smoke` ("adding it again is skipped as a duplicate") |
+| 13 | Question bank access respects company/tenant permissions | ✅ | every route needs `HrCtxDep`/`SuperAdminCtxDep` (AST-verified, ≥25 routes), the company from the session, never the request; composite FKs everywhere. Smoke: "another company's HR gets 404 on the bank… and on the question… and search across banks finds nothing of another company's"; "an interviewer gets 403 on a bank route"; "a candidate gets 403 on a bank route"; `unit` (`test_every_route_sits_behind_its_audience_gate`) `db` `smoke` |
+| 14 | Existing assessment questions continue to work | ✅ | every new column (`source_bank_*` on `exam_questions`/`coding_questions`) is nullable and additive; a plain, non-bank question insert never touches the new provenance checks (the T2 trigger's bank-specific `IF` block only runs when `source_bank_question_id IS NOT NULL`). The D1 smoke test runs a full pre-existing candidate path — assign, open round, start attempt, submit, pass — against an exam whose only question came in via the bank, unaffected by the new lock triggers. One real, deliberate behaviour change: a published-but-untaken round's questions used to be editable at the app layer (the migration's own docstring names this as the gap it closes) and now are not — HR must unpublish or duplicate first. That narrows an editing gap rather than breaking the candidate-facing flow; `db` (additive migration) `smoke` |
+| 15 | Tests cover creation, reuse, permissions and immutability | ✅ | `test_ph4_d1_question_banks.py` (unit, ~30 tests: content-hash normalisation, the transition table pinned against the trigger's own SQL, the picker's skip logic, the audience-gate AST check, "no agent/LLM path ever imports this module"), `test_ph4_d1_guarantees.py` (db, ~35 tests: every lifecycle transition, both locks, cross-company FK refusals, the append-only event log), `smoke_ph4_d1_question_banks.py` (real API: author → submit → self-approve refused → a second HR approves → copy into an exam → duplicate skipped → publish → a real candidate takes and passes it → editing the published/taken round refused → a new version drafted, approved, retires v1 automatically, the exam's existing copy is untouched → cross-tenant and role boundaries), plus `BankQuestionEditor.test.tsx` / `BankQuestionPicker.test.tsx` / `QuestionBankDetail.test.tsx` / `QuestionBanks.test.tsx` / `QuestionReviewQueue.test.tsx` / `QuestionReviewsPages.test.tsx` |
+
+**Worth knowing.**
+
+- **The two known Wave-5 bugs are fixed and now tested.** Revising an approved/retired question
+  used to have no "New version" control at all (`QuestionBankDetail.tsx` now has one, gated on
+  `approved`/`retired` status); the editor used to keep the PREVIOUS question's draft state when a
+  different question (or version) was selected, so "Save changes" could PATCH the wrong row —
+  `BankQuestionEditor.tsx` now re-seeds strictly on `question?.id` changing, with a comment
+  explaining why (fixed in `17acec9`).
+- **Reuse across exams: a defect this pass found, now fixed and tested.** The "From bank · vN"
+  chip on an exam's own question list could never render. `QuestionOut`/`CodingQuestionOut` did
+  not send the provenance fields the frontend expected, and no test rendered the chip. Fixed in
+  `d8d714c`, which adds the fields; the D1 smoke now puts one approved question into two different
+  exams and checks each copy. The chip is now one component with its own test
+  (`BankProvenanceChip`).
+- **A published-but-untaken round's questions are now genuinely locked**, at the database as well
+  as the app (new `exam_locks.py`), closing a real prior gap named in the migration's own docstring
+  ("the app checked for attempts only, never for published"). Intentional and documented, but it is
+  a behaviour change to an editing path that used to succeed.
+- **Staff-console screens (`QuestionBankDetail.tsx`, `QuestionReviews.tsx`) are English-only by
+  design** (CLAUDE.md — staff consoles are not translated); this is correct and not a defect.
 
 ---
 
 ## PH4-D2 — Candidate Accommodations  ·  Wave 5
 
-| # | Acceptance criterion | |
-|---|---|---|
-| 1 | Authorized HR users can record an accommodation for a candidate | ⏳ |
-| 2 | Accommodations are associated with the appropriate candidate/application | ⏳ |
-| 3 | An accommodation can be associated with a specific assessment/interview where applicable | ⏳ |
-| 4 | Authorized users can define the effective period or relevant assessment | ⏳ |
-| 5 | The candidate's assessment experience reflects the approved accommodation | ⏳ |
-| 6 | Additional time/deadline adjustments are applied correctly where configured | ⏳ |
-| 7 | Accommodation information is not exposed unnecessarily to interviewers or other users | ⏳ |
-| 8 | Accommodation does not change the underlying competency or evaluation criteria | ⏳ |
-| 9 | Accommodation does not automatically increase or decrease candidate scores | ⏳ |
-| 10 | Accommodation changes are auditable | ⏳ |
-| 11 | Candidate data associated with accommodations follows existing consent, retention and erasure rules | ⏳ |
-| 12 | Existing candidates without accommodations continue through the normal flow | ⏳ |
-| 13 | Tests cover accommodation configuration, application and permission boundaries | ⏳ |
+| # | Acceptance criterion | | Evidence |
+|---|---|---|---|
+| 1 | Authorized HR users can record an accommodation for a candidate | ✅ | HR: candidate drawer → **Accommodations** → pick a scope → **Record accommodation** (`AccommodationsSection.tsx`, `POST /hr/applicants/{id}/accommodations`), `HrCtxDep`-gated; there is no super-admin, interviewer, candidate or agent route at all (module docstring, and `test_no_super_admin_interviewer_or_public_router_in_the_module`); `ui` `unit` `smoke` |
+| 2 | Accommodations are associated with the appropriate candidate/application | ✅ | `applicant_id` always set (composite FK to `applicants(id, company_id)`); optional `enrolment_id` (composite FK to `enrolments`); a round- or exam-round-scoped row additionally REQUIRES an enrolment (CHECK constraints), so a round-scoped adjustment can never silently apply to a different application that happens to reuse the same round; `db` (`test_a_round_scoped_row_needs_an_enrolment`, `..._exam_round_...`) `unit` |
+| 3 | An accommodation can be associated with a specific assessment/interview where applicable | ✅ | scoped to one workflow round (`round_id`) or one hand-assigned exam round (`exam_round_id`, mutually exclusive with `round_id` by CHECK); a deadline extension also lengthens an interview invite's own `expires_at` (`hr_interviews.py`, `workflow_runner.py` — both now carry `accommodation_id`). UI: **This application / One workflow round / One exam round** scope radios, disabled with a stated reason when there is no open application to scope them to; `ui` `db` `unit` |
+| 4 | Authorized users can define the effective period or relevant assessment | ✅ | `effective_from`/`effective_until` (CHECK: until > from), editable via `localInputToIso`/`toLocalInputValue` in both the record and revise forms; a REVISE pre-fills the existing window rather than blanking it — a Wave 5 fix, since a blank window used to silently turn a time-boxed adjustment permanent; `ui` `db` |
+| 5 | The candidate's assessment experience reflects the approved accommodation | ✅ | candidate: **/exam/start** returns SCALED round/section time limits (`accommodations.scaled`) and, when `relax_auto_submit` is set, `max_violations: null` (no auto-submit threshold); `PublicExam.tsx` shows a fact-only banner ("Your time for this round includes an adjustment.") in EN/HI/TE — never the percentage or the reason. Smoke: the candidate actually starts and submits inside the extended deadline; `ui` `unit` `smoke` |
+| 6 | Additional time/deadline adjustments are applied correctly where configured | ✅ | `extra_seconds`/`scaled` (pure, unit-tested for rounding and the untimed-limit case) are frozen onto the attempt at `/start` (`exam_attempts_allowance_fixed` trigger — later HR edits cannot retroactively shrink or grow a clock already shown to the candidate). Smoke: "A's round + section time limits are scaled to 90s… A's attempt was frozen with +30s (50% of 60)… A is submitted (within the extended deadline)"; `unit` `db` `smoke` |
+| 7 | Accommodation information is not exposed unnecessarily to interviewers or other users | ✅ | an assigned interviewer's OWN scorecard carries only `adjustments_note` (=`interviewer_note`), resolved by `_load_owned` scoped to THAT interviewer and THAT round — never `internal_note`, never the parameters, never `basis`. Smoke: "A's interviewer sees exactly the interviewer note… the payload never carries the internal note or the parameters… the interviewer for an unrelated candidate sees no note"; `ui` (`InterviewerScorecard.tsx`) `unit` `smoke` |
+| 8 | Accommodation does not change the underlying competency or evaluation criteria | ✅ | no FK from `candidate_accommodations` to `round_criteria`; `round_id`/`exam_round_id` are used only to match SCOPE (which adjustment applies where), never to touch a round's own criteria rows; `AccommodationsSection.tsx` has no criteria-editing control at all; `db` (schema) `ui` |
+| 9 | Accommodation does not automatically increase or decrease candidate scores | ✅ | `test_exam_grading_never_references_accommodations`/`test_coding_grader_never_references_accommodations` (AST-tested — the module name appears in neither grader's source, ever). Smoke proves it directly: "identical answers score identically" between the accommodated and the plain candidate; `unit` `smoke` |
+| 10 | Accommodation changes are auditable | ✅ | `accommodation_events` (append-only, DB-refused UPDATE/DELETE) records recorded / revised / revoked / applied / redacted; every HR write also lands an `AuditLog` row with IP/user-agent. Smoke: "HR's history names who recorded the adjustment"; `db` `unit` `smoke` |
+| 11 | Candidate data associated with accommodations follows existing consent, retention and erasure rules | ✅ | `_record_basis` writes a `dpdp_consent_ledger` row per state change, booked against the RECORDER (never falsely against the candidate — there is no candidate consent path here at all, and a prior version of this code wrongly booked consent against the candidate's own account; fixed in `1012488`). `purge()` redacts the four note fields 180 days after every one of the applicant's applications is decided, honouring `RETENTION_DRY_RUN`. Erasure step 5g revokes any still-active row and redacts all notes; `services/admin_ops/tests/test_erasure_step_order.py` (`test_accommodations_are_revoked_before_applicants_lose_their_user_id`) and `test_erasure_executor.py` both prove it. Smoke: "a retention dry run reports the candidate without redacting… the real run redacts it"; `db` `unit` `smoke` |
+| 12 | Existing candidates without accommodations continue through the normal flow | ✅ | `pick()` returns `None` with no active rows; `extra_seconds`/`scaled` are 0/unchanged with no percentage; `test_deadline_with_zero_extra_seconds_matches_the_old_formula` proves the accommodated-with-nothing path computes byte-identically to the pre-D2 deadline formula. Smoke: "B sees no adjustment… B's time limits are the plain 60s… B is expired (past the plain deadline)"; `unit` `smoke` |
+| 13 | Tests cover accommodation configuration, application and permission boundaries | ✅ | `test_ph4_d2_accommodations.py` (unit, ~40 tests: `pick()`'s scope-precedence rules, the grading-isolation AST tests, the HR-only audience gate, the email never carrying notes), `test_ph4_d2_guarantees.py` (db, ~38 tests against the real `candidate_accommodations_guard` trigger — arrival shape, frozen scope/parameters, redaction shape, revoke/supersede rules, cross-company refusals), `smoke_ph4_d2_accommodations.py` (real API: record → scaled exam start → frozen allowance → submit/expire → interviewer note scoping → revoke → retention dry/real → cross-company and super-admin denial), `AccommodationsSection.test.tsx` (ui, 20+ behavioural assertions incl. scope-disabling without an application and the three notes' audience warnings) |
+
+**Worth knowing.**
+
+- **No criterion here is anything but ✅** — this is the tightest of the three stories: every write
+  path is guarded by a single DB trigger (`candidate_accommodations_guard`) that freezes scope,
+  parameters, basis and dates after insert and only ever allows a revoke or a one-time supersede: no
+  application-layer bypass is possible even in principle.
+- **The consent-ledger fix (`1012488`) matters for DPDP correctness.** An earlier version of this
+  feature booked a `granted=true` consent row against the CANDIDATE's own account for every
+  HR-initiated accommodation — asserting a consent the candidate never gave, which the
+  platform-owner's DPDP audit feed would have read as a real candidate consent grant. It is now
+  booked against the RECORDER (the HR manager), with `granted=false` for a revoke, exactly mirroring
+  the `bulk_ingest.record_hr_collected_basis` precedent.
+- **A revoked-by-the-platform row correctly names no person.** `revoked_by_user_id` stays NULL when
+  retention or erasure ends a still-active row (it is a real FK to `users`, and an earlier version's
+  attempt to use a sentinel UUID failed an FK constraint in the smoke test — now fixed).
+- **Extra time and a relaxed auto-submit threshold are frozen the moment a candidate's attempt
+  starts** (`exam_attempts_allowance_fixed`), so a later HR revoke or revision cannot retroactively
+  shrink a clock, or reinstate a threshold, the candidate has already been shown.
 
 ---
 
 ## PH4-D3 — Code Quality & Similarity Evidence  ·  Wave 5
 
-| # | Acceptance criterion | |
-|---|---|---|
-| | **Code Quality** | |
-| 1 | Coding submissions can be analyzed for supported quality signals | ⏳ |
-| 2 | Quality signals can include measurable characteristics such as: | ⏳ |
-| 3 | complexity | ⏳ |
-| 4 | duplication | ⏳ |
-| 5 | maintainability indicators | ⏳ |
-| 6 | test coverage where available | ⏳ |
-| 7 | code smells/static-analysis findings where supported | ⏳ |
-| 8 | Quality results are associated with the specific candidate submission | ⏳ |
-| 9 | Results are available to authorized reviewers | ⏳ |
-| 10 | Quality signals are presented as evidence rather than an automatic decision | ⏳ |
-| 11 | Analysis failures do not invalidate a candidate submission | ⏳ |
-| | **Similarity / Integrity** | |
-| 12 | The system can calculate similarity between code submissions where supported | ⏳ |
-| 13 | Similarity analysis can identify potentially related submissions/reference material | ⏳ |
-| 14 | Similarity results include enough context for a human reviewer to investigate | ⏳ |
-| 15 | Similarity results are not treated as proof of misconduct by themselves | ⏳ |
-| 16 | Reviewers can distinguish between a similarity signal and a confirmed integrity finding | ⏳ |
-| 17 | Existing assessment integrity evidence remains available alongside code-analysis evidence | ⏳ |
-| | **Decision Safety** | |
-| 18 | Code quality cannot automatically reject a candidate | ⏳ |
-| 19 | Code similarity cannot automatically reject a candidate | ⏳ |
-| 20 | AI cannot directly change candidate lifecycle status based on these signals | ⏳ |
-| 21 | Any resulting candidate decision remains human-authorized | ⏳ |
-| 22 | Evidence and reviewer actions are auditable | ⏳ |
-| | **Security** | |
-| 23 | Analysis runs in an appropriately isolated environment | ⏳ |
-| 24 | Candidate code is not unnecessarily exposed to unauthorized users | ⏳ |
-| 25 | Company/tenant boundaries are enforced | ⏳ |
-| 26 | Sensitive code-analysis data follows retention and erasure requirements | ⏳ |
-| | **Compatibility** | |
-| 27 | Existing coding assessments continue to work if analysis is unavailable | ⏳ |
-| 28 | Existing sandbox/test execution remains functional | ⏳ |
-| 29 | Analysis results do not alter the candidate's submitted source code | ⏳ |
-| 30 | Tests cover quality analysis, similarity detection, permissions and no-auto-reject behavior | ⏳ |
+| # | Acceptance criterion | | Evidence |
+|---|---|---|---|
+| | **Code Quality** | | |
+| 1 | Coding submissions can be analyzed for supported quality signals | ✅ | HR: **Exams → exam → Results → attempt → Code evidence** (`ExamAttemptDetail.tsx` → `CodeEvidencePanel.tsx`) shows a `code_quality_reports` row per coding question; written by the nightly sweep (`analyse_pending`, wired into `app/reminders.py`) or on demand (`POST /hr/exams/{id}/attempts/{id}/code-analysis`, rate-limited per company); `ui` `unit` `smoke` |
+| 2 | Quality signals can include measurable characteristics such as: | ✅ | heading item — the five characteristics below are all present on the same report and the same screen |
+| 3 | complexity | ✅ | Python: real per-function McCabe cyclomatic complexity + nesting depth (`ast`-only, never executes the source); the other nine languages: a token-level decision-point-density approximation, explicitly labelled `kind='token-approximate'` and never presented as equal to the Python figure. Shown as "Avg. complexity"; `unit` `ui` |
+| 4 | duplication | ✅ | `duplication_ratio` — a within-submission k-gram recurrence ratio, independent of the cross-submission similarity signal — shown as "Duplication"; `unit` `ui` |
+| 5 | maintainability indicators | ✅ | the classic SEI maintainability index (0-100, clamped) from Halstead volume + complexity + LOC, computed identically for both the AST and the token path; shown as "Maintainability"; `unit` `ui` |
+| 6 | test coverage where available | ⚠️ | honestly reported as unavailable for EVERY language — `coverage.available` is always `false`, with a stated reason ("Coverage requires instrumented execution… this analyser is pure static analysis and never runs candidate code."); the panel shows the sandbox's existing pass/fail TEST RESULTS instead, explicitly labelled results, never coverage. The criterion says "where available" and it is nowhere available, by design — a reader should know that no code-coverage figure exists anywhere in this feature, for any of the 10 languages, ever; `ui` (`'never shows a coverage figure — only the reason it is unavailable'`, `'shows the sandbox test results, labelled as results, not coverage'`) `unit` |
+| 7 | code smells/static-analysis findings where supported | ✅ | Python: bare `except`, mutable default argument, unused import/local, `eval`/`exec`, `global`/`nonlocal`, long/deep-nested function. Other languages: empty catch, `var` (JS/TS), `any` (TS), `unsafe`/`.unwrap()` (Rust), `goto` (C/C++), magic numbers — rendered as a findings list with a severity per line; `unit` `ui` |
+| 8 | Quality results are associated with the specific candidate submission | ✅ | `code_quality_reports` is keyed by `(attempt_id, coding_question_id, analyser_version)`, composite-FK'd to `exam_attempts(id, company_id)`; `db` `unit` |
+| 9 | Results are available to authorized reviewers | ✅ | HR (only) reaches the full bundle via `ExamAttemptDetail.tsx`'s Code evidence tab, gated by `HrCtxDep` and the company's own attempt (`_owned_attempt`). NOTE: a SECOND read surface exists in the backend (`GET /hr/enrolments/{id}/code-evidence-summary`, and `row.code_evidence` computed into every decision-queue row by `hr_workflows.py`) but is wired to no screen at all — grepped `web/src/**` for both `code-evidence-summary` and `code_evidence`/`codeEvidence` outside `codeEvidence.ts`/`CodeEvidencePanel.tsx`/`CodeSimilarityCompare.tsx`/`ExamResults.tsx`, and `DecisionQueue.tsx` renders `row.scorecards` but never `row.code_evidence`. The primary reviewer surface (the attempt's own Code evidence tab) is real and complete, so this criterion still passes for it, but the summary-counts feature described in the backend's own comments is not reachable from any product screen; `ui` `unit` `smoke` |
+| 10 | Quality signals are presented as evidence rather than an automatic decision | ✅ | the module's own docstring and an AST test (`test_code_evidence_never_calls_lifecycle_mutators`) prove `code_evidence.py` never writes `exam_attempts.status/passed/score_*` and contains no `UPDATE enrolments`; the screen labels findings as findings, with a severity, never a pass/fail verdict; `unit` `ui` |
+| 11 | Analysis failures do not invalidate a candidate submission | ✅ | `exam_take.py` never imports `code_evidence` (`test_exam_take_never_imports_code_evidence`); a timeout or a pathological input is stored as `status='failed'` with only the exception's TYPE NAME, never the source, and the sweep moves to the next submission. Smoke: "the failed analysis still wrote a report… E's attempt is still submitted and graded despite the failure"; `unit` `smoke` |
+| | **Similarity / Integrity** | | |
+| 12 | The system can calculate similarity between code submissions where supported | ✅ | winnowing (MOSS-style, k=15/w=8) over normalised, boilerplate-subtracted token streams, for the same 10 languages the quality analyser supports; written by the same sweep, surfaced on the attempt's Code evidence tab and the exam-wide **Similarity** list (`ExamResults.tsx` → `listSimilaritySignals`); `unit` `db` `smoke` |
+| 13 | Similarity analysis can identify potentially related submissions/reference material | ✅ | two signal kinds — `submission` (attempt vs. attempt) and `reference_solution` (attempt vs. the question's own reference solution). Smoke proves both fire: "exactly one submission-pair signal (A and B only)… at least one reference-solution signal"; `unit` `smoke` |
+| 14 | Similarity results include enough context for a human reviewer to investigate | ✅ | HR: **Compare & record a finding** opens `CodeSimilarityCompare.tsx` — line-numbered excerpt blocks around each matched region (±3 lines, merged, capped 200 lines/side), a real gap row between separated blocks, containment/Jaccard figures. Fixed THIS wave (commit `c62756b`): rows used to be numbered 1..N against absolute `matched_regions`, so a match past roughly line 200 highlighted nothing and the gap between regions showed as a numbered line; the only prior test used a match on line 1 of a two-line file, the one case where the bug was invisible — now covered at line 40 and across two separated regions; `ui` `unit` |
+| 15 | Similarity results are not treated as proof of misconduct by themselves | ✅ | every signal carries a fixed, server-written caption verbatim: "Automated, unreviewed — similar code is not evidence of misconduct on its own. Many candidates independently using the same tools or references can look alike." — rendered on-screen, not editable by anyone; `unit` `ui` |
+| 16 | Reviewers can distinguish between a similarity signal and a confirmed integrity finding | ✅ | structurally two tables — `code_similarity_signals` (system, immutable, unreviewed) vs. `code_integrity_findings` (human, mandatory 20-2000 char rationale, one of `no_concern`/`follow_up`/`confirmed`, always against a NAMED `hr_manager`) — and two visually separate sections on the panel; "a signal is never a finding" is the screen's own load-bearing rule, UI-tested ("keeps similarity signals and integrity findings in separate, distinctly labelled sections", "labels the finding with who recorded it, not a similarity number"). Also fixed this wave (commit `44daaaa`): the compare dialog used to always put the pair's `low`-UUID attempt on the left under "This submission", regardless of which attempt HR was actually reviewing — whenever the reviewed attempt sorted second, HR judged the OTHER candidate's code as this one's, with the containment figures reversed; now the panes follow the attempt under review, with a new test for the side that was never tested (`'labels the HIGH side "This submission" when the attempt under review is attempt_high_id'`); `db` `unit` `ui` |
+| 17 | Existing assessment integrity evidence remains available alongside code-analysis evidence | ✅ | `evidence_for_attempt` returns the PRE-EXISTING `integrity_score`/`proctoring_summary`/`exam_integrity_events` counts in the same bundle as the new quality/similarity data, rendered by `IntegritySummaryCard` on the same screen, right alongside the new evidence; `unit` `ui` |
+| | **Decision Safety** | | |
+| 18 | Code quality cannot automatically reject a candidate | ✅ | `code_evidence.py` never imports or calls a workflow/decision mutator; an AST test asserts none of `record_transition`/`record_final_decision`/`release_hold`/`_hold` appear anywhere in the module's source, and no `UPDATE enrolments`; `unit` |
+| 19 | Code similarity cannot automatically reject a candidate | ✅ | the same module, the same test — similarity signals are written by the identical sweep and are equally inert; `unit` |
+| 20 | AI cannot directly change candidate lifecycle status based on these signals | ✅ | no agent/LLM path touches any of the four tables: `test_no_agent_module_references_code_evidence` greps every file under `app/agents`/`shared/agents` for the table and module names; `test_no_module_here_imports_an_llm_client` AST-checks `code_evidence`/`code_quality`/`code_similarity`/`code_sandbox` for an LLM-client import; `unit` |
+| 21 | Any resulting candidate decision remains human-authorized | ✅ | `record_finding` is the ONLY writer of a human judgement, always against a NAMED `hr_manager` (`recorded_by_user_id` NOT NULL, DB-enforced) with a mandatory 20-2000 char rationale; nothing here can itself become a hire/reject — `PanelVerdict.decision_authority` stays the literal `"human_only"`, structurally untouched by this feature; `db` `unit` |
+| 22 | Evidence and reviewer actions are auditable | ✅ | `AuditLog` rows for `code_evidence.viewed` (every source/compare read, D3 #24) and `code_integrity.finding_recorded`. Smoke: "reading source wrote an audit row"; `db` `unit` `smoke` |
+| | **Security** | | |
+| 23 | Analysis runs in an appropriately isolated environment | ✅ | one `spawn`ed OS process PER analysis task, never a shared pool (a security review found and fixed the two ways a shared `ProcessPoolExecutor` broke that promise — one dead worker permanently disabling analysis for every tenant, and pool resets cancelling unrelated callers' work); a cleared environment (no inherited DB/Redis/API-key env vars — `test_the_child_starts_with_an_empty_environment`); per-task `RLIMIT_AS`/`RLIMIT_CPU` where the platform supports it; a hard timeout that kills the process (`test_a_timeout_kills_the_process_it_timed_out`, `test_one_analysis_timing_out_does_not_cancel_another`). The analysis itself never executes candidate source at all — `ast.parse`/Pygments tokenising only inspect syntax — so the process isolation is defence against a pathological INPUT (a deep expression, a lexer pathology), not against arbitrary code execution, which never happens; the child does have network access (stated plainly in the module docstring; the claim made is narrower than full sandboxing) — worth knowing, not a failure of this criterion; `unit` |
+| 24 | Candidate code is not unnecessarily exposed to unauthorized users | ✅ | HR only (`hr_router`, no super-admin/interviewer/candidate/agent route — statically verified, ≥7 routes via `test_every_route_sits_behind_hr_ctx_dep` / `test_no_super_admin_interviewer_or_public_router_in_the_module`); reading a candidate's raw source or a compare view is audited EVERY call and never prefetched (`getCodeSource`/`getSimilarityCompare` fire only on an explicit "View source"/"Compare" click — UI-tested: "does not fetch source until HR clicks 'View source'"). Smoke: "an interviewer gets 403 on the evidence tab"; `unit` `ui` `smoke` |
+| 25 | Company/tenant boundaries are enforced | ✅ | composite FKs from BOTH sides of a similarity pair to `exam_attempts(id, company_id)` make a cross-tenant pair UNREPRESENTABLE, not merely filtered (`test_a_cross_tenant_signal_pair_is_unrepresentable`, `test_a_cross_tenant_finding_attempt_is_refused`). Smoke: "another company's HR gets 404 on the evidence tab"; `db` `smoke` |
+| 26 | Sensitive code-analysis data follows retention and erasure requirements | ✅ | `purge()` redacts source/program-output (never the score) and deletes reports/fingerprints/signals once retention elapses, honouring `RETENTION_DRY_RUN` (`test_new_tables_are_in_the_erasure_inventory`). Smoke: dry run changes nothing, the real run redacts — "reports were deleted… fingerprints were deleted… signals were deleted… the finding's rationale is redacted", and "the score survives redaction"; `unit` `smoke` |
+| | **Compatibility** | | |
+| 27 | Existing coding assessments continue to work if analysis is unavailable | ✅ | `analyse()` never raises for ordinary input (`status='unsupported'`/`'failed'` instead of an exception); `exam_take.py` imports none of this, so a sandbox outage cannot touch submission or grading. Smoke: "a disabled sweep writes nothing… E's attempt is still submitted and graded despite the failure"; `unit` `smoke` |
+| 28 | Existing sandbox/test execution remains functional | ✅ | `test_execution_module_signature_is_unchanged` pins `app.execution.run_code`'s signature and the 10-language `SUPPORTED_LANGUAGES` set, untouched by this feature; the analyser is a SEPARATE, non-executing path (`code_sandbox.py`) from the existing Piston-backed execution sandbox candidates actually run against; `unit` |
+| 29 | Analysis results do not alter the candidate's submitted source code | ✅ | both analysers only READ `source`/`starter_code` as strings (`ast.parse` / Pygments tokenise, never `exec`/`eval`/subprocess-run them); nothing in this module writes `exam_attempts.answers` except the one, differently-triggered retention redaction, which the `exam_attempts_submission_frozen` trigger only permits in the SAME statement as `code_redacted_at`, never as an ordinary write from analysis; `db` `unit` |
+| 30 | Tests cover quality analysis, similarity detection, permissions and no-auto-reject behavior | ✅ | `test_ph4_d3_code_evidence.py` (unit, 78 tests: quality metrics, similarity scoring, redaction helpers, the audience-gate and no-agent/no-LLM AST checks, failure-isolation paths), `test_ph4_d3_sandbox.py` (unit, 7 tests: process isolation, timeout, empty environment), `test_ph4_d3_guarantees.py` (db, 61 tests against the real triggers: arrival/immutability/redaction shape for all four tables, cross-tenant unrepresentability, retention interaction with the submission freeze), `smoke_ph4_d3_code_evidence.py` (real API, 39 checks: full sweep → fingerprinting → signals for both kinds → evidence tab → source read audited → cross-company 404 → interviewer 403 → a confirmed finding recorded with no score/status change → an analysis failure still leaves the attempt submitted and graded → a disabled sweep writes nothing → retention dry run then real, with the score surviving redaction), `CodeEvidencePanel.test.tsx` (ui, 14 behavioural tests across 6 describe blocks, including the two Wave-5 regressions: the swapped compare side and the line-40/two-region highlighting) |
+
+**Worth knowing.**
+
+- **Test coverage does not exist, for any language, and the product says so.** `coverage.available`
+  is hard-coded `false` everywhere, with a stated reason; the screen shows the sandbox's existing
+  pass/fail test RESULTS instead, explicitly labelled results, never coverage. This is the honest
+  reading of "test coverage where available" — it is nowhere available, by design, since this
+  analyser is deliberately static-only and never executes candidate code.
+- **The code-evidence counts reached no screen until `f455b79`, and then said too much.** The
+  `/hr/enrolments/{id}/code-evidence-summary` endpoint and `row.code_evidence` on every
+  decision-queue row were built and tested, but nothing rendered them. `f455b79` showed them. Its
+  first wording called every signal "unreviewed" and every finding "recorded", so a candidate HR
+  had reviewed and cleared still read as flagged on the decision screen (security review, D3 M3).
+  They now say how many signals are awaiting review, and name each finding by its outcome ("1
+  reviewed: no concern", "1 flagged for follow-up", "1 integrity concern confirmed"). Nothing
+  shows when there is none. Tested by a db test on the counts and by `CodeEvidenceCounts` and
+  `DecisionQueue`. The main reviewer surface, the attempt's own Code evidence tab, was complete
+  throughout.
+- **No HR screen receives a candidate's program output.** The evidence tab reduced each test to
+  pass/fail in `c62756b`, but the same attempt page's score breakdown (`/breakdown`) still sent
+  every test's stdout/stderr and the hidden cases, unaudited (security review, D3 M2). It is now
+  reduced the same way, and the D3 smoke checks it over HTTP.
+- **Two real, independently-found bugs were fixed in this wave's own review commit (`44daaaa`)**:
+  the compare dialog used to always label the pair's UUID-`low` attempt "This submission" regardless
+  of which attempt HR was actually reviewing (reversing the containment figures and misattributing
+  code whenever the reviewed attempt sorted second — the only dialog where an integrity finding is
+  recorded); and matched-region highlighting was numbered 1..N against absolute source line numbers,
+  so a match past roughly line 200 lit up nothing. Both are now covered by dedicated regression
+  tests, and both are the kind of defect this evidence pass is meant to surface, not merely record
+  as already fixed.
+- **The sandbox process has network access.** The isolation guarantee is about a fresh OS process,
+  a cleared environment and hard resource limits — not a network-free jail — and the module
+  docstring says so plainly. It is not a gap against the stated criterion (analysis never executes
+  candidate code in the first place), but a reader should know the isolation is narrower than "no
+  network."
+- **Analysis is pure and static by construction** (stdlib + Pygments only, `ast.parse`/tokenising
+  never execution) — the strongest form of "never expose candidate code to execution risk" available
+  short of not analysing it at all.
 
 ---
 
 ## PH4-D4 — Job Simulations & Portfolio  ·  Wave 5
 
-| # | Acceptance criterion | |
-|---|---|---|
-| | **Job Simulations** | |
-| 1 | Authorized users can create a job simulation round | ⏳ |
-| 2 | Simulation rounds can be associated with role competencies | ⏳ |
-| 3 | A simulation can contain a structured candidate task/scenario | ⏳ |
-| 4 | Candidates can access assigned simulations through the existing candidate experience | ⏳ |
-| 5 | Candidates can submit simulation responses/work | ⏳ |
-| 6 | Simulation submissions are persisted and associated with the candidate/enrolment | ⏳ |
-| 7 | Simulation submissions have a clear lifecycle | ⏳ |
-| 8 | Authorized reviewers can review submitted work | ⏳ |
-| 9 | Reviewers can record structured evaluation/evidence | ⏳ |
-| 10 | Simulation evaluation uses the existing competency/evaluation architecture where applicable | ⏳ |
-| | **Portfolio** | |
-| 11 | Authorized users can configure a portfolio submission round | ⏳ |
-| 12 | Candidates can submit portfolio artifacts or approved external links | ⏳ |
-| 13 | Portfolio submissions can support appropriate metadata such as title, description and artifact/link type | ⏳ |
-| 14 | Authorized reviewers can view submitted portfolio evidence | ⏳ |
-| 15 | Reviewers can record evaluation/evidence against configured criteria | ⏳ |
-| 16 | Portfolio submissions are associated with the candidate/enrolment | ⏳ |
-| 17 | Candidate submissions remain protected by appropriate permissions | ⏳ |
-| | **Decision & Safety** | |
-| 18 | Simulation and portfolio evidence appears in the candidate evidence/decision workspace | ⏳ |
-| 19 | Simulation/portfolio results do not automatically reject candidates | ⏳ |
-| 20 | AI cannot independently determine a candidate's final outcome from these submissions | ⏳ |
-| 21 | Human decision authority remains unchanged | ⏳ |
-| 22 | Evaluation criteria remain traceable to the configured workflow/round criteria | ⏳ |
-| 23 | Published assessment configuration remains protected from unintended modification | ⏳ |
-| | **Security / Compliance** | |
-| 24 | Uploaded portfolio artifacts follow existing secure storage mechanisms | ⏳ |
-| 25 | Candidate-submitted data follows consent, retention and erasure rules | ⏳ |
-| 26 | Access is company/tenant scoped | ⏳ |
-| 27 | Unauthorized candidates cannot access another candidate's submissions | ⏳ |
-| 28 | Review and evaluation actions are auditable | ⏳ |
-| | **Compatibility** | |
-| 29 | Existing MCQ, coding and AI interview rounds continue to work | ⏳ |
-| 30 | New simulation/portfolio rounds integrate with the existing workflow runner | ⏳ |
-| 31 | Tests cover candidate submission, reviewer access, evaluation and decision integration | ⏳ |
+| # | Acceptance criterion | | Evidence |
+|---|---|---|---|
+| | **Job Simulations** | | |
+| 1 | Authorized users can create a job simulation round | ✅ | HR: **Requisitions → opening → Workflow (`/hr/requisitions/:id/workflow`) → select a round → Round type: Job simulation**, then the **Task** section (`TaskEditor.tsx` inside `RoundInspector.tsx`) → **Save task**. `ck_workflow_rounds_kind` grew to six kinds; every `/hr/rounds/{id}/task*` route sits behind `HrCtxDep` (AST test) and writes only while the version is a draft. The D4 smoke drives the config write over HTTP: it saves a draft round's brief and items and reads them back, and a published round's save is refused (409); `ui` (`RoundInspectorTask`) `unit` `db` (`test_job_simulation_and_portfolio_are_legal_kinds`) `smoke` |
+| 2 | Simulation rounds can be associated with role competencies | ✅ | HR: **Workflow builder → task round → Reviewer’s checklist** — the same `CriteriaPicker` a human_review round uses (`roundKinds.tsx` sets `supportsCriteria: true` for both task kinds), writing frozen `round_criteria`; `workflows.validate` refuses to publish a task round with no criterion. No test renders the checklist on a task round or triggers that publish refusal — the smoke seeds `round_criteria` by SQL, then proves a reviewer scores against them; `smoke` |
+| 3 | A simulation can contain a structured candidate task/scenario | ✅ | `round_tasks`: a brief (≤20 000 chars, optional Hindi/Telugu translations served in the candidate's language), up to 20 items each with key, prompt, answer type (text / file / link), required flag and max characters, plus HR reference materials (PDF/JPEG/PNG) and the round's time limit and deadline — all edited in **TaskEditor**. `validate_config` is the single validator (15 unit tests); for a timed task the server withholds items and materials until the candidate starts (M4); `ui` (`RoundInspectorTask`, `PublicTask`) `unit` `db` (`test_timed_task_withholds_items_until_started`) `smoke` |
+| 4 | Candidates can access assigned simulations through the existing candidate experience | ✅ | Two ways in. (a) The runner emails a magic link (`/task#<token>`, no login, EN/HI/TE) — the same pattern as exam and offer links. (b) A signed-in candidate: **My applications (`/applications`) → “Your task is ready” → Open task**, which mints a fresh link (`POST /users/me/tasks/{id}/link`) and lands on the same `/task` page. Caveats: (b) only works for a candidate whose application is linked to an activated account; opening from (b) invalidates the emailed link; the task page sits outside the signed-in shell; and the mint route's only backend test is the AST check that it needs `CurrentUserDep`; `ui` (`Applications` ×4, `PublicTask`) `unit` |
+| 5 | Candidates can submit simulation responses/work | ✅ | Candidate: **task link → tick “I agree…” → Begin → answer each item (text autosaves on blur; a file item has its own upload/Replace/Remove) → Submit → Yes, submit**. Required items and minimum artifacts block Submit in the page and are refused again by `submit` (422); a second submit is 409; `ui` (`PublicTask`) `db` `smoke` |
+| 6 | Simulation submissions are persisted and associated with the candidate/enrolment | ✅ | `task_submissions` carries `enrolment_id`, `applicant_id`, `round_id` and `company_id` through composite `(id, company_id)` FKs, with one live row per (enrolment, round) (partial unique index) and no hard delete; `task_responses` hangs off the submission; `db` (`test_one_live_submission_per_enrolment_round`, cross-company refusals, `test_submission_never_hard_deleted`) `smoke` |
+| 7 | Simulation submissions have a clear lifecycle | ✅ | assigned → in_progress → submitted / expired / withdrawn, enforced by the `task_submissions_lifecycle` trigger (it must arrive `assigned`; submitting needs `submitted_at` + `closed_by`; terminal rows are frozen; a re-issue supersedes, then inserts) and mirrored in `ALLOWED_TRANSITIONS`. Shown to HR as status tags in **Candidate drawer → Job simulation / portfolio**, and to the candidate as begin / working / “Submitted”; `db` `unit` `ui` (`TaskSubmissionSection`, `PublicTask`) `smoke` |
+| 8 | Authorized reviewers can review submitted work | ✅ | Once HR assigns them (**Candidate drawer → Human interview → Assign interviewers**), a reviewer opens **Interviewer console (`/interviewer`) → “Simulation review” → Submission tab** (`SubmissionPanel.tsx`): the round's brief, each answer under its item's own prompt, reference materials with a download, files as signed downloads, links through an interstitial. Content is served only for submitted work whose consent stands (M1, NEW-2). The screen was wired to the brief, prompts and materials in `498753b` (before that it showed item keys only); `ui` (`SubmissionPanel`) `db` (`test_reviewer_cannot_read_an_unsubmitted_draft`) `smoke` (brief and items, material download, file download) |
+| 9 | Reviewers can record structured evaluation/evidence | ✅ | Reviewer: **Scorecard tab** — a 1–5 score or “not assessed” per round criterion, per-criterion evidence text and a summary. Submit needs every criterion scored or marked, with at least one scored; corrections supersede and never overwrite. This is the existing `interviewer_scorecards` machinery, unchanged; `ui` (`InterviewerScorecard`) `smoke` (a scorecard submitted against the simulation round's `round_criteria`) |
+| 10 | Simulation evaluation uses the existing competency/evaluation architecture where applicable | ✅ | `SCORABLE_ROUND_KINDS = HUMAN_EVALUATED_KINDS` (`interviewer_scorecards.py:80`), so task rounds reuse the scorecards, the frozen `round_criteria` with anchors, the existing `post_round_review` → `record_result(graded_by='human')` verdict, the decision queue and `enrolment_awaits_human`. D2 accommodations scale the time limit and deadline (`due_and_limit`). No new scoring model, and no threshold; `unit` (`test_group_c_workflows`: task kinds ⊆ human-evaluated and disjoint from AI-graded/exam-backed) `db` `smoke` |
+| | **Portfolio** | | |
+| 11 | Authorized users can configure a portfolio submission round | ✅ | HR: **Workflow builder → round → Round type: Portfolio → Task** — brief, optional items, **Portfolio settings** (minimum/maximum artifacts 0–20, Accept files, Accept links, allowed link domains, defaulting to github/gitlab/behance/figma/…) → **Save task**. The editor blocks a file item when files are off, as `validate_config` does. The same HTTP write path is smoke-tested (criterion 1), with material upload, list, download and removal; `ui` (`RoundInspectorTask` ×2) `unit` `smoke` |
+| 12 | Candidates can submit portfolio artifacts or approved external links | ✅ | Candidate: **task link → Begin → Your portfolio → Add a file / Add a link → Submit**. A link must be https with no userinfo, no IP address, port 443 only, and a dot-boundary match against the round's allow-list. Backslashes and control characters are refused, which closes the H1 bypass. Links are never fetched. Files pass the magic-byte check; the count is capped at `max_artifacts`. The free-form artifact form (`AddArtifactForm`) has no UI test, and no test uploads a free-form FILE artifact (only a file item); `unit` (`validate_link` ×14) `db` `smoke` (approved link accepted, `evilgithub.com` refused, a non-PDF refused) |
+| 13 | Portfolio submissions can support appropriate metadata such as title, description and artifact/link type | ✅ | Each artifact stores a title (≤200), a description (≤2000) and a type (repository / design / document / video / website / other, checked in app and DB). Files also record the server's own sanitised name, content type, size and sha256. The candidate enters the first three under **Add a link → Type / Title (optional) / Description (optional)**, and the reviewer's Portfolio list shows them. No test ever submits a description; `ui` (`SubmissionPanel` renders title and type) `db` (`link_kind='repository'`) `smoke` (title) |
+| 14 | Authorized reviewers can view submitted portfolio evidence | ✅ | Reviewer: **Submission tab → Portfolio** lists each artifact's title, description and type. A file opens through a presigned download from `reviewer_artifact_download`, which serves only submitted, consented work, only for the scorecard's own enrolment and round, and audits every download. A link opens only after an interstitial that shows the BROWSER-resolved host, is https-only and uses `rel=noopener noreferrer nofollow`. The smoke has the portfolio round's reviewer download the candidate's file, and the SIMULATION round's reviewer refused it (404, not their round); `ui` (`SubmissionPanel`: interstitial ×5, nothing shown before submit) `db` (M1 refusals) `smoke` |
+| 15 | Reviewers can record evaluation/evidence against configured criteria | ✅ | The same **Scorecard tab** against the portfolio round's own frozen `round_criteria` — the kinds share `SCORABLE_ROUND_KINDS`. The smoke scores only the simulation round (the portfolio round is held without a scorecard), so the portfolio case rests on that shared path; `ui` (`InterviewerScorecard`) `unit` `smoke` (simulation) |
+| 16 | Portfolio submissions are associated with the candidate/enrolment | ✅ | The same `task_submissions` row and FKs as criterion 6. A file answering an item carries its `item_key` and does not count toward `max_artifacts`. In the smoke, the runner issues the portfolio link for the same enrolment when HR passes the simulation; `db` `smoke` |
+| 17 | Candidate submissions remain protected by appropriate permissions | ✅ | HR routes need `HrCtxDep` (hr_manager only), reviewer routes need `InterviewerCtxDep` plus ownership of the scorecard (someone else's is a 404, never a 500 — L1), and the candidate needs the link token (header only, HMAC at rest, rate-limited per token). No super_admin, platform_owner, admin or agent route reaches task content. Reviewers and HR get content and signed URLs only for submitted, consented work; a submitted link stops serving the candidate's own answers; `unit` (AST route gates) `db` (M1, `test_submitted_view_carries_no_content`) `smoke` `ui` (`SubmissionPanel`) |
+| | **Decision & Safety** | | |
+| 18 | Simulation and portfolio evidence appears in the candidate evidence/decision workspace | ✅ | HR: **Decision queue (`/hr/requisitions/:id/decisions`)** tags the row “Submission received” / “Submission in progress” while the candidate awaits review. **Scores, evidence & history** opens the drawer, whose **Job simulation / portfolio** section shows the brief, each item's prompt with the answer (text; a link through the same interstitial reviewers use; a file as an audited signed download), then free-form portfolio artifacts with title, description and type, beside the reviewers' scorecards and the round verdict. The live row is chosen by `is_current`, not by list position. Work whose consent was withdrawn is shown as “Consent withdrawn — content hidden”. The section was wired to the content in `498753b`; before that HR saw lifecycle only; `ui` (`TaskSubmissionSection`, `DecisionQueue` task tag ×3) `db` (`test_hr_reads_submitted_work_with_its_prompts_and_the_read_is_recorded`) `smoke` |
+| 19 | Simulation/portfolio results do not automatically reject candidates | ✅ | Nothing turns a task outcome into a rejection. `close_due` only moves the SUBMISSION (expired, or submitted if consented work exists), and an expired task leaves the candidate waiting for a person. `post_round_review` holds on a fail and only refuses a PASS that has no submitted, consented work (`hr_workflows.py:930-944`). `job_tasks.py` contains no `UPDATE enrolments` or lifecycle mutator. The smoke checks that PASS refusal (409 before anything is submitted); `unit` (`test_job_tasks_never_calls_lifecycle_mutators`, `test_failing_a_review_holds_rather_than_rejects`) `smoke` (“held, never rejected”) `ui` (`TaskSubmissionSection`: “never offers a reject action”) |
+| 20 | AI cannot independently determine a candidate's final outcome from these submissions | ✅ | No model ever sees or scores a submission. `job_tasks`/`guest_identity` import no LLM client, no module under `app/agents` or `shared/agents` names a task table, the workflow copilot stays pinned to the four older kinds, task rounds have no threshold, and `PanelVerdict.decision_authority` is the literal `"human_only"`; `unit` (`test_no_module_here_imports_an_llm_client`, `test_no_agent_module_references_job_tasks`, `test_copilot_round_kinds_stays_at_four`) |
+| 21 | Human decision authority remains unchanged | ✅ | `record_final_decision` is still the one writer of hire/reject, and the dependency points one way: `final_decision.py` calls `job_tasks.close_for_decision` to withdraw open links, leaving submitted work alone. The round verdict is the existing named-HR **Decision queue → Passes this round / Hold for a decision**, recorded as `graded_by='human'` with the grader's id; `unit` `db` (`test_close_for_decision_*` ×2) `smoke` |
+| 22 | Evaluation criteria remain traceable to the configured workflow/round criteria | ✅ | Scores are keyed by `(scorecard_id, competency_id)` with `round_id`. Ids are validated against the round's own frozen `round_criteria`, and submit lists any criterion left unscored. Each submission stores the `config_digest` of the task it was issued. The version's review fingerprint now covers `round_tasks`, so an approved version cannot drift from what was reviewed; `smoke` (scored with the round's competency id) `unit` (digest stability) |
+| 23 | Published assessment configuration remains protected from unintended modification | ✅ | `round_tasks` and `round_task_materials` use the existing `workflow_children_immutable` trigger: frozen while the version is published, archived, in review or approved. `_config_lock_reason` gives HR a 409 sentence before the write reaches the trigger, and the editor goes read-only. A clone shares material objects, deleted only when no row names them; `ui` (`RoundInspectorTask`: read-only, no save) `db` (frozen in review, materials frozen when published, editable as draft) `smoke` (a published round's config save is 409) |
+| | **Security / Compliance** | | |
+| 24 | Uploaded portfolio artifacts follow existing secure storage mechanisms | ✅ | Files go through the same `app/document_storage` as preboarding documents: `check` (magic bytes, PDF/JPEG/PNG, 10 MB), `store`, presigned `signed_download`. Keys (`tasks/{company}/{submission}/{response}`) name no person, and downloads are limited to submitted, consented work. The D4 smoke runs against a real S3-compatible store with `SMOKE_REAL_STORAGE=1` (a local MinIO, nothing patched): 61/61, including a byte-for-byte read back through the signed URL HR receives. A replaced file's old object is removed only after the commit (NEW-6, fixed in `52b2385`). A material's file is removed when the material, or its round's task kind, is (`ba73e1a`). Known and accepted: the demo bucket is Cloudflare R2 in the US (AR-1), and uploads are not malware-scanned (AR-6); `unit` `db` `smoke` (faked and real storage) |
+| 25 | Candidate-submitted data follows consent, retention and erasure rules | ⚠️ | Consent: ticking the box to **Begin** books one `dpdp_consent_ledger` row for THAT submission, written before `consented_at` is set. Nothing is saved or uploaded before it. The database enforces it both ways: `consented_at` can be set only by the start transition and only with an active ledger row for that submission, and revoking the row from anywhere clears it in the same transaction (`52b2385`, `c8e0a2b4d6f8`; db-tested). So an erasure REQUEST stops processing at once, not 30 days later. The grant records hashed request evidence and is audited. The candidate can **withdraw** on the task page while working or after submitting. Withdrawal hides the work from reviewers and HR, and stops it passing the round, but deletes nothing (NEW-1/NEW-2 fixed, db-tested). Retention is decision-aware: a held application is never purged; a decided one is purged after `TASK_SUBMISSION_RETENTION_DAYS` (180), only when `RETENTION_DRY_RUN=false`. What keeps this ⚠️: erasure step 5i/8 (redact responses, delete files) is proven only by inventory/version unit tests, never on real task rows; an application abandoned without a decision keeps its evidence until erasure; data sits outside India in the demo tier (AR-1); `db` `unit` `smoke` `ui` (`PublicTask` consent and withdrawal) |
+| 26 | Access is company/tenant scoped | ✅ | The company always comes from the session (`HrCtxDep`/`InterviewerCtxDep`), never the request, and every HR/reviewer query filters on it. Composite `(id, company_id)` FKs refuse a cross-company round, applicant, enrolment or task config. The smoke: another company's HR gets 404 on the round's task and `[]` for the enrolment's submissions. Other-company download/reissue/withdraw are scoped the same way, but only by reading; `unit` `db` (×4) `smoke` |
+| 27 | Unauthorized candidates cannot access another candidate's submissions | ✅ | `by_token` resolves exactly one submission from the HMAC of a 256-bit token (one 404 for every failure), and every candidate read or write uses that submission's id. A db test gives candidate A's valid token candidate B's artifact id: A's view shows nothing of B's, and removing it is a 404 with B's row intact. Consent withdrawal matches by submission id from the token, so one candidate cannot revoke another's. Reviewer reads are pinned to the enrolment and round of a scorecard they own; the smoke refuses the simulation round's reviewer the portfolio round's file (404). Re-issued, withdrawn, decided and erased links die (db); `db` (`test_one_candidates_token_cannot_reach_another_candidates_work`) `smoke` |
+| 28 | Review and evaluation actions are auditable | ✅ | Scorecard assign/start/submit are audited by the existing machinery (`smoke_ph4_scorecards` asserts it), and the round verdict lands in `round_results` with the grader. HR re-issue, withdraw and download, reviewer download, and candidate submit or consent withdrawal each write an `AuditLog` row plus an append-only `task_event`. Reading a candidate's work writes a `submission_viewed` event against the reader, at most once an hour per reader: a reviewer's read, and HR's since `52b2385`. Giving consent at **Begin** is audited too (`task_submission.consent_given`). The smoke asserts the HR download's audit row and HR's read event; a db test asserts the read event, and that a draft read records nothing. A retention redaction writes a log line, not an audit row (it is not a review action); `db` `unit` `smoke` |
+| | **Compatibility** | | |
+| 29 | Existing MCQ, coding and AI interview rounds continue to work | ✅ | The full data_gateway, admin_ops and shared suites pass on a database built from nothing (numbers in the header). pytest never collects `smoke_*.py`, so all 42 smokes were run, each on its own throwaway copy of a migrated database, with every external credential blanked. 41 pass: 38 directly, the two Group B backfill smokes with the seeded setup their docstrings require, and the Wave 4 smoke against a local MinIO (108/108). Three had silently rotted since earlier waves and are fixed in `ea87ddf`: `smoke_group_c_api` still expected `portfolio` to be refused, and it, `smoke_group_c_runner` and `smoke_group_c_workflows` seeded questions into an already-published exam round, which D1's lock refuses. The one not run, `smoke_group_a_scorecard_retry`, needs a live LLM; `unit` `smoke` (the sweep) |
+| 30 | New simulation/portfolio rounds integrate with the existing workflow runner | ✅ | `_assign_round` has an explicit `TASK_KINDS` branch → `job_tasks.issue` (link, email, D2 allowance). In the smoke, HR passes the simulation, the runner issues the portfolio link, HR holds, and the next round is a plain human_review. `enrolment_awaits_human` and the decision-queue join both cover task kinds. The publish rule for an unconfigured task round is untested; `unit` (`test_assign_round_has_an_explicit_task_branch`) `db` (`test_enrolment_awaits_human_true_for_task_round`) `smoke` |
+| 31 | Tests cover candidate submission, reviewer access, evaluation and decision integration | ✅ | Candidate submission: `PublicTask` UI tests, the db tests in `test_ph4_d4_wave5_fixes.py` (36) and `test_ph4_d4_guarantees.py`, and the D4 smoke (60 checks faked, 61 on real storage). Reviewer access: db M1 tests, `SubmissionPanel`, and smoke downloads. Evaluation: a smoke scorecard against `round_criteria`. Decision integration: smoke pass → next round, hold → held, and the PASS refusal, plus db `close_for_decision` and the pipeline-board close-out (unit). No browser (Playwright) spec touches a task round; `unit` `db` `smoke` `ui` |
+
+**Worth knowing.**
+
+- **Three security reviews changed this story after it was built.**
+  - The first found work reaching the hiring team without consent. The fix moved consent to
+    **Begin**, with one ledger row per submission (`69435c0`).
+  - The second found that a candidate who had withdrawn once could later work with no consent
+    record, and that nothing could be withdrawn after submitting (`52b2385`).
+  - The third found that an erasure request revoked the consent record but left the work
+    readable for 30 days. The database now keeps the record and `consented_at` in step both ways
+    (`c8e0a2b4d6f8`), which is also a revision that re-asserts every in-place edit to the D4
+    migration, so a database that applied its first version is corrected too (checked).
+- **The screens now show what the server sends.** The server had closed gaps 2–4, but the
+  reviewer's Submission tab still showed item keys only, and HR's drawer showed lifecycle only.
+  Both now show the brief, the prompts and the work (`498753b`).
+- **Consent withdrawal hides; it does not delete.** Withdrawn work stays stored until retention
+  or erasure removes it. An application that is never hired or rejected keeps its task evidence
+  until erasure: retention waits for a decision by design, so it never purges held work. Purging
+  happens only where `RETENTION_DRY_RUN=false`. DPDP §8(7) expects erasure once the purpose is
+  served, so whether "hidden, then retained until decision + 180 days" is acceptable is a
+  decision for the DPDP owner, not something this checklist can settle.
+- **What no test exercises:**
+  - erasure step 5i on real task rows;
+  - a free-form portfolio FILE upload (a file ITEM is tested, and so are free-form links);
+  - any Playwright browser journey through a task round.
+- **Residency and scanning.** In the demo tier, uploaded files sit in Cloudflare R2 (US) and text
+  in Neon (Singapore) — AR-1. No upload is malware-scanned — AR-6. Portfolio links are never
+  fetched server-side — AR-7. The task page's consent notice names the storage locations.
+- **Candidate access depends on email for anyone without an activated account.** The
+  `/applications` "Open task" button helps only linked accounts, and it rotates the emailed link.
+  Check email delivery before a demo: the demo Resend account delivers to a single address. The
+  HI/TE candidate copy has not had a native-speaker review.
 
 ---
 

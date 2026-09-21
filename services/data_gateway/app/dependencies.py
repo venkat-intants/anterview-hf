@@ -121,6 +121,44 @@ def require_role(*allowed: str) -> Callable[[User], Awaitable[User]]:
     return _dep
 
 
+def reject_role(*denied: str) -> Callable[[User], Awaitable[User]]:
+    """Dependency factory: refuse a caller holding any of *denied* roles.
+
+    The inverse of :func:`require_role`, and it exists for one shape of
+    surface: where the legitimate callers cannot be named by a single role but
+    the illegitimate ones can.
+
+    That is exactly the candidate surface. ``candidate`` is granted by
+    activation and by Google SSO, so an account that reached its applications
+    some other way — an HR user who also applied, an account provisioned before
+    the role existed — may hold no candidate role at all, and
+    ``require_role("candidate")`` would lock them out of their own page. What
+    must never reach it is narrow and nameable: ``guest_candidate``.
+
+    Why that matters: an interview magic link is redeemable for an access token
+    whose ``sub`` is the applicant's ``user_id`` — which, once they have
+    activated, IS their real account id — carrying the role
+    ``guest_candidate`` (``interview_take._issue_guest_token``).
+    :func:`get_current_user` verifies the signature, the issuer, the audience
+    and the revocation epoch, and does not look at roles. So without this,
+    possession of a forwarded interview link is possession of the candidate's
+    account for every route that authenticates with ``get_current_user`` alone.
+
+    Usage:
+        router = APIRouter(..., dependencies=[Depends(reject_role("guest_candidate"))])
+    """
+
+    async def _dep(user: Annotated[User, Depends(get_current_user)]) -> User:
+        if set(denied) & set(user.roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions for this action.",
+            )
+        return user
+
+    return _dep
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap-password gate
 # ---------------------------------------------------------------------------

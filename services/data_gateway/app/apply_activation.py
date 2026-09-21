@@ -314,9 +314,15 @@ async def _promote_guest(
         ),
         {"em": email, "pw": password_hash, "fn": full_name, "now": now, "uid": user_id},
     )
-    # Becomes a candidate and stops being a guest, in that order: every
-    # candidate route rejects guest_candidate, and the two roles together would
-    # leave the account describable as both.
+    # Becomes a candidate and stops being a guest, in that order: the candidate
+    # router rejects guest_candidate, and the two roles together would leave the
+    # account describable as both.
+    #
+    # Dropping the guest role matters more than it reads. A guest token's `sub`
+    # is this same user id, so while the role is still attached, that token is a
+    # credential for the account it was just promoted to. The DELETE below is
+    # what ends that, and `reject_role` on the candidate router is what makes it
+    # true for tokens minted before the promotion.
     await db.execute(
         text(
             "INSERT INTO user_roles (user_id, role_id, assigned_at)"

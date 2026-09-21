@@ -20,6 +20,24 @@ candidate-facing surface that deliberately reads across tenants. It is safe in
 the one direction that counts: the join starts from ``applicants.user_id`` and
 can only ever reach rows that name this user.
 
+WHICH CREDENTIAL MAY READ IT
+----------------------------
+The account's own, and not an interview link. ``get_current_user`` verifies a
+JWT and returns its roles; it does not check them. Redeeming an interview
+invitation issues a real access token whose ``sub`` is the applicant's
+``user_id`` — after activation, their actual account id — with the role
+``guest_candidate``. So for any route that authenticates with
+``get_current_user`` alone, holding a forwarded interview link is holding the
+candidate's account: their applications at every company, and the ability to
+rotate their links.
+
+Two comments elsewhere asserted this was already prevented ("rejected by
+candidate/HR routes", "every candidate route rejects guest_candidate"). Only
+the HR routes rejected it; that is why nobody noticed. The router-level
+``reject_role("guest_candidate")`` below is what makes those sentences true.
+It refuses a role rather than requiring one deliberately — see
+``dependencies.reject_role``.
+
 WHAT IS DELIBERATELY NOT RETURNED
 ---------------------------------
 Any evaluation of the person. No ATS score, no breakdown, no strengths or
@@ -57,13 +75,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db_session
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, reject_role
 from app.interview_link import hash_interview_token, mint_interview_token
 from app.publishing import visible_sql
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/users/me", tags=["candidate-applications"])
+router = APIRouter(
+    prefix="/users/me",
+    tags=["candidate-applications"],
+    # On the router, not on each route, so a candidate surface added later
+    # inherits it rather than having to remember. See the module docstring.
+    dependencies=[Depends(reject_role("guest_candidate"))],
+)
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]

@@ -79,10 +79,15 @@ async def test_one_analysis_timing_out_does_not_cancel_another() -> None:
 async def test_time_spent_queued_does_not_count_against_the_timeout() -> None:
     """HIGH-1: the clock used to start at submit, so a healthy task queued
     behind a slow one timed out and was stored as a permanent 'failed'."""
-    slow = asyncio.create_task(run_isolated(h.never_finishes, timeout=2))
-    # Queued behind `slow` (concurrency is 1) for ~2s, then needs well under
-    # its own 2s -- it must succeed.
-    queued = asyncio.create_task(run_isolated(h.doubled, 3, timeout=2))
+    # The queued task waits ~8 s behind `slow` (concurrency is 1) but has only
+    # 5 s of its own. So if queued time counted, it would time out before it
+    # ever ran -- the test discriminates. If not, 5 s is ample to spawn and run.
+    #
+    # The first version used 2 s and 2 s. That barely discriminated (the two
+    # were equal), and 2 s was too tight: spawning a Windows process under a
+    # full test run's load can take that long on its own, so it flaked.
+    slow = asyncio.create_task(run_isolated(h.never_finishes, timeout=8))
+    queued = asyncio.create_task(run_isolated(h.doubled, 3, timeout=5))
 
     with pytest.raises(AnalysisTimeoutError):
         await slow

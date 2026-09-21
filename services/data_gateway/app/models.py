@@ -2433,12 +2433,14 @@ class TaskSubmission(Base):
         ForeignKeyConstraint(
             ["accommodation_id", "company_id"],
             ["candidate_accommodations.id", "candidate_accommodations.company_id"],
-            name="fk_task_submissions_accommodation", ondelete="SET NULL",
+            # RESTRICT, not SET NULL (L4): a composite SET NULL here would
+            # try to null company_id too, which is NOT NULL on this table.
+            name="fk_task_submissions_accommodation", ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
             ["superseded_by_id", "company_id"],
             ["task_submissions.id", "task_submissions.company_id"],
-            name="fk_task_submissions_superseded_by", ondelete="SET NULL",
+            name="fk_task_submissions_superseded_by", ondelete="RESTRICT",
             deferrable=True, initially="DEFERRED",
         ),
         CheckConstraint("kind IN ('job_simulation','portfolio')", name="ck_task_submissions_kind"),

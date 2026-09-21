@@ -541,3 +541,79 @@ async def test_round_tasks_cross_company_refused(db: AsyncSession) -> None:
         {"i": uuid.uuid4(), "c": f.other_company, "r": f.round},
         "fk_round_tasks_round",
     )
+
+
+# ===========================================================================
+# M2 (security review, PH4-D4 wave 5): a candidate may retract their own
+# upload/answer while the submission is open; it is frozen the moment it
+# closes. Before the fix, a DELETE was refused unconditionally (while the
+# parent submission existed at all), so ``remove_artifact``'s python-level
+# "open submission" check always reached a DB error it did not catch — a 500
+# on every attempt, whatever the status.
+# ===========================================================================
+def _response_insert(f: F, sid: uuid.UUID, resp_id: uuid.UUID) -> tuple[str, dict[str, Any]]:
+    sql = (
+        "INSERT INTO task_responses (id, company_id, submission_id, item_key, response_type,"
+        " text_value, created_at, updated_at)"
+        " VALUES (:i, :c, :s, 'q1', 'text', 'my answer', now(), now())"
+    )
+    return sql, {"i": resp_id, "c": f.company, "s": sid}
+
+
+@pytest.mark.asyncio
+async def test_response_deletable_while_submission_open(db: AsyncSession) -> None:
+    f = await _build(db)
+    sid = uuid.uuid4()
+    sql, params = _sub_insert(f, sid)
+    await db.execute(text(sql), params)
+    await db.execute(
+        text("UPDATE task_submissions SET status = 'in_progress', started_at = now() WHERE id = :i"),
+        {"i": sid},
+    )
+    resp_id = uuid.uuid4()
+    rsql, rparams = _response_insert(f, sid, resp_id)
+    await db.execute(text(rsql), rparams)
+    await _allowed(db, "DELETE FROM task_responses WHERE id = :i", {"i": resp_id})
+
+
+@pytest.mark.asyncio
+async def test_response_not_deletable_once_submitted(db: AsyncSession) -> None:
+    f = await _build(db)
+    sid = uuid.uuid4()
+    sql, params = _sub_insert(f, sid)
+    await db.execute(text(sql), params)
+    resp_id = uuid.uuid4()
+    rsql, rparams = _response_insert(f, sid, resp_id)
+    await db.execute(text(rsql), rparams)
+    await db.execute(
+        text(
+            "UPDATE task_submissions SET status = 'submitted', submitted_at = now(),"
+            " closed_by = 'candidate' WHERE id = :i"
+        ),
+        {"i": sid},
+    )
+    await _refused(
+        db, "DELETE FROM task_responses WHERE id = :i", {"i": resp_id}, "is kept, not deleted",
+    )
+
+
+@pytest.mark.asyncio
+async def test_response_not_deletable_once_redacted(db: AsyncSession) -> None:
+    """A redacted row stays gone-in-substance but present-in-form for the
+    retention audit trail — it is never additionally hard-deleted."""
+    f = await _build(db)
+    sid = uuid.uuid4()
+    sql, params = _sub_insert(f, sid)
+    await db.execute(text(sql), params)
+    resp_id = uuid.uuid4()
+    rsql, rparams = _response_insert(f, sid, resp_id)
+    await db.execute(text(rsql), rparams)
+    await db.execute(
+        text(
+            "UPDATE task_responses SET text_value = NULL, redacted_at = now() WHERE id = :i"
+        ),
+        {"i": resp_id},
+    )
+    await _refused(
+        db, "DELETE FROM task_responses WHERE id = :i", {"i": resp_id}, "is kept, not deleted",
+    )

@@ -29,6 +29,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import Awaitable, Callable
 
@@ -127,6 +128,73 @@ def rate_limit_company(bucket: str, per_minute: int) -> Callable[..., Awaitable[
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many requests from your company. Please wait a minute and try again.",
+            )
+
+    return Depends(_dep)
+
+
+def _token_fingerprint(raw: str) -> str:
+    """A stable, non-reversible bucket key for a magic-link credential — never
+    the raw token itself, so a Redis key never carries a live credential."""
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def rate_limit_task(bucket: str, per_token: int, per_ip: int) -> Callable[..., Awaitable[None]]:
+    """Cap a public job-simulation/portfolio task route primarily by the
+    candidate's OWN link — the ``X-Task-Token`` header, hashed — rather than
+    by client IP (M3, security review PH4-D4).
+
+    ``rate_limit`` keys everything from one route on one shared IP bucket,
+    which is the wrong boundary here for two independent reasons this fixes
+    together: (a) four routes (start/save/delete/submit) shared ONE bucket
+    name with four different caps, so autosaves could exhaust the budget a
+    submit needed; separate ``bucket`` values per call site fix that on their
+    own; (b) a college computer lab — the primary market — puts many
+    candidates, each working their OWN task, behind one NAT address, so an
+    IP-keyed cap punishes every candidate in the room for one candidate's
+    normal use. Keying on the token instead gives each candidate their own
+    budget regardless of how many others share their address.
+
+    A request with no token (or an unrecognised one, since the header is
+    opaque here) still hits a LOOSER per-IP ceiling — a backstop against
+    volumetric abuse, not the normal-use limit. Same fixed 60-second window
+    and fail-open posture as ``rate_limit``; see its docstring.
+    """
+
+    async def _dep(request: Request) -> None:
+        token = request.headers.get("X-Task-Token")
+        ip = extract_client_ip(request)
+        try:
+            redis = get_redis()
+            tok_count: int | None = None
+            if token:
+                tok_key = f"rl:{bucket}:tok:{_token_fingerprint(token)}"
+                tok_count = await redis.incr(tok_key)
+                if tok_count == 1:
+                    await redis.expire(tok_key, 60)
+            ip_key = f"rl:{bucket}:ip:{ip}"
+            ip_count: int = await redis.incr(ip_key)
+            if ip_count == 1:
+                await redis.expire(ip_key, 60)
+        except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
+            _rate_limit_skipped.labels(
+                bucket=bucket, error_type=type(exc).__name__
+            ).inc()
+            log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+            return
+        if tok_count is not None and tok_count > per_token:
+            _rate_limit_exceeded.labels(bucket=bucket).inc()
+            log.warning("rate_limit.exceeded", bucket=bucket, keyed="token")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests. Please wait a minute and try again.",
+            )
+        if ip_count > per_ip:
+            _rate_limit_exceeded.labels(bucket=bucket).inc()
+            log.warning("rate_limit.exceeded", bucket=bucket, keyed="ip")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests from your network. Please wait a minute and try again.",
             )
 
     return Depends(_dep)

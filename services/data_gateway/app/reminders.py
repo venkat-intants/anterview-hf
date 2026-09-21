@@ -375,7 +375,8 @@ SELECT * FROM (
   SELECT 'exam' AS kind, asg.id, asg.expires_at, asg.company_id,
          COALESCE(asg.created_by_user_id, wf.created_by_user_id) AS owner_user_id,
          a.full_name, a.email, a.user_id, COALESCE(r.title, e.title) AS what,
-         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate,
+         false AS has_work
     FROM exam_assignments asg
     JOIN applicants a ON a.id = asg.applicant_id AND a.deleted_at IS NULL
     JOIN exams       e ON e.id = asg.exam_id
@@ -388,7 +389,8 @@ SELECT * FROM (
   SELECT 'interview' AS kind, inv.id, inv.expires_at, inv.company_id,
          COALESCE(inv.created_by_user_id, wf.created_by_user_id) AS owner_user_id,
          a.full_name, a.email, a.user_id, j.title AS what,
-         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate,
+         false AS has_work
     FROM interview_invites inv
     JOIN applicants a ON a.id = inv.applicant_id AND a.deleted_at IS NULL
     LEFT JOIN jobs j ON j.id = inv.job_id
@@ -411,7 +413,12 @@ SELECT * FROM (
   SELECT 'task' AS kind, t.id, t.due_at AS expires_at, t.company_id,
          t.issued_by_user_id AS owner_user_id,
          a.full_name, a.email, a.user_id, wr.title AS what,
-         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate
+         (a.email LIKE '%@%' AND COALESCE(wf.reminders_enabled, true)) AS mail_candidate,
+         -- H2(e): the sweep (_task_deadlines, AFTER this stage) submits a
+         -- task that has any saved work, rather than expiring it -- so the
+         -- notice must not tell every candidate their work is gone.
+         EXISTS (SELECT 1 FROM task_responses tr
+                  WHERE tr.submission_id = t.id AND tr.redacted_at IS NULL) AS has_work
     FROM task_submissions t
     JOIN applicants a ON a.id = t.applicant_id AND a.deleted_at IS NULL
     JOIN workflow_rounds wr ON wr.id = t.round_id
@@ -469,6 +476,7 @@ async def _expiry_notices(db: AsyncSession, result: SweepResult) -> None:
                     "what": r["what"] or "",
                     "kind": r["kind"],
                     "expired": _fmt(r["expires_at"]),
+                    "has_work": bool(r["has_work"]),
                 },
                 company_id=r["company_id"],
                 related_kind=f"{r['kind']}_expiry",

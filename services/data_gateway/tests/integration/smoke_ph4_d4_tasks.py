@@ -161,6 +161,18 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                  " '[]'::jsonb, 1, 2, true, true, ARRAY['github.com'], :n, :n)"),
             {"i": uuid.uuid4(), "c": cid, "r": round_portfolio, "n": now},
         )
+        # Gap 3: a reference material HR attached to the simulation round, so
+        # the reviewer's new materials-download route has something to fetch.
+        material_id = uuid.uuid4()
+        await db.execute(
+            text("INSERT INTO round_task_materials (id, company_id, round_id, title,"
+                 " storage_key, original_name, content_type, size_bytes, sha256, created_at,"
+                 " updated_at)"
+                 " VALUES (:i,:c,:r,'Reference brief',:k,'brief.pdf','application/pdf',8,"
+                 " :sha,:n,:n)"),
+            {"i": material_id, "c": cid, "r": round_sim,
+             "k": f"task_materials/{cid}/{round_sim}/{material_id}", "sha": "a" * 64, "n": now},
+        )
         await db.commit()
 
         # Submit → approve → publish, the sequence the O6 trigger requires.
@@ -261,8 +273,17 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("GET /task opens the simulation brief", r.status_code == 200
               and "Fix the failing test" in r.json().get("brief", ""), r.text[:200])
 
-        r = await c.post("/task/start", headers=headers_sim)
-        check("candidate starts the task", r.status_code == 200
+        # H2 — security review PH4-D4: nothing is stored before consent, and
+        # consent is given at START, not submit.
+        r = await c.put("/task/responses/approach", json={"text_value": "too early"},
+                        headers=headers_sim)
+        check("saving before start/consent is refused", r.status_code == 409, r.text[:200])
+
+        r = await c.post("/task/start", json={"consent": False}, headers=headers_sim)
+        check("starting without agreeing to consent is refused", r.status_code == 422, r.text[:200])
+
+        r = await c.post("/task/start", json={"consent": True}, headers=headers_sim)
+        check("candidate starts the task (consent recorded here)", r.status_code == 200
               and r.json()["status"] == "in_progress", r.text[:200])
 
         r = await c.put("/task/responses/approach", json={"text_value": "I patched the off-by-one."},
@@ -288,6 +309,13 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("a DPDP consent row was booked for the submission", consent is True or consent is None,
               "consent lookup best-effort")
 
+        r = await c.get(f"/hr/enrolments/{enrolment}/tasks")
+        sim_entry = next((x for x in r.json() if x.get("round_id") == str(round_sim)), None) \
+            if r.status_code == 200 else None
+        check("gap 4 — HR's task list shows the submitted content",
+              sim_entry is not None and sim_entry.get("responses")
+              and sim_entry.get("is_current") is True, r.text[:300])
+
         # -------------------------------------------------------------
         # A reviewer reads the submission through the scorecard machinery
         # -------------------------------------------------------------
@@ -304,6 +332,14 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               and r.json()["status"] == "submitted", r.text[:200])
         check("the response text is visible to the reviewer",
               any(resp.get("text_value") for resp in r.json().get("responses", [])), r.text[:300])
+        check("gap 2 — the round's brief and item prompts are included",
+              r.json().get("brief") and r.json().get("items"), r.text[:300])
+
+        r = await c.get(
+            f"/interviewer/scorecards/{scorecard_id}/submission/materials/{material_id}/download"
+        )
+        check("gap 3 — the reviewer can download a round's reference material",
+              r.status_code == 200 and "url" in r.json(), r.text[:300])
 
         r = await c.post(
             f"/interviewer/scorecards/{scorecard_id}/submit",
@@ -330,6 +366,10 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.get("/task", headers=headers_port)
         check("GET /task opens the portfolio brief", r.status_code == 200
               and r.json()["kind"] == "portfolio", r.text[:200])
+
+        r = await c.post("/task/start", json={"consent": True}, headers=headers_port)
+        check("candidate starts the portfolio task", r.status_code == 200
+              and r.json()["status"] == "in_progress", r.text[:200])
 
         r = await c.post("/task/artifacts", headers=headers_port,
                          data={"link_url": "https://github.com/asha/demo", "title": "Demo repo"})

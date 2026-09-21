@@ -142,6 +142,18 @@
 		}
 		reverse_proxy data_gateway:8002
 	}
+	# /hr/rounds/*/task/materials* — PH4-D4: HR's reference-material upload for
+	# a job-simulation/portfolio round. More specific than /hr/* below (which
+	# must stay uncapped for bulk CV ingestion, up to 250 MB), so Caddy's
+	# longest-path-wins picks this narrower block first. docs/ACCEPTED-RISKS.md
+	# AR-6 says this upload is "enforced at the edge"; before this block it was
+	# not — L8, security review PH4-D4 wave 5.
+	handle /hr/rounds/*/task/materials* {
+		request_body {
+			max_size 11MB
+		}
+		reverse_proxy data_gateway:8002
+	}
 	handle /hr/* {
 		reverse_proxy data_gateway:8002
 	}

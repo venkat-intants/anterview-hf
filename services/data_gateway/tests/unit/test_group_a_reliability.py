@@ -754,6 +754,10 @@ def _lapsed(**over: object) -> dict:
         "company_id": uuid.uuid4(), "owner_user_id": uuid.uuid4(),
         "full_name": "Anita", "email": "anita@example.com", "user_id": None,
         "what": "Technical Round", "mail_candidate": True,
+        # PH4-D4 wave 5 (H2(e)): whether the sweep is about to SUBMIT a task
+        # with saved work, rather than expire it — only kind='task' rows are
+        # ever true; irrelevant (and false) for exam/interview.
+        "has_work": False,
     }
     return {**row, **over}
 

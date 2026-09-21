@@ -92,13 +92,22 @@ _VIDEO_CONSENT_TYPE = "video_capture"
 # (app/preboarding.py `upload`). A candidate who has no account to sign in
 # with withdraws from the documents step itself (POST /offer/documents/consent).
 _DOCUMENTS_CONSENT_TYPE = "preboarding_documents"
+# PH4-D4 wave 5: submitting a job-simulation/portfolio task records consent to
+# send that work to the hiring team, for 'recruitment' — taken at
+# app/job_tasks.py `start`, one row per submission. Listed here only so DPDP's
+# "withdrawal must be as easy as giving it" has a place to check the type is
+# recognised; the actual withdrawal route is the task's own
+# ``POST /task/consent/withdraw`` (a magic-link credential, like the documents
+# case above), never this router's authenticated ``DELETE /consent``.
+_TASK_CONSENT_TYPE = "assessment_submission"
 _VALID_CONSENT_TYPES = frozenset({_CONSENT_TYPE, _VIDEO_CONSENT_TYPE,
-                                  _DOCUMENTS_CONSENT_TYPE})
+                                  _DOCUMENTS_CONSENT_TYPE, _TASK_CONSENT_TYPE})
 # A consent is for a stated purpose (DPDP §6(1)), so what this route may GRANT
 # is narrower than what it may revoke: the documents consent is recorded when
 # an offer is accepted, for 'onboarding', and is never granted here — where the
 # only purpose on offer is 'interview'. Granting it here would file a row whose
-# purpose does not describe it and quietly re-open uploads.
+# purpose does not describe it and quietly re-open uploads. The task consent
+# is the same shape: granted only at `job_tasks.start`, for 'recruitment'.
 _GRANTABLE_CONSENT_TYPES = frozenset({_CONSENT_TYPE, _VIDEO_CONSENT_TYPE})
 _VALID_PURPOSES = frozenset({"interview"})
 

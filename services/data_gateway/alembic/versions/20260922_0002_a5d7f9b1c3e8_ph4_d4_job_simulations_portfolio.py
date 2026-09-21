@@ -47,6 +47,22 @@ portfolio rounds for). ``PanelVerdict.decision_authority`` stays structurally
 ``human_only`` — nothing in this migration gives a round a way to pass or fail
 itself; ``post_round_review`` (a named human) is still the only writer of a
 task round's outcome.
+
+CONSENT NEEDS A DIFFERENT UNIQUE SHAPE (added in review, security review
+PH4-D4 wave 5, H2)
+Consent to send a task's work to the hiring team is booked one row per
+SUBMISSION (``app/job_tasks.py::_record_submission_consent``) — a candidate
+can have more than one task submission open at once (two rounds in
+progress), and each has to be able to book its own record. But
+``ix_dpdp_consent_active_unique`` (migration ``f9a2c1d3b4e7``) enforces at
+most one ACTIVE row per ``(user_id, consent_type, purpose)`` for EVERY
+consent_type, including this new one — a second concurrent task submission
+raised a live ``IntegrityError``. That index is narrowed here to exclude
+``assessment_submission`` (its original scope — voice/video/documents
+consent — is unchanged), and a new partial unique index takes over
+enforcing the invariant this type actually needs: at most one ACTIVE row per
+SUBMISSION (keyed on ``evidence ->> 'submission_id'``, which every row of
+this type carries).
 """
 
 from __future__ import annotations
@@ -61,6 +77,23 @@ down_revision: str | None = "f4c6e8a0b2d7"
 branch_labels: str | None = None
 depends_on: str | None = None
 
+TASK_CONSENT_TYPE = "assessment_submission"
+_OLD_CONSENT_ACTIVE_UNIQUE_SQL = (
+    "CREATE UNIQUE INDEX ix_dpdp_consent_active_unique"
+    " ON dpdp_consent_ledger (user_id, consent_type, purpose)"
+    " WHERE granted = TRUE AND revoked_at IS NULL"
+)
+_NEW_CONSENT_ACTIVE_UNIQUE_SQL = (
+    "CREATE UNIQUE INDEX ix_dpdp_consent_active_unique"
+    " ON dpdp_consent_ledger (user_id, consent_type, purpose)"
+    f" WHERE granted = TRUE AND revoked_at IS NULL AND consent_type <> '{TASK_CONSENT_TYPE}'"
+)
+_TASK_CONSENT_SUBMISSION_UNIQUE_SQL = (
+    "CREATE UNIQUE INDEX ix_dpdp_consent_task_submission_unique"
+    " ON dpdp_consent_ledger ((evidence ->> 'submission_id'))"
+    f" WHERE consent_type = '{TASK_CONSENT_TYPE}' AND granted = TRUE AND revoked_at IS NULL"
+)
+
 OLD_ROUND_KINDS = ("mcq", "coding", "ai_interview", "human_review")
 ROUND_KINDS = (*OLD_ROUND_KINDS, "job_simulation", "portfolio")
 TASK_KINDS = ("job_simulation", "portfolio")
@@ -72,7 +105,7 @@ TASK_CONTENT_TYPES = ("application/pdf", "image/jpeg", "image/png")
 TASK_EVENT_ACTIONS = (
     "issued", "opened", "started", "saved", "artifact_added", "artifact_removed", "submitted",
     "closed_at_time_limit", "expired", "withdrawn", "reissued", "link_rotated",
-    "artifact_downloaded", "submission_viewed", "round_task_updated",
+    "artifact_downloaded", "submission_viewed", "round_task_updated", "consent_withdrawn",
 )
 
 NEW_ENROLMENT_AWAITS_HUMAN = """
@@ -234,10 +267,19 @@ DECLARE
     sub_status text;
 BEGIN
     IF TG_OP = 'DELETE' THEN
-        IF EXISTS (SELECT 1 FROM task_submissions s WHERE s.id = OLD.submission_id) THEN
-            RAISE EXCEPTION 'task response % is kept, not deleted', OLD.id;
+        SELECT s.status INTO sub_status FROM task_submissions s WHERE s.id = OLD.submission_id;
+        IF sub_status IS NULL THEN
+            RETURN OLD;  -- cascade: the submission (or its enrolment) is gone
         END IF;
-        RETURN OLD;  -- cascade: the submission (or its enrolment) is gone
+        -- M2 (security review, PH4-D4 wave 5): while the submission is still
+        -- open, a candidate may retract their own upload or answer -- a
+        -- wrong file, an ID scan instead of a portfolio PDF. Once the
+        -- submission has closed (or the row is already redacted, kept only
+        -- for the retention audit trail) it is frozen like everything else.
+        IF sub_status IN ('assigned', 'in_progress') AND OLD.redacted_at IS NULL THEN
+            RETURN OLD;
+        END IF;
+        RAISE EXCEPTION 'task response % is kept, not deleted', OLD.id;
     END IF;
 
     SELECT s.status INTO sub_status FROM task_submissions s
@@ -467,14 +509,26 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["accommodation_id", "company_id"],
             ["candidate_accommodations.id", "candidate_accommodations.company_id"],
-            name="fk_task_submissions_accommodation", ondelete="SET NULL",
+            # L4 (security review, PH4-D4 wave 5): a composite ON DELETE SET
+            # NULL here would try to null BOTH referencing columns, including
+            # company_id -- NOT NULL on this table -- turning a deleted
+            # accommodation into a constraint-violation error instead of a
+            # clean unlink. RESTRICT instead: an accommodation still applied
+            # to a submission cannot be hard-deleted (it is revoked, not
+            # deleted -- app/accommodations.py). The defect already fixed
+            # twice elsewhere this wave.
+            name="fk_task_submissions_accommodation", ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(["issued_by_user_id"], ["users.id"],
                                 name="fk_task_submissions_issued_by", ondelete="SET NULL"),
         sa.ForeignKeyConstraint(
             ["superseded_by_id", "company_id"],
             ["task_submissions.id", "task_submissions.company_id"],
-            name="fk_task_submissions_superseded_by", ondelete="SET NULL",
+            # Same composite-SET-NULL hazard as above (company_id is NOT
+            # NULL); task_submissions rows are never hard-deleted anyway
+            # (task_submissions_lifecycle refuses every DELETE), so RESTRICT
+            # costs nothing and removes the trap.
+            name="fk_task_submissions_superseded_by", ondelete="RESTRICT",
             deferrable=True, initially="DEFERRED",
         ),
         sa.CheckConstraint(f"kind IN {TASK_KINDS}", name="ck_task_submissions_kind"),
@@ -630,6 +684,14 @@ def upgrade() -> None:
             " FOR EACH ROW EXECUTE FUNCTION workflow_children_immutable()"
         )
 
+    # -----------------------------------------------------------------
+    # H2 (added in review): the task consent ledger needs one ACTIVE row per
+    # SUBMISSION, not per (user, type, purpose) — see the module docstring.
+    # -----------------------------------------------------------------
+    op.execute("DROP INDEX ix_dpdp_consent_active_unique")
+    op.execute(_NEW_CONSENT_ACTIVE_UNIQUE_SQL)
+    op.execute(_TASK_CONSENT_SUBMISSION_UNIQUE_SQL)
+
 
 def downgrade() -> None:
     conn = op.get_bind()
@@ -641,6 +703,10 @@ def downgrade() -> None:
             f"{stuck} workflow_rounds still use a PH4-D4 round kind "
             "(job_simulation/portfolio); remove or re-kind them before downgrading."
         )
+
+    op.execute("DROP INDEX IF EXISTS ix_dpdp_consent_task_submission_unique")
+    op.execute("DROP INDEX IF EXISTS ix_dpdp_consent_active_unique")
+    op.execute(_OLD_CONSENT_ACTIVE_UNIQUE_SQL)
 
     for table in ("round_tasks", "round_task_materials"):
         op.execute(f"DROP TRIGGER IF EXISTS {table}_no_edit_when_published ON {table}")

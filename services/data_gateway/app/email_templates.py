@@ -854,6 +854,10 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     what = ctx.get("what", "")
     kind = ctx.get("kind", "exam")
     expired = ctx.get("expired")
+    # H2(e): the sweep (app.job_tasks.close_due) SUBMITS a task that has any
+    # saved work rather than expiring it, so "closed without a submission"
+    # was simply false whenever there was work to submit.
+    has_work = bool(ctx.get("has_work"))
     whate = _esc(what)
     loc = _loc(lang, {
         "en": {
@@ -868,6 +872,9 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                 else "The window for your assessment has closed."
             ),
             "lead": (
+                f"The window for <strong>{whate}</strong> closed, and what you had saved "
+                "was sent to the hiring team."
+                if what and kind == "task" and has_work else
                 f"The window for <strong>{whate}</strong> closed without a submission."
                 if what and kind == "task" else
                 f"The window for <strong>{whate}</strong> closed without it being started."
@@ -892,6 +899,9 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                 else "आपकी परीक्षा की अवधि समाप्त हो गई है।"
             ),
             "lead": (
+                f"<strong>{whate}</strong> की अवधि समाप्त हो गई, और आपका सहेजा गया कार्य "
+                "भर्ती टीम को भेज दिया गया।"
+                if what and kind == "task" and has_work else
                 f"<strong>{whate}</strong> की अवधि बिना सबमिट किए समाप्त हो गई।"
                 if what and kind == "task" else
                 f"<strong>{whate}</strong> की अवधि बिना शुरू हुए समाप्त हो गई।"
@@ -916,6 +926,9 @@ def _t_link_expired(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                 else "మీ పరీక్ష వ్యవధి ముగిసింది."
             ),
             "lead": (
+                f"<strong>{whate}</strong> వ్యవధి ముగిసింది, మీరు సేవ్ చేసిన పని నియామక "
+                "బృందానికి పంపబడింది."
+                if what and kind == "task" and has_work else
                 f"<strong>{whate}</strong> వ్యవధి సమర్పించకుండానే ముగిసింది."
                 if what and kind == "task" else
                 f"<strong>{whate}</strong> వ్యవధి ప్రారంభించకుండానే ముగిసింది."

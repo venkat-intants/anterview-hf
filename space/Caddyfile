@@ -144,6 +144,17 @@
 	handle /exam* {
 		reverse_proxy 127.0.0.1:8002
 	}
+	# /hr/rounds/*/task/materials* — PH4-D4: HR's reference-material upload,
+	# capped like the repo-root Caddyfile (more specific than /hr/* below,
+	# which must stay uncapped for bulk CV ingestion). L8, security review
+	# PH4-D4 wave 5 — docs/ACCEPTED-RISKS.md AR-6 claimed this was already
+	# true.
+	handle /hr/rounds/*/task/materials* {
+		request_body {
+			max_size 11MB
+		}
+		reverse_proxy 127.0.0.1:8002
+	}
 	handle /hr/* {
 		reverse_proxy 127.0.0.1:8002
 	}

@@ -42,9 +42,9 @@ from app import job_tasks as svc
 from app.config import settings
 from app.database import DbSessionDep, get_db_session
 from app.dependencies import HrCtxDep, InterviewerCtxDep, get_current_user
-from app.interviewer_scorecards import RequestMeta
+from app.interviewer_scorecards import RequestMeta, ScorecardError
 from app.job_tasks import TaskError
-from app.rate_limit import rate_limit
+from app.rate_limit import rate_limit_task
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 
 hr_router = APIRouter(prefix="/hr", tags=["job-tasks"])
@@ -71,7 +71,7 @@ def _meta(request: Request) -> RequestMeta:
     return RequestMeta(ip_address=extract_client_ip(request), user_agent=extract_user_agent(request))
 
 
-async def _fail(db: AsyncSession, exc: TaskError) -> HTTPException:
+async def _fail(db: AsyncSession, exc: TaskError | ScorecardError) -> HTTPException:
     await db.rollback()
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
@@ -110,7 +110,18 @@ class SaveResponseIn(BaseModel):
     link_url: str | None = Field(default=None, max_length=2000)
 
 
+class StartIn(BaseModel):
+    """Consent moved here (H2, security review PH4-D4): nothing is ever
+    autosaved or uploaded before ``start`` succeeds, so consent has to exist
+    before it, not at submit."""
+
+    consent: bool = False
+
+
 class SubmitIn(BaseModel):
+    # Accepted and ignored (H2) — kept only so the field the UI still sends
+    # (publicTask.ts::submitTask, for compatibility) never becomes an
+    # unrecognised-field error. Consent itself was taken at `start`.
     consent: bool = False
 
 
@@ -287,7 +298,7 @@ async def get_scorecard_submission(
         out = await svc.submission_for_reviewer(
             db, company_id=company_id, scorecard_id=scorecard_id, interviewer_user_id=uid,
         )
-    except TaskError as exc:
+    except (TaskError, ScorecardError) as exc:
         raise await _fail(db, exc) from exc
     await db.commit()
     return out
@@ -304,7 +315,25 @@ async def download_scorecard_artifact(
             db, company_id=company_id, scorecard_id=scorecard_id, interviewer_user_id=uid,
             response_id=response_id, meta=_meta(request),
         )
-    except TaskError as exc:
+    except (TaskError, ScorecardError) as exc:
+        raise await _fail(db, exc) from exc
+    await db.commit()
+    return out
+
+
+@iv_router.get("/scorecards/{scorecard_id}/submission/materials/{material_id}/download")
+async def download_scorecard_material(
+    scorecard_id: uuid.UUID, material_id: uuid.UUID, ctx: InterviewerCtxDep, db: DbSessionDep,
+) -> dict[str, Any]:
+    """Gap 3: a reviewer previously had no way at all to read a round's
+    reference materials."""
+    uid, company_id = ctx
+    try:
+        out = await svc.reviewer_material_download(
+            db, company_id=company_id, scorecard_id=scorecard_id, interviewer_user_id=uid,
+            material_id=material_id,
+        )
+    except (TaskError, ScorecardError) as exc:
         raise await _fail(db, exc) from exc
     await db.commit()
     return out
@@ -312,8 +341,15 @@ async def download_scorecard_artifact(
 
 # ---------------------------------------------------------------------------
 # The candidate, by link
+#
+# M3: each route below has its OWN bucket name (previously four of them
+# shared "task_answer" with four different caps, so autosaves could exhaust
+# the budget a submit needed) and is keyed on the candidate's own link, not
+# client IP, with a looser per-IP ceiling behind it — see
+# app.rate_limit.rate_limit_task's docstring for why (a college computer lab,
+# the primary market, puts many candidates behind one NAT address).
 # ---------------------------------------------------------------------------
-@public_router.get("", dependencies=[rate_limit("task_view", 30)])
+@public_router.get("", dependencies=[rate_limit_task("task_view", per_token=30, per_ip=300)])
 async def view_task(token: TaskTokenDep, request: Request, db: CandidateDbDep) -> dict[str, Any]:
     try:
         out = await svc.open_submission(db, raw=token, meta=_meta(request))
@@ -323,17 +359,39 @@ async def view_task(token: TaskTokenDep, request: Request, db: CandidateDbDep) -
     return out
 
 
-@public_router.post("/start", dependencies=[rate_limit("task_answer", 20)])
-async def start_task(token: TaskTokenDep, request: Request, db: CandidateDbDep) -> dict[str, Any]:
+@public_router.post("/start", dependencies=[rate_limit_task("task_start", per_token=20, per_ip=200)])
+async def start_task(
+    body: StartIn, token: TaskTokenDep, request: Request, db: CandidateDbDep,
+) -> dict[str, Any]:
     try:
-        out = await svc.start(db, raw=token, meta=_meta(request))
+        out = await svc.start(db, raw=token, consent=body.consent, meta=_meta(request))
     except TaskError as exc:
         raise await _fail(db, exc) from exc
     await db.commit()
     return out
 
 
-@public_router.put("/responses/{item_key}", dependencies=[rate_limit("task_answer", 60)])
+@public_router.post(
+    "/consent/withdraw", dependencies=[rate_limit_task("task_consent_withdraw", per_token=10, per_ip=100)],
+)
+async def withdraw_task_consent(
+    token: TaskTokenDep, request: Request, db: CandidateDbDep,
+) -> dict[str, Any]:
+    """Withdraw consent to send this task's work to the hiring team (DPDP
+    §11) — the preboarding-documents precedent
+    (``POST /offer/documents/consent/withdraw``). Nothing already stored is
+    deleted; save, upload and submit all refuse afterwards."""
+    try:
+        out = await svc.withdraw_task_consent(db, raw=token, meta=_meta(request))
+    except TaskError as exc:
+        raise await _fail(db, exc) from exc
+    await db.commit()
+    return out
+
+
+@public_router.put(
+    "/responses/{item_key}", dependencies=[rate_limit_task("task_save", per_token=60, per_ip=600)],
+)
 async def save_task_response(
     item_key: str, body: SaveResponseIn, token: TaskTokenDep, request: Request, db: CandidateDbDep,
 ) -> dict[str, Any]:
@@ -348,7 +406,10 @@ async def save_task_response(
     return out
 
 
-@public_router.post("/artifacts", status_code=201, dependencies=[rate_limit("task_upload", 20)])
+@public_router.post(
+    "/artifacts", status_code=201,
+    dependencies=[rate_limit_task("task_upload", per_token=20, per_ip=200)],
+)
 async def add_task_artifact(
     token: TaskTokenDep, request: Request, db: CandidateDbDep,
     file: Annotated[UploadFile | None, File()] = None,
@@ -356,6 +417,7 @@ async def add_task_artifact(
     link_kind: Annotated[str | None, Form()] = None,
     title: Annotated[str | None, Form()] = None,
     description: Annotated[str | None, Form()] = None,
+    item_key: Annotated[str | None, Form()] = None,
 ) -> dict[str, Any]:
     data: bytes | None = None
     if file is not None:
@@ -365,7 +427,7 @@ async def add_task_artifact(
         out = await svc.add_artifact(
             db, raw=token, kind=kind, data=data, filename=file.filename if file else None,
             link_url=link_url, link_kind=link_kind, title=title, description=description,
-            meta=_meta(request),
+            item_key=item_key, meta=_meta(request),
         )
     except TaskError as exc:
         raise await _fail(db, exc) from exc
@@ -381,8 +443,10 @@ async def add_task_artifact(
     return out
 
 
-@public_router.delete("/artifacts/{response_id}", status_code=204,
-                      dependencies=[rate_limit("task_answer", 30)])
+@public_router.delete(
+    "/artifacts/{response_id}", status_code=204,
+    dependencies=[rate_limit_task("task_delete", per_token=30, per_ip=300)],
+)
 async def remove_task_artifact(
     response_id: uuid.UUID, token: TaskTokenDep, request: Request, db: CandidateDbDep,
 ) -> Response:
@@ -398,7 +462,7 @@ async def remove_task_artifact(
     return Response(status_code=204)
 
 
-@public_router.post("/submit", dependencies=[rate_limit("task_answer", 10)])
+@public_router.post("/submit", dependencies=[rate_limit_task("task_submit", per_token=10, per_ip=100)])
 async def submit_task(
     body: SubmitIn, token: TaskTokenDep, request: Request, db: CandidateDbDep,
 ) -> dict[str, Any]:
@@ -410,12 +474,20 @@ async def submit_task(
     return out
 
 
-@public_router.get("/materials/{material_id}/download", dependencies=[rate_limit("task_view", 30)])
+@public_router.get(
+    "/materials/{material_id}/download",
+    dependencies=[rate_limit_task("task_material_download", per_token=30, per_ip=300)],
+)
 async def download_task_material(
     material_id: uuid.UUID, token: TaskTokenDep, db: CandidateDbDep,
 ) -> dict[str, Any]:
     try:
         sub = await svc.by_token(db, token)
+        if svc.materials_withheld(sub):
+            # M4 (before a timed task starts) / security review wave 5 item 2
+            # (after submission): the same NOT_AVAILABLE-shaped refusal a bad
+            # token gets, so this is not an oracle for "is this timed" either.
+            raise TaskError(404, svc.NOT_AVAILABLE)
         out = await svc.material_download(
             db, company_id=sub["company_id"], round_id=sub["round_id"], material_id=material_id,
         )

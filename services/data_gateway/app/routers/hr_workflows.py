@@ -932,6 +932,7 @@ async def post_round_review(
             text(
                 "SELECT 1 FROM task_submissions WHERE enrolment_id = :e AND round_id = :r"
                 "   AND superseded_at IS NULL AND status = 'submitted'"
+                "   AND consented_at IS NOT NULL"
             ),
             {"e": enrolment_id, "r": row["current_round_id"]},
         )

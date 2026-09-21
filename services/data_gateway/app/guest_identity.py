@@ -14,9 +14,12 @@ RACES
 Two links for the same applicant can be redeemed at once. This function does
 the INSERT and the link; it does NOT catch the ``IntegrityError`` a lost race
 raises on ``uq_applicants_user_id`` — the caller does, exactly as
-``interview_take.redeem`` and ``job_tasks.submit`` each already need to: on a
+``interview_take.redeem`` and ``job_tasks.start`` each already need to: on a
 lost race the caller re-reads ``applicants.user_id`` for the winner's row and
 carries on with that, re-acquiring whatever lock it held before the insert.
+(Provisioning moved from ``job_tasks.submit`` to ``job_tasks.start`` when
+consent moved there too, PH4-D4 wave 5 — consent needs an identity to be
+booked against, and that has to exist before anything is stored, not after.)
 
 WHY THIS IS NOT ``offers._ensure_candidate_identity``
 Offers deliberately mint a guest with ``company_id = NULL`` ("a candidate is

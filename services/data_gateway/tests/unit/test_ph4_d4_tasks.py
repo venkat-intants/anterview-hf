@@ -303,6 +303,21 @@ def test_migration_downgrade_refuses_while_task_rounds_exist() -> None:
     assert "raise RuntimeError" in src
 
 
+def test_composite_fks_with_a_not_null_company_id_never_set_null() -> None:
+    """L4 (security review, wave 5): a composite ``ON DELETE SET NULL`` FK
+    that includes ``company_id`` (NOT NULL on task_submissions) would try to
+    null it too — the defect already fixed twice elsewhere this wave.
+    RESTRICT instead, for both FKs that shape applies to."""
+    migrations = (APP.parents[0] / "alembic" / "versions").glob("*ph4_d4*.py")
+    path = next(migrations)
+    src = path.read_text(encoding="utf-8")
+    for name in ("fk_task_submissions_accommodation", "fk_task_submissions_superseded_by"):
+        idx = src.index(f'name="{name}"')
+        # ondelete is the very next keyword argument on these two calls.
+        tail = src[idx:idx + 200]
+        assert 'ondelete="RESTRICT"' in tail, name
+
+
 # ===========================================================================
 # The runner has an explicit task branch — no kind silently falls through to
 # human_review, and no kind is silently dropped.

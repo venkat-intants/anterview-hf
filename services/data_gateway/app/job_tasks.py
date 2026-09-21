@@ -20,6 +20,17 @@ like a human_review round (CLAUDE.md constraint 9). Candidate-authored
 content — the brief a candidate writes back, a link they paste — is never
 read by an agent (AST-tested).
 
+CONSENT (security review, PH4-D4 wave 5)
+Given at ``start``, not ``submit`` — nothing is ever autosaved or uploaded
+before it (H2). One ``dpdp_consent_ledger`` row per SUBMISSION, never
+re-granted once withdrawn (``withdraw_task_consent``, the public_apply.py
+precedent). ``save``/``add_artifact``/``submit`` all refuse without it
+(``_require_consent``); the sweep (``close_due``) never turns unconsented
+work into a submission; a reviewer or HR reads a submission's content only
+once it is ``submitted`` AND consented (M1); and once submitted the
+candidate's own link stops serving content at all (a recovered link on a
+shared lab machine must not keep exposing the work already sent).
+
 THE LINK
 Same shape as ``app/offer_security.py``: a 256-bit random token, presented as
 a header, hashed with HMAC before it is ever stored. ``task_link_secret``
@@ -52,6 +63,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import accommodations
@@ -758,8 +770,13 @@ SELECT s.*, rt.brief, rt.brief_translations, rt.items, rt.min_artifacts, rt.max_
   JOIN companies co ON co.id = s.company_id
   JOIN enrolments e ON e.id = s.enrolment_id
  WHERE s.token_hash = :h AND s.redacted_at IS NULL
+   AND a.deleted_at IS NULL AND e.deleted_at IS NULL
  FOR UPDATE OF s
 """
+
+# Terminal application outcomes: a task link outlives neither (M5). The
+# column was selected for this from the start and never consulted.
+_LINK_DEAD_ENROLMENT_STATUSES = ("rejected", "hired")
 
 
 async def by_token(db: AsyncSession, raw: str | None) -> dict[str, Any]:
@@ -771,6 +788,8 @@ async def by_token(db: AsyncSession, raw: str | None) -> dict[str, Any]:
         raise TaskError(404, NOT_AVAILABLE)
     sub = dict(row)
     if sub["status"] not in ("assigned", "in_progress", "submitted"):
+        raise TaskError(404, NOT_AVAILABLE)
+    if sub["enrolment_status"] in _LINK_DEAD_ENROLMENT_STATUSES:
         raise TaskError(404, NOT_AVAILABLE)
     return sub
 
@@ -801,15 +820,60 @@ async def _responses_for(db: AsyncSession, submission_id: uuid.UUID) -> list[dic
     ]
 
 
+def timed_task_locked(sub: dict[str, Any]) -> bool:
+    """A TIMED task's items and reference materials are consent-gated content
+    (M4, security review PH4-D4): while the submission is still ``assigned``
+    (never started), showing them would let a candidate read the actual
+    items, and download materials, without ever starting the clock or
+    consenting. An untimed task has no clock to protect and is not gated —
+    the UI already shows items only after start regardless of kind."""
+    return sub["status"] == "assigned" and bool(sub.get("time_limit_seconds"))
+
+
+def materials_withheld(sub: dict[str, Any]) -> bool:
+    """Materials are withheld before a timed task starts (``timed_task_locked``)
+    AND after the task is submitted: once submitted there is nothing further
+    for the candidate to do with reference material, and a link recovered
+    from browser history on a shared machine (a college lab, the primary
+    market) should not go on serving it (security review, PH4-D4 wave 5)."""
+    return sub["status"] == "submitted" or timed_task_locked(sub)
+
+
 async def candidate_view(db: AsyncSession, sub: dict[str, Any]) -> dict[str, Any]:
+    """The candidate's own read of their task.
+
+    Once ``submitted``, this deliberately returns status/timing only — no
+    brief, items, materials or responses. The page only ever shows
+    "Submitted" for this status (PublicTask.tsx), but the fragment link
+    itself outlives the browser tab (history, a shared lab machine), so the
+    API must not keep serving the candidate's own answers, file names and
+    link URLs to whoever holds a recovered link (security review, PH4-D4
+    wave 5, item 2).
+    """
+    if sub["status"] == "submitted":
+        return {
+            "status": sub["status"], "kind": sub["kind"], "round_title": sub["round_title"],
+            "company": sub["company_name"], "brief": "", "items": [],
+            "min_artifacts": None, "max_artifacts": None,
+            "allow_files": False, "allow_links": False, "allowed_link_domains": None,
+            "materials": [],
+            "due_at": None, "time_limit_seconds": None,
+            "started_at": _iso(sub["started_at"]), "submitted_at": _iso(sub["submitted_at"]),
+            "adjustments": {"extra_time_seconds": None, "deadline_extended": False},
+            "responses": [],
+        }
     lang = await candidate_language(db, sub["applicant_id"])
     brief = sub["brief"]
     if lang in ("hi", "te") and sub.get("brief_translations"):
         brief = sub["brief_translations"].get(lang, brief)
-    materials = await list_materials(db, company_id=sub["company_id"], round_id=sub["round_id"])
+    locked = timed_task_locked(sub)
+    materials = (
+        [] if materials_withheld(sub)
+        else await list_materials(db, company_id=sub["company_id"], round_id=sub["round_id"])
+    )
     return {
         "status": sub["status"], "kind": sub["kind"], "round_title": sub["round_title"],
-        "company": sub["company_name"], "brief": brief, "items": sub["items"],
+        "company": sub["company_name"], "brief": brief, "items": [] if locked else sub["items"],
         "min_artifacts": sub["min_artifacts"], "max_artifacts": sub["max_artifacts"],
         "allow_files": sub["allow_files"], "allow_links": sub["allow_links"],
         "allowed_link_domains": sub["allowed_link_domains"], "materials": materials,
@@ -819,7 +883,7 @@ async def candidate_view(db: AsyncSession, sub: dict[str, Any]) -> dict[str, Any
             "extra_time_seconds": sub["extra_time_seconds"],
             "deadline_extended": bool(sub["deadline_extension_days"]),
         },
-        "responses": await _responses_for(db, sub["id"]),
+        "responses": [] if locked else await _responses_for(db, sub["id"]),
     }
 
 
@@ -849,22 +913,62 @@ def _deadline_passed(sub: dict[str, Any], now: datetime) -> bool:
     return False
 
 
-async def start(db: AsyncSession, *, raw: str | None, meta: RequestMeta) -> dict[str, Any]:
+async def start(db: AsyncSession, *, raw: str | None, consent: bool, meta: RequestMeta) -> dict[str, Any]:
+    """Begin the clock — and, security review PH4-D4, the ONLY moment consent
+    to send this work to the hiring team is given. Nothing is ever
+    autosaved or uploaded before this succeeds (H2): ``save``, ``add_artifact``
+    and ``submit`` all refuse until ``consented_at`` is set here, together
+    with the ``in_progress`` transition, in the one UPDATE.
+    """
     sub = await by_token(db, raw)
     if sub["status"] == "assigned":
         now = datetime.now(tz=UTC)
         if _deadline_passed(sub, now):
             raise TaskError(409, "This task's window has closed.")
+        if not consent:
+            raise TaskError(
+                422, "Agree to send this work to the hiring team before you begin."
+            )
+        user_id = sub["candidate_user_id"]
+        if user_id is None:
+            try:
+                user_id = await provision_guest_user(
+                    db, applicant_id=sub["applicant_id"], full_name=sub["candidate_name"],
+                    company_id=sub["company_id"],
+                    language=await candidate_language(db, sub["applicant_id"]),
+                    email_prefix="task", now=now,
+                )
+            except IntegrityError:
+                # Lost a race against another submission for the same
+                # applicant provisioning a guest identity at the same moment
+                # (uq_applicants_user_id) — L7. Recover exactly as
+                # interview_take.redeem does: roll back, reuse the winner's
+                # guest user, and re-acquire this submission's own lock (the
+                # rollback dropped it) before continuing.
+                await db.rollback()
+                user_id = await db.scalar(
+                    text("SELECT user_id FROM applicants WHERE id = :a"),
+                    {"a": sub["applicant_id"]},
+                )
+                if user_id is None:
+                    raise TaskError(404, NOT_AVAILABLE) from None
+                sub = await by_token(db, raw)
+                if sub["status"] != "assigned":
+                    # Someone else's request (or a second tab) already
+                    # started this exact submission while we recovered —
+                    # nothing left to do.
+                    return await candidate_view(db, sub)
         await db.execute(
             text(
                 "UPDATE task_submissions SET status = 'in_progress', started_at = :n,"
-                " updated_at = :n WHERE id = :i"
+                " consented_at = :n, updated_at = :n WHERE id = :i"
             ),
             {"n": now, "i": sub["id"]},
         )
+        await _record_submission_consent(db, user_id=user_id, sub=sub)
         await _event(
             db, company_id=sub["company_id"], submission_id=sub["id"], round_id=sub["round_id"],
-            action="started", actor_type="candidate", actor=sub["candidate_user_id"],
+            action="started", actor_type="candidate", actor=user_id,
         )
         sub = await by_token(db, raw)
     return await candidate_view(db, sub)
@@ -878,6 +982,39 @@ def _item_or_raise(sub: dict[str, Any], item_key: str) -> dict[str, Any]:
     return item
 
 
+def _require_consent(sub: dict[str, Any], *, action: str) -> None:
+    """H2: save, upload and submit are all refused until ``consented_at`` is
+    set — which now happens only at ``start``. ``assigned`` (never started)
+    and ``in_progress`` with a withdrawn consent (``withdraw_task_consent``)
+    are the only two ways to reach here with ``consented_at IS NULL``, and
+    each earns its own sentence."""
+    if sub["consented_at"] is not None:
+        return
+    if sub["status"] == "assigned":
+        raise TaskError(409, f"Start the task before {action}.")
+    raise TaskError(409, f"Consent for this task was withdrawn; {action} is no longer possible.")
+
+
+async def _clear_response(db: AsyncSession, sub: dict[str, Any], item_key: str) -> dict[str, Any]:
+    """No answer for an OPTIONAL item is the ABSENCE of a row, never one with
+    NULL content — ``ck_task_responses_shape`` has no shape for that, so
+    writing one was a 500 (L6). Deleting the row is safe while the
+    submission is open (``task_responses_frozen``, migration ``a5d7f9b1c3e8``,
+    M2's fix)."""
+    existing = await db.scalar(
+        text("SELECT id FROM task_responses WHERE submission_id = :s AND item_key = :k"),
+        {"s": sub["id"], "k": item_key},
+    )
+    if existing:
+        await db.execute(text("DELETE FROM task_responses WHERE id = :i"), {"i": existing})
+    await _event(
+        db, company_id=sub["company_id"], submission_id=sub["id"], round_id=sub["round_id"],
+        action="saved", actor_type="candidate", actor=sub["candidate_user_id"],
+        details={"item_key": item_key},
+    )
+    return {"item_key": item_key, "saved": True}
+
+
 async def save_response(
     db: AsyncSession, *, raw: str | None, item_key: str, text_value: str | None,
     link_url: str | None, meta: RequestMeta,
@@ -886,6 +1023,7 @@ async def save_response(
     sub = await by_token(db, raw)
     if sub["status"] not in ("assigned", "in_progress"):
         raise TaskError(409, "This task is no longer open for changes.")
+    _require_consent(sub, action="saving an answer")
     now = datetime.now(tz=UTC)
     if _deadline_passed(sub, now):
         raise TaskError(409, "This task's window has closed; nothing more can be saved.")
@@ -898,23 +1036,19 @@ async def save_response(
             raise TaskError(422, "Give an answer before saving.")
         if len(value) > limit:
             raise TaskError(422, f"This answer is limited to {limit} characters.")
-        params = {"tv": value or None, "lu": None, "lk": None}
+        if not value:
+            return await _clear_response(db, sub, item_key)
+        params = {"tv": value, "lu": None, "lk": None}
     elif response_type == "link":
         if not link_url:
             if item.get("required"):
                 raise TaskError(422, "Give a link before saving.")
-            params = {"tv": None, "lu": None, "lk": None}
-        else:
-            clean = validate_link(link_url, sub.get("allowed_link_domains"))
-            params = {"tv": None, "lu": clean, "lk": "other"}
+            return await _clear_response(db, sub, item_key)
+        clean = validate_link(link_url, sub.get("allowed_link_domains"))
+        params = {"tv": None, "lu": clean, "lk": "other"}
     else:
         raise TaskError(422, "This item takes a file — upload it as an artifact instead.")
 
-    if sub["status"] == "assigned":
-        await db.execute(
-            text("UPDATE task_submissions SET status = 'in_progress', started_at = :n WHERE id = :i"),
-            {"n": now, "i": sub["id"]},
-        )
     existing = await db.scalar(
         text("SELECT id FROM task_responses WHERE submission_id = :s AND item_key = :k"),
         {"s": sub["id"], "k": item_key},
@@ -952,27 +1086,38 @@ MAX_ARTIFACT_DESCRIPTION = 2000
 async def add_artifact(
     db: AsyncSession, *, raw: str | None, kind: str, data: bytes | None, filename: str | None,
     link_url: str | None, link_kind: str | None, title: str | None, description: str | None,
-    meta: RequestMeta,
+    meta: RequestMeta, item_key: str | None = None,
 ) -> dict[str, Any]:
-    """A free-form portfolio artifact (a file, or an approved link) — up to
-    ``max_artifacts``. Returns ``_storage_key`` for the router on a file."""
+    """A file — or, free-form, an approved link too.
+
+    ``item_key`` answers one specific item whose ``response_type`` is
+    ``"file"``: the one shape ``PUT /task/responses/{item_key}`` refuses
+    outright, so before this a candidate had no way to answer a file item at
+    all (gap 1). It counts toward THAT item, never toward
+    ``max_artifacts``, and is replaceable — the old response row (and its
+    object) is removed first, since a file's ``storage_key`` never changes in
+    place (``task_responses_frozen``). Without ``item_key`` this is a
+    free-form portfolio artifact, up to ``max_artifacts``, unchanged. Returns
+    ``_storage_key`` for the router on a file.
+    """
     sub = await by_token(db, raw)
-    if sub["kind"] != "portfolio":
-        raise TaskError(409, "Only a portfolio round accepts artifacts.")
     if sub["status"] not in ("assigned", "in_progress"):
         raise TaskError(409, "This task is no longer open for changes.")
+    _require_consent(sub, action="adding to it")
     now = datetime.now(tz=UTC)
     if _deadline_passed(sub, now):
         raise TaskError(409, "This task's window has closed; nothing more can be added.")
-    count = await db.scalar(
-        text(
-            "SELECT count(*) FROM task_responses WHERE submission_id = :s"
-            "   AND item_key IS NULL AND redacted_at IS NULL"
-        ),
-        {"s": sub["id"]},
-    )
-    if sub["max_artifacts"] is not None and int(count or 0) >= int(sub["max_artifacts"]):
-        raise TaskError(422, f"At most {sub['max_artifacts']} artifacts are accepted.")
+
+    item: dict[str, Any] | None = None
+    if item_key is not None:
+        item = _item_or_raise(sub, item_key)
+        if item["response_type"] != "file":
+            raise TaskError(422, f"Item '{item_key}' does not take a file.")
+        if kind != "file":
+            raise TaskError(422, "An item's file answer must be a file.")
+    elif sub["kind"] != "portfolio":
+        raise TaskError(409, "Only a portfolio round accepts artifacts.")
+
     title = (title or "").strip() or None
     if title and len(title) > MAX_ARTIFACT_TITLE:
         raise TaskError(422, f"A title is at most {MAX_ARTIFACT_TITLE} characters.")
@@ -982,11 +1127,37 @@ async def add_artifact(
     if link_kind is not None and link_kind not in LINK_KINDS:
         raise TaskError(422, "Choose a valid artifact type.")
 
-    if sub["status"] == "assigned":
-        await db.execute(
-            text("UPDATE task_submissions SET status = 'in_progress', started_at = :n WHERE id = :i"),
-            {"n": now, "i": sub["id"]},
+    replaced_key: str | None = None
+    if item is not None:
+        position = len(sub["items"])
+        existing = (
+            await db.execute(
+                text(
+                    "SELECT id, storage_key FROM task_responses"
+                    " WHERE submission_id = :s AND item_key = :k AND redacted_at IS NULL"
+                ),
+                {"s": sub["id"], "k": item_key},
+            )
+        ).mappings().first()
+        if existing is not None:
+            # A file's storage_key never changes in place -- replacing it is
+            # a new row. The old one may now be deleted: the submission is
+            # still open (task_responses_frozen, M2's fix).
+            await db.execute(
+                text("DELETE FROM task_responses WHERE id = :i"), {"i": existing["id"]},
+            )
+            replaced_key = existing["storage_key"]
+    else:
+        count = await db.scalar(
+            text(
+                "SELECT count(*) FROM task_responses WHERE submission_id = :s"
+                "   AND item_key IS NULL AND redacted_at IS NULL"
+            ),
+            {"s": sub["id"]},
         )
+        if sub["max_artifacts"] is not None and int(count or 0) >= int(sub["max_artifacts"]):
+            raise TaskError(422, f"At most {sub['max_artifacts']} artifacts are accepted.")
+        position = int(count or 0)
 
     response_id = uuid.uuid4()
     storage_key: str | None = None
@@ -1005,10 +1176,10 @@ async def add_artifact(
                 "INSERT INTO task_responses (id, company_id, submission_id, item_key, position,"
                 " response_type, title, description, link_kind, storage_key, original_name,"
                 " content_type, size_bytes, sha256, created_at, updated_at)"
-                " VALUES (:i,:c,:s,NULL,:p,'file',:t,:d,:lk,:k,:n,:ct,:sz,:sha,:now,:now)"
+                " VALUES (:i,:c,:s,:ik,:p,'file',:t,:d,:lk,:k,:n,:ct,:sz,:sha,:now,:now)"
             ),
-            {"i": response_id, "c": sub["company_id"], "s": sub["id"], "p": int(count or 0),
-             "t": title, "d": description, "lk": link_kind, "k": storage_key,
+            {"i": response_id, "c": sub["company_id"], "s": sub["id"], "ik": item_key,
+             "p": position, "t": title, "d": description, "lk": link_kind, "k": storage_key,
              "n": checked.safe_name, "ct": checked.content_type, "sz": checked.size_bytes,
              "sha": checked.sha256, "now": now},
         )
@@ -1021,18 +1192,21 @@ async def add_artifact(
             text(
                 "INSERT INTO task_responses (id, company_id, submission_id, item_key, position,"
                 " response_type, title, description, link_kind, link_url, created_at, updated_at)"
-                " VALUES (:i,:c,:s,NULL,:p,'link',:t,:d,:lk,:lu,:now,:now)"
+                " VALUES (:i,:c,:s,:ik,:p,'link',:t,:d,:lk,:lu,:now,:now)"
             ),
-            {"i": response_id, "c": sub["company_id"], "s": sub["id"], "p": int(count or 0),
-             "t": title, "d": description, "lk": link_kind, "lu": clean, "now": now},
+            {"i": response_id, "c": sub["company_id"], "s": sub["id"], "ik": item_key,
+             "p": position, "t": title, "d": description, "lk": link_kind, "lu": clean, "now": now},
         )
     else:
         raise TaskError(422, "An artifact is a file or a link.")
 
+    if replaced_key and replaced_key != storage_key:
+        await store.remove(settings, [replaced_key])
+
     await _event(
         db, company_id=sub["company_id"], submission_id=sub["id"], round_id=sub["round_id"],
         action="artifact_added", actor_type="candidate", actor=sub["candidate_user_id"],
-        details={"kind": kind},
+        details={"kind": kind, "item_key": item_key} if item_key else {"kind": kind},
     )
     return {"id": str(response_id), "_storage_key": storage_key}
 
@@ -1040,16 +1214,19 @@ async def add_artifact(
 async def remove_artifact(
     db: AsyncSession, *, raw: str | None, response_id: uuid.UUID, meta: RequestMeta,
 ) -> str | None:
-    """Remove a free-form artifact. Returns the storage key to delete, if any."""
+    """Remove a free-form artifact, or an item's own file answer (M2 — a
+    wrong upload, an ID scan instead of a portfolio PDF, must be retractable
+    rather than shipping with the submission). Returns the storage key to
+    delete, if any."""
     sub = await by_token(db, raw)
     if sub["status"] not in ("assigned", "in_progress"):
         raise TaskError(409, "This task is no longer open for changes.")
     row = (
         await db.execute(
             text(
-                "SELECT storage_key FROM task_responses"
-                " WHERE id = :i AND submission_id = :s AND item_key IS NULL"
-                "   AND redacted_at IS NULL"
+                "SELECT storage_key, item_key FROM task_responses"
+                " WHERE id = :i AND submission_id = :s AND redacted_at IS NULL"
+                "   AND (item_key IS NULL OR response_type = 'file')"
             ),
             {"i": response_id, "s": sub["id"]},
         )
@@ -1060,40 +1237,116 @@ async def remove_artifact(
     await _event(
         db, company_id=sub["company_id"], submission_id=sub["id"], round_id=sub["round_id"],
         action="artifact_removed", actor_type="candidate", actor=sub["candidate_user_id"],
+        details={"item_key": row["item_key"]} if row["item_key"] else {},
     )
     return row["storage_key"]
 
 
 CONSENT_TYPE = "assessment_submission"
+#: Bumped when the consent notice's wording changes materially — recorded in
+#: every ledger row's evidence so an audit can tell what a candidate actually
+#: agreed to, the same reason a version travels with the interview consent
+#: notice (app/routers/consent.py's ``body.version``).
+CONSENT_NOTICE_VERSION = "1"
 
 
 async def _record_submission_consent(
     db: AsyncSession, *, user_id: uuid.UUID, sub: dict[str, Any],
 ) -> None:
-    """DPDP: the candidate's consent to send their work to the hiring team.
-    Booked against the candidate's own identity, at the moment of the act —
-    never re-granted over a withdrawal (the public_apply.py precedent)."""
-    existing = await db.scalar(
-        text(
-            "SELECT revoked_at IS NOT NULL AS was_revoked FROM dpdp_consent_ledger"
-            " WHERE user_id = :u AND consent_type = :ct AND purpose = 'recruitment'"
-            " ORDER BY granted_at DESC LIMIT 1"
-        ),
-        {"u": user_id, "ct": CONSENT_TYPE},
-    )
-    if existing is not None:
-        if existing:
-            log.info("job_tasks.consent.not_regranted_after_withdrawal", user_id=str(user_id))
+    """DPDP: the candidate's consent to send THIS submission's work to the
+    hiring team. Booked against the candidate's own identity, at the moment
+    of the act (``start``) — ONE row per submission, so a second submission
+    (a re-issue, or a later round) gets a row of its own rather than being
+    silently covered by an earlier one. Never re-granted once this identity's
+    consent of this type has ever been revoked — the public_apply.py
+    precedent — regardless of which submission the revoked row named."""
+    rows = (
+        await db.execute(
+            text(
+                "SELECT revoked_at IS NOT NULL AS was_revoked,"
+                "       evidence ->> 'submission_id' AS submission_id"
+                "  FROM dpdp_consent_ledger"
+                " WHERE user_id = :u AND consent_type = :ct AND purpose = 'recruitment'"
+            ),
+            {"u": user_id, "ct": CONSENT_TYPE},
+        )
+    ).mappings().all()
+    if any(r["was_revoked"] for r in rows):
+        log.info("job_tasks.consent.not_regranted_after_withdrawal", user_id=str(user_id))
         return
+    if any(r["submission_id"] == str(sub["id"]) for r in rows):
+        return  # idempotent: this submission already has its own row
     await db.execute(
         text(
             "INSERT INTO dpdp_consent_ledger (id, user_id, consent_type, granted, granted_at,"
             " purpose, evidence) VALUES (:id, :u, :ct, true, now(), 'recruitment', CAST(:ev AS jsonb))"
         ),
         {"id": uuid.uuid4(), "u": user_id, "ct": CONSENT_TYPE,
-         "ev": json.dumps({"source": "task_submit", "submission_id": str(sub["id"]),
-                          "company_id": str(sub["company_id"])})},
+         "ev": json.dumps({"source": "task_start", "submission_id": str(sub["id"]),
+                          "company_id": str(sub["company_id"]),
+                          "notice_version": CONSENT_NOTICE_VERSION})},
     )
+
+
+async def withdraw_task_consent(
+    db: AsyncSession, *, raw: str | None, meta: RequestMeta,
+) -> dict[str, Any]:
+    """The candidate withdraws their consent to send this task's work to the
+    hiring team (DPDP §11) — reachable with the same ``X-Task-Token``
+    credential that authorises a save, since most candidates here have no
+    account to sign in with (the preboarding-documents precedent,
+    ``app/preboarding.py::withdraw_consent``).
+
+    Nothing already stored is deleted by this — that is what erasure and
+    retention are for. It stops anything FURTHER: ``save``, ``add_artifact``
+    and ``submit`` all refuse once ``consented_at`` is cleared (mirrored onto
+    the submission row here so those checks need no ledger join), and the
+    issuer is told. A repeat call, or a submission that was never started, is
+    a 409. Caller commits.
+    """
+    sub = await by_token(db, raw)
+    if sub["status"] not in ("assigned", "in_progress"):
+        raise TaskError(
+            409, "This task is no longer open; there is no consent left to withdraw."
+        )
+    if sub["consented_at"] is None:
+        if sub["status"] == "assigned":
+            raise TaskError(409, "This task has not been started, so there is no consent yet.")
+        raise TaskError(409, "Consent for this task is already withdrawn.")
+    user_id = sub["candidate_user_id"]
+    revoked = (
+        await db.execute(
+            text(
+                "UPDATE dpdp_consent_ledger SET revoked_at = now()"
+                " WHERE user_id = :u AND consent_type = :ct AND purpose = 'recruitment'"
+                "   AND granted AND revoked_at IS NULL"
+                "   AND evidence ->> 'submission_id' = :s"
+                " RETURNING id"
+            ),
+            {"u": user_id, "ct": CONSENT_TYPE, "s": str(sub["id"])},
+        )
+    ).all()
+    if not revoked:
+        raise TaskError(409, "Consent for this task is already withdrawn.")
+    await db.execute(
+        text("UPDATE task_submissions SET consented_at = NULL, updated_at = now() WHERE id = :i"),
+        {"i": sub["id"]},
+    )
+    await _event(
+        db, company_id=sub["company_id"], submission_id=sub["id"], round_id=sub["round_id"],
+        action="consent_withdrawn", actor_type="candidate", actor=user_id,
+    )
+    _audit(db, actor=user_id, action="task_submission.consent_withdrawn", resource_id=sub["id"],
+          details={"company_id": str(sub["company_id"]), "rows": len(revoked)}, meta=meta,
+          actor_type="candidate")
+    if sub["issued_by_user_id"]:
+        await create_notification(
+            db, user_id=sub["issued_by_user_id"], kind="task_consent_withdrawn",
+            title=f"{sub['candidate_name']} withdrew consent for {sub['round_title']}",
+            body="They can save, upload or submit no further work until they agree again.",
+            link="/hr/requisitions",
+        )
+    return {"withdrawn": True}
 
 
 def _min_artifacts_met(sub: dict[str, Any], artifact_count: int) -> bool:
@@ -1105,11 +1358,18 @@ def _min_artifacts_met(sub: dict[str, Any], artifact_count: int) -> bool:
 async def submit(
     db: AsyncSession, *, raw: str | None, consent: bool, meta: RequestMeta,
 ) -> dict[str, Any]:
+    """Send the finished work to the hiring team.
+
+    ``consent`` is accepted and ignored (H2) — kept only so the field the UI
+    still sends (``publicTask.ts::submitTask``, for compatibility) never
+    becomes an unrecognised-field error. Consent itself was taken at
+    ``start``; this needs only that it is STILL standing —
+    ``_require_consent`` refuses if it was withdrawn since (``withdraw_task_consent``).
+    """
     sub = await by_token(db, raw)
     if sub["status"] not in ("assigned", "in_progress"):
         raise TaskError(409, f"This task is already {sub['status']}.")
-    if not consent:
-        raise TaskError(422, "Agree to send this work to the hiring team before submitting.")
+    _require_consent(sub, action="submitting")
     items = item_index(sub["items"])
     responses = {
         r["item_key"]: r for r in await _responses_for(db, sub["id"]) if r["item_key"]
@@ -1133,19 +1393,18 @@ async def submit(
     now = datetime.now(tz=UTC)
     user_id = sub["candidate_user_id"]
     if user_id is None:
-        user_id = await provision_guest_user(
-            db, applicant_id=sub["applicant_id"], full_name=sub["candidate_name"],
-            company_id=sub["company_id"], language=await candidate_language(db, sub["applicant_id"]),
-            email_prefix="task", now=now,
-        )
+        # Structurally unreachable once consent lives at `start` — the only
+        # place a guest identity is ever provisioned for this submission
+        # (L7's race-handling moved there with it) — so this refuses rather
+        # than provisioning a second identity here.
+        raise TaskError(409, "This task has no candidate identity yet; start it again.")
     await db.execute(
         text(
             "UPDATE task_submissions SET status = 'submitted', submitted_at = :n,"
-            " closed_by = 'candidate', consented_at = :n, updated_at = :n WHERE id = :i"
+            " closed_by = 'candidate', updated_at = :n WHERE id = :i"
         ),
         {"n": now, "i": sub["id"]},
     )
-    await _record_submission_consent(db, user_id=user_id, sub=sub)
     await _event(
         db, company_id=sub["company_id"], submission_id=sub["id"], round_id=sub["round_id"],
         action="submitted", actor_type="candidate", actor=user_id,
@@ -1220,6 +1479,11 @@ def _submission_out(row: dict[str, Any]) -> dict[str, Any]:
         "due_at": _iso(row["due_at"]), "started_at": _iso(row["started_at"]),
         "submitted_at": _iso(row["submitted_at"]), "attempt_no": row["attempt_no"],
         "created_at": _iso(row["created_at"]),
+        # Gap 4: TaskSubmissionSection.tsx documents having to INFER which row
+        # is the live one from list order (`for_enrolment` orders newest
+        # first) because `_submission_out` carried no `superseded_at`.
+        "superseded_at": _iso(row.get("superseded_at")),
+        "is_current": row.get("superseded_at") is None,
     }
 
 
@@ -1237,7 +1501,20 @@ async def for_enrolment(db: AsyncSession, *, company_id: uuid.UUID, enrolment_id
             {"e": enrolment_id, "c": company_id},
         )
     ).mappings().all()
-    return [_submission_out(dict(r)) for r in rows]
+    out = []
+    for r in rows:
+        row = dict(r)
+        entry = _submission_out(row)
+        # Gap 4 closes "no content" — M1 says the content is submitted work
+        # ONLY: an unsubmitted draft is not shown here either, so this list
+        # cannot become a second way to watch autosaves live.
+        entry["responses"] = (
+            await _responses_for(db, row["id"])
+            if row["status"] == "submitted" and row.get("consented_at") is not None
+            else []
+        )
+        out.append(entry)
+    return out
 
 
 async def for_requisition(db: AsyncSession, *, company_id: uuid.UUID, requisition_id: uuid.UUID) -> list[dict[str, Any]]:
@@ -1263,10 +1540,35 @@ async def reissue(
     db: AsyncSession, *, company_id: uuid.UUID, submission_id: uuid.UUID, actor: uuid.UUID,
     meta: RequestMeta,
 ) -> dict[str, Any]:
-    """Supersede a submission and issue a fresh link for the same round."""
+    """Supersede a submission and issue a fresh link for the same round.
+
+    L3 (security review, wave 5): a LIVE submission (``assigned``/
+    ``in_progress``) is withdrawn here first, atomically, so ``issue`` never
+    takes its own "already live — reuse it" shortcut on this call. That
+    shortcut exists for the WORKFLOW RUNNER advancing a candidate who is
+    already mid-task, not for HR replacing a link they believe is
+    compromised — reached through this shortcut, reissue minted no new
+    token and sent no email while still writing a 'reissued' event and audit
+    row, so HR believed a leaked link had been replaced when it had not.
+    """
     sub = await _hr_submission(db, company_id, submission_id)
     if sub["superseded_at"] is not None:
         raise TaskError(409, "A newer link has already been issued for this round.")
+    if sub["status"] in ("assigned", "in_progress"):
+        now = datetime.now(tz=UTC)
+        await db.execute(
+            text(
+                "UPDATE task_submissions SET status = 'withdrawn', token_hash = NULL,"
+                " updated_at = :n WHERE id = :i"
+            ),
+            {"n": now, "i": submission_id},
+        )
+        await _event(
+            db, company_id=company_id, submission_id=submission_id, round_id=sub["round_id"],
+            action="withdrawn", actor_type="user", actor=actor, details={"reason": "reissue"},
+        )
+        _audit(db, actor=actor, action="task_submission.withdrawn", resource_id=submission_id,
+              details={"company_id": str(company_id), "reason": "reissue"}, meta=meta)
     enrolment = (
         await db.execute(
             text(
@@ -1325,16 +1627,59 @@ async def withdraw(
     return _submission_out(await _hr_submission(db, company_id, submission_id))
 
 
+async def close_for_decision(
+    db: AsyncSession, *, company_id: uuid.UUID, enrolment_id: uuid.UUID, actor: uuid.UUID | None,
+    meta: RequestMeta,
+) -> int:
+    """Withdraw this application's open task submissions when a final
+    decision (hire or reject) is recorded — the ``interview_scheduling.
+    close_for_decision`` precedent (M5, security review PH4-D4 wave 5): a
+    task link otherwise outlives the application, since ``by_token`` only
+    ever consulted the submission's own status, never the enrolment's.
+    Called from ``app/final_decision.py`` when a hire or reject is recorded —
+    never the other way around; this module never writes a decision itself
+    (CLAUDE.md constraint 9). Caller commits.
+    """
+    now = datetime.now(tz=UTC)
+    rows = (
+        await db.execute(
+            text(
+                "UPDATE task_submissions SET status = 'withdrawn', token_hash = NULL,"
+                " updated_at = :n WHERE enrolment_id = :e AND company_id = :c"
+                "   AND status IN ('assigned', 'in_progress') AND superseded_at IS NULL"
+                " RETURNING id, round_id"
+            ),
+            {"e": enrolment_id, "c": company_id, "n": now},
+        )
+    ).mappings().all()
+    for r in rows:
+        await _event(
+            db, company_id=company_id, submission_id=r["id"], round_id=r["round_id"],
+            action="withdrawn", actor_type="user" if actor else "system", actor=actor,
+            details={"reason": "final_decision"},
+        )
+        _audit(db, actor=actor, action="task_submission.withdrawn", resource_id=r["id"],
+              details={"company_id": str(company_id), "reason": "final_decision"}, meta=meta)
+    if rows:
+        log.info("job_tasks.close_for_decision", enrolment_id=str(enrolment_id), count=len(rows))
+    return len(rows)
+
+
 async def artifact_download(
     db: AsyncSession, *, company_id: uuid.UUID, submission_id: uuid.UUID, response_id: uuid.UUID,
     actor: uuid.UUID | None, actor_type: str, meta: RequestMeta,
 ) -> dict[str, Any]:
+    """HR's download of a candidate's file — M1: only for submitted,
+    consented work, exactly what a candidate agreed to send. An unsubmitted
+    draft is not reachable here even with the response id in hand."""
     row = (
         await db.execute(
             text(
-                "SELECT storage_key, original_name FROM task_responses"
-                " WHERE id = :i AND submission_id = :s AND company_id = :c"
-                "   AND redacted_at IS NULL"
+                "SELECT r.storage_key, r.original_name FROM task_responses r"
+                "  JOIN task_submissions s ON s.id = r.submission_id AND s.company_id = r.company_id"
+                " WHERE r.id = :i AND r.submission_id = :s AND r.company_id = :c"
+                "   AND r.redacted_at IS NULL"
+                "   AND s.status = 'submitted' AND s.consented_at IS NOT NULL"
             ),
             {"i": response_id, "s": submission_id, "c": company_id},
         )
@@ -1358,6 +1703,10 @@ async def artifact_download(
 async def submission_for_reviewer(
     db: AsyncSession, *, company_id: uuid.UUID, scorecard_id: uuid.UUID, interviewer_user_id: uuid.UUID,
 ) -> dict[str, Any]:
+    """M1: only a SUBMITTED, consented attempt is a submission to review — an
+    assigned reviewer must not be able to watch autosaves live. Gap 2: the
+    round's own brief and item prompts are included, not just item keys and
+    answers, so a reviewer can tell what a response was actually answering."""
     from app.interviewer_scorecards import _load_owned  # noqa: PLC0415 — avoid a cycle
 
     card = await _load_owned(
@@ -1368,6 +1717,7 @@ async def submission_for_reviewer(
             text(
                 "SELECT s.* FROM task_submissions s"
                 " WHERE s.enrolment_id = :e AND s.round_id = :r AND s.company_id = :c"
+                "   AND s.status = 'submitted' AND s.consented_at IS NOT NULL"
                 " ORDER BY s.attempt_no DESC LIMIT 1"
             ),
             {"e": card["enrolment_id"], "r": card["round_id"], "c": company_id},
@@ -1380,10 +1730,13 @@ async def submission_for_reviewer(
         db, company_id=company_id, submission_id=sub["id"], round_id=sub["round_id"],
         action="submission_viewed", actor_type="user", actor=interviewer_user_id,
     )
+    cfg = await get_config(db, company_id=company_id, round_id=sub["round_id"])
     materials = await list_materials(db, company_id=company_id, round_id=sub["round_id"])
     return {
         "submission_id": str(sub["id"]), "status": sub["status"], "kind": sub["kind"],
-        "submitted_at": _iso(sub["submitted_at"]), "materials": materials,
+        "submitted_at": _iso(sub["submitted_at"]),
+        "brief": cfg["brief"] if cfg else None, "items": cfg["items"] if cfg else [],
+        "materials": materials,
         "responses": await _responses_for(db, sub["id"]),
     }
 
@@ -1392,6 +1745,9 @@ async def reviewer_artifact_download(
     db: AsyncSession, *, company_id: uuid.UUID, scorecard_id: uuid.UUID,
     interviewer_user_id: uuid.UUID, response_id: uuid.UUID, meta: RequestMeta,
 ) -> dict[str, Any]:
+    """M1: gated on ``submitted`` + consented, same as ``submission_for_reviewer``.
+    Writes an audit row too — a reviewer reading a candidate's file is as
+    traceable as HR doing it (``artifact_download`` above already does)."""
     from app.interviewer_scorecards import _load_owned  # noqa: PLC0415
 
     card = await _load_owned(
@@ -1400,10 +1756,11 @@ async def reviewer_artifact_download(
     row = (
         await db.execute(
             text(
-                "SELECT r.storage_key, r.original_name FROM task_responses r"
-                "  JOIN task_submissions s ON s.id = r.submission_id"
+                "SELECT r.storage_key, r.original_name, s.id AS submission_id FROM task_responses r"
+                "  JOIN task_submissions s ON s.id = r.submission_id AND s.company_id = r.company_id"
                 " WHERE r.id = :i AND s.enrolment_id = :e AND s.round_id = :rd"
                 "   AND s.company_id = :c AND r.redacted_at IS NULL"
+                "   AND s.status = 'submitted' AND s.consented_at IS NOT NULL"
             ),
             {"i": response_id, "e": card["enrolment_id"], "rd": card["round_id"], "c": company_id},
         )
@@ -1415,7 +1772,28 @@ async def reviewer_artifact_download(
         db, company_id=company_id, submission_id=None, round_id=card["round_id"],
         action="artifact_downloaded", actor_type="user", actor=interviewer_user_id,
     )
+    _audit(db, actor=interviewer_user_id, action="task_response.downloaded", resource_id=response_id,
+          details={"company_id": str(company_id), "submission_id": str(row["submission_id"])},
+          meta=meta, actor_type="user")
     return {"url": url, "expires_in": store.PRESIGN_SECONDS}
+
+
+async def reviewer_material_download(
+    db: AsyncSession, *, company_id: uuid.UUID, scorecard_id: uuid.UUID,
+    interviewer_user_id: uuid.UUID, material_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Gap 3: a reviewer had no way at all to read the round's reference
+    materials, only the candidate's own responses. Owned through the SAME
+    scorecard check as the artifact download above, then delegates to the
+    existing ``material_download`` (HR's own, unchanged)."""
+    from app.interviewer_scorecards import _load_owned  # noqa: PLC0415
+
+    card = await _load_owned(
+        db, scorecard_id=scorecard_id, interviewer_user_id=interviewer_user_id, company_id=company_id,
+    )
+    return await material_download(
+        db, company_id=company_id, round_id=card["round_id"], material_id=material_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1453,7 +1831,7 @@ async def candidate_link(
 # Sweep — close_due
 # ---------------------------------------------------------------------------
 _DUE_SQL = """
-SELECT id, company_id, status, due_at, time_limit_seconds, started_at
+SELECT id, company_id, status, due_at, time_limit_seconds, started_at, consented_at
   FROM task_submissions
  WHERE status IN ('assigned', 'in_progress') AND redacted_at IS NULL
    AND (
@@ -1468,9 +1846,12 @@ SELECT id, company_id, status, due_at, time_limit_seconds, started_at
 
 
 async def close_due(db: AsyncSession) -> int:
-    """Auto-close timed-out submissions: any WORK becomes ``submitted``
-    (``closed_by='time_limit'``); an untouched ``assigned`` row becomes
-    ``expired``. Caller commits."""
+    """Auto-close timed-out submissions: consented WORK becomes ``submitted``
+    (``closed_by='time_limit'``); everything else (nothing saved, or consent
+    withdrawn since — ``withdraw_task_consent`` clears ``consented_at``
+    without moving ``status``) becomes ``expired`` rather than being turned
+    into a submission the candidate never consented to send (H2 — the sweep
+    used to submit unconsented drafts). Caller commits."""
     rows = (
         await db.execute(text(_DUE_SQL), {"grace": settings.task_submit_grace_seconds})
     ).mappings().all()
@@ -1481,7 +1862,7 @@ async def close_due(db: AsyncSession) -> int:
             text("SELECT 1 FROM task_responses WHERE submission_id = :s AND redacted_at IS NULL"),
             {"s": r["id"]},
         )
-        if has_work:
+        if has_work and r["consented_at"] is not None:
             await db.execute(
                 text(
                     "UPDATE task_submissions SET status = 'submitted', submitted_at = :n,"
@@ -1511,18 +1892,39 @@ async def close_due(db: AsyncSession) -> int:
 # ---------------------------------------------------------------------------
 _PURGEABLE_SQL = """
 SELECT s.id, s.company_id FROM task_submissions s
+  JOIN enrolments e ON e.id = s.enrolment_id AND e.company_id = s.company_id
  WHERE s.redacted_at IS NULL
-   AND s.status IN ('submitted', 'expired', 'withdrawn')
-   AND COALESCE(s.submitted_at, s.updated_at) < :cutoff
+   AND (
+     -- Nothing became evidence of anything: purge on the submission's own
+     -- clock, exactly like before, since there is no decision to wait on.
+     (s.status IN ('expired', 'withdrawn')
+        AND COALESCE(s.submitted_at, s.updated_at) < :cutoff)
+     OR (
+       -- Real evidence a decision may have been made on: only once the
+       -- APPLICATION is decided, and only once the decision itself is older
+       -- than the cutoff (the code_evidence.py / accommodations.py
+       -- precedent) -- config.py's own comment already promised this shape.
+       -- A HELD or otherwise undecided application never matches: there is
+       -- no COALESCE(decision, 'epoch') here, the exact bug PH4-D3 shipped.
+       s.status = 'submitted'
+       AND e.status IN ('hired', 'rejected')
+       AND (SELECT max(t.occurred_at) FROM stage_transitions t
+             WHERE t.enrolment_id = e.id AND t.to_status IN ('hired', 'rejected')) < :cutoff
+     )
+   )
  LIMIT :lim
+ FOR UPDATE OF s SKIP LOCKED
 """
 _PURGE_BATCH = 500
 
 
 async def purge(db: AsyncSession, *, retention_days: int, dry_run: bool) -> int:
-    """Withdraw nothing further, redact responses and clear the link,
-    ``retention_days`` after a submission closed. Honours RETENTION_DRY_RUN.
-    Caller commits."""
+    """Redact responses and clear the link ``retention_days`` after a
+    submission closed unproductively (expired/withdrawn), or after the
+    application it was evidence for is decided (M6 — decision-aware, matching
+    ``config.py``'s own comment on ``task_submission_retention_days``; a HELD
+    application no longer loses its evidence 180 days in). Honours
+    RETENTION_DRY_RUN. Caller commits."""
     cutoff = datetime.now(tz=UTC) - timedelta(days=retention_days)
     rows = (await db.execute(text(_PURGEABLE_SQL), {"cutoff": cutoff, "lim": _PURGE_BATCH})).all()
     if dry_run or not rows:
@@ -1559,7 +1961,7 @@ async def purge(db: AsyncSession, *, retention_days: int, dry_run: bool) -> int:
         await db.execute(
             text(
                 "UPDATE task_submissions SET token_hash = NULL, redacted_at = :n, updated_at = :n"
-                " WHERE id = :i"
+                " WHERE id = :i AND redacted_at IS NULL"
             ),
             {"n": now, "i": sub_id},
         )

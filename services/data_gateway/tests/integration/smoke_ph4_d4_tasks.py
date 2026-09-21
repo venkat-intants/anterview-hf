@@ -11,15 +11,16 @@ real Postgres.
     PYTHONPATH=".;../.." DATABASE_URL=postgresql+asyncpg://ph3:ph3@127.0.0.1:55432/ph4_w5 \\
       DATABASE_SSL= python tests/integration/smoke_ph4_d4_tasks.py
 
-OBJECT STORAGE IS FAKED, DELIBERATELY. MinIO is not available on this
-machine for this wave (another project holds :9000, untouched); app.job_tasks
-delegates every byte-carrying call to app.document_storage, so this script
-replaces exactly those four functions (store/signed_download/remove/
-keys_under) with in-memory equivalents before the app is exercised.
-``document_storage.check`` — the magic-byte sniff — is untouched and runs for
-real. What this script does NOT prove: that bytes actually round-trip through
-S3/R2. That is out of scope for this session and is called out again in the
-final report.
+OBJECT STORAGE IS FAKED BY DEFAULT. app.job_tasks delegates every
+byte-carrying call to app.document_storage, so this script replaces exactly
+those four functions (store/signed_download/remove/keys_under) with in-memory
+equivalents. ``document_storage.check`` — the magic-byte sniff — is never
+replaced and always runs for real.
+
+SMOKE_REAL_STORAGE=1 runs against a real S3-compatible store instead (a local
+MinIO, with S3_ENDPOINT / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY /
+S3_BUCKET_NAME pointing at it): nothing is patched, and a candidate's file is
+fetched back through its signed URL and compared byte for byte.
 
 Seeds its own company; leaves it behind (unique slug), like the other smokes.
 """
@@ -39,6 +40,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 URL = os.environ.get("SMOKE_DATABASE_URL", "postgresql+asyncpg://ph3:ph3@127.0.0.1:55432/ph4_w5")
 PASS: list[str] = []
 FAIL: list[str] = []
+# A real (tiny) PDF header, so the magic-byte check accepts it.
+CV_BYTES = b"%PDF-1.4\n%smoke cv\n%%EOF\n"
 
 
 def check(label: str, cond: bool, detail: str = "") -> None:
@@ -213,13 +216,21 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         async with factory() as session:
             yield session
 
+    real_storage = os.environ.get("SMOKE_REAL_STORAGE") == "1"
     fake_store = _FakeStore()
     import app.job_tasks as job_tasks_mod
+    from app.config import settings as app_settings
 
-    job_tasks_mod.store.store = fake_store.store  # type: ignore[method-assign]
-    job_tasks_mod.store.signed_download = fake_store.signed_download  # type: ignore[method-assign]
-    job_tasks_mod.store.remove = fake_store.remove  # type: ignore[method-assign]
-    job_tasks_mod.store.keys_under = fake_store.keys_under  # type: ignore[method-assign]
+    if not real_storage:
+        job_tasks_mod.store.store = fake_store.store  # type: ignore[method-assign]
+        job_tasks_mod.store.signed_download = fake_store.signed_download  # type: ignore[method-assign]
+        job_tasks_mod.store.remove = fake_store.remove  # type: ignore[method-assign]
+        job_tasks_mod.store.keys_under = fake_store.keys_under  # type: ignore[method-assign]
+    print(f"\nobject storage: {'REAL (' + app_settings.s3_endpoint + ')' if real_storage else 'faked'}")
+
+    async def stored_under(prefix: str) -> list[str]:
+        """What storage holds under ``prefix`` -- the fake's dict, or the bucket."""
+        return list(await job_tasks_mod.store.keys_under(app_settings, prefix))
 
     # Unique per RUN (``tag``), not just per call within one run — a previous
     # run's rows are deliberately left behind (like every other smoke here),
@@ -396,7 +407,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("a file item still gets the magic-byte check", r.status_code == 422, r.text[:200])
 
         r = await c.post("/task/artifacts", headers=headers_port, data={"item_key": "cv"},
-                         files={"file": ("cv.pdf", b"%PDF-1.4\n%smoke\n", "application/pdf")})
+                         files={"file": ("cv.pdf", CV_BYTES, "application/pdf")})
         check("candidate uploads a file against the CV item (multipart item_key)",
               r.status_code == 201, r.text[:300])
 
@@ -426,6 +437,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                         f"/artifacts/{cv['id'] if cv else ''}/download")
         check("HR downloads the candidate's file", r.status_code == 200 and "url" in r.json(),
               r.text[:200])
+        if real_storage and r.status_code == 200:
+            async with AsyncClient() as ext:
+                got = await ext.get(r.json()["url"])
+            check("…and the signed URL returns exactly the bytes the candidate uploaded",
+                  got.status_code == 200 and got.content == CV_BYTES,
+                  f"{got.status_code} {got.content[:40]!r}")
         async with factory() as db:
             audited = await db.scalar(
                 text("SELECT count(*) FROM audit_log WHERE action = 'task_response.downloaded'"
@@ -593,9 +610,8 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               r.text[:200])
         r = await c.delete(f"/hr/rounds/{draft_round}/task/materials/{mat.get('id')}")
         check("HR removes the material", r.status_code == 204, r.text[:200])
-        check("…and its file is gone from storage",
-              not any(k.startswith(f"task_materials/{cid}/{draft_round}/") for k in fake_store.objects),
-              str(list(fake_store.objects))[:200])
+        left_files = await stored_under(f"task_materials/{cid}/{draft_round}/")
+        check("…and its file is gone from storage", not left_files, str(left_files)[:200])
 
         # Moving a round AWAY from a task kind drops its config and materials —
         # and, since this change, the materials' files too (after the commit).
@@ -610,9 +626,9 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 {"r": draft_round},
             )
         check("…its task materials are gone", left == 0, str(left))
-        check("…and so are their files, not orphaned in storage",
-              not any(k.startswith(f"task_materials/{cid}/{draft_round}/") for k in fake_store.objects),
-              str(list(fake_store.objects))[:200])
+        left_files = await stored_under(f"task_materials/{cid}/{draft_round}/")
+        check("…and so are their files, not orphaned in storage", not left_files,
+              str(left_files)[:200])
 
     app.dependency_overrides.clear()
     await eng.dispose()

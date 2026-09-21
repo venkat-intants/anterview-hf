@@ -1178,7 +1178,6 @@ async def summary_for_enrolments(
     D3 M3)."""
     if not enrolment_ids:
         return {}
-    live = "f.superseded_at IS NULL AND f.redacted_at IS NULL"
     rows = (
         await db.execute(
             text(
@@ -1189,12 +1188,12 @@ async def summary_for_enrolments(
                 "            WHERE rf.company_id = s.company_id AND rf.signal_id = s.id"
                 "              AND rf.superseded_at IS NULL AND rf.redacted_at IS NULL"
                 "       )) AS unreviewed_signal_count,"
-                f"       count(DISTINCT f.id) FILTER (WHERE {live}) AS finding_count,"
-                f"       count(DISTINCT f.id) FILTER (WHERE {live} AND f.outcome = 'no_concern')"
+                "       count(DISTINCT f.id) FILTER (WHERE f.superseded_at IS NULL AND f.redacted_at IS NULL) AS finding_count,"
+                "       count(DISTINCT f.id) FILTER (WHERE f.superseded_at IS NULL AND f.redacted_at IS NULL AND f.outcome = 'no_concern')"
                 "           AS no_concern_count,"
-                f"       count(DISTINCT f.id) FILTER (WHERE {live} AND f.outcome = 'follow_up')"
+                "       count(DISTINCT f.id) FILTER (WHERE f.superseded_at IS NULL AND f.redacted_at IS NULL AND f.outcome = 'follow_up')"
                 "           AS follow_up_count,"
-                f"       count(DISTINCT f.id) FILTER (WHERE {live} AND f.outcome = 'confirmed')"
+                "       count(DISTINCT f.id) FILTER (WHERE f.superseded_at IS NULL AND f.redacted_at IS NULL AND f.outcome = 'confirmed')"
                 "           AS confirmed_count"
                 "  FROM exam_assignments asg"
                 "  JOIN exam_attempts a ON a.assignment_id = asg.id AND a.company_id = asg.company_id"

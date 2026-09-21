@@ -11,7 +11,7 @@
 // mirrors the server's own bounds (20–2000 characters) so a save never
 // round-trips into a 422.
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   FINDING_RATIONALE_MAX,
@@ -19,9 +19,9 @@ import {
   getSimilarityCompare,
   recordCodeIntegrityFinding,
   type AttemptSimilaritySignal,
+  type ExcerptBlock,
   type FindingOutcome,
   type MatchedRegion,
-  type SimilarityExcerpt,
 } from '@/api/codeEvidence';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -39,43 +39,68 @@ function inRange(line: number, ranges: Array<[number, number]>): boolean {
   return ranges.some(([start, end]) => line >= start && line <= end);
 }
 
-/** Plain-text excerpt, one line per row, with matched lines highlighted.
- *  Never HTML — each line is rendered as text content only. */
+/**
+ * Plain-text excerpt, one line per row, with matched lines highlighted.
+ * Never HTML — each line is rendered as text content only.
+ *
+ * Rendered from `blocks`, never the flat `excerpt` string: each block carries
+ * the ABSOLUTE source line it starts on (`start_line`), and `matched_regions`
+ * are also absolute line numbers. Numbering rows 1..N by their position in
+ * the excerpt (the previous version) only ever lined up while excerpts were
+ * the first 200 lines of the file; now that the backend cuts an excerpt
+ * around the matches (commit 6edadcd), a match at line 340 would highlight
+ * row 340 of a ~20-row excerpt — i.e. nothing. Security review, PH4 wave 5.
+ */
 function ExcerptPane({
   title,
-  excerpt,
+  language,
+  blocks,
   highlightRanges,
 }: {
   title: string;
-  excerpt: SimilarityExcerpt;
+  language: string | null;
+  blocks: ExcerptBlock[];
   highlightRanges: Array<[number, number]>;
 }) {
-  const lines = (excerpt.excerpt ?? '').split('\n');
   return (
     <div className="min-w-0 overflow-hidden rounded-[10px] border border-border bg-[#0b0c0e]">
       <div className="border-b border-[var(--ui-line-strong)] px-2.5 py-1.5 text-[11px] uppercase tracking-[0.4px] text-[var(--ui-faint)]">
         {title}
-        {excerpt.language ? ` · ${excerpt.language}` : ''}
+        {language ? ` · ${language}` : ''}
       </div>
       <pre className="max-h-[380px] overflow-auto p-0 text-[12px] leading-[1.55]">
-        {lines.map((line, i) => {
-          const ln = i + 1;
-          const highlighted = inRange(ln, highlightRanges);
-          return (
-            <div
-              key={ln}
-              className={cn(
-                'whitespace-pre px-2.5',
-                highlighted ? 'bg-[var(--ui-warn)]/20 text-[#f5e6c8]' : 'text-[#d8dadd]',
-              )}
-            >
-              <span className="mr-2 inline-block w-7 shrink-0 select-none text-right text-[var(--ui-faint)]">
-                {ln}
-              </span>
-              {line.length === 0 ? ' ' : line}
-            </div>
-          );
-        })}
+        {blocks.map((block, bi) => (
+          <Fragment key={block.start_line}>
+            {bi > 0 ? (
+              // The gap between two non-adjacent matched regions — never a
+              // numbered line of code, and never a highlight target.
+              <div
+                aria-hidden="true"
+                className="select-none whitespace-pre px-2.5 text-[var(--ui-faint)]"
+              >
+                <span className="mr-2 inline-block w-7 shrink-0 text-right"> </span>…
+              </div>
+            ) : null}
+            {block.lines.map((line, li) => {
+              const ln = block.start_line + li;
+              const highlighted = inRange(ln, highlightRanges);
+              return (
+                <div
+                  key={ln}
+                  className={cn(
+                    'whitespace-pre px-2.5',
+                    highlighted ? 'bg-[var(--ui-warn)]/20 text-[#f5e6c8]' : 'text-[#d8dadd]',
+                  )}
+                >
+                  <span className="mr-2 inline-block w-7 shrink-0 select-none text-right text-[var(--ui-faint)]">
+                    {ln}
+                  </span>
+                  {line.length === 0 ? ' ' : line}
+                </div>
+              );
+            })}
+          </Fragment>
+        ))}
       </pre>
     </div>
   );
@@ -112,6 +137,14 @@ export default function CodeSimilarityCompare({
     queryKey: ['hr', 'code-similarity', signal.id],
     queryFn: () => getSimilarityCompare(signal.id),
     retry: false,
+    // `code_similarity.viewed` names a second candidate every time this
+    // fires (D3 #24) — the query default (refetchOnWindowFocus, 15s
+    // staleTime) would otherwise re-audit "HR viewed this candidate's code"
+    // just from returning to the tab. HR re-opening this same dialog is a
+    // deliberate re-fetch either way, so nothing here needs a background
+    // refresh; an explicit invalidation after recording a finding still runs.
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   });
 
   const recordMut = useMutation({
@@ -150,6 +183,23 @@ export default function CodeSimilarityCompare({
   const lowRanges: Array<[number, number]> = matchedRegions.map((r) => [r.low_start, r.low_end]);
   const highRanges: Array<[number, number]> = matchedRegions.map((r) => [r.high_start, r.high_end]);
 
+  // The server orders a pair by UUID (`low_id, high_id = sorted(...)`,
+  // app/code_evidence.py), never by which attempt HR is reviewing — so the
+  // attempt under review is `low` about half the time and `high` the other
+  // half. Rendering `low` as "This submission" unconditionally showed the
+  // OTHER named candidate's code under that label whenever this attempt was
+  // the high side, with the containment figures reversed to match (security
+  // review, PH4 wave 5). `CodeEvidencePanel`'s signal list already works this
+  // out (`otherAttemptId`); this dialog must too, since it is the one place a
+  // misconduct finding gets recorded.
+  const thisIsLow = signal.attempt_low_id === attemptId;
+  const thisExcerpt = compare.data ? (thisIsLow ? compare.data.low : compare.data.high) : undefined;
+  const otherExcerpt = compare.data ? (thisIsLow ? compare.data.high : compare.data.low) : undefined;
+  const thisRanges = thisIsLow ? lowRanges : highRanges;
+  const otherRanges = thisIsLow ? highRanges : lowRanges;
+  const thisContainment = thisIsLow ? signal.containment_low : signal.containment_high;
+  const otherContainment = thisIsLow ? signal.containment_high : signal.containment_low;
+
   return (
     <div
       role="dialog"
@@ -185,8 +235,8 @@ export default function CodeSimilarityCompare({
           ) : null}
 
           <p className="mb-3 font-mono text-[12px] text-[var(--ui-faint)]">
-            containment {pct(signal.containment_low)}
-            {signal.containment_high != null ? ` / ${pct(signal.containment_high)}` : ''} · jaccard{' '}
+            containment {thisContainment != null ? pct(thisContainment) : '—'}
+            {otherContainment != null ? ` / ${pct(otherContainment)}` : ''} · jaccard{' '}
             {pct(signal.jaccard)} · {signal.shared_fingerprints} shared fingerprints
           </p>
 
@@ -199,14 +249,20 @@ export default function CodeSimilarityCompare({
             <p className="py-8 text-[13px] text-[var(--ui-danger)]">
               {errText(compare.error, 'Could not load this comparison.')}
             </p>
-          ) : compare.data ? (
+          ) : compare.data && thisExcerpt && otherExcerpt ? (
             <>
               <div className="grid gap-3 sm:grid-cols-2">
-                <ExcerptPane title="This submission" excerpt={compare.data.low} highlightRanges={lowRanges} />
+                <ExcerptPane
+                  title="This submission"
+                  language={thisExcerpt.language}
+                  blocks={thisExcerpt.blocks}
+                  highlightRanges={thisRanges}
+                />
                 <ExcerptPane
                   title={signal.reference_kind === 'reference_solution' ? 'Reference solution' : 'Other submission'}
-                  excerpt={compare.data.high}
-                  highlightRanges={highRanges}
+                  language={otherExcerpt.language}
+                  blocks={otherExcerpt.blocks}
+                  highlightRanges={otherRanges}
                 />
               </div>
               {matchedRegions.length === 0 ? (

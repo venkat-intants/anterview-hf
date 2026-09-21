@@ -29,6 +29,7 @@ const submitTask = vi.fn();
 const addTaskArtifact = vi.fn();
 const removeTaskArtifact = vi.fn();
 const downloadTaskMaterial = vi.fn();
+const withdrawTaskConsent = vi.fn();
 vi.mock('../api/publicTask', () => ({
   viewTask: (...a: unknown[]) => viewTask(...a) as unknown,
   startTask: (...a: unknown[]) => startTask(...a) as unknown,
@@ -37,6 +38,7 @@ vi.mock('../api/publicTask', () => ({
   addTaskArtifact: (...a: unknown[]) => addTaskArtifact(...a) as unknown,
   removeTaskArtifact: (...a: unknown[]) => removeTaskArtifact(...a) as unknown,
   downloadTaskMaterial: (...a: unknown[]) => downloadTaskMaterial(...a) as unknown,
+  withdrawTaskConsent: (...a: unknown[]) => withdrawTaskConsent(...a) as unknown,
 }));
 
 import PublicTask from '../pages/PublicTask';
@@ -174,6 +176,19 @@ describe('PublicTask — before starting: consent, nothing else', () => {
     expect(begin).toBeEnabled();
   });
 
+  // Security review, PH4-D4 wave 5: the consent copy previously hedged with
+  // "may be outside India" and pointed withdrawal at emailing the hiring
+  // team, when nothing could actually withdraw it. Both are now accurate.
+  it('names the actual storage locations and says withdrawal happens on this page', async () => {
+    renderPage();
+    await screen.findByText('Take-home simulation');
+
+    expect(screen.getByText(/Singapore, United States/)).toBeInTheDocument();
+    expect(screen.queryByText(/may be outside India/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/withdraw this consent at any time on this page/i)).toBeInTheDocument();
+    expect(screen.queryByText(/contacting the hiring team/i)).not.toBeInTheDocument();
+  });
+
   it('sends consent on start, and only then shows items and materials', async () => {
     const user = userEvent.setup();
     startTask.mockResolvedValue(IN_PROGRESS);
@@ -253,6 +268,65 @@ describe('PublicTask — working on it', () => {
 
     await user.click(screen.getByRole('button', { name: /yes, submit/i }));
     await waitFor(() => expect(submitTask).toHaveBeenCalledWith('task_tok_123456'));
+  });
+});
+
+// Security review, PH4-D4 wave 5: the consent notice says the candidate can
+// withdraw ON THIS PAGE, and `POST /task/consent/withdraw` needs a control
+// that actually calls it. Mirrors PublicOffer.test.tsx's document-consent
+// withdrawal shape: a plain link, a two-step confirm, then a done state.
+describe('PublicTask — withdrawing consent', () => {
+  beforeEach(() => {
+    viewTask.mockResolvedValue(IN_PROGRESS);
+  });
+
+  it('withdraws consent through a two-step confirm, then disables further edits', async () => {
+    const user = userEvent.setup();
+    withdrawTaskConsent.mockResolvedValue({ withdrawn: true });
+    renderPage();
+    await screen.findByText('Take-home simulation');
+
+    await user.click(screen.getByRole('button', { name: /withdraw my consent/i }));
+    expect(withdrawTaskConsent).not.toHaveBeenCalled();
+    expect(await screen.findByText(/won't be able to send any more/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /yes, withdraw consent/i }));
+    await waitFor(() => expect(withdrawTaskConsent).toHaveBeenCalledWith('task_tok_123456'));
+
+    expect(
+      await screen.findByText(/nothing more can be sent for this task/i),
+    ).toBeInTheDocument();
+    // The item field is now read-only, and there is no submit control left.
+    expect(screen.getByPlaceholderText(/write your answer/i)).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^submit$/i })).not.toBeInTheDocument();
+  });
+
+  it('can be cancelled without withdrawing anything', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Take-home simulation');
+
+    await user.click(screen.getByRole('button', { name: /withdraw my consent/i }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByRole('button', { name: /withdraw my consent/i })).toBeInTheDocument();
+    expect(withdrawTaskConsent).not.toHaveBeenCalled();
+  });
+
+  it('shows the server refusal verbatim on a repeat withdrawal', async () => {
+    const user = userEvent.setup();
+    withdrawTaskConsent.mockRejectedValue(
+      new ApiError('Consent for this task is already withdrawn.', 409),
+    );
+    renderPage();
+    await screen.findByText('Take-home simulation');
+
+    await user.click(screen.getByRole('button', { name: /withdraw my consent/i }));
+    await user.click(screen.getByRole('button', { name: /yes, withdraw consent/i }));
+
+    expect(
+      await screen.findByText('Consent for this task is already withdrawn.'),
+    ).toBeInTheDocument();
   });
 });
 

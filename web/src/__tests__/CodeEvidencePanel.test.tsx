@@ -162,8 +162,16 @@ const EVIDENCE: CodeEvidence = {
 
 const COMPARE: SimilarityCompare = {
   signal_id: 'sig-1',
-  low: { language: 'python', excerpt: 'def solve():\n    return 1\n' },
-  high: { language: 'python', excerpt: 'def other():\n    return 2\n' },
+  low: {
+    language: 'python',
+    excerpt: 'def solve():\n    return 1\n',
+    blocks: [{ start_line: 1, lines: ['def solve():', '    return 1'] }],
+  },
+  high: {
+    language: 'python',
+    excerpt: 'def other():\n    return 2\n',
+    blocks: [{ start_line: 1, lines: ['def other():', '    return 2'] }],
+  },
   matched_regions: [{ low_start: 1, low_end: 1, high_start: 1, high_end: 1 }],
   caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
 };
@@ -365,5 +373,144 @@ describe('CodeSimilarityCompare — record a finding', () => {
     expect(
       await screen.findByText(/not available for a reference-solution comparison/i),
     ).toBeInTheDocument();
+  });
+});
+
+// Security review, PH4 wave 5, finding #1: the pair is ordered by UUID
+// server-side, not by which attempt HR is reviewing — so the attempt under
+// review is `attempt_high_id` about half the time. The dialog must still
+// label ITS content "This submission", whichever side it lands on.
+describe('CodeSimilarityCompare — the pane matches whichever side this attempt is on', () => {
+  it('labels the HIGH side "This submission" when the attempt under review is attempt_high_id', async () => {
+    const withSwapped: CodeEvidence = {
+      ...EVIDENCE,
+      similarity_signals: [
+        {
+          ...EVIDENCE.similarity_signals[0],
+          attempt_low_id: 'att-2',
+          attempt_high_id: 'att-1', // renderPanel's default attemptId
+          containment_low: 0.81,
+          containment_high: 0.92,
+        },
+      ],
+    };
+    api.getCodeEvidence.mockResolvedValue(withSwapped);
+    api.getSimilarityCompare.mockResolvedValue({
+      signal_id: 'sig-1',
+      low: {
+        language: 'python',
+        excerpt: 'def other_candidate():\n    return 2\n',
+        blocks: [{ start_line: 1, lines: ['def other_candidate():', '    return 2'] }],
+      },
+      high: {
+        language: 'python',
+        excerpt: 'def this_candidate():\n    return 1\n',
+        blocks: [{ start_line: 1, lines: ['def this_candidate():', '    return 1'] }],
+      },
+      matched_regions: [{ low_start: 1, low_end: 1, high_start: 1, high_end: 1 }],
+      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+    });
+
+    const user = userEvent.setup();
+    renderPanel(); // attemptId defaults to 'att-1'
+    await user.click(await screen.findByRole('button', { name: /compare & record a finding/i }));
+    await screen.findByRole('dialog');
+    await waitFor(() => expect(api.getSimilarityCompare).toHaveBeenCalledWith('sig-1'));
+
+    const thisPane = (await screen.findByText('def this_candidate():')).closest('div')!
+      .parentElement!.parentElement as HTMLElement;
+    expect(within(thisPane).getByText(/This submission/)).toBeInTheDocument();
+
+    const otherPane = screen.getByText('def other_candidate():').closest('div')!.parentElement!
+      .parentElement as HTMLElement;
+    expect(within(otherPane).getByText(/Other submission/)).toBeInTheDocument();
+
+    // The containment figures follow the swap too: this attempt's own number
+    // (containment_high, 92%) leads; the other side's (81%) follows.
+    expect(screen.getByText(/containment 92% \/ 81%/)).toBeInTheDocument();
+  });
+});
+
+// Security review, PH4 wave 5, finding #2: `matched_regions` are ABSOLUTE
+// source line numbers; the excerpt is now cut around the match rather than
+// taken from the start of the file, so a screen numbering rows 1..N by their
+// position in the excerpt highlights the wrong lines (or none). Render from
+// `blocks`, numbering and highlighting by each block's own `start_line`.
+describe('CodeSimilarityCompare — blocks are numbered and highlighted by absolute source line', () => {
+  it('numbers and highlights a match at line 40 of a longer file by its real line number', async () => {
+    api.getSimilarityCompare.mockResolvedValue({
+      signal_id: 'sig-1',
+      low: {
+        language: 'python',
+        excerpt: 'L37\nL38\nL39\nL40\nL41\nL42\nL43',
+        blocks: [{ start_line: 37, lines: ['L37', 'L38', 'L39', 'L40', 'L41', 'L42', 'L43'] }],
+      },
+      high: {
+        language: 'python',
+        excerpt: 'H1',
+        blocks: [{ start_line: 1, lines: ['H1'] }],
+      },
+      matched_regions: [{ low_start: 40, low_end: 40, high_start: 1, high_end: 1 }],
+      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+    });
+
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole('button', { name: /compare & record a finding/i }));
+    await screen.findByRole('dialog');
+    await waitFor(() => expect(api.getSimilarityCompare).toHaveBeenCalledWith('sig-1'));
+
+    // L40 is the FOURTH row rendered in this excerpt, but its number must
+    // read 40 (its real source line) — the bug this fixes numbered it 4.
+    const matchedRow = (await screen.findByText('L40')).closest('div') as HTMLElement;
+    expect(matchedRow.className).toMatch(/ui-warn/);
+    expect(within(matchedRow).getByText('40')).toBeInTheDocument();
+
+    const unmatchedRow = screen.getByText('L37').closest('div') as HTMLElement;
+    expect(unmatchedRow.className).not.toMatch(/ui-warn/);
+    expect(within(unmatchedRow).getByText('37')).toBeInTheDocument();
+  });
+
+  it('renders a gap between two separated matched blocks, never as a numbered code row', async () => {
+    api.getSimilarityCompare.mockResolvedValue({
+      signal_id: 'sig-1',
+      low: {
+        language: 'python',
+        excerpt: 'A10\nA11\n...\nA50\nA51',
+        blocks: [
+          { start_line: 10, lines: ['A10', 'A11'] },
+          { start_line: 50, lines: ['A50', 'A51'] },
+        ],
+      },
+      high: {
+        language: 'python',
+        excerpt: 'B10\nB11',
+        blocks: [{ start_line: 10, lines: ['B10', 'B11'] }],
+      },
+      matched_regions: [
+        { low_start: 10, low_end: 11, high_start: 10, high_end: 11 },
+        { low_start: 50, low_end: 51, high_start: 10, high_end: 11 },
+      ],
+      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+    });
+
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole('button', { name: /compare & record a finding/i }));
+    await screen.findByRole('dialog');
+    await waitFor(() => expect(api.getSimilarityCompare).toHaveBeenCalledWith('sig-1'));
+
+    const a10 = (await screen.findByText('A10')).closest('div') as HTMLElement;
+    const a51 = screen.getByText('A51').closest('div') as HTMLElement;
+    expect(a10.className).toMatch(/ui-warn/);
+    expect(a51.className).toMatch(/ui-warn/);
+    expect(within(a10).getByText('10')).toBeInTheDocument();
+    expect(within(a51).getByText('51')).toBeInTheDocument();
+
+    // The gap between the two blocks carries no source line number of its
+    // own, and is hidden from assistive tech rather than read as code.
+    const gap = screen.getByText('…').closest('div') as HTMLElement;
+    expect(gap).toHaveAttribute('aria-hidden', 'true');
+    expect(within(gap).queryByText(/^\d+$/)).not.toBeInTheDocument();
   });
 });

@@ -206,7 +206,10 @@ describe('PublicOffer — a sent offer', () => {
     await user.click(screen.getByRole('button', { name: 'Send me a code' }));
     await screen.findByText(/Code sent/);
     expect(screen.getByText(/you agree to share the documents/i)).toBeInTheDocument();
-    expect(screen.getByText(/may be outside India/i)).toBeInTheDocument();
+    // Security review, PH4 wave 5: names the actual places rather than
+    // hedging with "may be outside India" (see docs/DATA-FLOW.md).
+    expect(screen.getByText(/Singapore, United States/)).toBeInTheDocument();
+    expect(screen.queryByText(/may be outside India/i)).not.toBeInTheDocument();
     expect(screen.getByText(/withdraw this consent/i)).toBeInTheDocument();
   });
 

@@ -7,7 +7,7 @@
 // with `new URL(...)`, never the candidate's own label for the link) and the
 // anchor must carry rel="noopener noreferrer nofollow" and open in a new tab.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -171,6 +171,71 @@ describe('SubmissionPanel — the link interstitial', () => {
   });
 });
 
+// Security review, PH4 wave 5: checking only that `new URL(href).hostname`
+// is non-empty let `javascript://github.com/x` through with a hostname of
+// `github.com` — this interstitial would have labelled it "resolves to
+// github.com" and rendered it as the anchor's own href. `vbscript:`, `http:`
+// and a protocol-relative `//host` all had the same gap. The fix requires
+// `url.protocol === 'https:'`.
+describe('SubmissionPanel — the interstitial refuses a non-https scheme', () => {
+  const realLocation = window.location;
+
+  beforeEach(() => {
+    // This app is always served over https in production (Vercel) — force
+    // that here so the assertions below test the SCHEME check itself, not
+    // `downloadUrl`'s separate allowance for a machine that is itself
+    // running insecurely (jsdom's default test URL is http://localhost).
+    Object.defineProperty(window, 'location', {
+      value: { ...realLocation, protocol: 'https:' },
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', {
+      value: realLocation,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  function renderWithLink(link_url: string) {
+    getScorecardSubmission.mockResolvedValue({
+      ...BASE,
+      responses: [
+        {
+          id: 'r-1',
+          item_key: null,
+          response_type: 'link',
+          text_value: null,
+          link_url,
+          link_kind: 'other',
+          title: 'Suspicious link',
+          description: null,
+          original_name: null,
+          content_type: null,
+          size_bytes: null,
+        },
+      ],
+    });
+    return renderPanel();
+  }
+
+  it.each([
+    ['a javascript: URL with an allowed-looking host', 'javascript://github.com/x'],
+    ['a plain http: URL', 'http://github.com/x'],
+    ['a data: URL', 'data:text/html,<p>x</p>'],
+    ['a protocol-relative URL', '//github.com/x'],
+  ])('refuses %s and never offers to open it', async (_label, link_url) => {
+    renderWithLink(link_url);
+
+    await screen.findByText('Suspicious link');
+    expect(screen.getByText('This link could not be opened.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /open link/i })).not.toBeInTheDocument();
+  });
+});
+
 describe('SubmissionPanel — evidence, not a verdict', () => {
   it('renders a text answer as plain text', async () => {
     getScorecardSubmission.mockResolvedValue({
@@ -200,5 +265,42 @@ describe('SubmissionPanel — evidence, not a verdict', () => {
     getScorecardSubmission.mockResolvedValue(BASE);
     renderPanel();
     expect(await screen.findByText(/evidence, not a verdict/i)).toBeInTheDocument();
+  });
+});
+
+// Security review, PH4 wave 5: the candidate is told submitting is the
+// moment work goes to the hiring team, and can "Remove" anything beforehand.
+// This screen used to render every response whatever `data.status` was, with
+// only the header line saying "Not yet submitted" — so a reviewer could read
+// work the candidate had not yet sent. The backend gates this too
+// (`submission_for_reviewer` only returns a `submitted` row); this is the
+// belt to that brace.
+describe('SubmissionPanel — nothing renders before the candidate submits', () => {
+  it('shows only a not-yet-submitted message for an in-progress submission, never its responses', async () => {
+    getScorecardSubmission.mockResolvedValue({
+      ...BASE,
+      status: 'in_progress',
+      submitted_at: null,
+      responses: [
+        {
+          id: 'r-1',
+          item_key: 'design_doc',
+          response_type: 'text',
+          text_value: 'Draft — do not read this yet.',
+          link_url: null,
+          link_kind: null,
+          title: null,
+          description: null,
+          original_name: null,
+          content_type: null,
+          size_bytes: null,
+        },
+      ],
+    });
+    renderPanel();
+
+    expect(await screen.findByText(/not yet submitted/i)).toBeInTheDocument();
+    expect(screen.queryByText('Draft — do not read this yet.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/evidence, not a verdict/i)).not.toBeInTheDocument();
   });
 });

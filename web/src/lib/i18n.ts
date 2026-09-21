@@ -1017,8 +1017,12 @@ const en = {
       fullNamePlaceholder: 'Your full name',
       reasonLabel: 'Reason (optional)',
       confirmAccept: 'Confirm acceptance',
+      // Cross-border disclosure — same rule as consent.dataFlowNote just
+      // above: name the places, say India-resident storage is planned but
+      // not yet active, and point to the sub-processor list. Do NOT soften
+      // this back to "may be outside India" — see DATA-FLOW.md.
       acceptConsent:
-        'By accepting, you agree to share the documents the hiring team asks for, for your onboarding. They are kept securely — with a storage provider that may be outside India — and deleted once they have served their purpose. You can withdraw this consent at any time.',
+        'By accepting, you agree to share the documents the hiring team asks for, for your onboarding. They are kept securely by sub-processors located outside India (Singapore, United States) — India-resident storage is planned but not yet active; full sub-processor list: intants.com/data-flow — and deleted once they have served their purpose. You can withdraw this consent at any time.',
       confirmDecline: 'Confirm decline',
       cancel: 'Cancel',
       documents: {
@@ -1128,9 +1132,23 @@ const en = {
       // box before `beginButton` is enabled, in the house voice of
       // offer.acceptConsent (what is shared, with whom, where it is kept,
       // and that it can be withdrawn).
+      // Same two rules as offer.acceptConsent just above: the cross-border
+      // disclosure names the places rather than hedging with "may be", and
+      // the withdrawal sentence describes what POST /task/consent/withdraw
+      // actually does — stops anything further, deletes nothing already sent.
       consentNotice:
-        'By starting, you agree to share your answers and any files or links you add with the hiring team, for this application. They are kept securely — with a storage provider that may be outside India — and used only to assess this application. You can withdraw this consent at any time by contacting the hiring team.',
+        'By starting, you agree to share your answers and any files or links you add with the hiring team, for this application. They are kept securely by sub-processors located outside India (Singapore, United States) — India-resident storage is planned but not yet active; full sub-processor list: intants.com/data-flow — and used only to assess this application. You can withdraw this consent at any time on this page; withdrawing stops anything further being sent, but does not delete what you have already saved.',
       consentLabel: 'I agree to share this work with the hiring team, as described above.',
+      // PH4-D4 wave 5 — mirrors offer.documents.withdraw's shape: a plain
+      // link, a two-step confirm, then a done state. POST /task/consent/
+      // withdraw deletes nothing already stored; it only stops save/upload/
+      // submit from here on, so say exactly that, not "your data is deleted".
+      withdrawConsent: 'Withdraw my consent for this task',
+      withdrawConsentConfirm:
+        "Withdraw consent? You won't be able to send any more answers, files or links. What you have already saved stays as it is.",
+      withdrawConsentYes: 'Yes, withdraw consent',
+      withdrawConsentDone:
+        'Your consent is withdrawn. Nothing more can be sent for this task. What you had already saved stays as it is.',
       beginButton: 'Begin',
       beginError: 'Could not start this task. Please try again.',
       submit: 'Submit',
@@ -2065,7 +2083,7 @@ const hi = {
       reasonLabel: 'कारण (वैकल्पिक)',
       confirmAccept: 'स्वीकृति की पुष्टि करें',
       acceptConsent:
-        'स्वीकार करके, आप अपनी ऑनबोर्डिंग के लिए भर्ती टीम द्वारा माँगे गए दस्तावेज़ साझा करने के लिए सहमत होते हैं। वे सुरक्षित रखे जाते हैं — ऐसे स्टोरेज प्रदाता के पास जो भारत के बाहर हो सकता है — और अपना उद्देश्य पूरा होने पर हटा दिए जाते हैं। आप यह सहमति कभी भी वापस ले सकते हैं।',
+        'स्वीकार करके, आप अपनी ऑनबोर्डिंग के लिए भर्ती टीम द्वारा माँगे गए दस्तावेज़ साझा करने के लिए सहमत होते हैं। वे भारत से बाहर स्थित sub-processors (Singapore, United States) द्वारा सुरक्षित रखे जाते हैं — India-resident storage की योजना है लेकिन अभी सक्रिय नहीं है; पूरी sub-processor सूची: intants.com/data-flow — और अपना उद्देश्य पूरा होने पर हटा दिए जाते हैं। आप यह सहमति कभी भी वापस ले सकते हैं।',
       confirmDecline: 'अस्वीकृति की पुष्टि करें',
       cancel: 'रद्द करें',
       documents: {
@@ -2168,8 +2186,14 @@ const hi = {
       tooLarge: 'वह फ़ाइल 10 MB से बड़ी है। कृपया छोटी फ़ाइल अपलोड करें।',
       wrongType: 'कृपया PDF, JPEG या PNG फ़ाइल अपलोड करें।',
       consentNotice:
-        'शुरू करके, आप इस आवेदन के लिए अपने उत्तर और आपके द्वारा जोड़ी गई कोई भी फ़ाइल या लिंक भर्ती टीम के साथ साझा करने के लिए सहमत होते हैं। वे सुरक्षित रखे जाते हैं — ऐसे स्टोरेज प्रदाता के पास जो भारत के बाहर हो सकता है — और केवल इस आवेदन के मूल्यांकन के लिए उपयोग किए जाते हैं। आप भर्ती टीम से संपर्क करके यह सहमति कभी भी वापस ले सकते हैं।',
+        'शुरू करके, आप इस आवेदन के लिए अपने उत्तर और आपके द्वारा जोड़ी गई कोई भी फ़ाइल या लिंक भर्ती टीम के साथ साझा करने के लिए सहमत होते हैं। वे भारत से बाहर स्थित sub-processors (Singapore, United States) द्वारा सुरक्षित रखे जाते हैं — India-resident storage की योजना है लेकिन अभी सक्रिय नहीं है; पूरी sub-processor सूची: intants.com/data-flow — और केवल इस आवेदन के मूल्यांकन के लिए उपयोग किए जाते हैं। आप इस पेज पर यह सहमति कभी भी वापस ले सकते हैं; वापस लेने से आगे कुछ भी भेजा जाना रुक जाता है, लेकिन आपने जो पहले से सहेजा है वह हटता नहीं है।',
       consentLabel: 'मैं ऊपर बताए अनुसार यह काम भर्ती टीम के साथ साझा करने के लिए सहमत हूं।',
+      withdrawConsent: 'इस टास्क के लिए अपनी सहमति वापस लें',
+      withdrawConsentConfirm:
+        'सहमति वापस लें? इसके बाद कोई और उत्तर, फ़ाइल या लिंक भेजा नहीं जा सकेगा। आपने अब तक जो सहेजा है वह वैसे ही रहेगा।',
+      withdrawConsentYes: 'हां, सहमति वापस लें',
+      withdrawConsentDone:
+        'आपकी सहमति वापस ले ली गई है। इस टास्क के लिए अब कुछ और नहीं भेजा जा सकता। आपने पहले जो सहेजा था वह वैसे ही रहता है।',
       beginButton: 'शुरू करें',
       beginError: 'यह टास्क शुरू नहीं हो सका। कृपया फिर कोशिश करें।',
       submit: 'सबमिट करें',
@@ -3114,7 +3138,7 @@ const te = {
       reasonLabel: 'కారణం (ఐచ్ఛికం)',
       confirmAccept: 'అంగీకారాన్ని నిర్ధారించండి',
       acceptConsent:
-        'అంగీకరించడం ద్వారా, మీ ఆన్‌బోర్డింగ్ కోసం నియామక బృందం అడిగే పత్రాలను పంచుకోవడానికి మీరు అంగీకరిస్తారు. అవి సురక్షితంగా ఉంచబడతాయి — భారతదేశం వెలుపల ఉండే అవకాశం ఉన్న నిల్వ ప్రదాత వద్ద — మరియు వాటి ప్రయోజనం పూర్తయిన తర్వాత తొలగించబడతాయి. మీరు ఈ సమ్మతిని ఎప్పుడైనా ఉపసంహరించుకోవచ్చు.',
+        'అంగీకరించడం ద్వారా, మీ ఆన్‌బోర్డింగ్ కోసం నియామక బృందం అడిగే పత్రాలను పంచుకోవడానికి మీరు అంగీకరిస్తారు. అవి భారతదేశం వెలుపల ఉన్న sub-processors (Singapore, United States) వద్ద సురక్షితంగా ఉంచబడతాయి — India-resident storage ప్రణాళికలో ఉంది కానీ ఇంకా సక్రియం కాలేదు; పూర్తి sub-processor జాబితా: intants.com/data-flow — మరియు వాటి ప్రయోజనం పూర్తయిన తర్వాత తొలగించబడతాయి. మీరు ఈ సమ్మతిని ఎప్పుడైనా ఉపసంహరించుకోవచ్చు.',
       confirmDecline: 'తిరస్కరణను నిర్ధారించండి',
       cancel: 'రద్దు చేయండి',
       documents: {
@@ -3217,9 +3241,15 @@ const te = {
       tooLarge: 'ఆ ఫైల్ 10 MB కంటే పెద్దది. దయచేసి చిన్న ఫైల్‌ను అప్‌లోడ్ చేయండి.',
       wrongType: 'దయచేసి PDF, JPEG లేదా PNG ఫైల్‌ను అప్‌లోడ్ చేయండి.',
       consentNotice:
-        'ప్రారంభించడం ద్వారా, ఈ దరఖాస్తు కోసం మీ సమాధానాలను మరియు మీరు జోడించే ఏవైనా ఫైళ్లు లేదా లింక్‌లను నియామక బృందంతో పంచుకోవడానికి మీరు అంగీకరిస్తారు. అవి సురక్షితంగా ఉంచబడతాయి — భారతదేశం వెలుపల ఉండే అవకాశం ఉన్న నిల్వ ప్రదాత వద్ద — మరియు ఈ దరఖాస్తును మదింపు చేయడానికి మాత్రమే ఉపయోగించబడతాయి. నియామక బృందాన్ని సంప్రదించడం ద్వారా మీరు ఈ సమ్మతిని ఎప్పుడైనా ఉపసంహరించుకోవచ్చు.',
+        'ప్రారంభించడం ద్వారా, ఈ దరఖాస్తు కోసం మీ సమాధానాలను మరియు మీరు జోడించే ఏవైనా ఫైళ్లు లేదా లింక్‌లను నియామక బృందంతో పంచుకోవడానికి మీరు అంగీకరిస్తారు. అవి భారతదేశం వెలుపల ఉన్న sub-processors (Singapore, United States) వద్ద సురక్షితంగా ఉంచబడతాయి — India-resident storage ప్రణాళికలో ఉంది కానీ ఇంకా సక్రియం కాలేదు; పూర్తి sub-processor జాబితా: intants.com/data-flow — మరియు ఈ దరఖాస్తును మదింపు చేయడానికి మాత్రమే ఉపయోగించబడతాయి. మీరు ఈ పేజీలో ఈ సమ్మతిని ఎప్పుడైనా ఉపసంహరించుకోవచ్చు; ఉపసంహరించుకోవడం వల్ల ఇకపై ఏదీ పంపబడదు, కానీ మీరు ఇప్పటికే సేవ్ చేసినది తొలగించబడదు.',
       consentLabel:
         'పైన వివరించినట్లుగా ఈ పనిని నియామక బృందంతో పంచుకోవడానికి నేను అంగీకరిస్తున్నాను.',
+      withdrawConsent: 'ఈ టాస్క్ కోసం నా సమ్మతిని ఉపసంహరించుకుంటాను',
+      withdrawConsentConfirm:
+        'సమ్మతిని ఉపసంహరించుకోవాలా? దీని తర్వాత మరే సమాధానం, ఫైల్ లేదా లింక్ పంపలేరు. మీరు ఇప్పటికే సేవ్ చేసినది అలాగే ఉంటుంది.',
+      withdrawConsentYes: 'అవును, సమ్మతిని ఉపసంహరించు',
+      withdrawConsentDone:
+        'మీ సమ్మతి ఉపసంహరించబడింది. ఈ టాస్క్ కోసం ఇక ఏదీ పంపలేరు. మీరు ఇంతకుముందు సేవ్ చేసినది అలాగే ఉంటుంది.',
       beginButton: 'ప్రారంభించండి',
       beginError: 'ఈ టాస్క్ ప్రారంభం కాలేదు. దయచేసి మళ్లీ ప్రయత్నించండి.',
       submit: 'సమర్పించండి',

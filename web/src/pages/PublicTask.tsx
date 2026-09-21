@@ -27,6 +27,9 @@
 // begins the clock (so a time limit, and any D2 extra time, is real rather
 // than advisory) and is the moment `dpdp_consent_ledger` gets its entry.
 // Submitting afterwards is a confirmation step, never a second consent gate.
+// While the task is in progress the candidate can withdraw that consent
+// (`withdrawTaskConsent`, POST /task/consent/withdraw) — this deletes
+// nothing already saved, it only refuses any further save/upload/submit.
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -40,6 +43,7 @@ import {
   startTask,
   submitTask,
   viewTask,
+  withdrawTaskConsent,
   type PublicTask as PublicTaskShape,
 } from '@/api/publicTask';
 import {
@@ -715,6 +719,26 @@ function TaskWorkspace({
   const [confirming, setConfirming] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // Consent withdrawal (security review, PH4-D4 wave 5) — mirrors
+  // PublicOffer.tsx's document-consent withdrawal: a plain link, a two-step
+  // confirm, then a done state. `withdrawn` is local to this render only
+  // (the server has no field on `GET /task` that says consent was pulled —
+  // it just starts refusing save/upload/submit with a 409), the same trade
+  // DocumentsSection already makes.
+  const [withdrawAsking, setWithdrawAsking] = useState(false);
+  const [withdrawn, setWithdrawn] = useState(false);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+
+  const withdrawMut = useMutation({
+    mutationFn: () => withdrawTaskConsent(token),
+    onSuccess: () => {
+      setWithdrawn(true);
+      setWithdrawAsking(false);
+      setWithdrawError(null);
+    },
+    onError: (e: unknown) => setWithdrawError(errText(e, t('task.errorGeneric'))),
+  });
+
   const responsesByItem = new Map(
     data.responses.filter((r) => r.item_key).map((r) => [r.item_key as string, r]),
   );
@@ -790,7 +814,7 @@ function TaskWorkspace({
           item={item}
           response={responsesByItem.get(item.key)}
           allowedDomains={allowedDomains}
-          disabled={false}
+          disabled={withdrawn}
           onSaved={onChanged}
         />
       ))}
@@ -818,7 +842,11 @@ function TaskWorkspace({
               ))}
             </ul>
           ) : null}
-          {data.max_artifacts == null || artifacts.length < data.max_artifacts ? (
+          {/* Adding an artifact is a write POST /task/artifacts refuses once
+              consent is withdrawn — the same reason the item fields above go
+              read-only. Removing one stays available either way (see
+              ArtifactRow): the server never gates that on consent. */}
+          {!withdrawn && (data.max_artifacts == null || artifacts.length < data.max_artifacts) ? (
             <div className="mt-3">
               <AddArtifactForm
                 token={token}
@@ -832,53 +860,100 @@ function TaskWorkspace({
       ) : null}
 
       <GlassCard className="w-full p-5">
-        {!ready ? (
-          <p className="text-[12px] text-[var(--ui-warn)]">
-            {requiredUnmet.length > 0 ? t('task.notReadyRequired') : null}
-            {minArtifactsUnmet
-              ? t('task.notReadyArtifacts', { count: data.min_artifacts ?? 0 })
-              : null}
-          </p>
-        ) : null}
-
-        {submitError ? <p className="mt-2 text-[12.5px] text-ember">{submitError}</p> : null}
-
-        {confirming ? (
-          <div className="mt-3 flex flex-col gap-2 rounded-[10px] border border-border bg-[var(--ui-inset)] p-3">
-            <p className="text-[13px] font-medium text-foreground">
-              {t('task.confirmSubmitTitle')}
-            </p>
-            <p className="text-[12.5px] text-[var(--ui-soft)]">{t('task.confirmSubmitDesc')}</p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => submitMut.mutate()}
-                disabled={submitMut.isPending}
-                className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
-              >
-                {submitMut.isPending ? t('task.submitting') : t('task.confirmYes')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirming(false)}
-                className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)]"
-              >
-                {t('task.cancel')}
-              </button>
-            </div>
-          </div>
+        {withdrawn ? (
+          <p className="text-[12.5px] text-muted-foreground">{t('task.withdrawConsentDone')}</p>
         ) : (
-          <Pill
-            className="mt-1"
-            disabled={!ready}
-            onClick={() => {
-              setSubmitError(null);
-              setConfirming(true);
-            }}
-          >
-            {t('task.submit')}
-          </Pill>
+          <>
+            {!ready ? (
+              <p className="text-[12px] text-[var(--ui-warn)]">
+                {requiredUnmet.length > 0 ? t('task.notReadyRequired') : null}
+                {minArtifactsUnmet
+                  ? t('task.notReadyArtifacts', { count: data.min_artifacts ?? 0 })
+                  : null}
+              </p>
+            ) : null}
+
+            {submitError ? <p className="mt-2 text-[12.5px] text-ember">{submitError}</p> : null}
+
+            {confirming ? (
+              <div className="mt-3 flex flex-col gap-2 rounded-[10px] border border-border bg-[var(--ui-inset)] p-3">
+                <p className="text-[13px] font-medium text-foreground">
+                  {t('task.confirmSubmitTitle')}
+                </p>
+                <p className="text-[12.5px] text-[var(--ui-soft)]">{t('task.confirmSubmitDesc')}</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => submitMut.mutate()}
+                    disabled={submitMut.isPending}
+                    className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+                  >
+                    {submitMut.isPending ? t('task.submitting') : t('task.confirmYes')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirming(false)}
+                    className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)]"
+                  >
+                    {t('task.cancel')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <Pill
+                className="mt-1"
+                disabled={!ready}
+                onClick={() => {
+                  setSubmitError(null);
+                  setConfirming(true);
+                }}
+              >
+                {t('task.submit')}
+              </Pill>
+            )}
+          </>
         )}
+
+        {/* Withdraw this task's consent (security review, PH4-D4 wave 5) —
+            mirrors PublicOffer.tsx's document-consent withdrawal: a plain
+            link, a two-step confirm, then a done state. Available while the
+            task is in progress; once withdrawn there is nothing more to ask
+            for here. */}
+        {!withdrawn ? (
+          <div className="mt-4 border-t border-border pt-3">
+            {withdrawAsking ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-[12.5px] text-foreground">{t('task.withdrawConsentConfirm')}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={withdrawMut.isPending}
+                    onClick={() => withdrawMut.mutate()}
+                    className="rounded-[9px] border border-[var(--ui-danger)]/40 px-3 py-1.5 text-[12.5px] font-medium text-[var(--ui-danger)] disabled:opacity-40"
+                  >
+                    {t('task.withdrawConsentYes')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWithdrawAsking(false)}
+                    className="text-[12.5px] text-muted-foreground hover:text-foreground"
+                  >
+                    {t('task.cancel')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setWithdrawAsking(true)}
+                className="text-[12.5px] text-[var(--ui-info)] hover:underline"
+              >
+                {t('task.withdrawConsent')}
+              </button>
+            )}
+            {withdrawError ? <p className="mt-2 text-[12px] text-ember">{withdrawError}</p> : null}
+          </div>
+        ) : null}
       </GlassCard>
     </>
   );

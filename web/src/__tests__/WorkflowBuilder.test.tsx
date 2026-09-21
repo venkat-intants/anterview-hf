@@ -178,13 +178,11 @@ const publishWorkflow = vi.fn();
 const cloneWorkflow = vi.fn();
 const discardDraft = vi.fn();
 
-vi.mock('../api/workflows', () => ({
-  MAX_ROUNDS: 12,
-  MAX_CRITERIA_PER_ROUND: 8,
-  EXAM_BACKED_KINDS: ['mcq', 'coding'],
-  // PH4-D4 — RoundInspector reads these directly.
-  TASK_KINDS: ['job_simulation', 'portfolio'],
-  HUMAN_EVALUATED_KINDS: ['human_review', 'job_simulation', 'portfolio'],
+// The real constants (MAX_ROUNDS, the round-kind sets) come from the module
+// itself, so this test fails if they change -- a hard-coded copy here would
+// keep asserting against a stale duplicate. Only the network calls are stubbed.
+vi.mock('../api/workflows', async () => ({
+  ...(await vi.importActual<typeof import('../api/workflows')>('../api/workflows')),
   listWorkflows: (...a: unknown[]) => listWorkflows(...a) as unknown,
   getWorkflow: (...a: unknown[]) => getWorkflow(...a) as unknown,
   validateWorkflow: (...a: unknown[]) => validateWorkflow(...a) as unknown,

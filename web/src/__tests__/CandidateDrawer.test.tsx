@@ -95,14 +95,17 @@ const workflowsApi = {
   listWorkflows: vi.fn(),
   getWorkflow: vi.fn(),
 };
-vi.mock('../api/workflows', () => ({
-  listWorkflows: (...a: unknown[]) => workflowsApi.listWorkflows(...a) as unknown,
-  getWorkflow: (...a: unknown[]) => workflowsApi.getWorkflow(...a) as unknown,
-  // PH4-D4 — real constants, not mocked away: HumanInterviewSection filters
-  // the round picker against HUMAN_EVALUATED_KINDS.
-  TASK_KINDS: ['job_simulation', 'portfolio'],
-  HUMAN_EVALUATED_KINDS: ['human_review', 'job_simulation', 'portfolio'],
-}));
+vi.mock('../api/workflows', async () => {
+  // PH4-D4 — the real exports, not a hand-copied literal: HumanInterviewSection
+  // filters the round picker against HUMAN_EVALUATED_KINDS, and a literal here
+  // would keep passing even if that constant's own set ever changed.
+  const actual = await vi.importActual<typeof import('../api/workflows')>('../api/workflows');
+  return {
+    ...actual,
+    listWorkflows: (...a: unknown[]) => workflowsApi.listWorkflows(...a) as unknown,
+    getWorkflow: (...a: unknown[]) => workflowsApi.getWorkflow(...a) as unknown,
+  };
+});
 
 const toastError = vi.fn();
 const toastSuccess = vi.fn();

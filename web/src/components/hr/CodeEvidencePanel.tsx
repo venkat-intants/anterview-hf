@@ -539,6 +539,15 @@ export default function CodeEvidencePanel({
     queryFn: () => getCodeEvidence(examId, attemptId),
     enabled: Boolean(examId) && Boolean(attemptId),
     retry: false,
+    // `code_evidence.viewed` is audited server-side on every call, and it
+    // names this candidate — the query default (refetchOnWindowFocus, 15s
+    // staleTime) would silently re-audit "HR viewed this candidate's code"
+    // every time HR returns to the tab after 15s, with nothing HR actually
+    // did (security review, PH4 wave 5). The mutations below still
+    // invalidate this explicitly after HR runs an analysis or records a
+    // finding, so this only removes the background refetch, not a real one.
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   });
 
   const analyseMut = useMutation({

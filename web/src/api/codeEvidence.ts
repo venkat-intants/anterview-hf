@@ -181,10 +181,30 @@ export interface MatchedRegion {
   high_end: number;
 }
 
+/** One contiguous run of source lines, carrying the ABSOLUTE line it starts
+ *  on. Number and highlight from `start_line + index`, never from a block's
+ *  own position in the array — `matched_regions` are absolute source line
+ *  numbers too, and the previous version of this screen numbered rows 1..N
+ *  by excerpt position, which only ever lined up while excerpts were the
+ *  first 200 lines of the file (security review, PH4 wave 5; server fix in
+ *  commit c62756b). */
+export interface ExcerptBlock {
+  start_line: number;
+  lines: string[];
+}
+
 export interface SimilarityExcerpt {
   language: string | null;
-  /** At most 200 lines, from the start of the source. */
+  /** The same content as `blocks`, flattened to one string with an `...`
+   *  separator between non-adjacent blocks. NOT the first 200 lines of the
+   *  file — cut around the matched regions instead (±3 lines of context,
+   *  merged, capped at 200 lines total). Kept for any caller that only wants
+   *  a flat string; screens render from `blocks` (see CodeSimilarityCompare's
+   *  `ExcerptPane`), since this string alone carries no line numbers to
+   *  highlight against. */
   excerpt: string;
+  /** Render from this, not `excerpt` — see `ExcerptBlock`. */
+  blocks: ExcerptBlock[];
 }
 
 export interface SimilarityCompare {

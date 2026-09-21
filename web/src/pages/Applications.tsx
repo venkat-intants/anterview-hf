@@ -26,6 +26,7 @@ import {
   mintMyInterviewLink,
   mintMyTaskLink,
 } from '@/api/applications';
+import { sameOriginUrl } from '@/lib/safeUrl';
 import { toast } from '@/lib/toast';
 import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
@@ -154,7 +155,15 @@ function TaskCallToAction({ submissionId, dueAt }: { submissionId: string; dueAt
   const mint = useMutation({
     mutationFn: () => mintMyTaskLink(submissionId),
     onSuccess: (link) => {
-      window.location.assign(link.url);
+      // The link carries a fresh bearer token in its fragment — never
+      // navigate to it unchecked (safeUrl.ts's own header names this exact
+      // mistake). Same guard as YourOffers.tsx's "Open offer".
+      const safe = sameOriginUrl(link.url, '/task');
+      if (!safe) {
+        setError('Could not open your task.');
+        return;
+      }
+      window.location.assign(safe);
     },
     onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Could not open your task.'),
   });

@@ -15,13 +15,7 @@
 // `public_router` and app/job_tasks.py's `candidate_view` EXACTLY.
 
 import { ApiError } from './client';
-import type {
-  TaskItem,
-  TaskKind,
-  TaskLinkKind,
-  TaskResponseOut,
-  TaskSubmissionStatus,
-} from './jobTasks';
+import type { TaskItem, TaskKind, TaskLinkKind, TaskResponseOut } from './jobTasks';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -45,9 +39,19 @@ export interface PublicTaskMaterial {
   position: number;
 }
 
+/**
+ * `GET /task` (`app.job_tasks.by_token`) only ever returns a submission whose
+ * status is one of these three — anything else (`expired`, `withdrawn`, or a
+ * status this build has never heard of) reads as the SAME 404 every other
+ * failure does, before `candidate_view` ever runs. Deliberately narrower than
+ * `TaskSubmissionStatus` (jobTasks.ts), which is the wider HR/staff-facing
+ * union that genuinely does include those two.
+ */
+export type PublicTaskStatus = 'assigned' | 'in_progress' | 'submitted';
+
 /** What the candidate reads: their own task, never an evaluation of it. */
 export interface PublicTask {
-  status: TaskSubmissionStatus;
+  status: PublicTaskStatus;
   kind: TaskKind;
   round_title: string | null;
   company: string | null;
@@ -187,6 +191,29 @@ export async function submitTask(token: string): Promise<PublicTask> {
   });
   if (!res.ok) return readError(res);
   return (await res.json()) as PublicTask;
+}
+
+export interface WithdrawConsentResult {
+  withdrawn: true;
+}
+
+/**
+ * The candidate withdraws their consent to send this task's work to the
+ * hiring team (DPDP §11) — the same `X-Task-Token` credential as a save,
+ * since most candidates here have no account to sign in with (mirrors
+ * PublicOffer.tsx's document-consent withdrawal). Stops `saveTaskResponse`,
+ * `addTaskArtifact` and `submitTask` from here on — the server refuses each
+ * of those with a 409 once this has succeeded. Deletes nothing already
+ * saved: that is what erasure and retention are for, not this call. A
+ * repeat call, or a task never started, is a 409.
+ */
+export async function withdrawTaskConsent(token: string): Promise<WithdrawConsentResult> {
+  const res = await fetch(`${API_BASE}/task/consent/withdraw`, {
+    method: 'POST',
+    headers: taskHeaders(token, { 'Content-Type': 'application/json' }),
+  });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as WithdrawConsentResult;
 }
 
 export interface SignedDownload {

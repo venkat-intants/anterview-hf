@@ -38,7 +38,7 @@ import {
 } from '@/api/accommodations';
 import { getWorkflow, listWorkflows, type Round } from '@/api/workflows';
 import { formatDate } from '@/lib/formatters';
-import { toLocalInputValue } from '@/lib/localDatetime';
+import { localInputToIso, toLocalInputValue } from '@/lib/localDatetime';
 import { toast } from '@/lib/toast';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { StatusTag } from '@/design/components/primitives';
@@ -351,8 +351,8 @@ function RecordForm({
         interviewer_note: fields.interviewerNote.trim() || null,
         internal_note: fields.internalNote.trim() || null,
         basis,
-        effective_from: fields.effectiveFrom ? new Date(fields.effectiveFrom).toISOString() : null,
-        effective_until: fields.effectiveUntil ? new Date(fields.effectiveUntil).toISOString() : null,
+        effective_from: fields.effectiveFrom ? localInputToIso(fields.effectiveFrom) : null,
+        effective_until: fields.effectiveUntil ? localInputToIso(fields.effectiveUntil) : null,
       }),
     onSuccess: () => {
       toast.success('Accommodation recorded');
@@ -559,8 +559,8 @@ function ReviseForm({
         other_adjustment: fields.otherAdjustment.trim() || null,
         interviewer_note: fields.interviewerNote.trim() || null,
         internal_note: fields.internalNote.trim() || null,
-        effective_from: fields.effectiveFrom ? new Date(fields.effectiveFrom).toISOString() : null,
-        effective_until: fields.effectiveUntil ? new Date(fields.effectiveUntil).toISOString() : null,
+        effective_from: fields.effectiveFrom ? localInputToIso(fields.effectiveFrom) : null,
+        effective_until: fields.effectiveUntil ? localInputToIso(fields.effectiveUntil) : null,
       }),
     onSuccess: () => {
       toast.success('Accommodation revised — the earlier record is kept');

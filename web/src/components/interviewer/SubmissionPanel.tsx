@@ -12,6 +12,17 @@
 // thing a candidate-chosen label could paper over, which is why this reads
 // `url.hostname` rather than trusting the stored string's appearance.
 //
+// SCHEME, NOT JUST HOSTNAME (security review, PH4 wave 5): checking only
+// that `new URL(href).hostname` is non-empty let `javascript://github.com/x`
+// and `vbscript://github.com/x` through with a hostname of `github.com` —
+// this interstitial would have labelled either "resolves to github.com" and
+// then rendered it as the anchor's own `href`. `http:` passed too. The
+// server blocks all of these today, but this interstitial is meant to be
+// the LAST safeguard, so it parses the URL once with `downloadUrl()`
+// (`lib/safeUrl.ts`) — https-only, plus http when this app is itself served
+// insecurely, exactly the rule that helper already enforces — and renders
+// `url.href` from that same parse, never the raw candidate string.
+//
 // WHAT THIS CANNOT SHOW (backend gaps, not UI omissions — see
 // `app.job_tasks.submission_for_reviewer`):
 //   - An item's PROMPT. The endpoint returns each response's `item_key` and
@@ -55,14 +66,13 @@ function prettyKey(key: string): string {
  */
 function ExternalLinkGate({ href }: { href: string }) {
   const [confirming, setConfirming] = useState(false);
-  let hostname: string | null = null;
-  try {
-    hostname = new URL(href).hostname;
-  } catch {
-    hostname = null;
-  }
+  // Parsed ONCE, https-only (see the module note): `safeHref` is what gets
+  // rendered as the anchor's `href`, never the raw candidate string, and
+  // `hostname` is read from that same parsed URL.
+  const safeHref = downloadUrl(href);
+  const hostname = safeHref ? new URL(safeHref).hostname : null;
 
-  if (!hostname) {
+  if (!safeHref || !hostname) {
     return <p className="text-[12px] text-[var(--ui-danger)]">This link could not be opened.</p>;
   }
 
@@ -92,7 +102,7 @@ function ExternalLinkGate({ href }: { href: string }) {
       </p>
       <div className="flex items-center gap-2">
         <a
-          href={href}
+          href={safeHref}
           target="_blank"
           rel="noopener noreferrer nofollow"
           onClick={() => setConfirming(false)}
@@ -222,15 +232,31 @@ export default function SubmissionPanel({ scorecardId }: { scorecardId: string }
   }
 
   const data = submission.data;
+
+  // The candidate is told submitting is the moment their work goes to the
+  // hiring team, and "Remove" exists on their own page precisely so a
+  // mistaken upload (the code's own example: an ID scan) can be withdrawn
+  // BEFORE that moment. Rendering responses here regardless of status showed
+  // a reviewer work the candidate had not yet sent, with only the header
+  // line saying otherwise (security review, PH4 wave 5). The backend gates
+  // this too (`submission_for_reviewer` now only returns a `submitted` row),
+  // so this is belt and braces, not either/or.
+  if (data.status !== 'submitted') {
+    return (
+      <p className="py-6 text-[13px] text-muted-foreground">
+        Not yet submitted ({data.status.replace('_', ' ')}) — nothing to show the reviewer until
+        the candidate submits.
+      </p>
+    );
+  }
+
   const items = data.responses.filter((r) => r.item_key);
   const artifacts = data.responses.filter((r) => !r.item_key);
 
   return (
     <div className="flex flex-col gap-5">
       <p className="text-[12.5px] text-muted-foreground">
-        {data.status === 'submitted' && data.submitted_at
-          ? `Submitted ${formatDate(data.submitted_at)}`
-          : `Not yet submitted (${data.status.replace('_', ' ')})`}
+        {data.submitted_at ? `Submitted ${formatDate(data.submitted_at)}` : 'Submitted'}
       </p>
 
       {data.materials.length > 0 ? (

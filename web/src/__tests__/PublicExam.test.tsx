@@ -8,17 +8,21 @@
 //     are in one language. The fact is gone; questions and duration remain.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TakeExam } from '../api/publicExam';
 import i18n from '../lib/i18n';
 
 const getPublicExam = vi.fn();
+const startExam = vi.fn();
+const sendIntegrityEvent = vi.fn();
 vi.mock('../api/publicExam', () => ({
   getPublicExam: (...a: unknown[]) => getPublicExam(...a) as unknown,
-  startExam: vi.fn(),
+  startExam: (...a: unknown[]) => startExam(...a) as unknown,
   submitRound: vi.fn(),
+  sendIntegrityEvent: (...a: unknown[]) => sendIntegrityEvent(...a) as unknown,
 }));
 
 import PublicExam from '../pages/PublicExam';
@@ -171,5 +175,58 @@ describe('PublicExam — the accommodation banner (PH4-D2)', () => {
     renderExam();
     await screen.findByRole('heading', { name: 'Backend fundamentals' });
     expect(screen.getByText('ఈ రౌండ్ కోసం మీ సమయంలో ఒక సర్దుబాటు చేర్చబడింది.')).toBeInTheDocument();
+  });
+});
+
+// PH4-D2: `max_violations: null` (this attempt's auto-submit is relaxed)
+// arrives from POST /exam/start and must reach useExamProctor BEFORE it is
+// enabled — `handleStart` sets it in the same batch as `setPhase('taking')`.
+// Only reading the code verified this until now; this drives it through an
+// actual violation and checks the copy it produces: the no-countdown
+// "Violation N recorded." sentence, never "N remaining before auto-submit.".
+describe("PublicExam — the proctor's max_violations wiring (security review)", () => {
+  beforeEach(() => {
+    // The violation banner also requires `isFullscreen` — jsdom implements no
+    // real Fullscreen API, so this forces the one signal it can give:
+    // `document.fullscreenElement` already set before the component mounts.
+    Object.defineProperty(document, 'fullscreenElement', {
+      value: document.body,
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(document, 'fullscreenElement', { value: null, configurable: true });
+  });
+
+  it("wires null max_violations into the proctor before it is enabled, driving the no-countdown copy", async () => {
+    const user = userEvent.setup();
+    getPublicExam.mockResolvedValue(EXAM);
+    startExam.mockResolvedValue({
+      attempt_id: 'att-1',
+      started_at: '2026-09-16T00:00:00.000Z',
+      deadline: null,
+      max_violations: null,
+    });
+    sendIntegrityEvent.mockResolvedValue({
+      accepted: true,
+      violation_count: 1,
+      max_violations: null,
+      integrity_score: 90,
+    });
+
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Start exam' }));
+
+    // Now in the "taking" phase — the consent checkbox is gone.
+    await waitFor(() => expect(screen.queryByRole('checkbox')).not.toBeInTheDocument());
+
+    document.dispatchEvent(new Event('copy'));
+
+    expect(await screen.findByText('Violation 1 recorded.')).toBeInTheDocument();
+    // The relaxed attempt never shows a countdown to auto-submit.
+    expect(screen.queryByText(/remaining/i)).not.toBeInTheDocument();
   });
 });

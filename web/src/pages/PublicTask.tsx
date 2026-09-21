@@ -829,22 +829,25 @@ function TaskWorkspace({
 
   // Consent withdrawal (security review, PH4-D4 wave 5) — mirrors
   // PublicOffer.tsx's document-consent withdrawal: a plain link, a two-step
-  // confirm, then a done state. `GET /task` now reports whether consent was
-  // withdrawn (`consent_withdrawn`), so `withdrawn` starts from the server's
-  // own field — a reload of an already-withdrawn in-progress task shows the
-  // withdrawn state instead of losing it. It is still set locally on a
-  // successful withdrawal too, so the UI updates at once without waiting on
-  // a refetch.
+  // confirm, then a done state. `withdrawn` is DERIVED, never just local
+  // state: it is true once either the server's own `consent_withdrawn`
+  // says so (code review — a refetch that surfaces a withdrawal made
+  // elsewhere, another tab or a retried request, must never be ignored) OR
+  // this mutation has just succeeded (so the UI updates at once, without
+  // waiting on the refetch `onChanged()` below triggers). Consent, once
+  // withdrawn, never goes back — a plain OR is enough, never a reset.
   const [withdrawAsking, setWithdrawAsking] = useState(false);
-  const [withdrawn, setWithdrawn] = useState(data.consent_withdrawn);
+  const [locallyWithdrawn, setLocallyWithdrawn] = useState(false);
+  const withdrawn = locallyWithdrawn || data.consent_withdrawn;
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
 
   const withdrawMut = useMutation({
     mutationFn: () => withdrawTaskConsent(token),
     onSuccess: () => {
-      setWithdrawn(true);
+      setLocallyWithdrawn(true);
       setWithdrawAsking(false);
       setWithdrawError(null);
+      onChanged();
     },
     onError: (e: unknown) => setWithdrawError(errText(e, t('task.errorGeneric'))),
   });

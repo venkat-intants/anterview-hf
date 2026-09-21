@@ -195,6 +195,47 @@ describe('TaskSubmissionSection', () => {
     expect(toastSuccess).toHaveBeenCalled();
   });
 
+  // Code review, pre-existing bug: a single shared `useState('')` meant that
+  // with two open task rounds on the same application, typing a withdraw
+  // reason for one filled the box for the other too.
+  it("keeps each row's withdraw reason separate when two task rounds are open at once", async () => {
+    const user = userEvent.setup();
+    const ROW_A: TaskSubmissionSummary = {
+      ...SUBMISSION,
+      id: 'sub-a',
+      round_id: 'r-a',
+      round_title: 'Round A',
+      status: 'in_progress',
+      submitted_at: null,
+    };
+    const ROW_B: TaskSubmissionSummary = {
+      ...SUBMISSION,
+      id: 'sub-b',
+      round_id: 'r-b',
+      round_title: 'Round B',
+      status: 'in_progress',
+      submitted_at: null,
+    };
+    listEnrolmentTasks.mockResolvedValue([ROW_A, ROW_B]);
+    withdrawTaskSubmission.mockResolvedValue({ ...ROW_A, status: 'withdrawn' });
+    renderSection();
+
+    await screen.findByText('Round A');
+    await screen.findByText('Round B');
+
+    await user.type(screen.getByLabelText(/withdraw reason for round a/i), 'Reason for A');
+
+    expect(screen.getByLabelText(/withdraw reason for round a/i)).toHaveValue('Reason for A');
+    expect(screen.getByLabelText(/withdraw reason for round b/i)).toHaveValue('');
+
+    const withdrawButtons = screen.getAllByRole('button', { name: /^withdraw$/i });
+    await user.click(withdrawButtons[0]);
+
+    await waitFor(() =>
+      expect(withdrawTaskSubmission).toHaveBeenCalledWith('sub-a', 'Reason for A'),
+    );
+  });
+
   it('offers no withdraw control once a submission is no longer open', async () => {
     listEnrolmentTasks.mockResolvedValue([SUBMISSION]); // status: submitted
     renderSection();

@@ -136,7 +136,22 @@ export function downloadRoundTaskMaterial(
 
 // ── HR — submissions ─────────────────────────────────────────────────────────
 
-export interface TaskSubmissionSummary {
+/**
+ * Lifecycle-only view of a submission — status, dates, attempt number, which
+ * row is live (`superseded_at`/`is_current`), and whether its content is
+ * even readable (`consent_withdrawn`) — but never the content itself. This
+ * is what `for_requisition` (`listRequisitionTaskSubmissions`, across one
+ * opening's applicants) returns, and what `reissue`/`withdraw` hand back
+ * after acting: neither joins in a round's config or a submission's
+ * responses, only `_submission_out`.
+ *
+ * Code review, MAJOR: this used to be the SAME type as `TaskSubmissionSummary`
+ * below, with `brief`/`items`/`responses` declared as always present — true
+ * for `listEnrolmentTasks` (`for_enrolment`), but those keys are simply
+ * ABSENT on everything here. Split so a caller of this narrower shape can
+ * never read a field the wire response does not carry.
+ */
+export interface TaskSubmissionLifecycle {
   id: string;
   enrolment_id: string;
   round_id: string;
@@ -159,8 +174,18 @@ export interface TaskSubmissionSummary {
   is_current: boolean;
   /** PH4-D4 wave 5 — true once the candidate has withdrawn consent for this
    *  submission, whether that happened while it was open or after it was
-   *  submitted. `responses` is always `[]` when this is true. */
+   *  submitted. */
   consent_withdrawn: boolean;
+}
+
+/**
+ * `listEnrolmentTasks` (`for_enrolment`, ONE application) only. Adds the
+ * submission's actual content on top of the lifecycle every other HR
+ * endpoint above returns — `listRequisitionTaskSubmissions` does NOT carry
+ * `brief`/`items`/`responses` at all; reach for `TaskSubmissionLifecycle`
+ * there instead of assuming these three are always present.
+ */
+export interface TaskSubmissionSummary extends TaskSubmissionLifecycle {
   /** The round's brief and item prompts, so an answer below reads in
    *  context. Set ONLY when `responses` is readable (the same gate) —
    *  `null` / `[]` otherwise, never a stale or partial copy. */
@@ -177,18 +202,23 @@ export interface TaskSubmissionSummary {
   responses: TaskResponseOut[];
 }
 
-/** Every submission ever issued for this application, newest attempt first.
- *  A re-issue supersedes rather than replaces, so a withdrawn or expired
- *  attempt is kept in the list, not silently dropped — use `is_current`,
- *  never list position, to find the live one. */
+/** Every submission ever issued for THIS application, newest attempt first —
+ *  the ONLY HR endpoint that carries a submission's actual content
+ *  (`brief`/`items`/`responses`), when it is readable. A re-issue supersedes
+ *  rather than replaces, so a withdrawn or expired attempt is kept in the
+ *  list, not silently dropped — use `is_current`, never list position, to
+ *  find the live one. */
 export function listEnrolmentTasks(enrolmentId: string): Promise<TaskSubmissionSummary[]> {
   return apiGet<TaskSubmissionSummary[]>(`/hr/enrolments/${pathId(enrolmentId)}/tasks`);
 }
 
+/** Across one requisition's applicants — lifecycle only (`for_requisition`
+ *  never joins in a round's config or a submission's responses), so this is
+ *  `TaskSubmissionLifecycle`, never the wider `TaskSubmissionSummary`. */
 export function listRequisitionTaskSubmissions(
   requisitionId: string,
-): Promise<TaskSubmissionSummary[]> {
-  return apiGet<TaskSubmissionSummary[]>(
+): Promise<TaskSubmissionLifecycle[]> {
+  return apiGet<TaskSubmissionLifecycle[]>(
     `/hr/requisitions/${pathId(requisitionId)}/task-submissions`,
   );
 }
@@ -204,18 +234,21 @@ export function downloadTaskArtifact(
 
 /** Supersede this submission and issue a fresh link for the same round —
  *  the exam-link precedent. Refused (409) once nothing here can be reissued
- *  against (a newer link already exists, or the round has no configuration). */
-export function reissueTaskSubmission(submissionId: string): Promise<TaskSubmissionSummary> {
-  return apiPost<TaskSubmissionSummary>(`/hr/task-submissions/${pathId(submissionId)}/reissue`, {});
+ *  against (a newer link already exists, or the round has no configuration).
+ *  Returns lifecycle only (`_submission_out`, same as `withdraw`) — never a
+ *  submission's content. */
+export function reissueTaskSubmission(submissionId: string): Promise<TaskSubmissionLifecycle> {
+  return apiPost<TaskSubmissionLifecycle>(`/hr/task-submissions/${pathId(submissionId)}/reissue`, {});
 }
 
 /** Only while the submission is still open (`assigned`/`in_progress`) — the
- *  server refuses once it has been submitted, expired or already withdrawn. */
+ *  server refuses once it has been submitted, expired or already withdrawn.
+ *  Returns lifecycle only (`_submission_out`, same as `reissue`). */
 export function withdrawTaskSubmission(
   submissionId: string,
   reason?: string,
-): Promise<TaskSubmissionSummary> {
-  return apiPost<TaskSubmissionSummary>(`/hr/task-submissions/${pathId(submissionId)}/withdraw`, {
+): Promise<TaskSubmissionLifecycle> {
+  return apiPost<TaskSubmissionLifecycle>(`/hr/task-submissions/${pathId(submissionId)}/withdraw`, {
     reason: reason?.trim() || null,
   });
 }

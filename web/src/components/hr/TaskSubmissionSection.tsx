@@ -257,7 +257,10 @@ export default function TaskSubmissionSection({
   enrolmentId: string;
 }): JSX.Element | null {
   const qc = useQueryClient();
-  const [reason, setReason] = useState('');
+  // Keyed by submission id (code review, pre-existing bug) — a single shared
+  // string meant that with two open task rounds on the same application,
+  // typing a withdraw reason for one filled the box for the other too.
+  const [reasons, setReasons] = useState<Record<string, string>>({});
 
   const list = useQuery({
     queryKey: ['hr', 'enrolment', enrolmentId, 'tasks'],
@@ -278,10 +281,14 @@ export default function TaskSubmissionSection({
   });
 
   const withdrawMut = useMutation({
-    mutationFn: (submissionId: string) => withdrawTaskSubmission(submissionId, reason),
-    onSuccess: () => {
+    mutationFn: (submissionId: string) => withdrawTaskSubmission(submissionId, reasons[submissionId]),
+    onSuccess: (_data, submissionId) => {
       toast.success('Submission withdrawn');
-      setReason('');
+      setReasons((prev) => {
+        const next = { ...prev };
+        delete next[submissionId];
+        return next;
+      });
       invalidate();
     },
     onError: (e) => toast.error(errText(e, 'Could not withdraw this submission')),
@@ -361,8 +368,10 @@ export default function TaskSubmissionSection({
                       <>
                         <input
                           type="text"
-                          value={reason}
-                          onChange={(e) => setReason(e.target.value)}
+                          value={reasons[row.id] ?? ''}
+                          onChange={(e) =>
+                            setReasons((prev) => ({ ...prev, [row.id]: e.target.value }))
+                          }
                           placeholder="Withdraw reason (optional)"
                           aria-label={`Withdraw reason for ${row.round_title ?? 'this task'}`}
                           className="w-full max-w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"

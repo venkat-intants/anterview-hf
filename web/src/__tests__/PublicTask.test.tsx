@@ -414,6 +414,22 @@ describe('PublicTask — withdrawing consent', () => {
       await screen.findByText('Consent for this task is already withdrawn.'),
     ).toBeInTheDocument();
   });
+
+  // Code review: onSuccess used to only set local state, so another tab's
+  // (or a retried request's) view of this task never learned the withdrawal
+  // happened here until it happened to refetch some other way.
+  it('refetches on success, not just updating local state', async () => {
+    const user = userEvent.setup();
+    withdrawTaskConsent.mockResolvedValue({ withdrawn: true });
+    renderPage();
+    await screen.findByText('Take-home simulation');
+
+    await user.click(screen.getByRole('button', { name: /withdraw my consent/i }));
+    await user.click(screen.getByRole('button', { name: /yes, withdraw consent/i }));
+
+    await waitFor(() => expect(withdrawTaskConsent).toHaveBeenCalledWith('task_tok_123456'));
+    await waitFor(() => expect(viewTask).toHaveBeenCalledTimes(2));
+  });
 });
 
 // Security review, PH4-D4 wave 5: `GET /task` now reports whether consent
@@ -430,6 +446,31 @@ describe('PublicTask — consent already withdrawn (e.g. after a reload)', () =>
       screen.queryByRole('button', { name: /withdraw my consent/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText(/write your answer/i)).toBeDisabled();
+  });
+
+  // Code review: `withdrawn` used to be seeded ONCE from `data.consent_withdrawn`
+  // and never re-synced, so a refetch bringing a withdrawal made elsewhere
+  // (another tab, a retried request) was silently ignored. No local mutation
+  // runs in this test at all — only the data itself changes underneath.
+  it('shows the withdrawn state once a refetch brings a withdrawal made elsewhere', async () => {
+    const user = userEvent.setup();
+    viewTask
+      .mockResolvedValueOnce(IN_PROGRESS)
+      .mockResolvedValueOnce({ ...IN_PROGRESS, consent_withdrawn: true });
+    saveTaskResponse.mockResolvedValue({ item_key: 'design_doc', saved: true });
+    renderPage();
+
+    const textarea = await screen.findByPlaceholderText(/write your answer/i);
+    expect(textarea).toBeEnabled();
+    await user.type(textarea, 'An answer');
+    await user.tab(); // autosave -> onSaved -> onChanged -> refetch
+
+    await waitFor(() => expect(viewTask).toHaveBeenCalledTimes(2));
+    expect(await screen.findByPlaceholderText(/write your answer/i)).toBeDisabled();
+    expect(
+      screen.queryByRole('button', { name: /withdraw my consent/i }),
+    ).not.toBeInTheDocument();
+    expect(withdrawTaskConsent).not.toHaveBeenCalled();
   });
 });
 

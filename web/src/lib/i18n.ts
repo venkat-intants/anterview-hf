@@ -1152,13 +1152,15 @@ const en = {
         'Your consent is withdrawn. Nothing more can be sent for this task. What you had already saved stays as it is.',
       // PH4-D4 wave 5 — the same withdrawal, offered again after the work
       // has already been sent (POST /task/consent/withdraw now succeeds on
-      // a `submitted` task too). Wording is written for work already in the
-      // hiring team's hands: nothing is deleted, but they lose the ability
-      // to see it or use it to decide this round.
+      // a `submitted` task too). Security review NEW-9: withdrawal is not
+      // retroactive, so this must say only what is true — the hiring team
+      // loses the ability to see or use the work, but a decision already
+      // recorded, and any notes a reviewer already wrote, are untouched, and
+      // nothing already saved is deleted.
       withdrawConsentSubmittedConfirm:
-        'Withdraw consent for the work you already sent? The hiring team will no longer be able to see it, and it will not be used in their decision for this round. This does not delete what you have already saved.',
+        'Withdraw consent for the work you already sent? The hiring team will no longer be able to see it, and it can no longer be used to pass this round. Any decision already made, and any notes reviewers already wrote, stay as they are. Nothing is deleted.',
       withdrawConsentSubmittedDone:
-        'Your consent is withdrawn. The hiring team can no longer see this submission, and it will not be used in their decision for this round.',
+        'Your consent is withdrawn. The hiring team can no longer see this submission, and it can no longer be used to pass this round. Any decision already made, and any notes reviewers already wrote, stay as they are. Nothing is deleted.',
       beginButton: 'Begin',
       beginError: 'Could not start this task. Please try again.',
       submit: 'Submit',
@@ -2206,9 +2208,9 @@ const hi = {
       withdrawConsentDone:
         'आपकी सहमति वापस ले ली गई है। इस टास्क के लिए अब कुछ और नहीं भेजा जा सकता। आपने पहले जो सहेजा था वह वैसे ही रहता है।',
       withdrawConsentSubmittedConfirm:
-        'पहले से भेजे गए काम के लिए सहमति वापस लें? इसके बाद भर्ती टीम इसे नहीं देख पाएगी, और इसका उपयोग इस राउंड के फैसले में नहीं किया जाएगा। इससे आपने जो पहले से सहेजा है वह हटता नहीं है।',
+        'पहले से भेजे गए काम के लिए सहमति वापस लें? इसके बाद भर्ती टीम इसे नहीं देख पाएगी, और इसका उपयोग इस राउंड को पास करने के लिए नहीं किया जा सकेगा। पहले से लिया गया कोई भी फैसला, और समीक्षकों द्वारा पहले से लिखे गए नोट्स, वैसे ही रहेंगे। कुछ भी हटाया नहीं जाता।',
       withdrawConsentSubmittedDone:
-        'आपकी सहमति वापस ले ली गई है। भर्ती टीम अब यह सबमिशन नहीं देख सकती, और इसका उपयोग इस राउंड के फैसले में नहीं किया जाएगा।',
+        'आपकी सहमति वापस ले ली गई है। भर्ती टीम अब यह सबमिशन नहीं देख सकती, और इसका उपयोग इस राउंड को पास करने के लिए नहीं किया जा सकेगा। पहले से लिया गया कोई भी फैसला, और समीक्षकों द्वारा पहले से लिखे गए नोट्स, वैसे ही रहेंगे। कुछ भी हटाया नहीं जाता।',
       beginButton: 'शुरू करें',
       beginError: 'यह टास्क शुरू नहीं हो सका। कृपया फिर कोशिश करें।',
       submit: 'सबमिट करें',
@@ -3267,9 +3269,9 @@ const te = {
       withdrawConsentDone:
         'మీ సమ్మతి ఉపసంహరించబడింది. ఈ టాస్క్ కోసం ఇక ఏదీ పంపలేరు. మీరు ఇంతకుముందు సేవ్ చేసినది అలాగే ఉంటుంది.',
       withdrawConsentSubmittedConfirm:
-        'మీరు ఇప్పటికే పంపిన పని కోసం సమ్మతిని ఉపసంహరించుకోవాలా? దీని తర్వాత నియామక బృందం దీన్ని చూడలేరు, మరియు ఇది ఈ రౌండ్ నిర్ణయంలో ఉపయోగించబడదు. దీని వల్ల మీరు ఇప్పటికే సేవ్ చేసినది తొలగించబడదు.',
+        'మీరు ఇప్పటికే పంపిన పని కోసం సమ్మతిని ఉపసంహరించుకోవాలా? దీని తర్వాత నియామక బృందం దీన్ని చూడలేరు, మరియు ఇది ఈ రౌండ్‌ను పాస్ చేయడానికి ఉపయోగించబడదు. ఇప్పటికే తీసుకున్న ఏ నిర్ణయమైనా, మరియు సమీక్షకులు ఇప్పటికే రాసిన గమనికలు, అలాగే ఉంటాయి. ఏదీ తొలగించబడదు.',
       withdrawConsentSubmittedDone:
-        'మీ సమ్మతి ఉపసంహరించబడింది. నియామక బృందం ఇక ఈ సమర్పణను చూడలేరు, మరియు ఇది ఈ రౌండ్ నిర్ణయంలో ఉపయోగించబడదు.',
+        'మీ సమ్మతి ఉపసంహరించబడింది. నియామక బృందం ఇక ఈ సమర్పణను చూడలేరు, మరియు ఇది ఈ రౌండ్‌ను పాస్ చేయడానికి ఉపయోగించబడదు. ఇప్పటికే తీసుకున్న ఏ నిర్ణయమైనా, మరియు సమీక్షకులు ఇప్పటికే రాసిన గమనికలు, అలాగే ఉంటాయి. ఏదీ తొలగించబడదు.',
       beginButton: 'ప్రారంభించండి',
       beginError: 'ఈ టాస్క్ ప్రారంభం కాలేదు. దయచేసి మళ్లీ ప్రయత్నించండి.',
       submit: 'సమర్పించండి',

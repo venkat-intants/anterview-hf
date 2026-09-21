@@ -83,7 +83,7 @@ def _update_sql(stmt: Update) -> str:
 async def test_revoking_consent_stamps_in_flight_sessions() -> None:
     db = _FakeDb(active_types={"interview_voice_recording"}, sessions_updated=1)
 
-    resp = await consent_router.revoke_consent(current_user=_user(), db=db)  # type: ignore[arg-type]
+    resp = await consent_router.revoke_consent(current_user=_user(), db=db, request=MagicMock())  # type: ignore[arg-type]
 
     assert resp.revoked is True
     assert len(db.updates) == 1
@@ -99,7 +99,7 @@ async def test_only_non_terminal_sessions_are_rewritten() -> None:
     — and would make an already-scored session look like a withdrawal."""
     db = _FakeDb(active_types={"interview_voice_recording"}, sessions_updated=0)
 
-    await consent_router.revoke_consent(current_user=_user(), db=db)  # type: ignore[arg-type]
+    await consent_router.revoke_consent(current_user=_user(), db=db, request=MagicMock())  # type: ignore[arg-type]
 
     sql = _update_sql(db.updates[0])
     assert "'created'" in sql
@@ -114,10 +114,57 @@ async def test_the_status_write_shares_the_revocation_transaction() -> None:
     read 'in_progress' — the exact ambiguity this write removes."""
     db = _FakeDb(active_types={"video_capture"}, sessions_updated=2)
 
-    await consent_router.revoke_consent(current_user=_user(), db=db)  # type: ignore[arg-type]
+    await consent_router.revoke_consent(current_user=_user(), db=db, request=MagicMock())  # type: ignore[arg-type]
 
     assert db.updates, "the session UPDATE must be staged before the commit"
     assert db.committed is True
+
+
+def _request() -> Any:
+    return SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+
+
+@pytest.mark.asyncio
+async def test_a_documents_consent_revoked_here_tells_the_hiring_team(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once this route could actually FIND the documents consent (4802bb3),
+    revoking it here owed what the documents step's own withdrawal does: an
+    audit row and a notice to the hiring team. It skipped both."""
+    import app.preboarding as preboarding
+
+    calls: list[dict[str, Any]] = []
+
+    async def _record(_db: Any, **kw: Any) -> None:
+        calls.append(kw)
+
+    monkeypatch.setattr(preboarding, "documents_consent_withdrawn_elsewhere", _record)
+    db = _FakeDb(active_types={"preboarding_documents"}, sessions_updated=0)
+
+    resp = await consent_router.revoke_consent(current_user=_user(), db=db, request=_request())  # type: ignore[arg-type]
+
+    assert resp.revoked is True
+    assert len(calls) == 1
+    assert str(calls[0]["user_id"]) == _USER_ID
+
+
+@pytest.mark.asyncio
+async def test_revoking_only_interview_consents_tells_no_hiring_team(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.preboarding as preboarding
+
+    calls: list[dict[str, Any]] = []
+
+    async def _record(_db: Any, **kw: Any) -> None:
+        calls.append(kw)
+
+    monkeypatch.setattr(preboarding, "documents_consent_withdrawn_elsewhere", _record)
+    db = _FakeDb(active_types={"interview_voice_recording"}, sessions_updated=0)
+
+    await consent_router.revoke_consent(current_user=_user(), db=db, request=_request())  # type: ignore[arg-type]
+
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -128,7 +175,7 @@ async def test_nothing_to_revoke_writes_no_status() -> None:
     db = _FakeDb(active_types=set(), sessions_updated=0)
 
     with pytest.raises(HTTPException) as exc:
-        await consent_router.revoke_consent(current_user=_user(), db=db)  # type: ignore[arg-type]
+        await consent_router.revoke_consent(current_user=_user(), db=db, request=MagicMock())  # type: ignore[arg-type]
 
     assert exc.value.status_code == 404
     assert db.updates == []

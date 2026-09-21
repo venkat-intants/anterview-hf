@@ -551,6 +551,38 @@ async def withdraw_consent(db: AsyncSession, *, raw: str | None, session: str | 
     return {"withdrawn": True}
 
 
+async def documents_consent_withdrawn_elsewhere(
+    db: AsyncSession, *, user_id: uuid.UUID, rows: int, meta: RequestMeta,
+) -> None:
+    """What a documents-consent withdrawal owes when it came through the
+    signed-in ``DELETE /consent`` rather than the documents step
+    (``withdraw_consent``): an audit row and a notice to the hiring team, for
+    every offer it stops. The consent is held per candidate, so that is every
+    accepted offer of theirs still in preboarding. Caller commits."""
+    offers = (
+        await db.execute(
+            text("SELECT o.id, o.company_id, o.created_by_user_id, o.sent_by_user_id,"
+                 "       a.full_name AS candidate_name"
+                 "  FROM offers o JOIN applicants a ON a.id = o.applicant_id"
+                 " WHERE a.user_id = :u AND o.status = 'accepted'"
+                 "   AND o.preboarding_completed_at IS NULL"),
+            {"u": user_id},
+        )
+    ).mappings().all()
+    for offer in offers:
+        _audit(db, actor=user_id, action="document.consent_withdrawn", resource_id=offer["id"],
+               details={"company_id": str(offer["company_id"]), "rows": rows,
+                        "via": "DELETE /consent"},
+               meta=meta, actor_type="candidate", resource_type="offer")
+        for who in {offer["created_by_user_id"], offer["sent_by_user_id"]} - {None}:
+            await create_notification(
+                db, user_id=who, kind="offer_update",
+                title=f"Documents consent withdrawn: {offer['candidate_name']}",
+                body="They can send no more documents until they agree again.",
+                link=f"/hr/offers/{offer['id']}",
+            )
+
+
 async def complete(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
                    actor: uuid.UUID, meta: RequestMeta) -> dict[str, Any]:
     offer = await _hr_offer(db, company_id, offer_id)

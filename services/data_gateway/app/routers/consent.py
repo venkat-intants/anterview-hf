@@ -392,28 +392,37 @@ async def get_consent_status(
     "",
     status_code=status.HTTP_200_OK,
     response_model=ConsentRevocationResponse,
-    summary="Revoke ALL DPDP consents (DPDP §11 — right to withdraw)",
+    summary="Revoke this router's DPDP consents (DPDP §11 — right to withdraw)",
     description=(
-        "Sets revoked_at = now() on every active consent row for the user, "
-        "covering both 'interview_voice_recording' (voice/audio) and "
-        "'video_capture' (webcam / proctoring biometric). "
+        "Sets revoked_at = now() on the user's active consent of each type this "
+        "router manages: 'interview_voice_recording' (voice/audio), "
+        "'video_capture' (webcam / proctoring biometric) and "
+        "'preboarding_documents' (offer documents). A job-simulation/portfolio "
+        "task's consent is NOT here: it is one per submission and is withdrawn "
+        "on the task link (POST /task/consent/withdraw). "
         "Returns 200 with the list of revoked rows. "
-        "Returns 404 if no active consent of any type exists. "
+        "Returns 404 if no active consent of any of these types exists. "
         "Idempotent in the sense that a second DELETE returns 404 consistently."
     ),
 )
 async def revoke_consent(
     current_user: CurrentUserDep,
     db: DbSessionDep,
+    request: Request,
 ) -> ConsentRevocationResponse:
-    """Revoke ALL active DPDP consents for the current user (DPDP Act 2023, §11).
+    """Revoke the user's active DPDP consents of every type this router manages
+    (DPDP Act 2023, §11).
 
     DPDP §11 grants every data principal the right to withdraw consent at any
-    time without restriction. A candidate must be able to retract both their
-    voice-recording consent AND their video-capture (webcam / proctoring
-    biometric) consent in a single action. This endpoint revokes every active
-    consent row — regardless of type — so the candidate's full withdrawal is
-    honoured atomically.
+    time without restriction. This revokes the voice-recording, video-capture
+    and preboarding-documents consents in one action, each found under the
+    purpose it was recorded with (``_PURPOSE_BY_TYPE``). It is not "every
+    consent row regardless of type", as this docstring used to say: task
+    consents are one per submission and are withdrawn on the task link.
+
+    A documents consent withdrawn here gets the same audit row and hiring-team
+    notice as one withdrawn on the documents step
+    (``preboarding.documents_consent_withdrawn_elsewhere``).
 
     After revocation:
       - interview_core/app/consent_guard.py ``has_active_consent`` returns False
@@ -451,6 +460,16 @@ async def revoke_consent(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No active consent to revoke",
+        )
+
+    if any(item.consent_type == _DOCUMENTS_CONSENT_TYPE for item in revoked_items):
+        from app.interviewer_scorecards import RequestMeta  # noqa: PLC0415
+        from app.preboarding import documents_consent_withdrawn_elsewhere  # noqa: PLC0415
+
+        await documents_consent_withdrawn_elsewhere(
+            db, user_id=_uuid_mod.UUID(current_user.user_id), rows=1,
+            meta=RequestMeta(ip_address=_extract_client_ip(request),
+                             user_agent=_extract_user_agent(request)),
         )
 
     # DPDP-6 / §6(4): record WHY these sessions ended, on the same transaction as

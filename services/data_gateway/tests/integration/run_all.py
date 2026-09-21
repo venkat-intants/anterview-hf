@@ -39,6 +39,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -111,6 +112,30 @@ ENV = {
     # session_replication_role.
     "SMOKE_DATABASE_URL": DB_URL,
 }
+
+
+# LOCAL ONLY. These smokes drop and recreate databases, write test tenants and
+# upload test documents. Pointed at anything but this machine they would do
+# that to real data — which happened once already (2026-09-07: 571 test rows
+# in the live Neon database, deleted by hand; see tests/integration/conftest.py).
+# The database is checked before anything runs and the whole run refuses.
+# Storage and the scoring service are checked where they are used, and a
+# non-local one skips its smoke with the reason rather than being sent test
+# files. There is no override: a smoke has no business on a remote host.
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _is_local(url: str) -> bool:
+    host = urllib.parse.urlsplit(url.replace("+asyncpg", "")).hostname or ""
+    return host in _LOCAL_HOSTS
+
+
+def _refuse_unless_local() -> None:
+    if not _is_local(DB_URL):
+        host = urllib.parse.urlsplit(DB_URL.replace("+asyncpg", "")).hostname
+        sys.exit(f"refusing: the smoke database is on {host!r}, not this machine. "
+                 "run_all.py only ever runs against local Postgres.")
+
 
 Result = tuple[str, bool, str, str]
 results: list[Result] = []
@@ -199,6 +224,12 @@ def _run_scorecard_retry() -> None:
             f"({', '.join(missing)} unset). See README.md."
         )
         return
+    for what, url in (("S3_ENDPOINT_URL", S3_FOR_SCORECARDS["S3_ENDPOINT_URL"]),
+                      ("FEEDBACK_BILLING_URL", FEEDBACK_BILLING_URL)):
+        if not _is_local(url):
+            skipped.append(f"smoke_group_a_scorecard_retry.py — {what} is not local; "
+                           "smokes only write to local services.")
+            return
     try:
         with urllib.request.urlopen(f"{FEEDBACK_BILLING_URL}/health/live", timeout=5) as r:
             r.read()
@@ -222,10 +253,15 @@ def _run_wave4() -> None:
             f"({', '.join(missing)} unset). See README.md."
         )
         return
+    if not _is_local(S3_FOR_DOCUMENTS["S3_ENDPOINT"]):
+        skipped.append("smoke_ph4_wave4.py — S3_ENDPOINT is not local; "
+                       "smokes only upload to a local bucket.")
+        return
     _run(["smoke_ph4_wave4.py"], {**ENV, **S3_FOR_DOCUMENTS})
 
 
 def main() -> int:
+    _refuse_unless_local()
     for name in BACKFILL_PAIR:
         _seeded_at_head()
         print(f"— seeded before Group B, migrated to head, for {name}", flush=True)

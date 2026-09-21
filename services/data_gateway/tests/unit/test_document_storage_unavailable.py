@@ -23,6 +23,7 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 
 def _settings(**over: object) -> SimpleNamespace:
     base = {
+        "s3_endpoint": "http://127.0.0.1:9000",
         "s3_bucket_name": "intants-uploads",
         "s3_access_key_id": "key",
         "s3_secret_access_key": "secret",
@@ -90,3 +91,51 @@ def test_every_caller_maps_storage_failure_to_a_503(module: str) -> None:
     assert calls, f"{module} no longer stores documents — update this test"
     assert handled == calls, f"{module}: {calls} store() calls, {handled} mapped to a 503"
     assert "503" in src
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unset", ["s3_endpoint", "s3_bucket_name"])
+async def test_keys_without_an_endpoint_or_bucket_refuse_rather_than_go_to_aws(unset: str) -> None:
+    """Keys but no endpoint would send identity documents to Amazon's default region.
+
+    Nobody chose that destination, so it is refused like missing keys are.
+    delete_objects already refused endpoint-less configs; uploads now match.
+    """
+    from app import document_storage as store
+
+    with (
+        patch.object(store, "upload_file", AsyncMock()) as upload,
+        pytest.raises(store.StorageUnavailableError),
+    ):
+        await store.store(_settings(**{unset: ""}), "preboarding/c/o/d", b"%PDF-1.4",
+                          "application/pdf")
+    upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_upload_deletes_whatever_may_have_landed() -> None:
+    """A timeout can hide a successful write; the row is rolled back, so the object goes too."""
+    from app import document_storage as store
+
+    lost = EndpointConnectionError(endpoint_url="http://127.0.0.1:9000/x")
+    with (
+        patch.object(store, "upload_file", AsyncMock(side_effect=lost)),
+        patch.object(store, "delete_objects", AsyncMock(return_value=1)) as delete,
+        pytest.raises(store.StorageUnavailableError),
+    ):
+        await store.store(_settings(), "preboarding/c/o/d", b"%PDF-1.4", "application/pdf")
+    delete.assert_awaited_once()
+    assert delete.await_args.args[0] == {"intants-uploads": ["preboarding/c/o/d"]}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cleanup_does_not_hide_the_original_failure() -> None:
+    from app import document_storage as store
+
+    with (
+        patch.object(store, "upload_file",
+                     AsyncMock(side_effect=EndpointConnectionError(endpoint_url="http://x"))),
+        patch.object(store, "delete_objects", AsyncMock(side_effect=RuntimeError("also down"))),
+        pytest.raises(store.StorageUnavailableError, match="EndpointConnectionError"),
+    ):
+        await store.store(_settings(), "preboarding/c/o/d", b"%PDF-1.4", "application/pdf")

@@ -128,22 +128,50 @@ def storage_key(company_id: uuid.UUID, offer_id: uuid.UUID, document_id: uuid.UU
 async def store(settings: Settings, key: str, data: bytes, content_type: str) -> None:
     """Put a checked document in the uploads bucket, or raise StorageUnavailableError.
 
-    Checked for configuration FIRST: with no credentials there is nothing to
-    try, and trying means a network call to Amazon that fails slowly and says
-    nothing useful. The operator gets the fix in the log; the caller gets one
-    exception type to map, whatever went wrong underneath.
+    Checked for configuration FIRST: with nothing configured there is nothing
+    to try, and trying means a network call to Amazon that fails slowly and
+    says nothing useful. The operator gets the fix in the log; the caller gets
+    one exception type to map, whatever went wrong underneath.
+
+    The ENDPOINT is required as well as the keys. With keys but no endpoint,
+    boto3 falls back to Amazon's default region, so a half-configured
+    deployment would quietly send identity documents somewhere nobody chose —
+    a residency question, not just a bug. Every store this product uses (R2,
+    Backblaze, MinIO) needs an endpoint anyway, and an AWS bucket should name
+    its regional one (``https://s3.ap-south-1.amazonaws.com``) for the same
+    reason.
     """
-    if not (settings.s3_access_key_id and settings.s3_secret_access_key):
-        log.warning(
-            "document_storage.not_configured",
-            hint="set S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY and S3_BUCKET_NAME",
+    missing = [
+        name for name, value in (
+            ("S3_ENDPOINT", settings.s3_endpoint),
+            ("S3_ACCESS_KEY_ID", settings.s3_access_key_id),
+            ("S3_SECRET_ACCESS_KEY", settings.s3_secret_access_key),
+            ("S3_BUCKET_NAME", settings.s3_bucket_name),
         )
+        if not (value or "").strip()
+    ]
+    if missing:
+        # Names only, never values.
+        log.warning("document_storage.not_configured", missing=missing)
         raise StorageUnavailableError("object storage is not configured")
     try:
         await upload_file(settings.s3_bucket_name, key, data, content_type, settings=settings)
     except (BotoCoreError, ClientError) as exc:
         # The key names no person, so it is safe to log; the bytes never are.
         log.warning("document_storage.upload_failed", key=key, error_type=type(exc).__name__)
+        # A timeout does not mean the object is absent — the bucket may have
+        # stored it and only the reply was lost. The caller rolls the row back,
+        # so an object left here would belong to nothing, reachable only by an
+        # erasure that happens to list its prefix. Delete it on the way out:
+        # deleting a key that was never written is a no-op, and a failure here
+        # must not mask the original one.
+        try:
+            await remove(settings, [key])
+        except Exception as cleanup_exc:  # noqa: BLE001 — best effort, logged
+            log.warning(
+                "document_storage.cleanup_failed", key=key,
+                error_type=type(cleanup_exc).__name__,
+            )
         raise StorageUnavailableError(type(exc).__name__) from exc
 
 

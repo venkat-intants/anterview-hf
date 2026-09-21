@@ -819,3 +819,27 @@ async def test_scorecard_records_the_model_that_was_called_not_gemini() -> None:
         "the scorecard must record the model that scored it"
     )
     assert "gemini" not in stored["scorer_model"]
+
+
+def test_a_model_name_too_long_for_the_scorecard_is_refused_at_startup() -> None:
+    """Refused when settings load, not after the paid scoring call."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="scorer_model holds 64"):
+        Settings(
+            database_url="postgresql+asyncpg://test:test@localhost:5432/test",
+            redis_url="redis://localhost:6379/0",
+            llm_provider="groq",
+            groq_api_key="k",
+            groq_model="x" * 65,
+            jwt_secret="test-secret-that-is-at-least-32-chars-long!!",
+        )
+    # 64 exactly still fits.
+    Settings(
+        database_url="postgresql+asyncpg://test:test@localhost:5432/test",
+        redis_url="redis://localhost:6379/0",
+        llm_provider="groq",
+        groq_api_key="k",
+        groq_model="x" * 64,
+        jwt_secret="test-secret-that-is-at-least-32-chars-long!!",
+    )

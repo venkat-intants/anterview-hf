@@ -52,6 +52,10 @@ opening and creates another; the requisitions smoke merges applicants):
 Seeded after head instead, the backfill has already run, there is nothing for it
 to collapse, and both fail with empty results.
 
+**Local only.** `run_all.py` refuses to start if the smoke database is not on this
+machine, and skips a smoke rather than send test files to storage or a scoring
+service that is not local. There is no override; see `_refuse_unless_local`.
+
 ## The three that need more than a database
 
 `run_all.py` handles all three. None is skipped silently — each prints the reason

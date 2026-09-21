@@ -1202,9 +1202,9 @@ async def _execute_one_erasure(
     #
     # MUST run before step 6: the join reaches these rows through
     # applicants.user_id, which step 6 sets to NULL.
-    # revoked_by_user_id / revoked_at are NOT NULL on this transition
-    # (candidate_accommodations_guard) — attributed to the erasure's own
-    # system actor, the audit_log precedent (step 10).
+    # revoked_at is set; revoked_by_user_id is deliberately left NULL (see
+    # the paragraph below). An earlier version of this comment said the
+    # revoke was attributed to the erasure's system actor -- it never was.
     #
     # BLOCKING 1: the revoke statement must not touch a row retention already
     # redacted (accommodations.purge sets redacted_at but, before F8, left

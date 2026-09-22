@@ -1023,6 +1023,11 @@ const en = {
       // this back to "may be outside India" — see DATA-FLOW.md.
       acceptConsent:
         'By accepting, you agree to share the documents the hiring team asks for, for your onboarding. They are kept securely by sub-processors located outside India (Singapore, United States) — India-resident storage is planned but not yet active; full sub-processor list: intants.com/data-flow — and deleted once they have served their purpose. You can withdraw this consent at any time.',
+      // PH5 wave-1 follow-up (D) — disclosed before acceptance, same reason
+      // acceptConsent is. NEEDS NATIVE-SPEAKER + LEGAL REVIEW (HI/TE) before
+      // this is candidate-facing in production — see the i18n.ts file header.
+      checkinNotice:
+        "About 90 days after you start, the company's HR team may record whether you are still with them and a broad performance level. It is used only in aggregate to understand hiring quality and never changes any decision.",
       confirmDecline: 'Confirm decline',
       cancel: 'Cancel',
       documents: {
@@ -2096,6 +2101,8 @@ const hi = {
       confirmAccept: 'स्वीकृति की पुष्टि करें',
       acceptConsent:
         'स्वीकार करके, आप अपनी ऑनबोर्डिंग के लिए भर्ती टीम द्वारा माँगे गए दस्तावेज़ साझा करने के लिए सहमत होते हैं। वे भारत से बाहर स्थित sub-processors (Singapore, United States) द्वारा सुरक्षित रखे जाते हैं — India-resident storage की योजना है लेकिन अभी सक्रिय नहीं है; पूरी sub-processor सूची: intants.com/data-flow — और अपना उद्देश्य पूरा होने पर हटा दिए जाते हैं। आप यह सहमति कभी भी वापस ले सकते हैं।',
+      checkinNotice:
+        'आपके शुरू करने के लगभग 90 दिन बाद, कंपनी की HR टीम यह दर्ज कर सकती है कि क्या आप अभी भी उनके साथ कार्यरत हैं, और एक सामान्य प्रदर्शन स्तर। इसका उपयोग केवल भर्ती की गुणवत्ता को समग्र रूप से समझने के लिए किया जाता है और यह किसी भी निर्णय को कभी नहीं बदलता।',
       confirmDecline: 'अस्वीकृति की पुष्टि करें',
       cancel: 'रद्द करें',
       documents: {
@@ -3156,6 +3163,8 @@ const te = {
       confirmAccept: 'అంగీకారాన్ని నిర్ధారించండి',
       acceptConsent:
         'అంగీకరించడం ద్వారా, మీ ఆన్‌బోర్డింగ్ కోసం నియామక బృందం అడిగే పత్రాలను పంచుకోవడానికి మీరు అంగీకరిస్తారు. అవి భారతదేశం వెలుపల ఉన్న sub-processors (Singapore, United States) వద్ద సురక్షితంగా ఉంచబడతాయి — India-resident storage ప్రణాళికలో ఉంది కానీ ఇంకా సక్రియం కాలేదు; పూర్తి sub-processor జాబితా: intants.com/data-flow — మరియు వాటి ప్రయోజనం పూర్తయిన తర్వాత తొలగించబడతాయి. మీరు ఈ సమ్మతిని ఎప్పుడైనా ఉపసంహరించుకోవచ్చు.',
+      checkinNotice:
+        'మీరు ప్రారంభించిన సుమారు 90 రోజుల తర్వాత, కంపెనీ HR బృందం మీరు ఇప్పటికీ వారితో కొనసాగుతున్నారా అనేది మరియు ఒక సాధారణ పనితీరు స్థాయిని నమోదు చేయవచ్చు. ఇది నియామక నాణ్యతను అర్థం చేసుకోవడానికి మాత్రమే మొత్తం మీద ఉపయోగించబడుతుంది మరియు ఇది ఏ నిర్ణయాన్నీ ఎప్పుడూ మార్చదు.',
       confirmDecline: 'తిరస్కరణను నిర్ధారించండి',
       cancel: 'రద్దు చేయండి',
       documents: {

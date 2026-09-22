@@ -1,4 +1,7 @@
-// Tests for the HR analytics panel and its standalone page (FE-2).
+// Tests for the embeddable HR analytics PANEL (FE-2) — the default export used
+// by HRPipeline, still backed by the unchanged `GET /hr/analytics`
+// (application_progress). PH5 wave 1 does not touch this data path; see
+// HRAnalyticsPage.test.tsx for the new governed-metrics standalone screen.
 //
 // The funnel bars are the only chart on this page backed by a real API; the
 // other three are declared empty until their endpoints ship. That distinction
@@ -46,7 +49,7 @@ vi.mock('../api/pipeline', () => ({
   getHrAnalytics: (...a: unknown[]) => getHrAnalytics(...a) as unknown,
 }));
 
-import HRAnalytics, { HRAnalyticsPage } from '../pages/hr/HRAnalytics';
+import HRAnalytics from '../pages/hr/HRAnalytics';
 
 function renderWith(node: JSX.Element) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -106,23 +109,12 @@ describe('HRAnalytics — averages summary', () => {
     getHrAnalytics.mockResolvedValue({
       ...FULL,
       averages: { avg_ats: 66.4, avg_exam_percent: null, avg_interview_composite: null },
-  ...analyticsDefaults(),
+      ...analyticsDefaults(),
     });
     renderWith(<HRAnalytics />);
 
     expect(await screen.findByText(/avg ATS score/i)).toBeInTheDocument();
     expect(screen.queryByText(/avg exam score/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/avg interview score/i)).not.toBeInTheDocument();
-  });
-});
-
-describe('HRAnalyticsPage — standalone route', () => {
-  it('wraps the same panel in a titled page', async () => {
-    renderWith(<HRAnalyticsPage />);
-
-    expect(screen.getByRole('heading', { name: /^analytics$/i })).toBeInTheDocument();
-    // Same panel, one fetch — the page is a shell, not a second data path.
-    expect(await screen.findByText('Hiring funnel')).toBeInTheDocument();
-    expect(getHrAnalytics).toHaveBeenCalledTimes(1);
   });
 });

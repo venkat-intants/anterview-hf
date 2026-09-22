@@ -325,10 +325,18 @@ function AnswerPanel({
               </label>
             )}
             {purpose === 'accept' ? (
-              // What accepting agrees to (DPDP): said here, before they do it.
-              <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-                {t('offer.acceptConsent')}
-              </p>
+              <>
+                {/* What accepting agrees to (DPDP): said here, before they do it. */}
+                <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+                  {t('offer.acceptConsent')}
+                </p>
+                {/* PH5 wave 1 follow-up (D) — the 90-day check-in is HR-recorded,
+                    aggregate-only, and never a decision; disclosed here for the
+                    same reason acceptConsent is: before they accept, not after. */}
+                <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+                  {t('offer.checkinNotice')}
+                </p>
+              </>
             ) : null}
             <Pill
               disabled={

@@ -39,6 +39,7 @@ import {
 import { listRequisitions, type Requisition } from '@/api/requisitions';
 import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
 import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
+import { useSourceOptions } from '@/lib/sourceOptions';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -230,7 +231,10 @@ function RejectAction({
         onChange={setReasonCode}
       />
       <div>
-        <label htmlFor={`reject-why-${idSuffix}`} className="block text-[12px] text-[var(--ui-soft)]">
+        <label
+          htmlFor={`reject-why-${idSuffix}`}
+          className="block text-[12px] text-[var(--ui-soft)]"
+        >
           Why{chosen?.requires_explanation ? ` (at least ${minLen} characters)` : ''}
         </label>
         <textarea
@@ -277,7 +281,12 @@ interface DrawerProps {
   onShortlist: (id: string, enrolmentId?: string | null) => void;
   /** Rejecting is terminal (O4) — always carries the chosen reason code and
    *  the free-text reason behind it. */
-  onReject: (id: string, enrolmentId: string | null | undefined, reasonCode: string, reason: string) => void;
+  onReject: (
+    id: string,
+    enrolmentId: string | null | undefined,
+    reasonCode: string,
+    reason: string,
+  ) => void;
   onRescore: (id: string) => void;
   statusPending: boolean;
   rescorePending: boolean;
@@ -367,7 +376,9 @@ function ApplicantDrawer({
       >
         {/* Header — pinned */}
         <div className="flex shrink-0 items-center justify-between border-b border-border px-7 py-5">
-          <span className="text-[12px] uppercase tracking-[1px] text-[var(--ui-faint)]">Candidate</span>
+          <span className="text-[12px] uppercase tracking-[1px] text-[var(--ui-faint)]">
+            Candidate
+          </span>
           <button
             onClick={onClose}
             aria-label="Close"
@@ -379,207 +390,223 @@ function ApplicantDrawer({
 
         {/* Body — sizes to content; scrolls only as a safety net on very short screens */}
         <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
-        {/* Wide landscape layout: two columns side by side */}
-        <div className="grid gap-x-8 gap-y-6 md:grid-cols-2">
-          {/* LEFT column — identity, score/status, role, summary */}
-          <div className="space-y-5">
-            {/* Identity */}
-            <div className="flex items-center gap-4">
-              <Avatar initials={initialsOf(a.full_name)} gradient={gradientFor(seed)} size={58} />
-              <div className="min-w-0">
-                <div className="text-[20px] font-semibold tracking-[-0.5px] text-foreground">{a.full_name}</div>
-                <div className="truncate text-[13px] text-[var(--ui-faint)]">{a.email ?? 'No email on file'}</div>
-                {a.user_id && (
-                  <Link
-                    to={`/u/${a.user_id}`}
-                    className="mt-1 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ui-info)] hover:underline"
-                  >
-                    View full profile <ArrowRight size={12} aria-hidden="true" />
-                  </Link>
-                )}
-              </div>
-            </div>
-
-            {/* Score + status tiles */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="rounded-[12px] border border-border bg-card p-4">
-                <div className="text-[11px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">ATS score</div>
-                <div
-                  className="mt-1 text-[28px] font-semibold tracking-[-1px]"
-                  style={{ color: atsDisplay !== null ? scoreColor(atsDisplay) : '#70757c' }}
-                >
-                  {atsDisplay ?? '—'}
+          {/* Wide landscape layout: two columns side by side */}
+          <div className="grid gap-x-8 gap-y-6 md:grid-cols-2">
+            {/* LEFT column — identity, score/status, role, summary */}
+            <div className="space-y-5">
+              {/* Identity */}
+              <div className="flex items-center gap-4">
+                <Avatar initials={initialsOf(a.full_name)} gradient={gradientFor(seed)} size={58} />
+                <div className="min-w-0">
+                  <div className="text-[20px] font-semibold tracking-[-0.5px] text-foreground">
+                    {a.full_name}
+                  </div>
+                  <div className="truncate text-[13px] text-[var(--ui-faint)]">
+                    {a.email ?? 'No email on file'}
+                  </div>
+                  {a.user_id && (
+                    <Link
+                      to={`/u/${a.user_id}`}
+                      className="mt-1 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ui-info)] hover:underline"
+                    >
+                      View full profile <ArrowRight size={12} aria-hidden="true" />
+                    </Link>
+                  )}
                 </div>
               </div>
-              <div className="rounded-[12px] border border-border bg-card p-4">
-                <div className="text-[11px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">Status</div>
-                <div className="mt-2">
-                  <StatusTag tone={statusTone(a.status)} dot>
-                    {statusLabel(a.status)}
+
+              {/* Score + status tiles */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="rounded-[12px] border border-border bg-card p-4">
+                  <div className="text-[11px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
+                    ATS score
+                  </div>
+                  <div
+                    className="mt-1 text-[28px] font-semibold tracking-[-1px]"
+                    style={{ color: atsDisplay !== null ? scoreColor(atsDisplay) : '#70757c' }}
+                  >
+                    {atsDisplay ?? '—'}
+                  </div>
+                </div>
+                <div className="rounded-[12px] border border-border bg-card p-4">
+                  <div className="text-[11px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
+                    Status
+                  </div>
+                  <div className="mt-2">
+                    <StatusTag tone={statusTone(a.status)} dot>
+                      {statusLabel(a.status)}
+                    </StatusTag>
+                  </div>
+                </div>
+              </div>
+
+              {/* Role meta */}
+              <div className="space-y-1.5 text-[12.5px] text-[var(--ui-faint)]">
+                <p>
+                  Role &middot;{' '}
+                  <span className="text-[var(--ui-soft)]">
+                    {a.target_job_title} ({a.target_level})
+                  </span>
+                </p>
+                <div>
+                  <StatusTag tone={rec.tone} className="text-[11.5px]">
+                    {rec.label}
                   </StatusTag>
                 </div>
               </div>
-            </div>
 
-            {/* Role meta */}
-            <div className="space-y-1.5 text-[12.5px] text-[var(--ui-faint)]">
-              <p>
-                Role &middot;{' '}
-                <span className="text-[var(--ui-soft)]">
-                  {a.target_job_title} ({a.target_level})
-                </span>
-              </p>
-              <div>
-                <StatusTag tone={rec.tone} className="text-[11.5px]">
-                  {rec.label}
-                </StatusTag>
-              </div>
-            </div>
+              {/* ATS summary */}
+              {a.ats_summary && (
+                <p className="text-[13px] leading-relaxed text-muted-foreground">{a.ats_summary}</p>
+              )}
 
-            {/* ATS summary */}
-            {a.ats_summary && (
-              <p className="text-[13px] leading-relaxed text-muted-foreground">{a.ats_summary}</p>
-            )}
-
-            {/* Why matched — only during a search */}
-            {showMatch && (
-              <div className="rounded-[12px] border border-[rgba(var(--accent-rgb),0.25)] bg-[rgba(var(--accent-rgb),0.06)] p-4">
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ui-info)]">
-                    <Search size={13} aria-hidden="true" />
-                    Why this matched
-                  </span>
-                  {a.match_score != null && (
-                    <span
-                      className="text-[13px] font-semibold"
-                      style={{ color: matchColor(a.match_score) }}
-                    >
-                      {a.match_score}% match
+              {/* Why matched — only during a search */}
+              {showMatch && (
+                <div className="rounded-[12px] border border-[rgba(var(--accent-rgb),0.25)] bg-[rgba(var(--accent-rgb),0.06)] p-4">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ui-info)]">
+                      <Search size={13} aria-hidden="true" />
+                      Why this matched
                     </span>
-                  )}
+                    {a.match_score != null && (
+                      <span
+                        className="text-[13px] font-semibold"
+                        style={{ color: matchColor(a.match_score) }}
+                      >
+                        {a.match_score}% match
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-2 text-[13px] leading-relaxed text-[var(--ui-soft)]">
+                    {!worthExplaining
+                      ? 'Low relevance to this search.'
+                      : whyLoading
+                        ? 'Analysing the resume against your search…'
+                        : why?.reason || 'No explanation available.'}
+                  </p>
                 </div>
-                <p className="mt-2 text-[13px] leading-relaxed text-[var(--ui-soft)]">
-                  {!worthExplaining
-                    ? 'Low relevance to this search.'
-                    : whyLoading
-                      ? 'Analysing the resume against your search…'
-                      : why?.reason || 'No explanation available.'}
-                </p>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          {/* RIGHT column — score breakdown + strengths / concerns */}
-          <div className="space-y-5">
-            {/* ATS breakdown bars — REAL data, not fabricated competencies */}
-            {a.ats_breakdown && Object.keys(a.ats_breakdown).length > 0 && (
-              <div>
-                <div className="text-[13px] font-semibold text-foreground">Score breakdown</div>
-                <div className="mt-3 flex flex-col gap-3">
-                  {Object.entries(a.ats_breakdown).map(([k, v]) => (
-                    <div key={k}>
-                      <div className="mb-1 flex justify-between text-[12.5px]">
-                        <span className="text-[var(--ui-soft)]">{BREAKDOWN_LABELS[k] ?? k}</span>
-                        <span className="font-mono text-muted-foreground">{v}</span>
+            {/* RIGHT column — score breakdown + strengths / concerns */}
+            <div className="space-y-5">
+              {/* ATS breakdown bars — REAL data, not fabricated competencies */}
+              {a.ats_breakdown && Object.keys(a.ats_breakdown).length > 0 && (
+                <div>
+                  <div className="text-[13px] font-semibold text-foreground">Score breakdown</div>
+                  <div className="mt-3 flex flex-col gap-3">
+                    {Object.entries(a.ats_breakdown).map(([k, v]) => (
+                      <div key={k}>
+                        <div className="mb-1 flex justify-between text-[12.5px]">
+                          <span className="text-[var(--ui-soft)]">{BREAKDOWN_LABELS[k] ?? k}</span>
+                          <span className="font-mono text-muted-foreground">{v}</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-[var(--ui-inset-strong)]">
+                          <div
+                            className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),#a887dc)]"
+                            style={{ width: `${Math.max(0, Math.min(100, v))}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="h-1.5 rounded-full bg-[var(--ui-inset-strong)]">
-                        <div
-                          className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),#a887dc)]"
-                          style={{ width: `${Math.max(0, Math.min(100, v))}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Cross-signal assessment — the specialist panel. Placed above the
+              {/* Cross-signal assessment — the specialist panel. Placed above the
                 ATS strengths/concerns because it spans every round, whereas
                 those describe the resume alone. User-triggered inside the
                 component, so opening a drawer costs nothing. */}
-            <CandidatePanel applicantId={a.id} applicantName={a.full_name} />
+              <CandidatePanel applicantId={a.id} applicantName={a.full_name} />
 
-            {/* Several applications: each with where it is and its own actions. */}
-            {several && (
-              <div>
-                <p className="text-[12.5px] font-semibold text-foreground">
-                  Applications ({applications.length})
-                </p>
-                <ul className="mt-2 space-y-2" aria-label="Applications">
-                  {applications.map((app) => (
-                    <li
-                      key={app.enrolment_id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-border px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-[12.5px] font-medium text-foreground">
-                          {app.opening_title ?? 'Untitled opening'}
-                        </p>
-                        <p className="text-[11.5px] text-[var(--ui-faint)]">
-                          {app.status}
-                          {app.ats_overall != null ? ` · resume ${app.ats_overall}/100` : ''}
-                          {app.is_latest ? ' · latest' : ''}
-                        </p>
-                      </div>
-                      <div className="flex w-full flex-wrap items-center justify-end gap-1.5 sm:w-auto">
-                        <Pill
-                          variant="ghost"
-                          onClick={() => onShortlist(a.id, app.enrolment_id)}
-                          disabled={statusPending || app.stored_status === 'shortlisted'}
-                          aria-label={`Shortlist for ${app.opening_title ?? 'this opening'}`}
-                        >
-                          Shortlist
-                        </Pill>
-                        <RejectAction
-                          idSuffix={app.enrolment_id}
-                          ariaLabel={`Reject for ${app.opening_title ?? 'this opening'}`}
-                          disabled={statusPending || app.stored_status === 'rejected'}
-                          onConfirm={(reasonCode, reason) =>
-                            onReject(a.id, app.enrolment_id, reasonCode, reason)
-                          }
-                        />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+              {/* Several applications: each with where it is and its own actions. */}
+              {several && (
+                <div>
+                  <p className="text-[12.5px] font-semibold text-foreground">
+                    Applications ({applications.length})
+                  </p>
+                  <ul className="mt-2 space-y-2" aria-label="Applications">
+                    {applications.map((app) => (
+                      <li
+                        key={app.enrolment_id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-border px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-[12.5px] font-medium text-foreground">
+                            {app.opening_title ?? 'Untitled opening'}
+                          </p>
+                          <p className="text-[11.5px] text-[var(--ui-faint)]">
+                            {app.status}
+                            {app.ats_overall != null ? ` · resume ${app.ats_overall}/100` : ''}
+                            {app.is_latest ? ' · latest' : ''}
+                          </p>
+                        </div>
+                        <div className="flex w-full flex-wrap items-center justify-end gap-1.5 sm:w-auto">
+                          <Pill
+                            variant="ghost"
+                            onClick={() => onShortlist(a.id, app.enrolment_id)}
+                            disabled={statusPending || app.stored_status === 'shortlisted'}
+                            aria-label={`Shortlist for ${app.opening_title ?? 'this opening'}`}
+                          >
+                            Shortlist
+                          </Pill>
+                          <RejectAction
+                            idSuffix={app.enrolment_id}
+                            ariaLabel={`Reject for ${app.opening_title ?? 'this opening'}`}
+                            disabled={statusPending || app.stored_status === 'rejected'}
+                            onConfirm={(reasonCode, reason) =>
+                              onReject(a.id, app.enrolment_id, reasonCode, reason)
+                            }
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
-            {/* Strengths + Concerns */}
-            {((a.ats_strengths && a.ats_strengths.length > 0) ||
-              (a.ats_concerns && a.ats_concerns.length > 0)) && (
-              <div className="grid gap-4">
-                {a.ats_strengths && a.ats_strengths.length > 0 && (
-                  <div>
-                    <p className="text-[12.5px] font-semibold text-[var(--ui-ok)]">Strengths</p>
-                    <ul className="mt-2 space-y-1">
-                      {a.ats_strengths.map((s, i) => (
-                        <li key={i} className="flex items-start gap-1.5 text-[12px] text-[var(--ui-faint)]">
-                          <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-ok)]" />
-                          {s}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {a.ats_concerns && a.ats_concerns.length > 0 && (
-                  <div>
-                    <p className="text-[12.5px] font-semibold text-[var(--ui-danger)]">Concerns</p>
-                    <ul className="mt-2 space-y-1">
-                      {a.ats_concerns.map((c, i) => (
-                        <li key={i} className="flex items-start gap-1.5 text-[12px] text-[var(--ui-faint)]">
-                          <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-danger)]" />
-                          {c}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
+              {/* Strengths + Concerns */}
+              {((a.ats_strengths && a.ats_strengths.length > 0) ||
+                (a.ats_concerns && a.ats_concerns.length > 0)) && (
+                <div className="grid gap-4">
+                  {a.ats_strengths && a.ats_strengths.length > 0 && (
+                    <div>
+                      <p className="text-[12.5px] font-semibold text-[var(--ui-ok)]">Strengths</p>
+                      <ul className="mt-2 space-y-1">
+                        {a.ats_strengths.map((s, i) => (
+                          <li
+                            key={i}
+                            className="flex items-start gap-1.5 text-[12px] text-[var(--ui-faint)]"
+                          >
+                            <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-ok)]" />
+                            {s}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {a.ats_concerns && a.ats_concerns.length > 0 && (
+                    <div>
+                      <p className="text-[12.5px] font-semibold text-[var(--ui-danger)]">
+                        Concerns
+                      </p>
+                      <ul className="mt-2 space-y-1">
+                        {a.ats_concerns.map((c, i) => (
+                          <li
+                            key={i}
+                            className="flex items-start gap-1.5 text-[12px] text-[var(--ui-faint)]"
+                          >
+                            <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-danger)]" />
+                            {c}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
         </div>
 
         {/* Actions — grouped on the right of the card */}
@@ -629,13 +656,7 @@ function ApplicantDrawer({
 
 // ── Table row ─────────────────────────────────────────────────────────────────
 
-function ApplicantRow({
-  a,
-  onSelect,
-}: {
-  a: Applicant;
-  onSelect: (applicant: Applicant) => void;
-}) {
+function ApplicantRow({ a, onSelect }: { a: Applicant; onSelect: (applicant: Applicant) => void }) {
   const seed = seedFrom(a.full_name);
   const atsDisplay = a.ats_overall;
   const rec = atsInfo(a);
@@ -725,6 +746,10 @@ interface UploadSectionProps {
   openings: Requisition[];
   openingId: string;
   onOpening: (id: string) => void;
+  /** PH5 wave-1 follow-up (B) — where this upload's candidate(s) came from;
+   *  applies to the whole batch. Defaults to "internal". */
+  source: string;
+  onSource: (source: string) => void;
 }
 
 /**
@@ -797,10 +822,21 @@ function UploadBatchProgress({ batchId }: { batchId: string }) {
 }
 
 function UploadSection({
-  files, progress, pending, batchId,
-  onFilesAdd, onFileRemove, onFilesClear, onSubmit,
-  openings, openingId, onOpening,
+  files,
+  progress,
+  pending,
+  batchId,
+  onFilesAdd,
+  onFileRemove,
+  onFilesClear,
+  onSubmit,
+  openings,
+  openingId,
+  onOpening,
+  source,
+  onSource,
 }: UploadSectionProps) {
+  const { options: sourceOptions } = useSourceOptions();
   return (
     <GlassCard className="p-6">
       {/* Card header */}
@@ -811,8 +847,8 @@ function UploadSection({
         <div>
           <p className="text-[15px] font-semibold text-foreground">Bulk upload resumes</p>
           <p className="text-[12.5px] text-muted-foreground">
-            Pick the opening, then select up to {MAX_BULK_FILES} PDF resumes. They are read,
-            filed and scored in the background.
+            Pick the opening, then select up to {MAX_BULK_FILES} PDF resumes. They are read, filed
+            and scored in the background.
           </p>
         </div>
       </div>
@@ -843,6 +879,31 @@ function UploadSection({
             ))}
           </select>
         )}
+
+        {/* PH5 wave-1 follow-up (B) — applies to the whole upload, not per file:
+            there is one "add applicant(s)" flow in this console, used for one
+            resume or many the same way. */}
+        <div>
+          <label
+            htmlFor="upload-source"
+            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+          >
+            Where did this candidate come from?
+          </label>
+          <select
+            id="upload-source"
+            className={inputCls}
+            value={source}
+            onChange={(e) => onSource(e.target.value)}
+          >
+            {sourceOptions.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">Applies to the whole upload.</p>
+        </div>
 
         {/* File drop zone */}
         <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[16px] border-2 border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-inset-soft)] px-4 py-8 text-center transition-colors hover:border-[rgba(var(--accent-rgb),0.5)] hover:bg-[rgba(var(--accent-rgb),0.04)]">
@@ -887,7 +948,11 @@ function UploadSection({
                   key={`${f.name}:${f.size}:${i}`}
                   className="flex items-center gap-2 rounded-[8px] px-2 py-1 text-[12px] text-[var(--ui-faint)] hover:bg-[var(--ui-inset)]"
                 >
-                  <FileText size={13} className="shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+                  <FileText
+                    size={13}
+                    className="shrink-0 text-[var(--ui-faint)]"
+                    aria-hidden="true"
+                  />
                   <span className="min-w-0 flex-1 truncate">{f.name}</span>
                   <span className="shrink-0 text-[var(--ui-faint)]">
                     {(f.size / 1024).toFixed(0)} KB
@@ -953,6 +1018,9 @@ export default function Applicants() {
   // Upload form state
   const [files, setFiles] = useState<File[]>([]);
   const [openingId, setOpeningId] = useState('');
+  // PH5 wave-1 follow-up (B) — defaults to "internal", matching what the
+  // server assumes when the field is omitted entirely.
+  const [source, setSource] = useState('internal');
   const [progress, setProgress] = useState(0);
   // The upload the progress panel follows, once the server has accepted it.
   const [batchId, setBatchId] = useState<string | null>(null);
@@ -980,7 +1048,11 @@ export default function Applicants() {
   // Server-side hybrid search: q + status go to data_gateway, which runs the
   // pgvector + full-text ranking. Previous results stay on screen while the next
   // query resolves (no flicker between keystrokes).
-  const { data: applicants, isLoading, isFetching } = useQuery({
+  const {
+    data: applicants,
+    isLoading,
+    isFetching,
+  } = useQuery({
     queryKey: ['hr', 'applicants', 'list', trimmedQuery, statusParam ?? 'all'],
     // A5: new applicants arrive from bulk upload and, later, self-apply.
     refetchInterval: LIVE_POLL_MS,
@@ -1017,6 +1089,7 @@ export default function Applicants() {
       const fd = new FormData();
       files.forEach((f) => fd.append('files', f));
       fd.append('requisition_id', openingId);
+      fd.append('source', source);
       setProgress(0);
       return bulkUploadApplicants(fd, setProgress);
     },
@@ -1124,8 +1197,7 @@ export default function Applicants() {
    * count — a confidently-wrong number, which is worse than an obviously
    * incomplete one. A full page means "at least this many"; say that.
    * When a real total or a pager lands, this can show the true figure. */
-  const countLabel =
-    list.length >= APPLICANTS_PAGE_SIZE ? `${list.length}+` : `${list.length}`;
+  const countLabel = list.length >= APPLICANTS_PAGE_SIZE ? `${list.length}+` : `${list.length}`;
 
   const pending = uploadMut.isPending;
 
@@ -1133,7 +1205,9 @@ export default function Applicants() {
     <div className="mx-auto max-w-[1280px] px-6 py-8 lg:px-8 space-y-8">
       {/* Page header */}
       <Reveal>
-        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Resume screening</h1>
+        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
+          Resume screening
+        </h1>
         <p className="mt-1 text-[14px] text-muted-foreground">
           Drop in many resumes at once — each candidate&apos;s name &amp; email are read straight
           from the resume, AI-scored against the role, then ranked.
@@ -1153,6 +1227,8 @@ export default function Applicants() {
         openings={openings}
         openingId={openingId}
         onOpening={setOpeningId}
+        source={source}
+        onSource={setSource}
       />
 
       {/* List section */}
@@ -1194,7 +1270,11 @@ export default function Applicants() {
               className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
             />
             {searching && isFetching && (
-              <RefreshCw size={13} className="shrink-0 animate-spin text-[var(--ui-faint)]" aria-hidden="true" />
+              <RefreshCw
+                size={13}
+                className="shrink-0 animate-spin text-[var(--ui-faint)]"
+                aria-hidden="true"
+              />
             )}
             {query && (
               <button
@@ -1223,7 +1303,10 @@ export default function Applicants() {
         {isLoading ? (
           <div className="space-y-2" role="status" aria-label="Loading applicants" aria-busy="true">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-16 w-full rounded-[16px] bg-[var(--ui-inset)] animate-pulse" />
+              <div
+                key={i}
+                className="h-16 w-full rounded-[16px] bg-[var(--ui-inset)] animate-pulse"
+              />
             ))}
           </div>
         ) : list.length === 0 ? (
@@ -1252,11 +1335,7 @@ export default function Applicants() {
             </div>
 
             {/* Staggered rows */}
-            <motion.div
-              variants={staggerParent}
-              initial="hidden"
-              animate="show"
-            >
+            <motion.div variants={staggerParent} initial="hidden" animate="show">
               {list.map((a) => (
                 <motion.div key={a.id} variants={staggerChild}>
                   <ApplicantRow a={a} onSelect={setSelected} />

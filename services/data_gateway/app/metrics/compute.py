@@ -618,7 +618,9 @@ def _suppress_checkin_outcomes_uniformly(
     metric, suppress that metric in every non-"All" group — see
     :func:`compute_funnel`'s docstring for why a partially-suppressed
     breakdown leaks the hidden cell by subtraction from "All"."""
-    non_all = [g for g in groups if g.key is not None]
+    # By position, not by key: "All" is always groups[0] (compute_funnel
+    # appends it first), so this holds even if a grouped key could be NULL.
+    non_all = groups[1:]
     if len(non_all) < 2:
         return
     for plan in plans:

@@ -224,7 +224,12 @@ def _assert_watcher_metrics_are_checkin_safe(names: tuple[str, ...]) -> None:
     startup gate.
     """
     current = current_metrics()
-    unsafe = [name for name in names if name in current and uses_checkin_data(current[name])]
+    unknown = [name for name in names if name not in current]
+    if unknown:
+        raise RuntimeError(
+            f"watch_runner._WATCHER_FUNNEL_METRICS names an unregistered metric {unknown!r}."
+        )
+    unsafe = [name for name in names if uses_checkin_data(current[name])]
     if unsafe:
         raise RuntimeError(
             f"watch_runner._WATCHER_FUNNEL_METRICS names a check-in metric {unsafe!r} — "

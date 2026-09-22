@@ -296,6 +296,10 @@ def test_the_watcher_guard_passes_for_the_real_tuple_and_raises_for_a_checkin_me
     with pytest.raises(RuntimeError, match="checkin_coverage"):
         guard(("applications", "checkin_coverage"))
 
+    # A name the registry does not know is refused too, rather than skipped.
+    with pytest.raises(RuntimeError, match="unregistered"):
+        guard(("applications", "no_such_metric"))
+
 
 # ===========================================================================
 # uses_checkin_data / uses_checkin_outcome / drillable

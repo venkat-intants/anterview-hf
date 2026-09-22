@@ -70,6 +70,7 @@ from app.routers.hr_checkins import router as hr_checkins_router
 from app.routers.hr_coding import router as hr_coding_router
 from app.routers.hr_exams import router as hr_exams_router
 from app.routers.hr_interviews import router as hr_interviews_router
+from app.routers.hr_metrics import router as hr_metrics_router
 from app.routers.hr_pipeline import router as hr_pipeline_router
 from app.routers.hr_questions import router as hr_questions_router
 from app.routers.hr_requisitions import router as hr_requisitions_router
@@ -579,6 +580,7 @@ app.include_router(exam_take_router)
 app.include_router(hr_interviews_router)
 app.include_router(interview_take_router)
 app.include_router(hr_pipeline_router)
+app.include_router(hr_metrics_router)
 app.include_router(hr_attention_router)
 app.include_router(hr_questions_router)
 app.include_router(hr_requisitions_router)

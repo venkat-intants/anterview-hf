@@ -530,7 +530,24 @@ def test_staff_reading_an_offer_is_audited_and_the_hire_count_leaves_out_unfille
 
     for fn in (r.get_offer, r.admin_offer):
         assert "record_staff_view(" in inspect.getsource(fn), fn.__name__
-    for mod in ("requisition_dashboard.py", "company_board.py"):
-        text_ = (APP / mod).read_text(encoding="utf-8")
-        assert "('offer_declined', 'offer_expired', 'offer_withdrawn')" in text_, mod
+
+    # requisition_dashboard.py still computes its OWN progress.hired inline
+    # (feeding DashboardFacts.hired, which the attention rules read directly);
+    # the literal three-outcome exclusion is still right there.
+    dashboard_text = (APP / "requisition_dashboard.py").read_text(encoding="utf-8")
+    assert "('offer_declined', 'offer_expired', 'offer_withdrawn')" in dashboard_text
+
+    # company_board.py (PH5-C2) no longer computes "hired" itself at all — it
+    # reads the GOVERNED `hires@1` flag via app.metrics.compute.compute_funnel,
+    # so the same exclusion now lives in exactly one place:
+    # app.metrics.definitions.HIRE_STANDS_SQL, which company_board.py no
+    # longer needs to (and must not) restate.
+    from app.metrics.definitions import HIRE_STANDS_SQL
+
+    board_text = (APP / "company_board.py").read_text(encoding="utf-8")
+    assert "('offer_declined', 'offer_expired', 'offer_withdrawn')" not in board_text
+    assert "compute_funnel" in board_text
+    assert "'offer_declined'" in HIRE_STANDS_SQL
+    assert "'offer_expired'" in HIRE_STANDS_SQL
+    assert "'offer_withdrawn'" in HIRE_STANDS_SQL
 

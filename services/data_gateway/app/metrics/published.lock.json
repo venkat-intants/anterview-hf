@@ -1,0 +1,197 @@
+{
+  "dimension:requisition@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "17cd6f6d251e2ab2886b95a7abc17f093ea886d9c4c85fea373352b099d66664"
+  },
+  "dimension:source@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "576b836cd0a753f357f7442ef7e7cbf2464d85ecaa0e84037050607b34565576"
+  },
+  "flag:applied@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "737b3338fb2913940eb5be9d2138acf2f1bd59f2cfe1991c419405878e36ff7a"
+  },
+  "flag:assessed@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "ed92ba885f3984a0c22b999ae1d51435678390069759731de4e32998ff8c149e"
+  },
+  "flag:checkin_due@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "44b850031dafae7fff04e2d4e3768a7206bc0c249ce112535c6e9c47fce5b8f1"
+  },
+  "flag:checkin_recorded@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "65dacfa9b9797c4176095d5fdae80192a4136bafc0fa802c56484548feb8486f"
+  },
+  "flag:hired@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "34b259114225f3649dfac962fe00a42b34dbbaeeaed96b474f6731207690cf9f"
+  },
+  "flag:interviewed@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "ae05cdde3c05e3cf7663079ad6c7ebcc44d604d428676bf3e396ed8fa15c0c2d"
+  },
+  "flag:offer_accepted@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "b9300c6f6041d52ccb2cbf2cb9fc35d1bf17cb3962ab631ceb5422c69c7e590b"
+  },
+  "flag:offer_sent@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "0f363d9380334e050e0e8295c671b99cfd363ca6086d27333bb0bff08c699b1b"
+  },
+  "flag:perf_below@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "686d9de9e699ef5fc1b35a5b202ae0e0b74306722e3bc3cc4cac5528b30bf15b"
+  },
+  "flag:perf_exceeds@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "fffa324660900ac6c180e40e5f10711cc9f2e38096131a4a20c26abe7292101a"
+  },
+  "flag:perf_meets@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "a46d3b8acdf87f8074e82cbfebfd41d1ce23d99fb072bd65e1a2788320145bf9"
+  },
+  "flag:rejected@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "02977302d42d81a7bc22aa164e06648cc6d540a4981e166113806dd5effdbfa2"
+  },
+  "flag:retained_90d@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "dd4bb8fe07ea58c1b8debe513ce83cf28fcf3c88c5e43be96683a4889c0fe602"
+  },
+  "flag:screened@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "448a1d742b63b03d9a421af514d57eef53d2cfde862c5dd15a82bd204e0818c7"
+  },
+  "flag:selected@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "f3b510066424aa0cf1262b2b0d89751c8f6232b4d077c9f5c169c5b36dead32e"
+  },
+  "measure:days_to_hire@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "de23244cf4d0ed403244bcc9e84c0146717f6b31f76fb9f487d92410f71b0eca"
+  },
+  "measure:hire_interviewer_score@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "12c85771490ee7d0e1c1bdc075ac41cf59d220821be375fdae118caf60a055bf"
+  },
+  "metric:application_to_assess@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "4898b570859aa78999ac9692b62428f56bd2e1b1c90e34c0a748dcb720d2db76"
+  },
+  "metric:application_to_hire@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "f4706ffa7f9509e35d6e4015659807d20370517f8c5bc0da75413723e841a923"
+  },
+  "metric:application_to_interview@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "b853359b1ba8e3c75f77611ca79050858388b15edb8e4fc79a250eb7d57eaa23"
+  },
+  "metric:application_to_screen@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "0e3e78e7614f1b8e839e9f0f6514e5277e6c74b2e62d5efe834365bfb60d798e"
+  },
+  "metric:applications@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "e8ba3c68736c55619d7409ba109076ffc2c1f7c3994c72ac68d37c82c33e1efa"
+  },
+  "metric:assessed@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "07a25436b4f64f6ae717b7fe6a0617d0bc4d281bf19bdf1c53b236a8fce0cdf0"
+  },
+  "metric:checkin_coverage@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "4b0926bef9f9b87152794fe4bf86c6122b6ecaf3b9bc6eba93f943622f9703df"
+  },
+  "metric:hire_interviewer_score@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "25e2bb0785fa85c5ceafb8e42b2169c9045dea7225b422701a1a6a58e993cd5a"
+  },
+  "metric:hires@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "3485a1309793abd218f3e77f8e5aba66487c474970993ccb68af7b06009d459e"
+  },
+  "metric:interview_to_hire@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "381b971ca04a7dd3e788c00f7906fb3b9aeabd34fc0c2c2de163bf7265337012"
+  },
+  "metric:interviewed@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "a73bdfbed49ff050dde651ff5e7cf96a1ca745de6bc31b85d6b97dd8c57e772f"
+  },
+  "metric:offer_acceptance@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "bbef50976544d30934a4c04fd861702b4c54c64f0e4039542f23a9202defd5fc"
+  },
+  "metric:performance_90d@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "ef80c747ba38b39703e2d94b021faabba8b0bdbb3df036f555f60092f9476f3e"
+  },
+  "metric:rejections@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "2655a9aef0b9e0ae51fc3fcd7ce37a9140f71afe68ecf6daa5b74ee429eee5be"
+  },
+  "metric:retention_90d@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "3da3aba4172fb0faa0c30abb1ecc40f19227d7971426619e81cdab1afcda0fee"
+  },
+  "metric:screen_to_interview@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "387ec979f312ae6ea4cd78a2882c16fdc13eb04107e55eb833ca00053475638a"
+  },
+  "metric:screened@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "157c22912be90d30ab5197132a3ee186b5f6dd62c105393826748a8a8541d4d4"
+  },
+  "metric:selected@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "e3fc8cfcc1b9894e11fd9dcbba64736b603a8710bdd56b776e2917cd6f49d4be"
+  },
+  "metric:time_to_hire_days@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "d57fd8caeb5654445281dc3ee7d4a964acf9ff57d656f16e2d219e5d82b09707"
+  },
+  "rule:min_cell@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "5370c924d1eea4e5a8d0847ea8690a915fd7562d1c2082bd128d5733986864ea"
+  }
+}

@@ -30,6 +30,7 @@ from app.decision_reasons import ReasonError
 from app.decision_reasons import resolve as resolve_reason
 from app.dependencies import HrCtxDep
 from app.interviewer_scorecards import RequestMeta
+from app.metrics.compute import CohortWindow, FunnelFilters, compute_funnel
 from app.models import AuditLog
 from app.requisitions import ambiguous_decision_detail, choose_application, record_transition
 from app.routers.hr_applicants import (
@@ -133,6 +134,23 @@ class HrVelocity(BaseModel):
 
     None means nobody has been hired yet. Not zero — zero is a claim about
     speed, and "no data" is not a fast hire.
+
+    GOVERNED (PH5-C2): ``median_time_to_hire_days``/``hires_measured`` are now
+    the ``time_to_hire_days@1`` metric (hire cohort) — its population is only
+    hires that stand, where the ledger-only version this replaces counted any
+    move to hired, including one later reversed. ``applications_last_7d``/
+    ``applications_prev_7d`` are unchanged (ungoverned; see
+    ``requisition_dashboard``'s docstring for the reasoning that applies here
+    too — a rolling window is an operational count, not a governed metric).
+
+    ``None`` STILL means only "nobody has been hired yet" (a zero
+    population) — never small-cell suppression (lead policy decision,
+    C2-13). ``time_to_hire_days`` reads no check-in flag, so a company with a
+    handful of hires (below the registry's ``rule:min_cell`` floor) sees its
+    REAL median here, exactly as before this metric was governed; nulling on
+    smallness is reserved for a check-in OUTCOME metric (``retention_90d``,
+    ``performance_90d`` — neither exposed on this model), never an ordinary
+    hiring number. See ``app.metrics.compute._read_metric_value``.
     """
 
     median_time_to_hire_days: float | None = None
@@ -142,33 +160,37 @@ class HrVelocity(BaseModel):
 
 
 class HrConversion(BaseModel):
-    """Stage-to-stage conversion, as percentages of the stage before.
+    """Stage-to-stage conversion, as percentages of APPLICATIONS (not of the
+    stage before — a "shortlist → exam" rate would report as an impossibility
+    the legitimate route where HR assigns an exam by hand, outside any
+    workflow, to more people than were ever shortlisted).
 
-    Two things had to be got right here, and both were wrong first time.
+    GOVERNED (PH5-C2). Every field here is now a metric from
+    ``app.metrics.definitions`` — ``applied`` is ``applications@1``,
+    ``ever_shortlisted`` is ``screened@1``, ``ever_sat_exam`` is
+    ``assessed@1``, ``ever_interviewed`` is ``interviewed@1``, ``ever_hired``
+    is ``hires@1``, and each ``pct_*`` is the matching ``application_to_*@1``
+    rate — see ``HrAnalytics.definitions`` for the exact mapping and
+    ``GET /hr/metrics/definitions`` for what each one means. Three meanings
+    changed from the ledger-based version this replaces (each metric's
+    ``change_note`` has the detail):
 
-    THE SOURCE. Read from the transition LEDGER, not from ``HrFunnel``. The
-    funnel counts applicants by current status, so somebody shortlisted and
-    then hired has left "shortlisted" — dividing one of those fields by another
-    produced 175%, which is the arithmetic saying the stages are a snapshot
-    rather than a sequence.
+    * ``ever_interviewed`` is now an AI session or a submitted human
+      interviewer scorecard, not the ledger's ``interviewed`` status (which
+      means "finished the workflow, awaiting a decision");
+    * ``ever_sat_exam`` no longer bleeds an attempt across every application
+      the same person holds;
+    * ``ever_hired`` counts only a hire that stands (not one later reversed).
 
-    THE DENOMINATOR. Every rate is a share of APPLICATIONS rather than of the
-    stage before it. Stage-to-stage assumes a chain, and this product does not
-    enforce one: HR can assign an exam by hand, outside any workflow, so more
-    people can sit an exam than were ever shortlisted. That is a legitimate
-    route through the product, not bad data, and a "shortlist → exam" rate
-    would report it as an impossibility.
-
-    Computed here rather than in the client so the definition lives in one
-    place, and the raw counts ship alongside because a percentage with no
-    denominator beside it is unreadable at small numbers — "50%" out of two
+    None where nobody has applied — a rate out of nothing is not 0%. The raw
+    counts ship alongside every percentage because "50%" out of two
     candidates and out of two hundred are different facts.
 
-    None where nobody has applied — a rate out of nothing is not 0%.
-
-    The counts are also exposed, because a percentage with no denominator
-    beside it is unreadable at small numbers: "50%" out of two candidates and
-    out of two hundred are different facts.
+    ``None`` never means "too few to show": none of these fields reads a
+    check-in flag, so small-cell suppression (lead policy decision, C2-13)
+    never nulls a value or a count here — a small company's real numbers are
+    shown, same as before this block was governed. See
+    ``app.metrics.compute._read_metric_value``.
     """
 
     applied: int = 0
@@ -193,6 +215,12 @@ class HrAnalytics(BaseModel):
     openings: HrOpenings = Field(default_factory=HrOpenings)
     velocity: HrVelocity = Field(default_factory=HrVelocity)
     conversion: HrConversion = Field(default_factory=HrConversion)
+    # PH5-C2: which governed metric (name@version) computed each conversion/
+    # velocity field, and the hash of the whole locked registry that produced
+    # them — "How is this calculated?" reads this rather than a hard-coded
+    # explanation that can drift from what actually ran.
+    definitions: dict[str, str] = Field(default_factory=dict)
+    registry_hash: str = ""
 
 
 class DecisionIn(BaseModel):
@@ -332,64 +360,24 @@ GROUP BY status
 """
 )
 
-# Time from the application landing to the hire being recorded, per hired
-# candidate. Read off the transition ledger rather than from
-# updated_at: the ledger is what actually records when each move happened,
-# and updated_at moves for reasons that have nothing to do with a stage.
-_VELOCITY_SQL = text(
-    """
-WITH hires AS (
-    SELECT e.id,
-           MIN(t.occurred_at) FILTER (WHERE t.to_status = 'new')   AS applied_at,
-           MIN(t.occurred_at) FILTER (WHERE t.to_status = 'hired') AS hired_at
-    FROM enrolments e
-    JOIN stage_transitions t ON t.enrolment_id = e.id
-    WHERE e.company_id = :cid AND e.deleted_at IS NULL
-    GROUP BY e.id
-)
-SELECT
-  PERCENTILE_CONT(0.5) WITHIN GROUP (
-      ORDER BY EXTRACT(EPOCH FROM (hired_at - applied_at)) / 86400.0
-  ) FILTER (WHERE hired_at IS NOT NULL AND applied_at IS NOT NULL) AS median_days,
-  COUNT(*) FILTER (WHERE hired_at IS NOT NULL AND applied_at IS NOT NULL) AS hires_measured
-FROM hires
-"""
-)
-
-# Cumulative-ever, off the transition ledger. Scoped to ENROLMENTS, which is
-# what a stage is a property of — an applicant HR uploaded by hand has no
-# enrolment and no stages, so including them would put people in the
-# denominator who were never in the process being measured.
-_CONVERSION_SQL = text(
-    """
-WITH mine AS (
-    SELECT id, applicant_id FROM enrolments
-    WHERE company_id = :cid AND deleted_at IS NULL
-),
-reached AS (
-    SELECT m.id,
-           bool_or(t.to_status = 'shortlisted') AS ever_shortlisted,
-           bool_or(t.to_status = 'interviewed') AS ever_interviewed,
-           bool_or(t.to_status = 'hired')       AS ever_hired
-    FROM mine m
-    LEFT JOIN stage_transitions t ON t.enrolment_id = m.id
-    GROUP BY m.id
-),
-sat_exam AS (
-    SELECT DISTINCT m.id
-    FROM mine m
-    JOIN exam_attempts ea ON ea.applicant_id = m.applicant_id
-    WHERE ea.status = 'submitted' AND ea.deleted_at IS NULL
-)
-SELECT
-  (SELECT COUNT(*) FROM mine)                                        AS applied,
-  COUNT(*) FILTER (WHERE r.ever_shortlisted)                         AS shortlisted,
-  (SELECT COUNT(*) FROM sat_exam)                                    AS sat_exam,
-  COUNT(*) FILTER (WHERE r.ever_interviewed)                         AS interviewed,
-  COUNT(*) FILTER (WHERE r.ever_hired)                               AS hired
-FROM reached r
-"""
-)
+# PH5-C2: velocity's median/hires-measured and every `conversion` field used
+# to be computed here (the ledger's `_VELOCITY_SQL`/`_CONVERSION_SQL`, since
+# removed — see tests/unit/test_analytics_rollup.py for what changed and
+# why). They are now `app.metrics.compute.compute_funnel`, over the
+# `application` cohort (conversion) and the `hire` cohort
+# (time_to_hire_days) — the same governed metrics `/hr/analytics/funnel`,
+# the copilot and the watcher read, so this board cannot disagree with any
+# of them about what "interviewed" or "hired" means (the cross-consumer
+# consistency test).
+_CONVERSION_METRIC_MAP: dict[str, str] = {
+    "applied": "applications", "ever_shortlisted": "screened",
+    "ever_sat_exam": "assessed", "ever_interviewed": "interviewed",
+    "ever_hired": "hires",
+}
+_CONVERSION_RATE_MAP: dict[str, str] = {
+    "pct_shortlisted": "application_to_screen", "pct_sat_exam": "application_to_assess",
+    "pct_interviewed": "application_to_interview", "pct_hired": "application_to_hire",
+}
 
 # "Applications in the last 7 days" counts applications, by when each was made
 # — a returning candidate's second application is new this week even though
@@ -425,7 +413,14 @@ def _round2(x: Any) -> float | None:
 
 @router.get("/analytics", response_model=HrAnalytics)
 async def get_analytics(ctx: HrCtxDep, db: DbSessionDep) -> HrAnalytics:
-    """Company-scoped funnel counts + averages. NULL-safe (empty company → zeros/None)."""
+    """Company-scoped funnel counts + averages. NULL-safe (empty company → zeros/None).
+
+    ``funnel``/``averages`` stay on the ``application_progress`` view (the
+    ``snapshot`` cohort HrFunnel has always used — see the cross-consumer
+    consistency test asserting ``funnel.hired`` equals the governed
+    ``hires@1``). ``conversion`` and ``velocity``'s hire figures are governed
+    (PH5-C2) — see ``HrConversion``/``HrVelocity``'s docstrings.
+    """
     _hr_uid, company_id = ctx
     f = (await db.execute(_FUNNEL_SQL, {"cid": company_id})).mappings().one()
     avg = (await db.execute(_AVERAGES_SQL, {"cid": company_id})).mappings().one()
@@ -433,17 +428,25 @@ async def get_analytics(ctx: HrCtxDep, db: DbSessionDep) -> HrAnalytics:
         r["status"]: int(r["n"])
         for r in (await db.execute(_OPENINGS_SQL, {"cid": company_id})).mappings().all()
     }
-    vel = (await db.execute(_VELOCITY_SQL, {"cid": company_id})).mappings().one()
-    conv = (await db.execute(_CONVERSION_SQL, {"cid": company_id})).mappings().one()
     recent = (await db.execute(_RECENT_SQL, {"cid": company_id})).mappings().one()
 
-    def _rate(part: int, whole: int) -> float | None:
-        """A percentage, or None when there is nothing to divide by.
+    pipeline = await compute_funnel(
+        db, company_id=company_id, cohort=CohortWindow(basis="application"),
+        filters=FunnelFilters(),
+    )
+    hire = await compute_funnel(
+        db, company_id=company_id, cohort=CohortWindow(basis="hire"), filters=FunnelFilters(),
+    )
+    pipeline_metrics = pipeline.groups[0].metrics
+    hire_metrics = hire.groups[0].metrics
+    time_to_hire = hire_metrics["time_to_hire_days"]
 
-        Zero would be a claim — "nobody converted" — and an empty funnel has
-        not made that claim.
-        """
-        return round(100.0 * part / whole, 1) if whole else None
+    definitions = {
+        f"conversion.{field}": f"{metric}@1" for field, metric in _CONVERSION_METRIC_MAP.items()
+    } | {
+        f"conversion.{field}": f"{metric}@1" for field, metric in _CONVERSION_RATE_MAP.items()
+    } | {"velocity.median_time_to_hire_days": "time_to_hire_days@1",
+         "velocity.hires_measured": "time_to_hire_days@1"}
 
     return HrAnalytics(
         funnel=HrFunnel(
@@ -468,26 +471,23 @@ async def get_analytics(ctx: HrCtxDep, db: DbSessionDep) -> HrAnalytics:
             closed=openings.get("closed", 0),
         ),
         velocity=HrVelocity(
-            median_time_to_hire_days=_round2(vel["median_days"]),
-            hires_measured=int(vel["hires_measured"] or 0),
+            median_time_to_hire_days=time_to_hire["value"],
+            hires_measured=int(time_to_hire["n"] or 0),
             applications_last_7d=int(recent["last_7d"] or 0),
             applications_prev_7d=int(recent["prev_7d"] or 0),
         ),
         conversion=HrConversion(
-            applied=int(conv["applied"] or 0),
-            ever_shortlisted=int(conv["shortlisted"] or 0),
-            ever_sat_exam=int(conv["sat_exam"] or 0),
-            ever_interviewed=int(conv["interviewed"] or 0),
-            ever_hired=int(conv["hired"] or 0),
-            pct_shortlisted=_rate(
-                int(conv["shortlisted"] or 0), int(conv["applied"] or 0)
-            ),
-            pct_sat_exam=_rate(int(conv["sat_exam"] or 0), int(conv["applied"] or 0)),
-            pct_interviewed=_rate(
-                int(conv["interviewed"] or 0), int(conv["applied"] or 0)
-            ),
-            pct_hired=_rate(int(conv["hired"] or 0), int(conv["applied"] or 0)),
+            **{
+                field: int(pipeline_metrics[metric]["value"] or 0)
+                for field, metric in _CONVERSION_METRIC_MAP.items()
+            },
+            **{
+                field: pipeline_metrics[metric]["value"]
+                for field, metric in _CONVERSION_RATE_MAP.items()
+            },
         ),
+        definitions=definitions,
+        registry_hash=pipeline.registry_hash,
     )
 
 

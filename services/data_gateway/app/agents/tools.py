@@ -21,6 +21,7 @@ looks like the copilot ignoring what was asked.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import structlog
@@ -36,6 +37,8 @@ from shared.agents import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.metrics.compute import CohortWindow, FunnelFilters, compute_funnel
+from app.metrics.definitions import current_metrics, uses_checkin_data
 from app.utils.sql_like import like_literal
 
 log = structlog.get_logger(__name__)
@@ -361,6 +364,23 @@ async def _get_applicant_detail(args: dict[str, Any], ctx: ToolContext) -> ToolO
     return ToolOutput(data=data, citations=citations)
 
 
+def _checkin_safe_metrics(metrics: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Governed metrics, minus any that read a 90-day check-in flag.
+
+    PH5-C1 "check-in data never reaches a model": a post-hire outcome about a
+    named former candidate must never land in an LLM prompt, however
+    aggregated. ``uses_checkin_data`` is the same predicate
+    ``validate_registry`` uses to keep a check-in metric off an unsafe
+    dimension — see ``test_copilot_funnel_tool_excludes_checkin_metrics``.
+    """
+    current = current_metrics()
+    return {
+        name: value
+        for name, value in metrics.items()
+        if name in current and not uses_checkin_data(current[name])
+    }
+
+
 @registry.tool(
     name="get_funnel_analytics",
     description=(
@@ -373,58 +393,48 @@ async def _get_applicant_detail(args: dict[str, Any], ctx: ToolContext) -> ToolO
     allowed_roles=COMPANY_ROLES,
 )
 async def _get_funnel_analytics(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+    """Governed hiring funnel (PH5-C2): applications, screened, assessed,
+    interviewed, hires, and the application-to-* rates, overall and per
+    opening (top N by application count) — the SAME `app.metrics.compute`
+    figures `/hr/analytics/funnel` and the funnel_health watcher read, each
+    carrying its own `metric`/`version`, so this tool cannot disagree with
+    either about what "interviewed" or "hired" means. No check-in metric is
+    ever included (`_checkin_safe_metrics`).
+    """
     db = _db(ctx)
-    by_stage = (
-        await db.execute(
-            text(
-                """
-                -- Applications by stage (B5), the same view as the board.
-                SELECT status, COUNT(*) AS n
-                FROM application_progress
-                WHERE company_id = :cid
-                GROUP BY status ORDER BY n DESC
-                """
-            ),
-            {"cid": ctx.company_id},
-        )
-    ).all()
+    company_id = uuid.UUID(ctx.company_id) if ctx.company_id else None
+    if company_id is None:  # pragma: no cover — COMPANY_ROLES always carries one
+        return ToolOutput(data={"overall": {}, "by_opening": []}, citations=[])
 
-    by_role = (
-        await db.execute(
-            text(
-                """
-                -- Per opening, counting its applications (B5): someone who
-                -- applied to two roles is counted, and scored, in each.
-                SELECT opening_title AS role,
-                       COUNT(*) AS applicants,
-                       COUNT(scorecard_id) AS interviewed,
-                       ROUND(AVG(ats_overall)::numeric, 1) AS avg_ats
-                FROM application_progress
-                WHERE company_id = :cid
-                GROUP BY opening_title
-                ORDER BY applicants DESC LIMIT :limit
-                """
-            ),
-            {"cid": ctx.company_id, "limit": MAX_ROWS},
-        )
-    ).all()
+    overall = await compute_funnel(
+        db, company_id=company_id, cohort=CohortWindow(basis="application"),
+        filters=FunnelFilters(),
+    )
+    per_opening = await compute_funnel(
+        db, company_id=company_id, cohort=CohortWindow(basis="application"),
+        filters=FunnelFilters(), group_by="requisition",
+    )
+
+    by_opening = [
+        {
+            "role": group.label,
+            # Applications, not people — someone who applied to two openings
+            # is counted, and scored, in each (B5).
+            "requisition_id": group.key,
+            "metrics": _checkin_safe_metrics(group.metrics),
+        }
+        for group in per_opening.groups
+        if group.key is not None
+    ]
+    by_opening.sort(
+        key=lambda r: r["metrics"].get("applications", {}).get("value") or 0, reverse=True
+    )
 
     return ToolOutput(
         data={
-            "by_stage": {r.status: r.n for r in by_stage},
-            "total_applicants": sum(r.n for r in by_stage),
-            "by_role": [
-                {
-                    "role": r.role,
-                    "applicants": r.applicants,
-                    "interviewed": r.interviewed,
-                    "interview_rate": (
-                        round(r.interviewed / r.applicants, 3) if r.applicants else 0.0
-                    ),
-                    "avg_ats_0_100": float(r.avg_ats) if r.avg_ats is not None else None,
-                }
-                for r in by_role
-            ],
+            "registry_hash": overall.registry_hash,
+            "overall": _checkin_safe_metrics(overall.groups[0].metrics),
+            "by_opening": by_opening[:MAX_ROWS],
         },
         citations=[Citation(kind="analytics", id="funnel", label="Hiring funnel", href="/hr/analytics")],
     )

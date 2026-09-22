@@ -869,3 +869,130 @@ def test_the_evidence_tab_gets_scores_and_pass_flags_never_program_output() -> N
     flat = repr(out)
     for leaked in ("HIDDEN-INPUT", "HIDDEN-ANSWER", "candidate printed this", "Traceback", "stdin"):
         assert leaked not in flat, leaked
+
+
+# ===========================================================================
+# Fingerprints must fit the column they are stored in
+# ===========================================================================
+# code_fingerprints.hashes is a SIGNED 64-bit array. Hashes read unsigned
+# overflowed it: 58% of realistic submissions could not be stored, the INSERT
+# failed, and — see the next section — that stopped analysis for everyone. The
+# 2026-09-22 pipeline test found 11 coding answers and 0 fingerprints.
+_INT64_MAX = 2**63 - 1
+
+
+def _realistic_python(seed: int) -> str:
+    import random
+    import string
+
+    r = random.Random(seed)
+    names = ["".join(r.choices(string.ascii_lowercase, k=r.randint(3, 8))) for _ in range(12)]
+    lines = []
+    for _ in range(r.randint(15, 40)):
+        a, b, c = r.sample(names, 3)
+        lines.append(r.choice([
+            f"{a} = {b} + {c} * {r.randint(1, 99)}",
+            f"if {a} > {b}:\n    {c} = {a} - {b}",
+            f"for {a} in range({r.randint(2, 50)}):\n    {b} += {a}",
+            f"def {a}({b}, {c}):\n    return {b} * {c}",
+            f"print({a}, {b})",
+        ]))
+    return "\n".join(lines)
+
+
+def test_every_fingerprint_hash_fits_a_signed_64_bit_column() -> None:
+    """300 sources, about 16,000 hashes: before the fix well over half the
+    sources would have held at least one that did not fit."""
+    seen = 0
+    for seed in range(300):
+        for h in code_similarity.fingerprint_source("python", _realistic_python(seed)).hashes:
+            assert 0 <= h <= _INT64_MAX, f"hash {h} does not fit bigint (seed {seed})"
+            seen += 1
+    assert seen > 5000, "too few hashes to mean anything"
+
+
+def test_the_fix_keeps_winnowing_choosing_the_same_positions() -> None:
+    """Selection still runs on the full 64-bit value: same positions chosen,
+    and only a chosen value at or above 2**63 changes — by losing its top bit."""
+    top = 1 << 63
+
+    def unmasked_fingerprints(tokens: list[str]) -> tuple[list[int], list[int]]:
+        with patch.object(code_similarity, "_STORABLE", (1 << 64) - 1):
+            return code_similarity.fingerprints(tokens)
+
+    changed = 0
+    for seed in range(60):
+        tokens = code_similarity.normalised_tokens("python", _realistic_python(seed))
+        new_hashes, new_positions = code_similarity.fingerprints(tokens)
+        raw_hashes, raw_positions = unmasked_fingerprints(tokens)
+        assert new_positions == raw_positions
+        for new, raw in zip(new_hashes, raw_hashes, strict=True):
+            if raw < top:
+                assert new == raw, "a hash that already fitted must come out unchanged"
+            else:
+                assert new == raw - top
+                changed += 1
+    assert changed, "no hash reached 2**63 — the test would pass vacuously"
+
+
+def test_the_algorithm_version_did_not_move() -> None:
+    """Deliberately unchanged. The sweep picks work by quality report, not by
+    fingerprint, so a bump would never re-fingerprint a submission already
+    reported — they would drop out of similarity checks for good. The fix is
+    safe to leave unversioned because every previously storable hash is
+    identical (the test above)."""
+    assert code_similarity.ALGORITHM_VERSION == "sim-winnow-1.0"
+
+
+# ===========================================================================
+# One failing submission must not stop the others
+# ===========================================================================
+class _Savepoint:
+    """What ``db.begin_nested()`` returns, as an async context manager."""
+
+    async def __aenter__(self) -> _Savepoint:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False  # let the error propagate to the caller's except
+
+
+@pytest.mark.asyncio
+async def test_one_failing_submission_does_not_stop_the_pass() -> None:
+    """The regression: the oldest submission's failure rolled back the whole
+    pass, and came first again on every sweep, forever."""
+    rows = [
+        {"attempt_id": uuid.uuid4(), "company_id": uuid.uuid4(), "exam_id": uuid.uuid4(),
+         "coding_question_id": str(uuid.uuid4()),
+         "answer": {"language": "python", "source": f"print({i})"}}
+        for i in range(3)
+    ]
+    from unittest.mock import MagicMock
+
+    result_rows = MagicMock()
+    result_rows.mappings.return_value.all.return_value = rows
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result_rows)
+    db.begin_nested = lambda: _Savepoint()
+
+    calls: list[uuid.UUID] = []
+
+    async def analyse(db_: object, *, attempt_id: uuid.UUID, **_: object) -> bool:
+        calls.append(attempt_id)
+        if attempt_id == rows[0]["attempt_id"]:
+            raise RuntimeError("this one is poison")
+        return True
+
+    with (
+        patch.object(svc.settings, "code_analysis_enabled", True),
+        patch.object(svc, "_analyse_one", analyse),
+        patch.object(svc, "_starter_code", AsyncMock(return_value=None)),
+        patch.object(svc, "_fingerprint_one", AsyncMock(return_value=False)),
+    ):
+        result = await svc.analyse_pending(db)
+
+    assert calls == [r["attempt_id"] for r in rows], "every submission was attempted"
+    assert result.failed == 1
+    assert result.reports_written == 2, "the two behind the poison one were analysed"
+    db.commit.assert_awaited()

@@ -149,6 +149,9 @@ class SweepResult:
     reports_written: int = 0
     fingerprints_written: int = 0
     signals_written: int = 0
+    # Submissions whose analysis failed this pass and were skipped, not
+    # allowed to stop the pass. Non-zero on every sweep means one keeps failing.
+    failed: int = 0
 
 
 async def analyse_pending(db: AsyncSession, *, limit: int | None = None) -> SweepResult:
@@ -179,27 +182,49 @@ async def analyse_pending(db: AsyncSession, *, limit: int | None = None) -> Swee
     touched: dict[tuple[uuid.UUID, uuid.UUID, uuid.UUID], list[uuid.UUID]] = {}
     reports_written = 0
     fingerprints_written = 0
+    failed = 0
     for row in rows:
         entry = row["answer"] if isinstance(row["answer"], dict) else {}
         language = str(entry.get("language") or "")
         source = str(entry.get("source") or "")
         qid = uuid.UUID(str(row["coding_question_id"]))
-        report = await _analyse_one(
-            db, company_id=row["company_id"], attempt_id=row["attempt_id"],
-            coding_question_id=qid, exam_id=row["exam_id"], language=language, source=source,
-        )
-        reports_written += 1 if report else 0
-        if language in PYGMENTS_LANGUAGE_ALIASES and len(source) > 0:
-            starter = await _starter_code(db, row["company_id"], qid)
-            wrote_fp = await _fingerprint_one(
-                db, company_id=row["company_id"], attempt_id=row["attempt_id"],
-                coding_question_id=qid, language=language, source=source, starter_code=starter,
+        # One submission per savepoint. Before this, a single submission whose
+        # write failed rolled back the WHOLE pass — and because the pass takes
+        # the oldest submissions first, that same one came back first on every
+        # sweep and failed again, forever. One bad row stopped code analysis
+        # for every candidate behind it: the 2026-09-22 pipeline test found 11
+        # coding answers and 0 reports, 0 fingerprints, 0 signals. Now a
+        # failure costs only its own row, which is logged and retried next
+        # sweep, and everyone else is analysed.
+        try:
+            async with db.begin_nested():
+                report = await _analyse_one(
+                    db, company_id=row["company_id"], attempt_id=row["attempt_id"],
+                    coding_question_id=qid, exam_id=row["exam_id"], language=language,
+                    source=source,
+                )
+                wrote_fp = False
+                if language in PYGMENTS_LANGUAGE_ALIASES and len(source) > 0:
+                    starter = await _starter_code(db, row["company_id"], qid)
+                    wrote_fp = await _fingerprint_one(
+                        db, company_id=row["company_id"], attempt_id=row["attempt_id"],
+                        coding_question_id=qid, language=language, source=source,
+                        starter_code=starter,
+                    )
+        except Exception as exc:  # noqa: BLE001 — isolate the row, keep the pass going
+            failed += 1
+            log.warning(
+                "code_evidence.submission_failed",
+                attempt_id=str(row["attempt_id"]), coding_question_id=str(qid),
+                error_type=type(exc).__name__,
             )
-            fingerprints_written += 1 if wrote_fp else 0
-            if wrote_fp:
-                touched.setdefault(
-                    (row["company_id"], row["exam_id"], qid), []
-                ).append(row["attempt_id"])
+            continue
+        reports_written += 1 if report else 0
+        fingerprints_written += 1 if wrote_fp else 0
+        if wrote_fp:
+            touched.setdefault(
+                (row["company_id"], row["exam_id"], qid), []
+            ).append(row["attempt_id"])
     await db.commit()
 
     signals_written = 0
@@ -212,10 +237,12 @@ async def analyse_pending(db: AsyncSession, *, limit: int | None = None) -> Swee
     log.info(
         "code_evidence.sweep", attempts_scanned=len(rows), reports_written=reports_written,
         fingerprints_written=fingerprints_written, signals_written=signals_written,
+        failed=failed,
     )
     return SweepResult(
         attempts_scanned=len(rows), reports_written=reports_written,
         fingerprints_written=fingerprints_written, signals_written=signals_written,
+        failed=failed,
     )
 
 

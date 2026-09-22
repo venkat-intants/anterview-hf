@@ -198,9 +198,21 @@ def test_a_caller_that_says_nothing_gets_unknown_not_a_guess() -> None:
 
 
 def test_hr_created_applicants_are_internal_not_direct() -> None:
+    """PH5-C1: HR may now say which channel a candidate came through, so
+    neither write path hardcodes 'internal' any more — but 'internal' is
+    still what either one falls back to when HR does not say."""
     app = Path(__file__).resolve().parents[2] / "app"
-    for module in ("routers/hr_applicants.py", "bulk_ingest.py"):
-        assert "source=INTERNAL" in (app / module).read_text(encoding="utf-8"), module
+    hr_applicants = (app / "routers" / "hr_applicants.py").read_text(encoding="utf-8")
+    bulk_ingest = (app / "bulk_ingest.py").read_text(encoding="utf-8")
+    # Single add: the form field is validated (default 'internal') before
+    # ever reaching _file_under/enrol_applicant.
+    assert "validate_hr_source(source)" in hr_applicants
+    assert "source=validated_source" in hr_applicants
+    # _file_under's own default, for its one caller that never got a form
+    # value at all (_ingest_resume, exercised only by tests today).
+    assert "source: str = INTERNAL" in hr_applicants
+    # Bulk ingest: the batch's own channel, falling back to 'internal'.
+    assert "source=it[\"source\"] or INTERNAL" in bulk_ingest
 
 
 def test_the_public_apply_endpoint_normalises_before_it_writes() -> None:

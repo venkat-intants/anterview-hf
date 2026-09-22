@@ -2597,3 +2597,85 @@ class TaskEvent(Base):
     )
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class HireCheckin(Base):
+    """HR's post-hire outcome for one hire, at roughly 90 days — PH5-D5-2.
+
+    A SIGNAL for quality-of-hire analytics (PH5-C1), never a decision: nothing
+    here can move ``enrolments.status``, and ``hire_checkins_lifecycle``
+    (migration ``8f41cb18a299``) refuses to let it try. No free text, no
+    correction reason (security review LOW-2) and no ``applicant_id`` (DPDP
+    review) — the person is reached through ``enrolment_id ->
+    enrolments.applicant_id``, which ``requisitions.merge_applicants``
+    already repoints on a merge, unlike a second ``applicant_id`` column this
+    table's freeze trigger would refuse to update. One LIVE row per
+    (``enrolment_id``, ``kind``) — a correction supersedes it with a new row
+    carrying ``supersedes_id`` rather than editing it, on the
+    ``interviewer_scorecards`` precedent. The self-referential foreign key is
+    keyed on ``(supersedes_id, enrolment_id, company_id)``, not just
+    ``company_id`` (security review MEDIUM-3): a correction can only ever
+    point at an earlier row of its OWN hire, and
+    ``uq_hire_checkins_supersedes`` gives each row at most one successor.
+    Every other column is frozen by the trigger except ``superseded_at``
+    (once, alone). Deleted outright — never redacted — by 24-month retention
+    (``app.hire_checkins.purge``) and, sooner, by the erasure executor.
+    """
+
+    __tablename__ = "hire_checkins"
+    __table_args__ = (
+        UniqueConstraint("id", "company_id", name="uq_hire_checkins_id_company"),
+        UniqueConstraint(
+            "id", "enrolment_id", "company_id", name="uq_hire_checkins_id_enrolment_company",
+        ),
+        # CASCADE, not RESTRICT: deletion (retention, erasure, or a
+        # hard-deleted parent) is this table's designed end state.
+        ForeignKeyConstraint(
+            ["enrolment_id", "company_id"], ["enrolments.id", "enrolments.company_id"],
+            name="fk_hire_checkins_enrolment", ondelete="CASCADE",
+        ),
+        # (supersedes_id, enrolment_id, company_id): a correction can only
+        # ever point at an earlier row of the SAME hire (security review
+        # MEDIUM-3).
+        ForeignKeyConstraint(
+            ["supersedes_id", "enrolment_id", "company_id"],
+            ["hire_checkins.id", "hire_checkins.enrolment_id", "hire_checkins.company_id"],
+            name="fk_hire_checkins_supersedes",
+        ),
+        CheckConstraint("kind = ANY (ARRAY['90_day'])", name="ck_hire_checkins_kind"),
+        CheckConstraint("employment IN ('employed','left')", name="ck_hire_checkins_employment"),
+        CheckConstraint(
+            "left_reason IS NULL OR left_reason IN ('voluntary','involuntary','unknown')",
+            name="ck_hire_checkins_left_reason_vocab",
+        ),
+        CheckConstraint(
+            "performance IS NULL OR performance IN ('below','meets','exceeds')",
+            name="ck_hire_checkins_performance_vocab",
+        ),
+        CheckConstraint(
+            "(employment = 'left') = (left_reason IS NOT NULL)",
+            name="ck_hire_checkins_left_reason_iff",
+        ),
+        CheckConstraint(
+            "(employment = 'employed') = (performance IS NOT NULL)",
+            name="ck_hire_checkins_performance_iff",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    enrolment_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, default="90_day", nullable=False)
+    employment: Mapped[str] = mapped_column(Text, nullable=False)
+    left_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    performance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=False
+    )
+    recorded_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

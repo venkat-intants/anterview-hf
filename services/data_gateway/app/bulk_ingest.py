@@ -90,24 +90,31 @@ async def create_batch(
     requisition_id: uuid.UUID,
     uploaded_by: uuid.UUID,
     files: list[StagedFile],
+    source: str | None = None,
 ) -> None:
     """Record the batch and its files. Caller commits.
 
     A file refused at upload (not a PDF, empty, too large, not stored) is
     recorded as ``failed`` straight away, so the batch's progress shows it with
     the rest rather than only in a response that is gone once the page closes.
+
+    ``source`` (PH5-C1) is the channel this WHOLE batch came through — one
+    bulk upload is already scoped to one opening, and in practice one channel
+    too. Validated by the caller (``app.application_source.validate_hr_source``)
+    before it reaches here; ``_create_applicant`` falls back to ``internal``
+    when it is NULL, the same default HR add has always used.
     """
     now = datetime.now(tz=UTC)
     waiting = any(f.error is None for f in files)
     await db.execute(
         text(
             "INSERT INTO upload_batches (id, company_id, requisition_id, uploaded_by_user_id,"
-            " total_files, status, created_at, finished_at)"
-            " VALUES (:i, :c, :r, :u, :n, :s, :t, :f)"
+            " total_files, status, source, created_at, finished_at)"
+            " VALUES (:i, :c, :r, :u, :n, :s, :src, :t, :f)"
         ),
         {"i": batch_id, "c": company_id, "r": requisition_id, "u": uploaded_by,
-         "n": len(files), "s": "processing" if waiting else "finished", "t": now,
-         "f": None if waiting else now},
+         "n": len(files), "s": "processing" if waiting else "finished", "src": source,
+         "t": now, "f": None if waiting else now},
     )
     for f in files:
         await db.execute(
@@ -145,7 +152,7 @@ RETURNING id
 
 _ITEMS_SQL = """
 SELECT i.id, i.batch_id, i.company_id, i.filename, i.s3_key,
-       b.requisition_id, b.uploaded_by_user_id,
+       b.requisition_id, b.uploaded_by_user_id, b.source,
        r.title, r.level, r.jd_text, r.deleted_at AS requisition_deleted_at
   FROM upload_items i
   JOIN upload_batches b ON b.id = i.batch_id AND b.company_id = i.company_id
@@ -314,7 +321,10 @@ async def _create_applicant(
         actor_user_id=uploader,
         reason="added by HR bulk upload",
         resume_s3_key=it["s3_key"],
-        source=INTERNAL,
+        # PH5-C1: the batch's own channel (validated at upload time), falling
+        # back to 'internal' — the default before this existed — for a batch
+        # that did not set one.
+        source=it["source"] or INTERNAL,
     )
     if uploader is not None:
         await record_hr_collected_basis(

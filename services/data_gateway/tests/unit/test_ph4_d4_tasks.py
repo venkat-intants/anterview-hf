@@ -305,17 +305,28 @@ def test_task_kinds_are_a_subset_of_human_evaluated() -> None:
 # ===========================================================================
 # The D4 migration's enrolment_awaits_human body lists exactly HUMAN_EVALUATED_KINDS
 # ===========================================================================
+def _d4_migration_src() -> str:
+    """The job-simulation/portfolio migration, by its REVISION ID.
+
+    ``*ph4_d4*.py`` matches two files (this one and the consent invariant),
+    and `glob` hands them back in directory order — arbitrary on Linux, and it
+    shifted the moment PH5 added files to this directory, so these assertions
+    silently started reading the wrong migration in CI while passing locally.
+    The revision id is unique and never moves.
+    """
+    versions = APP.parents[0] / "alembic" / "versions"
+    matches = sorted(versions.glob("*a5d7f9b1c3e8*.py"))
+    assert len(matches) == 1, matches
+    return matches[0].read_text(encoding="utf-8")
+
+
 def test_migration_enrolment_awaits_human_lists_human_evaluated_kinds() -> None:
-    migrations = (APP.parents[0] / "alembic" / "versions").glob("*ph4_d4*.py")
-    path = next(migrations)
-    src = path.read_text(encoding="utf-8")
+    src = _d4_migration_src()
     assert "'human_review', 'job_simulation', 'portfolio'" in src
 
 
 def test_migration_downgrade_refuses_while_task_rounds_exist() -> None:
-    migrations = (APP.parents[0] / "alembic" / "versions").glob("*ph4_d4*.py")
-    path = next(migrations)
-    src = path.read_text(encoding="utf-8")
+    src = _d4_migration_src()
     assert "stuck" in src
     assert "raise RuntimeError" in src
 
@@ -325,9 +336,7 @@ def test_composite_fks_with_a_not_null_company_id_never_set_null() -> None:
     that includes ``company_id`` (NOT NULL on task_submissions) would try to
     null it too — the defect already fixed twice elsewhere this wave.
     RESTRICT instead, for both FKs that shape applies to."""
-    migrations = (APP.parents[0] / "alembic" / "versions").glob("*ph4_d4*.py")
-    path = next(migrations)
-    src = path.read_text(encoding="utf-8")
+    src = _d4_migration_src()
     for name in ("fk_task_submissions_accommodation", "fk_task_submissions_superseded_by"):
         idx = src.index(f'name="{name}"')
         # ondelete is the very next keyword argument on these two calls.

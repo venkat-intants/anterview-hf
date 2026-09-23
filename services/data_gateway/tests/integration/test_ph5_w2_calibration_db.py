@@ -590,20 +590,12 @@ async def test_an_erased_candidate_still_counts_and_reads_as_redacted(db: AsyncS
     assert len(other_rows) == 4
     assert all(r["candidate_name"].startswith("Applicant ") for r in other_rows)
 
-    audit = (
-        await db.execute(
-            text(
-                "SELECT details FROM audit_log WHERE action = 'panel.calibration.evidence_viewed'"
-                " ORDER BY event_ts DESC LIMIT 1"
-            )
-        )
-    ).mappings().first()
-    assert audit is not None
-    details_text = str(audit["details"])
-    assert "[redacted]" not in details_text
-    assert "Applicant" not in details_text
-    assert str(erased_applicant_id) not in details_text
-    assert str(erased_enrolment) not in details_text
+    # The audit row is deliberately NOT asserted here. This test drives
+    # judgements() in-process on a session that rolls back, so its own row is
+    # never committed — reading "the latest row" would either find nothing on a
+    # clean database or, worse, silently examine a row another test committed.
+    # test_the_judgements_drilldown_audit_row_carries_no_candidate_names covers
+    # the same property through the HTTP route, where the row is really its own.
 
 
 # ===========================================================================

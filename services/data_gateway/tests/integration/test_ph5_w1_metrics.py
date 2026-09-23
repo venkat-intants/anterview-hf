@@ -864,6 +864,36 @@ async def test_time_to_hire_and_interviewer_score_stay_visible_when_suppressed(
     assert m["hire_interviewer_score"]["value"] == 4.0
 
 
+async def test_time_to_hire_days_is_the_median_not_the_mean(db: AsyncSession) -> None:
+    """Evidence audit follow-up: no test before this one could tell a median
+    from any other percentile, because every ``time_to_hire_days`` population
+    in the suite was one row or all rows with the same measure — swapping
+    ``_plan_metric``'s ``percentile_cont(0.5)`` for ``percentile_cont(0.9)``
+    (or any other value) would have passed every existing assertion.
+
+    Five DIFFERENT times to hire (2, 4, 10, 20, 40 days) fix that: the median
+    is 10, the mean is 15.2, and the 90th percentile (Postgres's default
+    linear interpolation over these five sorted values) is 32 — three
+    different numbers, so asserting exactly 10 actually pins down
+    ``percentile_cont(0.5)`` specifically, not merely "some aggregate"."""
+    seed = await _seed_company(db)
+    now = datetime.now(tz=UTC)
+    for days in (2, 4, 10, 20, 40):
+        enrolment = await _application(db, seed, created_at=now - timedelta(days=days))
+        await _hire(db, seed, enrolment, hired_at=now)
+
+    result = await compute_funnel(
+        db, company_id=seed.company, cohort=CohortWindow(basis="hire"), filters=FunnelFilters(),
+    )
+    m = result.groups[0].metrics
+    assert m["time_to_hire_days"]["n"] == 5
+    assert m["time_to_hire_days"]["suppressed"] is False
+    median = m["time_to_hire_days"]["value"]
+    assert median == pytest.approx(10.0, abs=0.1)
+    assert median != pytest.approx(15.2, abs=0.5)  # the mean
+    assert median != pytest.approx(32.0, abs=0.5)  # the 90th percentile
+
+
 # ===========================================================================
 # Cohorts
 # ===========================================================================
@@ -1320,8 +1350,12 @@ async def test_cross_consumer_consistency(
     on the application -> interview RATE (not just the counts underneath it)
     — five applications, a non-trivial (neither 0% nor 100%) interview count,
     so the rate clears the suppression floor and is asserted non-null
-    everywhere it appears. `HrFunnel.hired` (the unrelated `snapshot` cohort
-    `/hr/analytics` also returns) must equal the governed hire count too.
+    everywhere it appears. PH5 Wave 1 close-out (C2-5/C1-9): `HrFunnel`'s
+    `total_applications`/`interview_completed`/`hired` are no longer a second,
+    independently-computed number over `application_progress` — they ARE
+    `conversion`'s `applied`/`ever_interviewed`/`ever_hired`, so they must
+    equal them here too (see `test_funnel_interview_completed_agrees_with_
+    governed_interviewed` for the disagreement this specifically fixed).
     """
     from shared.agents import ToolContext
 
@@ -1357,7 +1391,9 @@ async def test_cross_consumer_consistency(
     assert analytics["conversion"]["ever_interviewed"] == 3
     assert analytics["conversion"]["ever_hired"] == 1
     assert analytics["conversion"]["pct_interviewed"] == pytest.approx(60.0)
-    assert analytics["funnel"]["hired"] == 1  # HrFunnel (snapshot) == governed hires
+    assert analytics["funnel"]["total_applications"] == 5  # == conversion.applied
+    assert analytics["funnel"]["interview_completed"] == 3  # == conversion.ever_interviewed
+    assert analytics["funnel"]["hired"] == 1  # == conversion.ever_hired
 
     # 2. /hr/analytics/funnel.
     funnel = (await client.get("/hr/analytics/funnel", headers=headers)).json()
@@ -1412,6 +1448,52 @@ async def test_cross_consumer_consistency(
     board = await hiring_board(committed_db, company_id=seed.company)
     assert sum(o["hired"] for o in board["openings"]) == 1
     assert sum(o["applied"] for o in board["openings"]) == 5
+
+
+async def test_funnel_interview_completed_agrees_with_governed_interviewed(
+    committed_db: AsyncSession, client: AsyncClient,
+) -> None:
+    """The exact disagreement PH5 Wave 1 close-out fixes (C2-5/C1-9).
+
+    Before this change, ``HrFunnel.interview_completed`` was
+    ``scorecard_id IS NOT NULL`` on ``application_progress`` — an AI session's
+    scorecard only — so a candidate interviewed by a HUMAN panel with no AI
+    session at all counted on the Analytics page's ``Interviewed``
+    (``conversion.ever_interviewed``, already governed) but NOT on the HR
+    console's ``Interviewed`` tile (``funnel.interview_completed``). One
+    AI-completed application, one human-scorecard-only application, one
+    application with neither: both fields must now agree, and both must be 2
+    (not 1, which is what the old AI-only count would have shown).
+    """
+    seed = await _seed_company(committed_db)
+
+    ai_only = await _application(committed_db, seed)
+    applicant_id = (
+        await committed_db.execute(
+            text("SELECT applicant_id FROM enrolments WHERE id = :e"), {"e": ai_only},
+        )
+    ).scalar_one()
+    await _ai_interview_completed(committed_db, seed, applicant_id, enrolment_id=ai_only)
+
+    human_only = await _application(committed_db, seed)
+    await _human_scorecard(committed_db, seed, human_only)
+
+    await _application(committed_db, seed)  # neither — never interviewed
+    await committed_db.commit()
+
+    headers = _auth(seed.hr, ["hr_manager"])
+    analytics = (await client.get("/hr/analytics", headers=headers)).json()
+
+    assert analytics["funnel"]["total_applications"] == 3
+    assert analytics["conversion"]["ever_interviewed"] == 2
+    assert analytics["funnel"]["interview_completed"] == 2
+    assert (
+        analytics["funnel"]["interview_completed"] == analytics["conversion"]["ever_interviewed"]
+    )
+    assert analytics["definitions"]["funnel.interview_completed"] == "interviewed@1"
+    assert analytics["definitions"]["funnel.total_applications"] == "applications@1"
+    assert analytics["definitions"]["funnel.exam_taken"] == "assessed@1"
+    assert analytics["definitions"]["funnel.hired"] == "hires@1"
 
 
 async def test_get_company_overview_agrees_with_get_funnel_analytics(

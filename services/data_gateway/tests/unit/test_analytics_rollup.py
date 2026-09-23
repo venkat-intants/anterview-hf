@@ -44,13 +44,14 @@ from app.metrics.compute import CohortWindow, FunnelFilters, FunnelGroup, Funnel
 def _analytics_db() -> AsyncMock:
     """A session that answers the FOUR raw roll-up queries `get_analytics`
     still runs itself, in order: funnel, averages, openings, recent. The
-    governed conversion/velocity figures no longer come from `db.execute` —
-    they come from `compute_funnel`, mocked separately per test."""
+    governed conversion/velocity figures — and, since PH5 Wave 1 close-out
+    (C2-5/C1-9), `funnel.total_applications`/`exam_taken`/
+    `interview_completed`/`hired` too — no longer come from `db.execute`; they
+    come from `compute_funnel`, mocked separately per test via
+    `_pipeline_result`/`_patch_compute_funnel`. Only the five fields
+    `_FUNNEL_SQL` still actually selects belong in this row."""
     zeros = dict.fromkeys(
-        (
-            "total_applicants", "total_applications", "shortlisted", "exam_taken",
-            "exam_passed", "interview_invited", "interview_completed", "hired", "rejected",
-        ),
+        ("total_applicants", "shortlisted", "rejected", "exam_passed", "interview_invited"),
         0,
     )
     queue = [
@@ -247,6 +248,75 @@ def test_the_response_names_the_metric_behind_every_field() -> None:
 
     fields = set(HrAnalytics.model_fields)
     assert {"definitions", "registry_hash"} <= fields
+
+
+# ===========================================================================
+# Funnel — the four fields governed by PH5 Wave 1 close-out (C2-5/C1-9)
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_funnels_governed_fields_are_the_conversion_counts_not_a_second_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`HrFunnel.total_applications`/`exam_taken`/`interview_completed`/
+    `hired` used to be this router's OWN count over `application_progress` —
+    `interview_completed` in particular counted only a completed AI scorecard,
+    which is exactly why it disagreed with the Analytics page's `Interviewed`
+    (that already counted a submitted human scorecard too). They are now read
+    off the SAME governed pipeline metrics `conversion` already exposes, so
+    the two can no longer drift apart."""
+    from app.routers.hr_pipeline import get_analytics
+
+    _patch_compute_funnel(
+        monkeypatch,
+        _pipeline_result(applied=9, shortlisted=6, sat_exam=5, interviewed=4, hired=2),
+        _hire_result(),
+    )
+    analytics = await get_analytics((uuid.uuid4(), uuid.uuid4()), _analytics_db())
+    f = analytics.funnel
+    assert (f.total_applications, f.exam_taken, f.interview_completed, f.hired) == (9, 5, 4, 2)
+    assert f.total_applications == analytics.conversion.applied
+    assert f.exam_taken == analytics.conversion.ever_sat_exam
+    assert f.interview_completed == analytics.conversion.ever_interviewed
+    assert f.hired == analytics.conversion.ever_hired
+
+
+@pytest.mark.asyncio
+async def test_the_definitions_map_names_the_newly_governed_funnel_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Extends the "How is this calculated?" contract (above) to the four
+    funnel fields PH5 Wave 1 close-out (C2-5/C1-9) governed, the same way it
+    already covers every `conversion`/`velocity` field."""
+    from app.routers.hr_pipeline import get_analytics
+
+    _patch_compute_funnel(
+        monkeypatch,
+        _pipeline_result(applied=9, shortlisted=6, sat_exam=5, interviewed=4, hired=2),
+        _hire_result(),
+    )
+    analytics = await get_analytics((uuid.uuid4(), uuid.uuid4()), _analytics_db())
+    assert analytics.definitions["funnel.total_applications"] == "applications@1"
+    assert analytics.definitions["funnel.exam_taken"] == "assessed@1"
+    assert analytics.definitions["funnel.interview_completed"] == "interviewed@1"
+    assert analytics.definitions["funnel.hired"] == "hires@1"
+
+
+def test_funnels_ungoverned_fields_stay_on_the_raw_query() -> None:
+    """`total_applicants` (people), `shortlisted`/`rejected` (current status)
+    and `exam_passed`/`interview_invited` have no governed equivalent and must
+    stay selected by `_FUNNEL_SQL` — see `HrFunnel`'s docstring for why."""
+    import app.routers.hr_pipeline as mod
+
+    sql = str(mod._FUNNEL_SQL)
+    for column in (
+        "total_applicants", "shortlisted", "rejected", "exam_passed", "interview_invited",
+    ):
+        assert column in sql
+    # And the four newly-governed fields are gone from the raw query — reading
+    # them from `application_progress` here would be the exact duplication
+    # this change removes.
+    for column in ("total_applications", "exam_taken", "interview_completed", "hired"):
+        assert column not in sql
 
 
 # ===========================================================================

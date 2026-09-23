@@ -96,7 +96,39 @@ class HrFunnel(BaseModel):
     """Counts of APPLICATIONS by where they are now (B5), except
     ``total_applicants``, which is people. Someone shortlisted for one opening
     and rejected for another is one shortlist and one rejection — it used to be
-    whichever of the two wrote the person's row last."""
+    whichever of the two wrote the person's row last.
+
+    GOVERNED (PH5 Wave 1 close-out, C2-5/C1-9): ``total_applications``,
+    ``exam_taken``, ``interview_completed`` and ``hired`` are no longer this
+    router's own count over ``application_progress`` — they ARE the governed
+    metrics ``HrConversion``/``HrAnalytics.definitions`` already name
+    (``applications@1``, ``assessed@1``, ``interviewed@1``, ``hires@1``
+    respectively), read off the SAME all-time ``application``-cohort
+    ``compute_funnel`` call ``conversion`` already makes (no second query).
+    This closes the exact defect the acceptance criteria named:
+    ``interview_completed`` used to count only a completed AI scorecard
+    (``scorecard_id IS NOT NULL`` on ``application_progress``), so the HR
+    console's "Interviewed" tile showed a different number from the Analytics
+    page's "Interviewed", which already counted a submitted human interviewer
+    scorecard too — both now read ``interviewed@1`` and cannot disagree.
+    ``exam_taken`` similarly now also counts a ``round_results`` row with no
+    exam attempt behind it (``assessed@1``'s definition), which the old
+    ``total_exam_attempts > 0`` count missed. ``hired`` was already
+    numerically identical to ``hires@1`` for real data (see
+    ``test_cross_consumer_consistency``) and is now computed FROM it
+    directly, rather than a second, independently-written expression that
+    happened to agree.
+
+    UNGOVERNED, deliberately, because no governed metric matches what these
+    ask: ``total_applicants`` counts PEOPLE, not applications, and a governed
+    metric is always over applications; ``shortlisted``/``rejected`` are
+    CURRENT STATUS — where an application sits right now — not a cumulative
+    "ever" count, and nothing in the registry describes a snapshot;
+    ``exam_passed`` has no governed pass/fail metric (only ``assessed`` —
+    that someone sat an exam at all); ``interview_invited`` has no governed
+    definition of what an "invite" is. These five stay on the
+    ``application_progress`` view, exactly as before.
+    """
 
     total_applicants: int
     total_applications: int = 0
@@ -324,28 +356,20 @@ async def get_pipeline(
 # ---------------------------------------------------------------------------
 # Analytics (funnel + averages)
 # ---------------------------------------------------------------------------
-# Applications, from the same view as the board — so "Shortlisted 4" here is
-# the four shortlisted cards there. Filed-under-no-opening people count as a
-# person but not as an application (they have not applied to anything).
+# PH5 Wave 1 close-out (C2-5/C1-9): only the UNGOVERNED fields are read here
+# now — total_applications/exam_taken/interview_completed/hired moved to the
+# governed compute_funnel call get_analytics already makes for `conversion`
+# (see HrFunnel's docstring for exactly which four and why). Filed-under-no-
+# opening people count as a person but not as an application (they have not
+# applied to anything).
 _FUNNEL_SQL = text(
     """
 SELECT
-  COUNT(DISTINCT applicant_id)                                        AS total_applicants,
-  COUNT(*) FILTER (WHERE enrolment_id IS NOT NULL)                    AS total_applications,
-  COUNT(*) FILTER (WHERE stored_status = 'shortlisted')               AS shortlisted,
-  -- PH4-A3: a hire whose offer was declined, expired or withdrawn has not
-  -- filled the role, and the two dashboards leave it out of their counts; the
-  -- funnel says the same number for the same data. The shared
-  -- application_progress view is left alone (the copilot reads it), so the
-  -- outcome is read from the application itself.
-  COUNT(*) FILTER (WHERE stored_status = 'hired' AND COALESCE(
-    (SELECT e.offer_outcome FROM enrolments e WHERE e.id = application_progress.enrolment_id),
-    '') NOT IN ('offer_declined', 'offer_expired', 'offer_withdrawn'))  AS hired,
-  COUNT(*) FILTER (WHERE stored_status = 'rejected')                  AS rejected,
-  COUNT(*) FILTER (WHERE total_exam_attempts > 0)                     AS exam_taken,
-  COUNT(*) FILTER (WHERE exam_passed IS TRUE)                         AS exam_passed,
-  COUNT(*) FILTER (WHERE ever_invited)                                AS interview_invited,
-  COUNT(*) FILTER (WHERE scorecard_id IS NOT NULL)                    AS interview_completed
+  COUNT(DISTINCT applicant_id)                          AS total_applicants,
+  COUNT(*) FILTER (WHERE stored_status = 'shortlisted') AS shortlisted,
+  COUNT(*) FILTER (WHERE stored_status = 'rejected')    AS rejected,
+  COUNT(*) FILTER (WHERE exam_passed IS TRUE)           AS exam_passed,
+  COUNT(*) FILTER (WHERE ever_invited)                  AS interview_invited
 FROM application_progress
 WHERE company_id = :cid
 """
@@ -377,6 +401,15 @@ _CONVERSION_METRIC_MAP: dict[str, str] = {
 _CONVERSION_RATE_MAP: dict[str, str] = {
     "pct_shortlisted": "application_to_screen", "pct_sat_exam": "application_to_assess",
     "pct_interviewed": "application_to_interview", "pct_hired": "application_to_hire",
+}
+
+# PH5 Wave 1 close-out (C2-5/C1-9): the four HrFunnel fields that have a
+# governed equivalent, read off the SAME `pipeline` (application-cohort)
+# FunnelResult `conversion` already uses above — one query serves both. See
+# HrFunnel's docstring for why these four moved and the other five did not.
+_FUNNEL_METRIC_MAP: dict[str, str] = {
+    "total_applications": "applications", "exam_taken": "assessed",
+    "interview_completed": "interviewed", "hired": "hires",
 }
 
 # "Applications in the last 7 days" counts applications, by when each was made
@@ -415,11 +448,14 @@ def _round2(x: Any) -> float | None:
 async def get_analytics(ctx: HrCtxDep, db: DbSessionDep) -> HrAnalytics:
     """Company-scoped funnel counts + averages. NULL-safe (empty company → zeros/None).
 
-    ``funnel``/``averages`` stay on the ``application_progress`` view (the
-    ``snapshot`` cohort HrFunnel has always used — see the cross-consumer
-    consistency test asserting ``funnel.hired`` equals the governed
-    ``hires@1``). ``conversion`` and ``velocity``'s hire figures are governed
-    (PH5-C2) — see ``HrConversion``/``HrVelocity``'s docstrings.
+    ``funnel``'s UNGOVERNED fields (``total_applicants``, ``shortlisted``,
+    ``rejected``, ``exam_passed``, ``interview_invited``) and ``averages``
+    stay on the ``application_progress`` view. ``funnel``'s GOVERNED fields
+    (``total_applications``, ``exam_taken``, ``interview_completed``,
+    ``hired`` — PH5 Wave 1 close-out, C2-5/C1-9) and ``conversion``/
+    ``velocity`` all come from the SAME ``pipeline``/``hire`` ``compute_funnel``
+    calls below — no field here is computed twice. See ``HrFunnel``'s
+    docstring for exactly which four fields moved and why.
     """
     _hr_uid, company_id = ctx
     f = (await db.execute(_FUNNEL_SQL, {"cid": company_id})).mappings().one()
@@ -445,20 +481,22 @@ async def get_analytics(ctx: HrCtxDep, db: DbSessionDep) -> HrAnalytics:
         f"conversion.{field}": f"{metric}@1" for field, metric in _CONVERSION_METRIC_MAP.items()
     } | {
         f"conversion.{field}": f"{metric}@1" for field, metric in _CONVERSION_RATE_MAP.items()
+    } | {
+        f"funnel.{field}": f"{metric}@1" for field, metric in _FUNNEL_METRIC_MAP.items()
     } | {"velocity.median_time_to_hire_days": "time_to_hire_days@1",
          "velocity.hires_measured": "time_to_hire_days@1"}
 
     return HrAnalytics(
         funnel=HrFunnel(
             total_applicants=int(f["total_applicants"]),
-            total_applications=int(f["total_applications"] or 0),
             shortlisted=int(f["shortlisted"]),
-            exam_taken=int(f["exam_taken"]),
             exam_passed=int(f["exam_passed"]),
             interview_invited=int(f["interview_invited"]),
-            interview_completed=int(f["interview_completed"]),
-            hired=int(f["hired"]),
             rejected=int(f["rejected"]),
+            **{
+                field: int(pipeline_metrics[metric]["value"] or 0)
+                for field, metric in _FUNNEL_METRIC_MAP.items()
+            },
         ),
         averages=HrAverages(
             avg_ats=_round2(avg["avg_ats"]),

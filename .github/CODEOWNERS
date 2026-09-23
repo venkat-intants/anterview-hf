@@ -1,0 +1,11 @@
+# Code owners — currently just PH5-C2's metric registry lock.
+#
+# The lock file freezes every published flag/measure/metric/dimension/rule
+# version by hash (see services/data_gateway/app/metrics/definitions.py and
+# ops/ci/check_metric_lock.py). CI's `invariants` job already refuses a PR
+# that edits or removes an existing entry; this asks the owner of the metric
+# layer to review any PR that touches the file at all, including a legitimate
+# new entry. GitHub only makes that review REQUIRED when branch protection on
+# main has "Require review from Code Owners" on — unverified for this repo.
+
+services/data_gateway/app/metrics/published.lock.json @venkat-intants

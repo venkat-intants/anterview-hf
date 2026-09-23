@@ -21,6 +21,8 @@ looks like the copilot ignoring what was asked.
 
 from __future__ import annotations
 
+import uuid
+from datetime import date, timedelta
 from typing import Any
 
 import structlog
@@ -36,6 +38,8 @@ from shared.agents import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.metrics.compute import CohortWindow, FunnelFilters, compute_funnel
+from app.metrics.definitions import current_metrics, uses_checkin_data
 from app.utils.sql_like import like_literal
 
 log = structlog.get_logger(__name__)
@@ -361,70 +365,79 @@ async def _get_applicant_detail(args: dict[str, Any], ctx: ToolContext) -> ToolO
     return ToolOutput(data=data, citations=citations)
 
 
+def _checkin_safe_metrics(metrics: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Governed metrics, minus any that read a 90-day check-in flag.
+
+    PH5-C1 "check-in data never reaches a model": a post-hire outcome about a
+    named former candidate must never land in an LLM prompt, however
+    aggregated. ``uses_checkin_data`` is the same predicate
+    ``validate_registry`` uses to keep a check-in metric off an unsafe
+    dimension — see ``test_copilot_funnel_tool_excludes_checkin_metrics``.
+    """
+    current = current_metrics()
+    return {
+        name: value
+        for name, value in metrics.items()
+        if name in current and not uses_checkin_data(current[name])
+    }
+
+
 @registry.tool(
     name="get_funnel_analytics",
     description=(
-        "Company hiring funnel: applicant counts by stage, per-role conversion, "
-        "and how long candidates have been waiting. Use for 'how are we doing', "
-        "bottleneck, and throughput questions."
+        "Company hiring funnel: governed application counts by stage and "
+        "per-role conversion rates, overall and for the top openings by "
+        "volume. Use for 'how are we doing', bottleneck, and throughput "
+        "questions. Does not include how long candidates have been waiting — "
+        "that is on the per-opening requisition dashboard, not this tool."
     ),
     parameters={"type": "object", "properties": {}},
     data_class="company_scoped",
     allowed_roles=COMPANY_ROLES,
 )
 async def _get_funnel_analytics(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+    """Governed hiring funnel (PH5-C2): applications, screened, assessed,
+    interviewed, hires, and the application-to-* rates, overall and per
+    opening (top N by application count) — the SAME `app.metrics.compute`
+    figures `/hr/analytics/funnel` and the funnel_health watcher read, each
+    carrying its own `metric`/`version`, so this tool cannot disagree with
+    either about what "interviewed" or "hired" means. No check-in metric is
+    ever included (`_checkin_safe_metrics`).
+    """
     db = _db(ctx)
-    by_stage = (
-        await db.execute(
-            text(
-                """
-                -- Applications by stage (B5), the same view as the board.
-                SELECT status, COUNT(*) AS n
-                FROM application_progress
-                WHERE company_id = :cid
-                GROUP BY status ORDER BY n DESC
-                """
-            ),
-            {"cid": ctx.company_id},
-        )
-    ).all()
+    company_id = uuid.UUID(ctx.company_id) if ctx.company_id else None
+    if company_id is None:  # pragma: no cover — COMPANY_ROLES always carries one
+        return ToolOutput(data={"overall": {}, "by_opening": []}, citations=[])
 
-    by_role = (
-        await db.execute(
-            text(
-                """
-                -- Per opening, counting its applications (B5): someone who
-                -- applied to two roles is counted, and scored, in each.
-                SELECT opening_title AS role,
-                       COUNT(*) AS applicants,
-                       COUNT(scorecard_id) AS interviewed,
-                       ROUND(AVG(ats_overall)::numeric, 1) AS avg_ats
-                FROM application_progress
-                WHERE company_id = :cid
-                GROUP BY opening_title
-                ORDER BY applicants DESC LIMIT :limit
-                """
-            ),
-            {"cid": ctx.company_id, "limit": MAX_ROWS},
-        )
-    ).all()
+    overall = await compute_funnel(
+        db, company_id=company_id, cohort=CohortWindow(basis="application"),
+        filters=FunnelFilters(),
+    )
+    per_opening = await compute_funnel(
+        db, company_id=company_id, cohort=CohortWindow(basis="application"),
+        filters=FunnelFilters(), group_by="requisition",
+    )
+
+    by_opening = [
+        {
+            "role": group.label,
+            # Applications, not people — someone who applied to two openings
+            # is counted, and scored, in each (B5).
+            "requisition_id": group.key,
+            "metrics": _checkin_safe_metrics(group.metrics),
+        }
+        for group in per_opening.groups
+        if group.key is not None
+    ]
+    by_opening.sort(
+        key=lambda r: r["metrics"].get("applications", {}).get("value") or 0, reverse=True
+    )
 
     return ToolOutput(
         data={
-            "by_stage": {r.status: r.n for r in by_stage},
-            "total_applicants": sum(r.n for r in by_stage),
-            "by_role": [
-                {
-                    "role": r.role,
-                    "applicants": r.applicants,
-                    "interviewed": r.interviewed,
-                    "interview_rate": (
-                        round(r.interviewed / r.applicants, 3) if r.applicants else 0.0
-                    ),
-                    "avg_ats_0_100": float(r.avg_ats) if r.avg_ats is not None else None,
-                }
-                for r in by_role
-            ],
+            "registry_hash": overall.registry_hash,
+            "overall": _checkin_safe_metrics(overall.groups[0].metrics),
+            "by_opening": by_opening[:MAX_ROWS],
         },
         citations=[Citation(kind="analytics", id="funnel", label="Hiring funnel", href="/hr/analytics")],
     )
@@ -931,17 +944,50 @@ async def _draft_shortlist(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
 @registry.tool(
     name="get_company_overview",
     description=(
-        "This company's operating picture: staff headcount by role, applicant "
-        "totals by stage, exams by status, and interview volume in the last 30 "
-        "days. Counts only - no individual candidate appears in the result. Use "
-        "for 'how is the company doing' and capacity questions."
+        "This company's operating picture: staff headcount by role, the "
+        "governed hiring pipeline (the SAME applications/screened/assessed/"
+        "interviewed/selected/hires/rejections figures get_funnel_analytics and "
+        "/hr/analytics/funnel use), exams by status, and how many of the "
+        "applications received in the last 30 days have been interviewed. "
+        "Counts only - no individual candidate appears in the result. Use for "
+        "'how is the company doing' and capacity questions."
     ),
     parameters={"type": "object", "properties": {}},
     data_class="company_staff",
     allowed_roles=COMPANY_STAFF_ROLES,
 )
 async def _get_company_overview(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+    """Governed pipeline counts (PH5-C2 / C2-6), alongside staff headcount and
+    exam status.
+
+    BEFORE this fix, this tool counted ``applicants.status`` (a per-PERSON
+    bucket that predates the enrolment/application model) for
+    ``applicants_by_stage``, and joined ``interview_invites`` to the AI-only
+    ``scorecards`` table for "interviews completed" — a second, independent
+    definition of both "how many at each stage" and "how many interviewed"
+    from the ones ``get_funnel_analytics`` already reads through
+    ``app.metrics.compute``. A super admin and an HR manager asking the same
+    question through two different tools could get two different numbers.
+
+    NOW both read the SAME governed flags, `_checkin_safe_metrics`-filtered
+    exactly like ``get_funnel_analytics``:
+    * ``applicants_by_stage`` is the all-time ``application`` cohort's
+      pipeline metrics (``applications``/``screened``/``assessed``/
+      ``interviewed``/``selected``/``hires``/``rejections``) — cumulative
+      milestones an application may satisfy more than one of at once, NOT the
+      mutually-exclusive current-status buckets the old ``applicants.status``
+      breakdown gave. They therefore no longer sum to ``applicants_total``;
+      ``applicants_by_stage_note`` says so in the payload itself.
+    * ``interviews_last_30d`` no longer separately reports "invited": an
+      interview invite has no governed definition of its own, and pairing an
+      ungoverned invite count against a governed interviewed count under one
+      key is the same duplicate-definition problem this fix closes. It is
+      now, like every other figure here, "of the applications received in
+      the last 30 days, how many have been interviewed (ever)" — an
+      application-window count, not an invite-activity window.
+    """
     db = _db(ctx)
+    company_id = uuid.UUID(ctx.company_id) if ctx.company_id else None
 
     # A user holding two roles is counted under both - same caveat as the
     # platform overview, and stated in the payload so the model does not
@@ -962,23 +1008,6 @@ async def _get_company_overview(args: dict[str, Any], ctx: ToolContext) -> ToolO
         )
     ).all()
 
-    pipeline = (
-        await db.execute(
-            text(
-                """
-                SELECT status, COUNT(*) AS n,
-                       COUNT(*) FILTER (
-                           WHERE created_at > NOW() - INTERVAL '30 days'
-                       ) AS added_30d
-                FROM applicants
-                WHERE company_id = CAST(:cid AS uuid) AND deleted_at IS NULL
-                GROUP BY status ORDER BY n DESC
-                """
-            ),
-            {"cid": ctx.company_id},
-        )
-    ).all()
-
     exams = (
         await db.execute(
             text(
@@ -993,25 +1022,30 @@ async def _get_company_overview(args: dict[str, Any], ctx: ToolContext) -> ToolO
         )
     ).all()
 
-    # Interview volume is reached through interview_invites, which carries
-    # company_id; the sessions table does not, so counting sessions directly
-    # would silently cross tenants.
-    interviews = (
-        await db.execute(
-            text(
-                """
-                SELECT COUNT(*) AS invited,
-                       COUNT(sc.scorecard_id) AS completed
-                FROM interview_invites i
-                LEFT JOIN scorecards sc ON sc.session_id = i.session_id
-                WHERE i.company_id = CAST(:cid AS uuid)
-                  AND i.deleted_at IS NULL
-                  AND i.created_at > NOW() - INTERVAL '30 days'
-                """
-            ),
-            {"cid": ctx.company_id},
+    if company_id is None:  # pragma: no cover — COMPANY_STAFF_ROLES always carries one
+        applicants_by_stage: dict[str, dict[str, Any]] = {}
+        applicants_total = 0
+        applicants_added_last_30d = 0
+        interviewed_last_30d = 0
+        registry_hash = None
+    else:
+        overall = await compute_funnel(
+            db, company_id=company_id, cohort=CohortWindow(basis="application"),
+            filters=FunnelFilters(),
         )
-    ).first()
+        applicants_by_stage = _checkin_safe_metrics(overall.groups[0].metrics)
+        applicants_total = int(applicants_by_stage.get("applications", {}).get("value") or 0)
+        registry_hash = overall.registry_hash
+
+        recent_window = CohortWindow(
+            basis="application", from_=date.today() - timedelta(days=30),
+        )
+        recent = await compute_funnel(
+            db, company_id=company_id, cohort=recent_window, filters=FunnelFilters(),
+        )
+        recent_metrics = recent.groups[0].metrics
+        applicants_added_last_30d = int(recent_metrics.get("applications", {}).get("value") or 0)
+        interviewed_last_30d = int(recent_metrics.get("interviewed", {}).get("value") or 0)
 
     return ToolOutput(
         data={
@@ -1020,13 +1054,26 @@ async def _get_company_overview(args: dict[str, Any], ctx: ToolContext) -> ToolO
                 "A user holding two roles is counted under both, so these do "
                 "not sum to total headcount."
             ),
-            "applicants_by_stage": {r.status: r.n for r in pipeline},
-            "applicants_total": sum(r.n for r in pipeline),
-            "applicants_added_last_30d": sum(r.added_30d for r in pipeline),
+            "registry_hash": registry_hash,
+            "applicants_by_stage": applicants_by_stage,
+            "applicants_by_stage_note": (
+                "Governed pipeline counts (metric@version per figure) — the "
+                "same ones get_funnel_analytics and /hr/analytics/funnel use. "
+                "Each is a cumulative milestone an application may satisfy "
+                "more than one of at once, so these do NOT sum to "
+                "applicants_total."
+            ),
+            "applicants_total": applicants_total,
+            "applicants_added_last_30d": applicants_added_last_30d,
             "exams_by_status": {r.status: r.n for r in exams},
             "interviews_last_30d": {
-                "invited": interviews.invited if interviews else 0,
-                "completed": interviews.completed if interviews else 0,
+                "interviewed": interviewed_last_30d,
+                "note": (
+                    "Of the applications received in the last 30 days, how "
+                    "many have been interviewed (an AI session or a submitted "
+                    "human interviewer scorecard) — not interview invites "
+                    "sent in the last 30 days, which this no longer reports."
+                ),
             },
         },
         citations=[

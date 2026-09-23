@@ -291,6 +291,13 @@ class Settings(BaseSettings):
     # withdrawn — the accommodation/code-evidence retention shape.
     task_submission_retention_days: int = 180
 
+    # --- PH5-D5-2: 90-day hire check-ins ---
+    # A check-in is deleted OUTRIGHT (not redacted) this many days after it was
+    # recorded — there is no free text on the row to redact, only structured
+    # employment/left_reason/performance values, so retention is disposal
+    # rather than the accommodation/code-evidence redaction shape. 24 months.
+    hire_checkin_retention_days: int = 730
+
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""

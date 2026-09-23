@@ -72,9 +72,26 @@ vi.mock('../api/requisitions', () => ({
   listRequisitions: (...a: unknown[]) => listRequisitions(...a) as unknown,
 }));
 
+// PH5 wave-1 follow-up (B) — the upload form's source picker reads its
+// options from here. `vi.importActual` keeps the real sourceOptionsFromDefinitions
+// pure function; only the network call is stubbed.
+const getMetricDefinitions = vi.fn();
+vi.mock('../api/metrics', async () => {
+  const actual = await vi.importActual<typeof import('../api/metrics')>('../api/metrics');
+  return {
+    ...actual,
+    getMetricDefinitions: (...a: unknown[]) => getMetricDefinitions(...a) as unknown,
+  };
+});
+
 // O4 — the reject flow now needs a structured reason before it can fire.
 const REJECT_REASONS = [
-  { code: 'weak-fit', label: 'Not a fit for the role', applies_to: 'rejected' as const, requires_explanation: false },
+  {
+    code: 'weak-fit',
+    label: 'Not a fit for the role',
+    applies_to: 'rejected' as const,
+    requires_explanation: false,
+  },
 ];
 const listDecisionReasons = vi.fn();
 vi.mock('../api/scorecards', () => ({
@@ -133,24 +150,70 @@ beforeEach(() => {
   // One application each unless a test says otherwise (B5).
   listApplications.mockImplementation((id: string) =>
     Promise.resolve([
-      { enrolment_id: `en-${id}`, requisition_id: 'r1', opening_title: 'Backend Engineer',
-        status: 'new', stored_status: 'new', ats_overall: 84, ats_breakdown: null,
-        ats_strengths: null, ats_concerns: null, ats_recommendation: null, ats_summary: null,
-        best_exam_percent: null, exam_passed: null, interview_score: null, scorecard_id: null,
-        applied_at: '2026-09-01T00:00:00Z', is_latest: true },
+      {
+        enrolment_id: `en-${id}`,
+        requisition_id: 'r1',
+        opening_title: 'Backend Engineer',
+        status: 'new',
+        stored_status: 'new',
+        ats_overall: 84,
+        ats_breakdown: null,
+        ats_strengths: null,
+        ats_concerns: null,
+        ats_recommendation: null,
+        ats_summary: null,
+        best_exam_percent: null,
+        exam_passed: null,
+        interview_score: null,
+        scorecard_id: null,
+        applied_at: '2026-09-01T00:00:00Z',
+        is_latest: true,
+      },
     ]),
   );
   listRequisitions.mockResolvedValue([
     { id: 'req-9', title: 'Staff Nurse', level: 'senior', status: 'open' },
   ]);
+  getMetricDefinitions.mockResolvedValue({
+    registry_hash: 'test-hash',
+    flags: [],
+    measures: [],
+    metrics: [],
+    dimensions: [
+      {
+        name: 'source',
+        version: 1,
+        label: 'Source',
+        description: 'Where the application came from.',
+        values: [
+          { key: 'internal', label: 'Internal (HR-added)' },
+          { key: 'referral', label: 'Referral' },
+          { key: 'unknown', label: 'Unknown / untracked' },
+        ],
+      },
+    ],
+  });
   bulkUploadApplicants.mockResolvedValue({
-    batch_id: 'batch-1', requisition_id: 'req-9', total_files: 1, accepted: 1,
-    failed_count: 0, failed: [],
+    batch_id: 'batch-1',
+    requisition_id: 'req-9',
+    total_files: 1,
+    accepted: 1,
+    failed_count: 0,
+    failed: [],
   });
   getUploadProgress.mockResolvedValue({
-    batch_id: 'batch-1', requisition_id: 'req-9', requisition_title: 'Staff Nurse',
-    uploaded_by: 'HR', total_files: 3, queued: 1, created: 1, failed: 1, being_scored: 1,
-    finished: false, created_at: '2026-09-13T10:00:00Z', finished_at: null,
+    batch_id: 'batch-1',
+    requisition_id: 'req-9',
+    requisition_title: 'Staff Nurse',
+    uploaded_by: 'HR',
+    total_files: 3,
+    queued: 1,
+    created: 1,
+    failed: 1,
+    being_scored: 1,
+    finished: false,
+    created_at: '2026-09-13T10:00:00Z',
+    finished_at: null,
     failures: [{ filename: 'scan.pdf', error: 'Could not read the PDF.' }],
   });
 });
@@ -175,6 +238,37 @@ describe('Applicants — bulk upload', () => {
     const fd = bulkUploadApplicants.mock.calls[0][0] as FormData;
     expect(fd.get('requisition_id')).toBe('req-9');
     expect(fd.get('target_job_title')).toBeNull();
+  });
+
+  it('sends the chosen source, defaulting to internal', async () => {
+    const user = userEvent.setup();
+    const { container } = renderPage();
+
+    await screen.findByRole('option', { name: /staff nurse · senior/i });
+    await user.selectOptions(screen.getByLabelText('Opening'), 'req-9');
+    // Defaults to Internal without the HR user touching the field.
+    expect(screen.getByLabelText(/where did this candidate come from/i)).toHaveValue('internal');
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(['%PDF-1.4'], 'a.pdf', { type: 'application/pdf' }));
+    await user.click(screen.getByRole('button', { name: /upload 1 resume/i }));
+
+    await waitFor(() => expect(bulkUploadApplicants).toHaveBeenCalled());
+    let fd = bulkUploadApplicants.mock.calls[0][0] as FormData;
+    expect(fd.get('source')).toBe('internal');
+
+    // Explicitly chosen — applies to the whole upload.
+    bulkUploadApplicants.mockClear();
+    await user.selectOptions(
+      screen.getByLabelText(/where did this candidate come from/i),
+      'referral',
+    );
+    await user.upload(input, new File(['%PDF-1.4'], 'b.pdf', { type: 'application/pdf' }));
+    await user.click(screen.getByRole('button', { name: /upload/i }));
+
+    await waitFor(() => expect(bulkUploadApplicants).toHaveBeenCalled());
+    fd = bulkUploadApplicants.mock.calls[0][0] as FormData;
+    expect(fd.get('source')).toBe('referral');
   });
 
   it('will not upload without an opening', async () => {
@@ -313,9 +407,7 @@ describe('Applicants — search-index backfill', () => {
     // proves the request fired, not that its result reached the render. Cache
     // status 'success' is the first moment the component has actually seen
     // remaining: 0.
-    await waitFor(() =>
-      expect(client.getQueryState(REINDEX_STATUS_KEY)?.status).toBe('success'),
-    );
+    await waitFor(() => expect(client.getQueryState(REINDEX_STATUS_KEY)?.status).toBe('success'));
 
     expect(screen.queryByRole('button', { name: /make searchable/i })).not.toBeInTheDocument();
   });
@@ -354,9 +446,7 @@ describe('Applicants — per-applicant actions', () => {
     renderPage();
 
     // Bhavya is 'new', so Shortlist is live for her and only her.
-    await user.click(
-      await screen.findByRole('button', { name: /open details for bhavya nair/i }),
-    );
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
     await user.click(await screen.findByRole('button', { name: /^shortlist$/i }));
 
     // With the application it is about (B5).
@@ -369,23 +459,49 @@ describe('Applicants — per-applicant actions', () => {
     // B5: the row's status is only the latest application's, so with two
     // applications each gets its own actions and the person-level ones go.
     listApplications.mockResolvedValue([
-      { enrolment_id: 'en-py', requisition_id: 'r1', opening_title: 'Python Developer',
-        status: 'shortlisted', stored_status: 'shortlisted', ats_overall: 80, ats_breakdown: null,
-        ats_strengths: null, ats_concerns: null, ats_recommendation: null, ats_summary: null,
-        best_exam_percent: null, exam_passed: null, interview_score: null, scorecard_id: null,
-        applied_at: '2026-09-01T00:00:00Z', is_latest: false },
-      { enrolment_id: 'en-nu', requisition_id: 'r2', opening_title: 'Staff Nurse',
-        status: 'new', stored_status: 'new', ats_overall: 40, ats_breakdown: null,
-        ats_strengths: null, ats_concerns: null, ats_recommendation: null, ats_summary: null,
-        best_exam_percent: null, exam_passed: null, interview_score: null, scorecard_id: null,
-        applied_at: '2026-09-02T00:00:00Z', is_latest: true },
+      {
+        enrolment_id: 'en-py',
+        requisition_id: 'r1',
+        opening_title: 'Python Developer',
+        status: 'shortlisted',
+        stored_status: 'shortlisted',
+        ats_overall: 80,
+        ats_breakdown: null,
+        ats_strengths: null,
+        ats_concerns: null,
+        ats_recommendation: null,
+        ats_summary: null,
+        best_exam_percent: null,
+        exam_passed: null,
+        interview_score: null,
+        scorecard_id: null,
+        applied_at: '2026-09-01T00:00:00Z',
+        is_latest: false,
+      },
+      {
+        enrolment_id: 'en-nu',
+        requisition_id: 'r2',
+        opening_title: 'Staff Nurse',
+        status: 'new',
+        stored_status: 'new',
+        ats_overall: 40,
+        ats_breakdown: null,
+        ats_strengths: null,
+        ats_concerns: null,
+        ats_recommendation: null,
+        ats_summary: null,
+        best_exam_percent: null,
+        exam_passed: null,
+        interview_score: null,
+        scorecard_id: null,
+        applied_at: '2026-09-02T00:00:00Z',
+        is_latest: true,
+      },
     ]);
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(
-      await screen.findByRole('button', { name: /open details for bhavya nair/i }),
-    );
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
     await user.click(await screen.findByRole('button', { name: /shortlist for staff nurse/i }));
     await waitFor(() =>
       expect(updateApplicantStatus).toHaveBeenCalledWith('ap-1', 'shortlisted', 'en-nu'),
@@ -400,9 +516,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(
-      await screen.findByRole('button', { name: /open details for chetan iyer/i }),
-    );
+    await user.click(await screen.findByRole('button', { name: /open details for chetan iyer/i }));
 
     expect(await screen.findByRole('button', { name: /^shortlist$/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /^reject$/i })).toBeEnabled();
@@ -412,9 +526,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(
-      await screen.findByRole('button', { name: /open details for bhavya nair/i }),
-    );
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
     await user.click(await screen.findByRole('button', { name: /^re-score$/i }));
 
     await waitFor(() => expect(rescoreApplicant).toHaveBeenCalledWith('ap-1'));
@@ -426,9 +538,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(
-      await screen.findByRole('button', { name: /open details for bhavya nair/i }),
-    );
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
     // Rejecting now always needs a structured reason AND free text (O4).
     await user.click(await screen.findByRole('button', { name: /^reject$/i }));
     await user.selectOptions(await screen.findByLabelText('Reason'), 'weak-fit');
@@ -442,9 +552,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(
-      await screen.findByRole('button', { name: /open details for bhavya nair/i }),
-    );
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
     await user.click(await screen.findByRole('button', { name: /^reject$/i }));
 
     const confirm = await screen.findByRole('button', { name: /confirm reject/i });
@@ -457,9 +565,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(
-      await screen.findByRole('button', { name: /open details for bhavya nair/i }),
-    );
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
     await user.click(await screen.findByRole('button', { name: /^reject$/i }));
     await user.selectOptions(await screen.findByLabelText('Reason'), 'weak-fit');
     await user.type(screen.getByLabelText(/^why/i), 'Did not meet the bar in screening.');
@@ -491,9 +597,7 @@ describe('Applicants — status badges', () => {
     ['hired', 'Hired'],
   ])('labels a %s applicant rather than leaving the badge blank', async (status, label) => {
     // Cast: the exported union lists three statuses; the API returns six.
-    listApplicants.mockResolvedValue([
-      { ...SCORED, status: status as Applicant['status'] },
-    ]);
+    listApplicants.mockResolvedValue([{ ...SCORED, status: status as Applicant['status'] }]);
     renderPage();
 
     await screen.findByText('Bhavya Nair');
@@ -501,9 +605,7 @@ describe('Applicants — status badges', () => {
   });
 
   it('shows an unknown status as its raw value, not a blank', async () => {
-    listApplicants.mockResolvedValue([
-      { ...SCORED, status: 'on_the_moon' as Applicant['status'] },
-    ]);
+    listApplicants.mockResolvedValue([{ ...SCORED, status: 'on_the_moon' as Applicant['status'] }]);
     renderPage();
 
     await screen.findByText('Bhavya Nair');

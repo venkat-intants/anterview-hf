@@ -37,6 +37,17 @@ THE BANDS
 
 Pure (``hiring_health``) plus one company-scoped query (``hiring_board``).
 Read-only: nothing here changes anything.
+
+GOVERNED VS UNGOVERNED (PH5-C2). ``applied``/``hired`` (and ``rejected``, fed
+into the health projection but never itself shown) come from the metric
+layer — ``applications@1``/``hires@1``/``rejections@1``, the same figures
+``/hr/analytics/funnel``, the requisition dashboard and the copilot read,
+grouped by opening in one call (``app.metrics.compute.compute_funnel``).
+Everything else this module returns is an OPERATIONAL work-queue or PACE
+signal with no governed definition: ``in_play``/``awaiting_decision``
+(workflow-state snapshots, not a hiring-funnel stage), ``reached_decision``/
+``last_movement_at`` (rolling-window pace inputs the health projection alone
+uses), and ``published_version``/``draft_version`` (workflow review state).
 """
 
 from __future__ import annotations
@@ -49,6 +60,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.metrics.compute import CohortWindow, FunnelFilters, compute_funnel
 from app.publishing import public_gate_open
 
 WINDOW_DAYS = 30
@@ -151,6 +163,10 @@ def hiring_health(h: HealthInput) -> dict[str, Any]:
 # Every open or paused opening in ONE company, with its counts and pace. The
 # company is constrained on every table. "Awaiting a decision" is the shared
 # database definition the decision queue uses.
+#
+# PH5-C2: applied/hired/rejected are NOT computed here any more — they come
+# from app.metrics.compute (see hiring_board, below), so this query keeps
+# only the operational fields nothing in the metric layer defines.
 _BOARD_SQL = """
 SELECT r.id, r.title, r.location, r.status, r.target_hires, r.closes_at, r.created_at,
        r.public_apply_enabled, r.approval_status,
@@ -158,14 +174,7 @@ SELECT r.id, r.title, r.location, r.status, r.target_hires, r.closes_at, r.creat
        (SELECT max(w.version) FROM workflows w
          WHERE w.requisition_id = r.id AND w.company_id = r.company_id
            AND w.status = 'draft' AND w.deleted_at IS NULL) AS draft_version,
-       count(e.id) AS applied,
        count(e.id) FILTER (WHERE e.status NOT IN ('hired', 'rejected')) AS in_play,
-       count(e.id) FILTER (WHERE e.status = 'hired'
-         -- PH4-A3: a hire whose offer was declined, expired or withdrawn
-         -- has not filled the role; the decision itself is unchanged.
-         AND COALESCE(e.offer_outcome, '') NOT IN
-             ('offer_declined', 'offer_expired', 'offer_withdrawn')) AS hired,
-       count(e.id) FILTER (WHERE e.status = 'rejected') AS rejected,
        count(e.id) FILTER (WHERE enrolment_awaits_human(e.status, e.current_round_id))
          AS awaiting_decision,
        (SELECT count(DISTINCT t.enrolment_id)
@@ -205,8 +214,23 @@ async def hiring_board(db: AsyncSession, *, company_id: uuid.UUID) -> dict[str, 
         )
     ).mappings().all()
 
+    # PH5-C2: applied/hired/rejected, governed — one call for the whole
+    # company, grouped by opening. A requisition with zero applications never
+    # appears in a governed group ("nothing to divide by" is not a zero —
+    # see app.metrics.compute), hence the explicit 0 default below.
+    governed = await compute_funnel(
+        db, company_id=company_id, cohort=CohortWindow(basis="application"),
+        filters=FunnelFilters(), group_by="requisition",
+    )
+    governed_by_requisition = {g.key: g.metrics for g in governed.groups if g.key is not None}
+
     openings: list[dict[str, Any]] = []
     for r in rows:
+        req_metrics = governed_by_requisition.get(str(r["id"]), {})
+        applied = int((req_metrics.get("applications") or {}).get("value") or 0)
+        hired = int((req_metrics.get("hires") or {}).get("value") or 0)
+        rejected = int((req_metrics.get("rejections") or {}).get("value") or 0)
+
         published = r["published_version"] is not None
         # ONE definition of "the public may apply", shared with the board, the
         # feed and the apply endpoint (PH3-B0). This used to be two different
@@ -225,8 +249,8 @@ async def hiring_board(db: AsyncSession, *, company_id: uuid.UUID) -> dict[str, 
             has_published_workflow=published,
             accepting_applications=accepting,
             target_hires=r["target_hires"],
-            hired=int(r["hired"] or 0),
-            rejected=int(r["rejected"] or 0),
+            hired=hired,
+            rejected=rejected,
             in_play=int(r["in_play"] or 0),
             closes_at=r["closes_at"],
             created_at=r["created_at"],
@@ -244,10 +268,10 @@ async def hiring_board(db: AsyncSession, *, company_id: uuid.UUID) -> dict[str, 
             "published_version": r["published_version"],
             "draft_version": r["draft_version"],
             "accepting_applications": accepting,
-            "applied": int(r["applied"] or 0),
+            "applied": applied,
             "in_play": int(r["in_play"] or 0),
             "target_hires": r["target_hires"],
-            "hired": int(r["hired"] or 0),
+            "hired": hired,
             "awaiting_decision": int(r["awaiting_decision"] or 0),
             "closes_at": r["closes_at"].isoformat() if r["closes_at"] else None,
             "health": health,

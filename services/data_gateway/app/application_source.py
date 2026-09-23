@@ -57,6 +57,26 @@ SOURCES: frozenset[str] = frozenset({
     "other",          # a src we did not recognise, kept rather than dropped
 })
 
+#: Human labels for the vocabulary — the HR console's source picker/display,
+#: and PH5-C2's governed "source" dimension (``GET /hr/metrics/definitions``).
+#: ``unknown`` reads as "Unknown / untracked" everywhere (PH5-C1: missing
+#: source is shown, never dropped). A unit test asserts every ``SOURCES``
+#: value has exactly one entry here.
+SOURCE_LABELS: dict[str, str] = {
+    "unknown": "Unknown / untracked",
+    "direct": "Direct",
+    "careers_site": "Careers site",
+    "job_board": "Job board",
+    "referral": "Referral",
+    "social": "Social",
+    "email_campaign": "Email campaign",
+    "agency": "Agency",
+    "campus": "Campus",
+    "qr_code": "QR code",
+    "internal": "Internal (HR added)",
+    "other": "Other",
+}
+
 #: The value a row gets when nobody was tracking. Also the column default, so
 #: every historical enrolment reads as this rather than as NULL.
 UNTRACKED = "unknown"
@@ -150,6 +170,31 @@ def normalise_source(raw: str | None, *, default: str = DIRECT) -> tuple[str, st
         return _ALIASES[folded]
 
     return ("other", folded) if _DETAIL_OK.match(folded) else (default, None)
+
+
+def validate_hr_source(raw: str | None, *, default: str = INTERNAL) -> str:
+    """An HR-picked channel (single add, bulk upload) — PH5-C1.
+
+    Unlike ``normalise_source``, this is not parsing a raw ``?src=`` value off
+    a public URL: HR selects from the governed vocabulary directly, so there
+    is no alias table and no ``other`` fallback — an unrecognised value is a
+    client bug, not a typo in someone's campaign link, and is refused rather
+    than silently coerced. Deliberately returns ``source`` alone: HR's own
+    inputs never carry a free-text detail (a referrer's or an agency
+    contact's name is third-party personal data the erasure executor has no
+    way to find), unlike the public apply path's ``source_detail``, which is
+    untouched by this function.
+
+    Raises ``ValueError`` (the caller turns this into a 422) when *raw* is
+    given but is not one of ``SOURCES``. Blank or absent means "not stated",
+    which keeps ``default`` (``internal`` for both HR callers today).
+    """
+    if raw is None or not raw.strip():
+        return default
+    candidate = raw.strip().lower()
+    if candidate not in SOURCES:
+        raise ValueError(f"source must be one of {sorted(SOURCES)}.")
+    return candidate
 
 
 def normalise_detail(raw: str | None) -> str | None:

@@ -282,6 +282,13 @@ ERASED_TABLES: dict[str, str] = {
                       "the application_answers precedent. Step 5i clears text_value, "
                       "link_url, title, description, storage_key and original_name and "
                       "stamps redacted_at; the FILE a storage_key named is deleted in step 8.",
+    "hire_checkins": "PH5-D5-2 — a 90-day post-hire outcome: employment/left_reason/"
+                     "performance, no free text and no applicant_id (reached only through "
+                     "enrolment_id -> enrolments.applicant_id). DPDP review decided this one "
+                     "differently from round_results/exam_attempts: rather than keep a "
+                     "structural record against the anonymised applicant, step 5j DELETES "
+                     "every row outright. Ordinary 24-month retention "
+                     "(app.hire_checkins.purge) deletes what erasure does not reach sooner.",
 }
 
 #: Tables deliberately left standing, each with the reason it is defensible.
@@ -1458,6 +1465,39 @@ async def _execute_one_erasure(
     )
 
     # ------------------------------------------------------------------
+    # Step 5j: 90-day hire check-ins (PH5-D5-2)
+    # ------------------------------------------------------------------
+    # Unlike every other row in this executor, hire_checkins is DELETED
+    # outright, not redacted: the row carries no free text and no
+    # applicant_id (the DPDP review that shaped this table decided a
+    # structured employment/left_reason/performance record naming no one is
+    # not worth keeping once the applicant it concerns is gone — there is
+    # nothing left to anonymise it against). Ordinary 24-month retention
+    # deletes the rest (app.hire_checkins.purge); this step deletes sooner,
+    # on request.
+    #
+    # MUST run before step 6: the join reaches these rows through
+    # enrolments.applicant_id -> applicants.user_id, and hire_checkins has no
+    # applicant_id of its own to be reached through once user_id is cleared.
+    hire_checkins_result = await db.execute(
+        text(
+            "DELETE FROM hire_checkins"
+            " WHERE enrolment_id IN ("
+            "   SELECT e.id FROM enrolments e"
+            "     JOIN applicants a ON a.id = e.applicant_id"
+            "    WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    hire_checkins_deleted: int = getattr(hire_checkins_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.hire_checkins_deleted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        count=hire_checkins_deleted,
+    )
+
+    # ------------------------------------------------------------------
     # Step 6: Anonymise applicant rows linked to this user_id
     # ------------------------------------------------------------------
     # embedding is NOT decoration on this list. applicants.embedding is a
@@ -1684,11 +1724,12 @@ async def _execute_one_erasure(
         # when it took in offers and preboarding documents (PH4-A3/A4), and
         # 1.6 → 1.7 when step 5g took in candidate accommodations (PH4-D2),
         # 1.7 → 1.8 when step 5h took in coding-round source and program
-        # output (PH4-D3), and 1.8 → 1.9 when step 5i took in job simulation
-        # / portfolio submissions (PH4-D4): the artifacts record is what an
+        # output (PH4-D3), 1.8 → 1.9 when step 5i took in job simulation
+        # / portfolio submissions (PH4-D4), and 1.9 → 1.10 when step 5j took
+        # in 90-day hire check-ins (PH5-D5-2): the artifacts record is what an
         # auditor reads to know WHAT a given completion covered, so two
         # records with different coverage must not claim the same version.
-        "executor_version": "1.9",
+        "executor_version": "1.10",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
@@ -1715,6 +1756,7 @@ async def _execute_one_erasure(
         "task_submissions_withdrawn": task_submissions_withdrawn,
         "task_submissions_redacted": task_submissions_redacted,
         "task_responses_redacted": task_responses_redacted,
+        "hire_checkins_deleted": hire_checkins_deleted,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
         # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,

@@ -44,6 +44,8 @@ import CodeEvidenceCounts from '@/components/hr/CodeEvidenceCounts';
 import ExceptionsSection from '@/components/ExceptionsSection';
 import InterviewLoopsSection from '@/components/InterviewLoopsSection';
 import OfferSection from '@/components/OfferSection';
+import CheckinSection from '@/components/hr/CheckinSection';
+import { getMetricDefinitions, sourceLabel } from '@/api/metrics';
 import { AlertTriangle, Info, User, X } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 
@@ -68,6 +70,9 @@ export interface DrawerCandidate {
   linkedin_url?: string | null;
   github_url?: string | null;
   current_round_title?: string | null;
+  /** Where THIS application came from (PH5-C1/wave-1 follow-up B) — a code
+   *  from the closed source vocabulary, e.g. "referral" or "job_board". */
+  source?: string | null;
 }
 
 /* ── Why a score is what it is (§7, C8) ─────────────────────────────────── */
@@ -634,6 +639,7 @@ export default function CandidateDrawer({
   applicantId,
   enrolmentId,
   onClose,
+  focusSection,
 }: {
   /** Null closes the drawer. */
   applicantId: string | null;
@@ -645,6 +651,14 @@ export default function CandidateDrawer({
    */
   enrolmentId?: string | null;
   onClose: () => void;
+  /**
+   * PH5 wave-1 follow-up (A2) — opened from the analytics page's "Check-ins
+   * due" card, which wants the drawer to land on the 90-day check-in section
+   * rather than the top of the drawer. Scrolled and focused once the section
+   * has mounted (`#checkin-section`, rendered by CheckinSection itself); a
+   * no-op if the application turns out not to be hired after all.
+   */
+  focusSection?: 'checkin';
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -678,6 +692,7 @@ export default function CandidateDrawer({
           ats_strengths: app.ats_strengths,
           ats_concerns: app.ats_concerns,
           ats_summary: app.ats_summary,
+          source: app.source,
         }
       : person;
 
@@ -693,6 +708,20 @@ export default function CandidateDrawer({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [applicantId, onClose]);
+
+  // PH5 wave-1 follow-up (A2) — land on the check-in section instead of the
+  // top of the drawer, once it has actually mounted (status hired). Runs
+  // after the effect above, so it wins the final focus placement over the
+  // close button's default. A no-op — the section simply never mounts — if
+  // this application turns out not to be hired.
+  useEffect(() => {
+    if (focusSection !== 'checkin' || !enrolmentId || candidate?.status !== 'hired') return;
+    const el = document.getElementById('checkin-section');
+    // Optional chained on the method itself, not just the element: jsdom (and
+    // some embedded webviews) have no scrollIntoView at all.
+    el?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    el?.focus();
+  }, [focusSection, enrolmentId, candidate?.status]);
 
   const answers = useQuery({
     queryKey: ['answers', enrolmentId],
@@ -710,6 +739,15 @@ export default function CandidateDrawer({
     enabled: Boolean(enrolmentId),
     retry: false,
     throwOnError: false,
+  });
+
+  // Same query key the analytics page uses for the source vocabulary — one
+  // shared cache entry, not a second fetch, wherever both mount.
+  const definitions = useQuery({
+    queryKey: ['hr', 'metrics', 'definitions'],
+    queryFn: getMetricDefinitions,
+    enabled: Boolean(applicantId),
+    staleTime: 5 * 60_000,
   });
 
   if (!applicantId) return null;
@@ -890,11 +928,22 @@ export default function CandidateDrawer({
               />
             ) : null}
 
+            {/* PH5 wave-1 follow-up A1 — the 90-day check-in, once this
+            application has actually resulted in a hire. Nothing here can
+            move it back off "hired" or otherwise change a decision (D-05). */}
+            {enrolmentId && candidate.status === 'hired' ? (
+              <CheckinSection enrolmentId={enrolmentId} />
+            ) : null}
+
             <div className="mt-5">
               <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">
                 <User size={13} aria-hidden="true" />
                 Details
               </h3>
+              <Row
+                label="Source"
+                value={candidate.source ? sourceLabel(candidate.source, definitions.data) : null}
+              />
               <Row label="Phone" value={candidate.phone} />
               <Row
                 label="Experience"

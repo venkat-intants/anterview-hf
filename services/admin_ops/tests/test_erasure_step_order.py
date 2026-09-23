@@ -185,3 +185,29 @@ def test_accommodations_are_revoked_before_applicants_lose_their_user_id() -> No
                 where=body)
     anonymise = _at("UPDATE applicants", where=body)
     assert revoke < redact < anonymise
+
+
+# ===========================================================================
+# 5. 90-day hire check-ins (step 5j, PH5-D5-2) — deleted outright, not redacted
+# ===========================================================================
+def test_hire_checkins_are_deleted_before_applicants_lose_their_user_id() -> None:
+    """5j's join reaches hire_checkins through enrolments.applicant_id ->
+    applicants.user_id; hire_checkins itself has no applicant_id column."""
+    body = _body()
+    delete_checkins = _at("DELETE FROM hire_checkins", where=body)
+    anonymise = _at("UPDATE applicants", where=body)
+    assert delete_checkins < anonymise
+
+
+def test_hire_checkins_delete_matches_through_enrolments() -> None:
+    """There is no hire_checkins.applicant_id; the match must go through the
+    enrolment, not a column this table does not have."""
+    delete = SOURCE[SOURCE.index("DELETE FROM hire_checkins"):][:400]
+    assert "FROM enrolments e" in delete
+    assert "JOIN applicants a ON a.id = e.applicant_id" in delete
+    assert "a.user_id = :uid" in delete
+
+
+def test_hire_checkins_count_reaches_the_completion_record() -> None:
+    body = _body()
+    assert body.count('"hire_checkins_deleted": hire_checkins_deleted') == 1

@@ -25,6 +25,17 @@ The rules that turn facts into "needs attention" items are pure functions over
 a ``DashboardFacts`` value, so they are tested without a database. Every SQL
 statement is a single literal (the SAST gate refuses assembled SQL) and is
 scoped to the company and the requisition.
+
+GOVERNED VS UNGOVERNED (PH5-C2). Only ``progress.applications``,
+``progress.hired`` and ``progress.rejected`` come from the metric layer
+(``applications@1``/``hires@1``/``rejections@1``, filtered to this
+requisition) — see ``app.metrics.definitions``. Everything else this module
+returns is an OPERATIONAL work-queue count with no governed definition and no
+plan to get one: ``in_progress``/``awaiting_decision``/``held``/
+``not_started``/``on_older_version``/``target_hires`` (workflow-state
+snapshots, not a hiring-funnel stage); ``stage_timing``/``scores``/
+``held_pool``/``attention``/``manual_steps``/``activity`` (per-round and
+per-candidate operational detail the four canonical metrics do not carry).
 """
 
 from __future__ import annotations
@@ -39,6 +50,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.watch_runner import gather_round_stalls
+from app.metrics.compute import CohortWindow, FunnelFilters, compute_funnel
 from app.publishing import public_gate_open
 from app.workflows import HUMAN_EVALUATED_KINDS
 
@@ -451,6 +463,17 @@ async def gather_dashboard(
     summary = dict(
         (await db.execute(text(_ACTIVITY_SUMMARY_SQL), params)).mappings().first() or {}
     )
+    # PH5-C2: applications/hired/rejected, governed — the same `applications@1`
+    # /`hires@1`/`rejections@1` flags `/hr/analytics/funnel` and the copilot
+    # read, filtered to this one requisition.
+    governed = await compute_funnel(
+        db, company_id=company_id, cohort=CohortWindow(basis="application"),
+        filters=FunnelFilters(requisition_id=requisition_id),
+    )
+    governed_metrics = governed.groups[0].metrics
+    governed_applications = int(governed_metrics["applications"]["value"])
+    governed_hired = int(governed_metrics["hires"]["value"])
+    governed_rejected = int(governed_metrics["rejections"]["value"])
 
     round_dicts = [dict(r) for r in rounds]
     low_pass = [
@@ -491,7 +514,7 @@ async def gather_dashboard(
         scoring_failed=int(p.get("scoring_failed") or 0),
         without_workflow=int(p.get("without_workflow") or 0),
         target_hires=req.get("target_hires"),
-        hired=int(p.get("hired") or 0),
+        hired=governed_hired,
         closes_at=closes_at if isinstance(closes_at, datetime) else None,
         low_pass_rounds=low_pass,
     )
@@ -507,17 +530,25 @@ async def gather_dashboard(
     attention.sort(key=lambda i: _SEVERITY_ORDER.get(i["severity"], 9))
 
     return {
+        # PH5-C2: `applications`/`hired`/`rejected` are governed
+        # (`applications@1`/`hires@1`/`rejections@1`); the rest of this block
+        # is operational and ungoverned — see the module docstring.
         "progress": {
-            "applications": int(p.get("applications") or 0),
+            "applications": governed_applications,
             "in_progress": int(p.get("in_progress") or 0),
             "awaiting_decision": facts.awaiting,
             "held": facts.held,
             "hired": facts.hired,
-            "rejected": int(p.get("rejected") or 0),
+            "rejected": governed_rejected,
             "not_started": int(p.get("not_started") or 0),
             "on_older_version": int(p.get("on_older_version") or 0),
             "target_hires": facts.target_hires,
         },
+        "definitions": {
+            "progress.applications": "applications@1", "progress.hired": "hires@1",
+            "progress.rejected": "rejections@1",
+        },
+        "registry_hash": governed.registry_hash,
         "workflow_state": {
             "published_version": facts.published_version,
             "draft_version": facts.draft_version,

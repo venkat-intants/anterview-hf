@@ -482,7 +482,7 @@ jobs:
     #
     # Cheap on purpose: no service dependencies, no Docker, ~10 seconds. A gate
     # that costs a minute gets deleted the first time someone is in a hurry.
-    name: invariants (coverage floors + alert rules + env parity + Space metadata + SAST)
+    name: invariants (coverage floors + alert rules + env parity + Space metadata + SAST + metric lock)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -495,6 +495,13 @@ jobs:
           # looking for. The workflow-level `permissions: contents: read` caps
           # what that token could do; this removes the token itself.
           persist-credentials: false
+          # PH5-C2's check_metric_lock.py diffs the current lock file against
+          # `git merge-base HEAD origin/main` (or HEAD^1 on main itself) — a
+          # shallow (depth-1, the actions/checkout default) clone has neither
+          # that commit nor `origin/main` to compute it from, and the script
+          # would silently fall back to "nothing to compare", passing on a
+          # bad edit. Full history is the only way that diff is real.
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -626,6 +633,16 @@ jobs:
           bandit -r services/data_gateway/app services/interview_core/app \
             services/feedback_billing/app services/admin_ops/app shared \
             -ll -q -b ops/ci/bandit-baseline.json
+
+      - name: Metric registry lock is append-only (PH5-C2)
+        # published.lock.json freezes every published flag/measure/metric/
+        # dimension/rule version by hash — "a metric version cannot silently
+        # change historical results". A test inside the SAME PR that edited an
+        # entry proves nothing (it can update the hash to match); this instead
+        # diffs the lock file against the merge base (fetch-depth: 0, above),
+        # so an entry that existed before this change must be byte-identical
+        # now. New entries are always fine — this is append-only, not frozen.
+        run: python ops/ci/check_metric_lock.py
 
   migrations:
     name: migrations (single linear head)

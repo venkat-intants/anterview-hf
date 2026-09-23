@@ -72,6 +72,7 @@ EXPECTED: dict[str, set[str]] = {
         "get_role_model",
         "draft_interview_invites",
         "draft_shortlist",
+        "get_decision_trace",
     },
     "super_admin": {
         "get_funnel_analytics",
@@ -94,6 +95,9 @@ CANDIDATE_TOOLS = {
     "get_applicant_detail",
     "draft_interview_invites",
     "draft_shortlist",
+    # PH5-E5: what existed when a decision was recorded, for one named
+    # applicant's application — hr_manager only, same as every other tool here.
+    "get_decision_trace",
 }
 
 

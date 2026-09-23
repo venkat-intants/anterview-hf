@@ -1,6 +1,7 @@
 // MembersDrillDown — the auditable people behind a count or rate.
 
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { isTransientApiError } from '@/api/client';
 import {
   findDefinition,
@@ -32,6 +33,9 @@ export default function MembersDrillDown({
     to?: string;
     requisition_id?: string;
     source?: string;
+    /** PH5-E4 — narrows to one interviewer-score band; each row then also
+     *  carries `interviewer_score`/`evidence_href`. */
+    score_band?: string;
   };
   onClose: () => void;
   onOpenCandidate: (row: { applicant_id: string; enrolment_id: string }) => void;
@@ -94,7 +98,10 @@ export default function MembersDrillDown({
             </p>
             <ul className="mt-3 flex flex-col gap-2">
               {members.data.rows.map((row) => (
-                <li key={row.enrolment_id}>
+                <li
+                  key={row.enrolment_id}
+                  className="rounded-[10px] border border-border bg-[var(--ui-inset-soft)]"
+                >
                   <button
                     type="button"
                     onClick={() =>
@@ -103,7 +110,7 @@ export default function MembersDrillDown({
                         enrolment_id: row.enrolment_id,
                       })
                     }
-                    className="flex w-full flex-col items-start gap-0.5 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3 text-left transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
+                    className="flex w-full flex-col items-start gap-0.5 rounded-[10px] p-3 text-left transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
                   >
                     <span className="text-[13px] font-medium text-foreground">
                       {row.candidate_name}
@@ -112,7 +119,23 @@ export default function MembersDrillDown({
                       {row.requisition_title ?? 'No opening on file'} ·{' '}
                       {sourceLabel(row.source, definitions)} · applied {formatDate(row.applied_at)}
                     </span>
+                    {/* PH5-E4 — only present for a score-band drill-down (the
+                    outcome-signals table); an ordinary members list never
+                    shows this. */}
+                    {row.interviewer_score != null ? (
+                      <span className="text-[11.5px] text-muted-foreground">
+                        Interviewer score {row.interviewer_score.toFixed(1)}
+                      </span>
+                    ) : null}
                   </button>
+                  {row.evidence_href ? (
+                    <Link
+                      to={row.evidence_href}
+                      className="block px-3 pb-2.5 text-[11.5px] text-[var(--ui-info)] underline decoration-dotted underline-offset-2 hover:opacity-80"
+                    >
+                      Evidence trail
+                    </Link>
+                  ) : null}
                 </li>
               ))}
             </ul>

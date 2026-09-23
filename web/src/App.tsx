@@ -110,6 +110,8 @@ const RequisitionDashboard = lazy(() => import('./pages/hr/RequisitionDashboard'
 const HRAnalyticsPage = lazy(() =>
   import('./pages/hr/HRAnalytics').then((m) => ({ default: m.HRAnalyticsPage })),
 );
+// PH5 Wave 2 (E5) — the evidence trail: what existed when one decision was recorded.
+const EvidenceTrail = lazy(() => import('./pages/hr/EvidenceTrail'));
 
 function PageLoader() {
   return (
@@ -299,6 +301,7 @@ export default function App() {
               />
               <Route path="/hr/requisitions/:requisitionId/decisions" element={<DecisionQueue />} />
               <Route path="/hr/analytics" element={<HRAnalyticsPage />} />
+              <Route path="/hr/enrolments/:enrolmentId/evidence" element={<EvidenceTrail />} />
             </Route>
           </Route>
 

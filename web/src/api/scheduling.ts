@@ -353,8 +353,26 @@ export function setInterviewerCapacity(
 }
 
 // ---------------------------------------------------------------------------
-// Calibration (O5) — read-only; never changes a scorecard or a decision.
+// Calibration (O5, extended PH5-E4) — read-only; never changes a scorecard
+// or a decision. Field names match app.panel_workload.calibration/judgements
+// and app.calibration_core EXACTLY.
 // ---------------------------------------------------------------------------
+
+export interface CalibrationSpecRef {
+  name: string;
+  version: number;
+}
+
+export interface CalibrationCohort {
+  basis: 'scorecard_submitted';
+  from: string;
+  to: string;
+}
+
+export interface CalibrationFilters {
+  requisition_id: string | null;
+  round_id: string | null;
+}
 
 export interface CalibrationRules {
   min_pairs: number;
@@ -362,13 +380,38 @@ export interface CalibrationRules {
   scale: string;
   /** Fewer distinct candidates than this and the row is suppressed. */
   min_candidates: number;
+  /** PH5-E4 — the share of shared judgements that must point the same way
+   *  before a "higher"/"lower" flag is raised; a single wild score cannot
+   *  trip it alone. */
+  min_same_direction_share: number;
+  /** PH5-E4 — a panel baseline needs at least this many distinct
+   *  interviewers, or it is one person's scores, not a panel's. */
+  min_interviewers_for_baseline: number;
+  /** PH5-E4 — a criterion's "wide disagreement" signal fires at or above
+   *  this mean (max-min) range on shared judgements. */
+  wide_disagreement_range: number;
+  min_span_days: number;
+  max_span_days: number;
+}
+
+/** One interviewer's paired gap on a single frozen criterion
+ *  `(round_id, competency_id)` — omitted from `by_criterion` below
+ *  `rules.min_candidates`, the same convention `by_competency` uses. */
+export interface CriterionGap {
+  criterion_key: string;
+  shared_judgements: number;
+  candidates: number;
+  gap: number;
+  signal: 'higher' | 'lower' | null;
 }
 
 export interface CalibrationRow {
   user_id: string;
   name: string;
   scorecards: number;
-  scores: number;
+  /** Withheld (null) with the other figures when `suppressed` — a count over
+   *  one candidate says how many criteria they were scored on. */
+  scores: number | null;
   /** Distinct candidates this interviewer scored in the period — the number
    *  `suppressed` and the security fix's `min_candidates` rule are about. */
   candidates: number;
@@ -383,19 +426,57 @@ export interface CalibrationRow {
   distribution: Record<string, number> | null;
   /** May omit a competency that rests on fewer than `rules.min_candidates`
    *  candidates, even for a row that is not itself suppressed. Empty when
-   *  suppressed. */
+   *  suppressed, or when no `round_id` filter is set (mixes different
+   *  rounds' anchors under one competency id otherwise). */
   by_competency: Record<string, number>;
   pairs: number;
   mean_delta: number | null;
+  /** PH5-E4 — the share of `pairs` whose gap points the same way as
+   *  `mean_delta`; null exactly when `mean_delta` is. */
+  same_direction_share: number | null;
   flag: 'higher' | 'lower' | null;
+  /** PH5-E4 — the same paired-gap method, one frozen criterion at a time. */
+  by_criterion: CriterionGap[];
+}
+
+/** PH5-E4 — the panel's OWN baseline on one frozen criterion
+ *  `(round_id, competency_id)`, never an interviewer's figure. */
+export interface CalibrationCriterion {
+  criterion_key: string;
+  round_id: string;
+  competency_id: string;
+  competency_name: string;
+  round_title: string | null;
+  round_kind: string | null;
+  workflow_version: number | null;
+  requisition_id: string | null;
+  requisition_title: string | null;
+  suppressed: boolean;
+  candidates: number;
+  interviewers: number;
+  /** Withheld (null) with the other figures when `suppressed`. */
+  scores: number | null;
+  not_assessed: number;
+  distribution: Record<string, number> | null;
+  mean: number | null;
+  shared_judgements: number;
+  disagreement: number | null;
+  signal: 'wide_disagreement' | null;
 }
 
 export interface CalibrationResponse {
+  spec: CalibrationSpecRef;
+  registry_hash: string;
+  cohort: CalibrationCohort;
+  filters: CalibrationFilters;
   start: string;
   end: string;
   rules: CalibrationRules;
-  /** competency_id -> name, for the `by_competency` keys above. */
+  /** competency_id -> name, for the `by_competency` keys above. Filled only
+   *  when a `round_id` filter is set (otherwise ambiguous across rounds). */
   competencies: Record<string, string>;
+  /** PH5-E4 — the panel's own baseline per frozen criterion. */
+  criteria: CalibrationCriterion[];
   interviewers: CalibrationRow[];
 }
 
@@ -410,6 +491,62 @@ export function getCalibration(opts: {
   if (opts.requisitionId) p.set('requisition_id', pathId(opts.requisitionId));
   if (opts.roundId) p.set('round_id', pathId(opts.roundId));
   return apiGet<CalibrationResponse>(`/hr/panel/calibration?${p.toString()}`);
+}
+
+// ---------------------------------------------------------------------------
+// Calibration judgements drill-down (PH5-E4) — one interviewer's row, or one
+// interviewer x criterion cell, named down to the candidate. 404s for an
+// interviewer outside the company; 422s ("Too few candidates to show") when
+// that cell is suppressed in the aggregate report — show that message
+// plainly, not as a generic error.
+// ---------------------------------------------------------------------------
+
+export interface CalibrationJudgementRow {
+  enrolment_id: string;
+  applicant_id: string;
+  candidate_name: string;
+  requisition_title: string | null;
+  round_id: string;
+  round_title: string;
+  criterion_key: string;
+  competency_name: string;
+  score: number;
+  panel_mean: number | null;
+  panel_size: number;
+  gap: number | null;
+  scorecard_id: string;
+  submitted_at: string;
+  evidence_href: string;
+}
+
+export interface CalibrationJudgementsResponse {
+  spec: CalibrationSpecRef;
+  cohort: CalibrationCohort;
+  filters: CalibrationFilters & { criterion_key: string | null };
+  interviewer: { user_id: string; name: string };
+  total: number;
+  /** Rows are capped (newest first) — `total` is the full count. */
+  truncated: boolean;
+  rows: CalibrationJudgementRow[];
+}
+
+export function getCalibrationJudgements(opts: {
+  interviewerId: string;
+  start: string;
+  end: string;
+  requisitionId?: string | null;
+  roundId?: string | null;
+  criterionKey?: string | null;
+}): Promise<CalibrationJudgementsResponse> {
+  const p = new URLSearchParams({
+    interviewer_id: pathId(opts.interviewerId),
+    start: opts.start,
+    end: opts.end,
+  });
+  if (opts.requisitionId) p.set('requisition_id', pathId(opts.requisitionId));
+  if (opts.roundId) p.set('round_id', pathId(opts.roundId));
+  if (opts.criterionKey) p.set('criterion_key', opts.criterionKey);
+  return apiGet<CalibrationJudgementsResponse>(`/hr/panel/calibration/judgements?${p.toString()}`);
 }
 
 // ---------------------------------------------------------------------------

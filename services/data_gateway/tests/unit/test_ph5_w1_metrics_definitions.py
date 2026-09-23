@@ -213,11 +213,61 @@ def test_the_real_registry_validates() -> None:
 # The lock file
 # ===========================================================================
 def test_every_registry_entry_matches_its_lock_entry() -> None:
+    """Covers BOTH halves of the lock: the Flag/Measure/Metric/Dimension/Rule
+    registry this module owns, and the ``engine:*`` fragments (the FROM/JOIN
+    skeleton and the cohort-window predicates) ``app.metrics.compute`` owns
+    (C2-8, evidence audit) — merged here exactly as a lock regeneration would,
+    so this is the ONE test that fails the moment either half drifts from
+    ``published.lock.json`` without a version bump.
+    """
+    import app.metrics.compute as compute_module
+
     lock = d.load_lock()
-    entries = d.build_lock_entries()
+    entries = {**d.build_lock_entries(), **compute_module.build_engine_lock_entries()}
     assert set(lock) == set(entries), set(lock) ^ set(entries)
     for key, entry in entries.items():
         assert lock[key]["sha256"] == entry["sha256"], f"{key} hash drifted from its lock entry"
+
+
+def test_editing_the_app_facts_skeleton_without_a_new_version_is_caught() -> None:
+    """The exact failure mode C2-8 closes: someone edits the FROM/JOIN
+    skeleton text in ``compute.py`` but leaves its
+    ``engine:app_facts_skeleton@1`` lock entry (and version) alone. A silent
+    one-character edit to the REAL fragment must stop matching the committed
+    lock — this is what makes ``test_every_registry_entry_matches_its_lock_entry``
+    fail for that edit, isolated here to the one fragment."""
+    import app.metrics.compute as compute_module
+
+    real = next(f for f in compute_module._ENGINE_FRAGMENTS if f.name == "app_facts_skeleton")
+    tampered = d.EngineFragment(
+        real.name, real.version, real.effective_from, real.description,
+        real.sql + "\n-- a silent edit nobody bumped the version for",
+    )
+    tampered_hash = d.engine_fragment_lock_entries((tampered,))["engine:app_facts_skeleton@1"]["sha256"]
+    assert tampered_hash != d.load_lock()["engine:app_facts_skeleton@1"]["sha256"]
+
+
+def test_editing_a_cohort_predicate_without_a_new_version_is_caught() -> None:
+    """Same failure mode, for a cohort-window predicate instead of the
+    skeleton — e.g. silently widening a window's comparison — would change
+    every metric computed over that cohort under an unchanged
+    ``engine:cohort_decision@1`` lock entry."""
+    import app.metrics.compute as compute_module
+
+    real = next(f for f in compute_module._ENGINE_FRAGMENTS if f.name == "cohort_decision")
+    assert "decided_at IS NOT NULL" in real.sql
+    tampered = d.EngineFragment(
+        real.name, real.version, real.effective_from, real.description,
+        real.sql.replace("decided_at >=", "decided_at >"),
+    )
+    tampered_hash = d.engine_fragment_lock_entries((tampered,))["engine:cohort_decision@1"]["sha256"]
+    assert tampered_hash != d.load_lock()["engine:cohort_decision@1"]["sha256"]
+
+
+def test_engine_fragment_key_is_prefixed_engine() -> None:
+    frag = d.EngineFragment("x", 1, date(2026, 9, 22), "d", "TRUE")
+    entries = d.engine_fragment_lock_entries((frag,))
+    assert set(entries) == {"engine:x@1"}
 
 
 def test_every_lock_entry_has_effective_from_on_or_after_added_on() -> None:

@@ -38,6 +38,31 @@ be careful; it is closed structurally, here:
   version's canonical spec by hash — see that file and
   ``ops/ci/check_metric_lock.py`` — so a definition already shipped cannot be
   edited in place, only superseded.
+* **The lock also covers what gives a flag's SQL its meaning, not just the SQL
+  itself** (evidence-audit finding, C2-8). A flag's ``sql`` is a predicate
+  fragment, not a complete query — it means nothing except evaluated inside
+  :mod:`app.metrics.compute`'s fixed FROM/JOIN skeleton, filtered to a cohort
+  window predicate picked by ``CohortBasis``. Before this fix, editing that
+  skeleton or a cohort window changed every published figure under an
+  UNCHANGED lock and hash. :class:`EngineFragment` is the same
+  ``{sha256, effective_from, added_on}`` shape as a Flag/Measure/Metric, keyed
+  ``engine:name@version`` in the SAME lock file — but the SQL text lives in
+  ``compute.py`` (where the skeleton and cohort predicates actually are), not
+  here, so :func:`engine_fragment_lock_entries` is exported for
+  ``app.metrics.compute.build_engine_lock_entries`` to call rather than this
+  module importing ``compute.py`` (which already imports this one — that
+  would be circular). See ``compute.py``'s module docstring for exactly which
+  constants are locked this way, and what is NOT: the per-metric aggregation
+  shape :func:`app.metrics.compute._plan_metric` generates (``count(*) FILTER
+  (WHERE ...)`` vs ``percentile_cont`` vs ``avg`` vs a bucketed ``FILTER``,
+  chosen from a metric's ``kind``) and the suppression control flow in
+  :func:`app.metrics.compute._read_metric_value` are Python branches, not
+  string constants — there is nothing to hash that is not already the source
+  code itself. Both are exercised end-to-end by the integration suite (every
+  flag/cohort/suppression test in ``tests/integration/test_ph5_w1_metrics.py``
+  would fail if either changed the wrong value), but neither failure would, by
+  itself, trip ``check_metric_lock.py`` the way an edited skeleton or cohort
+  predicate now does.
 
 VALIDATION AT IMPORT
 :func:`validate_registry` runs once, at the bottom of this module, over the
@@ -272,6 +297,68 @@ class Rule:
     @property
     def key(self) -> str:
         return f"{self.name}@{self.version}"
+
+
+@dataclass(frozen=True)
+class EngineFragment:
+    """A locked, named SQL constant OUTSIDE the Flag/Measure/Metric registry
+    that every flag's and measure's SQL is evaluated INSIDE — the FROM/JOIN
+    skeleton :mod:`app.metrics.compute` builds ``app_base`` from, and the
+    per-``CohortBasis`` window predicate ``app_facts`` filters it by (C2-8,
+    evidence audit). Neither is a fact about one application (nothing here
+    ever appears in a ``numerator``/``denominator``/``buckets`` tuple), so it
+    is not a :class:`Flag`; it is what gives every flag's ``sql`` its
+    MEANING. Locked the same ``{sha256, effective_from, added_on}`` shape,
+    keyed ``engine:name@version`` in the SAME ``published.lock.json`` — see
+    :func:`engine_fragment_lock_entries`, and this module's own docstring for
+    why the SQL text itself lives in ``compute.py`` rather than here.
+    """
+
+    name: str
+    version: int
+    effective_from: date
+    description: str
+    sql: str
+
+    @property
+    def key(self) -> str:
+        return f"{self.name}@{self.version}"
+
+
+def engine_fragment_lock_entries(
+    fragments: tuple[EngineFragment, ...],
+) -> dict[str, dict[str, Any]]:
+    """The lock entries a tuple of :class:`EngineFragment` implies —
+    ``{"engine:name@version": {sha256, effective_from, added_on}}`` — the same
+    shape :func:`build_lock_entries` produces for a Flag/Measure/Metric/
+    Dimension/Rule, so both merge into one ``published.lock.json`` under one
+    hashing rule and one append-only check (``ops/ci/check_metric_lock.py``
+    needs no change: it compares opaque JSON keys, never parses the
+    ``kind:name@version`` structure).
+
+    A free function taking the fragments as an argument, not a global this
+    module owns, because the fragments THEMSELVES are ``compute.py``'s module
+    constants (the FROM/JOIN skeleton, the cohort predicates) — this module
+    importing ``compute.py`` to reach them would be circular, since
+    ``compute.py`` already imports ``app.metrics.definitions``. Call this from
+    ``app.metrics.compute.build_engine_lock_entries()`` instead.
+    """
+    entries: dict[str, dict[str, Any]] = {}
+    for item in fragments:
+        spec = {
+            "name": item.name,
+            "version": item.version,
+            "effective_from": item.effective_from.isoformat(),
+            "description": item.description,
+            "sql": item.sql,
+            "_type": "EngineFragment",
+        }
+        entries[f"engine:{item.key}"] = {
+            "sha256": _sha256_of(spec),
+            "effective_from": item.effective_from.isoformat(),
+            "added_on": item.effective_from.isoformat(),
+        }
+    return entries
 
 
 def _bare(flag_key: str) -> str:
@@ -548,9 +635,14 @@ METRICS: dict[str, Metric] = _index_metrics((
     Metric("time_to_hire_days", 1, _V1_DATE, "median", "Time to hire (days)",
            "Median days from application to hire, for hires in the cohort.",
            _HIRE_COHORTS, _HIRE_DIMS, numerator=("hired@1",), measure="days_to_hire@1",
-           change_note="New in PH5-C2. Same measure HrVelocity already used "
-           "(the stage ledger, not updated_at); now cohort-filterable and "
-           "shared with every other consumer."),
+           change_note="New in PH5-C2. NOT the same measure HrVelocity used, "
+           "though both read the stage ledger rather than updated_at: "
+           "HrVelocity.median_time_to_hire_days started the clock at the "
+           "ledger's first move to 'new' (MIN(occurred_at) FILTER (to_status "
+           "= 'new'), joined from stage_transitions — silently excluding any "
+           "enrolment with no such row at all); days_to_hire@1 starts it at "
+           "enrolments.created_at, which every enrolment has. Now "
+           "cohort-filterable and shared with every other consumer."),
     Metric("checkin_coverage", 1, _V1_DATE, "rate", "Check-in coverage",
            "Of hires due a 90-day check-in, the share that have one recorded. "
            "A check-in can only be recorded up to 180 days after the start "

@@ -60,6 +60,31 @@ carries ``# nosec B608`` with that one-line justification, per file policy
 reviewed exception the bandit gate expects, the same pattern already used in
 ``app/jd_versions.py`` and ``app/offers.py``).
 
+THE SKELETON AND THE COHORT WINDOWS ARE THEMSELVES LOCKED (C2-8, evidence
+audit). A Flag's ``sql`` means nothing except evaluated inside
+``_APP_BASE_HEAD`` + ``_APP_BASE_TAIL`` (the FROM/JOIN skeleton every lateral
+alias comes from) and filtered by one ``_COHORT_PREDICATES`` entry — so
+editing either used to change every published figure under an unchanged lock
+and an unchanged ``registry_hash``, which is exactly what
+``published.lock.json`` exists to make impossible. :func:`build_engine_lock_entries`
+locks both, as ``engine:app_facts_skeleton@1``, ``engine:app_facts_filters@1``
+(the ``requisition_id``/``source`` filters every cohort query also applies)
+and ``engine:cohort_application@1`` / ``engine:cohort_decision@1`` /
+``engine:cohort_hire@1`` — the SAME lock file
+:mod:`app.metrics.definitions` freezes Flags/Measures/Metrics in (see
+:class:`app.metrics.definitions.EngineFragment` for why the class lives
+there but the SQL text stays here). NOT locked, because there is no string
+constant to hash that is not the source code itself: the per-metric
+aggregation shape :func:`_plan_metric` picks from a metric's ``kind`` (
+``count(*) FILTER (...)`` / ``percentile_cont`` / ``avg`` / a bucketed
+``FILTER``) and the suppression branching in :func:`_read_metric_value`. Both
+are Python control flow, not data, and both are exercised end-to-end by
+``tests/integration/test_ph5_w1_metrics.py``'s per-flag, per-cohort and
+per-suppression assertions — which would fail immediately if either produced
+the wrong number — but neither would, by itself, trip
+``ops/ci/check_metric_lock.py`` the way an edited skeleton or cohort
+predicate now does. That gap is disclosed here rather than left implicit.
+
 THIS MODULE NEVER WRITES (except the one exception the caller controls: the
 drill-down audit row, which lives in the ROUTER, not here — see
 ``app/routers/hr_metrics.py``). ``SET LOCAL statement_timeout`` bounds every
@@ -88,10 +113,12 @@ from app.metrics.definitions import (
     CURRENT_SCORECARD_SQL,
     REGISTRY_HASH,
     CohortBasis,
+    EngineFragment,
     Metric,
     current_flags,
     current_measures,
     current_metrics,
+    engine_fragment_lock_entries,
     min_cell_size,
     uses_checkin_data,
     uses_checkin_outcome,
@@ -254,6 +281,75 @@ _REQUISITION_FILTER = (
     "(CAST(:requisition_id AS uuid) IS NULL OR requisition_id = CAST(:requisition_id AS uuid))"
 )
 _SOURCE_FILTER = "(CAST(:source_filter AS text) IS NULL OR source = CAST(:source_filter AS text))"
+
+#: When these engine fragments became effective — the same date every v1
+#: flag/measure/metric in ``app.metrics.definitions`` did, since they were
+#: already part of what v1 meant; this closes a lock GAP, not a definition
+#: change (nothing here was ever a separately-versioned thing before).
+_ENGINE_V1_DATE = date(2026, 9, 22)
+
+#: What C2-8 (evidence audit) found missing from the lock: the FROM/JOIN
+#: skeleton every flag/measure is evaluated inside, the requisition/source
+#: filters every cohort query applies, and each cohort basis's own window
+#: predicate. None of these is a Flag or a Measure — nothing here is a fact
+#: about one application — so they are locked as
+#: :class:`~app.metrics.definitions.EngineFragment`, ``engine:name@version``,
+#: in the SAME ``published.lock.json``. See :func:`build_engine_lock_entries`
+#: and this module's docstring ("THE SKELETON AND THE COHORT WINDOWS ARE
+#: THEMSELVES LOCKED") for what this does and does not cover.
+_ENGINE_FRAGMENTS: tuple[EngineFragment, ...] = (
+    EngineFragment(
+        "app_facts_skeleton", 1, _ENGINE_V1_DATE,
+        "The FROM/JOIN skeleton every flag/measure column is selected "
+        "alongside: which base tables app_base joins, on what keys, and "
+        "which lateral columns (la, st, ex, rr, iv, hsc, off, hc — see this "
+        "module's docstring) a flag or measure's own SQL may reference. "
+        "Locked as _APP_BASE_HEAD + _APP_BASE_TAIL (CURRENT_SCORECARD_SQL "
+        "already substituted in) — NOT the per-flag/measure SELECT list "
+        "_app_base_select_list() appends, since THAT is assembled from "
+        "flags/measures the registry already locks individually.",
+        _APP_BASE_HEAD + _APP_BASE_TAIL,
+    ),
+    EngineFragment(
+        "app_facts_filters", 1, _ENGINE_V1_DATE,
+        "The requisition_id/source filters app_facts applies in every "
+        "cohort, in addition to its cohort-window predicate.",
+        _REQUISITION_FILTER + _SOURCE_FILTER,
+    ),
+    EngineFragment(
+        "cohort_application", 1, _ENGINE_V1_DATE,
+        "The 'application' cohort-window predicate: e.created_at in "
+        "[from, to).",
+        _COHORT_PREDICATES["application"],
+    ),
+    EngineFragment(
+        "cohort_decision", 1, _ENGINE_V1_DATE,
+        "The 'decision' cohort-window predicate: the first ledger move of "
+        "e into hired or rejected is in [from, to).",
+        _COHORT_PREDICATES["decision"],
+    ),
+    EngineFragment(
+        "cohort_hire", 1, _ENGINE_V1_DATE,
+        "The 'hire' cohort-window predicate: a hire that stands, whose "
+        "first move into hired is in [from, to).",
+        _COHORT_PREDICATES["hire"],
+    ),
+)
+
+
+def build_engine_lock_entries() -> dict[str, dict[str, Any]]:
+    """This module's own share of ``published.lock.json`` —
+    ``engine:app_facts_skeleton@1``, ``engine:app_facts_filters@1`` and
+    ``engine:cohort_<basis>@1`` — merged with
+    :func:`app.metrics.definitions.build_lock_entries` (by whatever caller is
+    regenerating or checking the lock; see
+    ``tests/unit/test_ph5_w1_metrics_definitions.py``) to form the complete,
+    published lock. A free function rather than a global :mod:`app.metrics.definitions`
+    reaches into, because ``definitions.py`` cannot import this module
+    (``compute.py`` already imports ``definitions.py`` — that would be
+    circular).
+    """
+    return engine_fragment_lock_entries(_ENGINE_FRAGMENTS)
 
 
 def _app_base_select_list() -> str:

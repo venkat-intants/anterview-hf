@@ -9,6 +9,31 @@
     "effective_from": "2026-09-22",
     "sha256": "576b836cd0a753f357f7442ef7e7cbf2464d85ecaa0e84037050607b34565576"
   },
+  "engine:app_facts_filters@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "e5aa919dd31ee9b808f2038179e49fd4ea6ed2962974e0a2efefb7c987466715"
+  },
+  "engine:app_facts_skeleton@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "f48b866bbb6e8942a7fd189c1950805c4eebc9cb1e05de59eca7d67a9a99eea5"
+  },
+  "engine:cohort_application@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "e3a9a4d496625312142c7dc265bd61da2421ccef91f6733e249a28bbe1eb98ea"
+  },
+  "engine:cohort_decision@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "c11a48a0f79e207cf0856c00f3d73883908358eab4e69cbd83de85e78713dba5"
+  },
+  "engine:cohort_hire@1": {
+    "added_on": "2026-09-22",
+    "effective_from": "2026-09-22",
+    "sha256": "3ad8ce4b1fa8b02484bc045a04879251b5daf1e49b238aa24a105b6562c6d74c"
+  },
   "flag:applied@1": {
     "added_on": "2026-09-22",
     "effective_from": "2026-09-22",
@@ -187,7 +212,7 @@
   "metric:time_to_hire_days@1": {
     "added_on": "2026-09-22",
     "effective_from": "2026-09-22",
-    "sha256": "d57fd8caeb5654445281dc3ee7d4a964acf9ff57d656f16e2d219e5d82b09707"
+    "sha256": "b041d84b2388f06c06ed452ae74f8e0517dbfb27831b2745d8e4ab59ccb81dae"
   },
   "rule:min_cell@1": {
     "added_on": "2026-09-22",

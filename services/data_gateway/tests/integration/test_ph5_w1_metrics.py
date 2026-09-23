@@ -893,6 +893,58 @@ async def test_hire_cohort_filters_by_hired_at_not_created_at(db: AsyncSession) 
     assert result.groups[0].metrics["hires"]["value"] == 1
 
 
+async def _reject(
+    db: AsyncSession, seed: Seed, enrolment_id: uuid.UUID, occurred_at: datetime | None = None,
+) -> None:
+    await db.execute(
+        text("UPDATE enrolments SET status = 'rejected', updated_at = now() WHERE id = :e"),
+        {"e": enrolment_id},
+    )
+    await _transition(db, seed, enrolment_id, "rejected", occurred_at=occurred_at)
+
+
+async def test_decision_cohort_counts_only_applications_decided_in_the_window(
+    db: AsyncSession,
+) -> None:
+    """The `decision` cohort basis has no pytest of its own before this — only
+    the smoke test covers it. All four applications here were created long
+    before the window; only when each was DECIDED (the ledger's first move
+    to hired or rejected) determines whether the `decision` cohort counts it,
+    and the RATE's denominator is that same decided population, not every
+    application that ever existed."""
+    seed = await _seed_company(db)
+    old_created = datetime.now(tz=UTC) - timedelta(days=200)
+    within_window = datetime.now(tz=UTC) - timedelta(days=10)
+
+    rejected_in_window = await _application(db, seed, created_at=old_created)
+    await _reject(db, seed, rejected_in_window, occurred_at=datetime.now(tz=UTC) - timedelta(days=5))
+
+    hired_in_window = await _application(db, seed, created_at=old_created)
+    await _hire(db, seed, hired_in_window, hired_at=datetime.now(tz=UTC) - timedelta(days=3))
+
+    rejected_outside_window = await _application(db, seed, created_at=old_created)
+    await _reject(db, seed, rejected_outside_window, occurred_at=old_created)
+
+    await _application(db, seed, created_at=old_created)  # never decided ('new')
+
+    window = CohortWindow(basis="decision", from_=within_window.date(), to_=None)
+    result = await compute_funnel(db, company_id=seed.company, cohort=window, filters=FunnelFilters())
+    m = result.groups[0].metrics
+
+    # Only the two decided INSIDE the window are in the cohort at all —
+    # neither the one decided too early nor the one never decided counts.
+    assert m["applications"]["value"] == 2
+    assert m["hires"]["value"] == 1
+    assert m["rejections"]["value"] == 1
+
+    # The rate's denominator is the DECIDED population (2), not all four
+    # applications that exist for this company.
+    rate = m["application_to_hire"]
+    assert rate["denominator"] == 2
+    assert rate["numerator"] == 1
+    assert rate["value"] == pytest.approx(50.0)
+
+
 # ===========================================================================
 # Source grouping, including Unknown / untracked
 # ===========================================================================
@@ -1360,3 +1412,63 @@ async def test_cross_consumer_consistency(
     board = await hiring_board(committed_db, company_id=seed.company)
     assert sum(o["hired"] for o in board["openings"]) == 1
     assert sum(o["applied"] for o in board["openings"]) == 5
+
+
+async def test_get_company_overview_agrees_with_get_funnel_analytics(
+    committed_db: AsyncSession,
+) -> None:
+    """C2-6: the super-admin copilot's ``get_company_overview`` used to count
+    ``applicants.status`` and an AI-only ``scorecards`` join — a second
+    definition of "how many at each stage" and "how many interviewed" from
+    ``get_funnel_analytics``. Both now read the SAME governed
+    ``app.metrics.compute`` figures, so they cannot disagree, and no
+    check-in metric ever reaches either payload."""
+    from shared.agents import ToolContext
+
+    from app.agents import tools as tools_module
+
+    seed = await _seed_company(committed_db)
+    for _i in range(3):
+        e = await _application(committed_db, seed)
+        applicant_id = (
+            await committed_db.execute(
+                text("SELECT applicant_id FROM enrolments WHERE id = :e"), {"e": e},
+            )
+        ).scalar_one()
+        await _ai_interview_completed(committed_db, seed, applicant_id, enrolment_id=e)
+    hired = await _application(committed_db, seed)
+    await _hire(committed_db, seed, hired)
+    await committed_db.commit()
+
+    funnel_ctx = ToolContext(
+        actor_id=str(seed.hr), role="hr_manager", company_id=str(seed.company),
+        resources={"db": committed_db},
+    )
+    _funnel_spec, funnel_handler = next(
+        (s, h) for s, h in tools_module.registry._tools.values() if s.name == "get_funnel_analytics"
+    )
+    funnel_out = await funnel_handler({}, funnel_ctx)
+
+    overview_ctx = ToolContext(
+        actor_id=str(seed.admin), role="super_admin", company_id=str(seed.company),
+        resources={"db": committed_db},
+    )
+    _overview_spec, overview_handler = next(
+        (s, h) for s, h in tools_module.registry._tools.values() if s.name == "get_company_overview"
+    )
+    overview_out = await overview_handler({}, overview_ctx)
+
+    funnel_overall = funnel_out.data["overall"]
+    overview_stage = overview_out.data["applicants_by_stage"]
+    for name in ("applications", "interviewed", "hires"):
+        assert overview_stage[name]["value"] == funnel_overall[name]["value"], name
+    assert overview_out.data["applicants_total"] == funnel_overall["applications"]["value"]
+    assert overview_out.data["registry_hash"] == funnel_out.data["registry_hash"]
+
+    # No check-in metric ever reaches this payload (PH5-C1).
+    for name in ("checkin_coverage", "retention_90d", "performance_90d"):
+        assert name not in overview_stage
+
+    # The last-30-days interview figure is also the governed flag, not the
+    # old AI-only `scorecards` join.
+    assert overview_out.data["interviews_last_30d"]["interviewed"] == 3

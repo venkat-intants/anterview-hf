@@ -7,6 +7,7 @@ put in the column, and what it refuses to throw away.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import re
 from pathlib import Path
@@ -17,6 +18,8 @@ MIGRATION = (
     Path(__file__).resolve().parents[2]
     / "alembic" / "versions" / "20260916_0001_c3e5a7b9d1f4_ph3_b1_application_source.py"
 )
+_DATA_GATEWAY = Path(__file__).resolve().parents[2]
+_REPO_ROOT = _DATA_GATEWAY.parents[1]
 
 
 # ===========================================================================
@@ -195,6 +198,65 @@ def test_a_caller_that_says_nothing_gets_unknown_not_a_guess() -> None:
     from app.workflow_runner import enrol_applicant
 
     assert inspect.signature(enrol_applicant).parameters["source"].default == "unknown"
+
+
+# ===========================================================================
+# C1-2 ("sources are retained throughout the lifecycle"): a grep shows
+# nothing UPDATES enrolments.source once written — this asserts nothing else
+# is even ABLE to WRITE it in the first place. Same technique as
+# ``test_ph5_w1_checkins.py::test_delete_from_hire_checkins_has_exactly_two_callers``:
+# a text/AST scan of the whole ``services/`` tree, not just this one file, so
+# a second writer added anywhere else (an HR-facing route included) turns
+# this red.
+# ===========================================================================
+def _sql_string_literals(path: Path) -> list[str]:
+    """Every string literal in ``path`` that is not a docstring — adjacent
+    literals (``"a" "b"``) are already ONE ``ast.Constant`` by the time the
+    parser sees them, so a statement built across several lines is not split
+    across several list entries."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docstrings: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            body = getattr(node, "body", [])
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                docstrings.add(id(body[0].value))
+    literals: list[str] = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and id(node) not in docstrings):
+            literals.append(node.value)
+    return literals
+
+
+def _writes_enrolments_source(literal: str) -> bool:
+    """True if ``literal`` is a write statement against ``enrolments`` that
+    touches the ``source`` column specifically — never ``source_detail``
+    (``\\bsource\\b`` does not match inside it: there is no boundary between
+    ``e`` and the following ``_``)."""
+    low = literal.lower()
+    is_write = "insert into enrolments" in low or "update enrolments" in low
+    return is_write and re.search(r"\bsource\b", low) is not None
+
+
+def test_only_enrol_applicant_writes_enrolments_source() -> None:
+    """Scans every ``.py`` file under ``services/`` (production code only —
+    tests legitimately seed ``enrolments.source`` directly) for a write
+    statement against ``enrolments`` that touches ``source``. The one
+    permitted writer is ``app.workflow_runner.enrol_applicant`` — the only
+    place an enrolment is ever created (its own docstring says so) — via a
+    single INSERT. A bare grep for the column name would also flag every
+    SELECT that reads it (``app.metrics.compute``, ``hr_requisitions.py``,
+    the copilot); this only flags a WRITE."""
+    hits: list[str] = []
+    for path in (_REPO_ROOT / "services").rglob("*.py"):
+        if "__pycache__" in path.parts or "tests" in path.parts:
+            continue
+        for literal in _sql_string_literals(path):
+            if _writes_enrolments_source(literal):
+                hits.append(str(path.relative_to(_REPO_ROOT)).replace("\\", "/"))
+                break
+    assert hits == ["services/data_gateway/app/workflow_runner.py"], hits
 
 
 def test_hr_created_applicants_are_internal_not_direct() -> None:

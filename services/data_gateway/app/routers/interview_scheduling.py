@@ -53,6 +53,7 @@ from app.panel_workload import (
     MAX_CALIBRATION_SPAN,
     PanelError,
     calibration,
+    judgements,
     set_capacity,
     workload,
 )
@@ -403,6 +404,37 @@ async def hr_calibration(
         await db.rollback()  # a refused write leaves nothing half-done
         raise _raise(exc) from exc
     await db.commit()  # the audit row: who looked at the panel's scoring, and when
+    return out
+
+
+@hr_router.get("/panel/calibration/judgements")
+async def hr_calibration_judgements(
+    request: Request, ctx: HrCtxDep, db: DbSessionDep,
+    interviewer_id: Annotated[uuid.UUID, Query()],
+    start: Annotated[datetime | None, Query()] = None,
+    end: Annotated[datetime | None, Query()] = None,
+    requisition_id: Annotated[uuid.UUID | None, Query()] = None,
+    round_id: Annotated[uuid.UUID | None, Query()] = None,
+    criterion_key: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """PH5-E4 criterion 13: the drill-down behind one interviewer's row, or
+    one interviewer x criterion cell. 422 when that row/cell is suppressed
+    in the aggregate report; 404 when the interviewer is not this company's.
+    """
+    actor, company_id = ctx
+    now = datetime.now(tz=UTC)
+    s, e = _window(start or now - timedelta(days=90), end or now, days=90,
+                   max_days=CALIBRATION_MAX_DAYS)
+    try:
+        out = await judgements(
+            db, company_id=company_id, interviewer_id=interviewer_id, start=s, end=e,
+            requisition_id=requisition_id, round_id=round_id, criterion_key=criterion_key,
+            actor=actor, meta=_meta(request),
+        )
+    except PanelError as exc:
+        await db.rollback()  # a refused write leaves nothing half-done
+        raise _raise(exc) from exc
+    await db.commit()  # the audit row: panel.calibration.evidence_viewed
     return out
 
 

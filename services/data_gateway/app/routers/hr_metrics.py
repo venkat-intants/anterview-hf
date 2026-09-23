@@ -57,12 +57,14 @@ from app.metrics.compute import (
 from app.metrics.definitions import (
     DIMENSIONS_REGISTRY,
     FLAGS,
+    INTERVIEWER_SCORE_BAND_LABELS,
     MEASURES,
     METRICS,
     REGISTRY_HASH,
     checkin_outcome_drilldown_blocked,
     current_metrics,
     drillable,
+    min_cell_size,
 )
 from app.models import AuditLog
 from app.utils.request_ip import extract_client_ip, extract_user_agent
@@ -74,6 +76,20 @@ router = APIRouter(prefix="/hr", tags=["hr-metrics"])
 _VALID_COHORTS = ("application", "decision", "hire")
 _VALID_GROUP_BY = ("source", "requisition")
 _VALID_PARTS = ("numerator", "denominator")
+_VALID_SCORE_BANDS = tuple(INTERVIEWER_SCORE_BAND_LABELS)
+
+#: PH5-E4: the FIXED metric list each outcome-signals cohort reports —
+#: never every metric ``compute_funnel`` happens to return for that cohort
+#: basis (the "decision" basis carries the WHOLE pipeline, of which this
+#: view shows only the one outcome-relevant rate). "hire" lists all five
+#: hire-cohort metrics, which is deliberately the same set
+#: ``_metrics_for_cohort("hire")`` already returns — kept as an explicit
+#: tuple here anyway, so a future hire-cohort metric does not silently widen
+#: this view without a decision to add it.
+_OUTCOME_METRICS: dict[str, tuple[str, ...]] = {
+    "hire": ("hires", "checkin_coverage", "retention_90d", "performance_90d", "hire_interviewer_score"),
+    "decision": ("application_to_hire",),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +358,11 @@ class MemberRowOut(BaseModel):
     requisition_title: str | None
     source: str
     applied_at: str
+    # PH5-E4: populated only when the request carries a `score_band` filter —
+    # otherwise omitted (None), so an ordinary members drill-down is
+    # byte-for-byte what it always was.
+    interviewer_score: float | None = None
+    evidence_href: str | None = None
 
 
 class MembersOut(BaseModel):
@@ -365,6 +386,7 @@ async def get_analytics_members(
     to: Annotated[dt.date | None, Query()] = None,
     requisition_id: Annotated[uuid.UUID | None, Query()] = None,
     source: Annotated[str | None, Query()] = None,
+    score_band: Annotated[str | None, Query()] = None,
 ) -> MembersOut:
     """The applications behind one metric's numerator or denominator.
 
@@ -373,10 +395,20 @@ async def get_analytics_members(
     metric/part combination (PH5-C1: those never surface below aggregate) —
     ``checkin_coverage`` (operational — has a check-in been recorded, not
     what it said) is unaffected.
+
+    ``score_band`` (PH5-E4) additionally narrows the population to hires in
+    that band, and each row then also carries ``interviewer_score`` and
+    ``evidence_href``. The SAME checkin-outcome refusal above still applies
+    first — a score-band filter never widens what a checkin-outcome
+    metric/part is allowed to show below aggregate.
     """
     hr_uid, company_id = ctx
     if part not in _VALID_PARTS:
         raise HTTPException(status_code=400, detail=f"part must be one of {list(_VALID_PARTS)}")
+    if score_band is not None and score_band not in _VALID_SCORE_BANDS:
+        raise HTTPException(
+            status_code=400, detail=f"score_band must be one of {list(_VALID_SCORE_BANDS)}"
+        )
     source = _parse_source(source)
     window = _cohort_window(cohort, from_, to)
 
@@ -393,6 +425,7 @@ async def get_analytics_members(
         result = await compute_members(
             db, company_id=company_id, metric_name=metric, part=part,  # type: ignore[arg-type]
             cohort=window, filters=FunnelFilters(requisition_id=requisition_id, source=source),
+            score_band=score_band,
         )
     except MetricComputeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -414,6 +447,7 @@ async def get_analytics_members(
                 "to": to.isoformat() if to else None,
                 "requisition_id": str(requisition_id) if requisition_id else None,
                 "source": source,
+                "score_band": score_band,
                 "total": result.total,
             },
             ip_address=extract_client_ip(request),
@@ -434,7 +468,130 @@ async def get_analytics_members(
                 enrolment_id=r.enrolment_id, applicant_id=r.applicant_id,
                 candidate_name=r.candidate_name, requisition_id=r.requisition_id,
                 requisition_title=r.requisition_title, source=r.source, applied_at=r.applied_at,
+                interviewer_score=r.interviewer_score if score_band is not None else None,
+                evidence_href=(
+                    f"/hr/enrolments/{r.enrolment_id}/evidence" if score_band is not None else None
+                ),
             )
             for r in result.rows
         ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /hr/analytics/outcome-signals — PH5-E4. Human interviewer scores only;
+# never an AI interview score (see app.metrics.definitions.MEASURES
+# ["hire_interviewer_score@1"]). A thin wrapper over Wave 1's compute_funnel,
+# grouped by the governed interviewer_score_band dimension, filtered to a
+# FIXED metric list per cohort (_OUTCOME_METRICS) — never every metric that
+# cohort basis happens to carry.
+# ---------------------------------------------------------------------------
+class OutcomeBandOut(BaseModel):
+    key: str
+    label: str
+
+
+class OutcomeSignalOut(BaseModel):
+    dimension: str
+    version: int
+    measure: str
+    bands: list[OutcomeBandOut]
+
+
+class OutcomeGroupOut(BaseModel):
+    key: str | None
+    label: str
+    metrics: dict[str, MetricValueOut]
+
+
+class OutcomeGuardrailsOut(BaseModel):
+    evaluation_signal: str
+    min_group: int
+    changes_candidate_status: bool
+
+
+class OutcomeSignalsOut(BaseModel):
+    registry_hash: str
+    cohort: FunnelCohortOut
+    filters: FunnelFiltersOut
+    signal: OutcomeSignalOut
+    groups: list[OutcomeGroupOut]
+    guardrails: OutcomeGuardrailsOut
+
+
+def _default_outcome_window(to: dt.date | None, from_: dt.date | None) -> tuple[dt.date, dt.date]:
+    """The last 12 months, ending today, when the caller supplies neither
+    bound — a fixed function (not inlined) so a test can pin the arithmetic
+    without freezing the clock."""
+    end = to or dt.date.today()
+    start = from_ or (end - dt.timedelta(days=365))
+    return start, end
+
+
+@router.get("/analytics/outcome-signals", response_model=OutcomeSignalsOut)
+async def get_analytics_outcome_signals(
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+    cohort: Annotated[str, Query()] = "hire",
+    from_: Annotated[dt.date | None, Query(alias="from")] = None,
+    to: Annotated[dt.date | None, Query()] = None,
+    requisition_id: Annotated[uuid.UUID | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
+) -> OutcomeSignalsOut:
+    """Interview scores and later outcomes, banded by the mean CURRENT human
+    interviewer scorecard score. NEVER an AI interview score — those are
+    purged 90 days after the session and are structurally excluded from this
+    view (the underlying measure reads only ``interviewer_scorecard_scores``).
+
+    A SIGNAL, never a decision: this changes no candidate's status or score.
+    Not per-read audited (Wave 1 v2 precedent for aggregate reads) — logged
+    at structlog level only, as ``analytics.outcome_signals.read``.
+    """
+    hr_uid, company_id = ctx
+    if cohort not in ("hire", "decision"):
+        raise HTTPException(status_code=400, detail="cohort must be one of ['hire', 'decision']")
+    source = _parse_source(source)
+    start, end = _default_outcome_window(to, from_)
+    window = CohortWindow(basis=cohort, from_=start, to_=end)  # type: ignore[arg-type]
+
+    result = await compute_funnel(
+        db, company_id=company_id, cohort=window,
+        filters=FunnelFilters(requisition_id=requisition_id, source=source),
+        group_by="interviewer_score_band",
+    )
+    wanted = _OUTCOME_METRICS[cohort]
+    groups = [
+        OutcomeGroupOut(
+            key=g.key, label=g.label,
+            metrics={
+                name: MetricValueOut(**value)
+                for name, value in g.metrics.items() if name in wanted
+            },
+        )
+        for g in result.groups
+    ]
+
+    log.info(
+        "analytics.outcome_signals.read", company_id=str(company_id), cohort=cohort,
+        actor_id=hr_uid,
+    )
+    return OutcomeSignalsOut(
+        registry_hash=result.registry_hash,
+        cohort=FunnelCohortOut(basis=cohort, from_=start.isoformat(), to=end.isoformat()),
+        filters=FunnelFiltersOut(
+            requisition_id=str(requisition_id) if requisition_id else None, source=source,
+        ),
+        signal=OutcomeSignalOut(
+            dimension="interviewer_score_band", version=1, measure="hire_interviewer_score@1",
+            bands=[
+                OutcomeBandOut(key=key, label=label)
+                for key, label in INTERVIEWER_SCORE_BAND_LABELS.items()
+            ],
+        ),
+        groups=groups,
+        guardrails=OutcomeGuardrailsOut(
+            evaluation_signal="human interviewer scorecards only",
+            min_group=min_cell_size(),
+            changes_candidate_status=False,
+        ),
     )

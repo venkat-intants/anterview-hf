@@ -233,13 +233,19 @@ def test_a_competency_cell_resting_on_few_candidates_is_withheld() -> None:
 
 
 def test_calibration_hides_what_the_caller_has_not_yet_scored() -> None:
-    """Security review M1: the PH4-A1 independence rule holds in calibration too."""
+    """Security review M1: the PH4-A1 independence rule holds in calibration too.
+
+    PH5-E4: the ``{"me": actor}`` binding moved from ``calibration()`` itself
+    into the ``_score_rows()`` helper both ``calibration()`` and
+    ``judgements()`` now share — checked on the helper, not the (now much
+    longer) orchestration function.
+    """
     import app.panel_workload as pw
 
     sql = " ".join(pw._SCORES_SQL.split())
     assert "mine.interviewer_user_id = :me" in sql
     assert "mine.status IN ('assigned', 'in_progress')" in sql
-    assert '"me": actor' in inspect.getsource(pw.calibration)
+    assert '"me": actor' in inspect.getsource(pw._score_rows)
     assert timedelta(days=7) == pw.MIN_CALIBRATION_SPAN
 
 
@@ -317,12 +323,29 @@ def test_scheduling_and_panel_views_cannot_move_a_candidate() -> None:
 
 
 def test_calibration_writes_nothing_but_its_audit_row() -> None:
+    """PH5-E4: ``_SCORES_SQL``/``_JUDGEMENTS_SQL`` now adopt the SAME "current
+    scorecard" rule as ``hire_interviewer_score@1`` and the ``interviewed``
+    flag (``app.metrics.definitions.CURRENT_SCORECARD_SQL`` — the "last word"
+    rule, closing O5 gap #10), rather than calibration's own
+    ``status = 'submitted' AND superseded_at IS NULL`` copy — so this no
+    longer pins that literal substring; it pins the ADOPTION instead."""
     import app.calibration_core as core
     import app.panel_workload as pw
+    from app.metrics.definitions import CURRENT_SCORECARD_SQL
 
-    sql = _sql(pw.calibration) + " " + pw._SCORES_SQL.upper()
+    # Scoped to the calibration functions specifically (not the whole
+    # module): app.panel_workload.set_capacity has a real, legitimate
+    # INSERT ... ON CONFLICT DO UPDATE for interviewer capacity, unrelated to
+    # calibration, that must NOT make this test fail.
+    sql = (
+        _sql(pw.calibration) + " " + _sql(pw.judgements) + " " + _sql(pw._score_rows)
+        + " " + _sql(pw._criterion_labels) + " " + pw._SCORES_SQL.upper()
+        + " " + pw._JUDGEMENTS_SQL.upper() + " " + pw._JUDGEMENTS_COUNT_SQL.upper()
+        + " " + pw._CRITERION_LABELS_SQL.upper()
+    )
     assert "UPDATE " not in sql and "INSERT " not in sql and "DELETE " not in sql
-    assert "SC.STATUS = 'SUBMITTED' AND SC.SUPERSEDED_AT IS NULL" in pw._SCORES_SQL.upper()
+    assert CURRENT_SCORECARD_SQL.upper() in pw._SCORES_SQL.upper()
+    assert CURRENT_SCORECARD_SQL.upper() in pw._JUDGEMENTS_SQL.upper()
     # No model, no recommendation: plain arithmetic.
     src = inspect.getsource(core) + inspect.getsource(pw)
     for word in ("llm", "gemini", "groq", "recommend", "decision_authority"):

@@ -88,23 +88,35 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 CohortBasis = Literal["application", "decision", "hire"]
-Dimension = Literal["source", "requisition"]
+Dimension = Literal["source", "requisition", "interviewer_score_band"]
 MetricKind = Literal["count", "rate", "median", "mean", "distribution"]
 
 COHORT_BASES: frozenset[str] = frozenset({"application", "decision", "hire"})
-DIMENSIONS: frozenset[str] = frozenset({"source", "requisition"})
+#: ``interviewer_score_band`` added in PH5-E4 (Wave 2) — a hires' band on the
+#: mean CURRENT human interviewer scorecard score. Added to the SAME
+#: ``DIMENSIONS_REGISTRY``/``DIMENSIONS`` a metric's ``dimensions`` tuple is
+#: validated against; a ``Metric``'s hash EXCLUDES ``dimensions`` (see
+#: ``_canonical_spec``), so widening ``_HIRE_DIMS``/``_PIPELINE_DIMS`` below to
+#: include it does not move any already-locked metric to a new version.
+DIMENSIONS: frozenset[str] = frozenset({"source", "requisition", "interviewer_score_band"})
 METRIC_KINDS: frozenset[str] = frozenset({"count", "rate", "median", "mean", "distribution"})
 
 #: The date every version-1 definition in this file became effective. A new
 #: version added later gets its OWN, later ``effective_from`` — this constant
 #: is deliberately not reused for anything but the initial set.
 _V1_DATE = date(2026, 9, 22)
+#: PH5-E4 (Wave 2): when the calibration spec and the new score-band
+#: dimension became effective — later than every V1 definition, since they
+#: are new registry KINDS added after Wave 1 shipped, not part of what V1
+#: meant.
+_V2_DATE = date(2026, 9, 23)
 
 
 class MetricDefinitionError(ValueError):
@@ -172,10 +184,47 @@ CHECKIN_FLAGS: frozenset[str] = CHECKIN_OPERATIONAL_FLAGS | CHECKIN_OUTCOME_FLAG
 #: A metric that reads any :data:`CHECKIN_FLAGS` member may only be grouped by
 #: these dimensions — validated at import (:func:`validate_registry`), the
 #: same "raise before publication" precedent as ``DATA_CLASS_ROLES`` in
-#: ``shared/agents/schema.py``. Wave 2 extends this set deliberately; it is
-#: not simply today's :data:`DIMENSIONS` restated, even though the two
-#: happen to be equal right now.
-CHECKIN_SAFE_DIMENSIONS: frozenset[str] = frozenset({"source", "requisition"})
+#: ``shared/agents/schema.py``. Wave 2 extends this set deliberately with
+#: ``interviewer_score_band`` — a hires' band on the mean CURRENT human
+#: interviewer scorecard score, never a candidate-authored or free-text
+#: field — validated (:func:`_validate_score_band_dimension`) to derive from
+#: nothing but ``hire_interviewer_score@1``.
+CHECKIN_SAFE_DIMENSIONS: frozenset[str] = frozenset(
+    {"source", "requisition", "interviewer_score_band"}
+)
+
+#: The interviewer_score_band bucketing (PH5-E4) — fixed, anchored edges on
+#: the governed 1-5 scale (never a quantile, which would be data-dependent
+#: and could not be governed the same way): below_3 [1,3), 3_to_4 [3,4),
+#: 4_plus [4,5], or none (no CURRENT human interviewer scorecard at all).
+#: References ONLY ``m_hire_interviewer_score`` — the ``app_facts`` output
+#: column :mod:`app.metrics.compute` builds for the ``hire_interviewer_score@1``
+#: measure — never a raw lateral alias (this SQL is evaluated OUTSIDE
+#: ``app_base``, over ``app_facts``'s own columns, the same scope
+#: ``_COHORT_PREDICATES`` and the ``source``/``requisition`` dimensions'
+#: ``group_sql`` already run in). :func:`_validate_score_band_dimension`
+#: checks this structurally at import.
+INTERVIEWER_SCORE_BAND_SQL: str = (
+    "(CASE WHEN m_hire_interviewer_score IS NULL THEN 'none' "
+    "WHEN m_hire_interviewer_score < 3 THEN 'below_3' "
+    "WHEN m_hire_interviewer_score < 4 THEN '3_to_4' "
+    "ELSE '4_plus' END)"
+)
+
+#: The single measure :data:`INTERVIEWER_SCORE_BAND_SQL` may reference —
+#: pinned so a future edit cannot quietly widen what a check-in-safe
+#: grouping is allowed to depend on.
+INTERVIEWER_SCORE_BAND_MEASURE: str = "hire_interviewer_score@1"
+
+#: Display labels for the band dimension's values, in the fixed order the
+#: outcome-signals API reports them (below_3, 3_to_4, 4_plus, none) — never
+#: derived from data, since the edges themselves are not.
+INTERVIEWER_SCORE_BAND_LABELS: dict[str, str] = {
+    "below_3": "Below 3",
+    "3_to_4": "3 to under 4",
+    "4_plus": "4 and above",
+    "none": "No human scorecard",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +349,38 @@ class Rule:
 
 
 @dataclass(frozen=True)
+class CalibrationSpec:
+    """A governed, versioned calibration METHOD — PH5-E4 — locked the same way
+    a :class:`Metric` is (``calibration:name@version``, in the SAME
+    ``published.lock.json``), so a threshold ``app.calibration_core.calibrate``
+    reads cannot silently change under an unchanged ``registry_hash``.
+
+    NOT a :class:`Metric`: its unit of analysis is one JUDGEMENT (an
+    enrolment x round x competency x interviewer row), never one application,
+    so it is not expressible as flags/measures over the ``app_facts`` cohort
+    engine — see ``app.calibration_core`` and ``app.panel_workload`` for
+    where it is actually computed. ``thresholds`` is a flat, JSON-serialisable
+    mapping (every value already the exact type the API echoes back as
+    ``rules``), hashed as part of this spec's canonical form like every other
+    registry entry.
+    """
+
+    name: str
+    version: int
+    effective_from: date
+    description: str
+    method: str
+    unit: str
+    cohort_bases: tuple[str, ...]
+    thresholds: dict[str, Any]
+    change_note: str = ""
+
+    @property
+    def key(self) -> str:
+        return f"{self.name}@{self.version}"
+
+
+@dataclass(frozen=True)
 class EngineFragment:
     """A locked, named SQL constant OUTSIDE the Flag/Measure/Metric registry
     that every flag's and measure's SQL is evaluated INSIDE — the FROM/JOIN
@@ -384,12 +465,12 @@ def _formula(m: Metric) -> str:
     raise MetricDefinitionError(f"{m.key}: unknown kind {m.kind!r}")  # unreachable post-validation
 
 
-T = TypeVar("T", Flag, Measure, MetricDimension, Rule)
+T = TypeVar("T", Flag, Measure, MetricDimension, Rule, CalibrationSpec)
 
 
 def _index(items: tuple[T, ...]) -> dict[str, T]:
-    """Key a tuple of Flags/Measures/Dimensions/Rules by ``name@version``,
-    raising on a duplicate."""
+    """Key a tuple of Flags/Measures/Dimensions/Rules/CalibrationSpecs by
+    ``name@version``, raising on a duplicate."""
     out: dict[str, T] = {}
     for item in items:
         if item.key in out:
@@ -522,6 +603,16 @@ DIMENSIONS_REGISTRY: dict[str, MetricDimension] = _index((
         "The job requisition (opening) the application belongs to.",
         "requisition_id",
     ),
+    MetricDimension(
+        "interviewer_score_band", 1, _V2_DATE, "Interviewer score band",
+        "The hires' band on the mean CURRENT (see CURRENT_SCORECARD_SQL) "
+        "human interviewer scorecard score: below_3 [1,3), 3_to_4 [3,4), "
+        "4_plus [4,5], or none (no current human scorecard at all). Fixed, "
+        "anchored edges on the governed 1-5 scale, not quantiles, so the "
+        "boundary is itself governed rather than data-dependent. New in "
+        "PH5-E4.",
+        INTERVIEWER_SCORE_BAND_SQL,
+    ),
 ))
 
 # ---------------------------------------------------------------------------
@@ -545,12 +636,77 @@ RULES: dict[str, Rule] = _index((
 ))
 
 # ---------------------------------------------------------------------------
+# Calibration specs, version 1 — PH5-E4. NOT a Flag/Measure/Metric: its unit
+# of analysis is one judgement, not one application. Locked in the SAME
+# published.lock.json as ``calibration:name@version``.
+# ---------------------------------------------------------------------------
+CALIBRATION_SPECS: dict[str, CalibrationSpec] = _index((
+    CalibrationSpec(
+        "interviewer_calibration", 1, _V2_DATE,
+        "Whether an interviewer scores the SAME candidates differently from "
+        "the rest of the panel, on a frozen criterion (round_id, "
+        "competency_id) — see app.calibration_core for the paired-panel-mean "
+        "method this spec parameterises, and app.panel_workload for where it "
+        "is computed. Thresholds only; the method itself is code, not data.",
+        method="paired_panel_mean", unit="judgement",
+        cohort_bases=("scorecard_submitted",),
+        thresholds={
+            "min_candidates": 5,
+            "min_pairs": 5,
+            "meaningful_delta": 0.75,
+            "min_same_direction_share": 0.7,
+            "min_interviewers_for_baseline": 2,
+            "wide_disagreement_range": 1.5,
+            "min_span_days": 7,
+            "max_span_days": 366,
+            "scale": "1-5",
+        },
+        change_note="New in PH5-E4: governs the thresholds "
+        "app.calibration_core previously held as bare module constants "
+        "(MIN_PAIRS, MEANINGFUL_DELTA, MIN_CANDIDATES), and adds "
+        "min_same_direction_share (a sign-consistency guard: one wild score "
+        "no longer trips the flag on its own) and "
+        "min_interviewers_for_baseline (a panel baseline needs more than one "
+        "person's scores).",
+    ),
+))
+
+
+def current_calibration_specs(as_of: date | None = None) -> dict[str, CalibrationSpec]:
+    return _current(CALIBRATION_SPECS.values(), as_of or date.today())
+
+
+#: The one calibration spec this codebase currently computes —
+#: ``app.calibration_core``/``app.panel_workload`` read this rather than
+#: re-deriving the name.
+CALIBRATION_SPEC_NAME = "interviewer_calibration"
+
+
+def calibration_spec(as_of: date | None = None) -> CalibrationSpec:
+    """The CURRENT ``interviewer_calibration`` spec — thresholds and metadata,
+    never re-derived by a caller. Raises ``KeyError`` if ``as_of`` predates
+    every published version, which cannot happen for ``None`` (today)."""
+    return current_calibration_specs(as_of)[CALIBRATION_SPEC_NAME]
+
+
+# ---------------------------------------------------------------------------
 # Metrics, version 1, effective 2026-09-22.
 # ---------------------------------------------------------------------------
 _PIPELINE_COHORTS: tuple[CohortBasis, ...] = ("application", "decision")
-_PIPELINE_DIMS: tuple[Dimension, ...] = ("source", "requisition")
+#: PH5-E4 adds ``interviewer_score_band`` — harmless for the metrics that
+#: never use check-in data (their DPDP validation never even looks at
+#: ``dimensions``), and required for ``application_to_hire``, which the
+#: outcome-signals "decision" cohort DOES group this way (see
+#: ``routers/hr_metrics.py``). Excluded from a Metric's hash (see
+#: ``_canonical_spec``), so this changes no already-locked metric's version.
+_PIPELINE_DIMS: tuple[Dimension, ...] = ("source", "requisition", "interviewer_score_band")
 _HIRE_COHORTS: tuple[CohortBasis, ...] = ("hire",)
-_HIRE_DIMS: tuple[Dimension, ...] = ("source", "requisition")
+#: PH5-E4: the outcome-signals "hire" cohort groups every one of these five
+#: metrics by ``interviewer_score_band`` (routers/hr_metrics.py). Three of
+#: them (checkin_coverage, retention_90d, performance_90d) read check-in
+#: flags, which is exactly why CHECKIN_SAFE_DIMENSIONS had to grow to include
+#: it — validated at import, below.
+_HIRE_DIMS: tuple[Dimension, ...] = ("source", "requisition", "interviewer_score_band")
 
 METRICS: dict[str, Metric] = _index_metrics((
     Metric("applications", 1, _V1_DATE, "count", "Applications",
@@ -873,6 +1029,41 @@ validate_registry(FLAGS, MEASURES, METRICS)
 
 
 # ---------------------------------------------------------------------------
+# PH5-E4: the score-band dimension derives from nothing but
+# hire_interviewer_score@1 — structural, not a comment.
+# ---------------------------------------------------------------------------
+def _validate_score_band_dimension(dimensions: dict[str, MetricDimension]) -> None:
+    """Raise unless ``interviewer_score_band@1``'s ``group_sql`` references
+    ``m_hire_interviewer_score`` (the ``app_facts`` output column for
+    :data:`INTERVIEWER_SCORE_BAND_MEASURE`) and NOTHING else that looks like
+    another flag or measure column (``f_*``/``m_*``). The same "raise before
+    publication" precedent as :func:`validate_registry`'s check-in-safe
+    dimensions check and ``shared/agents/schema.py``'s ``DATA_CLASS_ROLES``.
+
+    A plain substring/regex check, not a SQL parse — proportionate to what
+    this guards: nobody can widen the band's dependency to another flag or
+    measure without this failing at import, which is the whole point.
+    """
+    key = "interviewer_score_band@1"
+    if key not in dimensions:
+        raise MetricDefinitionError(f"{key}: dimension is not registered")
+    sql = dimensions[key].group_sql
+    expected_column = f"m_{_bare(INTERVIEWER_SCORE_BAND_MEASURE)}"
+    if expected_column not in sql:
+        raise MetricDefinitionError(f"{key}: group_sql must reference {expected_column}")
+    referenced = set(re.findall(r"\b[mf]_[a-z][a-z0-9_]*\b", sql))
+    extra = referenced - {expected_column}
+    if extra:
+        raise MetricDefinitionError(
+            f"{key}: group_sql must derive from {expected_column} alone, "
+            f"found extra reference(s) {sorted(extra)}"
+        )
+
+
+_validate_score_band_dimension(DIMENSIONS_REGISTRY)
+
+
+# ---------------------------------------------------------------------------
 # "Current" resolution — the latest version of each name whose effective_from
 # is on or before ``as_of`` (default today). Every consumer that does not ask
 # for a specific historical version gets this.
@@ -917,7 +1108,9 @@ def _current(items: Any, as_of: date) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # published.lock.json — canonical spec + hash, for the append-only freeze.
 # ---------------------------------------------------------------------------
-def _canonical_spec(item: Flag | Measure | Metric | MetricDimension | Rule) -> dict[str, Any]:
+def _canonical_spec(
+    item: Flag | Measure | Metric | MetricDimension | Rule | CalibrationSpec,
+) -> dict[str, Any]:
     """A JSON-serialisable, order-independent spec for hashing.
 
     Excludes computed properties (``key``, ``formula``) — hashing the formula
@@ -957,6 +1150,7 @@ def build_lock_entries() -> dict[str, dict[str, Any]]:
     for prefix, registry in (
         ("flag", FLAGS), ("measure", MEASURES), ("metric", METRICS),
         ("dimension", DIMENSIONS_REGISTRY), ("rule", RULES),
+        ("calibration", CALIBRATION_SPECS),
     ):
         for item in registry.values():
             spec = _canonical_spec(item)

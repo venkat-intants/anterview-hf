@@ -21,7 +21,16 @@ import { apiGet } from './client';
 // ── Cohort + grouping ────────────────────────────────────────────────────────
 
 export type CohortBasis = 'application' | 'decision' | 'hire';
+/** What `GET /hr/analytics/funnel`'s `group_by` query param accepts. */
 export type GroupByOption = 'source' | 'requisition';
+/**
+ * Every dimension a metric's OWN `dimensions` array may name (PH5-E4 widens
+ * this beyond `GroupByOption`): `interviewer_score_band` is not a `group_by`
+ * value the funnel endpoint accepts directly — only the outcome-signals
+ * wrapper groups by it — but it is listed on the metrics it applies to (e.g.
+ * `hires`, `hire_interviewer_score`) so "How is this calculated?" can name it.
+ */
+export type MetricDimensionName = GroupByOption | 'interviewer_score_band';
 export type MetricKind = 'count' | 'rate' | 'median' | 'mean' | 'distribution';
 export type MetricPart = 'numerator' | 'denominator';
 
@@ -49,7 +58,7 @@ export interface MetricDefinition {
   description: string;
   formula: string;
   cohort_bases: CohortBasis[];
-  dimensions: GroupByOption[];
+  dimensions: MetricDimensionName[];
   numerator: string[] | null;
   denominator: string[] | null;
   measure: string | null;
@@ -202,6 +211,12 @@ export interface MemberRow {
   requisition_title: string | null;
   source: string;
   applied_at: string;
+  /** PH5-E4 — populated only when the request carried a `score_band` filter;
+   *  the hire's mean CURRENT human interviewer scorecard score. */
+  interviewer_score?: number | null;
+  /** PH5-E4 — set alongside `interviewer_score`; a deep link into this hire's
+   *  evidence trail. */
+  evidence_href?: string | null;
 }
 
 export interface MembersResponse {
@@ -218,6 +233,10 @@ export interface MembersQuery extends FunnelQuery {
   metric: string;
   /** Ignored server-side for a count metric. */
   part?: MetricPart;
+  /** PH5-E4 — narrows a hire-cohort drill-down to one interviewer-score band
+   *  (see `OutcomeBand`). Adds `interviewer_score`/`evidence_href` to each
+   *  row. Refused (422) for a check-in-outcome metric/part, same as without it. */
+  score_band?: string;
 }
 
 /**
@@ -267,8 +286,83 @@ export function getAnalyticsMembers(opts: MembersQuery): Promise<MembersResponse
   const p = buildFunnelParams(opts);
   p.set('metric', opts.metric);
   if (opts.part) p.set('part', opts.part);
+  if (opts.score_band) p.set('score_band', opts.score_band);
   return apiGet<MembersResponse>(`/hr/analytics/members?${p.toString()}`);
 }
+
+// ── /hr/analytics/outcome-signals (PH5-E4) ───────────────────────────────────
+// Interview scores and later outcomes: rows are bands on the mean CURRENT
+// human interviewer scorecard score, never an AI interview score. A SIGNAL —
+// this changes no candidate's status or score.
+
+export type OutcomeCohort = 'hire' | 'decision';
+
+export interface OutcomeBand {
+  key: string;
+  label: string;
+}
+
+export interface OutcomeSignal {
+  dimension: 'interviewer_score_band';
+  version: number;
+  measure: string;
+  bands: OutcomeBand[];
+}
+
+export interface OutcomeGroup {
+  /** null for "All"; otherwise one of `signal.bands[].key`. */
+  key: string | null;
+  label: string;
+  metrics: Record<string, MetricResult>;
+}
+
+export interface OutcomeGuardrails {
+  evaluation_signal: string;
+  min_group: number;
+  changes_candidate_status: false;
+}
+
+export interface OutcomeSignalsResponse {
+  registry_hash: string;
+  cohort: { basis: OutcomeCohort; from: string; to: string };
+  filters: { requisition_id: string | null; source: string | null };
+  signal: OutcomeSignal;
+  groups: OutcomeGroup[];
+  guardrails: OutcomeGuardrails;
+}
+
+export interface OutcomeSignalsQuery {
+  cohort?: OutcomeCohort;
+  from?: string;
+  to?: string;
+  requisition_id?: string;
+  source?: string;
+}
+
+export function getOutcomeSignals(opts: OutcomeSignalsQuery = {}): Promise<OutcomeSignalsResponse> {
+  const p = new URLSearchParams();
+  if (opts.cohort) p.set('cohort', opts.cohort);
+  if (opts.from) p.set('from', opts.from);
+  if (opts.to) p.set('to', opts.to);
+  if (opts.requisition_id) p.set('requisition_id', opts.requisition_id);
+  if (opts.source) p.set('source', opts.source);
+  const q = p.toString();
+  return apiGet<OutcomeSignalsResponse>(`/hr/analytics/outcome-signals${q ? `?${q}` : ''}`);
+}
+
+/** The columns each cohort's table shows, in display order — mirrors
+ *  `_OUTCOME_METRICS` in `app/routers/hr_metrics.py`. Kept explicit here too
+ *  (rather than "every metric key the response happens to carry") so a
+ *  future server-side addition is a deliberate UI change, not a silent one. */
+export const OUTCOME_HIRE_METRICS = [
+  'hires',
+  'checkin_coverage',
+  'retention_90d',
+  'performance_90d',
+  'hire_interviewer_score',
+] as const;
+
+export const OUTCOME_DECISION_METRICS = ['application_to_hire'] as const;
 
 // ── Canonical metric ordering (v1) ───────────────────────────────────────────
 // Mirrors "Metrics (version 1)" in the PH5 wave-1 design doc. Used only to

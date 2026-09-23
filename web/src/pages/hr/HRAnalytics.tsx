@@ -71,6 +71,7 @@ import MetricGlossary from '@/components/hr/analytics/MetricGlossary';
 import MetricInfoDialog from '@/components/hr/analytics/MetricInfoDialog';
 import MembersDrillDown from '@/components/hr/analytics/MembersDrillDown';
 import CheckinDueCard from '@/components/hr/analytics/CheckinDueCard';
+import OutcomeSignalsSection from '@/components/hr/analytics/OutcomeSignalsSection';
 
 // ── Tooltip style (design spec) ───────────────────────────────────────────────
 
@@ -818,6 +819,12 @@ export function HRAnalyticsPage(): JSX.Element {
               }
             />
           </GlassCard>
+
+          <OutcomeSignalsSection
+            filters={sharedFilters}
+            definitions={definitionsQuery.data}
+            onOpenCandidate={setOpenCandidate}
+          />
 
           <MetricGlossary definitionsQuery={definitionsQuery} onInfo={setInfoMetric} />
         </div>

@@ -111,10 +111,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application_source import SOURCE_LABELS
 from app.metrics.definitions import (
     CURRENT_SCORECARD_SQL,
+    INTERVIEWER_SCORE_BAND_LABELS,
     REGISTRY_HASH,
     CohortBasis,
     EngineFragment,
     Metric,
+    current_dimensions,
     current_flags,
     current_measures,
     current_metrics,
@@ -125,7 +127,10 @@ from app.metrics.definitions import (
 )
 
 CompanyId = uuid.UUID
-GroupBy = Literal["source", "requisition"] | None
+#: PH5-E4 adds ``interviewer_score_band`` — grouped from
+#: ``current_dimensions()["interviewer_score_band"].group_sql`` (see
+#: :func:`compute_funnel`), never a hardcoded copy of that SQL here.
+GroupBy = Literal["source", "requisition", "interviewer_score_band"] | None
 
 #: The drill-down is capped, newest first — an unbounded members list is
 #: exactly the "200 applicants pushes the real question out" problem
@@ -693,6 +698,27 @@ async def compute_funnel(
                         metrics={plan.metric.name: _read_metric_value(row, plan) for plan in plans},
                     )
                 )
+        elif group_by == "interviewer_score_band":
+            # PH5-E4: the band's SQL is the governed dimension's OWN group_sql
+            # (DIMENSIONS_REGISTRY["interviewer_score_band@1"], validated at
+            # import to derive from nothing but m_hire_interviewer_score) —
+            # never re-typed here. It is a module constant reached through the
+            # validated registry, never a request value.
+            band_sql = current_dimensions()["interviewer_score_band"].group_sql
+            grouped_sql = (
+                f"{with_sql}SELECT {band_sql} AS grp_key, "  # nosec B608 — see module docstring
+                f"{select_list} FROM app_facts GROUP BY {band_sql}"
+            )
+            rows = (await db.execute(text(grouped_sql), params)).mappings().all()
+            for row in rows:
+                key = row["grp_key"]
+                groups.append(
+                    FunnelGroup(
+                        key=key, label=INTERVIEWER_SCORE_BAND_LABELS.get(key, key),
+                        in_progress=int(row["in_progress"] or 0),
+                        metrics={plan.metric.name: _read_metric_value(row, plan) for plan in plans},
+                    )
+                )
 
         if group_by is not None:
             _suppress_checkin_outcomes_uniformly(groups, plans)
@@ -744,6 +770,12 @@ class MemberRow:
     requisition_title: str | None
     source: str
     applied_at: str
+    #: PH5-E4: the row's mean CURRENT human interviewer scorecard score —
+    #: populated whenever one exists, regardless of whether ``score_band`` was
+    #: requested; ``routers/hr_metrics.py`` decides whether to surface it (the
+    #: design's "when score_band is given" is a RESPONSE-SHAPE choice, not a
+    #: reason to compute a different value here).
+    interviewer_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -765,6 +797,7 @@ async def compute_members(
     cohort: CohortWindow,
     filters: FunnelFilters,
     limit: int = MEMBERS_LIMIT,
+    score_band: str | None = None,
 ) -> MembersResult:
     """The applications behind one metric's numerator or denominator.
 
@@ -772,6 +805,15 @@ async def compute_members(
     numerator) and for anything without the requested part (e.g. asking for
     the ``denominator`` of a ``count`` or ``distribution`` metric falls back
     to the numerator population — there is no other population to show).
+
+    ``score_band`` (PH5-E4) additionally narrows the population to enrolments
+    whose ``interviewer_score_band`` equals the given key — the SAME governed
+    ``group_sql`` :func:`compute_funnel` groups by, never a re-typed copy. The
+    caller (``routers/hr_metrics.py``) is responsible for refusing this
+    combined with a check-in-derived metric/part the aggregate itself would
+    suppress (:func:`~app.metrics.definitions.checkin_outcome_drilldown_blocked`)
+    — this function does not re-derive that DPDP rule, only applies the extra
+    WHERE clause it is asked for.
     """
     metric = current_metrics().get(metric_name)
     if metric is None:
@@ -788,21 +830,34 @@ async def compute_members(
         with_sql = _with_clause(cohort.basis)
         params = _bound_params(company_id, cohort, filters)
         pop_sql = _population_sql(population)
+        # nosec B608 — band_sql is a module constant reached through the
+        # validated dimension registry (never a request value); the request
+        # VALUE is the bound parameter :score_band.
+        band_sql = current_dimensions()["interviewer_score_band"].group_sql
+        band_filter_sql = f" AND ({band_sql} = CAST(:score_band AS text))" if score_band else ""
+        band_params = {"score_band": score_band}
 
-        count_sql = f"{with_sql}SELECT count(*) FROM app_facts WHERE {pop_sql}"  # nosec B608
-        total = int((await db.execute(text(count_sql), params)).scalar_one())
+        count_sql = (
+            f"{with_sql}SELECT count(*) FROM app_facts "  # nosec B608
+            f"WHERE {pop_sql}{band_filter_sql}"
+        )
+        total = int(
+            (await db.execute(text(count_sql), {**params, **band_params})).scalar_one()
+        )
 
         rows_sql = (
             f"{with_sql}"  # nosec B608 — see module docstring
             "SELECT ef.enrolment_id, ef.applicant_id, a.full_name, ef.requisition_id,"
-            "       ef.requisition_title, ef.source, ef.created_at"
+            "       ef.requisition_title, ef.source, ef.created_at, ef.m_hire_interviewer_score"
             "  FROM app_facts ef"
             "  JOIN applicants a ON a.id = ef.applicant_id AND a.company_id = ef.company_id"
-            f" WHERE {pop_sql}"
+            f" WHERE {pop_sql}{band_filter_sql}"
             " ORDER BY ef.created_at DESC"
             " LIMIT :lim"
         )
-        rows = (await db.execute(text(rows_sql), {**params, "lim": limit})).mappings().all()
+        rows = (
+            await db.execute(text(rows_sql), {**params, **band_params, "lim": limit})
+        ).mappings().all()
         succeeded = True
     finally:
         if succeeded:  # never on an aborted transaction; see _set_timeout
@@ -817,6 +872,11 @@ async def compute_members(
             requisition_title=r["requisition_title"],
             source=r["source"],
             applied_at=r["created_at"].isoformat(),
+            interviewer_score=(
+                round(float(r["m_hire_interviewer_score"]), 1)
+                if r["m_hire_interviewer_score"] is not None
+                else None
+            ),
         )
         for r in rows
     ]

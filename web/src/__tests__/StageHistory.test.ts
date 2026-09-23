@@ -5,6 +5,7 @@ import type { StageHistoryEntry } from '../api/requisitions';
 import { describeMove } from '../lib/stageHistory';
 
 const base: StageHistoryEntry = {
+  id: 1,
   occurred_at: '2026-09-12T10:00:00Z',
   from_status: 'new',
   to_status: 'shortlisted',
@@ -44,14 +45,20 @@ describe('describeMove', () => {
   });
 
   it('reads the first round and the end of the workflow', () => {
-    const same = { ...base, from_status: 'shortlisted', to_status: 'shortlisted', automated: true, actor: null };
+    const same = {
+      ...base,
+      from_status: 'shortlisted',
+      to_status: 'shortlisted',
+      automated: true,
+      actor: null,
+    };
     expect(describeMove({ ...same, to_round: 'Aptitude' })).toBe('Started Aptitude · automatic');
     expect(describeMove({ ...same, from_round: 'Panel' })).toBe('Finished Panel · automatic');
   });
 
   it('reads the application itself', () => {
-    expect(describeMove({ ...base, from_status: null, to_status: 'new', automated: true, actor: null })).toBe(
-      'Applied — new · automatic',
-    );
+    expect(
+      describeMove({ ...base, from_status: null, to_status: 'new', automated: true, actor: null }),
+    ).toBe('Applied — new · automatic');
   });
 });

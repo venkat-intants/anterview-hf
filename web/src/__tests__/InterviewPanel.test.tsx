@@ -14,7 +14,8 @@ const schedulingApi = {
 };
 vi.mock('../api/scheduling', () => ({
   getWorkload: (...a: unknown[]) => schedulingApi.getWorkload(...a) as unknown,
-  getInterviewerAvailability: (...a: unknown[]) => schedulingApi.getInterviewerAvailability(...a) as unknown,
+  getInterviewerAvailability: (...a: unknown[]) =>
+    schedulingApi.getInterviewerAvailability(...a) as unknown,
   getCalibration: (...a: unknown[]) => schedulingApi.getCalibration(...a) as unknown,
 }));
 
@@ -48,13 +49,34 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   schedulingApi.getWorkload.mockResolvedValue({
-    start: '', end: '', timezone: 'Asia/Kolkata',
-    defaults: { max_per_day: 4, max_per_week: 15 }, interviewers: [],
+    start: '',
+    end: '',
+    timezone: 'Asia/Kolkata',
+    defaults: { max_per_day: 4, max_per_week: 15 },
+    interviewers: [],
   });
   schedulingApi.getInterviewerAvailability.mockResolvedValue([]);
   schedulingApi.getCalibration.mockResolvedValue({
-    start: '', end: '', rules: { min_pairs: 5, meaningful_delta: 0.75, scale: '1-5', min_candidates: 5 },
-    competencies: {}, interviewers: [],
+    spec: { name: 'interviewer_calibration', version: 1 },
+    registry_hash: 'test-hash',
+    cohort: { basis: 'scorecard_submitted', from: '', to: '' },
+    filters: { requisition_id: null, round_id: null },
+    start: '',
+    end: '',
+    rules: {
+      min_pairs: 5,
+      meaningful_delta: 0.75,
+      scale: '1-5',
+      min_candidates: 5,
+      min_same_direction_share: 0.7,
+      min_interviewers_for_baseline: 2,
+      wide_disagreement_range: 1.5,
+      min_span_days: 7,
+      max_span_days: 366,
+    },
+    competencies: {},
+    criteria: [],
+    interviewers: [],
   });
   listInterviewers.mockResolvedValue([]);
   listRequisitions.mockResolvedValue([]);
@@ -64,14 +86,20 @@ beforeEach(() => {
 describe('InterviewPanel — tabs', () => {
   it('opens on Workload', async () => {
     renderPage();
-    expect(await screen.findByText('No one can be booked for interviews yet. Your super admin adds interviewers under Team.')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'No one can be booked for interviews yet. Your super admin adds interviewers under Team.',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('switches to Availability', async () => {
     const user = userEvent.setup();
     renderPage();
     await user.click(await screen.findByRole('tab', { name: 'Availability' }));
-    expect(await screen.findByText('Choose an interviewer to see and edit their availability.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Choose an interviewer to see and edit their availability.'),
+    ).toBeInTheDocument();
   });
 
   it('switches to Calibration', async () => {
@@ -79,7 +107,9 @@ describe('InterviewPanel — tabs', () => {
     renderPage();
     await user.click(await screen.findByRole('tab', { name: 'Calibration' }));
     expect(
-      await screen.findByText('Read-only. Calibration never changes a submitted scorecard or a hiring decision.'),
+      await screen.findByText(
+        'These are patterns in scoring, not assessments of any interviewer. Differences can have good reasons. Use them to start a calibration conversation. Nothing here changes a scorecard or a decision.',
+      ),
     ).toBeInTheDocument();
   });
 });

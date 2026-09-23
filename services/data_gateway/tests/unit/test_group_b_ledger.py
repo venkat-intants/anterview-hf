@@ -312,3 +312,14 @@ def test_the_history_endpoint_names_only_people() -> None:
     src = inspect.getsource(get_enrolment_history)
     assert '"actor": None if r["automated"] else r["actor"]' in src
     assert "t.company_id = :c" in src  # tenant-scoped
+
+
+def test_the_history_endpoint_returns_the_ledger_row_id() -> None:
+    """PH5-E5: the frontend's per-decision "Why?" link needs the
+    ``stage_transitions`` row id to open ``/hr/decisions/{id}/trace`` on
+    exactly that decision, rather than only the trail's picker."""
+    from app.routers.hr_requisitions import get_enrolment_history
+
+    src = inspect.getsource(get_enrolment_history)
+    assert "SELECT t.id," in src
+    assert '"id": r["id"]' in src

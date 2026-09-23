@@ -25,7 +25,12 @@ export interface Citation {
     | 'job'
     | 'analytics'
     | 'audit'
-    | 'role_profile';
+    | 'role_profile'
+    // PH5-E5: a HUMAN interviewer's scorecard ('scorecard' is the AI one) and
+    // a hire/reject decision. Kept in sync with shared/agents/schema.py's
+    // CitationKind by a parity test that parses this union.
+    | 'interviewer_scorecard'
+    | 'decision';
   id: string;
   label: string;
   href: string | null;

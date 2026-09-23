@@ -38,6 +38,7 @@ from shared.agents import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import evidence_graph
 from app.metrics.compute import CohortWindow, FunnelFilters, compute_funnel
 from app.metrics.definitions import current_metrics, uses_checkin_data
 from app.utils.sql_like import like_literal
@@ -1184,6 +1185,222 @@ async def _get_hr_workload(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
                 href="/superadmin",
             )
         ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Decision trace (PH5-E5) — the evidence graph, read for one decision
+# ---------------------------------------------------------------------------
+
+#: Every EvidenceNode kind maps to an existing CitationKind, plus the two
+#: PH5-E5 added (`interviewer_scorecard`, `decision`) — never a made-up kind.
+#: `round_result`'s entry here is the ASSESSMENT-stage default; a human_review
+#: round's result is re-pointed to "interview" by `_citation_kind_for` below,
+#: since a blanket "exam_attempt" would mislabel it. This dict is still the
+#: complete kind->CitationKind whitelist (see
+#: test_citation_kind_by_node_only_uses_declared_citation_kinds).
+_CITATION_KIND_BY_NODE: dict[str, str] = {
+    "application": "applicant",
+    "screening_ats": "applicant",
+    "screening_answers": "applicant",
+    "stage_move": "applicant",
+    "exam_attempt": "exam_attempt",
+    "round_result": "exam_attempt",
+    "ai_interview": "interview",
+    "interview_session": "interview",
+    "human_scorecard": "interviewer_scorecard",
+    "task_submission": "applicant",
+    "offer": "applicant",
+    "decision": "decision",
+}
+
+
+def _citation_kind_for(node: Any) -> str:
+    """Almost always a straight lookup by node kind. The one exception is
+    ``round_result``: its citation follows which STAGE the round actually
+    was (`interview` for a human_review round, the dict's `exam_attempt`
+    default for an assessment-stage one) — cheap, since `stage.name` is
+    already on the node, and it avoids mislabelling a human_review round's
+    result as an exam attempt."""
+    if node.kind == "round_result" and node.stage.name == "interview":
+        return "interview"
+    return _CITATION_KIND_BY_NODE[node.kind]
+
+MAX_TRACE_EVIDENCE: int = 40
+MAX_TRACE_TEXT: int = 500
+
+
+def _safe_text(value: Any) -> str | None:
+    """Cap free text and flag it for injection markers before it ever reaches
+    a model — the same treatment a candidate's resume gets in
+    ``_get_applicant_detail``, applied here to a decision's reason and an
+    interviewer's summary."""
+    text_value = str(value).strip() if value else ""
+    if not text_value:
+        return None
+    capped = text_value[:MAX_TRACE_TEXT]
+    if detect_injection(capped):
+        log.warning("agents.tool.injection_detected", tool="get_decision_trace")
+    return capped
+
+
+def _sanitised_trace_content(kind: str, content: dict[str, Any]) -> dict[str, Any]:
+    """Numbers pass through untouched. Every free-text field this tool
+    carries is capped and injection-checked through ``_safe_text``: a human
+    scorecard's summary, the ATS recommendation (model output derived from
+    the candidate's own resume — a second-order injection path), exam/round/
+    session titles, and competency names. No candidate-authored text and no
+    AI prose reach this function at all — the evidence graph itself never
+    puts either in a node's content."""
+    out = dict(content)
+    if kind == "human_scorecard":
+        out["summary"] = _safe_text(out.get("summary"))
+        scores = out.get("scores")
+        if isinstance(scores, dict):
+            out["scores"] = {
+                cid: {"score": v.get("score"), "not_assessed": v.get("not_assessed")}
+                for cid, v in scores.items() if isinstance(v, dict)
+            }
+    elif kind == "screening_ats":
+        out["ats_recommendation"] = _safe_text(out.get("ats_recommendation"))
+    elif kind == "exam_attempt":
+        out["exam"] = _safe_text(out.get("exam"))
+    elif kind == "round_result":
+        criteria = out.get("criteria")
+        if isinstance(criteria, list):
+            out["criteria"] = [
+                {**c, "competency_name": _safe_text(c.get("competency_name"))}
+                if isinstance(c, dict) else c
+                for c in criteria
+            ]
+    elif kind == "interview_session":
+        out["title"] = _safe_text(out.get("title"))
+    elif kind == "stage_move":
+        out["from_round"] = _safe_text(out.get("from_round"))
+        out["to_round"] = _safe_text(out.get("to_round"))
+    return out
+
+
+@registry.tool(
+    name="get_decision_trace",
+    description=(
+        "What existed, by timestamp, when the most recent hire or reject "
+        "decision was recorded for one application: which scorecards, exam "
+        "attempts, the AI interview and other evidence were already on record "
+        "by then, and what only showed up afterwards. States what EXISTED, "
+        "never what the decision-maker actually read or relied on. Use to "
+        "explain or audit a specific hiring decision."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "application_id": {"type": "string", "description": "UUID of the application (enrolment)."},
+            "decision": {
+                "type": "string",
+                "enum": ["latest"],
+                "description": "Which decision to trace. Only 'latest' — the most recent hire or "
+                               "reject — is supported.",
+            },
+        },
+        "required": ["application_id"],
+    },
+    data_class="candidate_pii",
+    allowed_roles=CANDIDATE_PII_ROLES,
+)
+async def _get_decision_trace(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+    not_found = ToolOutput(data={"error": "no such application in this company"})
+    db = _db(ctx)
+    try:
+        enrolment_id = uuid.UUID(str(args.get("application_id", "")).strip())
+        company_id = uuid.UUID(str(ctx.company_id))
+        viewer_user_id = uuid.UUID(str(ctx.actor_id))
+    except (TypeError, ValueError):
+        return not_found
+
+    decision_id = await evidence_graph.latest_decision_id(
+        db, company_id=company_id, enrolment_id=enrolment_id
+    )
+    if decision_id is None:
+        return ToolOutput(
+            data={"error": "no such application in this company, or it has no recorded decision yet"}
+        )
+    decision_row = await evidence_graph.resolve_decision(
+        db, company_id=company_id, decision_id=decision_id
+    )
+    if decision_row is None:  # pragma: no cover — agrees with latest_decision_id by construction
+        return not_found
+
+    try:
+        graph = await evidence_graph.build_graph(
+            db, company_id=company_id, enrolment_id=enrolment_id, viewer_user_id=viewer_user_id,
+        )
+    except evidence_graph.EvidenceGraphError:
+        return not_found
+
+    result = evidence_graph.decision_trace_from_graph(
+        graph, decision=decision_row, decision_id=decision_id
+    )
+
+    items: list[dict[str, Any]] = []
+    citations: list[Citation] = []
+    for item in result.evidence[:MAX_TRACE_EVIDENCE]:
+        node = item.node
+        entry: dict[str, Any] = {
+            "kind": node.kind, "stage": node.stage.name, "produced_by": node.provenance.produced_by,
+            "when": node.occurred_at.isoformat(), "lifecycle": node.lifecycle,
+        }
+        if node.content:
+            entry["content"] = _sanitised_trace_content(node.kind, node.content)
+        if item.changed_after_decision:
+            entry["changed_after_decision"] = item.changed_after_decision
+        items.append(entry)
+        citations.append(
+            Citation(
+                kind=_citation_kind_for(node),  # type: ignore[arg-type]
+                id=node.source.id, label=f"{node.kind} — {node.stage.name}", href=node.href,
+            )
+        )
+
+    # The decision itself, and every other decision on this application, are
+    # never "evidence of themselves" (trace() excludes decision-kind nodes
+    # from evidence/after_decision by construction) — cited here instead, so
+    # the model can still point at "the hire decision on 12 Sep" by id.
+    decision_nodes_by_source_id = {n.source.id: n for n in graph.nodes if n.kind == "decision"}
+    for did in (str(decision_id), *(str(o.id) for o in result.other_decisions)):
+        node = decision_nodes_by_source_id.get(did)
+        if node is not None:
+            citations.append(
+                Citation(kind="decision", id=node.source.id,
+                         label=f"decision — {node.content.get('outcome') if node.content else ''}",
+                         href=node.href)
+            )
+
+    # Not an audit row — handlers may not write. A structlog event only,
+    # alongside the registry's own agents.tool.ok line.
+    log.info("evidence.trace_read", actor_id=ctx.actor_id, enrolment_id=str(enrolment_id))
+
+    return ToolOutput(
+        data={
+            # `result.decision.reason` is already None once the candidate is
+            # erased — decision_trace_from_graph withholds it (AR-5) before
+            # this handler ever sees it, so no LLM-facing surface has to
+            # re-check erasure on its own. `_safe_text(None)` is `None`.
+            # `reason_label` (the taxonomy) is never withheld.
+            "decision": {
+                "outcome": result.decision.outcome, "decided_at": result.decision.decided_at.isoformat(),
+                "reversal": result.decision.reversal, "reason_label": result.decision.reason_label,
+                "reason": _safe_text(result.decision.reason),
+            },
+            "evidence_count": len(result.evidence),
+            "after_decision_count": len(result.after_decision),
+            "truncated": len(result.evidence) > MAX_TRACE_EVIDENCE,
+            "evidence": items,
+            "ai_involvement": {
+                "ai_produced_evidence": result.ai_involvement.ai_produced_evidence,
+                "decided_by": result.ai_involvement.decided_by,
+            },
+        },
+        citations=citations,
     )
 
 

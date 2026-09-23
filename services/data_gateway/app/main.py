@@ -63,6 +63,7 @@ from app.routers.company_board import router as company_board_router
 from app.routers.consent import router as consent_router
 from app.routers.decision_reasons import admin_router as decision_reasons_admin_router
 from app.routers.decision_reasons import hr_router as decision_reasons_hr_router
+from app.routers.evidence_graph import router as evidence_graph_router
 from app.routers.exam_take import router as exam_take_router
 from app.routers.hr_applicants import router as hr_applicants_router
 from app.routers.hr_attention import router as hr_attention_router
@@ -589,6 +590,8 @@ app.include_router(hr_workflows_router)
 # their own assignments.
 app.include_router(hr_scorecards_router)
 app.include_router(hr_checkins_router)
+# PH5-E5: the read-time evidence graph, and one decision's trace through it.
+app.include_router(evidence_graph_router)
 app.include_router(interviewer_router)
 # PH4-O4: decision reason categories (HR reads, super admin configures).
 app.include_router(decision_reasons_hr_router)

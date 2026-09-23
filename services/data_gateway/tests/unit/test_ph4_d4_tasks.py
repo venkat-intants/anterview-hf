@@ -370,15 +370,31 @@ def test_job_tasks_never_calls_lifecycle_mutators() -> None:
 
 
 def test_no_agent_module_references_job_tasks() -> None:
+    """No agent module may import ``job_tasks`` (the config/lifecycle
+    machinery), touch ``round_tasks`` (HR's authored brief), or read
+    ``task_response`` (a candidate's own answer) — those stay behind their own
+    audited routes.
+
+    PH5-E5's ``get_decision_trace`` (``app/agents/tools.py``) is the one
+    reviewed exception to the ``task_submission`` word appearing at all: it
+    cites a ``task_submission`` NODE from the evidence graph
+    (``app/evidence_graph.py``, itself outside ``app/agents/``) — status,
+    timing and consent state only, never a candidate's answer, and never by
+    importing ``job_tasks`` directly. The companion assertions below hold that
+    line: ``tools.py`` still never imports ``job_tasks`` and never mentions
+    ``round_tasks`` or ``task_response``.
+    """
+    exempt_for_task_submission = {APP / "agents" / "tools.py"}
     for base in (APP / "agents", APP.parents[2] / "shared" / "agents"):
         if not base.exists():
             continue
         for path in base.rglob("*.py"):
             text_ = path.read_text(encoding="utf-8").lower()
-            assert "job_tasks" not in text_
-            assert "round_tasks" not in text_
-            assert "task_submission" not in text_
-            assert "task_response" not in text_
+            assert "job_tasks" not in text_, path
+            assert "round_tasks" not in text_, path
+            assert "task_response" not in text_, path
+            if path not in exempt_for_task_submission:
+                assert "task_submission" not in text_, path
 
 
 def test_no_module_here_imports_an_llm_client() -> None:

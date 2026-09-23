@@ -104,6 +104,12 @@ CitationKind = Literal[
     "analytics",
     "audit",
     "role_profile",
+    # PH5-E5: a HUMAN interviewer's scorecard (never reuse "scorecard", which
+    # means the AI one) and a hire/reject decision — nothing represented the
+    # latter before. Kept in sync with web/src/api/agent.ts's Citation union
+    # by test_evidence_graph_citation_kind_parity.
+    "interviewer_scorecard",
+    "decision",
 ]
 
 

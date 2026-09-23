@@ -203,20 +203,23 @@ def _href(applicant_id: uuid.UUID, enrolment_id: uuid.UUID, anchor: str | None =
 
 #: One anchor per node kind. This is HALF of a contract with
 #: ``web/src/components/CandidateDrawer.tsx``: that component owns the other
-#: half — a section carrying each of these as its DOM id. As of this writing
-#: the drawer defines only ``assign-due``, ``assign-round`` and
-#: ``drawer-name``, so every ``href`` this module produces lands on the right
-#: application but does not yet scroll to the right section — a dead anchor,
-#: not a dead link. Keep this mapping and the drawer's section ids in sync;
-#: a mismatch here is silent (the browser just does not jump).
+#: half — a section carrying each of these as its DOM id. The drawer now
+#: defines seven of them: ``screening``, ``answers``, ``round-results``,
+#: ``human-interview``, ``tasks``, ``offers`` and ``history``. There is no
+#: eighth or ninth section for a raw exam attempt or a raw AI interview
+#: session — both surface through the round's own result instead — so
+#: ``exam_attempt`` and ``ai_interview`` point at ``round-results`` too,
+#: deliberately, not as a placeholder. Keep this mapping and the drawer's
+#: section ids in sync; a mismatch here is silent (the browser just does not
+#: jump).
 HREF_ANCHOR: dict[EvidenceNodeKind, str] = {
     "application": "history",
     "screening_ats": "screening",
     "screening_answers": "answers",
     "stage_move": "history",
-    "exam_attempt": "exams",
+    "exam_attempt": "round-results",
     "round_result": "round-results",
-    "ai_interview": "ai-interview",
+    "ai_interview": "round-results",
     "interview_session": "human-interview",
     "human_scorecard": "human-interview",
     "task_submission": "tasks",

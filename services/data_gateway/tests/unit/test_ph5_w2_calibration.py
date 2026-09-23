@@ -32,27 +32,63 @@ def _rows(pattern: dict[str, int], n: int, comp: str = "c1", rnd: str = "r1") ->
 
 
 # ===========================================================================
-# same_direction_share — one wild score must not trip the flag alone
+# same_direction_share — a meaningful mean gap must still point the same way
+# most of the time, or it must not signal on its own (code review fix: the
+# original fixture here failed meaningful_delta on its own, so it proved
+# nothing about the same-direction gate specifically — deleting the gate
+# would have left this test passing unchanged).
 # ===========================================================================
-def test_a_single_wild_score_does_not_signal_on_its_own() -> None:
-    """6 judgements agree the gap is basically zero; a single one is wildly
-    off. The mean gap alone might still clear 0.75, but the sign is not
-    consistent, so no flag should fire."""
-    rows = [
-        ScoreRow("s0", "gen", "e0", "r1", "c1", 5),
-        ScoreRow("s0p", "peer", "e0", "r1", "c1", 1),  # one huge, one-off gap
-    ]
-    for i in range(1, 7):
-        rows.append(ScoreRow(f"s{i}", "gen", f"e{i}", "r1", "c1", 3))
-        rows.append(ScoreRow(f"s{i}p", "peer", f"e{i}", "r1", "c1", 3))
-    (gen, _peer) = sorted(calibrate(rows), key=lambda c: c.interviewer_id)
-    assert gen.interviewer_id == "gen"
-    assert gen.pairs == 7
-    # The mean gap is pulled up by the one wild judgement, but most judgements
-    # show no gap at all — same_direction_share must be low, and no flag.
-    assert gen.same_direction_share is not None
-    assert gen.same_direction_share < 0.7
+def test_a_meaningful_mean_gap_with_inconsistent_direction_does_not_signal() -> None:
+    """A panel of 2 (gen, peer): three judgements gap +2, two gap -1.
+    mean_delta = (2+2+2-1-1)/5 = 0.8, which ALONE clears meaningful_delta
+    (0.75) and pairs (5) — the OLDER, pre-E4 rule would have flagged this.
+    same_direction_share = 3/5 = 0.6 < 0.7, so the new gate must refuse it."""
+    rows = []
+    for i in range(3):  # gap +2: gen 5, peer 1, panel mean 3
+        rows.append(ScoreRow(f"g{i}", "gen", f"e{i}", "r1", "c1", 5))
+        rows.append(ScoreRow(f"p{i}", "peer", f"e{i}", "r1", "c1", 1))
+    for i in range(3, 5):  # gap -1: gen 1, peer 3, panel mean 2
+        rows.append(ScoreRow(f"g{i}", "gen", f"e{i}", "r1", "c1", 1))
+        rows.append(ScoreRow(f"p{i}", "peer", f"e{i}", "r1", "c1", 3))
+    out = {c.interviewer_id: c for c in calibrate(rows)}
+    gen = out["gen"]
+    assert gen.candidates == 5 and gen.pairs == 5
+    assert gen.mean_delta == pytest.approx(0.8)
+    assert gen.same_direction_share == pytest.approx(0.6)
+    assert gen.same_direction_count == 3
     assert gen.flag is None
+
+
+def test_the_same_size_gap_held_consistently_does_signal() -> None:
+    """The mirror of the test above: the SAME +2 gap, on all 5 judgements
+    instead of 3 of 5 — same_direction_share is 1.0, and the flag fires."""
+    rows = []
+    for i in range(5):
+        rows.append(ScoreRow(f"g{i}", "gen", f"e{i}", "r1", "c1", 5))
+        rows.append(ScoreRow(f"p{i}", "peer", f"e{i}", "r1", "c1", 1))
+    out = {c.interviewer_id: c for c in calibrate(rows)}
+    gen = out["gen"]
+    assert gen.mean_delta == pytest.approx(2.0)
+    assert gen.same_direction_share == 1.0
+    assert gen.same_direction_count == 5
+    assert gen.flag == "higher"
+
+
+def test_same_direction_count_is_the_raw_count_the_share_is_computed_from() -> None:
+    """The web sentence ("in 6 of 7 the gap was the same way") must read the
+    server's own count, never reconstruct it as round(share * pairs) — the
+    Wave 1 anti-pattern (code review, PH5-E4 sign-off). 6 of 7 pairs agree."""
+    rows = []
+    for i in range(6):
+        rows.append(ScoreRow(f"g{i}", "gen", f"e{i}", "r1", "c1", 5))
+        rows.append(ScoreRow(f"p{i}", "peer", f"e{i}", "r1", "c1", 3))
+    rows.append(ScoreRow("g6", "gen", "e6", "r1", "c1", 3))
+    rows.append(ScoreRow("p6", "peer", "e6", "r1", "c1", 5))
+    out = {c.interviewer_id: c for c in calibrate(rows)}
+    gen = out["gen"]
+    assert gen.pairs == 7
+    assert gen.same_direction_count == 6
+    assert gen.same_direction_share == pytest.approx(6 / 7, abs=1e-3)
 
 
 def test_a_consistent_gap_still_signals() -> None:

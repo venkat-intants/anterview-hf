@@ -1194,6 +1194,11 @@ async def _get_hr_workload(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
 
 #: Every EvidenceNode kind maps to an existing CitationKind, plus the two
 #: PH5-E5 added (`interviewer_scorecard`, `decision`) — never a made-up kind.
+#: `round_result`'s entry here is the ASSESSMENT-stage default; a human_review
+#: round's result is re-pointed to "interview" by `_citation_kind_for` below,
+#: since a blanket "exam_attempt" would mislabel it. This dict is still the
+#: complete kind->CitationKind whitelist (see
+#: test_citation_kind_by_node_only_uses_declared_citation_kinds).
 _CITATION_KIND_BY_NODE: dict[str, str] = {
     "application": "applicant",
     "screening_ats": "applicant",
@@ -1208,6 +1213,18 @@ _CITATION_KIND_BY_NODE: dict[str, str] = {
     "offer": "applicant",
     "decision": "decision",
 }
+
+
+def _citation_kind_for(node: Any) -> str:
+    """Almost always a straight lookup by node kind. The one exception is
+    ``round_result``: its citation follows which STAGE the round actually
+    was (`interview` for a human_review round, the dict's `exam_attempt`
+    default for an assessment-stage one) — cheap, since `stage.name` is
+    already on the node, and it avoids mislabelling a human_review round's
+    result as an exam attempt."""
+    if node.kind == "round_result" and node.stage.name == "interview":
+        return "interview"
+    return _CITATION_KIND_BY_NODE[node.kind]
 
 MAX_TRACE_EVIDENCE: int = 40
 MAX_TRACE_TEXT: int = 500
@@ -1339,7 +1356,7 @@ async def _get_decision_trace(args: dict[str, Any], ctx: ToolContext) -> ToolOut
         items.append(entry)
         citations.append(
             Citation(
-                kind=_CITATION_KIND_BY_NODE[node.kind],  # type: ignore[arg-type]
+                kind=_citation_kind_for(node),  # type: ignore[arg-type]
                 id=node.source.id, label=f"{node.kind} — {node.stage.name}", href=node.href,
             )
         )

@@ -1,40 +1,7 @@
-"""The evidence graph — PH5-E5, "First-Class Evidence Graph".
+"""Loaders — one per node kind, plus the erasure/href/stage tables they share.
 
-FIRST-CLASS MEANS DECLARED AND QUERYABLE, NOT STORED. There is no
-``evidence_edges`` table, no materialised graph, and nothing here ever writes
-one. Every :class:`~app.schemas.evidence.EvidenceNode` is derived, at read
-time, from rows the existing screens already show (``interviewer_scorecards``,
-``round_results``, ``offers``, ``stage_transitions``, ``task_submissions``,
-…); every edge is computed from timestamps and foreign keys already on those
-rows. Because nothing is copied, DPDP erasure, retention, redaction and
-consent withdrawal are inherited for free FOR EVERY SOURCE ROW THIS MODULE
-READS — they show up on the very next read of this graph, with no erasure
-step and no retention job of this module's own. There is exactly ONE named
-exception: ``stage_transitions.reason`` (a decision's free-text rationale) is
-deliberately NOT redacted at its source on erasure (``erasure_executor.py``
-EXCLUDED_TABLES, AR-5) — this module compensates for that at render time,
-withholding it (never the source row) once ``candidate.erased`` is true. See
-``_ERASED_REASON_HIDDEN``/``_ERASED_REASON_OMISSION`` and criterion E5's
-security review.
-
-"First-class" is expressed as: a closed, typed vocabulary
-(``app/schemas/evidence.py``), one ``STAGE_OF_ROUND_KIND`` map covering every
-``ck_workflow_rounds_kind`` value, one declared loader per node kind, and two
-pure functions — :func:`assemble` (structural edges) and :func:`trace`
-(what existed at a decision, and what did not). This module is read-only: it
-never calls ``record_transition``, ``record_round_move``, ``record_result``,
-``record_final_decision`` or anything else that writes, and it never inserts
-an audit row itself — callers (the router, never a tool) own that, so this
-module stays safe for the read-only agent layer to call directly.
-
-HONEST SEMANTICS, non-negotiable
----------------------------------
-The decision edge is ``available_at_decision``, computed purely by time:
-``node.recorded_at <= decision.occurred_at``. We can prove what existed in
-the system when a person decided. We cannot prove what they read or relied
-on — so nothing here is ever called ``supported_by``. Evidence recorded after
-the decision is never silently folded into ``evidence[]``; it goes in
-``after_decision[]``, flagged.
+Every query binds ``company_id`` explicitly, on top of whatever composite FK
+already enforces it (defence in depth).
 
 WHAT THIS MODULE NEVER READS
 ``audit_log`` (AR-5 trigger (b), ``docs/ACCEPTED-RISKS.md``) — the decision
@@ -46,6 +13,15 @@ some of the underlying columns are read: offer compensation figures, the text
 of a candidate's screening answers, any AI-generated prose (an ATS summary, a
 scorer's rationale, a round result's own evidence text — reduced to a
 boolean), and candidate contact details. See ``OMITTED_ALWAYS``.
+
+AR-5: ``stage_transitions.reason`` (a decision's free-text rationale) is
+deliberately NOT redacted at its source on erasure (``erasure_executor.py``
+EXCLUDED_TABLES) — that is a defensible choice for HR reading their own
+history, but not for a NEW surface that also names the candidate
+(``candidate.erased``/``[redacted]``) right next to that prose and ships it to
+an LLM (``get_decision_trace``). ``_decision_nodes`` therefore withholds it —
+never the source row, only this graph's rendering of it — once the candidate
+is erased. See ``_ERASED_REASON_HIDDEN``/``_ERASED_REASON_OMISSION``.
 
 KNOWN, DELIBERATE LIMIT — independence and ``round_result``
 A ``round_result`` node (a round's pass/fail outcome and per-criterion scores)
@@ -61,10 +37,8 @@ thinking every round-scoped node here is independence-safe.
 from __future__ import annotations
 
 import uuid
-from collections import Counter
-from collections.abc import Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -76,26 +50,13 @@ from app.interviewer_scorecards import scorecards_for_enrolment
 from app.job_tasks import consent_withdrawn as _task_consent_withdrawn
 from app.schemas.evidence import (
     ActorRef,
-    AfterDecisionItem,
-    AiInvolvement,
-    CandidateRef,
-    DecisionDetail,
-    DecisionSummary,
-    EvidenceEdge,
-    EvidenceGraph,
     EvidenceNode,
     EvidenceNodeKind,
-    EvidenceScope,
     EvidenceStage,
     OmittedItem,
-    OtherDecisionRef,
     Provenance,
-    RequisitionRef,
     SourceRef,
     StageInfo,
-    TraceEvidenceItem,
-    TracePathStep,
-    WorkflowRef,
 )
 from app.workflows import load_criteria
 
@@ -243,7 +204,8 @@ def _erased_expr_true(full_name: str | None, email: str | None, has_erasure_requ
 
 @dataclass(frozen=True)
 class _EdgeLink:
-    """What one node points at, for :func:`assemble` to turn into edges.
+    """What one node points at, for :func:`app.evidence_graph.assemble.assemble`
+    to turn into edges.
 
     Not returned to any caller — a loader's private notes to itself. Every
     field is a node id or None; ``assemble`` drops anything whose target is
@@ -258,104 +220,7 @@ class _EdgeLink:
     follows_decision_of: str | None = None
 
 
-def assemble(nodes: Sequence[EvidenceNode], links: Sequence[_EdgeLink] = ()) -> list[EvidenceEdge]:
-    """Pure: every node (but the application itself) is ``part_of`` it, plus
-    whatever ``supersedes`` / ``originates_from`` / ``follows_decision`` links
-    the loaders recorded. An edge whose target is not among ``nodes`` is
-    silently dropped — never a dangling reference.
-    """
-    ids = {n.id for n in nodes}
-    application_id = next((n.id for n in nodes if n.kind == "application"), None)
-    edges: list[EvidenceEdge] = []
-    for n in nodes:
-        if n.kind != "application" and application_id is not None and application_id in ids:
-            edges.append(EvidenceEdge(from_=n.id, to=application_id, kind="part_of"))
-    for link in links:
-        if link.node_id not in ids:
-            continue
-        if link.supersedes is not None and link.supersedes in ids:
-            edges.append(EvidenceEdge(from_=link.node_id, to=link.supersedes, kind="supersedes"))
-        if link.originates_from is not None and link.originates_from in ids:
-            edges.append(
-                EvidenceEdge(from_=link.node_id, to=link.originates_from, kind="originates_from")
-            )
-        if link.follows_decision_of is not None and link.follows_decision_of in ids:
-            edges.append(
-                EvidenceEdge(from_=link.node_id, to=link.follows_decision_of, kind="follows_decision")
-            )
-    return edges
-
-
-def availability_edges(nodes: Sequence[EvidenceNode], *, decision: EvidenceNode) -> list[EvidenceEdge]:
-    """Pure: the honest ``available_at_decision`` edges for one decision.
-
-    ``recorded_at <= decision.occurred_at`` and nothing else — this is a
-    statement about what existed, never about what was read or relied on.
-    Equal timestamps count as available (``<=``, not ``<``): a decision and
-    the evidence it was based on are frequently recorded in the same
-    transaction.
-    """
-    return [
-        EvidenceEdge(from_=decision.id, to=n.id, kind="available_at_decision")
-        for n in nodes
-        if n.kind != "decision" and n.recorded_at <= decision.occurred_at
-    ]
-
-
-def trace(
-    nodes: Sequence[EvidenceNode], edges: Sequence[EvidenceEdge], *, decision: EvidenceNode
-) -> tuple[list[TraceEvidenceItem], list[AfterDecisionItem]]:
-    """Pure: split every non-decision node into what existed at the decision
-    and what came strictly after it, with a one-hop path back to whatever a
-    node ``originates_from``.
-
-    ``screening_ats`` is the one deliberate exception to the time cutoff
-    (Q12): the ATS score is a single mutable field with no history of its
-    own, so there is no way to show "what it was" at decision time — only
-    whether it has been recomputed since. It always appears in ``evidence``
-    (never silently dropped into ``after_decision``), flagged via
-    ``changed_after_decision`` when it was in fact recorded later, so it is
-    never *silently* mixed in as though it certainly existed unchanged.
-    """
-    originates = {e.from_: e.to for e in edges if e.kind == "originates_from"}
-    superseded_by: dict[str, list[str]] = {}
-    for e in edges:
-        if e.kind == "supersedes":
-            superseded_by.setdefault(e.to, []).append(e.from_)
-    by_id = {n.id: n for n in nodes}
-    available_ids = {e.to for e in availability_edges(nodes, decision=decision)}
-
-    def _changed_after(node: EvidenceNode) -> str | None:
-        if node.kind == "screening_ats" and node.recorded_at > decision.occurred_at:
-            return "re-scored after the decision"
-        for newer_id in superseded_by.get(node.id, ()):
-            newer = by_id.get(newer_id)
-            if newer is not None and newer.recorded_at > decision.occurred_at:
-                return "corrected after the decision"
-        return None
-
-    evidence: list[TraceEvidenceItem] = []
-    after: list[AfterDecisionItem] = []
-    for node in nodes:
-        if node.kind == "decision":
-            continue
-        path = [TracePathStep(node_id=node.id)]
-        target = originates.get(node.id)
-        if target is not None and target in by_id:
-            path.append(TracePathStep(node_id=target, edge="originates_from"))
-        if node.kind == "screening_ats" or node.id in available_ids:
-            evidence.append(
-                TraceEvidenceItem(node=node, path=path, changed_after_decision=_changed_after(node))
-            )
-        else:
-            after.append(AfterDecisionItem(node=node))
-    return evidence, after
-
-
-# ---------------------------------------------------------------------------
-# Loaders — one per node kind. Every query binds company_id explicitly, on
-# top of whatever composite FK already enforces it (defence in depth).
-# ---------------------------------------------------------------------------
+_DECISION_STATUSES: frozenset[str] = frozenset({"hired", "rejected"})
 
 
 async def _load_scope(
@@ -454,9 +319,6 @@ async def _screening_answers_node(
         content={"count": int(row["n"])},
         href=_node_href("screening_answers", scope["applicant_id"], enrolment_id),
     )
-
-
-_DECISION_STATUSES: frozenset[str] = frozenset({"hired", "rejected"})
 
 
 async def _stage_move_nodes(
@@ -1034,6 +896,23 @@ async def _task_submission_nodes(
     return nodes, links
 
 
+def _latest_hire_at_or_before(decision_nodes: list[EvidenceNode], when: datetime) -> str | None:
+    """Pure: which hire (if any) an offer created/recorded at ``when`` follows
+    — the most recent hire decision at or before it.
+
+    A reversal (a later reject) does not retroactively un-link an offer from
+    the hire it followed; a LATER hire recorded after a reversal is a new
+    decision, and only an offer created at or after IT follows that one.
+    Split out so the selection itself — not just ``assemble()`` turning an
+    already-chosen link into an edge — is directly unit-testable.
+    """
+    hires_by_time = sorted(
+        (n for n in decision_nodes if isinstance(n.content, dict) and n.content.get("outcome") == "hired"),
+        key=lambda n: n.occurred_at,
+    )
+    return next((n.id for n in reversed(hires_by_time) if n.occurred_at <= when), None)
+
+
 async def _offer_nodes(
     db: AsyncSession,
     *,
@@ -1056,10 +935,6 @@ async def _offer_nodes(
     ).mappings().all()
     if not rows:
         return [], []
-    hires_by_time = sorted(
-        (n for n in decision_nodes if isinstance(n.content, dict) and n.content.get("outcome") == "hired"),
-        key=lambda n: n.occurred_at,
-    )
     nodes: list[EvidenceNode] = []
     links: list[_EdgeLink] = []
     for r in rows:
@@ -1078,23 +953,12 @@ async def _offer_nodes(
                 href=_node_href("offer", scope["applicant_id"], enrolment_id),
             )
         )
-        follows = next(
-            (n.id for n in reversed(hires_by_time) if n.occurred_at <= r["created_at"]), None
-        )
+        follows = _latest_hire_at_or_before(decision_nodes, r["created_at"])
         links.append(_EdgeLink(node_id=node_id, follows_decision_of=follows))
     return nodes, links
 
 
-#: AR-5: ``stage_transitions.reason`` is free text a person typed about the
-#: candidate, and it is deliberately NOT redacted on erasure
-#: (``erasure_executor.py`` EXCLUDED_TABLES) — the ledger's rationale is meant
-#: to survive for audit. That is a defensible choice for HR reading their own
-#: history, but not for a NEW surface that also names the candidate
-#: (``candidate.erased``/``[redacted]``) right next to that prose and ships it
-#: to an LLM (``get_decision_trace``). So this module withholds it — never the
-#: source row, only this graph's rendering of it — once the candidate is
-#: erased. ``reason_code``/``reason_label`` stay: they are the company's fixed
-#: taxonomy, not personal data.
+#: AR-5: see the module docstring's AR-5 section.
 _ERASED_REASON_HIDDEN = "rationale withheld: the candidate has been erased (AR-5)"
 
 _ERASED_REASON_OMISSION = OmittedItem(
@@ -1146,270 +1010,3 @@ async def _decision_nodes(
         )
         for r in rows
     ]
-
-
-# ---------------------------------------------------------------------------
-# Public entry points
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _Gathered:
-    scope: dict[str, Any]
-    erased: bool = False
-    nodes: list[EvidenceNode] = field(default_factory=list)
-    links: list[_EdgeLink] = field(default_factory=list)
-
-
-async def _gather(
-    db: AsyncSession, *, company_id: uuid.UUID, enrolment_id: uuid.UUID, viewer_user_id: uuid.UUID
-) -> _Gathered:
-    scope = await _load_scope(db, company_id=company_id, enrolment_id=enrolment_id)
-    erased = _erased_expr_true(scope["full_name"], scope["email"], bool(scope["has_erasure_request"]))
-    g = _Gathered(scope=scope, erased=erased)
-    g.nodes.append(_application_node(scope, enrolment_id))
-
-    ats_node = _screening_ats_node(scope, enrolment_id)
-    if ats_node is not None:
-        g.nodes.append(ats_node)
-
-    answers_node = await _screening_answers_node(
-        db, company_id=company_id, enrolment_id=enrolment_id, scope=scope
-    )
-    if answers_node is not None:
-        g.nodes.append(answers_node)
-
-    g.nodes.extend(await _stage_move_nodes(db, company_id=company_id, enrolment_id=enrolment_id, scope=scope))
-    g.nodes.extend(await _exam_attempt_nodes(db, company_id=company_id, enrolment_id=enrolment_id, scope=scope))
-
-    ai_nodes, scorecard_id_to_invite = await _ai_interview_nodes(
-        db, company_id=company_id, enrolment_id=enrolment_id, scope=scope
-    )
-    g.nodes.extend(ai_nodes)
-
-    rr_nodes, rr_links = await _round_result_nodes(
-        db, company_id=company_id, enrolment_id=enrolment_id, scope=scope,
-        scorecard_id_to_invite=scorecard_id_to_invite,
-    )
-    g.nodes.extend(rr_nodes)
-    g.links.extend(rr_links)
-
-    g.nodes.extend(
-        await _interview_session_nodes(db, company_id=company_id, enrolment_id=enrolment_id, scope=scope)
-    )
-
-    hs_nodes, hs_links = await _human_scorecard_nodes(
-        db, company_id=company_id, enrolment_id=enrolment_id, viewer_user_id=viewer_user_id, scope=scope,
-    )
-    g.nodes.extend(hs_nodes)
-    g.links.extend(hs_links)
-
-    ts_nodes, ts_links = await _task_submission_nodes(
-        db, company_id=company_id, enrolment_id=enrolment_id, scope=scope
-    )
-    g.nodes.extend(ts_nodes)
-    g.links.extend(ts_links)
-
-    decision_nodes = await _decision_nodes(
-        db, company_id=company_id, enrolment_id=enrolment_id, scope=scope, erased=erased,
-    )
-    g.nodes.extend(decision_nodes)
-
-    offer_nodes, offer_links = await _offer_nodes(
-        db, company_id=company_id, enrolment_id=enrolment_id, scope=scope, decision_nodes=decision_nodes,
-    )
-    g.nodes.extend(offer_nodes)
-    g.links.extend(offer_links)
-
-    return g
-
-
-async def build_graph(
-    db: AsyncSession, *, company_id: uuid.UUID, enrolment_id: uuid.UUID, viewer_user_id: uuid.UUID
-) -> EvidenceGraph:
-    """Assemble the full, declared evidence graph for one application.
-
-    Read-only: writes nothing, and never raises for an authorisation reason a
-    caller (a route or a read-only agent tool) should not be trusted to
-    interpret consistently — a wrong company or a soft-deleted enrolment both
-    raise :class:`EvidenceGraphError` (404). Any audit row is the CALLER's
-    responsibility — this function must stay safe for a read-only tool to
-    call directly.
-    """
-    g = await _gather(db, company_id=company_id, enrolment_id=enrolment_id, viewer_user_id=viewer_user_id)
-    edges = assemble(g.nodes, g.links)
-    decision_nodes = [n for n in g.nodes if n.kind == "decision" and isinstance(n.content, dict)]
-    # Literalised, not reconstructed: every decision's available_at_decision
-    # edges are real EvidenceEdge objects here, not just an implicit ordering
-    # a reader would have to infer from timestamps (E5-1, E5-10).
-    for decision_node in decision_nodes:
-        edges.extend(availability_edges(g.nodes, decision=decision_node))
-    decisions = [
-        DecisionSummary(id=int(n.source.id), outcome=n.content["outcome"], decided_at=n.occurred_at)  # type: ignore[index]
-        for n in decision_nodes
-    ]
-    scope = g.scope
-    omitted = list(OMITTED_ALWAYS)
-    if g.erased:
-        omitted.append(_ERASED_REASON_OMISSION)
-    return EvidenceGraph(
-        generated_at=datetime.now(tz=UTC),
-        scope=EvidenceScope(
-            company_id=str(company_id), enrolment_id=str(enrolment_id), applicant_id=str(scope["applicant_id"])
-        ),
-        candidate=CandidateRef(name=scope["full_name"], erased=g.erased),
-        requisition=RequisitionRef(
-            id=str(scope["requisition_id"]) if scope.get("requisition_id_checked") else None,
-            title=scope["requisition_title"],
-        ),
-        workflow=WorkflowRef(
-            id=str(scope["workflow_id"]) if scope["workflow_id"] else None,
-            version=scope["workflow_version"],
-        ),
-        nodes=g.nodes, edges=edges, decisions=decisions, omitted=omitted,
-    )
-
-
-def blinded_round_count(graph: EvidenceGraph) -> int:
-    """How many rounds this graph hid content for, on independence grounds —
-    for the audit row only, never shown to the caller of the route itself."""
-    return len(
-        {
-            n.stage.round_id
-            for n in graph.nodes
-            if n.kind == "human_scorecard"
-            and n.content_hidden_reason is not None
-            and "independence" in n.content_hidden_reason
-        }
-    )
-
-
-@dataclass(frozen=True)
-class _DecisionRow:
-    enrolment_id: uuid.UUID
-    outcome: str
-    reversal: bool
-    decided_at: datetime
-    decided_by: ActorRef
-    reason_code: str | None
-    reason_label: str | None
-    reason: str | None
-
-
-async def resolve_decision(
-    db: AsyncSession, *, company_id: uuid.UUID, decision_id: int
-) -> _DecisionRow | None:
-    """The stage_transitions row a decision id names, if — and only if — it is
-    this company's, a real (non-automated) hire or reject, and its enrolment
-    is still live. None otherwise, including "no such id" and "wrong
-    company", so a caller (404, never 403) cannot tell those apart.
-    """
-    row = (
-        await db.execute(
-            text(
-                "SELECT t.id, t.enrolment_id, t.from_status, t.to_status, t.actor_user_id,"
-                "       t.occurred_at, t.reason, t.reason_code, t.reason_label,"
-                "       u.full_name AS actor_name"
-                "  FROM stage_transitions t"
-                "  JOIN enrolments e ON e.id = t.enrolment_id AND e.company_id = t.company_id"
-                "  LEFT JOIN users u ON u.id = t.actor_user_id"
-                " WHERE t.id = :id AND t.company_id = :c"
-                "   AND t.to_status = ANY(:decisions) AND NOT t.automated"
-                "   AND e.deleted_at IS NULL"
-            ),
-            {"id": decision_id, "c": company_id, "decisions": sorted(_DECISION_STATUSES)},
-        )
-    ).mappings().first()
-    if row is None:
-        return None
-    return _DecisionRow(
-        enrolment_id=row["enrolment_id"],
-        outcome=row["to_status"],
-        reversal=row["from_status"] == "hired" and row["to_status"] == "rejected",
-        decided_at=row["occurred_at"],
-        decided_by=ActorRef(user_id=str(row["actor_user_id"]) if row["actor_user_id"] else None, name=row["actor_name"]),
-        reason_code=row["reason_code"], reason_label=row["reason_label"], reason=row["reason"],
-    )
-
-
-async def latest_decision_id(
-    db: AsyncSession, *, company_id: uuid.UUID, enrolment_id: uuid.UUID
-) -> int | None:
-    """The most recent real decision on this application, or None — for the
-    copilot tool's ``decision="latest"``. Scoped to ``company_id`` exactly
-    like every other read here."""
-    return await db.scalar(
-        text(
-            "SELECT t.id FROM stage_transitions t"
-            "  JOIN enrolments e ON e.id = t.enrolment_id AND e.company_id = t.company_id"
-            " WHERE t.enrolment_id = :e AND t.company_id = :c"
-            "   AND t.to_status = ANY(:decisions) AND NOT t.automated"
-            "   AND e.deleted_at IS NULL"
-            " ORDER BY t.occurred_at DESC, t.id DESC LIMIT 1"
-        ),
-        {"e": enrolment_id, "c": company_id, "decisions": sorted(_DECISION_STATUSES)},
-    )
-
-
-def decision_trace_from_graph(graph: EvidenceGraph, *, decision: _DecisionRow, decision_id: int) -> Any:
-    """Pure: the trace view over an already-assembled graph.
-
-    Imported lazily to avoid a circular type reference at module load —
-    kept as a plain function so it stays trivially unit-testable over
-    fixtures, per the design's "pure assemble()/trace()" requirement.
-    """
-    from app.schemas.evidence import DecisionTrace  # noqa: PLC0415
-
-    edges = graph.edges  # already assembled by build_graph(), availability edges included
-    decision_node = next(n for n in graph.nodes if n.kind == "decision" and n.source.id == str(decision_id))
-    evidence, after = trace(graph.nodes, edges, decision=decision_node)
-    other = [
-        OtherDecisionRef(
-            id=int(n.source.id), outcome=n.content["outcome"],  # type: ignore[index]
-            decided_at=n.occurred_at, reversal=bool(n.content["reversal"]),  # type: ignore[index]
-        )
-        for n in graph.nodes
-        if n.kind == "decision" and n.source.id != str(decision_id)
-    ]
-    by_stage: dict[str, int] = dict(Counter(item.node.stage.name for item in evidence))
-    ai_count = sum(1 for item in evidence if item.node.provenance.produced_by == "ai")
-
-    # Literalise decision -> evidence -> origin as real edges (E5-1, E5-10):
-    # build_graph() already computed this decision's own available_at_decision
-    # edges (pure, honest, time-only) — reuse them rather than recompute, and
-    # add the originates_from edge already on each evidence item's own path,
-    # so a reader can walk the whole chain from `edges` alone. screening_ats,
-    # when shown in evidence[] past its honest window, gets no edge here —
-    # completeness of the edge list never overrides its honesty.
-    availability = [
-        e for e in edges if e.kind == "available_at_decision" and e.from_ == decision_node.id
-    ]
-    origin_edges = [
-        EvidenceEdge(from_=item.node.id, to=step.node_id, kind=step.edge)
-        for item in evidence
-        for step in item.path
-        if step.edge is not None
-    ]
-    trace_edges = [*availability, *origin_edges]
-
-    # The traced decision's own node already has its `reason` withheld by
-    # _decision_nodes when the candidate is erased — read it from there
-    # rather than from `decision` (a separate raw read with no erasure check
-    # of its own), so there is exactly one place this rule is applied.
-    node_content = decision_node.content if isinstance(decision_node.content, dict) else {}
-    reason = node_content.get("reason", decision.reason)
-
-    omitted = list(OMITTED_ALWAYS)
-    if graph.candidate.erased:
-        omitted.append(_ERASED_REASON_OMISSION)
-
-    return DecisionTrace(
-        decision=DecisionDetail(
-            id=decision_id, enrolment_id=str(decision.enrolment_id), outcome=decision.outcome,  # type: ignore[arg-type]
-            reversal=decision.reversal, decided_at=decision.decided_at, decided_by=decision.decided_by,
-            reason_code=decision.reason_code, reason_label=decision.reason_label, reason=reason,
-        ),
-        other_decisions=other, evidence=evidence, after_decision=after, edges=trace_edges,
-        by_stage=by_stage, ai_involvement=AiInvolvement(ai_produced_evidence=ai_count),
-        omitted=omitted,
-    )

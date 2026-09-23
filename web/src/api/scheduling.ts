@@ -434,6 +434,12 @@ export interface CalibrationRow {
   /** PH5-E4 — the share of `pairs` whose gap points the same way as
    *  `mean_delta`; null exactly when `mean_delta` is. */
   same_direction_share: number | null;
+  /** PH5-E4 — the server-computed COUNT behind `same_direction_share` (e.g.
+   *  6 of `pairs`); null exactly when `same_direction_share` is. Render this
+   *  directly for "in N of pairs the gap was the same way" — never
+   *  `Math.round(same_direction_share * pairs)`, which can silently disagree
+   *  with the server's own count. */
+  same_direction_count: number | null;
   flag: 'higher' | 'lower' | null;
   /** PH5-E4 — the same paired-gap method, one frozen criterion at a time. */
   by_criterion: CriterionGap[];

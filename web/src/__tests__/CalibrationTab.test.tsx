@@ -89,6 +89,7 @@ function interviewerRow(over: Partial<CalibrationRow> = {}): CalibrationRow {
     pairs: 9,
     mean_delta: 1.3,
     same_direction_share: 0.857,
+    same_direction_count: 8,
     flag: 'higher',
     by_criterion: [],
     ...over,
@@ -186,6 +187,7 @@ describe('CalibrationTab — suppression (security fix)', () => {
             pairs: 0,
             mean_delta: null,
             same_direction_share: null,
+            same_direction_count: null,
             flag: null,
           }),
         ],
@@ -203,7 +205,7 @@ describe('CalibrationTab — suppression (security fix)', () => {
 });
 
 describe('CalibrationTab — flags in words (PH5-E4 §4.3 wording)', () => {
-  it('states the paired-gap sentence with the panel size and same-direction count', async () => {
+  it('states the paired-gap sentence with the server’s own same-direction count', async () => {
     schedulingApi.getCalibration.mockResolvedValue(
       calibration({
         interviewers: [
@@ -211,6 +213,36 @@ describe('CalibrationTab — flags in words (PH5-E4 §4.3 wording)', () => {
             pairs: 7,
             mean_delta: 0.9,
             same_direction_share: 6 / 7,
+            same_direction_count: 6,
+            flag: 'higher',
+          }),
+        ],
+      }),
+    );
+    renderTab();
+
+    expect(await screen.findByText('Rekha Iyer')).toBeInTheDocument();
+    // The count is the server's own `same_direction_count` — never
+    // Math.round(same_direction_share * pairs), which can silently disagree
+    // with it.
+    expect(
+      screen.getByText(
+        'Scores higher than the rest of the panel on the same candidates, by 0.9 on average across 7 shared judgements; in 6 of 7 the gap was the same way.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Same direction in 86% of shared judgements.')).toBeInTheDocument();
+    expect(screen.getByText('Scores higher')).toBeInTheDocument();
+  });
+
+  it('falls back to the share as a percentage when the server omits same_direction_count, and never reconstructs a count', async () => {
+    schedulingApi.getCalibration.mockResolvedValue(
+      calibration({
+        interviewers: [
+          interviewerRow({
+            pairs: 7,
+            mean_delta: 0.9,
+            same_direction_share: 6 / 7,
+            same_direction_count: null,
             flag: 'higher',
           }),
         ],
@@ -221,11 +253,11 @@ describe('CalibrationTab — flags in words (PH5-E4 §4.3 wording)', () => {
     expect(await screen.findByText('Rekha Iyer')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Scores higher than the rest of the panel on the same candidates, by 0.9 on average across 7 shared judgements; in 6 of 7 the gap was the same way.',
+        'Scores higher than the rest of the panel on the same candidates, by 0.9 on average across 7 shared judgements; the gap pointed the same way in about 86% of them.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText('Same direction in 86% of shared judgements.')).toBeInTheDocument();
-    expect(screen.getByText('Scores higher')).toBeInTheDocument();
+    // Never a reconstructed "in N of 7" when the server did not send N.
+    expect(screen.queryByText(/in \d+ of \d+ the gap/)).not.toBeInTheDocument();
   });
 
   it('names no candidates — the API sends none, and this tab does not invent any', async () => {
@@ -249,6 +281,7 @@ describe('CalibrationTab — never ranks interviewers', () => {
             flag: null,
             mean_delta: null,
             same_direction_share: null,
+            same_direction_count: null,
           }),
           interviewerRow({
             user_id: 'iv-a',
@@ -256,6 +289,7 @@ describe('CalibrationTab — never ranks interviewers', () => {
             flag: null,
             mean_delta: null,
             same_direction_share: null,
+            same_direction_count: null,
           }),
         ],
       }),
@@ -557,6 +591,71 @@ describe('CalibrationTab — round picker', () => {
     expect(await screen.findByRole('option', { name: 'Take-home task' })).toBeInTheDocument();
     expect(
       await screen.findByRole('option', { name: 'Portfolio review (v1, archived)' }),
+    ).toBeInTheDocument();
+  });
+
+  it('caps the archived versions it fans out to, and says how many are not listed', async () => {
+    schedulingApi.getCalibration.mockResolvedValue(calibration());
+    // 9 archived versions plus one published — a requisition cloned and
+    // archived many times must not turn the round picker into 10 parallel
+    // GET /workflows/{id} requests.
+    const archivedSummaries = Array.from({ length: 9 }, (_, i) => ({
+      id: `wf-archived-${i + 1}`,
+      version: i + 1,
+      status: 'archived' as const,
+      name: null,
+      rounds: 1,
+      enrolled_candidates: 1,
+      published_at: '2026-01-01T00:00:00.000Z',
+      created_at: '2026-01-01T00:00:00.000Z',
+    }));
+    const publishedSummary = {
+      id: 'wf-published',
+      version: 10,
+      status: 'published' as const,
+      name: null,
+      rounds: 1,
+      enrolled_candidates: 1,
+      published_at: '2026-08-01T00:00:00.000Z',
+      created_at: '2026-07-01T00:00:00.000Z',
+    };
+    workflowsApi.listWorkflows.mockResolvedValue([publishedSummary, ...archivedSummaries]);
+    workflowsApi.getWorkflow.mockImplementation((id: string) =>
+      Promise.resolve({
+        id,
+        requisition_id: 'req-1',
+        version: id === 'wf-published' ? 10 : Number(id.split('-').pop()),
+        status: id === 'wf-published' ? 'published' : 'archived',
+        name: null,
+        editable: false,
+        review_status: 'approved',
+        role_profile_id: null,
+        settings: {},
+        published_at: null,
+        rounds: [],
+      }),
+    );
+    const user = userEvent.setup();
+    renderTab();
+
+    await screen.findByRole('option', { name: 'Backend Engineer' });
+    await user.selectOptions(screen.getByLabelText('Opening'), 'req-1');
+
+    // The published version plus the 5 most recent archived ones — never
+    // one request per archived version on file.
+    await waitFor(() => expect(workflowsApi.getWorkflow).toHaveBeenCalledTimes(6));
+    const requestedIds = workflowsApi.getWorkflow.mock.calls.map((c) => c[0] as string);
+    expect(requestedIds).toContain('wf-published');
+    // Newest-first: versions 9, 8, 7, 6, 5 — not 1 through 5.
+    for (const v of [9, 8, 7, 6, 5]) {
+      expect(requestedIds).toContain(`wf-archived-${v}`);
+    }
+    for (const v of [1, 2, 3, 4]) {
+      expect(requestedIds).not.toContain(`wf-archived-${v}`);
+    }
+
+    expect(
+      await screen.findByText('4 older archived versions are not listed.'),
     ).toBeInTheDocument();
   });
 });

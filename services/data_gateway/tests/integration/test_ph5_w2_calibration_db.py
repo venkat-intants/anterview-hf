@@ -453,6 +453,63 @@ async def test_calibration_never_sees_another_companys_scorecards(db: AsyncSessi
 
 
 # ===========================================================================
+# The drill-down never shows a not-yet-shared judgement as agreement
+# ===========================================================================
+async def test_judgements_excludes_rows_nobody_else_has_scored_yet(db: AsyncSession) -> None:
+    """5 candidates scored ONLY by seed.interviewer (panel_size 1 — nobody
+    else has scored them yet, so their gap would compute to exactly 0.00,
+    which reads as "agreed with the panel" rather than "not yet shared") plus
+    1 candidate a peer ALSO scored (panel_size 2, a real shared judgement).
+    The drill-down must return only the shared one."""
+    seed = await _seed_company(db)
+    await _grant_role(db, seed.hr, "hr_manager")
+    await _grant_role(db, seed.interviewer, "interviewer")
+    peer = uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO users (id, email, company_id) VALUES (:u, :e, :c)"),
+        {"u": peer, "e": f"peer-{peer.hex[:8]}@w2.test", "c": seed.company},
+    )
+
+    for _ in range(5):
+        e = await _application(db, seed)
+        await _human_scorecard(db, seed, e, interviewer=seed.interviewer, score=4)
+
+    shared = await _application(db, seed)
+    await _human_scorecard(db, seed, shared, interviewer=seed.interviewer, score=4)
+    await _human_scorecard(db, seed, shared, interviewer=peer, score=2)
+
+    start, end = _window()
+    out = await judgements(
+        db, company_id=seed.company, interviewer_id=seed.interviewer, start=start, end=end,
+        requisition_id=None, round_id=None, criterion_key=None, actor=seed.hr, meta=_META,
+    )
+    assert out["total"] == 1
+    assert out["rows"][0]["enrolment_id"] == str(shared)
+
+
+async def test_judgements_refuses_a_round_id_that_disagrees_with_criterion_key(
+    db: AsyncSession,
+) -> None:
+    """An explicit 422, not left to the suppression check to fail closed on
+    (code review fix): round_id and the round embedded in criterion_key must
+    agree, or the query would silently filter by the wrong round."""
+    seed = await _seed_company(db)
+    await _grant_role(db, seed.hr, "hr_manager")
+    await _grant_role(db, seed.interviewer, "interviewer")
+    other_round = uuid.uuid4()
+
+    start, end = _window()
+    with pytest.raises(PanelError) as exc_info:
+        await judgements(
+            db, company_id=seed.company, interviewer_id=seed.interviewer, start=start, end=end,
+            requisition_id=None, round_id=other_round,
+            criterion_key=f"{seed.round_id}:communication", actor=seed.hr, meta=_META,
+        )
+    assert exc_info.value.status_code == 422
+    assert "round_id" in exc_info.value.detail
+
+
+# ===========================================================================
 # Outcome linkage
 # ===========================================================================
 async def test_hires_band_by_current_human_interviewer_score(db: AsyncSession) -> None:
@@ -722,6 +779,9 @@ async def test_the_judgements_drilldown_audit_row_carries_no_candidate_names(
             )
         )
     ).mappings().first()
-    if audit is not None:
-        details_text = str(audit["details"])
-        assert "Applicant" not in details_text
+    # Assert the row exists FIRST — a version of this test that only checked
+    # candidate-name absence when a row happened to exist would still pass if
+    # the audit write were deleted entirely (code review fix).
+    assert audit is not None, "panel.calibration.evidence_viewed was not audited at all"
+    details_text = str(audit["details"])
+    assert "Applicant" not in details_text

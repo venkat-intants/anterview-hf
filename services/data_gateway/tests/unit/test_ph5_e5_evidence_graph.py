@@ -12,7 +12,9 @@ that does not need a database: the pure ``assemble()``/``trace()``/
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
+import pkgutil
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -68,8 +70,26 @@ def _node(
     )
 
 
+def _source_of(module: Any) -> str:
+    """The source of a plain module, or the CONCATENATED source of every
+    submodule of a package.
+
+    ``app.evidence_graph`` is a package now (loaders.py/assemble.py/graph.py,
+    re-exported through ``__init__.py``) — a guard that only ever inspected
+    ``inspect.getsource(eg)`` would see just ``__init__.py``'s handful of
+    re-export lines and trivially pass without looking at any real code.
+    """
+    if not hasattr(module, "__path__"):
+        return inspect.getsource(module)
+    parts = [inspect.getsource(module)]
+    for info in pkgutil.iter_modules(module.__path__):
+        sub = importlib.import_module(f"{module.__name__}.{info.name}")
+        parts.append(inspect.getsource(sub))
+    return "\n".join(parts)
+
+
 def _calls(module: Any) -> set[str]:
-    tree = ast.parse(inspect.getsource(module))
+    tree = ast.parse(_source_of(module))
     names: set[str] = set()
     for n in ast.walk(tree):
         if isinstance(n, ast.Call):
@@ -81,7 +101,7 @@ def _calls(module: Any) -> set[str]:
 def _sql(module: Any) -> str:
     """Only the string literals passed to ``text(...)`` — real SQL, never a
     docstring or a comment that happens to mention a table name in prose."""
-    tree = ast.parse(inspect.getsource(module))
+    tree = ast.parse(_source_of(module))
     parts: list[str] = []
     for n in ast.walk(tree):
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "text" and n.args:
@@ -158,6 +178,45 @@ def test_follows_decision_appears_when_the_decision_is_present() -> None:
         [offer, decision], [eg._EdgeLink(node_id="offer:o1", follows_decision_of="decision:1")]
     )
     assert EvidenceEdge(from_="offer:o1", to="decision:1", kind="follows_decision") in edges
+
+
+def test_offer_follows_the_latest_hire_at_or_before_it_was_created() -> None:
+    """The selection logic itself — not just assemble() turning an
+    already-chosen link into an edge. Three decisions: a hire, a reversal
+    to reject, and a later hire — exactly the shape a real reversed-then-
+    rehired candidate produces."""
+    hire1 = _node(
+        "decision:1", "decision", stage="decision", occurred=_dt(-10),
+        content={"outcome": "hired", "reversal": False},
+    )
+    reject = _node(
+        "decision:2", "decision", stage="decision", occurred=_dt(-5),
+        content={"outcome": "rejected", "reversal": True},
+    )
+    hire2 = _node(
+        "decision:3", "decision", stage="decision", occurred=_dt(-2),
+        content={"outcome": "hired", "reversal": False},
+    )
+    decisions = [hire1, reject, hire2]
+
+    # Before either hire: follows nothing.
+    assert eg._latest_hire_at_or_before(decisions, _dt(-20)) is None
+    # Just after the first hire: follows it.
+    assert eg._latest_hire_at_or_before(decisions, _dt(-9)) == "decision:1"
+    # After the reversal but before the second hire: the reversal does not
+    # un-link it — still the only hire that has happened so far.
+    assert eg._latest_hire_at_or_before(decisions, _dt(-3)) == "decision:1"
+    # At or after the second hire: follows THAT one, not the first.
+    assert eg._latest_hire_at_or_before(decisions, _dt(-2)) == "decision:3"
+    assert eg._latest_hire_at_or_before(decisions, _dt(0)) == "decision:3"
+
+    # And assemble() turns that selection into a real edge end to end.
+    offer = _node("offer:o1", "offer", stage="offer")
+    chosen = eg._latest_hire_at_or_before(decisions, _dt(-1))
+    edges = eg.assemble(
+        [offer, *decisions], [eg._EdgeLink(node_id="offer:o1", follows_decision_of=chosen)]
+    )
+    assert EvidenceEdge(from_="offer:o1", to="decision:3", kind="follows_decision") in edges
 
 
 def test_node_ids_are_stable_and_derived_from_kind_and_source_id() -> None:
@@ -260,6 +319,31 @@ def test_a_correction_opened_before_the_decision_is_not_flagged() -> None:
     assert original_item.changed_after_decision is None
     # And the correction itself, being available, is not the "original" here.
     assert any(i.node.id == "human_scorecard:c2" for i in _after) is False
+
+
+def test_changed_after_decision_walks_the_full_supersedes_chain_not_one_hop() -> None:
+    """A round_result retake (or a legacy row) can chain further than a live
+    scorecard correction does today. r1's IMMEDIATE successor (r2) is still
+    before the decision, so a one-hop check would miss that r2's OWN
+    successor (r3) is after it — walking the full chain must not."""
+    decided_at = _dt()
+    decision = _node("decision:1", "decision", stage="decision", occurred=decided_at)
+    original = _node("round_result:r1", "round_result", stage="assessment", recorded=_dt(-10))
+    middle = _node("round_result:r2", "round_result", stage="assessment", recorded=_dt(-5))
+    latest = _node("round_result:r3", "round_result", stage="assessment", recorded=_dt(3))
+    nodes = [decision, original, middle, latest]
+    links = [
+        eg._EdgeLink(node_id="round_result:r2", supersedes="round_result:r1"),
+        eg._EdgeLink(node_id="round_result:r3", supersedes="round_result:r2"),
+    ]
+    edges = eg.assemble(nodes, links)
+    evidence, after = eg.trace(nodes, edges, decision=decision)
+
+    original_item = next(i for i in evidence if i.node.id == "round_result:r1")
+    assert original_item.changed_after_decision == "corrected after the decision"
+    middle_item = next(i for i in evidence if i.node.id == "round_result:r2")
+    assert middle_item.changed_after_decision == "corrected after the decision"
+    assert {a.node.id for a in after} == {"round_result:r3"}
 
 
 def test_backfilled_and_reversal_decisions_are_excluded_by_the_sql_itself() -> None:
@@ -390,7 +474,7 @@ def test_the_module_never_reads_coding_source() -> None:
 
 
 def test_the_module_imports_no_llm_client_and_no_agents_package() -> None:
-    src = inspect.getsource(eg)
+    src = _source_of(eg)
     assert "shared.agents" not in src
     for word in ("gemini", "groq", "anthropic", "bedrock"):
         assert word not in src.lower()
@@ -434,6 +518,18 @@ def test_citation_kind_by_node_only_uses_declared_citation_kinds() -> None:
 
     assert set(_CITATION_KIND_BY_NODE) == set(get_args(EvidenceNodeKind))
     assert set(_CITATION_KIND_BY_NODE.values()) <= set(get_args(CitationKind))
+
+
+def test_a_human_review_round_result_is_cited_as_interview_not_exam_attempt() -> None:
+    from app.agents.tools import _citation_kind_for
+
+    human_review_result = _node("round_result:r1", "round_result", stage="interview")
+    assessment_result = _node("round_result:r2", "round_result", stage="assessment")
+    exam = _node("exam_attempt:a1", "exam_attempt", stage="assessment")
+
+    assert _citation_kind_for(human_review_result) == "interview"
+    assert _citation_kind_for(assessment_result) == "exam_attempt"
+    assert _citation_kind_for(exam) == "exam_attempt"
 
 
 # ===========================================================================

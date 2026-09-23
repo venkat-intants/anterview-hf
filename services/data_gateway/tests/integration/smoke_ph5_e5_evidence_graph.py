@@ -497,19 +497,35 @@ async def main() -> None:
         )
         await db.commit()
     decision_hire_id = None
+    hire_occurred_at = None
     async with factory() as db:
-        decision_hire_id = await db.scalar(
-            text(
-                "SELECT id FROM stage_transitions WHERE enrolment_id = :e AND to_status = 'hired'"
-                " ORDER BY occurred_at DESC LIMIT 1"
-            ),
-            {"e": enrolment_id},
-        )
+        hire_row = (
+            await db.execute(
+                text(
+                    "SELECT id, occurred_at FROM stage_transitions WHERE enrolment_id = :e"
+                    "   AND to_status = 'hired' ORDER BY occurred_at DESC LIMIT 1"
+                ),
+                {"e": enrolment_id},
+            )
+        ).first()
+        decision_hire_id, hire_occurred_at = hire_row[0], hire_row[1]
 
-    # An offer, following the hire. offers_lifecycle (PH4-A3) insists a row
-    # arrives as a draft and walks its own FSM — insert draft, then move it
-    # on exactly like the real writer would (submit, approve, send).
+    # An offer, following the hire — its created_at/sent_at are real
+    # wall-clock timestamps captured strictly AFTER the hire's occurred_at
+    # (never backdated before it, and never a fixed offset that could
+    # overshoot past the reversal recorded further down), which is the
+    # actual real-world invariant a `follows_decision` edge asserts: an offer
+    # follows the decision to hire, not the other way round.
+    # offers_lifecycle (PH4-A3) insists a row arrives as a draft and walks its
+    # own FSM — insert draft, then move it on exactly like the real writer
+    # would (submit, approve, send).
     offer_id = uuid.uuid4()
+    offer_created_at = datetime.now(tz=UTC)
+    offer_sent_at = datetime.now(tz=UTC)
+    check(
+        "fixture sanity: the offer's created_at is genuinely after the hire's occurred_at",
+        offer_created_at > hire_occurred_at, f"{offer_created_at} vs {hire_occurred_at}",
+    )
     async with factory() as db:
         await db.execute(
             text(
@@ -521,7 +537,7 @@ async def main() -> None:
             ),
             {
                 "i": offer_id, "c": company_a, "e": enrolment_id, "a": applicant_id, "r": req_a,
-                "u": hr_a, "t": _days_ago(16),
+                "u": hr_a, "t": offer_created_at,
             },
         )
         await db.execute(
@@ -529,14 +545,14 @@ async def main() -> None:
                 "UPDATE offers SET status = 'pending_approval', submitted_by_user_id = :u,"
                 " updated_at = :t WHERE id = :i"
             ),
-            {"i": offer_id, "u": hr_a, "t": _days_ago(16)},
+            {"i": offer_id, "u": hr_a, "t": offer_created_at},
         )
         await db.execute(
             text(
                 "UPDATE offers SET status = 'approved', decided_by_user_id = :u,"
                 " updated_at = :t WHERE id = :i"
             ),
-            {"i": offer_id, "u": sa_x, "t": _days_ago(16)},
+            {"i": offer_id, "u": sa_x, "t": offer_created_at},
         )
         await db.execute(
             text(
@@ -544,8 +560,8 @@ async def main() -> None:
                 " expires_at = :exp, updated_at = :sent WHERE id = :i"
             ),
             {
-                "i": offer_id, "h": f"hash-offer-{offer_id}", "sent": _days_ago(15),
-                "exp": NOW + timedelta(days=7),
+                "i": offer_id, "h": f"hash-offer-{offer_id}", "sent": offer_sent_at,
+                "exp": offer_sent_at + timedelta(days=7),
             },
         )
         await db.commit()
@@ -767,8 +783,19 @@ async def main() -> None:
     check("the correction itself is in after_decision, not evidence", "human_scorecard" in after_ids
           and any(a.node.source.id != str(iv1_card_id) for a in hire_trace.after_decision), str(after_ids))
     check(
-        "the offer, sent after the hire, is available at the hire decision",
-        any(i.node.kind == "offer" for i in hire_trace.evidence),
+        "the offer (created an hour after the hire) is honestly NOT available at the hire decision",
+        not any(i.node.kind == "offer" for i in hire_trace.evidence)
+        and any(i.node.kind == "offer" for i in hire_trace.after_decision),
+        str([i.node.kind for i in hire_trace.after_decision]),
+    )
+    check(
+        "the offer's follows_decision edge points at the HIRE, not the later reversal",
+        any(
+            e.kind == "follows_decision" and e.from_ == f"offer:{offer_id}"
+            and e.to == f"decision:{decision_hire_id}"
+            for e in graph_for_trace.edges
+        ),
+        str([e for e in graph_for_trace.edges if e.kind == "follows_decision"]),
     )
     check("ai_involvement counts the AI interview evidence", hire_trace.ai_involvement.ai_produced_evidence >= 1,
           str(hire_trace.ai_involvement))
@@ -808,6 +835,11 @@ async def main() -> None:
           any(i.node.source.id != str(iv1_card_id) and i.node.kind == "human_scorecard"
               for i in reject_trace.evidence),
           str([i.node.source.id for i in reject_trace.evidence if i.node.kind == "human_scorecard"]))
+    check(
+        "the offer IS available at the later reversal (it existed by then, unlike at the hire)",
+        any(i.node.kind == "offer" for i in reject_trace.evidence),
+        str([i.node.kind for i in reject_trace.after_decision]),
+    )
 
     # ========================================================================
     # 4. Tenant isolation

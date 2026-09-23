@@ -177,6 +177,13 @@ class InterviewerCalibration:
     pairs: int = 0
     mean_delta: float | None = None
     same_direction_share: float | None = None
+    #: The RAW count behind ``same_direction_share`` — e.g. 6 of ``pairs``.
+    #: Returned so a caller (the web sentence "in 6 of 7 the gap was the same
+    #: way") reads the server's own number rather than reconstructing it as
+    #: ``round(same_direction_share * pairs)``, which can disagree with the
+    #: real count at the rounding boundary (code review, PH5-E4 sign-off:
+    #: the Wave 1 anti-pattern).
+    same_direction_count: int | None = None
     flag: str | None = None  # "higher" | "lower" | None
     by_criterion: list[CriterionGap] = field(default_factory=list)
 
@@ -247,6 +254,13 @@ def calibrate(
             criterion_deltas[(who, rnd, comp)].append(gap)
             criterion_people[(who, rnd, comp)].add(enrolment)
 
+    # PH5-E4 code review: grouped by interviewer ONCE, rather than each
+    # interviewer below re-scanning every (interviewer, round, competency)
+    # key in criterion_deltas — O(keys) instead of O(interviewers x keys).
+    criterion_keys_by_interviewer: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for w, rnd, comp in sorted(criterion_deltas):
+        criterion_keys_by_interviewer[w].append((rnd, comp))
+
     for who, c in per.items():
         c.scorecards = len(cards[who])
         c.candidates = len(people[who])
@@ -269,6 +283,7 @@ def calibrate(
         if d and len(delta_people[who]) >= min_candidates:
             c.mean_delta = round(fmean(d), 3)
             same = sum(1 for x in d if _sign(x) == _sign(c.mean_delta))
+            c.same_direction_count = same
             c.same_direction_share = round(same / len(d), 3)
             if (
                 c.pairs >= min_pairs
@@ -281,10 +296,9 @@ def calibrate(
         # criterion at a time. Cells below min_candidates are omitted, like
         # by_competency above.
         by_criterion: list[CriterionGap] = []
-        for (w, rnd, comp), vals in sorted(criterion_deltas.items()):
-            if w != who:
-                continue
-            n_candidates = len(criterion_people[(w, rnd, comp)])
+        for rnd, comp in criterion_keys_by_interviewer.get(who, []):
+            vals = criterion_deltas[(who, rnd, comp)]
+            n_candidates = len(criterion_people[(who, rnd, comp)])
             if n_candidates < min_candidates:
                 continue
             gap = round(fmean(vals), 3)

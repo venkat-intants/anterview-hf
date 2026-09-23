@@ -58,15 +58,24 @@ function signed(n: number): string {
 
 /** The overall paired-gap sentence (PH5-E4 §4.3 wording) — every number in
  *  it comes straight from the server; nothing here is derived or rounded
- *  beyond display precision. Null when the row carries no signal to state. */
+ *  beyond display precision. Null when the row carries no signal to state.
+ *
+ *  `same_direction_count` is the server's own count behind
+ *  `same_direction_share` (never `Math.round(same_direction_share * pairs)`,
+ *  which can silently disagree with it) — printed directly as "in N of
+ *  pairs". Falls back to the share as a percentage only when the server
+ *  omits the count. */
 function flagSentence(row: CalibrationRow): string | null {
   if (!row.flag || row.mean_delta === null || row.same_direction_share === null) return null;
   const direction = row.flag === 'higher' ? 'higher than' : 'lower than';
-  const sameCount = Math.round(row.same_direction_share * row.pairs);
+  const sameWay =
+    row.same_direction_count !== null
+      ? `in ${row.same_direction_count} of ${row.pairs} the gap was the same way`
+      : `the gap pointed the same way in about ${Math.round(row.same_direction_share * 100)}% of them`;
   return (
     `Scores ${direction} the rest of the panel on the same candidates, by ` +
     `${Math.abs(row.mean_delta).toFixed(1)} on average across ${row.pairs} shared ` +
-    `judgements; in ${sameCount} of ${row.pairs} the gap was the same way.`
+    `judgements; ${sameWay}.`
   );
 }
 
@@ -103,18 +112,34 @@ function roundOptionLabel(o: RoundOption): string {
   return o.archived ? `${o.title} (v${o.workflowVersion}, archived)` : o.title;
 }
 
+/** A requisition cloned and archived many times must not turn one dropdown
+ *  into this many parallel `GET /workflows/{id}` requests — the published
+ *  version plus the most recent this-many archived ones, newest first. */
+const MAX_ARCHIVED_ROUND_VERSIONS = 5;
+
 /** Every scorable round (human_review, job_simulation, portfolio) across the
- *  published workflow AND every archived version — PH5-E4 fix to the O5 gap
- *  that only listed human_review rounds of the published workflow. */
-function useRoundOptions(requisitionId: string): { options: RoundOption[]; isLoading: boolean } {
+ *  published workflow AND the most recent archived versions (capped — see
+ *  `MAX_ARCHIVED_ROUND_VERSIONS`) — PH5-E4 fix to the O5 gap that only
+ *  listed human_review rounds of the published workflow. */
+function useRoundOptions(requisitionId: string): {
+  options: RoundOption[];
+  isLoading: boolean;
+  hiddenArchivedCount: number;
+} {
   const workflows = useQuery({
     queryKey: ['hr', 'workflows', requisitionId],
     queryFn: () => listWorkflows(requisitionId),
     enabled: Boolean(requisitionId),
   });
-  const relevant: WorkflowSummary[] = (workflows.data ?? [])
-    .filter((w) => w.status === 'published' || w.status === 'archived')
+  const published = (workflows.data ?? []).filter((w) => w.status === 'published');
+  const archived = (workflows.data ?? [])
+    .filter((w) => w.status === 'archived')
     .sort((a, b) => b.version - a.version);
+  const cappedArchived = archived.slice(0, MAX_ARCHIVED_ROUND_VERSIONS);
+  const hiddenArchivedCount = archived.length - cappedArchived.length;
+  const relevant: WorkflowSummary[] = [...published, ...cappedArchived].sort(
+    (a, b) => b.version - a.version,
+  );
   const workflowQueries = useQueries({
     queries: relevant.map((w) => ({
       queryKey: ['hr', 'workflow', w.id],
@@ -140,7 +165,11 @@ function useRoundOptions(requisitionId: string): { options: RoundOption[]; isLoa
       });
     }
   });
-  return { options, isLoading: workflows.isLoading || workflowQueries.some((q) => q.isLoading) };
+  return {
+    options,
+    isLoading: workflows.isLoading || workflowQueries.some((q) => q.isLoading),
+    hiddenArchivedCount,
+  };
 }
 
 function CriteriaTable({
@@ -359,7 +388,7 @@ export default function CalibrationTab(): JSX.Element {
     queryKey: ['hr', 'requisitions'],
     queryFn: () => listRequisitions(),
   });
-  const { options: rounds } = useRoundOptions(requisitionId);
+  const { options: rounds, hiddenArchivedCount } = useRoundOptions(requisitionId);
 
   const calibration = useQuery({
     queryKey: ['hr', 'panel', 'calibration', start, end, requisitionId, roundId],
@@ -482,6 +511,12 @@ export default function CalibrationTab(): JSX.Element {
               </option>
             ))}
           </select>
+          {hiddenArchivedCount > 0 ? (
+            <p className="mt-1 text-[11px] text-[var(--ui-faint)]">
+              {hiddenArchivedCount} older archived{' '}
+              {hiddenArchivedCount === 1 ? 'version is' : 'versions are'} not listed.
+            </p>
+          ) : null}
         </div>
       </div>
 

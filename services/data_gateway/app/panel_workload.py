@@ -339,6 +339,12 @@ SELECT s.id AS scorecard_id, s.round_id, s.enrolment_id, s.submitted_at,
    AND (CAST(:r AS uuid) IS NULL OR e.requisition_id = CAST(:r AS uuid))
    AND (CAST(:rd AS uuid) IS NULL OR s.round_id = CAST(:rd AS uuid))
    AND (CAST(:cid AS text) IS NULL OR ss.competency_id = CAST(:cid AS text))
+   -- Only rows another interviewer has ALSO scored (the aggregate's own
+   -- definition of a shared judgement, calibration_core's `shared` map: a
+   -- panel_size of 1 is just this interviewer, and its gap computes to
+   -- exactly 0.00, which reads as "agreed exactly with the panel" rather
+   -- than "nobody else has scored this yet" (code review fix).
+   AND panel.panel_size >= 2
    -- The PH4-A1 independence rule, same as the aggregate query.
    AND NOT EXISTS (
        SELECT 1 FROM interviewer_scorecards mine
@@ -514,7 +520,8 @@ async def calibration(
              # makes it unambiguous — calibrate() still always computes it.
              "by_competency": (c.by_competency if round_id is not None else {}),
              "pairs": c.pairs, "mean_delta": c.mean_delta,
-             "same_direction_share": c.same_direction_share, "flag": c.flag,
+             "same_direction_share": c.same_direction_share,
+             "same_direction_count": c.same_direction_count, "flag": c.flag,
              "by_criterion": [
                  {"criterion_key": g.criterion_key, "shared_judgements": g.shared_judgements,
                   "candidates": g.candidates, "gap": g.gap, "signal": g.signal}
@@ -560,6 +567,15 @@ async def judgements(
         except ValueError as exc:
             raise PanelError(422, "criterion_key must be '<round_id>:<competency_id>'.") from exc
         crit_competency_id = comp_part
+        # An explicit refusal, not left to the suppression check to fail
+        # closed on: a round_id that disagrees with criterion_key's own round
+        # would otherwise silently filter _score_rows by the WRONG round,
+        # making the criterion look suppressed for an unrelated reason
+        # (code review fix).
+        if round_id is not None and round_id != crit_round_id:
+            raise PanelError(
+                422, "round_id does not match the round in criterion_key."
+            )
 
     rows = await _score_rows(
         db, company_id=company_id, start=start, end=end, requisition_id=requisition_id,

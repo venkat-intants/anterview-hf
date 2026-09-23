@@ -459,6 +459,24 @@ describe('HRAnalyticsPage — the funnel', () => {
 
     expect(await screen.findByText('Could not load the funnel just now.')).toBeInTheDocument();
   });
+
+  it('explains the funnel is application-scoped on the hire cohort, rather than claiming there are no applications when there are hires', async () => {
+    // hireFunnel()'s default group has 37 hires — the pipeline metrics
+    // (applications, screened, …) simply are not computed for this cohort,
+    // which used to be misread as "0 applications".
+    renderPage();
+    await screen.findByText('12.5%');
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Hire' }));
+
+    expect(
+      await screen.findByText(
+        'The funnel is measured over applications. Switch to the application or decision cohort to see it.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('No applications in this period.')).not.toBeInTheDocument();
+  });
 });
 
 describe('HRAnalyticsPage — suppression', () => {
@@ -619,6 +637,56 @@ describe('HRAnalyticsPage — "How is this calculated?"', () => {
 
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+describe('HRAnalyticsPage — definition versioning', () => {
+  it('renders only the current version once a metric has two on file, in the glossary and its dialog', async () => {
+    const applicationsV1 = DEFINITIONS.metrics.find((m) => m.name === 'applications');
+    if (!applicationsV1) throw new Error('fixture missing "applications"');
+    const twoVersions: MetricDefinitionsResponse = {
+      ...DEFINITIONS,
+      metrics: [
+        {
+          ...applicationsV1,
+          version: 1,
+          current: false,
+          description: 'SUPERSEDED — the old, pre-v2 wording.',
+          formula: 'count(applied) [v1, superseded]',
+        },
+        {
+          ...applicationsV1,
+          version: 2,
+          current: true,
+          description: 'Every application in the cohort.',
+          formula: 'count(applied)',
+          change_note: 'Wording tightened; the count itself did not change.',
+        },
+        ...DEFINITIONS.metrics.filter((m) => m.name !== 'applications'),
+      ],
+    };
+    getMetricDefinitions.mockResolvedValue(twoVersions);
+    renderPage();
+    await screen.findByText('12.5%');
+
+    // One glossary row for "applications" — the current version, not a
+    // second row (or the wrong text) for the superseded one.
+    const glossary = screen.getByTestId('metric-glossary');
+    const glossaryLabels = within(glossary).getAllByText('Applications');
+    expect(glossaryLabels).toHaveLength(1);
+    expect(within(glossary).queryByText(/SUPERSEDED/)).not.toBeInTheDocument();
+
+    // Its "How is this calculated?" dialog — opened by name alone, same as
+    // every other consumer — shows the CURRENT version's text.
+    const user = userEvent.setup();
+    const glossaryRow = glossaryLabels[0].closest('li');
+    if (!glossaryRow) throw new Error('glossary row not found');
+    await user.click(within(glossaryRow).getByRole('button', { name: 'How is this calculated?' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('applications@2', { exact: false })).toBeInTheDocument();
+    expect(within(dialog).getByText('count(applied)')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/SUPERSEDED/)).not.toBeInTheDocument();
   });
 });
 

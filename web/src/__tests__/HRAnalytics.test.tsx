@@ -27,6 +27,21 @@ const FULL: HrAnalyticsData = {
   },
   averages: { avg_ats: 66.4, avg_exam_percent: 71.8, avg_interview_composite: 7.42 },
   ...analyticsDefaults(),
+  // Governed conversion — deliberately NOT derivable from `funnel` above by
+  // simple division (e.g. shortlisted/applied would read 50.0% too, but
+  // that coincidence is not what the assertions rely on: the panel reads
+  // these fields verbatim, it does not compute them).
+  conversion: {
+    applied: 40,
+    ever_shortlisted: 20,
+    ever_sat_exam: 16,
+    ever_interviewed: 10,
+    ever_hired: 5,
+    pct_shortlisted: 50.0,
+    pct_sat_exam: 40.0,
+    pct_interviewed: 25.0,
+    pct_hired: 12.5,
+  },
 };
 
 const EMPTY: HrAnalyticsData = {
@@ -71,13 +86,55 @@ describe('HRAnalytics — funnel', () => {
     }
   });
 
-  it('computes each conversion rate against the right denominator', async () => {
+  it('renders the governed conversion rates as sent, never a client-computed one', async () => {
     renderWith(<HRAnalytics />);
 
     await screen.findByText('40');
-    // shortlist 20/40, pass 8/16, hire 2/4 — the pass rate is over exams TAKEN,
-    // not over all applicants, which is the mistake worth pinning.
-    expect(screen.getAllByText('50%')).toHaveLength(3);
+    // FULL's conversion block (below) sets these explicitly; asserting the
+    // exact figures pins that the subtitle reads them as-is rather than
+    // recomputing anything from `funnel`.
+    expect(screen.getByText('50.0%')).toBeInTheDocument(); // shortlist
+    expect(screen.getByText('40.0%')).toBeInTheDocument(); // sat exam
+    expect(screen.getByText('25.0%')).toBeInTheDocument(); // interviewed
+    expect(screen.getByText('12.5%')).toBeInTheDocument(); // hire
+  });
+
+  it('shows the governed hire rate even when funnel counts would divide to over 100%', async () => {
+    // hired (5) > interview_completed (2): the old client math (hired ÷
+    // interviews) would have read 250%. The governed conversion.pct_hired
+    // — computed over ALL applications, not the funnel's interview count —
+    // is unaffected, because nothing here divides the funnel's own numbers.
+    getHrAnalytics.mockResolvedValue({
+      ...FULL,
+      funnel: { ...FULL.funnel, hired: 5, interview_completed: 2 },
+    });
+    renderWith(<HRAnalytics />);
+
+    await screen.findByText('40');
+    expect(screen.queryByText(/250%/)).not.toBeInTheDocument();
+    expect(screen.getByText('12.5%')).toBeInTheDocument();
+  });
+
+  it('shows a dash and "not enough data yet" for a null governed rate, never a computed fallback', async () => {
+    getHrAnalytics.mockResolvedValue({
+      ...FULL,
+      conversion: {
+        applied: 0,
+        ever_shortlisted: 0,
+        ever_sat_exam: 0,
+        ever_interviewed: 0,
+        ever_hired: 0,
+        pct_shortlisted: null,
+        pct_sat_exam: null,
+        pct_interviewed: null,
+        pct_hired: null,
+      },
+    });
+    renderWith(<HRAnalytics />);
+
+    await screen.findByText('40');
+    expect(screen.getAllByText('—')).toHaveLength(4);
+    expect(screen.getAllByText('(not enough data yet)')).toHaveLength(4);
   });
 
   it('says there is no pipeline data rather than drawing a chart of zeros', async () => {

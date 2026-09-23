@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { isTransientApiError } from '@/api/client';
 import {
+  findDefinition,
   getAnalyticsMembers,
   metricLabel,
   sourceLabel,
@@ -35,7 +36,8 @@ export default function MembersDrillDown({
   onClose: () => void;
   onOpenCandidate: (row: { applicant_id: string; enrolment_id: string }) => void;
 }): JSX.Element {
-  const def = definitions?.metrics.find((m) => m.name === metricName);
+  // Opened by name alone (no version in hand) — the CURRENT definition.
+  const def = findDefinition(definitions, metricName);
   const members = useQuery({
     queryKey: ['hr', 'analytics', 'members', metricName, part, query],
     queryFn: () => getAnalyticsMembers({ metric: metricName, part, ...query }),

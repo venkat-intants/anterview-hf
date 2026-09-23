@@ -5,7 +5,9 @@
 import {
   PIPELINE_COUNT_METRICS,
   PIPELINE_RATE_METRICS,
+  findDefinition,
   metricLabel,
+  type CohortBasis,
   type CountMetricResult,
   type FunnelGroup,
   type MetricDefinitionsResponse,
@@ -15,15 +17,31 @@ import MetricCell from './MetricCell';
 
 export default function PipelineFunnelSection({
   group,
+  cohort,
   definitions,
   onInfo,
   onDrillDown,
 }: {
   group: FunnelGroup | undefined;
+  cohort: CohortBasis;
   definitions: MetricDefinitionsResponse | undefined;
   onInfo: (name: string) => void;
   onDrillDown: (name: string, part: MetricPart) => void;
 }): JSX.Element {
+  // These pipeline counts/rates are only ever computed for the application
+  // and decision cohorts (see PIPELINE_COUNT_METRICS/PIPELINE_RATE_METRICS'
+  // cohort_bases) — the hire cohort's group simply has none of them. Reading
+  // that absence as "no applications" would misreport a company that has
+  // hires but is looking at the wrong cohort for this card.
+  if (cohort === 'hire') {
+    return (
+      <p className="text-[13px] text-muted-foreground">
+        The funnel is measured over applications. Switch to the application or decision cohort to
+        see it.
+      </p>
+    );
+  }
+
   if (!group) {
     return <p className="text-[13px] text-muted-foreground">No applications in this period.</p>;
   }
@@ -55,8 +73,8 @@ export default function PipelineFunnelSection({
 
       <div className="flex flex-col gap-2.5">
         {stepNames.map((name) => {
-          const def = definitions?.metrics.find((m) => m.name === name);
           const result = group.metrics[name] as CountMetricResult;
+          const def = findDefinition(definitions, name, result.version);
           const pct = Math.round((result.value / max) * 100);
           return (
             <div key={name} className="flex items-center gap-3.5">
@@ -88,13 +106,14 @@ export default function PipelineFunnelSection({
       {rateNames.length > 0 ? (
         <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-border pt-3">
           {rateNames.map((name) => {
-            const def = definitions?.metrics.find((m) => m.name === name);
+            const result = group.metrics[name];
+            const def = findDefinition(definitions, name, result.version);
             return (
               <div key={name} className="flex items-center gap-2 text-[12.5px]">
                 <span className="text-[var(--ui-faint)]">{metricLabel(name, def)}:</span>
                 <MetricCell
                   name={name}
-                  result={group.metrics[name]}
+                  result={result}
                   definition={def}
                   onInfo={onInfo}
                   onDrillDown={onDrillDown}

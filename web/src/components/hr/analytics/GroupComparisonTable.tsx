@@ -3,6 +3,7 @@
 
 import {
   orderedMetricNames,
+  findDefinition,
   metricLabel,
   type CohortBasis,
   type FunnelGroup,
@@ -52,7 +53,10 @@ export default function GroupComparisonTable({
             </th>
             <th className="py-2 pr-3 font-medium text-[var(--ui-faint)]">In progress</th>
             {names.map((name) => {
-              const def = definitions?.metrics.find((m) => m.name === name);
+              // A column header names one metric shared across every row —
+              // no single group's result to pin a version against, so this
+              // reads the definition presently in force.
+              const def = findDefinition(definitions, name);
               return (
                 <th key={name} className="py-2 pr-3 font-medium text-[var(--ui-faint)]">
                   {metricLabel(name, def)}
@@ -74,12 +78,13 @@ export default function GroupComparisonTable({
                 <td className="py-2 pr-3 font-medium text-foreground">{group.label}</td>
                 <td className="py-2 pr-3 text-muted-foreground">{group.in_progress}</td>
                 {names.map((name) => {
-                  const def = definitions?.metrics.find((m) => m.name === name);
+                  const result = group.metrics[name];
+                  const def = findDefinition(definitions, name, result?.version);
                   return (
                     <td key={name} className="py-2 pr-3">
                       <MetricCell
                         name={name}
-                        result={group.metrics[name]}
+                        result={result}
                         definition={def}
                         onInfo={onInfo}
                         onDrillDown={(m, part) =>

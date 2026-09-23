@@ -176,9 +176,17 @@ export default function MetricCell({
     );
   }
 
-  // Only 'median' | 'mean' remains.
+  // Only 'median' | 'mean' remains. A suppressed non-check-in metric (time to
+  // hire, human interviewer scorecards) still carries its real value — the
+  // server withholds only check-in OUTCOME metrics (which come back null,
+  // same as a rate's null is never shown). Mirror the rate branch above: the
+  // text stands, the real figure surfaces on hover only when there is one.
+  const suppressedTooltip =
+    result.suppressed && result.value !== null
+      ? `${result.value.toLocaleString('en-IN')} (n=${result.n}), too few to compare reliably`
+      : undefined;
   return (
-    <span className="inline-flex items-center gap-1.5 text-[12.5px]">
+    <span className="inline-flex items-center gap-1.5 text-[12.5px]" title={suppressedTooltip}>
       {result.suppressed ? (
         <span className="text-[var(--ui-faint)]">too few to compare</span>
       ) : (

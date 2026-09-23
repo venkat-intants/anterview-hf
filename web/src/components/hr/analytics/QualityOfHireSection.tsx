@@ -2,6 +2,7 @@
 
 import {
   HIRE_COHORT_METRICS,
+  findDefinition,
   metricLabel,
   type CountMetricResult,
   type FunnelGroup,
@@ -29,7 +30,8 @@ export default function QualityOfHireSection({
   return (
     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
       {names.map((name) => {
-        const def = definitions?.metrics.find((m) => m.name === name);
+        const result = group.metrics[name];
+        const def = findDefinition(definitions, name, result?.version);
         return (
           <div key={name} className="rounded-[12px] border border-border p-3.5">
             <p className="text-[11.5px] font-medium uppercase tracking-wide text-[var(--ui-faint)]">
@@ -38,7 +40,7 @@ export default function QualityOfHireSection({
             <div className="mt-1.5">
               <MetricCell
                 name={name}
-                result={group.metrics[name]}
+                result={result}
                 definition={def}
                 onInfo={onInfo}
                 onDrillDown={onDrillDown}

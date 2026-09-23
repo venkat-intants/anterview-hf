@@ -11,8 +11,14 @@ export default function MetricGlossary({
   definitionsQuery: QueryLike<MetricDefinitionsResponse>;
   onInfo: (name: string) => void;
 }): JSX.Element {
+  // Every metric name, current version only — a superseded entry (kept in
+  // the response so an old drill-down or audit trail can still resolve its
+  // exact version) would otherwise draw a second row for the same metric,
+  // and it is never the one worth reading here.
+  const current = definitionsQuery.data?.metrics.filter((m) => m.current) ?? [];
+
   return (
-    <GlassCard className="p-5">
+    <GlassCard className="p-5" data-testid="metric-glossary">
       <h2 className="text-[15px] font-semibold text-foreground">Metric glossary</h2>
       {definitionsQuery.isLoading ? (
         <p className="mt-3 text-[13px] text-muted-foreground">Loading…</p>
@@ -26,7 +32,7 @@ export default function MetricGlossary({
             registry {definitionsQuery.data.registry_hash.slice(0, 10)}…
           </p>
           <ul className="mt-3 flex flex-col gap-2">
-            {definitionsQuery.data.metrics.map((m) => (
+            {current.map((m) => (
               <li
                 key={`${m.name}@${m.version}`}
                 className="flex items-center justify-between gap-3 rounded-[10px] border border-border p-3"

@@ -5,9 +5,17 @@
 // Behavior: live getHrAnalytics query (funnel + averages); charts use real data
 //   where available and gracefully empty-state where there is no backing API.
 //   BOTH exports preserved:
-//     default HRAnalytics — embeddable panel used by HRPipeline. Unchanged by
-//       PH5 wave 1 — still the old `GET /hr/analytics` (application_progress),
-//       which the metric-layer migration explicitly keeps working as-is.
+//     default HRAnalytics — embeddable panel used by HRPipeline. Funnel
+//       counts + averages are unchanged — still the old `GET /hr/analytics`
+//       (application_progress), which the metric-layer migration explicitly
+//       keeps working as-is. PH5 wave-1 AUDIT FIX: its rate subtitle used to
+//       divide two funnel counts client-side (e.g. hires ÷ interviews for a
+//       "Hire rate") — a second, conflicting definition of the same figure
+//       the governed layer publishes, and one that could read over 100%. It
+//       now reads `conversion.pct_*` straight off the same `GET
+//       /hr/analytics` response (PH5-C2 added that block without changing
+//       the endpoint), same as HRConsole's stat strip already did. Nothing
+//       in this file divides one number by another any more.
 //     HRAnalyticsPage     — standalone /hr/analytics route. PH5 wave 1 (C1)
 //       rewrites this to the governed metric layer: cohort-scoped funnel,
 //       per-group comparison, quality-of-hire and an auditable drill-down.
@@ -75,9 +83,24 @@ function scoreColor(v: number): string {
   return '#e6714f';
 }
 
-function rate(part: number, whole: number): string {
-  if (!whole) return '—';
-  return `${Math.round((part / whole) * 100)}%`;
+/**
+ * A governed conversion rate, rendered exactly as `GET /hr/analytics` sent
+ * it — this file never divides two of its own numbers to build one. Null
+ * means "nobody has applied yet" (the only reason this block ever nulls; see
+ * `HrConversion`'s docstring), not "too few to compare" — that suppression
+ * concept belongs to the separate governed-metric layer (HRAnalyticsPage),
+ * not this response.
+ */
+function ConversionRate({ value }: { value: number | null }): JSX.Element {
+  if (value === null) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <span className="text-[var(--ui-soft)]">—</span>
+        <span className="text-[var(--ui-faint)]">(not enough data yet)</span>
+      </span>
+    );
+  }
+  return <span className="text-[var(--ui-soft)]">{value.toFixed(1)}%</span>;
 }
 
 // ── Static chart data (language-mix + score-dist + trend).
@@ -150,6 +173,7 @@ export default function HRAnalytics() {
   });
   const f = data?.funnel;
   const avg = data?.averages;
+  const conv = data?.conversion;
 
   const distData = SCORE_DIST_STATIC.map((d) => ({
     ...d,
@@ -173,22 +197,24 @@ export default function HRAnalytics() {
             ) : f ? (
               <FunnelBars f={f} />
             ) : null}
-            {/* Conversion rates subtitle when data is available */}
-            {f && avg && (
+            {/* Conversion rates subtitle — the governed `conversion.pct_*`
+                fields from this same response (PH5-C2), each a share of
+                applications. Never derived from `f` here: a client-side
+                hires ÷ interviews (etc.) is a second, conflicting definition
+                of the same number and can read over 100%. */}
+            {f && avg && conv && (
               <div className="mt-4 flex flex-wrap gap-4 text-[12px] text-[var(--ui-faint)]">
                 <span>
-                  Shortlist rate:{' '}
-                  <span className="text-[var(--ui-soft)]">{rate(f.shortlisted, applied(f))}</span>
+                  Shortlist rate: <ConversionRate value={conv.pct_shortlisted} />
                 </span>
                 <span>
-                  Pass rate:{' '}
-                  <span className="text-[var(--ui-soft)]">{rate(f.exam_passed, f.exam_taken)}</span>
+                  Sat exam rate: <ConversionRate value={conv.pct_sat_exam} />
                 </span>
                 <span>
-                  Hire rate:{' '}
-                  <span className="text-[var(--ui-soft)]">
-                    {rate(f.hired, f.interview_completed)}
-                  </span>
+                  Interviewed rate: <ConversionRate value={conv.pct_interviewed} />
+                </span>
+                <span>
+                  Hire rate: <ConversionRate value={conv.pct_hired} />
                 </span>
               </div>
             )}
@@ -700,6 +726,7 @@ export function HRAnalyticsPage(): JSX.Element {
               ) : (
                 <PipelineFunnelSection
                   group={allGroup}
+                  cohort={filters.cohort}
                   definitions={definitionsQuery.data}
                   onInfo={setInfoMetric}
                   onDrillDown={(metric, part) =>

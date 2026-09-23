@@ -237,6 +237,32 @@ export function isDrillable(definition: MetricDefinition | undefined, part: Metr
   return definition.drillable[part];
 }
 
+/**
+ * Look up ONE definition for a metric name — never `.find(m => m.name ===
+ * name)` alone, which returns whichever entry the registry happens to list
+ * first. Once a metric has a version 2, the registry response can carry both
+ * entries (an old, superseded one and the one now in force); a plain name
+ * match would silently pin every "How is this calculated?" dialog, the
+ * glossary, the funnel, the comparison table, the quality card and the
+ * drill-down to whichever came first.
+ *
+ * Pass `version` when the caller has one (a `MetricResult`'s own `metric` +
+ * `version` — the exact definition that computed THIS number). Every other
+ * caller (a dialog or drill-down opened by name alone) omits it and gets the
+ * `current: true` entry — the definition presently in force.
+ */
+export function findDefinition(
+  definitions: MetricDefinitionsResponse | undefined,
+  name: string,
+  version?: number,
+): MetricDefinition | undefined {
+  if (!definitions) return undefined;
+  if (version !== undefined) {
+    return definitions.metrics.find((m) => m.name === name && m.version === version);
+  }
+  return definitions.metrics.find((m) => m.name === name && m.current);
+}
+
 export function getAnalyticsMembers(opts: MembersQuery): Promise<MembersResponse> {
   const p = buildFunnelParams(opts);
   p.set('metric', opts.metric);

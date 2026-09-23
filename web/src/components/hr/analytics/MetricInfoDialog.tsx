@@ -3,7 +3,7 @@
 
 import { useState } from 'react';
 import { Copy, X } from '@/design/components/icons';
-import { metricLabel, type MetricDefinitionsResponse } from '@/api/metrics';
+import { findDefinition, metricLabel, type MetricDefinitionsResponse } from '@/api/metrics';
 import { formatDate } from '@/lib/formatters';
 import { useDialogFocus } from '@/hooks/useDialogFocus';
 
@@ -17,7 +17,9 @@ export default function MetricInfoDialog({
   onClose: () => void;
 }): JSX.Element | null {
   const [copied, setCopied] = useState(false);
-  const def = definitions?.metrics.find((m) => m.name === metricName);
+  // Opened by name alone (no version in hand) — the CURRENT definition, never
+  // whichever version the registry happens to list first.
+  const def = findDefinition(definitions, metricName);
   // Called unconditionally — hooks cannot follow the `!def` early return
   // below — but harmlessly, since the dialog unmounts (closes) whenever
   // `def` is absent anyway.

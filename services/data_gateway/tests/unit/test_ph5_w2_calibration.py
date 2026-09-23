@@ -244,24 +244,13 @@ def test_band_edges_are_monotonic_and_total() -> None:
     assert sql.index("IS NULL") < sql.index("< 3") < sql.index("< 4") < sql.index("ELSE")
 
 
-@pytest.mark.parametrize(
-    ("value", "band"),
-    [(None, "none"), (1.0, "below_3"), (2.99, "below_3"), (3.0, "3_to_4"),
-     (3.99, "3_to_4"), (4.0, "4_plus"), (5.0, "4_plus")],
-)
-def test_band_edges_cover_the_whole_scale(value: float | None, band: str) -> None:
-    """The SAME arithmetic INTERVIEWER_SCORE_BAND_SQL expresses in SQL,
-    checked here in Python so the edges are pinned independent of a
-    database."""
-    if value is None:
-        result = "none"
-    elif value < 3:
-        result = "below_3"
-    elif value < 4:
-        result = "3_to_4"
-    else:
-        result = "4_plus"
-    assert result == band
+# The per-value edge case (None -> none, 2.99 -> below_3, 3.0 -> 3_to_4, ...)
+# used to be re-implemented here in Python and asserted against ITSELF —
+# touching no product code at all (code review fix). It is now
+# tests/integration/test_ph5_w2_calibration_db.py::test_band_edges_match_the_real_registry_sql,
+# which executes the REAL INTERVIEWER_SCORE_BAND_SQL string against Postgres
+# for each value; test_band_edges_are_monotonic_and_total above stays here as
+# the offline half (the CASE branches exist and are ordered correctly).
 
 
 def test_band_dimension_derives_from_nothing_but_the_measure() -> None:

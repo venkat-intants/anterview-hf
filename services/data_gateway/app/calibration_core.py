@@ -140,10 +140,17 @@ class CriterionBaseline:
     Suppressed (``suppressed=True``) when fewer than ``min_candidates``
     distinct applications, or fewer than ``min_interviewers_for_baseline``
     distinct interviewers, contributed — otherwise a "panel" baseline could
-    be one person's scores. The caller decides what a suppressed row hides
-    from its serialised response (the same split ``panel_workload.py``
-    already uses for :class:`InterviewerCalibration`); every field here is
-    always populated with the real computed value.
+    be one person's scores. When suppressed, ``distribution``, ``mean`` and
+    ``disagreement`` (the figures that would describe too few people's
+    scores) are already ``None`` here, not left for a caller to hide later —
+    the safer default, so a caller cannot forget to. ``candidates``,
+    ``interviewers`` and ``shared_judgements`` (population SIZES, not
+    scores) stay populated either way. ``scores`` and ``not_assessed`` are
+    the one exception: this dataclass always populates them with the real
+    computed value, and it is ``panel_workload.py``'s serialised response —
+    the same split :class:`InterviewerCalibration` uses for its own
+    ``scores`` — that nulls them alongside the rest for a suppressed row
+    before it ever reaches an HTTP response.
     """
 
     criterion_key: str

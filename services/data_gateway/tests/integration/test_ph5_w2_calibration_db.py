@@ -55,6 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.interviewer_scorecards import RequestMeta
 from app.metrics.compute import CohortWindow, FunnelFilters, compute_funnel
+from app.metrics.definitions import INTERVIEWER_SCORE_BAND_SQL
 from app.panel_workload import PanelError, calibration, judgements
 from tests.integration.test_ph5_w1_metrics import (  # noqa: F401 — fixture builders reused by name
     Seed,
@@ -507,6 +508,129 @@ async def test_judgements_refuses_a_round_id_that_disagrees_with_criterion_key(
         )
     assert exc_info.value.status_code == 422
     assert "round_id" in exc_info.value.detail
+
+
+# ===========================================================================
+# Erasure (E4 #15) — inherited by construction, not special-cased.
+# Calibration copies nothing and names a candidate only by reading the LIVE
+# applicant row, which erasure anonymises in place; this proves the
+# inheritance holds rather than implementing anything new.
+# ===========================================================================
+async def test_an_erased_candidate_still_counts_and_reads_as_redacted(db: AsyncSession) -> None:
+    seed = await _seed_company(db)
+    await _grant_role(db, seed.hr, "hr_manager")
+    await _grant_role(db, seed.interviewer, "interviewer")
+    peer = uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO users (id, email, company_id) VALUES (:u, :e, :c)"),
+        {"u": peer, "e": f"peer-{peer.hex[:8]}@w2.test", "c": seed.company},
+    )
+
+    enrolments: list[uuid.UUID] = []
+    for _ in range(5):
+        e = await _application(db, seed)
+        await _human_scorecard(db, seed, e, interviewer=seed.interviewer, score=5)
+        await _human_scorecard(db, seed, e, interviewer=peer, score=3)
+        enrolments.append(e)
+
+    erased_enrolment = enrolments[0]
+    erased_applicant_id = await db.scalar(
+        text("SELECT applicant_id FROM enrolments WHERE id = :e"), {"e": erased_enrolment},
+    )
+    # Copied VERBATIM from services/admin_ops/app/erasure_executor.py's step 6
+    # (the applicant-anonymisation UPDATE) — same SET clause, same literal
+    # '[redacted]' — targeting by applicant id directly, since this test
+    # exercises calibration's READ side of erasure, not the erasure REQUEST
+    # flow that resolves a user_id to it.
+    await db.execute(
+        text(
+            "UPDATE applicants "
+            "SET full_name = '[redacted]', "
+            "    email = NULL, "
+            "    resume_text = NULL, "
+            "    resume_s3_key = NULL, "
+            "    embedding = NULL, "
+            "    user_id = NULL, "
+            "    phone = NULL, "
+            "    years_experience = NULL, "
+            "    current_company = NULL, "
+            "    current_title = NULL, "
+            "    linkedin_url = NULL, "
+            "    github_url = NULL, "
+            "    parsed_full_name = NULL, "
+            "    parsed_email = NULL, "
+            "    updated_at = now() "
+            "WHERE id = :aid"
+        ),
+        {"aid": erased_applicant_id},
+    )
+
+    start, end = _window()
+    out = await calibration(
+        db, company_id=seed.company, start=start, end=end, requisition_id=None, round_id=None,
+        actor=seed.hr, meta=_META,
+    )
+    row = next(i for i in out["interviewers"] if i["user_id"] == str(seed.interviewer))
+    # The erased candidate's SCORE survives erasure by design (DATA-FLOW.md
+    # :79): the aggregate still counts them as a judgement, unaffected.
+    assert row["candidates"] == 5
+    assert not row["suppressed"]
+
+    drilldown = await judgements(
+        db, company_id=seed.company, interviewer_id=seed.interviewer, start=start, end=end,
+        requisition_id=None, round_id=None, criterion_key=None, actor=seed.hr, meta=_META,
+    )
+    assert drilldown["total"] == 5
+    rows_by_enrolment = {r["enrolment_id"]: r for r in drilldown["rows"]}
+    erased_row = rows_by_enrolment[str(erased_enrolment)]
+    assert erased_row["candidate_name"] == "[redacted]"
+    # Not a blanket redaction: the OTHER four rows still show their real
+    # (test-fixture) names, proving only the erased candidate is affected.
+    other_rows = [r for eid, r in rows_by_enrolment.items() if eid != str(erased_enrolment)]
+    assert len(other_rows) == 4
+    assert all(r["candidate_name"].startswith("Applicant ") for r in other_rows)
+
+    audit = (
+        await db.execute(
+            text(
+                "SELECT details FROM audit_log WHERE action = 'panel.calibration.evidence_viewed'"
+                " ORDER BY event_ts DESC LIMIT 1"
+            )
+        )
+    ).mappings().first()
+    assert audit is not None
+    details_text = str(audit["details"])
+    assert "[redacted]" not in details_text
+    assert "Applicant" not in details_text
+    assert str(erased_applicant_id) not in details_text
+    assert str(erased_enrolment) not in details_text
+
+
+# ===========================================================================
+# The band edges — the REAL registry SQL, not a Python re-implementation of
+# it asserted against itself (code review fix; see the removed
+# tests/unit/test_ph5_w2_calibration.py::test_band_edges_cover_the_whole_scale).
+# ===========================================================================
+@pytest.mark.parametrize(
+    ("value", "band"),
+    [(None, "none"), (1.0, "below_3"), (2.99, "below_3"), (3.0, "3_to_4"),
+     (3.99, "3_to_4"), (4.0, "4_plus"), (5.0, "4_plus")],
+)
+async def test_band_edges_match_the_real_registry_sql(
+    db: AsyncSession, value: float | None, band: str,
+) -> None:
+    """Executes app.metrics.definitions.INTERVIEWER_SCORE_BAND_SQL itself
+    against Postgres, aliasing a bound value to the one column it may
+    reference (m_hire_interviewer_score) — never re-typing the CASE-WHEN
+    logic in Python."""
+    result = await db.scalar(
+        text(
+            f"SELECT ({INTERVIEWER_SCORE_BAND_SQL})"  # nosec B608 — module constant, no request value
+            " FROM (SELECT CAST(:val AS numeric) AS m_hire_interviewer_score) t"
+        ),
+        {"val": value},
+    )
+    assert result == band
 
 
 # ===========================================================================

@@ -107,6 +107,9 @@ const RequisitionReview = lazy(() => import('./pages/hr/RequisitionReview'));
 const WorkflowBuilder = lazy(() => import('./pages/hr/WorkflowBuilder'));
 const DecisionQueue = lazy(() => import('./pages/hr/DecisionQueue'));
 const RequisitionDashboard = lazy(() => import('./pages/hr/RequisitionDashboard'));
+// PH5-E2 — the company's document library (policies, handbooks, process
+// notes) the staff copilot can search; shared by hr_manager and super_admin.
+const CorpusDocuments = lazy(() => import('./pages/hr/CorpusDocuments'));
 const HRAnalyticsPage = lazy(() =>
   import('./pages/hr/HRAnalytics').then((m) => ({ default: m.HRAnalyticsPage })),
 );
@@ -251,6 +254,13 @@ export default function App() {
               {/* PH4-A3 — offers awaiting this super admin's approval (D4-2). */}
               <Route path="/superadmin/offer-approvals" element={<OfferApprovals />} />
               <Route path="/superadmin/offer-approvals/:offerId" element={<OfferApprovals />} />
+              {/* PH5-E2 — the same component as /hr/library; the page itself
+                  derives what a super admin may not do (choose "HR only")
+                  from the caller's own role. Path matches the API's
+                  `/hr/library` (moved off `/hr/documents` to dodge a
+                  collision with offers.py's candidate documents) and the
+                  copilot's document-citation route. */}
+              <Route path="/superadmin/library" element={<CorpusDocuments />} />
             </Route>
           </Route>
 
@@ -302,6 +312,10 @@ export default function App() {
               <Route path="/hr/requisitions/:requisitionId/decisions" element={<DecisionQueue />} />
               <Route path="/hr/analytics" element={<HRAnalyticsPage />} />
               <Route path="/hr/enrolments/:enrolmentId/evidence" element={<EvidenceTrail />} />
+              {/* PH5-E2 — the company document library, at the same path as
+                  the API (`/hr/library`, moved off `/hr/documents`) and the
+                  copilot's document-citation route. */}
+              <Route path="/hr/library" element={<CorpusDocuments />} />
             </Route>
           </Route>
 

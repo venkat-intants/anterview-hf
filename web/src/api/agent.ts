@@ -30,11 +30,52 @@ export interface Citation {
     // a hire/reject decision. Kept in sync with shared/agents/schema.py's
     // CitationKind by a parity test that parses this union.
     | 'interviewer_scorecard'
-    | 'decision';
+    | 'decision'
+    // PH5-E1/E2: a company's own document-corpus record (policy, handbook,
+    // process note). Added ahead of the corpus tool landing, same reason as
+    // the pair above.
+    | 'document';
   id: string;
   label: string;
   href: string | null;
+  /**
+   * Run-scoped reference handle ("S1", "S2", …) the assistant can write
+   * inline after a claim, e.g. "...notice period is 30 days[S1].". Assigned
+   * by the SERVER only — empty string means the run never cited this record
+   * inline, not that citing is unsupported.
+   */
+  ref: string;
+  /**
+   * Where inside the source the evidence sits — "page 4", "v3 · §2.1 Leave
+   * policy", "workload across 6 HR managers". Null for a citation that points
+   * at a whole record with nothing narrower to say.
+   */
+  locator: string | null;
 }
+
+/**
+ * Frontend route per citation kind — mirrors shared/agents/schema.py's
+ * CITATION_ROUTES so a href is built from one table rather than typed out at
+ * every renderer. `null` means "no single record to open" (an aggregate, or a
+ * role model computed on the fly rather than stored). Diffed against the
+ * Python table by a parity test that parses this object's keys.
+ */
+export const CITATION_ROUTES: Record<Citation['kind'], string | null> = {
+  applicant: '/hr/applicants/{id}',
+  scorecard: '/hr/applicants/{id}',
+  exam: '/hr/exams/{id}',
+  exam_attempt: '/hr/exams/attempts/{id}',
+  interview: '/hr/interviews/{id}',
+  job: '/hr/requisitions/{id}',
+  interviewer_scorecard: '/hr/enrolments/{id}/evidence',
+  decision: '/hr/enrolments/{id}/evidence?decision={id}',
+  // PH5-E2 coordination: moved from /hr/documents/{id} — that path was shared
+  // with an unrelated entity (candidate documents), differing only by verb.
+  document: '/hr/library/{id}',
+  role_profile: null,
+  analytics: null,
+  audit: null,
+};
 
 /** The request a human commits. Always a relative path on our own API. */
 export interface CommitSpec {
@@ -78,6 +119,14 @@ export interface AgentChatResponse {
   citations: Citation[];
   tools_used: { name: string; ok: boolean; duration_ms: number }[];
   stop_reason: 'completed' | 'max_steps' | 'token_budget' | 'llm_error' | 'no_llm';
+  /**
+   * Computed by the server, never the model's own account: true when at least
+   * one successful tool result carried a citation. Render this as "answered
+   * from your records" vs "no records were read for this answer" — do not
+   * infer it from whether `citations` is non-empty on the client, since the
+   * server is the one place that actually saw every tool result.
+   */
+  evidence_used: boolean;
 }
 
 export interface AgentStatus {

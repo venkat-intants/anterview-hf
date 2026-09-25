@@ -77,6 +77,15 @@ describe('AttentionPanel', () => {
     expect(await screen.findByText('Asha Rao')).toBeInTheDocument();
   });
 
+  it('makes a citation its own link to the record — PH5-E1, the href was always there', async () => {
+    // Previously a non-interactive <span>, discarding a real href. The chip
+    // is a sibling of the finding's own link, never nested inside it (an <a>
+    // inside an <a> would break both for keyboard and screen-reader users).
+    renderPanel();
+    const link = await screen.findByRole('link', { name: /Asha Rao/ });
+    expect(link).toHaveAttribute('href', '/hr/applicants/ap-1');
+  });
+
   it('caps the named records so one finding cannot bury the next', async () => {
     getAttention.mockResolvedValue(
       board([
@@ -97,7 +106,10 @@ describe('AttentionPanel', () => {
   });
 
   it('does not render a dead link for a finding with nowhere to go', async () => {
-    getAttention.mockResolvedValue(board([item({ link: null })]));
+    // Isolated from citations here: this test is about the FINDING's own
+    // link, which is a separate assertion from whether a citation is
+    // clickable (covered above and in CitationChips.test.tsx).
+    getAttention.mockResolvedValue(board([item({ link: null, citations: [] })]));
     renderPanel();
     await screen.findByText('7 applicants stalled over 7 days');
     expect(screen.queryByRole('link')).not.toBeInTheDocument();

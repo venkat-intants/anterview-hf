@@ -34,6 +34,7 @@ from shared.agents import (
     ToolOutput,
     ToolRegistry,
     citation_href,
+    citation_href_for_role,
     detect_injection,
     strip_invisible,
 )
@@ -96,7 +97,7 @@ def _applicant_citation(row: Any) -> Citation:
         kind="applicant",
         id=str(row.id),
         label=str(row.full_name),
-        href=f"/hr/applicants/{row.id}",
+        href=citation_href("applicant", str(row.id)),
     )
 
 
@@ -447,7 +448,16 @@ async def _get_funnel_analytics(args: dict[str, Any], ctx: ToolContext) -> ToolO
             "overall": _checkin_safe_metrics(overall.groups[0].metrics),
             "by_opening": by_opening[:MAX_ROWS],
         },
-        citations=[Citation(kind="analytics", id="funnel", label="Hiring funnel", href="/hr/analytics")],
+        citations=[
+            Citation(
+                kind="analytics",
+                id="funnel",
+                label="Hiring funnel",
+                # No record to open (CITATION_ROUTES["analytics"] is None), but
+                # the console that SHOWS this aggregate is a declared view.
+                href=citation_href("analytics", view="hr"),
+            )
+        ],
     )
 
 
@@ -521,7 +531,9 @@ async def _get_exam_question_stats(args: dict[str, Any], ctx: ToolContext) -> To
             continue
         seen_exam_ids.add(exam_id)
         citations.append(
-            Citation(kind="exam", id=exam_id, label=r.title, href=f"/hr/exams/{r.exam_id}")
+            Citation(
+                kind="exam", id=exam_id, label=r.title, href=citation_href("exam", exam_id)
+            )
         )
 
     return ToolOutput(
@@ -688,7 +700,12 @@ async def _get_platform_overview(args: dict[str, Any], ctx: ToolContext) -> Tool
             },
         },
         citations=[
-            Citation(kind="analytics", id="platform", label="Platform overview", href="/platform")
+            Citation(
+                kind="analytics",
+                id="platform",
+                label="Platform overview",
+                href=citation_href("analytics", view="platform"),
+            )
         ],
     )
 
@@ -1103,7 +1120,7 @@ async def _get_company_overview(args: dict[str, Any], ctx: ToolContext) -> ToolO
                 kind="analytics",
                 id="company_overview",
                 label="Company overview",
-                href="/superadmin",
+                href=citation_href("analytics", view="company"),
             )
         ],
     )
@@ -1203,7 +1220,7 @@ async def _get_hr_workload(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
                 kind="analytics",
                 id="hr_workload",
                 label="HR manager workload",
-                href="/superadmin",
+                href=citation_href("analytics", view="company"),
                 # This tool names staff by full_name/email but cites an
                 # aggregate — there is no per-staff route (a "staff" citation
                 # kind and a /superadmin/staff/{id} page do not exist yet, and
@@ -1392,7 +1409,17 @@ async def _get_decision_trace(args: dict[str, Any], ctx: ToolContext) -> ToolOut
         citations.append(
             Citation(
                 kind=_citation_kind_for(node),  # type: ignore[arg-type]
-                id=node.source.id, label=f"{node.kind} — {node.stage.name}", href=node.href,
+                id=node.source.id, label=f"{node.kind} — {node.stage.name}",
+                # The ONE citation href in the service that does not come from
+                # CITATION_ROUTES/CITATION_VIEWS, and deliberately: an evidence
+                # node's href is an ANCHORED deep link built by
+                # evidence_graph.loaders (`/hr/applicants/<aid>?enrolment=<eid>
+                # #<section>`), whose anchors are a documented contract with
+                # CandidateDrawer.tsx. Re-deriving it from the citation table
+                # would drop both the enrolment and the section the trace is
+                # pointing at. Passed through, never formatted here — so this
+                # file still contains no inline path.
+                href=node.href,
             )
         )
 
@@ -1566,7 +1593,12 @@ async def _search_company_documents(args: dict[str, Any], ctx: ToolContext) -> T
                 kind="document",
                 id=document_id,
                 label=title,
-                href=citation_href("document", document_id),
+                # Role-aware: both company roles may search the library, but
+                # /hr/* admits hr_manager only, so a super admin following the
+                # HR path was bounced back to /superadmin by their own route
+                # guard. The server knows the caller's role; the client should
+                # not have to rewrite a path it was handed.
+                href=citation_href_for_role("document", document_id, role=ctx.role),
                 locator=_corpus_locator(version, page, heading),
             )
 

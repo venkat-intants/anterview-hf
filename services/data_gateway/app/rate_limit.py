@@ -18,7 +18,8 @@ either changes:
      protection is off" but "brute-force protection is off and nothing says so".
 
 Worth knowing when reading an incident: this and the JWT revocation-epoch check
-(``dependencies._token_epoch``) use the same Redis and therefore fail open
+(``shared.auth.jwt.is_token_revoked``, called from
+``dependencies.get_current_user``) use the same Redis and therefore fail open
 TOGETHER. During an Upstash outage, login throttling and the "log out all
 devices" kill switch are both inactive at once. Alert on
 ``rate_limit_check_skipped_total``.

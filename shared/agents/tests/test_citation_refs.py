@@ -28,6 +28,7 @@ from shared.agents.schema import (
     ToolCall,
     ToolResult,
     citation_href,
+    citation_href_for_role,
 )
 
 OBJ_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
@@ -78,6 +79,53 @@ def test_citation_href_helper_scorecard_route_uses_the_given_id_not_a_guess() ->
     assert citation_href("scorecard", "applicant-id-here") == (
         "/hr/applicants/applicant-id-here"
     )
+
+
+def test_citation_href_view_selects_a_declared_sub_view() -> None:
+    """The workflow copilot's case: a ``job`` citation that must open the canvas
+    rather than the requisition dashboard. Both paths are real, which is why the
+    divergence between the table and what was emitted went unnoticed."""
+    assert citation_href("job", "r-1") == "/hr/requisitions/r-1"
+    assert citation_href("job", "r-1", view="workflow") == "/hr/requisitions/r-1/workflow"
+    assert citation_href("job", "r-1", view="decisions") == "/hr/requisitions/r-1/decisions"
+    # A view needs no id when its route has no {id} (a console dashboard).
+    assert citation_href("analytics", view="platform") == "/platform"
+
+
+def test_citation_href_refuses_an_undeclared_view_rather_than_guessing() -> None:
+    """A typo'd view must be loud. Falling back to the base route would put the
+    reader on a page that looks plausible and is not the one cited."""
+    with pytest.raises(KeyError, match="no citation view"):
+        citation_href("job", "r-1", view="worflow")
+
+
+def test_citation_href_refuses_a_route_that_needs_an_id_it_was_not_given() -> None:
+    """"/hr/applicants/" is a dead link no assertion would notice."""
+    with pytest.raises(KeyError, match="needs an id"):
+        citation_href("applicant")
+
+
+def test_a_document_citation_points_into_the_readers_own_console() -> None:
+    """Both company roles may be handed a ``document`` citation
+    (CITATION_MIN_ROLES["document"] is company_scoped), but ``/hr/*`` admits
+    hr_manager only — a super admin following the HR path is bounced to
+    /superadmin by their own route guard. Same record, different door."""
+    assert citation_href_for_role("document", "d-1", role="hr_manager") == "/hr/library/d-1"
+    assert citation_href_for_role("document", "d-1", role="super_admin") == (
+        "/superadmin/library/d-1"
+    )
+
+
+def test_the_role_aware_helper_falls_back_to_the_base_route() -> None:
+    """Two fallbacks, both deliberate: a role with no console view of its own,
+    and a kind that exists in only one console. The helper is therefore safe to
+    use at any call site and changes the answer only where a table entry says so."""
+    # A role that is never offered a company-scoped document tool at all.
+    assert citation_href_for_role("document", "d-1", role="platform_owner") == "/hr/library/d-1"
+    # A kind with no per-console view: hr_manager has a console view, `applicant`
+    # has no ("applicant", "hr") entry, so the base route stands.
+    assert citation_href_for_role("applicant", "a-1", role="hr_manager") == "/hr/applicants/a-1"
+    assert citation_href_for_role("applicant", "a-1", role="super_admin") == "/hr/applicants/a-1"
 
 
 # ---------------------------------------------------------------------------

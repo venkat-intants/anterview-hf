@@ -354,8 +354,10 @@ async def test_a_failed_tool_reports_its_error_to_the_model(
 # SAFETY_CLAUSE told the model to distrust "[UNTRUSTED DATA]" blocks that never
 # appeared on a real request, because the only place the notice was applied
 # (``runtime.build_wire_messages``) was dead code in production. These are the
-# per-adapter tests the fix is for — see the equivalent in
-# test_agent_llm.py for the Gemini side.
+# per-adapter tests the fix is for — see the equivalent in test_agent_tools.py
+# (``test_tool_output_is_wrapped_in_the_untrusted_data_notice_on_the_gemini_wire``)
+# for the Gemini side. This comment previously named a file that has never
+# existed in this repo.
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_tool_output_is_wrapped_in_the_untrusted_data_notice(

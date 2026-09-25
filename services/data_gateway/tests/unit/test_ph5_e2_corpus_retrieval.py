@@ -497,6 +497,42 @@ async def test_a_citation_points_at_the_library_route_and_the_first_passage_seen
     assert citation.locator == "v2 · page 4 · Notice period"
 
 
+async def test_a_super_admins_citation_points_into_their_own_console(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both company roles may search the library (the audience predicate is what
+    differs), so a super admin legitimately RECEIVES document citations —
+    CITATION_MIN_ROLES["document"] is company_scoped. But ``/hr/*`` admits
+    hr_manager only, so the HR path was a link their own route guard bounced to
+    /superadmin. Same record, different door: the server knows the role, so it
+    builds the door rather than asking the client to rewrite the path."""
+    db = search_session([chunk(page_from=4, heading="Notice period", version=2)])
+    monkeypatch.setattr(corpus, "embed_one_remote", embedder())
+
+    citation = (await call(db, {"query": "notice"}, role="super_admin")).citations[0]
+
+    assert citation.kind == "document"
+    assert citation.href == f"/superadmin/library/{DOC_A}"
+    # The locator is about the DOCUMENT, so it must not vary with who asked.
+    assert citation.locator == "v2 · page 4 · Notice period"
+
+
+async def test_the_two_company_roles_get_the_same_citation_but_their_own_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pair, asserted together: only the href differs. A future change that
+    made a super admin's chip point at a DIFFERENT document, or drop the
+    citation entirely, would pass both tests above separately."""
+    monkeypatch.setattr(corpus, "embed_one_remote", embedder())
+
+    hr = (await call(search_session(), {"query": "notice"}, role="hr_manager")).citations[0]
+    sa = (await call(search_session(), {"query": "notice"}, role="super_admin")).citations[0]
+
+    assert hr.id == sa.id and hr.label == sa.label and hr.kind == sa.kind
+    assert hr.href == f"/hr/library/{hr.id}"
+    assert sa.href == f"/superadmin/library/{sa.id}"
+
+
 async def test_a_document_with_no_title_is_cited_as_untitled_not_as_blank(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

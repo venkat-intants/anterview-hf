@@ -38,6 +38,7 @@ from shared.agents import (
     Proposal,
     ToolContext,
     ToolOutput,
+    citation_href,
     strip_invisible,
 )
 from shared.intelligence import baseline_profile, compute_profile_id
@@ -134,7 +135,11 @@ def _requisition_citation(req: dict[str, Any]) -> Citation:
         kind="job",
         id=str(req["id"]),
         label=f"Opening — {req['title']}",
-        href=f"/hr/requisitions/{req['id']}/workflow",
+        # The workflow CANVAS, not the requisition dashboard: this copilot only
+        # ever runs from the builder, and the answer is always about the process
+        # being designed. A declared view rather than an inline path — the
+        # table's own entry for "job" is the dashboard, and both are real.
+        href=citation_href("job", str(req["id"]), view="workflow"),
     )
 
 
@@ -353,7 +358,7 @@ async def _list_available_exams(_args: dict[str, Any], ctx: ToolContext) -> Tool
         },
         citations=[
             Citation(kind="exam", id=str(r["exam_id"]), label=str(r["exam_title"]),
-                     href=f"/hr/exams/{r['exam_id']}")
+                     href=citation_href("exam", str(r["exam_id"])))
             for r in rows
             if r["round_id"]
         ][:10],

@@ -14,6 +14,25 @@ frontend enforces access, so there is no TS side to parse). Both are extended
 here rather than in a new file, since "does this table cover every kind" is
 the same question the file already asks about ``CitationKind`` itself.
 
+PH5 Wave 3 adds two MORE tables, and neither is mirrored in TypeScript — stated
+plainly here because an uncovered table is exactly the kind of gap this file
+exists to make loud:
+
+* ``CITATION_VIEWS`` — ``(kind, view) -> path`` for a citation that must open
+  something other than the record's own page (the workflow canvas, a decision
+  queue, a console dashboard, the super admin's copy of the document library).
+* ``CITATION_CONSOLE_VIEW`` — ``role -> view``, so the server can pick the
+  console the reader is actually allowed to enter.
+
+There is NO TS parity test for either, and that is a decision, not an omission:
+``CitationChips.tsx`` navigates to the ``href`` the SERVER sent, so the TS
+``CITATION_ROUTES`` copy is documentation plus the diff below, not a link
+builder. A view therefore has no TS side to drift from. What IS checked here is
+that every view names a real ``CitationKind`` and yields a relative app path —
+the two properties the renderer and ``Citation.href``'s validator depend on. If
+the frontend ever starts BUILDING hrefs from its own table, this becomes a real
+gap and these tables need mirroring.
+
 Regex fragility, noted rather than silently relied on (PH5 Wave 3 design §9
 Q15): ``_ts_citation_kinds`` greeds up to the FIRST ``;`` after ``kind:``
 inside the FIRST ``export interface Citation {`` block it finds. A field
@@ -29,7 +48,13 @@ import pathlib
 import re
 import typing
 
-from shared.agents.schema import CITATION_MIN_ROLES, CITATION_ROUTES, CitationKind
+from shared.agents.schema import (
+    CITATION_CONSOLE_VIEW,
+    CITATION_MIN_ROLES,
+    CITATION_ROUTES,
+    CITATION_VIEWS,
+    CitationKind,
+)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 AGENT_TS = REPO_ROOT / "web" / "src" / "api" / "agent.ts"
@@ -108,8 +133,59 @@ def test_citation_min_roles_cover_every_kind() -> None:
 def test_citation_min_roles_are_never_empty() -> None:
     """An empty role set would mean "no caller may ever open this" — silently
     dead evidence, on a kind some tool presumably still emits."""
+    # An empty TABLE would run this loop zero times and pass. The coverage test
+    # above would catch that, but a guard should not depend on a sibling for the
+    # difference between "checked" and "not checked".
+    assert CITATION_MIN_ROLES, "the role table is empty; this guard checked nothing"
     for kind, roles in CITATION_MIN_ROLES.items():
         assert roles, f"{kind!r} permits no role at all"
+
+
+# ---------------------------------------------------------------------------
+# CITATION_VIEWS / CITATION_CONSOLE_VIEW — Python-only (see the module
+# docstring). No TS diff to run, so the properties the renderer actually
+# depends on are asserted directly instead.
+# ---------------------------------------------------------------------------
+
+
+def test_every_citation_view_names_a_real_kind_and_a_relative_path() -> None:
+    python_kinds = set(typing.get_args(CitationKind))
+    assert CITATION_VIEWS, "the view table is empty; this guard checked nothing"
+    for (kind, view), template in CITATION_VIEWS.items():
+        assert kind in python_kinds, f"view ({kind!r}, {view!r}) names no CitationKind"
+        assert view, f"({kind!r}, {view!r}) has an empty view name"
+        # The same rule Citation.href's validator enforces: a relative app path,
+        # never an absolute URL and never protocol-relative.
+        assert template.startswith("/") and not template.startswith("//"), (
+            f"view ({kind!r}, {view!r}) is not a relative app path: {template!r}"
+        )
+
+
+def test_a_multi_console_kinds_base_route_is_the_console_view_it_duplicates() -> None:
+    """``document`` is declared twice on purpose — once as the base route (which
+    the TS mirror carries, and which roles with no console view of their own
+    fall back to) and once as the ``hr`` view that hr_manager actually receives.
+    If those two ever diverge, the TS table and the parity diff above would
+    describe a path nothing emits: item 2's defect, re-armed.
+    """
+    for (kind, view), template in CITATION_VIEWS.items():
+        if view == "hr" and CITATION_ROUTES.get(kind) is not None:
+            assert template == CITATION_ROUTES[kind], (
+                f"{kind!r}'s 'hr' view ({template}) and its base route "
+                f"({CITATION_ROUTES[kind]}) have drifted"
+            )
+
+
+def test_every_console_view_is_a_view_some_kind_actually_declares() -> None:
+    """A role mapped to a view name no ``(kind, view)`` pair uses would silently
+    do nothing — ``citation_href_for_role`` would fall through to the base route
+    for every kind, which is precisely the bug it was added to fix."""
+    assert CITATION_CONSOLE_VIEW, "the console table is empty; this guard checked nothing"
+    declared_views = {view for _kind, view in CITATION_VIEWS}
+    for role, view in CITATION_CONSOLE_VIEW.items():
+        assert view in declared_views, (
+            f"role {role!r} maps to view {view!r}, which no kind declares in CITATION_VIEWS"
+        )
 
 
 def test_citation_routes_matches_the_typescript_table() -> None:

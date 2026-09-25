@@ -90,9 +90,15 @@ def test_hr_console_gets_both_read_and_draft_tools() -> None:
 
 def test_tool_descriptions_tell_the_model_drafts_are_not_actions() -> None:
     """A draft tool whose description implies it acts will be misreported."""
+    checked = 0
     for spec in registry.specs_for("hr_manager"):
         if spec.effect == "draft":
+            checked += 1
             assert "does NOT" in spec.description or "Does NOT" in spec.description
+    # Without this the inner `if` is free to match nothing — the shape that let
+    # test_no_draft_handler_reads_the_corpus ship green while examining zero
+    # functions. Two drafting tools are registered for hr_manager today.
+    assert checked >= 2, f"only {checked} draft tool(s) inspected; the filter has gone blind"
 
 
 # ---------------------------------------------------------------------------

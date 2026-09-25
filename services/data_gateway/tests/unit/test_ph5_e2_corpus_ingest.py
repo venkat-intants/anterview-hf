@@ -366,11 +366,28 @@ _WRITE_ALLOWED = {
 def test_corpus_module_writes_only_from_the_declared_functions() -> None:
     tree = ast.parse(_SOURCE)
     sources = _function_sources(tree)
+    # The scan must actually have found functions: an empty ``sources`` would
+    # satisfy every assertion below without inspecting anything.
+    assert len(sources) >= len(_WRITE_ALLOWED), (
+        f"only {len(sources)} functions parsed out of corpus.py -- the scan has "
+        "gone blind and this guard would pass whatever the module does"
+    )
     for name, body in sources.items():
+        assert body, f"no source segment recovered for {name}; the checks below are vacuous"
         if name in _WRITE_ALLOWED:
             continue
         for verb in ("INSERT INTO", "UPDATE ", "DELETE FROM"):
             assert verb not in body, f"{name} contains {verb!r} but is not in _WRITE_ALLOWED"
+
+
+def test_every_declared_writer_still_exists() -> None:
+    """The other half of the allow-list's contract. A renamed or deleted writer
+    would leave its old name here silently permitting nothing, and the guard
+    above would then be one name weaker than it reads -- the same "declaration
+    that outlived the code" defect the project treats as a defect elsewhere."""
+    sources = _function_sources(ast.parse(_SOURCE))
+    stale = sorted(_WRITE_ALLOWED - set(sources))
+    assert not stale, f"_WRITE_ALLOWED names functions corpus.py no longer defines: {stale}"
 
 
 def test_corpus_module_never_imports_httpx_directly() -> None:
@@ -378,22 +395,100 @@ def test_corpus_module_never_imports_httpx_directly() -> None:
     assert "import httpx" not in _SOURCE
 
 
+def _is_draft_handler(name: str) -> bool:
+    """A Proposal-drafting handler, by the convention BOTH modules use.
+
+    ``lstrip("_")`` and not ``startswith("draft_")``: every handler is private
+    (``_draft_shortlist``, ``_draft_workflow_round``, ...), so the bare prefix
+    matched ZERO functions and the guard below passed unconditionally for the
+    whole of Wave 3. The property held anyway, but the test proved nothing --
+    hence the registry cross-check in ``_registered_draft_handlers`` as well:
+    a naming convention is not something a guard should depend on silently.
+    """
+    return name.lstrip("_").startswith("draft_")
+
+
+def _registered_draft_handlers() -> set[str]:
+    """Handler function names the REGISTRY declares as ``effect="draft"``.
+
+    Imported here rather than at module scope so the parsing tests above stay
+    free of the agents package. ``workflow_tools`` registers onto the same
+    registry but is not imported by ``tools``, so it is imported explicitly --
+    exactly as ``app.routers.agent`` does it.
+    """
+    from app.agents import workflow_tools as _workflow_tools  # noqa: F401
+    from app.agents.tools import registry
+
+    return {
+        handler.__name__
+        for spec, handler in registry._tools.values()
+        if spec.effect == "draft"
+    }
+
+
+def _corpus_references(node: ast.AST) -> list[str]:
+    """Every way a parsed subtree could reach the corpus module.
+
+    Checked on the AST rather than by substring so a comment mentioning the word
+    "corpus" is not a failure and ``from app import corpus`` (which contains no
+    literal "app.corpus") is not a pass.
+    """
+    hits: list[str] = []
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and "corpus" in child.id:
+            hits.append(f"name {child.id}")
+        elif isinstance(child, ast.Attribute) and "corpus" in child.attr:
+            hits.append(f"attribute .{child.attr}")
+        elif isinstance(child, ast.Import | ast.ImportFrom):
+            # BOTH the module and the imported NAMES: ``from app import corpus``
+            # names the module "app", so a check on ``child.module`` alone misses
+            # the most natural way a handler would reach it. Found by mutating a
+            # handler to do exactly that and watching this guard stay green.
+            module = getattr(child, "module", None) or ""
+            imported = [alias.name for alias in child.names]
+            if "corpus" in module or any("corpus" in name for name in imported):
+                hits.append(f"import {module}.{','.join(imported)}".strip("."))
+    return hits
+
+
 def test_no_draft_handler_reads_the_corpus() -> None:
     """E2-specific rule: a Proposal-drafting handler must never see a corpus
     passage — the only path to an action is a query the corpus cannot
-    influence."""
+    influence.
+
+    The scan is asserted to have found handlers, twice over: a floor, and an
+    equality against what the registry declares draft-effect. A filter that
+    silently matches nothing is how this guard shipped green while examining
+    zero functions.
+    """
+    declared = _registered_draft_handlers()
+    examined: set[str] = set()
     for path in (_TOOLS_PY, _WORKFLOW_TOOLS_PY):
-        if not path.exists():
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
+        assert path.exists(), (
+            f"{path} is gone; skipping it (as this test used to) means scanning nothing"
+        )
+        source = path.read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
-            if not node.name.startswith("draft_"):
+            if not _is_draft_handler(node.name):
                 continue
-            body = ast.get_source_segment(path.read_text(encoding="utf-8"), node) or ""
-            assert "app.corpus" not in body, f"{node.name} in {path} imports app.corpus"
-            assert "search_corpus" not in body, f"{node.name} in {path} calls search_corpus"
+            examined.add(node.name)
+            found = _corpus_references(node)
+            assert not found, (
+                f"{node.name} in {path.name} reaches the corpus ({', '.join(found)}); "
+                "a drafting handler must not be able to see a retrieved passage"
+            )
+    assert len(examined) >= 3, (
+        f"only {len(examined)} drafting handler(s) inspected: {sorted(examined)}. "
+        "The name filter has stopped matching -- fix it rather than trusting a "
+        "guard that examines nothing."
+    )
+    assert declared <= examined, (
+        "handlers the registry declares effect='draft' were never inspected: "
+        f"{sorted(declared - examined)}. Either they are named outside the "
+        "_draft_* convention or they live outside the two scanned modules."
+    )
 
 
 def test_no_url_fetched_from_document_derived_content() -> None:

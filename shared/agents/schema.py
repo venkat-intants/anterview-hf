@@ -130,10 +130,23 @@ CitationKind = Literal[
 # own id but links through the APPLICANT page, because there is no standalone
 # scorecard route. Callers use ``citation_href`` below rather than formatting
 # this by hand, so that distinction is made once instead of at every call site.
+#
+# This table plus ``CITATION_VIEWS`` is the WHOLE vocabulary of citation hrefs:
+# no citation-producing module formats one itself, which
+# ``test_citation_contract_sweep.py`` enforces structurally. It was decoration
+# until PH5 Wave 3's acceptance pass — roughly two of twenty call sites used it,
+# and the rest agreed with it only by luck.
 CITATION_ROUTES: dict[str, str | None] = {
     "applicant": "/hr/applicants/{id}",
     "scorecard": "/hr/applicants/{id}",
     "exam": "/hr/exams/{id}",
+    # Served by ``web/src/pages/hr/ExamAttemptRedirect.tsx``, which resolves the
+    # owning exam and forwards to the attempt detail screen. That resolver costs
+    # ONE REQUEST PER EXAM until it finds the attempt, because there is no
+    # ``GET /hr/exams/attempts/{id}`` to ask directly — deliberately not added
+    # yet (this is a rescue path off a citation chip, not a hot route). The cheap
+    # fix, for whoever needs it: one endpoint returning the attempt's exam_id,
+    # and the resolver becomes a single call.
     "exam_attempt": "/hr/exams/attempts/{id}",
     "interview": "/hr/interviews/{id}",
     "job": "/hr/requisitions/{id}",
@@ -149,16 +162,108 @@ CITATION_ROUTES: dict[str, str | None] = {
 }
 
 
-def citation_href(kind: str, route_id: str) -> str | None:
-    """Build an href from ``CITATION_ROUTES`` for a given record id.
+# Sub-views a citation may legitimately point at INSTEAD of the record's own
+# page, keyed by ``(kind, view)``. The table above answers "where does this
+# record live"; this one answers the cases where that is the wrong place to land:
+#
+#   * the workflow copilot cites the opening it is designing — the canvas is
+#     the page the user is on and the one the answer is about, not the
+#     requisition dashboard;
+#   * two watchers cite an opening because a QUEUE on it needs working;
+#   * an ``analytics`` citation has no record at all (hence ``None`` above) but
+#     does have a console dashboard that shows the aggregate, and which console
+#     that is depends on who asked;
+#   * a ``document`` lives in TWO consoles (the HR library and the super admin's
+#     copy of the same screen) and a role may only enter its own, so the view is
+#     the console — see ``CITATION_CONSOLE_VIEW`` and ``citation_href_for_role``.
+#
+# This exists because the alternative was each of those call sites formatting a
+# path inline, which is how ``CITATION_ROUTES`` came to describe only about two
+# of twenty emitted hrefs. A ``(kind, view)`` pair that is not declared here
+# RAISES rather than falling back to the base route: a typo'd view must be a
+# loud failure in a test, not a chip that silently lands somewhere else.
+#
+# Python-side only, and deliberately not mirrored in ``web/src/api/agent.ts``:
+# the renderer (``components/agent/CitationChips.tsx``) navigates to the
+# ``href`` the SERVER sent, so the TS ``CITATION_ROUTES`` copy exists for the
+# kind-coverage parity test, not to build links. Adding a new CitationKind does
+# need the TS change; adding a view does not.
+CITATION_VIEWS: dict[tuple[str, str], str] = {
+    ("job", "workflow"): "/hr/requisitions/{id}/workflow",
+    ("job", "decisions"): "/hr/requisitions/{id}/decisions",
+    ("analytics", "hr"): "/hr/analytics",
+    ("analytics", "company"): "/superadmin",
+    ("analytics", "platform"): "/platform",
+    # One document, two consoles. ``/hr/*`` admits ``hr_manager`` only, so a
+    # super admin — who legitimately RECEIVES document citations, since
+    # CITATION_MIN_ROLES["document"] is company_scoped — was handed a link their
+    # own route guard bounced to /superadmin. The record is the same; the door is
+    # not. The base route above stays the HR one, which is what hr_manager gets.
+    ("document", "hr"): "/hr/library/{id}",
+    ("document", "company"): "/superadmin/library/{id}",
+}
+
+# Which console a staff role is allowed to walk into. Used ONLY for the kinds
+# that exist in more than one console (``document`` today): a citation's kind
+# says what the record is, and this says where that particular reader can open
+# it. On the server because the server is the only side that knows both — the
+# alternative was the client rewriting a path it was handed, which is a second
+# copy of the route table in the place least able to keep it honest.
+#
+# Roles absent here (``platform_owner``, ``admin``, ``interviewer``) get the
+# kind's base route: they are never offered a company-scoped document tool, and
+# inventing a console path for them would be a guess.
+CITATION_CONSOLE_VIEW: dict[str, str] = {
+    "hr_manager": "hr",
+    "super_admin": "company",
+}
+
+
+def citation_href(kind: str, route_id: str = "", *, view: str | None = None) -> str | None:
+    """Build an href from ``CITATION_ROUTES`` (or ``CITATION_VIEWS``) for a record.
 
     Not every citation's own ``id`` is the id its route needs (see the
     ``scorecard`` note on ``CITATION_ROUTES`` above), so callers pass whichever
     id the ROUTE wants, explicitly, rather than this function guessing from a
     ``Citation`` instance.
+
+    *view* selects a declared sub-view instead of the record's own page — see
+    ``CITATION_VIEWS``. An undeclared ``(kind, view)`` raises ``KeyError``; so
+    does a route that needs an id it was not given, because "/hr/requisitions/"
+    is a dead link that no test would notice.
     """
-    template = CITATION_ROUTES.get(kind)
-    return template.format(id=route_id) if template else None
+    if view is not None:
+        try:
+            template: str | None = CITATION_VIEWS[(kind, view)]
+        except KeyError:
+            raise KeyError(
+                f"no citation view {view!r} declared for kind {kind!r}; add it to "
+                "CITATION_VIEWS in shared/agents/schema.py rather than formatting "
+                "the path at the call site"
+            ) from None
+    else:
+        template = CITATION_ROUTES.get(kind)
+    if template is None:
+        return None
+    if "{id}" in template and not route_id:
+        raise KeyError(f"citation route {template!r} needs an id and was given none")
+    return template.format(id=route_id)
+
+
+def citation_href_for_role(kind: str, route_id: str, *, role: str) -> str | None:
+    """``citation_href`` for a kind whose page lives in more than one console.
+
+    Falls back to the kind's base route whenever this kind has no per-console
+    view for this role, so it is safe to use anywhere and only changes the answer
+    where a table entry says it should. That fallback is why it does not raise
+    like ``view=`` does: a role with no console view is the normal case, not a
+    typo — the loud failure that matters (a view named but not declared) is still
+    ``citation_href``'s.
+    """
+    view = CITATION_CONSOLE_VIEW.get(role)
+    if view is not None and (kind, view) in CITATION_VIEWS:
+        return citation_href(kind, route_id, view=view)
+    return citation_href(kind, route_id)
 
 
 # Minimum roles that may be HANDED a citation of this kind at all — the answer

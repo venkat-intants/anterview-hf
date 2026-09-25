@@ -79,8 +79,10 @@ from shared.agents.runtime import (
     tool_wire_content,
 )
 from shared.agents.schema import (
+    CITATION_CONSOLE_VIEW,
     CITATION_MIN_ROLES,
     CITATION_ROUTES,
+    CITATION_VIEWS,
     CROSS_TENANT_ROLES,
     DATA_CLASS_ROLES,
     AgentMessage,
@@ -100,6 +102,7 @@ from shared.agents.schema import (
     ToolSpec,
     WatcherFinding,
     citation_href,
+    citation_href_for_role,
 )
 from shared.agents.watchers import (
     WATCHERS,
@@ -115,8 +118,10 @@ from shared.agents.watchers import (
 )
 
 __all__ = [
+    "CITATION_CONSOLE_VIEW",
     "CITATION_MIN_ROLES",
     "CITATION_ROUTES",
+    "CITATION_VIEWS",
     "CONTRADICTION_THRESHOLD",
     "CROSS_TENANT_ROLES",
     "DATA_CLASS_ROLES",
@@ -166,6 +171,7 @@ __all__ = [
     "build_agent",
     "build_wire_messages",
     "citation_href",
+    "citation_href_for_role",
     "detect_contradictions",
     "detect_injection",
     "digest",

@@ -140,8 +140,9 @@ FAILURE_SENTENCES: dict[str, str] = {
 _HR_ONLY_REQUIRES_HR_MANAGER = "hr_only_requires_hr_manager"
 
 # Q5 — see the module docstring. Literal frozensets, not a reuse of
-# shared.agents.schema.DATA_CLASS_ROLES["candidate_pii"]; the subset test lives
-# in tests/unit/test_corpus_audience.py.
+# shared.agents.schema.DATA_CLASS_ROLES["candidate_pii"]; the subset tests live
+# in tests/unit/test_ph5_e2_corpus_ingest.py (TestAudienceRoles) and
+# tests/unit/test_ph5_e2_corpus_rules.py.
 CORPUS_AUDIENCE_ROLES: dict[str, frozenset[str]] = {
     "all_staff": frozenset({"hr_manager", "super_admin"}),
     "hr_only": frozenset({"hr_manager"}),

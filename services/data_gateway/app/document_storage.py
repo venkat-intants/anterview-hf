@@ -21,8 +21,10 @@ serves a document's bytes through the API.
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 import uuid
+import zipfile
 from dataclasses import dataclass
 
 import structlog
@@ -51,7 +53,17 @@ _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
 class DocumentRejectedError(ValueError):
-    """The file is not one we accept, in words a candidate can act on."""
+    """The file is not one we accept, in words a candidate can act on.
+
+    ``code`` is optional and unused by the original preboarding ``check()`` —
+    it exists for ``check_corpus()``, whose caller (``app/corpus.py``) needs a
+    machine-readable reason from the closed ``failure_code`` vocabulary, not a
+    string it would otherwise have to parse.
+    """
+
+    def __init__(self, message: str, *, code: str = "unsupported_type") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -105,6 +117,97 @@ def check(data: bytes, filename: str | None, *, max_bytes: int) -> CheckedFile:
 
 def storage_key(company_id: uuid.UUID, offer_id: uuid.UUID, document_id: uuid.UUID) -> str:
     return f"preboarding/{company_id}/{offer_id}/{document_id}"
+
+
+# ---------------------------------------------------------------------------
+# PH5-E2: the corpus sniffer — a SEPARATE allow-list from ``sniff()`` above.
+#
+# The company document library takes PDF, DOCX, TXT and MD; it deliberately
+# does NOT take JPEG/PNG (a scanned photo of a policy has no extractable
+# text — ``no_text`` refuses it cleanly rather than indexing nothing). Written
+# as its own function, inlining the PDF magic-byte check rather than calling
+# ``sniff()``, so a future change to the candidate-document allow-list cannot
+# silently widen what the corpus accepts, and vice versa. A test
+# (``test_corpus_sniff_does_not_widen_candidate_documents``) pins that
+# ``sniff()``'s accepted set is unchanged by this module gaining a sibling.
+# ---------------------------------------------------------------------------
+_DOCX_ZIP_MAGIC = b"PK\x03\x04"
+_DOCX_REQUIRED_ENTRY = "word/document.xml"
+# Bytes that can never appear in genuine UTF-8 text content HR would upload —
+# a NUL means the file is binary, whatever else decodes.
+_NUL = b"\x00"
+
+
+def sniff_corpus(data: bytes, filename: str | None) -> tuple[str, str] | None:
+    """(content type, extension) for the CORPUS allow-list, or None.
+
+    PDF and DOCX are recognised by content, exactly like ``sniff()``. Plain
+    text and Markdown have no magic bytes to key on, so they are recognised by
+    successfully decoding as UTF-8 with no NUL byte, and disambiguated from
+    each other by the filename's extension only (never used to override what
+    the CONTENT proves for PDF/DOCX).
+    """
+    if data.startswith(b"%PDF-"):
+        return "application/pdf", "pdf"
+    if data.startswith(_DOCX_ZIP_MAGIC):
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                names = archive.namelist()
+        except zipfile.BadZipFile:
+            return None
+        if _DOCX_REQUIRED_ENTRY in names:
+            return (
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "docx",
+            )
+        return None
+    if _NUL in data:
+        return None
+    try:
+        data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None
+    name = (filename or "").strip().lower()
+    if name.endswith(".md"):
+        return "text/markdown", "md"
+    return "text/plain", "txt"
+
+
+def check_corpus(data: bytes, filename: str | None, *, max_bytes: int) -> CheckedFile:
+    """``check()``'s corpus counterpart — PDF/DOCX/TXT/MD only, via ``sniff_corpus``.
+
+    Raises the same ``DocumentRejectedError`` shape so callers can share one
+    422 handler; ``app/corpus.py`` maps the message onto the closed
+    ``failure_code`` vocabulary rather than parsing this string.
+    """
+    if not data:
+        raise DocumentRejectedError("The file is empty.", code="unsupported_type")
+    if len(data) > max_bytes:
+        raise DocumentRejectedError(
+            f"The file is larger than {max_bytes // (1024 * 1024)} MB.", code="too_large"
+        )
+    kind = sniff_corpus(data, filename)
+    if kind is None:
+        raise DocumentRejectedError(
+            "We take PDF, Word (.docx), plain text and Markdown files.", code="unsupported_type"
+        )
+    content_type, extension = kind
+    if content_type == "application/pdf" and _PDF_ACTIVE.search(_decoded_names(data)):
+        raise DocumentRejectedError(
+            "This PDF contains scripts or embedded files, which we cannot accept. "
+            "Save or print it as a plain PDF and upload that.",
+            code="active_content",
+        )
+    return CheckedFile(
+        content_type=content_type, extension=extension, size_bytes=len(data),
+        sha256=hashlib.sha256(data).hexdigest(), safe_name=safe_filename(filename, extension),
+    )
+
+
+def corpus_storage_key(company_id: uuid.UUID, document_id: uuid.UUID, version_id: uuid.UUID) -> str:
+    """A key that names no candidate — company documents are staff-authored,
+    but the key shape still follows the platform's naming-nobody convention."""
+    return f"corpus/{company_id}/{document_id}/{version_id}"
 
 
 async def store(settings: Settings, key: str, data: bytes, content_type: str) -> None:

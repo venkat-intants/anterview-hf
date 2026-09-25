@@ -88,6 +88,11 @@ const Exams = lazy(() => import('./pages/hr/Exams'));
 const ExamEditor = lazy(() => import('./pages/hr/ExamEditor'));
 const ExamResults = lazy(() => import('./pages/hr/ExamResults'));
 const ExamAttemptDetail = lazy(() => import('./pages/hr/ExamAttemptDetail'));
+// PH5-E1 — an exam-attempt citation names the attempt and nothing else
+// (CITATION_ROUTES.exam_attempt = /hr/exams/attempts/{id}), while every attempt
+// API is scoped by exam. This finds the owning exam and forwards to the screen
+// above; see its own header for why that lives on the client for now.
+const ExamAttemptRedirect = lazy(() => import('./pages/hr/ExamAttemptRedirect'));
 // PH4-D1 — reusable question banks, and locking published exam content.
 const QuestionBanks = lazy(() => import('./pages/hr/QuestionBanks'));
 const QuestionBankDetail = lazy(() => import('./pages/hr/QuestionBankDetail'));
@@ -107,6 +112,9 @@ const RequisitionReview = lazy(() => import('./pages/hr/RequisitionReview'));
 const WorkflowBuilder = lazy(() => import('./pages/hr/WorkflowBuilder'));
 const DecisionQueue = lazy(() => import('./pages/hr/DecisionQueue'));
 const RequisitionDashboard = lazy(() => import('./pages/hr/RequisitionDashboard'));
+// PH5-E2 — the company's document library (policies, handbooks, process
+// notes) the staff copilot can search; shared by hr_manager and super_admin.
+const CorpusDocuments = lazy(() => import('./pages/hr/CorpusDocuments'));
 const HRAnalyticsPage = lazy(() =>
   import('./pages/hr/HRAnalytics').then((m) => ({ default: m.HRAnalyticsPage })),
 );
@@ -251,6 +259,18 @@ export default function App() {
               {/* PH4-A3 — offers awaiting this super admin's approval (D4-2). */}
               <Route path="/superadmin/offer-approvals" element={<OfferApprovals />} />
               <Route path="/superadmin/offer-approvals/:offerId" element={<OfferApprovals />} />
+              {/* PH5-E2 — the same component as /hr/library; the page itself
+                  derives what a super admin may not do (choose "HR only")
+                  from the caller's own role. Path matches the API's
+                  `/hr/library` (moved off `/hr/documents` to dodge a
+                  collision with offers.py's candidate documents) and the
+                  copilot's document-citation route. */}
+              <Route path="/superadmin/library" element={<CorpusDocuments />} />
+              {/* The same deep link as /hr/library/:documentId, for this
+                  console's own path — a super admin following a document
+                  citation gets bounced off /hr/* by HRRoute, so the row-focus
+                  behaviour has to be reachable from here too. */}
+              <Route path="/superadmin/library/:documentId" element={<CorpusDocuments />} />
             </Route>
           </Route>
 
@@ -271,7 +291,19 @@ export default function App() {
             <Route element={<ShellLayout />}>
               <Route path="/hr" element={<HRConsole />} />
               <Route path="/hr/applicants" element={<Applicants />} />
+              {/* PH5-E1 — one person, named by a citation
+                  (CITATION_ROUTES.applicant / .scorecard) or by an
+                  evidence-graph href, which also carries ?enrolment= and a
+                  #section anchor. The list screen opens CandidateDrawer on
+                  them; see its comment in Applicants.tsx. */}
+              <Route path="/hr/applicants/:applicantId" element={<Applicants />} />
               <Route path="/hr/exams" element={<Exams />} />
+              {/* /attempts/:attemptId before /:examId-shaped routes: a literal
+                  segment outranks a dynamic one either way, and reading them in
+                  this order keeps that obvious (the /hr/requisitions pattern
+                  below). This one carries the attempt id ALONE — the resolver
+                  finds its exam and forwards to the detail route. */}
+              <Route path="/hr/exams/attempts/:attemptId" element={<ExamAttemptRedirect />} />
               <Route path="/hr/exams/:examId" element={<ExamEditor />} />
               <Route path="/hr/exams/:examId/results" element={<ExamResults />} />
               <Route path="/hr/exams/:examId/attempts/:attemptId" element={<ExamAttemptDetail />} />
@@ -282,6 +314,9 @@ export default function App() {
               <Route path="/hr/question-banks/reviews" element={<QuestionReviews />} />
               <Route path="/hr/question-banks/:bankId" element={<QuestionBankDetail />} />
               <Route path="/hr/interviews" element={<HRInterviews />} />
+              {/* PH5-E1 — CITATION_ROUTES.interview. The list IS the screen for
+                  one AI interview, so this opens it with that row focused. */}
+              <Route path="/hr/interviews/:interviewId" element={<HRInterviews />} />
               <Route path="/hr/panel" element={<InterviewPanel />} />
               <Route path="/hr/stages-at-risk" element={<StagesAtRisk />} />
               <Route path="/hr/pipeline" element={<HRPipeline />} />
@@ -302,6 +337,13 @@ export default function App() {
               <Route path="/hr/requisitions/:requisitionId/decisions" element={<DecisionQueue />} />
               <Route path="/hr/analytics" element={<HRAnalyticsPage />} />
               <Route path="/hr/enrolments/:enrolmentId/evidence" element={<EvidenceTrail />} />
+              {/* PH5-E2 — the company document library, at the same path as
+                  the API (`/hr/library`, moved off `/hr/documents`) and the
+                  copilot's document-citation route. The :documentId form IS
+                  that citation route (CITATION_ROUTES.document) — same screen,
+                  with the cited row focused. */}
+              <Route path="/hr/library" element={<CorpusDocuments />} />
+              <Route path="/hr/library/:documentId" element={<CorpusDocuments />} />
             </Route>
           </Route>
 

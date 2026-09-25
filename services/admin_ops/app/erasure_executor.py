@@ -520,6 +520,41 @@ EXCLUDED_TABLES: dict[str, str] = {
                             "is nothing here that identifies or describes the candidate "
                             "beyond the accommodation row it names, which is redacted "
                             "in step 5g.",
+    # --- PH5-E2: the document corpus (company reference library) -----------
+    # The judgement call this wave adds, so the reasoning is written out in
+    # full rather than asserted, on the exam_assignments/enrolments precedent
+    # above of naming the limit rather than glossing over it. Recorded as
+    # ACCEPTED-RISKS AR-8 (owner platform_owner): there is no key from an
+    # applicant to a chunk of an HR-uploaded document, so this executor cannot
+    # find — let alone erase — a candidate's name typed INSIDE a policy PDF a
+    # company's own HR manager or super_admin uploaded. The controls that
+    # exist instead: an upload-time attestation ("this is a company document,
+    # not a record about a candidate", recorded in the corpus.document.uploaded
+    # audit row); `hr_only` as the UI's default audience; and an immediate,
+    # complete purge of text, chunks and embeddings the moment HR deletes a
+    # document (app/corpus.py::delete_document), rather than a 30-day grace
+    # window. None of the four tables below has a candidate_id, applicant_id
+    # or user_id column of any kind — they are keyed on company_id and the
+    # staff member who acted — which is also why none of them can be reached
+    # from `applicants` the way enrolments/round_results are two lists up.
+    "corpus_documents": "PH5-E2 — the identity of one company reference document (policy, "
+                       "handbook, process note): title, audience tag and expiry. No "
+                       "candidate column; see the AR-8 note above for the limit this "
+                       "table shares with the other three below.",
+    "corpus_document_versions": "PH5-E2 — one uploaded version of a corpus document: file "
+                                "identity, parse/index status and (if HR deletes it or "
+                                "retention redacts a superseded one) the storage key and "
+                                "original name, cleared. No candidate column; see the "
+                                "corpus_documents note.",
+    "corpus_chunks": "PH5-E2 — the retrievable passages of an indexed corpus document, plus "
+                     "their embeddings. No candidate column; see the corpus_documents note. "
+                     "This is the table AR-8's limit is actually about: a chunk's `content` "
+                     "is free text from an HR-uploaded document and this executor has no way "
+                     "to know whether it names anyone.",
+    "corpus_events": "PH5-E2 — append-only history of a corpus document (uploaded, parsed, "
+                     "indexed, superseded, deleted, ...): action, actor (HR staff) and facts "
+                     "(version numbers, chunk counts) — never document content. See the "
+                     "corpus_documents note.",
 }
 
 

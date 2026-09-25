@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type {
   EligibleApplicant,
@@ -142,12 +142,20 @@ async function selectApplicant(
   await user.selectOptions(screen.getByLabelText('Applicant'), id);
 }
 
-function renderPage() {
+/**
+ * @param path Mounted as App.tsx mounts it, so `/hr/interviews/{id}` — the
+ *             copilot's interview-citation route — drives the same component
+ *             through a real `:interviewId` param.
+ */
+function renderPage(path = '/hr/interviews') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <HRInterviews />
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/hr/interviews" element={<HRInterviews />} />
+          <Route path="/hr/interviews/:interviewId" element={<HRInterviews />} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -370,5 +378,43 @@ describe('HRInterviews — invite list', () => {
     renderPage();
 
     expect(await screen.findByText(/no interviews yet/i)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An interview citation lands on the interview it names
+//
+// PH5-E1: CITATION_ROUTES.interview is `/hr/interviews/{id}`, and App.tsx
+// mounted only the list — so every interview chip opened the 404 page. This list
+// IS the screen for an AI interview, so the citation focuses the row.
+// ---------------------------------------------------------------------------
+
+describe('HRInterviews — interview citation deep link', () => {
+  it('focuses the cited invite row', async () => {
+    renderPage(`/hr/interviews/${COMPLETED.invite_id}`);
+
+    await screen.findByText('Deepa Menon');
+    // Focused, not merely scrolled to: a citation followed by keyboard has to
+    // land on the record as well.
+    await waitFor(() =>
+      expect(document.activeElement?.id).toBe(`interview-${COMPLETED.invite_id}`),
+    );
+    expect(screen.queryByText(/not in this list/i)).not.toBeInTheDocument();
+  });
+
+  it('focuses nothing on the plain list route', async () => {
+    renderPage();
+    await screen.findByText('Bhavya Nair');
+    expect(document.activeElement?.id ?? '').not.toContain('interview-');
+  });
+
+  it('says where else to look for an id this list does not hold', async () => {
+    // A human panel interview is cited with the same `interview` kind but lives
+    // on the candidate's own record — an interview_sessions id is not an invite
+    // id, and silently highlighting nothing would read as "no such interview".
+    renderPage('/hr/interviews/00000000-0000-4000-8000-0000000000ff');
+
+    expect(await screen.findByText(/not in this list/i)).toBeInTheDocument();
+    expect(screen.getByText(/human interview/i)).toBeInTheDocument();
   });
 });

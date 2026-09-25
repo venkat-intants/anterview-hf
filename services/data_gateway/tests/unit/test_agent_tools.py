@@ -13,12 +13,26 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
-from shared.agents import AgentMessage, ToolCall, ToolContext, ToolResult
+from shared.agents import (
+    AgentMessage,
+    Citation,
+    PanelVerdict,
+    SignalAssessment,
+    ToolCall,
+    ToolContext,
+    ToolResult,
+)
 
 from app.agents.evidence import MAX_DETAIL_CHARS
 from app.agents.llm import _sanitise_schema, _to_gemini_contents
 from app.agents.tools import registry
-from app.routers.agent import _agent_context, _primary_role
+from app.routers import agent as agent_router
+from app.routers.agent import (
+    _agent_context,
+    _filter_panel_citations,
+    _primary_role,
+    agent_status,
+)
 
 # ---------------------------------------------------------------------------
 # Registry invariants
@@ -76,9 +90,15 @@ def test_hr_console_gets_both_read_and_draft_tools() -> None:
 
 def test_tool_descriptions_tell_the_model_drafts_are_not_actions() -> None:
     """A draft tool whose description implies it acts will be misreported."""
+    checked = 0
     for spec in registry.specs_for("hr_manager"):
         if spec.effect == "draft":
+            checked += 1
             assert "does NOT" in spec.description or "Does NOT" in spec.description
+    # Without this the inner `if` is free to match nothing — the shape that let
+    # test_no_draft_handler_reads_the_corpus ship green while examining zero
+    # functions. Two drafting tools are registered for hr_manager today.
+    assert checked >= 2, f"only {checked} draft tool(s) inspected; the filter has gone blind"
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +341,215 @@ async def test_a_tenant_role_without_a_company_is_refused() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GET /agent/status — corpus_semantic (PH5-E2, wired in by E1)
+#
+# ``app.corpus.embeddings_available()`` makes a real call to feedback_billing's
+# embedder, so /agent/status caches it briefly rather than paying that cost on
+# every poll. Each test resets the module-level cache via monkeypatch (a fresh
+# dict, auto-reverted) so one test's probe cannot leak into the next.
+# ---------------------------------------------------------------------------
+
+
+def _fresh_corpus_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        agent_router, "_corpus_semantic_cache", {"value": None, "checked_at": 0.0}
+    )
+
+
+async def test_agent_status_reports_corpus_semantic_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fresh_corpus_cache(monkeypatch)
+    monkeypatch.setattr(agent_router, "embeddings_available", AsyncMock(return_value=True))
+
+    out = await agent_status(_user("hr_manager"))
+
+    assert out["corpus_semantic"] is True
+
+
+async def test_agent_status_reports_corpus_semantic_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole point of this field (design §9 Q14): an unreachable embedder
+    must show up here, not fail silently the way applicant search's equivalent
+    degradation already does."""
+    _fresh_corpus_cache(monkeypatch)
+    monkeypatch.setattr(agent_router, "embeddings_available", AsyncMock(return_value=False))
+
+    out = await agent_status(_user("hr_manager"))
+
+    assert out["corpus_semantic"] is False
+
+
+async def test_agent_status_keeps_its_other_fields_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding a field must not cost any existing one."""
+    _fresh_corpus_cache(monkeypatch)
+    monkeypatch.setattr(agent_router, "embeddings_available", AsyncMock(return_value=True))
+
+    out = await agent_status(_user("hr_manager"))
+
+    assert set(out) >= {
+        "enabled", "model_configured", "console", "surfaces", "capabilities",
+        "note", "corpus_semantic",
+    }
+    assert out["console"] == "hr_manager"
+
+
+async def test_corpus_semantic_probe_is_cached_within_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hot-path concern: a poller hitting /agent/status repeatedly must not
+    cost one embedder round trip per request."""
+    _fresh_corpus_cache(monkeypatch)
+    probe = AsyncMock(return_value=True)
+    monkeypatch.setattr(agent_router, "embeddings_available", probe)
+
+    await agent_router._corpus_semantic_status()
+    await agent_router._corpus_semantic_status()
+    await agent_router._corpus_semantic_status()
+
+    probe.assert_awaited_once()
+
+
+async def test_corpus_semantic_probe_refreshes_after_the_window_expires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fresh_corpus_cache(monkeypatch)
+    probe = AsyncMock(return_value=True)
+    monkeypatch.setattr(agent_router, "embeddings_available", probe)
+    await agent_router._corpus_semantic_status()
+
+    # Simulate the cache entry having aged past the TTL, without sleeping.
+    agent_router._corpus_semantic_cache["checked_at"] -= (
+        agent_router._CORPUS_SEMANTIC_CACHE_SECONDS + 1
+    )
+    await agent_router._corpus_semantic_status()
+
+    assert probe.await_count == 2
+
+
+async def test_corpus_semantic_probe_never_raises_out_of_the_status_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``embeddings_available`` already reduces every failure to False; this
+    pins that the wrapper adds no new way for /agent/status to 500."""
+    _fresh_corpus_cache(monkeypatch)
+    monkeypatch.setattr(agent_router, "embeddings_available", AsyncMock(return_value=False))
+
+    out = await agent_status(_user("hr_manager"))
+
+    assert out["corpus_semantic"] is False
+
+
+async def test_corpus_semantic_is_false_and_unprobed_with_no_console(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LOW-7 (code review): a candidate cannot reach the corpus tool at all, so
+    /agent/status must not even ASK the embedder on their behalf — gated on
+    having a console, not merely reported as False after probing anyway."""
+    _fresh_corpus_cache(monkeypatch)
+    probe = AsyncMock(return_value=True)
+    monkeypatch.setattr(agent_router, "embeddings_available", probe)
+
+    out = await agent_status(_user("candidate"))
+
+    assert out["console"] == ""
+    assert out["corpus_semantic"] is False
+    probe.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Audit rows — _citation_audit_rows (MEDIUM-3, code review)
+#
+# audit_log is append-only for three years and, per AR-5, not touched by
+# erasure. locator is specified (PH5-E2) to sometimes carry a document heading
+# lifted verbatim from an uploaded file, so it is dropped from the audit row
+# entirely rather than capped — kind + id already identify the record, and a
+# locator is content, not metadata.
+# ---------------------------------------------------------------------------
+
+
+def test_citation_audit_rows_drops_locator_even_when_present() -> None:
+    cited = Citation(
+        kind="analytics",
+        id="hr_workload",
+        label="HR manager workload",
+        href="/superadmin",
+        locator="workload across 6 HR manager(s)",
+    )
+    rows = agent_router._citation_audit_rows([cited])
+    assert rows == [{"kind": "analytics", "id": "hr_workload"}]
+    assert "locator" not in rows[0]
+
+
+def test_citation_audit_rows_never_carries_a_label() -> None:
+    cited = Citation(kind="applicant", id="a-1", label="Asha K", href="/hr/applicants/a-1")
+    rows = agent_router._citation_audit_rows([cited])
+    assert rows == [{"kind": "applicant", "id": "a-1"}]
+    assert "label" not in rows[0]
+    assert "href" not in rows[0]
+
+
+# ---------------------------------------------------------------------------
+# The panel's citation-permission filter (code review small item 1)
+#
+# PanelVerdict/SignalAssessment citations are built directly by
+# assess_candidate(), never through ToolRegistry.invoke() — so nothing but
+# _filter_panel_citations enforces CITATION_MIN_ROLES on this path. Today it is
+# a no-op because /agent/panel is hr_manager-only; these tests exist so that
+# stays provably true rather than merely assumed if the route ever widens.
+# ---------------------------------------------------------------------------
+
+
+def _panel_verdict_with(*citations_per_signal: list[Citation]) -> PanelVerdict:
+    signals = [
+        SignalAssessment(signal="resume", available=True, citations=cites)
+        for cites in citations_per_signal
+    ]
+    return PanelVerdict(
+        applicant_id="a-1",
+        signals=signals,
+        citations=[c for sig in signals for c in sig.citations],
+    )
+
+
+def test_panel_citation_filter_drops_a_citation_outside_the_roles_remit() -> None:
+    overreach = Citation(kind="audit", id="req-1", label="erasure request")
+    verdict = _panel_verdict_with([overreach])
+
+    _filter_panel_citations(verdict, "hr_manager")
+
+    assert verdict.signals[0].citations == []
+    assert verdict.citations == []
+
+
+def test_panel_citation_filter_keeps_a_citation_inside_the_roles_remit() -> None:
+    ok = Citation(kind="applicant", id="a-1", label="Asha")
+    verdict = _panel_verdict_with([ok])
+
+    _filter_panel_citations(verdict, "hr_manager")
+
+    assert verdict.signals[0].citations == [ok]
+    assert verdict.citations == [ok]
+
+
+def test_panel_citation_filter_keeps_verdict_and_signals_in_agreement() -> None:
+    """verdict.citations is REBUILT from the filtered per-signal citations, so
+    the two can never list different things after filtering."""
+    kept = Citation(kind="applicant", id="a-1", label="Asha")
+    dropped = Citation(kind="audit", id="req-1", label="erasure request")
+    verdict = _panel_verdict_with([kept], [dropped])
+
+    _filter_panel_citations(verdict, "hr_manager")
+
+    assert verdict.citations == [kept]
+    assert verdict.signals[0].citations == [kept]
+    assert verdict.signals[1].citations == []
+
+
+# ---------------------------------------------------------------------------
 # Gemini wire format
 # ---------------------------------------------------------------------------
 
@@ -347,6 +576,81 @@ def test_tool_results_go_back_as_function_responses() -> None:
     assert "functionCall" in wire[1]["parts"][0]
     assert wire[2]["role"] == "user"
     assert wire[2]["parts"][0]["functionResponse"]["name"] == "list_applicants"
+
+
+# ---------------------------------------------------------------------------
+# PH5-E1 §2.1 — the untrusted-data notice must actually reach the wire.
+#
+# Before this fix, ``_to_gemini_contents`` serialised ``result.content`` raw:
+# SAFETY_CLAUSE told the model to distrust "[UNTRUSTED DATA]" blocks that never
+# appeared on a real request, because the only place the notice was applied
+# (``shared.agents.runtime.build_wire_messages``) was dead code in production
+# — Gemini and Groq both build their own wire shape. See the equivalent test in
+# test_agent_llm_groq.py for the Groq side.
+# ---------------------------------------------------------------------------
+def test_tool_output_is_wrapped_in_the_untrusted_data_notice_on_the_gemini_wire() -> None:
+    wire = _to_gemini_contents(
+        [
+            AgentMessage(role="user", text="who is top?"),
+            AgentMessage(
+                role="tool",
+                tool_results=[
+                    ToolResult(call_id="c1", name="list_applicants", ok=True, content='{"n":3}')
+                ],
+            ),
+        ]
+    )
+    content = wire[1]["parts"][0]["functionResponse"]["response"]["content"]
+    assert "UNTRUSTED DATA" in content
+    assert '{"n":3}' in content
+
+
+def test_a_cited_tool_result_carries_a_sources_line_on_the_gemini_wire() -> None:
+    """The ONLY place a citation reaches the model — a compact SOURCES line
+    naming the run-scoped ref ``run_agent`` already stamped onto it."""
+    from shared.agents import Citation
+
+    cited = Citation(
+        kind="applicant", id="a-1", label="Asha K", href="/hr/applicants/a-1", ref="S1"
+    )
+    wire = _to_gemini_contents(
+        [
+            AgentMessage(role="user", text="who is top?"),
+            AgentMessage(
+                role="tool",
+                tool_results=[
+                    ToolResult(
+                        call_id="c1",
+                        name="list_applicants",
+                        ok=True,
+                        content='{"n":1}',
+                        citations=[cited],
+                    )
+                ],
+            ),
+        ]
+    )
+    content = wire[1]["parts"][0]["functionResponse"]["response"]["content"]
+    assert "SOURCES" in content
+    assert "[S1]" in content
+    assert "Asha K" in content
+
+
+def test_a_failed_tool_result_is_also_wrapped_on_the_gemini_wire() -> None:
+    wire = _to_gemini_contents(
+        [
+            AgentMessage(role="user", text="x"),
+            AgentMessage(
+                role="tool",
+                tool_results=[
+                    ToolResult(call_id="c1", name="t", ok=False, error="permission denied")
+                ],
+            ),
+        ]
+    )
+    content = wire[1]["parts"][0]["functionResponse"]["response"]["content"]
+    assert "UNTRUSTED DATA" in content
+    assert "permission denied" in content
 
 
 def test_schema_sanitiser_drops_keywords_gemini_rejects() -> None:

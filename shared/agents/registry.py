@@ -17,6 +17,19 @@ Three properties this module is responsible for, in order of importance:
 3. **Role determines the visible toolset.** An HR manager's agent is handed
    only HR tools. Capabilities it cannot use are not described to it, which
    both avoids confusing refusals and shrinks the prompt.
+
+4. **A citation cannot hand a caller a record their role could not open.** A
+   ``company_scoped`` tool is offered to both ``hr_manager`` and
+   ``super_admin``, but if it surfaces a citation kind that is
+   ``candidate_pii`` (an ``applicant``, say), a super admin must never receive
+   it — ``DATA_CLASS_ROLES`` already says a company super admin has no route to
+   a named candidate, and an unfiltered citation is exactly such a route.
+   ``invoke`` checks every citation a handler returns against
+   ``CITATION_MIN_ROLES`` and DROPS the ones the caller's role may not open. It
+   drops rather than fails the call: a bad citation must not cost the user
+   their answer (E1-11) — the data in ``output.data`` was already permitted by
+   the tool's own role gate, and citations are additive evidence, not the
+   answer itself.
 """
 
 from __future__ import annotations
@@ -29,7 +42,9 @@ from typing import Any
 
 import structlog
 
+from shared.agents.guardrails import strip_invisible
 from shared.agents.schema import (
+    CITATION_MIN_ROLES,
     Citation,
     Proposal,
     ToolResult,
@@ -37,6 +52,18 @@ from shared.agents.schema import (
 )
 
 log = structlog.get_logger(__name__)
+
+# Test-only escape hatch. Production ALWAYS drops a mis-scoped citation and
+# keeps serving the rest of the answer (E1-11) — this flag exists so a
+# dedicated test can flip the drop into a raise and assert on the very
+# condition being detected, rather than only on the length of what came back.
+# Never read anywhere outside ``filter_citations_for_role``; never set outside
+# a test.
+RAISE_ON_CITATION_OVERREACH: bool = False
+
+
+class CitationOverreachError(Exception):
+    """Raised only when ``RAISE_ON_CITATION_OVERREACH`` is set for a test."""
 
 # Cap on what a single tool may return to the model. A handler that pulls 200
 # applicants would otherwise blow the context window and push the actual
@@ -257,7 +284,20 @@ class ToolRegistry:
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        content = json.dumps(output.data, ensure_ascii=False, default=str)
+        citations = filter_citations_for_role(output.citations, ctx.role, source=name)
+        for proposal in output.proposals:
+            proposal.citations = filter_citations_for_role(
+                proposal.citations, ctx.role, source=name
+            )
+
+        # Belt and braces on top of every specific call site that already
+        # strips invisible characters (a resume excerpt, a decision's reason,
+        # …): applied ONCE here, over the whole serialised payload, so a new
+        # tool that forgets to call ``strip_invisible`` on some free-text field
+        # still cannot ship a zero-width-laced instruction to the model. Idempotent
+        # on text that is already clean, so this is pure defence in depth, not a
+        # replacement for the targeted calls.
+        content = strip_invisible(json.dumps(output.data, ensure_ascii=False, default=str))
         truncated = len(content) > MAX_TOOL_CONTENT_CHARS
         if truncated:
             content = (
@@ -269,7 +309,7 @@ class ToolRegistry:
             "agents.tool.ok",
             tool=name,
             role=ctx.role,
-            citations=len(output.citations),
+            citations=len(citations),
             proposals=len(output.proposals),
             truncated=truncated,
             duration_ms=int((time.monotonic() - started) * 1000),
@@ -280,7 +320,55 @@ class ToolRegistry:
             name=name,
             ok=True,
             content=content,
-            citations=output.citations,
+            citations=citations,
             proposals=output.proposals,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
+
+
+def filter_citations_for_role(
+    citations: list[Citation], role: str, *, source: str
+) -> list[Citation]:
+    """Drop any citation whose kind this role may not open.
+
+    This is ``ToolRegistry.invoke``'s own citation gate, exposed publicly so
+    every place a ``Citation`` reaches a response gets the SAME guarantee —
+    not only tool results. Two call sites outside ``invoke`` need it for
+    exactly the reason this function exists: the specialist panel builds
+    ``PanelVerdict``/``SignalAssessment`` citations directly (not through a
+    registered tool), and the watcher-backed attention panel does the same.
+    Both happen to be safe today only because their routes are hr_manager-only
+    — routing coincidence, not a structural guarantee — so they call this too
+    rather than relying on that staying true.
+
+    Checked independently of whether the caller was otherwise entitled to
+    whatever produced the citation: a ``company_scoped`` tool open to both
+    ``hr_manager`` and ``super_admin`` must not become the back door by which
+    a super admin receives a named candidate, just because the tool (or route)
+    that surfaced it was theirs to use.
+
+    ``source`` is a label for the log line only — a tool name, or a router's
+    own name for itself — never used in the decision.
+    """
+    allowed: list[Citation] = []
+    for citation in citations:
+        permitted = CITATION_MIN_ROLES.get(citation.kind, frozenset())
+        if role in permitted:
+            allowed.append(citation)
+            continue
+        log.error(
+            "agents.tool.citation_overreach",
+            source=source,
+            role=role,
+            kind=citation.kind,
+            citation_id=citation.id,
+            # NEVER the label — it can be a candidate's name, and this is
+            # exactly the log line a wrongly-scoped read would otherwise leak
+            # it into.
+        )
+        if RAISE_ON_CITATION_OVERREACH:
+            raise CitationOverreachError(
+                f"{source!r} produced a {citation.kind!r} citation role "
+                f"{role!r} may not open"
+            )
+    return allowed

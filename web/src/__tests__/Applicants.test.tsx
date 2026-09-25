@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Applicant, ReindexResult } from '../api/applicants';
 
@@ -115,20 +115,51 @@ vi.mock('../components/agent/CandidatePanel', () => ({
   default: () => null,
 }));
 
+// The shared candidate drawer, which /hr/applicants/:applicantId opens (PH5-E1).
+// Stubbed to the props under test — its own contents have their own suite
+// (CandidateDrawer.test.tsx), and the same stub is what StagesAtRisk,
+// HRAnalyticsPage and DecisionQueue use.
+vi.mock('../components/CandidateDrawer', () => ({
+  default: ({
+    applicantId,
+    enrolmentId,
+    onClose,
+  }: {
+    applicantId: string | null;
+    enrolmentId?: string | null;
+    onClose: () => void;
+  }) =>
+    applicantId ? (
+      <div role="dialog">
+        {`drawer ${applicantId} ${enrolmentId ?? 'no-enrolment'}`}
+        <button type="button" onClick={onClose}>
+          Close drawer
+        </button>
+      </div>
+    ) : null,
+}));
+
 import Applicants from '../pages/hr/Applicants';
 
 // Returns the QueryClient alongside the render result. The reindex-status query
 // renders NOTHING when the backlog is zero, so a test asserting its absence has
 // no DOM signal to wait on — the cache is the only place that success is
 // observable. See "stays out of the way…" below.
-function renderPage() {
+//
+// `path` is mounted exactly as App.tsx mounts it, so the citation route
+// (/hr/applicants/{id}, optionally with ?enrolment=) is exercised through a real
+// param rather than a hand-passed prop.
+function renderPage(path = '/hr/applicants') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return {
     client,
     ...render(
       <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <Applicants />
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/hr/applicants" element={<Applicants />} />
+            <Route path="/hr/applicants/:applicantId" element={<Applicants />} />
+          </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     ),
@@ -610,5 +641,46 @@ describe('Applicants — status badges', () => {
 
     await screen.findByText('Bhavya Nair');
     expect(screen.getAllByText('on_the_moon').length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A citation (or an evidence-trail link) naming one person
+// ---------------------------------------------------------------------------
+// PH5-E1. `/hr/applicants/{id}` is CITATION_ROUTES.applicant AND .scorecard, and
+// the href every evidence-graph node carries (with ?enrolment= and a #section).
+// App.tsx mounted only the list, so all of those opened the 404 page.
+describe('Applicants — applicant citation deep link', () => {
+  it('opens the candidate drawer on the person named in the URL', async () => {
+    renderPage('/hr/applicants/ap-2');
+    expect(await screen.findByRole('dialog')).toHaveTextContent('drawer ap-2');
+  });
+
+  it('passes ?enrolment= through, so a link about one application shows that one', async () => {
+    // The applicant row's ats_* describe their LATEST application; the drawer
+    // re-scopes to this enrolment when it is given one, which is the difference
+    // between citing a person and citing an application.
+    renderPage('/hr/applicants/ap-2?enrolment=en-ap-2');
+    expect(await screen.findByRole('dialog')).toHaveTextContent('drawer ap-2 en-ap-2');
+  });
+
+  it('opens no drawer on the plain list route', async () => {
+    renderPage();
+    await screen.findByText('Bhavya Nair');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('returns to the list when the drawer is closed, rather than re-opening it', async () => {
+    // Closing has to change the URL as well as the state: leave the applicant id
+    // in the path and the drawer simply opens again — a panel the user cannot
+    // shut.
+    const user = userEvent.setup();
+    renderPage('/hr/applicants/ap-2');
+    await screen.findByRole('dialog');
+
+    await user.click(screen.getByRole('button', { name: /close drawer/i }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByText('Bhavya Nair')).toBeInTheDocument();
   });
 });

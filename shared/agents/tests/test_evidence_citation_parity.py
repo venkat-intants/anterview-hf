@@ -6,6 +6,40 @@ the other a TS union in a different package), so a member added to one and
 not the other would only ever surface as a citation the frontend renders with
 no icon or label. This test parses the TS union out of the source file and
 diffs it against ``typing.get_args(CitationKind)``.
+
+PH5-E1 adds two more tables keyed by the same closed vocabulary —
+``CITATION_ROUTES`` (mirrored in TS, since the frontend needs the href
+template too) and ``CITATION_MIN_ROLES`` (server-only: nothing in the
+frontend enforces access, so there is no TS side to parse). Both are extended
+here rather than in a new file, since "does this table cover every kind" is
+the same question the file already asks about ``CitationKind`` itself.
+
+PH5 Wave 3 adds two MORE tables, and neither is mirrored in TypeScript — stated
+plainly here because an uncovered table is exactly the kind of gap this file
+exists to make loud:
+
+* ``CITATION_VIEWS`` — ``(kind, view) -> path`` for a citation that must open
+  something other than the record's own page (the workflow canvas, a decision
+  queue, a console dashboard, the super admin's copy of the document library).
+* ``CITATION_CONSOLE_VIEW`` — ``role -> view``, so the server can pick the
+  console the reader is actually allowed to enter.
+
+There is NO TS parity test for either, and that is a decision, not an omission:
+``CitationChips.tsx`` navigates to the ``href`` the SERVER sent, so the TS
+``CITATION_ROUTES`` copy is documentation plus the diff below, not a link
+builder. A view therefore has no TS side to drift from. What IS checked here is
+that every view names a real ``CitationKind`` and yields a relative app path —
+the two properties the renderer and ``Citation.href``'s validator depend on. If
+the frontend ever starts BUILDING hrefs from its own table, this becomes a real
+gap and these tables need mirroring.
+
+Regex fragility, noted rather than silently relied on (PH5 Wave 3 design §9
+Q15): ``_ts_citation_kinds`` greeds up to the FIRST ``;`` after ``kind:``
+inside the FIRST ``export interface Citation {`` block it finds. A field
+literally named ``kind`` declared above ``Citation`` in this file, or a second
+``interface Citation`` block, would silently change what this parses without
+failing loudly. It is a source-scan, not a compiler, and is only as good as
+the file staying in the shape it is in today.
 """
 
 from __future__ import annotations
@@ -14,7 +48,13 @@ import pathlib
 import re
 import typing
 
-from shared.agents.schema import CitationKind
+from shared.agents.schema import (
+    CITATION_CONSOLE_VIEW,
+    CITATION_MIN_ROLES,
+    CITATION_ROUTES,
+    CITATION_VIEWS,
+    CitationKind,
+)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 AGENT_TS = REPO_ROOT / "web" / "src" / "api" / "agent.ts"
@@ -27,6 +67,19 @@ def _ts_citation_kinds() -> set[str]:
     match = re.search(r"export interface Citation \{.*?kind:\s*(.*?);", src, re.DOTALL)
     assert match is not None, "Citation.kind union not found in agent.ts"
     return set(re.findall(r"'([a-z_]+)'", match.group(1)))
+
+
+def _ts_citation_routes() -> dict[str, str | None]:
+    src = AGENT_TS.read_text(encoding="utf-8")
+    match = re.search(
+        r"export const CITATION_ROUTES:.*?=\s*\{(.*?)\};", src, re.DOTALL
+    )
+    assert match is not None, "CITATION_ROUTES not found in agent.ts"
+    body = match.group(1)
+    routes: dict[str, str | None] = {}
+    for key, value in re.findall(r"(\w+):\s*(null|'[^']*')", body):
+        routes[key] = None if value == "null" else value.strip("'")
+    return routes
 
 
 def test_citation_kind_matches_the_typescript_union() -> None:
@@ -43,3 +96,109 @@ def test_evidence_graph_citation_kinds_are_declared() -> None:
     python_kinds = set(typing.get_args(CitationKind))
     assert {"interviewer_scorecard", "decision"} <= python_kinds
     assert {"interviewer_scorecard", "decision"} <= _ts_citation_kinds()
+
+
+def test_document_citation_kind_is_declared_on_both_sides() -> None:
+    """PH5-E2's corpus kind, added in E1 so the route/role tables below are
+    complete from day one — E2 only has to USE the kind, never add it."""
+    python_kinds = set(typing.get_args(CitationKind))
+    assert "document" in python_kinds
+    assert "document" in _ts_citation_kinds()
+
+
+# ---------------------------------------------------------------------------
+# CITATION_ROUTES / CITATION_MIN_ROLES — a missing key is a red test here, not
+# a KeyError raised against a real caller at runtime.
+# ---------------------------------------------------------------------------
+
+
+def test_citation_routes_cover_every_kind() -> None:
+    python_kinds = set(typing.get_args(CitationKind))
+    assert set(CITATION_ROUTES) == python_kinds, (
+        f"CITATION_ROUTES does not cover every CitationKind: "
+        f"missing={python_kinds - set(CITATION_ROUTES)}, "
+        f"extra={set(CITATION_ROUTES) - python_kinds}"
+    )
+
+
+def test_citation_min_roles_cover_every_kind() -> None:
+    python_kinds = set(typing.get_args(CitationKind))
+    assert set(CITATION_MIN_ROLES) == python_kinds, (
+        f"CITATION_MIN_ROLES does not cover every CitationKind: "
+        f"missing={python_kinds - set(CITATION_MIN_ROLES)}, "
+        f"extra={set(CITATION_MIN_ROLES) - python_kinds}"
+    )
+
+
+def test_citation_min_roles_are_never_empty() -> None:
+    """An empty role set would mean "no caller may ever open this" — silently
+    dead evidence, on a kind some tool presumably still emits."""
+    # An empty TABLE would run this loop zero times and pass. The coverage test
+    # above would catch that, but a guard should not depend on a sibling for the
+    # difference between "checked" and "not checked".
+    assert CITATION_MIN_ROLES, "the role table is empty; this guard checked nothing"
+    for kind, roles in CITATION_MIN_ROLES.items():
+        assert roles, f"{kind!r} permits no role at all"
+
+
+# ---------------------------------------------------------------------------
+# CITATION_VIEWS / CITATION_CONSOLE_VIEW — Python-only (see the module
+# docstring). No TS diff to run, so the properties the renderer actually
+# depends on are asserted directly instead.
+# ---------------------------------------------------------------------------
+
+
+def test_every_citation_view_names_a_real_kind_and_a_relative_path() -> None:
+    python_kinds = set(typing.get_args(CitationKind))
+    assert CITATION_VIEWS, "the view table is empty; this guard checked nothing"
+    for (kind, view), template in CITATION_VIEWS.items():
+        assert kind in python_kinds, f"view ({kind!r}, {view!r}) names no CitationKind"
+        assert view, f"({kind!r}, {view!r}) has an empty view name"
+        # The same rule Citation.href's validator enforces: a relative app path,
+        # never an absolute URL and never protocol-relative.
+        assert template.startswith("/") and not template.startswith("//"), (
+            f"view ({kind!r}, {view!r}) is not a relative app path: {template!r}"
+        )
+
+
+def test_a_multi_console_kinds_base_route_is_the_console_view_it_duplicates() -> None:
+    """``document`` is declared twice on purpose — once as the base route (which
+    the TS mirror carries, and which roles with no console view of their own
+    fall back to) and once as the ``hr`` view that hr_manager actually receives.
+    If those two ever diverge, the TS table and the parity diff above would
+    describe a path nothing emits: item 2's defect, re-armed.
+    """
+    for (kind, view), template in CITATION_VIEWS.items():
+        if view == "hr" and CITATION_ROUTES.get(kind) is not None:
+            assert template == CITATION_ROUTES[kind], (
+                f"{kind!r}'s 'hr' view ({template}) and its base route "
+                f"({CITATION_ROUTES[kind]}) have drifted"
+            )
+
+
+def test_every_console_view_is_a_view_some_kind_actually_declares() -> None:
+    """A role mapped to a view name no ``(kind, view)`` pair uses would silently
+    do nothing — ``citation_href_for_role`` would fall through to the base route
+    for every kind, which is precisely the bug it was added to fix."""
+    assert CITATION_CONSOLE_VIEW, "the console table is empty; this guard checked nothing"
+    declared_views = {view for _kind, view in CITATION_VIEWS}
+    for role, view in CITATION_CONSOLE_VIEW.items():
+        assert view in declared_views, (
+            f"role {role!r} maps to view {view!r}, which no kind declares in CITATION_VIEWS"
+        )
+
+
+def test_citation_routes_matches_the_typescript_table() -> None:
+    """Same key-set (and value) parity as ``CitationKind`` itself, for the one
+    table the frontend also needs — a href template typed differently on the
+    two sides would 404 silently rather than fail a build."""
+    ts_routes = _ts_citation_routes()
+    assert set(CITATION_ROUTES) == set(ts_routes), (
+        f"CITATION_ROUTES (Python) and CITATION_ROUTES (TS) cover different "
+        f"kinds: python only={set(CITATION_ROUTES) - set(ts_routes)}, "
+        f"ts only={set(ts_routes) - set(CITATION_ROUTES)}"
+    )
+    assert ts_routes == CITATION_ROUTES, (
+        "CITATION_ROUTES (Python) and CITATION_ROUTES (TS) name different "
+        "route templates for at least one kind"
+    )

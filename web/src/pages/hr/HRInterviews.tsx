@@ -5,7 +5,7 @@
 //           eligibility gating, status taxonomy, real composite_score + /scorecard links.
 
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Video,
@@ -28,6 +28,7 @@ import {
   type InterviewInvite,
 } from '@/api/interviewInvites';
 import { applicationKey } from '@/lib/applicationKey';
+import { useDeepLinkedRow } from '@/hooks/useDeepLinkedRow';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
@@ -94,6 +95,12 @@ const LANG_LABEL: Record<string, string> = {
   te: 'తెలుగు',
 };
 
+/* ── Deep-linked interview that is not in this list ───────────────────────── */
+
+const CITED_INTERVIEW_MISSING_TEXT =
+  'That interview is not in this list. AI interviews appear here; a panel interview ' +
+  'with a human interviewer is on the candidate’s own record, under “Human interview”.';
+
 /* ── Stable gradient seed from id ───────────────────────────────────────── */
 
 function seedFrom(id: string): number {
@@ -106,18 +113,26 @@ function seedFrom(id: string): number {
 
 /* ── InviteRow ───────────────────────────────────────────────────────────── */
 
+/** DOM id for one invite row, so an interview citation can land on it. */
+function rowDomId(inviteId: string): string {
+  return `interview-${inviteId}`;
+}
+
 function InviteRow({
   inv,
   onRevoke,
   revoking,
   onReschedule,
   rescheduling,
+  cited,
 }: {
   inv: InterviewInvite;
   onRevoke: (id: string) => void;
   revoking: boolean;
   onReschedule: (id: string, iso: string) => void;
   rescheduling: boolean;
+  /** True for the row a `/hr/interviews/{id}` citation names. */
+  cited: boolean;
 }) {
   const { label, tone, dot } = statusDisplay(inv.status);
   const initials = initialsOf(inv.applicant_name);
@@ -132,7 +147,19 @@ function InviteRow({
   const canReschedule = inv.status === 'invited' || inv.status === 'consumed';
 
   return (
-    <div className="border-b border-border px-6 py-3.5 last:border-0 hover:bg-[var(--ui-inset-soft)] transition-colors">
+    <div
+      // The id + tabIndex are the landing target for an interview citation
+      // (useDeepLinkedRow); the ring says "this is the interview you followed a
+      // link to" rather than leaving it to the scroll position.
+      id={rowDomId(inv.invite_id)}
+      tabIndex={-1}
+      className={cn(
+        'border-b border-border px-6 py-3.5 last:border-0 outline-none transition-colors',
+        cited
+          ? 'bg-[var(--ui-inset-soft)] ring-1 ring-inset ring-[var(--accent)]'
+          : 'hover:bg-[var(--ui-inset-soft)]',
+      )}
+    >
       <div className="grid grid-cols-[2fr_1.2fr_1.2fr_1fr_0.8fr] items-center gap-3">
         {/* Candidate */}
         <div className="flex min-w-0 items-center gap-3">
@@ -260,6 +287,9 @@ function InviteRow({
 
 export default function HRInterviews() {
   const qc = useQueryClient();
+  // Set when this is an interview citation (`/hr/interviews/{id}`, the
+  // copilot's CITATION_ROUTES.interview) — absent on the plain list route.
+  const { interviewId: citedInviteId } = useParams<{ interviewId?: string }>();
 
   // Form state
   // The chosen APPLICATION (its enrolment id, or the person for someone filed
@@ -281,7 +311,11 @@ export default function HRInterviews() {
     queryFn: () => listEligibleApplicants('any'),
     refetchInterval: LIVE_POLL_MS,
   });
-  const { data: invites, isLoading } = useQuery({
+  const {
+    data: invites,
+    isLoading,
+    isSuccess: invitesLoaded,
+  } = useQuery({
     queryKey: ['hr', 'interviews'],
     queryFn: () => listInvites(),
     refetchInterval: LIVE_POLL_MS,
@@ -347,6 +381,24 @@ export default function HRInterviews() {
         : allInvites.filter((inv) => inv.status === filter),
     [allInvites, filter],
   );
+
+  // ── An interview citation (`/hr/interviews/{id}`) ──────────────────────────
+  //
+  // This list IS the screen for an AI interview: one row per invite, with its
+  // status, score and scorecard. So the citation lands on the row rather than a
+  // page of its own, and says so when the id is not one of these.
+  //
+  // The id can also be an interview_sessions id — a HUMAN panel interview,
+  // which the evidence graph cites with the same `interview` kind. No HR screen
+  // lists those; they live on the candidate's own record (CandidateDrawer's
+  // "Human interview" section). Such an id therefore lands here with the notice
+  // below rather than on a blank highlight, which is why the copy names where
+  // else to look instead of claiming the record is gone.
+  const citedInvite = citedInviteId
+    ? allInvites.find((inv) => inv.invite_id === citedInviteId)
+    : undefined;
+  useDeepLinkedRow(citedInvite ? rowDomId(citedInvite.invite_id) : null, invitesLoaded);
+  const citedInviteMissing = Boolean(citedInviteId) && invitesLoaded && citedInvite === undefined;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -472,6 +524,16 @@ export default function HRInterviews() {
 
       {/* Invites list */}
       <div className="mt-7 space-y-4">
+        {citedInviteMissing ? (
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-[14px] border border-border bg-[var(--ui-inset-soft)] px-4 py-3 text-[12.5px] text-muted-foreground"
+          >
+            <Video size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+            {CITED_INTERVIEW_MISSING_TEXT}
+          </div>
+        ) : null}
+
         <Reveal delay={0.1}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-[14px] font-semibold text-foreground">
@@ -531,6 +593,7 @@ export default function HRInterviews() {
                         rescheduleMut.mutate({ id, scheduledAt })
                       }
                       rescheduling={rescheduleMut.isPending}
+                      cited={citedInvite?.invite_id === inv.invite_id}
                     />
                   </StaggerItem>
                 ))}

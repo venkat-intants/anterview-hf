@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { commitProposal, type Proposal } from '@/api/agent';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { toast } from '@/lib/toast';
+import CitationChips from './CitationChips';
 
 type CommitState = 'idle' | 'committing' | 'done' | 'failed';
 
@@ -96,19 +97,7 @@ export default function ProposalCard({ proposal, onCommitted }: ProposalCardProp
         </pre>
       </details>
 
-      {proposal.citations.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {proposal.citations.map((c) => (
-            <a
-              key={`${c.kind}:${c.id}`}
-              href={c.href ?? '#'}
-              className="text-xs px-2 py-0.5 rounded-full bg-white/5 hover:bg-white/10 transition"
-            >
-              {c.label}
-            </a>
-          ))}
-        </div>
-      )}
+      <CitationChips citations={proposal.citations} variant="strip" />
 
       {proposal.risk_note && !isDone && (
         <div

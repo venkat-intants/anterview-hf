@@ -69,6 +69,7 @@ from app.routers.hr_applicants import router as hr_applicants_router
 from app.routers.hr_attention import router as hr_attention_router
 from app.routers.hr_checkins import router as hr_checkins_router
 from app.routers.hr_coding import router as hr_coding_router
+from app.routers.hr_corpus import router as hr_corpus_router
 from app.routers.hr_exams import router as hr_exams_router
 from app.routers.hr_interviews import router as hr_interviews_router
 from app.routers.hr_metrics import router as hr_metrics_router
@@ -352,6 +353,27 @@ async def _run_retention_job() -> None:
             "draft.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc)
         )
 
+    # Same tick: the document corpus (PH5-E2) — a document past its expiry
+    # date, and a superseded version's TEXT (chunks, embeddings, the stored
+    # object) once CORPUS_SUPERSEDED_RETENTION_DAYS has passed since it was
+    # replaced. The VERSION ROW survives either way, so a citation naming it
+    # still resolves — to "removed under retention" rather than a 404.
+    # Honours RETENTION_DRY_RUN like every purge above.
+    try:
+        from app.corpus import purge_corpus  # noqa: PLC0415
+
+        async with factory() as session:
+            purged_corpus = await purge_corpus(
+                session, superseded_days=settings.corpus_superseded_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("corpus.retention.done", purged=purged_corpus, dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "corpus.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
@@ -611,6 +633,7 @@ app.include_router(job_tasks_iv_router)
 app.include_router(job_tasks_public_router)
 app.include_router(job_tasks_me_router)
 app.include_router(workflow_review_admin_router)
+app.include_router(hr_corpus_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)
 app.include_router(careers_router)

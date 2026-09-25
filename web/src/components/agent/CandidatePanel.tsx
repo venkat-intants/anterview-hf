@@ -23,6 +23,7 @@ import {
   type SignalAssessment,
 } from '@/api/agent';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
+import CitationChips from './CitationChips';
 
 const SEVERITY_STYLE: Record<Contradiction['severity'], { bg: string; fg: string; label: string }> =
   {
@@ -72,6 +73,7 @@ function SignalRow({ signal }: { signal: SignalAssessment }): JSX.Element {
           ))}
         </ul>
       )}
+      <CitationChips citations={signal.citations} variant="strip" />
     </div>
   );
 }

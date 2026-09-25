@@ -298,6 +298,44 @@ class Settings(BaseSettings):
     # rather than the accommodation/code-evidence redaction shape. 24 months.
     hire_checkin_retention_days: int = 730
 
+    # --- PH5-E2: document corpus RAG (the governed HR document library) ---
+    # Same 10 MB ceiling as every other upload in this service (preboarding,
+    # task materials/responses) — one number to reason about, not a new one.
+    corpus_document_max_bytes: int = 10 * 1024 * 1024
+    # Above this the parsed text is refused with `too_long` rather than
+    # truncated silently — a truncated policy document that still "matches" a
+    # query it was cut before reaching is worse than a refusal HR can act on.
+    corpus_max_chars_per_document: int = 400_000
+    # ~1,200-char chunks with overlap (see app/corpus.py::chunk_document) puts
+    # a full-size document at roughly this many chunks; a hard cap bounds a
+    # pathological document (huge repeated whitespace, e.g.) from producing an
+    # unbounded number of embedding calls.
+    corpus_max_chunks_per_document: int = 400
+    # Per-company ceilings, both refused at upload with `quota_exceeded`. Bound
+    # storage and one-off embedding spend per tenant (docs/PH5-Wave3 design §5)
+    # — the ₹12/session cap is untouched by either, since corpus embedding is a
+    # one-off per document, not a per-interview cost.
+    corpus_max_documents_per_company: int = 200
+    # Chunk quota only (code review CONSIDER): counted against the CURRENT,
+    # searchable generation of each document (app/corpus.py::_check_chunk_quota
+    # excludes superseded versions) — this is a budget on what a company can
+    # actively search, not a running total of every version it has ever
+    # uploaded. Superseded history still consumes storage/embedding spend
+    # until it is purged, but that is bounded separately by
+    # corpus_superseded_retention_days, not by this number.
+    corpus_max_chunks_per_company: int = 20_000
+    # A superseded version's TEXT (chunks + embeddings + the stored object) is
+    # purged this many days after a newer version replaces it. The VERSION ROW
+    # survives, so a citation naming it still resolves — to a "replaced, text
+    # removed" notice rather than a broken link. Honours RETENTION_DRY_RUN.
+    corpus_superseded_retention_days: int = 180
+    # MEDIUM-5 (security review): each upload/replace runs a parser in a
+    # worker thread for up to 30s (DOCX additionally bounded by the zip caps
+    # below) — a per-company ceiling on how often that can be triggered, on
+    # the code_analysis_ondemand_per_minute precedent (app/rate_limit.py::
+    # rate_limit_context).
+    corpus_upload_per_minute: int = 20
+
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""

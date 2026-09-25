@@ -20,21 +20,25 @@ audit trail as doing it by hand.
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from shared.agents import (
     CROSS_TENANT_ROLES,
     AgentMessage,
+    AgentRun,
+    PanelVerdict,
     ToolContext,
     UnknownConsoleError,
     assess_candidate,
     available_consoles,
     available_surfaces,
     build_agent,
+    filter_citations_for_role,
     run_agent,
 )
 from shared.auth.base import User
@@ -54,8 +58,11 @@ from app.agents.evidence import (
 from app.agents.llm import build_agent_llm, build_panel_llm, describe_availability
 from app.agents.tools import registry
 from app.config import settings
+from app.corpus import embeddings_available
 from app.database import get_db_session
 from app.dependencies import get_current_user
+from app.models import AuditLog
+from app.utils.request_ip import extract_client_ip, extract_user_agent
 
 log = structlog.get_logger(__name__)
 
@@ -120,6 +127,12 @@ class ChatOut(BaseModel):
     # 12 applicants, 1 scorecard" without shipping candidate data twice.
     tools_used: list[dict[str, Any]]
     stop_reason: str
+    # Computed by the runtime, never the model's own account: true when at
+    # least one successful tool result carried a citation. The console renders
+    # this as "answered from your records" vs "no records were read for this
+    # answer" — the one E1-5 control that does not depend on the model
+    # remembering to say so.
+    evidence_used: bool
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +221,39 @@ def _primary_role(user: User) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Cheap, process-local cache for the corpus_semantic probe below.
+#
+# embeddings_available() makes a REAL call to feedback_billing's embedder — a
+# network hop, not a config read (design §9 Q14's whole point is that this must
+# be visible rather than silent, so it has to actually ask). /agent/status is a
+# status/poll endpoint a console may hit on every page load and on an interval,
+# so doing that on every call would put a network round trip on a hot path for
+# one boolean that changes on the order of minutes, not requests. Cached
+# process-wide (not per-user or per-company: embedder reachability is global
+# infrastructure state, not tenant data) for a short, fixed window — long
+# enough to absorb a poll storm, short enough that "semantic search is back"
+# shows up on the Documents screen without a restart.
+_CORPUS_SEMANTIC_CACHE_SECONDS: float = 30.0
+_corpus_semantic_cache: dict[str, Any] = {"value": None, "checked_at": 0.0}
+
+
+async def _corpus_semantic_status() -> bool:
+    """Cached wrapper around ``app.corpus.embeddings_available()``.
+
+    Never raises — ``embeddings_available()`` already reduces every failure
+    (unreachable, non-200, timeout) to ``False`` rather than propagating an
+    ``EmbeddingError``, and this wrapper adds no new failure mode of its own.
+    """
+    now = time.monotonic()
+    cached_at = _corpus_semantic_cache["checked_at"]
+    if _corpus_semantic_cache["value"] is not None and (now - cached_at) < _CORPUS_SEMANTIC_CACHE_SECONDS:
+        return bool(_corpus_semantic_cache["value"])
+    value = await embeddings_available()
+    _corpus_semantic_cache["value"] = value
+    _corpus_semantic_cache["checked_at"] = now
+    return value
+
+
 @router.get("/status")
 async def agent_status(user: UserDep) -> dict[str, Any]:
     """Whether the assistant is usable, and as which console."""
@@ -235,6 +281,15 @@ async def agent_status(user: UserDep) -> dict[str, Any]:
         # capable than it is.
         "capabilities": ["read", "draft"],
         "note": "The assistant can read records and draft actions. Every action needs your approval.",
+        # PH5-E2: whether the document corpus can search semantically right
+        # now, so the Documents screen can show "keyword search only" BEFORE a
+        # search comes back degraded, not after. Global (not gated on COMPANY —
+        # an embedder outage is not company-scoped), but gated on HAVING A
+        # CONSOLE: a candidate cannot reach the corpus tool at all, so there is
+        # nothing for this to be an early warning about on their session. The
+        # cache makes the probe itself free either way; the gate is about not
+        # answering a question a caller could never have asked, not latency.
+        "corpus_semantic": await _corpus_semantic_status() if has_console else False,
     }
 
 
@@ -275,8 +330,138 @@ async def _bind_surface(ctx: ToolContext, surface: str, given: dict[str, str], d
     ctx.resources["requisition_id"] = str(requisition_id)
 
 
+# ---------------------------------------------------------------------------
+# Audit — written by the ROUTER, never a handler (tools.py:11-12 rules out a
+# handler doing it; a handler that could write its own audit row could write
+# anything). One row per agent turn is the DPDP answer AgentRun.trace's
+# docstring promises but nothing previously persisted.
+# ---------------------------------------------------------------------------
+
+
+def _citation_audit_rows(citations: list[Any]) -> list[dict[str, Any]]:
+    """Kind + id for every citation. NEVER a ``label`` — a label is a
+    candidate's name (``tools.py``'s ``_applicant_citation``).
+
+    ``locator`` is deliberately dropped too, not merely capped. Kind + id
+    already identify the record, which is all an audit trail needs; a
+    ``locator`` is specified (PH5-E2) to sometimes carry a document HEADING
+    lifted verbatim from an HR-uploaded file, and this row is written to
+    ``audit_log`` — append-only for three years and, per AR-5, not touched by
+    erasure. A heading naming a person would become permanently unerasable the
+    moment it landed here. The rule a locator must follow is "name a POSITION
+    in a record, never quote its content" — but this function has no way to
+    tell a safe locator ("page 4") from an unsafe one ("Notes on Priya's
+    performance") short of re-parsing free text, so it does not try: it is
+    security-relevant metadata (kind, id, kept for the DPDP trace this row
+    exists for), never content, and a locator is content.
+    """
+    return [{"kind": c.kind, "id": c.id} for c in citations]
+
+
+async def _write_agent_audit(
+    db: Any,
+    request: Request,
+    *,
+    action: str,
+    ctx: ToolContext,
+    run: AgentRun,
+    surface: str | None,
+) -> None:
+    """One ``agent.chat.answered`` row per chat turn.
+
+    Carries the console, the agent, the stop reason, which tools ran, which
+    records were cited (kind + id only), and the marker integrity counters.
+    NEVER the user's message, the model's reply, or a citation's label — those
+    are exactly the fields that can carry a candidate's name or other PII into
+    a table operators and auditors read.
+    """
+    db.add(
+        AuditLog(
+            actor_id=uuid.UUID(ctx.actor_id),
+            actor_type="user",
+            action=action,
+            resource_type="user",
+            resource_id=uuid.UUID(ctx.actor_id),
+            details={
+                "company_id": ctx.company_id,
+                "console": ctx.role,
+                "surface": surface,
+                "agent": run.agent,
+                "stop_reason": run.stop_reason,
+                "steps": run.steps_used,
+                "tools": sorted({t.name for t in run.trace}),
+                "citations": _citation_audit_rows(run.citations),
+                "cited_refs": len(run.cited_refs),
+                "invented_refs": run.invented_refs,
+                "evidence_used": run.evidence_used,
+            },
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+        )
+    )
+    await db.commit()
+
+
+def _filter_panel_citations(verdict: PanelVerdict, role: str) -> None:
+    """Apply the same citation-permission gate ``ToolRegistry.invoke`` gives
+    every tool result (``shared/agents/registry.filter_citations_for_role``).
+
+    The panel builds ``Citation``s directly inside ``assess_candidate`` rather
+    than through ``invoke()``, so nothing else enforces this on this path.
+    Today it is a no-op — this route is hr_manager-only (checked above), and
+    every signal's citations are already ``candidate_pii``, which hr_manager
+    may open — but that is routing coincidence, not a structural guarantee,
+    and this is the one place a ``PanelVerdict`` is assembled for the
+    response. Mutates ``verdict`` in place: each signal's citations are
+    filtered first, then ``verdict.citations`` is rebuilt from them so the two
+    can never disagree about what survived.
+    """
+    for signal in verdict.signals:
+        signal.citations = filter_citations_for_role(
+            signal.citations, role, source="agent_panel"
+        )
+    verdict.citations = [c for signal in verdict.signals for c in signal.citations]
+
+
+async def _write_panel_audit(
+    db: Any,
+    request: Request,
+    *,
+    ctx: ToolContext,
+    applicant_id: uuid.UUID,
+    verdict: PanelVerdict,
+) -> None:
+    """The panel's equivalent of ``_write_agent_audit`` — same non-PII shape,
+    same "the router writes, a handler never does" rule. ``applicant_id`` is an
+    identifier already present in the URL the caller chose to hit, not a
+    label, so it is safe in ``details`` where ``verdict.applicant_label`` is
+    not."""
+    db.add(
+        AuditLog(
+            actor_id=uuid.UUID(ctx.actor_id),
+            actor_type="user",
+            action="agent.panel.run",
+            resource_type="user",
+            resource_id=uuid.UUID(ctx.actor_id),
+            details={
+                "company_id": ctx.company_id,
+                "applicant_id": str(applicant_id),
+                "signals_available": sum(1 for s in verdict.signals if s.available),
+                "contradictions": len(verdict.contradictions),
+                "confidence": verdict.confidence,
+                "citations": _citation_audit_rows(verdict.citations),
+            },
+            ip_address=extract_client_ip(request),
+            user_agent=extract_user_agent(request),
+        )
+    )
+    await db.commit()
+
+
 @router.post("/chat", response_model=ChatOut)
-async def agent_chat(body: ChatIn, user: UserDep, db: DbSessionDep) -> ChatOut:
+async def agent_chat(
+    body: ChatIn, user: UserDep, db: DbSessionDep, request: Request
+) -> ChatOut:
     """Ask this console's copilot a question."""
     if not settings.agents_enabled:
         raise _AGENT_DISABLED
@@ -310,6 +495,10 @@ async def agent_chat(body: ChatIn, user: UserDep, db: DbSessionDep) -> ChatOut:
 
     run = await run_agent(spec, ctx, body.message, llm=build_agent_llm(), history=history)
 
+    await _write_agent_audit(
+        db, request, action="agent.chat.answered", ctx=ctx, run=run, surface=body.surface,
+    )
+
     log.info(
         "agent.chat",
         actor_id=ctx.actor_id,
@@ -319,6 +508,8 @@ async def agent_chat(body: ChatIn, user: UserDep, db: DbSessionDep) -> ChatOut:
         steps=run.steps_used,
         proposals=len(run.proposals),
         stop_reason=run.stop_reason,
+        evidence_used=run.evidence_used,
+        invented_refs=run.invented_refs,
         # NEVER log the message or the reply — both carry candidate PII.
     )
 
@@ -331,6 +522,7 @@ async def agent_chat(body: ChatIn, user: UserDep, db: DbSessionDep) -> ChatOut:
             {"name": t.name, "ok": t.ok, "duration_ms": t.duration_ms} for t in run.trace
         ],
         stop_reason=run.stop_reason,
+        evidence_used=run.evidence_used,
     )
 
 
@@ -357,7 +549,9 @@ async def run_watchers_now(user: UserDep) -> dict[str, Any]:
 
 
 @router.post("/panel/{applicant_id}")
-async def agent_panel(applicant_id: uuid.UUID, user: UserDep, db: DbSessionDep) -> dict[str, Any]:
+async def agent_panel(
+    applicant_id: uuid.UUID, user: UserDep, db: DbSessionDep, request: Request
+) -> dict[str, Any]:
     """Run the specialist panel on one candidate.
 
     Four specialists read one signal each, blind to one another, then a
@@ -396,6 +590,11 @@ async def agent_panel(applicant_id: uuid.UUID, user: UserDep, db: DbSessionDep) 
 
     verdict = await assess_candidate(bundle.evidence, llm=build_panel_llm())
     apply_document_warnings(verdict, bundle.document_warnings)
+    _filter_panel_citations(verdict, ctx.role)
+
+    await _write_panel_audit(
+        db, request, ctx=ctx, applicant_id=applicant_id, verdict=verdict,
+    )
 
     log.info(
         "agent.panel",

@@ -30,6 +30,10 @@ import {
 /** Section ids in render order, for a given role set. */
 const idsFor = (roles: string[]): string[] => visibleNavSections(roles).map((s: NavSection) => s.id);
 
+/** Every link a role set is offered, across all the sections it can see. */
+const linksFor = (roles: string[]): string[] =>
+  visibleNavSections(roles).flatMap((s: NavSection) => s.items.map((i) => i.to));
+
 const ALL_SECTION_IDS = NAV_SECTIONS.map((s: NavSection) => s.id);
 
 describe('nav role scoping', () => {
@@ -77,6 +81,35 @@ describe('nav role scoping', () => {
 
   it('gives the analytics admin role the admin section only', () => {
     expect(idsFor(['admin'])).toEqual(['admin']);
+  });
+
+  it('offers each console its own document library, and no other console’s', () => {
+    // PH5-E2. The Documents screen was finished, routed and role-gated with no
+    // nav entry in either console — reachable only by typing the URL, which
+    // made "authorised HR users can upload documents" untrue of the product.
+    //
+    // One entry per console, not a shared link: /hr/library sits behind HRRoute
+    // (hr_manager only), so offering a super admin that path would hand them a
+    // link their own route guard bounces. Each console points at its own path,
+    // and the SAME component renders both.
+    const hr = linksFor(['hr_manager']);
+    expect(hr).toContain('/hr/library');
+    expect(hr).not.toContain('/superadmin/library');
+
+    const superAdmin = linksFor(['super_admin']);
+    expect(superAdmin).toContain('/superadmin/library');
+    expect(superAdmin).not.toContain('/hr/library');
+  });
+
+  it('offers no document library to an interviewer, a candidate, or a guest', () => {
+    // The complement. An interviewer sees only interviews assigned to them
+    // (D4-1) and a candidate is not staff at all; a company document is
+    // neither's business, and the server refuses both on /hr/library.
+    for (const roles of [['interviewer'], ['candidate'], ['guest_candidate'], []]) {
+      const links = linksFor(roles);
+      expect(links).not.toContain('/hr/library');
+      expect(links).not.toContain('/superadmin/library');
+    }
   });
 
   it('lists "My interviews" once for an HR manager who also holds the interviewer role', () => {

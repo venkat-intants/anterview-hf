@@ -7,10 +7,11 @@
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import CandidatePanel from '@/components/agent/CandidatePanel';
+import CandidateDrawer from '@/components/CandidateDrawer';
 import {
   Upload,
   FileText,
@@ -1015,6 +1016,26 @@ function UploadSection({
 export default function Applicants() {
   const qc = useQueryClient();
 
+  // ── A citation, or an evidence-trail link, naming one person ──────────────
+  //
+  // `/hr/applicants/{id}` is CITATION_ROUTES.applicant AND .scorecard (a
+  // scorecard has no page of its own, so it is cited through the person), and it
+  // is also the href every evidence-graph node carries —
+  // `/hr/applicants/{applicant_id}?enrolment={enrolment_id}#section`
+  // (evidence_graph/loaders.py::_href). Until this route existed, all of those
+  // opened the 404 page.
+  //
+  // It opens CandidateDrawer rather than this page's own ApplicantDrawer for
+  // that last reason: the drawer is the other half of the anchor contract those
+  // hrefs are built against (it owns the `#screening`, `#round-results`,
+  // `#human-interview`, `#offers`… section ids), and it is enrolment-scoped, so
+  // a link about ONE application shows that application's scores rather than
+  // the person's latest. Same component, same props, as the four other surfaces
+  // that open it from state.
+  const { applicantId: citedApplicantId } = useParams<{ applicantId?: string }>();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+
   // Upload form state
   const [files, setFiles] = useState<File[]>([]);
   const [openingId, setOpeningId] = useState('');
@@ -1345,6 +1366,16 @@ export default function Applicants() {
           </GlassCard>
         )}
       </div>
+
+      {/* The person a citation or an evidence link named. Rendered with a null
+          id on the plain list route, exactly as the four other surfaces do;
+          closing it returns to the list rather than leaving a URL that would
+          re-open it. */}
+      <CandidateDrawer
+        applicantId={citedApplicantId ?? null}
+        enrolmentId={searchParams.get('enrolment')}
+        onClose={() => void navigate('/hr/applicants', { replace: true })}
+      />
 
       {/* Slide-in drawer */}
       <AnimatePresence>

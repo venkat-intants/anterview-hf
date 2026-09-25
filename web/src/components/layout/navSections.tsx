@@ -21,6 +21,7 @@
 import {
   AlertTriangle,
   BarChart2,
+  BookText,
   Briefcase,
   Building2,
   ClipboardCheck,
@@ -113,6 +114,13 @@ const HR_NAV: NavItem[] = [
   // PH4 Wave 4 (A3/A4) — offers, and the reusable templates behind them.
   { to: '/hr/offers', label: 'Offers', icon: <Handshake className={ICON} aria-hidden="true" /> },
   { to: '/hr/offer-templates', label: 'Offer templates', icon: <FileText className={ICON} aria-hidden="true" /> },
+  // PH5-E2 — the company's document library (policies, handbooks, process
+  // notes) the staff copilot searches. Filed here, beside the other reference
+  // material (question banks, offer templates) rather than in the pipeline
+  // sequence above, because nothing here is a hiring stage. Without this entry
+  // the screen was reachable only by typing the URL, so "authorised HR users
+  // can upload documents" was not true of the product.
+  { to: '/hr/library', label: 'Documents', icon: <BookText className={ICON} aria-hidden="true" /> },
   { to: '/hr/analytics', label: 'Analytics', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
   // D4-1: an HR manager can ALSO be assigned as an interviewer. Kept as an item
   // in THIS section (not a new one) so idsFor(['hr_manager']) still resolves to
@@ -154,6 +162,10 @@ const SUPER_NAV: NavItem[] = [
   { to: '/superadmin/question-reviews', label: 'Question reviews', icon: <ShieldCheck className={ICON} aria-hidden="true" /> },
   // PH4-A3: offers waiting for this super admin's approval (D4-2).
   { to: '/superadmin/offer-approvals', label: 'Offer approvals', icon: <Handshake className={ICON} aria-hidden="true" /> },
+  // PH5-E2 — the same document library as HR's, at this console's own path
+  // (/superadmin/library). Its own entry rather than a link into /hr/library:
+  // HRRoute admits only hr_manager, so an /hr link from here would bounce.
+  { to: '/superadmin/library', label: 'Documents', icon: <BookText className={ICON} aria-hidden="true" /> },
 ];
 
 // interviewer — company staff who see ONLY interviews assigned to them (D4-1).

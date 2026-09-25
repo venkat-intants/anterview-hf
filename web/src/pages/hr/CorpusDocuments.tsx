@@ -7,8 +7,13 @@
 // — that collided with offers.py's candidate preboarding documents, an
 // unrelated entity; see api/corpus.ts's header comment). The citation route
 // table (`web/src/api/agent.ts`'s `CITATION_ROUTES.document`) points at
-// `/hr/library/{id}` too, so a document citation from the copilot lands here
-// rather than 404ing.
+// `/hr/library/{id}`, which App.tsx mounts on THIS component in both consoles:
+// a document citation opens the library with that row scrolled to and focused
+// (`useDeepLinkedRow`), and says so plainly when the row is not there any more.
+// This comment used to claim that already, while the route did not exist and
+// every document chip opened the 404 page — hence
+// `src/__tests__/citationRoutes.test.ts`, which now checks each citation route
+// against the routes App.tsx actually declares.
 //
 // Shared, unmodified, by hr_manager and super_admin — the SERVER refuses an
 // `hr_only` document from a super_admin (422) as a HARD RULE, not a default
@@ -26,12 +31,15 @@
 // English-only by design (CLAUDE.md — staff consoles are not translated).
 
 import { Fragment, useRef, useState, type FormEvent } from 'react';
+import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { ApiError } from '@/api/client';
+import { useDeepLinkedRow } from '@/hooks/useDeepLinkedRow';
 import { downloadUrl } from '@/lib/safeUrl';
 import { ACTIVE_POLL_MS } from '@/lib/polling';
 import { toast } from '@/lib/toast';
+import { cn } from '@/lib/utils';
 import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
 import {
@@ -51,6 +59,7 @@ import {
   getCorpusDownloadUrl,
   getCorpusSemanticStatus,
   listCorpusDocuments,
+  reindexCorpusDocument,
   replaceCorpusDocument,
   searchCorpusDocuments,
   uploadCorpusDocument,
@@ -107,11 +116,24 @@ const INJECTION_WARNING_TEXT =
   'This document contains text that tries to instruct an automated reader. It is ignored.';
 const SEMANTIC_UNAVAILABLE_TEXT =
   'Semantic search is unavailable — the assistant is matching keywords only.';
+// A document citation whose row is no longer in the library: deleted, or (for a
+// super admin following an `hr_only` link) not theirs to read. Both are "not in
+// your library" from here, and neither should look like an empty screen.
+const CITED_DOC_MISSING_TEXT =
+  'That document is no longer in your library — it may have been deleted since it was cited.';
 const ATTESTATION_LABEL = 'This is a company document, not a record about a candidate.';
+
+/** DOM id for one library row, so a citation can land on it. */
+function rowDomId(documentId: string): string {
+  return `corpus-doc-${documentId}`;
+}
 
 export default function CorpusDocuments(): JSX.Element {
   const { user } = useAuth();
   const roles = user?.roles ?? [];
+  // Set when this is a document citation (`/hr/library/{id}` or
+  // `/superadmin/library/{id}`), absent on the plain library route.
+  const { documentId: citedDocumentId } = useParams<{ documentId?: string }>();
   // The only two roles this route ever renders for (HRRoute / SuperAdminRoute)
   // are hr_manager and super_admin — a super_admin cannot create or read back
   // an `hr_only` document (app/corpus.py CORPUS_AUDIENCE_ROLES, design Q3).
@@ -192,6 +214,27 @@ export default function CorpusDocuments(): JSX.Element {
       invalidate();
     },
     onError: (e: unknown) => toast.error(corpusErrorMessage(e, 'Could not upload a new version')),
+  });
+
+  // ---- Retry indexing (a version parked at `failed`) ----
+  //
+  // Only a real retry because the server clears the parking record as well as
+  // the status — see `reindexCorpusDocument`'s own comment. Invalidating is
+  // what moves the row back to "Indexing…" and restarts the poll above, so the
+  // result arrives without a reload.
+  const reindexMut = useMutation({
+    mutationFn: (id: string) => reindexCorpusDocument(id),
+    onSuccess: () => {
+      toast.success('Indexing again');
+      invalidate();
+    },
+    onError: (e: unknown) => {
+      // A 409 ("not stuck") is the interesting case: the screen was stale, and
+      // the server's own sentence says so better than a generic failure would.
+      // Refresh either way, so the row stops offering an action it cannot do.
+      toast.error(corpusErrorMessage(e, 'Could not retry indexing this document'));
+      invalidate();
+    },
   });
 
   // ---- Edit (audience, expiry) ----
@@ -280,6 +323,17 @@ export default function CorpusDocuments(): JSX.Element {
 
   const docs: CorpusDocument[] = list.data ?? [];
 
+  // ---- A document citation (`/hr/library/{id}`) ----
+  //
+  // The library is one bounded list, so the cited row is either in it or gone —
+  // no second fetch is needed, and `getCorpusDocument` would only tell us the
+  // same thing twice. Land on the row when it is there; say so plainly when it
+  // is not, because a deleted or expired document is a fact the reader needs,
+  // not silence.
+  const citedDoc = citedDocumentId ? docs.find((d) => d.id === citedDocumentId) : undefined;
+  useDeepLinkedRow(citedDoc ? rowDomId(citedDoc.id) : null, list.isSuccess);
+  const citedDocMissing = Boolean(citedDocumentId) && list.isSuccess && citedDoc === undefined;
+
   return (
     <div className="mx-auto max-w-[1080px] px-0 py-2 space-y-6">
       <Reveal>
@@ -299,6 +353,16 @@ export default function CorpusDocuments(): JSX.Element {
         >
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {SEMANTIC_UNAVAILABLE_TEXT}
+        </div>
+      ) : null}
+
+      {citedDocMissing ? (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[12.5px] text-muted-foreground"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {CITED_DOC_MISSING_TEXT}
         </div>
       ) : null}
 
@@ -531,7 +595,19 @@ export default function CorpusDocuments(): JSX.Element {
                     const status = d.status ?? 'parsed';
                     return (
                       <Fragment key={d.id}>
-                        <tr className="border-b border-border align-top">
+                        <tr
+                          // The id + tabIndex are the landing target for a
+                          // document citation (`useDeepLinkedRow`); the ring
+                          // makes "this is the row you were sent to" visible
+                          // rather than something only the scroll position says.
+                          id={rowDomId(d.id)}
+                          tabIndex={-1}
+                          className={cn(
+                            'border-b border-border align-top outline-none',
+                            citedDoc?.id === d.id &&
+                              'bg-[var(--ui-inset-soft)] ring-1 ring-inset ring-[var(--accent)]',
+                          )}
+                        >
                           <td className="py-2.5 pr-3">
                             <p className="font-medium text-foreground">{d.title}</p>
                             {d.original_name ? (
@@ -556,21 +632,40 @@ export default function CorpusDocuments(): JSX.Element {
                               {STATUS_LABEL[status]}
                             </StatusTag>
                             {status === 'failed' ? (
-                              // Design calls for a Retry action here for
-                              // `embedding_unavailable` specifically, but
-                              // `hr_corpus.py` exposes no route that could
-                              // drive one (a failed version is excluded from
-                              // the reconciler's own retry query once it's
-                              // marked failed — app/reconciliation.py::
-                              // _corpus_embed_pass). Showing the honest
-                              // sentence with no button rather than a
-                              // client-side workaround (e.g. silently
-                              // replacing with the same file, which would
-                              // create a new version rather than retry this
-                              // one) — see PR notes for the backend follow-up.
-                              <p className="mt-1.5 max-w-[220px] text-[11.5px] text-[var(--ui-danger)]">
-                                {corpusFailureSentence(d.failure_code)}
-                              </p>
+                              // The sentence AND the retry. This comment used to
+                              // say `hr_corpus.py` exposed no route that could
+                              // drive a Retry, which was true when it was
+                              // written and is not now: `POST /hr/library/{id}/
+                              // reindex` exists and also clears the
+                              // `reconciliation_state` parking row, without
+                              // which a status reset alone would be a no-op (the
+                              // next embed pass skips anything with `gave_up_at`
+                              // set). Still NOT a client-side workaround —
+                              // re-uploading the same file would create a new
+                              // version instead of retrying this one.
+                              <>
+                                <p className="mt-1.5 max-w-[220px] text-[11.5px] text-[var(--ui-danger)]">
+                                  {corpusFailureSentence(d.failure_code)}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => reindexMut.mutate(d.id)}
+                                  disabled={reindexMut.isPending}
+                                  aria-label={`Retry indexing ${d.title}`}
+                                  className="mt-1.5 inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground disabled:opacity-40"
+                                >
+                                  <RefreshCw
+                                    className={cn(
+                                      'h-3 w-3',
+                                      reindexMut.isPending &&
+                                        reindexMut.variables === d.id &&
+                                        'animate-spin',
+                                    )}
+                                    aria-hidden="true"
+                                  />
+                                  Retry
+                                </button>
+                              </>
                             ) : null}
                             {d.injection_markers ? (
                               <p className="mt-1.5 flex max-w-[220px] items-start gap-1 text-[11px] text-[var(--ui-warn)]">

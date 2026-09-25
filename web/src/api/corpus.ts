@@ -252,6 +252,33 @@ export function editCorpusDocument(
 }
 
 /**
+ * `POST /hr/library/{id}/reindex` — retry the CURRENT version of a document
+ * parked at `failed`, which nothing else can un-park: the reconciler's embed
+ * pass only ever selects versions still `parsed`/`indexing`
+ * (`app/reconciliation.py::_corpus_embed_pass`), so once `mark_version_failed`
+ * wrote `failed` a transient embedder outage had bricked the document for good
+ * — while the row's own `embedding_unavailable` sentence went on promising it
+ * "will be indexed automatically".
+ *
+ * The server resets the version to `parsed`, clears `failure_code`, AND deletes
+ * the `reconciliation_state` parking row whose `gave_up_at` would otherwise
+ * make the next pass skip it anyway (`app/corpus.py::reindex_document`) — which
+ * is why this is a real retry and not a status cosmetic. Invalidate the list
+ * after it resolves: the row goes back to "Indexing…" and the screen's poll
+ * restarts on its own.
+ *
+ * Returns the updated document. Raises `ApiError` 409 `not_failed` ("This
+ * document is not stuck — there is nothing to reindex.") when the current
+ * version is in any other state — a stale screen clicking Retry on a row that
+ * has since been re-uploaded or has already recovered. `corpusErrorMessage`
+ * surfaces that sentence verbatim, since `not_failed` is deliberately not in
+ * `CORPUS_FAILURE_SENTENCES` (it is not a failure of the document).
+ */
+export function reindexCorpusDocument(documentId: string): Promise<CorpusDocument> {
+  return apiPost<CorpusDocument>(`/hr/library/${pathId(documentId)}/reindex`, {});
+}
+
+/**
  * `DELETE /hr/library/{id}` — immediate, complete purge: chunks,
  * embeddings and the stored object are gone at once, not after a grace
  * window (`app/corpus.py::delete_document`). Matches the confirmation

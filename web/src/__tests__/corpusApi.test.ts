@@ -9,6 +9,7 @@ import {
   corpusFailureSentence,
   corpusListHasPendingVersion,
   getCorpusSemanticStatus,
+  reindexCorpusDocument,
   replaceCorpusDocument,
   uploadCorpusDocument,
   type CorpusDocument,
@@ -188,6 +189,70 @@ describe('replaceCorpusDocument — multipart shape', () => {
     const sent = mock.send.mock.calls[0]?.[0] as FormData;
     expect(sent.get('file')).toBe(file);
     expect(sent.get('title')).toBeNull();
+  });
+});
+
+describe('reindexCorpusDocument', () => {
+  const OrigFetch = global.fetch;
+  const DOC_ID = '11111111-1111-4111-8111-111111111111';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setToken('token-abc');
+  });
+
+  afterEach(() => {
+    global.fetch = OrigFetch;
+  });
+
+  it('POSTs to the document’s own reindex route', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ id: DOC_ID, status: 'parsed', failure_code: null }),
+    } as unknown as Response);
+
+    const out = await reindexCorpusDocument(DOC_ID);
+    // 'parsed' is what puts the row back to "Indexing…" on the screen.
+    expect(out.status).toBe('parsed');
+
+    const [url, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toContain(`/hr/library/${DOC_ID}/reindex`);
+    expect(init.method).toBe('POST');
+    // Not the versions route: a retry must reindex THIS version, not create a
+    // new one from a re-upload.
+    expect(url).not.toContain('/versions');
+  });
+
+  it('surfaces the 409 “not stuck” sentence verbatim', async () => {
+    // `not_failed` is deliberately absent from CORPUS_FAILURE_SENTENCES — it is
+    // not a failure of the document, it means the screen was stale — so the
+    // server's own wording is the only sentence there is.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      headers: { get: () => null },
+      json: () =>
+        Promise.resolve({
+          detail: {
+            failure_code: 'not_failed',
+            message: 'This document is not stuck — there is nothing to reindex.',
+          },
+        }),
+    } as unknown as Response);
+
+    const promise = reindexCorpusDocument(DOC_ID);
+    await expect(promise).rejects.toBeInstanceOf(ApiError);
+    await promise.catch((err: unknown) => {
+      expect((err as ApiError).status).toBe(409);
+      expect(corpusErrorMessage(err, 'fallback')).toBe(
+        'This document is not stuck — there is nothing to reindex.',
+      );
+    });
   });
 });
 

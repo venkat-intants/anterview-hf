@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { AuthUser } from '../types/auth';
 import type { CorpusDocument, CorpusSearchResult } from '../api/corpus';
@@ -29,6 +29,7 @@ const api = {
   getCorpusDownloadUrl: vi.fn(),
   searchCorpusDocuments: vi.fn(),
   getCorpusSemanticStatus: vi.fn(),
+  reindexCorpusDocument: vi.fn(),
 };
 vi.mock('../api/corpus', async () => {
   const actual = await vi.importActual<typeof import('../api/corpus')>('../api/corpus');
@@ -42,6 +43,7 @@ vi.mock('../api/corpus', async () => {
     getCorpusDownloadUrl: (...a: unknown[]) => api.getCorpusDownloadUrl(...a) as unknown,
     searchCorpusDocuments: (...a: unknown[]) => api.searchCorpusDocuments(...a) as unknown,
     getCorpusSemanticStatus: (...a: unknown[]) => api.getCorpusSemanticStatus(...a) as unknown,
+    reindexCorpusDocument: (...a: unknown[]) => api.reindexCorpusDocument(...a) as unknown,
   };
 });
 
@@ -113,13 +115,21 @@ function doc(overrides: Partial<CorpusDocument> = {}): CorpusDocument {
 
 const NO_SEMANTIC: CorpusSearchResult = { semantic: false, passages: [] };
 
-function renderPage(user: AuthUser = hrUser()) {
+/**
+ * @param path Mounted the way App.tsx mounts it, so `/hr/library/{id}` — the
+ *             copilot's document-citation route — exercises the SAME component
+ *             with a `:documentId` param rather than a hand-passed prop.
+ */
+function renderPage(user: AuthUser = hrUser(), path = '/hr/library') {
   mockUseAuth.mockReturnValue({ isAuthenticated: true, isInitializing: false, user });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <CorpusDocuments />
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/hr/library" element={<CorpusDocuments />} />
+          <Route path="/hr/library/:documentId" element={<CorpusDocuments />} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -197,6 +207,101 @@ describe('CorpusDocuments — failed row', () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText('embedding_unavailable')).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Retry indexing — POST /hr/library/{id}/reindex
+//
+// The button was missing while the route existed and was unit-tested
+// server-side: a document parked at `failed` could never be indexed again from
+// the console, and the sentence beside it ("will be indexed automatically") was
+// false for exactly that row.
+// ---------------------------------------------------------------------------
+
+describe('CorpusDocuments — retry indexing', () => {
+  const FAILED = doc({ status: 'failed', failure_code: 'embedding_unavailable' });
+
+  it('offers Retry only on a failed row', async () => {
+    api.listCorpusDocuments.mockResolvedValue([doc({ status: 'indexed' })]);
+    renderPage();
+    await screen.findByText('Ready');
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+  });
+
+  it('retries that document and moves the row back to Indexing…', async () => {
+    const user = userEvent.setup();
+    api.listCorpusDocuments
+      .mockResolvedValueOnce([FAILED])
+      // What the invalidation re-reads: the server has reset the version to
+      // 'parsed' and cleared failure_code.
+      .mockResolvedValue([doc({ status: 'parsed', failure_code: null })]);
+    api.reindexCorpusDocument.mockResolvedValue(doc({ status: 'parsed', failure_code: null }));
+
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /retry indexing/i }));
+
+    await waitFor(() => expect(api.reindexCorpusDocument).toHaveBeenCalledWith(FAILED.id));
+    // The list is re-read, not patched locally — the status the server now holds
+    // is the one shown.
+    expect(await screen.findByText('Indexing…')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Failed')).not.toBeInTheDocument());
+  });
+
+  it('shows the server’s own sentence when the document is not actually stuck', async () => {
+    const user = userEvent.setup();
+    api.listCorpusDocuments.mockResolvedValue([FAILED]);
+    api.reindexCorpusDocument.mockRejectedValue(
+      new ApiError('This document is not stuck — there is nothing to reindex.', 409, {
+        failure_code: 'not_failed',
+        message: 'This document is not stuck — there is nothing to reindex.',
+      }),
+    );
+
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /retry indexing/i }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        'This document is not stuck — there is nothing to reindex.',
+      ),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A document citation lands on the row it names
+// ---------------------------------------------------------------------------
+
+describe('CorpusDocuments — document citation deep link', () => {
+  const CITED = doc({ id: '22222222-2222-4222-8222-222222222222', title: 'Leave policy' });
+  const OTHER = doc({ id: '33333333-3333-4333-8333-333333333333', title: 'Travel policy' });
+
+  it('focuses the cited row', async () => {
+    api.listCorpusDocuments.mockResolvedValue([OTHER, CITED]);
+    renderPage(hrUser(), `/hr/library/${CITED.id}`);
+
+    await screen.findByText('Leave policy');
+    // Focus, not only a scroll: someone arriving from a citation by keyboard
+    // must land on the record too.
+    await waitFor(() =>
+      expect(document.activeElement?.id).toBe(`corpus-doc-${CITED.id}`),
+    );
+  });
+
+  it('leaves every row unfocused on the plain library route', async () => {
+    api.listCorpusDocuments.mockResolvedValue([OTHER, CITED]);
+    renderPage();
+    await screen.findByText('Leave policy');
+    expect(document.activeElement?.id ?? '').not.toContain('corpus-doc-');
+  });
+
+  it('says the document is gone rather than showing an unremarkable list', async () => {
+    api.listCorpusDocuments.mockResolvedValue([OTHER]);
+    renderPage(hrUser(), `/hr/library/${CITED.id}`);
+    expect(
+      await screen.findByText(/no longer in your library/i),
+    ).toBeInTheDocument();
   });
 });
 

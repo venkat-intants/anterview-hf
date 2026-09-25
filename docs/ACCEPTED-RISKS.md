@@ -322,6 +322,42 @@ marked `submitted` (ClamAV in a sidecar, or the object store's managed
 scanner at Tier 2), with a `quarantined` state the review trigger refuses to
 verify.
 
+**PH5-E2 amendment (2026-09-23) — the document corpus fires trigger (b).**
+`app/corpus.py` parses a fourth upload path server-side (PDF, DOCX, TXT, MD
+into the company's document library), which is exactly "any feature that ...
+processes it server-side". Recorded here rather than treated as a new
+decision, because the trigger firing does not by itself change the answer —
+what changed is worth stating plainly:
+
+- **The threat model is different, not absent.** Every uploader on this path
+  is an authenticated `hr_manager` or `super_admin` of the tenant, not an
+  anonymous candidate — the same person who could otherwise type the same
+  content straight into the chat. This narrows, but does not remove, the
+  surface: a compromised or malicious staff account is still a real actor, and
+  a scanner would still be worth having against one.
+- **The controls E2 adds, on top of D4-3's allow-list and isolation:**
+  parsing runs in a thread (`app/corpus.py::extract_text`) with a
+  **30-second bound on the REQUEST**, not on the thread itself —
+  `asyncio.to_thread` can cancel the `await`, never the running thread, so
+  what the timeout actually buys is that the caller gets its 422/500 back and
+  the connection is freed at 30s; the worker THREAD is released only when the
+  parser call returns, which is bounded in practice by the input the parser
+  ever sees (the 10 MB upload cap, `pypdf`'s per-page loop, and DOCX's own
+  caps below) rather than by the timeout cancelling anything. Security
+  sign-off on this amendment is conditional on this paragraph, not the
+  earlier "cannot hang a worker" wording it replaces, which overstated what
+  `asyncio.to_thread` provides. DOCX is read with `defusedxml` (no DTD/entity
+  expansion, so no XXE) and hard caps of **200 zip entries and 8 MB
+  uncompressed**, enforced against ACTUAL bytes read, not only the archive's
+  declared sizes; the PDF active-content refusal (`document_storage.py`) is
+  unchanged and applies identically; and a corpus document is never rendered
+  in-browser — download only, through the same five-minute signed link as
+  every other document here. Uploads are also rate-limited per company
+  (`CORPUS_UPLOAD_PER_MINUTE`, default 20/minute) as a coarse bound on how
+  often the parse pool can be triggered at all.
+- **No scanner added this wave**, per the recommendation on file. If a lead
+  wants one, it is a separate story, not folded into this wave's checklist.
+
 ---
 
 ## AR-7 — Portfolio external links are never fetched, and reviewers see them cold
@@ -366,6 +402,72 @@ regardless.
 
 ---
 
+## AR-8 — DPDP erasure cannot reach a candidate's name inside an HR-uploaded document
+
+| | |
+|---|---|
+| **Source finding** | PH5 Wave 3 (E2 — document corpus RAG), 2026-09-23 |
+| **Status** | **ACCEPTED — mitigated by attestation, default audience and immediate purge on delete, not solved** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` reviews when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a customer or bid requiring erasure to reach text inside uploaded documents; (b) a corpus document found to contain candidate data; (c) any feature that auto-ingests candidate-derived content into the corpus |
+
+**The decision.** PH5-E2 gives a company's HR managers and super admins a
+document library the staff copilot can search — policies, handbooks, process
+notes. `corpus_chunks.content` is free text extracted from whatever they
+upload, and there is no key from an applicant row to a chunk of that text: not
+a foreign key, not a shared identifier, nothing an erasure executor could join
+on. **If an uploader pasted a real candidate's name into a document — a
+worked example in a training handbook, an old memo copied in whole — this
+platform cannot find it and cannot erase it.** That is a real limit, not a
+gap to be quietly designed around, and `services/admin_ops/app/
+erasure_executor.py::EXCLUDED_TABLES` says so for all four corpus tables
+rather than presenting the inventory as complete.
+
+**What exists instead — real controls, none of them detection:**
+
+- **An upload-time attestation.** The upload dialog requires HR to confirm
+  "This is a company document, not a record about a candidate" before the
+  request is accepted (`app/corpus.py::ingest_document` refuses with
+  `attestation_required` otherwise); the confirmation is recorded on the
+  `corpus.document.uploaded` audit row.
+- **`hr_only` as the UI's default audience for an `hr_manager` upload.**
+  Qualified deliberately: this default applies only when the uploader IS an
+  `hr_manager`. A `super_admin`'s upload is not "defaulted to `hr_only`" — it
+  **can only ever be `all_staff`**, full stop (design decision Q3;
+  `app/corpus.py::ingest_document` refuses `audience="hr_only"` from a
+  `super_admin` with a 422). So the narrowest-population default is real for
+  one uploader role and inapplicable, not merely different, for the other.
+- **Immediate, complete purge on delete — the ORIGINAL FILE included, not
+  only the derived chunks.** `app/corpus.py::delete_document` removes the
+  chunks, the embeddings, AND the originally uploaded file from object
+  storage (Cloudflare R2 in the demo tier) in the same request — no 30-day
+  grace window — so a document uploaded in error can be fully gone within
+  seconds of HR noticing, rather than waiting out a retention clock. Stated
+  explicitly because the limit above is about TEXT an erasure executor cannot
+  search; the original file is a second copy of exactly the same risk, and
+  the purge control covers both, not only the searchable copy.
+- **A `super_admin` can never create or read back an `hr_only` document**
+  (design decision Q3) — narrowing who could have put candidate-shaped text
+  in front of the widest company-level audience in the first place.
+
+**What is NOT true.** It is not true that the corpus is scanned, sampled or
+otherwise checked for candidate-identifying content, at upload or ever. It is
+not true that `hr_only` limits WHAT can be uploaded — only who can later read
+it. And the structural claim this wave is entitled to make is that **a
+retrieved document cannot change system behaviour** (no write tool exists for
+a document to steer); it is emphatically not entitled to claim that **a
+retrieved document cannot influence the model's prose** — see
+`shared/agents/guardrails.py` and `app/corpus.py::detect_injection` usage,
+which reports an injection attempt rather than claiming to neutralise it.
+
+**Path to closure.** Table-stakes if this ever needs closing: a client-side
+PII scanner over extracted text at upload (report, do not block, on the
+steering-resume precedent), and/or a documented process for HR to attest
+per-document that it contains no third-party personal data, reviewed
+periodically. Neither is built this wave.
+
+---
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -375,5 +477,6 @@ regardless.
 | **AR-3** | Candidate code executes on JDoodle | AG-05 | `platform_owner` | Residency bid, confidential-IP customer, or free-tier exhaustion |
 | **AR-4** | No production avatar gate; `custom` unimplemented | AG-06 residue | `cto-architect` | Production `APP_ENV`, residency bid, or 2026-11-28 sunset review |
 | **AR-5** | Decision rationale in audit log / ledger not redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | Erasure grievance naming it, audit details shown to others, or Tier-2 |
-| **AR-6** | Preboarding documents, task artifacts and materials are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
+| **AR-6** | Preboarding documents, task artifacts, materials and the corpus are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4, PH5-E2 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
+| **AR-8** | DPDP erasure cannot reach a candidate's name inside an HR-uploaded corpus document | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents requirement, a corpus document found to contain candidate data, or auto-ingested candidate content |

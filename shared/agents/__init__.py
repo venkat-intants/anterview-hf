@@ -43,6 +43,7 @@ from shared.agents.guardrails import (
     UNTRUSTED_DATA_NOTICE,
     detect_injection,
     redact,
+    strip_invisible,
     with_safety_clause,
 )
 from shared.agents.panel import (
@@ -54,11 +55,13 @@ from shared.agents.panel import (
     detect_contradictions,
 )
 from shared.agents.registry import (
+    CitationOverreachError,
     ToolContext,
     ToolHandler,
     ToolOutput,
     ToolPermissionError,
     ToolRegistry,
+    filter_citations_for_role,
 )
 from shared.agents.roster import (
     UnknownConsoleError,
@@ -70,10 +73,14 @@ from shared.agents.runtime import (
     AgentBudget,
     AgentLLM,
     AgentSpec,
+    bind_refs,
     build_wire_messages,
     run_agent,
+    tool_wire_content,
 )
 from shared.agents.schema import (
+    CITATION_MIN_ROLES,
+    CITATION_ROUTES,
     CROSS_TENANT_ROLES,
     DATA_CLASS_ROLES,
     AgentMessage,
@@ -81,6 +88,7 @@ from shared.agents.schema import (
     AgentRun,
     AssistantStep,
     Citation,
+    CitationKind,
     CommitSpec,
     Contradiction,
     PanelVerdict,
@@ -91,6 +99,7 @@ from shared.agents.schema import (
     ToolResult,
     ToolSpec,
     WatcherFinding,
+    citation_href,
 )
 from shared.agents.watchers import (
     WATCHERS,
@@ -106,6 +115,8 @@ from shared.agents.watchers import (
 )
 
 __all__ = [
+    "CITATION_MIN_ROLES",
+    "CITATION_ROUTES",
     "CONTRADICTION_THRESHOLD",
     "CROSS_TENANT_ROLES",
     "DATA_CLASS_ROLES",
@@ -121,6 +132,8 @@ __all__ = [
     "AssistantStep",
     "CandidateEvidence",
     "Citation",
+    "CitationKind",
+    "CitationOverreachError",
     "CommitSpec",
     "Contradiction",
     "ErasureRequest",
@@ -149,13 +162,18 @@ __all__ = [
     "assess_candidate",
     "available_consoles",
     "available_surfaces",
+    "bind_refs",
     "build_agent",
     "build_wire_messages",
+    "citation_href",
     "detect_contradictions",
     "detect_injection",
     "digest",
+    "filter_citations_for_role",
     "redact",
     "run_agent",
     "run_watchers",
+    "strip_invisible",
+    "tool_wire_content",
     "with_safety_clause",
 ]

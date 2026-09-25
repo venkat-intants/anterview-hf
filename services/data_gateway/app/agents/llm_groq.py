@@ -40,7 +40,15 @@ from typing import Any, Final
 
 import httpx
 import structlog
-from shared.agents import AgentLLM, AgentMessage, AssistantStep, PanelLLM, ToolCall, ToolSpec
+from shared.agents import (
+    AgentLLM,
+    AgentMessage,
+    AssistantStep,
+    PanelLLM,
+    ToolCall,
+    ToolSpec,
+    tool_wire_content,
+)
 
 from app.config import settings
 
@@ -119,7 +127,12 @@ def _to_openai_messages(
                 {
                     "role": "tool",
                     "tool_call_id": result.call_id,
-                    "content": result.content if result.ok else (result.error or "failed"),
+                    # ``tool_wire_content`` is what actually puts the
+                    # untrusted-data notice (and any SOURCES line) on the wire
+                    # — this used to send ``result.content`` raw, which is why
+                    # SAFETY_CLAUSE's "[UNTRUSTED DATA] block" never existed on
+                    # this path (see runtime.py's ``tool_wire_content``).
+                    "content": tool_wire_content(result),
                 }
                 for result in message.tool_results
             )

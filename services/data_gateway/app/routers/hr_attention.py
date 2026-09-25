@@ -51,7 +51,7 @@ from typing import Annotated
 import structlog
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
-from shared.agents import run_watchers
+from shared.agents import filter_citations_for_role, run_watchers
 
 from app.agents.watch_runner import gather_company_input
 from app.database import DbSessionDep
@@ -62,6 +62,12 @@ from app.routers.hr_requisitions import _owned
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/hr", tags=["hr-attention"])
+
+# ``HrCtxDep`` (``app.dependencies.get_hr_company``) gates this whole route on
+# ``require_role_password_ok("hr_manager")`` — there is no other role this
+# handler ever runs as. Named here, once, so the citation filter below states
+# what it is relying on rather than repeating the literal inline.
+_ROLE = "hr_manager"
 
 
 class AttentionCitation(BaseModel):
@@ -153,11 +159,18 @@ async def get_attention(
                 body=f.body,
                 link=f.link,
                 dedupe_key=f.dedupe_key,
+                # The same citation-permission gate ToolRegistry.invoke applies
+                # to every tool result. Watcher findings are built directly by
+                # shared.agents.watchers, never through invoke(), so nothing
+                # else enforces CITATION_MIN_ROLES on this path. A no-op today
+                # (this route is hr_manager-only and every watcher citation
+                # here is candidate_pii or company_scoped, both of which
+                # hr_manager may open) — kept structural rather than assumed.
                 citations=[
                     AttentionCitation(
                         kind=c.kind, id=c.id, label=c.label, href=getattr(c, "href", None)
                     )
-                    for c in f.citations
+                    for c in filter_citations_for_role(f.citations, _ROLE, source="hr_attention")
                 ],
             )
             for f in findings

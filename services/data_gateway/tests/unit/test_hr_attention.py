@@ -167,6 +167,32 @@ async def test_a_finding_carries_its_link_and_citations(
 
 
 @pytest.mark.asyncio
+async def test_a_citation_outside_hr_managers_remit_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same guarantee ToolRegistry.invoke gives every tool result, applied
+    here too (code review small item 1): watcher findings are built directly,
+    never through invoke(), so nothing else enforces CITATION_MIN_ROLES on this
+    path. This route is hr_manager-only in practice, but the filter is what
+    makes that structural rather than merely true today."""
+    from app.routers import hr_attention
+
+    overreach = _finding(
+        dedupe_key="overreach",
+        citations=[Citation(kind="audit", id="req-1", label="erasure request")],
+    )
+    monkeypatch.setattr(
+        hr_attention, "gather_company_input",
+        AsyncMock(return_value=WatcherInput(company_id="c")),
+    )
+    monkeypatch.setattr(hr_attention, "run_watchers", lambda _d: [overreach])
+
+    out = await hr_attention.get_attention(_ctx(), AsyncMock())
+
+    assert out.items[0].citations == []
+
+
+@pytest.mark.asyncio
 async def test_severity_order_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
     """run_watchers sorts worst-first; the panel must not re-sort by anything
     else, or the thing that needs attention stops being at the top."""
@@ -235,6 +261,67 @@ async def test_the_log_line_carries_counts_not_content(
 # ===========================================================================
 # Resilience, inherited rather than reimplemented
 # ===========================================================================
+# ===========================================================================
+# E6 — the requisition_id filter (PH5 Wave 3 design §9 Q12)
+#
+# ``CitationKind`` is a closed but GROWING vocabulary (Wave 2 added two
+# members, PH5-E1 adds "document") and the per-opening panel keys off one
+# literal string, "job", inside a citation list. Nothing else pins that a
+# future rename of the "job" member would be caught here rather than
+# discovered as a silently empty panel.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_requisition_filter_keeps_only_findings_citing_that_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import hr_attention
+
+    wanted_id = str(uuid.uuid4())
+    other_id = str(uuid.uuid4())
+
+    matching = _finding(
+        dedupe_key="1", citations=[Citation(kind="job", id=wanted_id, label="Opening")]
+    )
+    wrong_job = _finding(
+        dedupe_key="2",
+        citations=[Citation(kind="job", id=other_id, label="Other opening")],
+    )
+    right_id_wrong_kind = _finding(
+        dedupe_key="3",
+        # Same id as the wanted opening, but NOT a "job" citation — must not
+        # match. This is the case a kind/id predicate mix-up would pass.
+        citations=[Citation(kind="applicant", id=wanted_id, label="Someone")],
+    )
+
+    monkeypatch.setattr(hr_attention, "_owned", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        hr_attention, "gather_company_input",
+        AsyncMock(return_value=WatcherInput(company_id="c")),
+    )
+    monkeypatch.setattr(
+        hr_attention, "run_watchers",
+        lambda _d: [matching, wrong_job, right_id_wrong_kind],
+    )
+
+    _hr_uid, company_id = _ctx()
+    out = await hr_attention.get_attention(
+        (_hr_uid, company_id), AsyncMock(), requisition_id=uuid.UUID(wanted_id)
+    )
+
+    assert out.total == 1
+    assert out.items[0].dedupe_key == "1"
+
+
+def test_the_requisition_filter_checks_the_job_kind_literally() -> None:
+    """A rename of the "job" ``CitationKind`` member that missed this file
+    would otherwise show up only as an empty per-opening panel, never as a red
+    test. Source-pinned so the rename itself is what fails."""
+    from app.routers.hr_attention import get_attention
+
+    source = inspect.getsource(get_attention)
+    assert 'c.kind == "job"' in source
+
+
 def test_one_broken_rule_cannot_empty_the_panel() -> None:
     """run_watchers catches per-watcher failures itself. Asserted at the
     library so the endpoint can rely on it without a second try/except that

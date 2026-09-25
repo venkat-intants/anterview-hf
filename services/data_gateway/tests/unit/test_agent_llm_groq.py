@@ -313,7 +313,11 @@ async def test_tool_results_are_sent_back_keyed_by_call_id(
     # Round-tripped as a string, which is what the API expects.
     assert assistant["tool_calls"][0]["function"]["arguments"] == '{"limit": 5}'
     assert tool_msg["tool_call_id"] == "call_abc"
-    assert tool_msg["content"] == '{"n":3}'
+    # The body is wrapped by tool_wire_content (PH5-E1 §2.1) — the raw content
+    # is still IN there, just no longer the whole of it. See
+    # test_tool_output_is_wrapped_in_the_untrusted_data_notice below for the
+    # notice itself; this test's own job is call-id pairing.
+    assert '{"n":3}' in tool_msg["content"]
 
 
 @pytest.mark.asyncio
@@ -337,7 +341,93 @@ async def test_a_failed_tool_reports_its_error_to_the_model(
     assert call is not None
     await call("sys", history, [])
     tool_msg = next(m for m in recorder[0]["body"]["messages"] if m["role"] == "tool")
-    assert tool_msg["content"] == "permission denied"
+    # Wrapped the same way an ok=True result is (PH5-E1 §2.1) — a failed tool's
+    # own error text gets the same untrusted-data framing as its content.
+    assert "permission denied" in tool_msg["content"]
+    assert "UNTRUSTED DATA" in tool_msg["content"]
+
+
+# ---------------------------------------------------------------------------
+# PH5-E1 §2.1 — the untrusted-data notice must actually reach the wire.
+#
+# Before this fix, both provider adapters serialised ``result.content`` raw:
+# SAFETY_CLAUSE told the model to distrust "[UNTRUSTED DATA]" blocks that never
+# appeared on a real request, because the only place the notice was applied
+# (``runtime.build_wire_messages``) was dead code in production. These are the
+# per-adapter tests the fix is for — see the equivalent in
+# test_agent_llm.py for the Gemini side.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_tool_output_is_wrapped_in_the_untrusted_data_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure(monkeypatch)
+    recorder = _patch(monkeypatch, _reply("done"))
+    from app.agents.llm_groq import build_groq_agent_llm
+
+    history = [
+        AgentMessage(role="user", text="who should I interview?"),
+        AgentMessage(
+            role="tool",
+            tool_results=[
+                ToolResult(
+                    call_id="c1", name="list_applicants", ok=True, content='{"n":3}'
+                )
+            ],
+        ),
+    ]
+    call = build_groq_agent_llm()
+    assert call is not None
+    await call("sys", history, [_SPEC])
+
+    tool_msg = next(
+        m for m in recorder[0]["body"]["messages"] if m["role"] == "tool"
+    )
+    assert "UNTRUSTED DATA" in tool_msg["content"]
+    assert '{"n":3}' in tool_msg["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_cited_tool_result_carries_a_sources_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ONLY place a citation reaches the model — a compact SOURCES line
+    naming the run-scoped ref ``run_agent`` already stamped onto the citation
+    before the adapter ever sees it."""
+    _configure(monkeypatch)
+    recorder = _patch(monkeypatch, _reply("done"))
+    from shared.agents import Citation
+
+    from app.agents.llm_groq import build_groq_agent_llm
+
+    cited = Citation(
+        kind="applicant", id="a-1", label="Asha K", href="/hr/applicants/a-1", ref="S1"
+    )
+    history = [
+        AgentMessage(role="user", text="who should I interview?"),
+        AgentMessage(
+            role="tool",
+            tool_results=[
+                ToolResult(
+                    call_id="c1",
+                    name="list_applicants",
+                    ok=True,
+                    content='{"n":1}',
+                    citations=[cited],
+                )
+            ],
+        ),
+    ]
+    call = build_groq_agent_llm()
+    assert call is not None
+    await call("sys", history, [_SPEC])
+
+    tool_msg = next(
+        m for m in recorder[0]["body"]["messages"] if m["role"] == "tool"
+    )
+    assert "SOURCES" in tool_msg["content"]
+    assert "[S1]" in tool_msg["content"]
+    assert "Asha K" in tool_msg["content"]
 
 
 @pytest.mark.asyncio

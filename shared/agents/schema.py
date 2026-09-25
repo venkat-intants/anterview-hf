@@ -110,7 +110,83 @@ CitationKind = Literal[
     # by test_evidence_graph_citation_kind_parity.
     "interviewer_scorecard",
     "decision",
+    # PH5-E2: a company's own reference document (policy, handbook, process
+    # note) in the HR document corpus. Added here, ahead of that tool landing,
+    # so CITATION_ROUTES/CITATION_MIN_ROLES stay a complete table over every
+    # member of this Literal from day one, and the corpus tool needs only to
+    # USE the kind, never to add it.
+    "document",
 ]
+
+# Frontend route per citation kind, one table rather than a href string typed
+# out at every call site. ``None`` means "no single record to open" — an
+# analytics aggregate or a role model computed on the fly — and the renderer
+# shows an unlinked chip rather than a dead link. Keyed by ``str`` rather than
+# ``CitationKind`` so the coverage test below can compare key sets against
+# ``typing.get_args`` without a type-checker complaint about a non-Literal key.
+#
+# The id substituted into ``{id}`` is whatever the ROUTE needs, not necessarily
+# ``Citation.id`` — a ``scorecard`` citation is identified by the scorecard's
+# own id but links through the APPLICANT page, because there is no standalone
+# scorecard route. Callers use ``citation_href`` below rather than formatting
+# this by hand, so that distinction is made once instead of at every call site.
+CITATION_ROUTES: dict[str, str | None] = {
+    "applicant": "/hr/applicants/{id}",
+    "scorecard": "/hr/applicants/{id}",
+    "exam": "/hr/exams/{id}",
+    "exam_attempt": "/hr/exams/attempts/{id}",
+    "interview": "/hr/interviews/{id}",
+    "job": "/hr/requisitions/{id}",
+    "interviewer_scorecard": "/hr/enrolments/{id}/evidence",
+    "decision": "/hr/enrolments/{id}/evidence?decision={id}",
+    # PH5-E2 coordination: moved from /hr/documents/{id} — that path was
+    # shared with an unrelated entity (candidate_documents/preboarding),
+    # differing only by verb. The corpus's own routes live under /hr/library.
+    "document": "/hr/library/{id}",
+    "role_profile": None,
+    "analytics": None,
+    "audit": None,
+}
+
+
+def citation_href(kind: str, route_id: str) -> str | None:
+    """Build an href from ``CITATION_ROUTES`` for a given record id.
+
+    Not every citation's own ``id`` is the id its route needs (see the
+    ``scorecard`` note on ``CITATION_ROUTES`` above), so callers pass whichever
+    id the ROUTE wants, explicitly, rather than this function guessing from a
+    ``Citation`` instance.
+    """
+    template = CITATION_ROUTES.get(kind)
+    return template.format(id=route_id) if template else None
+
+
+# Minimum roles that may be HANDED a citation of this kind at all — the answer
+# to "can the caller open this?", checked by ``ToolRegistry.invoke`` on every
+# citation a tool returns, independently of whether the TOOL itself was one
+# this role may call. A ``company_scoped`` tool is offered to both
+# ``hr_manager`` and ``super_admin``, but if it happens to surface an
+# ``applicant`` citation (candidate_pii, hr_manager only), a super admin must
+# never receive it — the access matrix in ``DATA_CLASS_ROLES`` says a company
+# super admin has no route to a named candidate, and a citation is exactly
+# such a route if nothing here stops it.
+#
+# Derived from ``DATA_CLASS_ROLES`` wherever the design ties a citation kind to
+# an existing data class, rather than retyped, so the two tables cannot drift.
+CITATION_MIN_ROLES: dict[str, frozenset[str]] = {
+    "applicant": DATA_CLASS_ROLES["candidate_pii"],
+    "scorecard": DATA_CLASS_ROLES["candidate_pii"],
+    "exam_attempt": DATA_CLASS_ROLES["candidate_pii"],
+    "interviewer_scorecard": DATA_CLASS_ROLES["candidate_pii"],
+    "decision": DATA_CLASS_ROLES["candidate_pii"],
+    "interview": DATA_CLASS_ROLES["candidate_pii"],
+    "exam": DATA_CLASS_ROLES["company_scoped"],
+    "job": DATA_CLASS_ROLES["company_scoped"],
+    "document": DATA_CLASS_ROLES["company_scoped"],
+    "role_profile": DATA_CLASS_ROLES["company_scoped"],
+    "analytics": DATA_CLASS_ROLES["company_scoped"] | DATA_CLASS_ROLES["platform_aggregate"],
+    "audit": DATA_CLASS_ROLES["platform_aggregate"],
+}
 
 
 def _new_id() -> str:
@@ -132,6 +208,33 @@ class Citation(BaseModel):
     # Frontend route, e.g. "/hr/applicants/<id>". Optional because analytics
     # aggregates have no single record to link to.
     href: str | None = None
+    # Run-scoped reference handle ("S1", "S2", …) a model can write inline
+    # after a claim. ASSIGNED BY THE RUNTIME ONLY — never set by a tool, so a
+    # handler cannot forge a ref that collides with, or pre-empts, the one the
+    # run assigns. Empty until ``run_agent`` stamps it.
+    ref: str = ""
+    # Where inside the source the evidence sits — "page 4", "v3 · §2.1 Leave
+    # policy", "criterion Communication", "workload across 6 HR managers".
+    # Optional: most citations point at a whole record and need no locator.
+    locator: str | None = None
+
+    @field_validator("href")
+    @classmethod
+    def _must_be_relative_app_path(cls, v: str | None) -> str | None:
+        """Refuse an absolute URL, mirroring ``CommitSpec._must_be_relative_api_path``.
+
+        Unlike a commit, nothing FIRES a request at a citation's href — a click
+        just navigates the SPA. But the renderer today is a plain ``<a href=…>``
+        (``CopilotPanel.tsx``), and a tool that (by bug, or by a document that
+        got as far as instruction-following text) emitted an absolute URL would
+        turn a "see the source" chip into a link off our own site. ``None`` is
+        still legal and means "no single record to open".
+        """
+        if v is None:
+            return v
+        if not v.startswith("/") or v.startswith("//"):
+            raise ValueError("citation href must be a relative app path, or None")
+        return v
 
 
 class ToolSpec(BaseModel):
@@ -370,6 +473,19 @@ class AgentRun(BaseModel):
     stop_reason: StopReason = "completed"
     prompt_tokens: int = 0
     output_tokens: int = 0
+    # Refs (e.g. "S1") the reply actually cited, after ``bind_refs`` has removed
+    # any the model invented. Empty is normal — many good answers cite nothing
+    # inline even when evidence_used is true (a table, say, rather than prose).
+    cited_refs: list[str] = Field(default_factory=list)
+    # How many inline markers ``bind_refs`` had to strip because they named no
+    # citation the run actually produced. Never surfaced to the user — logged —
+    # because the FIX is silent (the marker is simply removed); this count is
+    # what tells an operator a console or a GROQ_MODEL is bad at the convention.
+    invented_refs: int = 0
+    # Computed, never claimed: true when at least one successful tool result in
+    # ``trace`` carried a citation. The console renders this — not the model's
+    # say-so — as "answered from your records" vs "no records were read".
+    evidence_used: bool = False
 
 
 # ---------------------------------------------------------------------------

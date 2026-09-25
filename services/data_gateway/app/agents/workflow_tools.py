@@ -38,6 +38,7 @@ from shared.agents import (
     Proposal,
     ToolContext,
     ToolOutput,
+    strip_invisible,
 )
 from shared.intelligence import baseline_profile, compute_profile_id
 from shared.intelligence.schema import Seniority
@@ -196,7 +197,9 @@ async def _get_opening_under_design(_args: dict[str, Any], ctx: ToolContext) -> 
                 "target_hires": req["target_hires"],
                 # Truncated: a full JD can be 40k characters and would crowd
                 # the actual question out of the model's attention.
-                "job_description_excerpt": jd[:1500] or None,
+                # ``strip_invisible``: a JD is sometimes pasted from an
+                # external posting, not always HR-authored from scratch.
+                "job_description_excerpt": strip_invisible(jd[:1500]) or None,
             },
             "occupational_family": profile.domain_label,
             "competencies": [
@@ -710,6 +713,10 @@ async def _draft_workflow_round(args: dict[str, Any], ctx: ToolContext) -> ToolO
             "note": "Nothing was added. This is a preview for the user to accept.",
         },
         proposals=[proposal],
+        # Lifted to the run level too, same as the proposal's own citation —
+        # a run-level citation is what lets the console render a source strip
+        # under the reply text, not only inside the proposal review panel.
+        citations=[_requisition_citation(req)],
     )
 
 
@@ -790,6 +797,7 @@ async def _draft_round_criteria(args: dict[str, Any], ctx: ToolContext) -> ToolO
             ),
         },
         proposals=[proposal],
+        citations=[_requisition_citation(req)],
     )
 
 
@@ -897,4 +905,5 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
                 citations=[_requisition_citation(req)],
             )
         ],
+        citations=[_requisition_citation(req)],
     )

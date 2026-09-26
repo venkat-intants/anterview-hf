@@ -585,6 +585,12 @@ export default function PublicApply(): JSX.Element {
   const [email, setEmail] = useState('');
   const [resume, setResume] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
+  // PH5-E3 (D5-1) — a SECOND, INDEPENDENT opt-in, unticked by default. Never
+  // read by `readyBase`/`ready` below: bundling it into the application
+  // consent gate would make it non-optional, which DPDP §6(1) forbids and
+  // D5-1's "opt-in" rules out. Getting this wrong (joining the gate, or
+  // defaulting it true) would be the worst outcome this screen could ship.
+  const [rediscoveryConsent, setRediscoveryConsent] = useState(false);
   // The language of the emails this application sends — EN, HI or TE.
   const [language, setLanguage] = useState<'en' | 'hi' | 'te'>('en');
   // Step two. All optional — see STEPS below for why the step exists at all.
@@ -624,6 +630,7 @@ export default function PublicApply(): JSX.Element {
         email: email.trim(),
         resume: resume as File,
         consentGranted: consent,
+        rediscoveryOptIn: rediscoveryConsent,
         language,
         phone,
         yearsExperience: yearsExperience === '' ? null : Number(yearsExperience),
@@ -1150,6 +1157,23 @@ export default function PublicApply(): JSX.Element {
             />
             <span className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
               {t('apply.consent', { company: job.company_name })}
+            </span>
+          </label>
+
+          {/* PH5-E3 (D5-1) — a SECOND, INDEPENDENT, unticked checkbox. It
+              must NEVER join `ready` below: this is a separate DPDP §6(1)
+              consent (being found again for a FUTURE opening), and bundling
+              it with the application consent above would make it
+              non-optional, which D5-1's "opt-in" design rules out. */}
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-border p-3">
+            <input
+              type="checkbox"
+              checked={rediscoveryConsent}
+              onChange={(e) => setRediscoveryConsent(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
+            />
+            <span className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
+              {t('apply.rediscoveryConsent', { company: job.company_name, months: 12 })}
             </span>
           </label>
 

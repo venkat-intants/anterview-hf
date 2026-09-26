@@ -22,6 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MyApplication, MyApplicationDetail } from '../api/applications';
+import type { MyRediscoveryCompany } from '../api/rediscovery';
 import { ApiError } from '../api/client';
 
 const listMyApplications = vi.fn();
@@ -60,6 +61,23 @@ const listMyInterviewLoops = vi.fn();
 vi.mock('../api/scheduling', () => ({
   listMyInterviewLoops: (...a: unknown[]) => listMyInterviewLoops(...a) as unknown,
 }));
+
+// PH5-E3 — "Your rediscovery" (YourRediscovery.tsx) also mounts above the
+// applications list unconditionally. Defaulted to an empty company list so
+// every existing test on this page stays exactly as deterministic as before
+// this feature existed; its own behaviour is covered below in "Applications —
+// rediscovery". `rediscoveryErrorMessage` is real (via importActual) rather
+// than reimplemented, on the CorpusDocuments.test.tsx precedent.
+const listMyRediscovery = vi.fn();
+const setMyRediscovery = vi.fn();
+vi.mock('../api/rediscovery', async () => {
+  const actual = await vi.importActual<typeof import('../api/rediscovery')>('../api/rediscovery');
+  return {
+    ...actual,
+    listMyRediscovery: (...a: unknown[]) => listMyRediscovery(...a) as unknown,
+    setMyRediscovery: (...a: unknown[]) => setMyRediscovery(...a) as unknown,
+  };
+});
 
 import Applications from '../pages/Applications';
 
@@ -108,6 +126,7 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   listMyInterviewLoops.mockResolvedValue([]);
+  listMyRediscovery.mockResolvedValue({ companies: [], consent_months: 12 });
   listMyApplications.mockResolvedValue([app()]);
   getMyApplication.mockResolvedValue({
     ...app(),
@@ -475,5 +494,94 @@ describe('Applications — a waiting assessment', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Start assessment' }));
     expect(await screen.findByText('No assessment is waiting on this application.')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PH5-E3 (D5-1) — the candidate's own rediscovery opt-in, one row per company.
+// ---------------------------------------------------------------------------
+
+function rediscoveryCompany(over: Partial<MyRediscoveryCompany> = {}): MyRediscoveryCompany {
+  return {
+    company_id: 'co-1',
+    company_name: 'Acme Test Co',
+    applicant_id: 'app-1',
+    state: 'off',
+    ...over,
+  };
+}
+
+describe('Applications — rediscovery', () => {
+  it('shows nothing when the candidate has no company to opt into', async () => {
+    listMyRediscovery.mockResolvedValue({ companies: [], consent_months: 12 });
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    expect(screen.queryByText('Future openings')).not.toBeInTheDocument();
+  });
+
+  it('shows the toggle for a company, off by default', async () => {
+    listMyRediscovery.mockResolvedValue({ companies: [rediscoveryCompany()], consent_months: 12 });
+    renderPage();
+
+    expect(
+      await screen.findByText('Keep my profile for future openings at Acme Test Co'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Turn on' })).toBeInTheDocument();
+  });
+
+  it('turns on with a single press — no confirm needed to opt in', async () => {
+    const user = userEvent.setup();
+    listMyRediscovery.mockResolvedValue({ companies: [rediscoveryCompany()], consent_months: 12 });
+    setMyRediscovery.mockResolvedValue(
+      rediscoveryCompany({ state: 'on', opted_in_at: '2026-09-26T00:00:00Z', expires_at: '2027-09-26T00:00:00Z' }),
+    );
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Turn on' }));
+
+    await waitFor(() => expect(setMyRediscovery).toHaveBeenCalledWith('co-1', true));
+    expect(await screen.findByRole('button', { name: 'Turn off' })).toBeInTheDocument();
+  });
+
+  it('requires a second press to turn off — a single click only shows the confirm', async () => {
+    const user = userEvent.setup();
+    listMyRediscovery.mockResolvedValue({
+      companies: [rediscoveryCompany({ state: 'on', expires_at: '2027-09-26T00:00:00Z' })],
+      consent_months: 12,
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Turn off' }));
+
+    // The first press only reveals the confirm — it must NOT have called the API yet.
+    expect(setMyRediscovery).not.toHaveBeenCalled();
+    expect(screen.getByText('Turn this off?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Yes, turn off' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Yes, turn off' }));
+    await waitFor(() => expect(setMyRediscovery).toHaveBeenCalledWith('co-1', false));
+  });
+
+  it('cancels the turn-off confirm without calling the API', async () => {
+    const user = userEvent.setup();
+    listMyRediscovery.mockResolvedValue({
+      companies: [rediscoveryCompany({ state: 'on' })],
+      consent_months: 12,
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Turn off' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByText('Turn this off?')).not.toBeInTheDocument();
+    expect(setMyRediscovery).not.toHaveBeenCalled();
+  });
+
+  it('names what is kept, for how long, in the plain-language notice', async () => {
+    listMyRediscovery.mockResolvedValue({ companies: [rediscoveryCompany()], consent_months: 12 });
+    renderPage();
+    await screen.findByText('Keep my profile for future openings at Acme Test Co');
+    expect(screen.getByText(/for up to 12 months/)).toBeInTheDocument();
+    expect(screen.getByText(/turn it off at any time/)).toBeInTheDocument();
   });
 });

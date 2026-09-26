@@ -115,6 +115,10 @@ const RequisitionDashboard = lazy(() => import('./pages/hr/RequisitionDashboard'
 // PH5-E2 — the company's document library (policies, handbooks, process
 // notes) the staff copilot can search; shared by hr_manager and super_admin.
 const CorpusDocuments = lazy(() => import('./pages/hr/CorpusDocuments'));
+// PH5-E3 — talent pools (HR-curated lists for future openings) and the
+// rediscovery search that fills them. `hr_manager` only — see TalentPools.tsx.
+const TalentPools = lazy(() => import('./pages/hr/TalentPools'));
+const Rediscovery = lazy(() => import('./pages/hr/Rediscovery'));
 const HRAnalyticsPage = lazy(() =>
   import('./pages/hr/HRAnalytics').then((m) => ({ default: m.HRAnalyticsPage })),
 );
@@ -344,6 +348,12 @@ export default function App() {
                   with the cited row focused. */}
               <Route path="/hr/library" element={<CorpusDocuments />} />
               <Route path="/hr/library/:documentId" element={<CorpusDocuments />} />
+              {/* PH5-E3 — talent pools and the rediscovery search behind them.
+                  /pools before /pools/:poolId so the literal wins the match,
+                  matching the /hr/requisitions pattern above. */}
+              <Route path="/hr/pools" element={<TalentPools />} />
+              <Route path="/hr/pools/:poolId" element={<TalentPools />} />
+              <Route path="/hr/rediscovery" element={<Rediscovery />} />
             </Route>
           </Route>
 

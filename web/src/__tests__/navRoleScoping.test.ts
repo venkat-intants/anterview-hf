@@ -112,6 +112,30 @@ describe('nav role scoping', () => {
     }
   });
 
+  it('gives an HR manager the talent-pools and rediscovery entries', () => {
+    // PH5-E3. Same reasoning as the document-library entry above: without a
+    // nav entry, "authorised HR users can create and manage talent pools" is
+    // not true of the product — the exact defect Wave 3's acceptance pass
+    // caught for the document library.
+    const hr = linksFor(['hr_manager']);
+    expect(hr).toContain('/hr/pools');
+    expect(hr).toContain('/hr/rediscovery');
+  });
+
+  it('offers pools and rediscovery to NO role except hr_manager — a pool names a candidate', () => {
+    // A pool and a rediscovery result both name a candidate, so this is
+    // `candidate_pii` (`DATA_CLASS_ROLES`), which is `{hr_manager}` alone —
+    // a company super_admin is deliberately NOT a superset of HR
+    // (CLAUDE.md), unlike the shared document library above. This is what
+    // makes E3 a NARROWER router than hr_corpus.py, and the nav must not
+    // quietly widen it back.
+    for (const roles of [['super_admin'], ['platform_owner'], ['admin'], ['interviewer'], ['candidate'], ['guest_candidate'], []]) {
+      const links = linksFor(roles);
+      expect(links).not.toContain('/hr/pools');
+      expect(links).not.toContain('/hr/rediscovery');
+    }
+  });
+
   it('lists "My interviews" once for an HR manager who also holds the interviewer role', () => {
     const links = visibleNavSections(['hr_manager', 'interviewer'])
       .flatMap((s: NavSection) => s.items.map((i) => i.to))

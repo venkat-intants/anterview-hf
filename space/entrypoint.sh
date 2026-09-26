@@ -218,7 +218,75 @@ PYEOF
 # ---------------------------------------------------------------------------
 echo "--- alembic upgrade head (data_gateway schema) ---"
 cd /app/services/data_gateway
-/venvs/dg/bin/alembic upgrade head
+
+# WHY THIS IS NOT JUST `alembic upgrade head`.
+#
+# It used to be, under `set -euo pipefail`, which meant ANY database problem at
+# boot killed the container before a single service started. On 2026-09-25 that
+# turned a recoverable infrastructure problem into a total outage: the Neon
+# project ran out of monthly compute allowance, the connect raised
+# InsufficientResourcesError, and the Space sat in RUNTIME_ERROR with no health
+# endpoint, no logs a non-owner could read, and nothing on any URL. The database
+# being unavailable and the application being broken looked identical from
+# outside, and they are not the same thing.
+#
+# Two failures, two different right answers:
+#
+#   * CANNOT CONNECT (cold start, a blip, an exhausted quota, wrong URL).
+#     Retrying helps for the first two, so we retry with backoff. If it still
+#     will not connect we START ANYWAY. The services come up and report the
+#     database as down through their own health endpoints, which is a
+#     diagnosable degraded state rather than an opaque dead container. Nothing
+#     works either way — but this way you can see WHY.
+#
+#   * CONNECTED, BUT THE MIGRATION FAILED (bad SQL, a half-applied revision).
+#     We ABORT. Serving against a schema that is partly migrated risks writing
+#     data the next deploy cannot read, which is worse than being down.
+#
+# The probe is what separates them, because alembic's exit code alone cannot.
+_db_reachable() {
+  /venvs/dg/bin/python - <<'PROBE'
+import os, sys, asyncio, re
+url = os.environ.get("DATABASE_URL", "")
+if not url:
+    sys.exit(2)
+dsn = re.sub(r"^postgresql\+asyncpg://", "postgresql://", url)
+ssl_mode = "require" if os.environ.get("DATABASE_SSL", "") not in ("", "disable") else None
+async def main():
+    import asyncpg
+    try:
+        conn = await asyncpg.connect(dsn, ssl=ssl_mode, timeout=15)
+    except Exception as exc:
+        print(f"    probe: {type(exc).__name__}: {exc}", flush=True)
+        sys.exit(1)
+    await conn.close()
+asyncio.run(main())
+PROBE
+}
+
+_reachable=0
+for attempt in 1 2 3 4 5; do
+  if _db_reachable; then
+    _reachable=1
+    break
+  fi
+  if [ "$attempt" -lt 5 ]; then
+    _wait=$((attempt * 5))
+    echo "    database not reachable (attempt ${attempt}/5) — retrying in ${_wait}s"
+    sleep "$_wait"
+  fi
+done
+
+if [ "$_reachable" -eq 1 ]; then
+  # Connected, so any failure now is a REAL migration fault. Let it abort.
+  /venvs/dg/bin/alembic upgrade head
+  echo "--- migrations applied ---"
+else
+  echo "!!! DATABASE UNREACHABLE AFTER 5 ATTEMPTS — STARTING WITHOUT MIGRATING !!!"
+  echo "!!! The schema may be behind this build. Services will start and report"
+  echo "!!! the database as down on their health endpoints. Fix the database,"
+  echo "!!! then restart this Space so migrations run."
+fi
 cd /app
 
 # ---------------------------------------------------------------------------

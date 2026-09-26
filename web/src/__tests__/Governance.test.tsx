@@ -49,6 +49,13 @@ vi.mock('../lib/toast', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 import GovernancePanel from '../components/workflow/GovernancePanel';
 import ApprovalQueue from '../pages/superadmin/ApprovalQueue';
 
+// A COPY of the sentence the server builds in
+// `scheduled_publishing.py::tolerance_sentence`, supplied here as a mock so
+// these tests can assert it is rendered. It therefore CANNOT detect the two
+// drifting apart — and they did: the server's wording changed in 8ac95fd and
+// this constant kept the pre-8ac95fd text until 2026-09-26. The number in it
+// is derived from a deployment-tuned poll interval, so treat any exact-match
+// assertion on this string as testing the rendering, never the promise.
 const TOLERANCE =
   'Scheduled openings go live within about 1 minute(s) of the chosen time while the ' +
   'service is running; if the service is asleep, shortly after it next wakes.';

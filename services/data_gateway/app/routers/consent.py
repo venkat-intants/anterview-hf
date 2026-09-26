@@ -12,9 +12,11 @@ Contract:
                          | 401 (missing/invalid JWT)
   GET    /consent/status → 200 ConsentStatus
                          | 401
-  DELETE /consent        → 200 ConsentRevocationResponse (ALL active rows revoked —
-                               both interview_voice_recording and video_capture —
-                               and every non-terminal session stamped
+  DELETE /consent        → 200 ConsentRevocationResponse (every active row of every
+                               type this router manages — interview_voice_recording,
+                               video_capture, preboarding_documents, and
+                               talent_pool_rediscovery at EVERY company — plus every
+                               non-terminal session stamped
                                status='consent_withdrawn')
                          | 404 (no active consent of any type to revoke)
                          | 401
@@ -49,6 +51,11 @@ from app.database import DbSessionDep
 from app.dependencies import get_current_user
 from app.models import DpdpConsent
 from app.models import Session as InterviewSession
+from app.rediscovery import (
+    REDISCOVERY_CONSENT_TYPE,
+    REDISCOVERY_PURPOSE,
+    revoke_opt_ins,
+)
 from app.retention import CONSENT_WITHDRAWN_STATUS
 from app.schemas.consent import (
     ConsentRequest,
@@ -99,8 +106,19 @@ _DOCUMENTS_CONSENT_TYPE = "preboarding_documents"
 # purpose 'interview', so listing the type here (as an earlier version did)
 # made ``DELETE /consent`` claim to revoke it while never finding the row, and
 # ``GET /consent/status`` always answer false (security re-review, NEW-2).
+# PH5-E3: the talent-pool rediscovery opt-in IS listed, for the opposite
+# reason to the task consent above — it is one row per (person, COMPANY), all
+# of them for purpose 'rediscovery', and a withdrawal without restriction
+# (DPDP §11) means every company's. Registering it here is what stops this
+# router lying: unlisted, ``GET /consent/status`` could not report it at all
+# and ``DELETE /consent`` left it standing while the route's own description
+# said it revoked the user's consents. It is NOT grantable here — granting one
+# needs a company, and this router has no notion of one (the same asymmetry
+# already documented for preboarding_documents). ``app/rediscovery.py`` is the
+# only writer, and the only place that knows which company a grant is for.
 _VALID_CONSENT_TYPES = frozenset({_CONSENT_TYPE, _VIDEO_CONSENT_TYPE,
-                                  _DOCUMENTS_CONSENT_TYPE})
+                                  _DOCUMENTS_CONSENT_TYPE,
+                                  REDISCOVERY_CONSENT_TYPE})
 # A consent is for a stated purpose (DPDP §6(1)), so what this route may GRANT
 # is narrower than what it may revoke: the documents consent is recorded when
 # an offer is accepted, for 'onboarding', and is never granted here — where the
@@ -117,7 +135,14 @@ _PURPOSE_BY_TYPE = {
     _CONSENT_TYPE: "interview",
     _VIDEO_CONSENT_TYPE: "interview",
     _DOCUMENTS_CONSENT_TYPE: "onboarding",
+    REDISCOVERY_CONSENT_TYPE: REDISCOVERY_PURPOSE,
 }
+# The types of which a person may hold MORE THAN ONE active row at a time, so
+# a lookup must not assume it can use scalar_one_or_none. Rediscovery is one
+# row per company: a candidate opted in at two companies has two, and
+# ``_find_active_consent`` would have raised MultipleResultsFound on the
+# status route the moment that happened.
+_MULTI_ROW_CONSENT_TYPES = frozenset({REDISCOVERY_CONSENT_TYPE})
 
 # ---------------------------------------------------------------------------
 # Dependency shortcuts
@@ -152,6 +177,13 @@ async def _find_active_consent(
     matched on the purpose that type is recorded under (``_PURPOSE_BY_TYPE``).
 
     consent_type defaults to the voice type so existing callers are unaffected.
+
+    For a type that can have several active rows at once (``rediscovery`` — one
+    per company) this returns the MOST RECENT and the callers say so: "you are
+    opted in at at least one company", with the per-company detail served by
+    the candidate's own route. ``scalar_one_or_none`` would have raised
+    ``MultipleResultsFound`` the first time somebody opted in at two companies,
+    turning a status read into a 500.
     """
     user_uuid = _uuid_mod.UUID(user_id)
     stmt = select(DpdpConsent).where(
@@ -161,6 +193,9 @@ async def _find_active_consent(
         DpdpConsent.granted.is_(True),
         DpdpConsent.revoked_at.is_(None),
     )
+    if consent_type in _MULTI_ROW_CONSENT_TYPES:
+        stmt = stmt.order_by(DpdpConsent.granted_at.desc()).limit(1)
+        return (await db.execute(stmt)).scalars().first()
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -349,7 +384,11 @@ async def record_consent(
     description=(
         "Returns consented=true with the consent_id and granted_at timestamp "
         "if the user has an active interview_voice_recording consent. "
-        "Returns consented=false with nulls otherwise."
+        "Returns consented=false with nulls otherwise. "
+        "For ?consent_type=talent_pool_rediscovery, consented=true means the "
+        "user is opted in at AT LEAST ONE company and granted_at is the most "
+        "recent of those; the per-company view is the candidate's own route, "
+        "because this router has no notion of a company."
     ),
 )
 async def get_consent_status(
@@ -396,8 +435,11 @@ async def get_consent_status(
     description=(
         "Sets revoked_at = now() on the user's active consent of each type this "
         "router manages: 'interview_voice_recording' (voice/audio), "
-        "'video_capture' (webcam / proctoring biometric) and "
-        "'preboarding_documents' (offer documents). A job-simulation/portfolio "
+        "'video_capture' (webcam / proctoring biometric), "
+        "'preboarding_documents' (offer documents) and "
+        "'talent_pool_rediscovery' (being kept for future openings) — the last "
+        "at EVERY company the user opted in at, which is what withdrawal "
+        "'without restriction' means. A job-simulation/portfolio "
         "task's consent is NOT here: it is one per submission and is withdrawn "
         "on the task link (POST /task/consent/withdraw). "
         "Returns 200 with the list of revoked rows. "
@@ -440,7 +482,23 @@ async def revoke_consent(
     now_utc = datetime.now(UTC)
     revoked_items: list[RevokedConsentItem] = []
 
-    for consent_type in _VALID_CONSENT_TYPES:
+    # PH5-E3, and the reason it is not in the loop below: a rediscovery opt-in
+    # is one row per COMPANY, so "revoke the active row" is the wrong shape —
+    # DPDP §11's "at any time without restriction" means every company's, in
+    # one action. Delegated to app/rediscovery.py::revoke_opt_ins so the
+    # ledger's only writer for this type is also its only revoker.
+    for revoked in await revoke_opt_ins(
+        db, user_id=_uuid_mod.UUID(current_user.user_id), now=now_utc, reason="withdrawn"
+    ):
+        revoked_items.append(
+            RevokedConsentItem(
+                consent_type=REDISCOVERY_CONSENT_TYPE,
+                consent_id=revoked["consent_id"],
+                revoked_at=revoked["revoked_at"],
+            )
+        )
+
+    for consent_type in _VALID_CONSENT_TYPES - _MULTI_ROW_CONSENT_TYPES:
         row = await _find_active_consent(db, current_user.user_id, consent_type)
         if row is not None:
             row.revoked_at = now_utc

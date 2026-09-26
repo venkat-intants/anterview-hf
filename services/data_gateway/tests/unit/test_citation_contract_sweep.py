@@ -321,6 +321,13 @@ CITATION_MODULES = (
     "services/data_gateway/app/agents/workflow_tools.py",
     "services/data_gateway/app/agents/evidence.py",
     "shared/agents/watchers.py",
+    # PH5-E3. Not an agent tool — the rediscovery screen calls this module
+    # directly, with no model in the loop — but it emits a citation on every
+    # explainable ``why`` item, so it is under the same rule: an href comes from
+    # the route table or it does not exist. Its kinds are all existing members
+    # of the closed vocabulary (applicant, interviewer_scorecard, exam_attempt,
+    # interview); E3 adds no CitationKind.
+    "services/data_gateway/app/rediscovery.py",
 )
 
 #: The one href expression that is neither ``citation_href(...)`` nor ``None``.

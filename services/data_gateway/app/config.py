@@ -336,6 +336,39 @@ class Settings(BaseSettings):
     # rate_limit_context).
     corpus_upload_per_minute: int = 20
 
+    # --- PH5-E3: talent pools & rediscovery ---
+    # D5-1's 12 months. The eligibility query computes expiry from the ledger
+    # row's own granted_at (app/rediscovery.py::ELIGIBLE_CTE), so this is the
+    # ONLY place the window is defined — the `expires_at_iso` written into
+    # evidence is for display, and cannot widen who is findable.
+    rediscovery_consent_months: int = 12
+    # The same ceiling as hr_applicants._SEARCH_LIMIT, deliberately: one
+    # tuning question for both searches, not two.
+    rediscovery_search_limit: int = 200
+    # How many ranked rows the evidence hydration (the second statement) is
+    # allowed to touch. That join is per-candidate work, so it is bounded
+    # independently of the ranking scan.
+    rediscovery_evidence_limit: int = 50
+    # Freshness bands, in days since the evidence's OWN timestamp. Nothing is
+    # stored: a stored band would itself go stale, which is the one failure
+    # mode the indicator exists to prevent.
+    rediscovery_fresh_days: int = 180
+    rediscovery_stale_days: int = 365
+    # The cap on the evidence boost — evidence informs the ORDER, it cannot
+    # invent a match out of an irrelevant CV. Unvalidated (PH5 Wave 4 design
+    # §11.8): shipped as a named constant with a change note, to be revisited
+    # against real queries rather than retuned by guess. Do NOT retune the
+    # 0.7/0.3 relevance split in hr_applicants.py to compensate — that would
+    # put the existing applicant search (criterion 18) at risk for no
+    # measured gain.
+    rediscovery_evidence_weight: float = 0.15
+    # Per COMPANY, via rate_limit_context — each search costs one query
+    # embedding, on the corpus_upload_per_minute precedent.
+    rediscovery_search_per_minute: int = 30
+    # Ceilings for the pools service built on top of this schema.
+    talent_pool_max_per_company: int = 100
+    talent_pool_max_members: int = 2_000
+
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""

@@ -350,41 +350,13 @@ jobs:
           python -m pytest tests/ -q -m "not integration" \
             --cov=app --cov-report=term-missing --cov-report=xml
 
-      - name: Install alembic (admin_ops leg only)
-        # Each leg installs ONLY its own service's requirements.txt — that
-        # separation is deliberate, so a leg exercises the dependency set its
-        # image actually ships. alembic is consequently in data_gateway's
-        # requirements and nowhere else, because data_gateway owns the schema.
-        #
-        # admin_ops now has live-database tests, so its leg has to migrate,
-        # and the first attempt failed with a bare `alembic: command not
-        # found`. Installing the ONE missing package is the narrow fix.
-        # Installing data_gateway's whole requirements file here would have
-        # this leg testing against packages admin_ops does not ship, which is
-        # exactly what the per-service split exists to prevent. Everything
-        # else `alembic/env.py` needs, admin_ops already has: SQLAlchemy,
-        # asyncpg, pydantic-settings, structlog, and shared/ on PYTHONPATH.
-        #
-        # Pinned to data_gateway's own pin so both legs migrate identically.
-        if: matrix.service == 'admin_ops'
-        run: pip install "alembic==1.18.4"
-
       - name: Migrate the CI database
         # data_gateway owns the schema (its alembic/ is the only one in the
-        # repo), so the migration ALWAYS runs from that directory — but it is
-        # needed by any leg that has live-database tests. A SEPARATE step from
-        # the tests below on purpose: a migration that fails to apply and a
+        # repo), so only this leg has a database to migrate. A SEPARATE step
+        # from the tests below on purpose: a migration that fails to apply and a
         # test that fails against a correctly-migrated schema are different
         # defects with different owners, and one step reports them as one red X.
-        #
-        # admin_ops was added on 2026-09-26. Its Postgres container was always
-        # provisioned (`services:` cannot take an `if:`, so every leg gets one)
-        # and was never migrated, so admin_ops could not have a live-database
-        # test even in principle. The security review found the consequence:
-        # the DPDP erasure executor — the most destructive code in the product
-        # — was covered only by mocks, and its step ordering was "proved"
-        # against a hand-copied SQL string in a different service.
-        if: matrix.service == 'data_gateway' || matrix.service == 'admin_ops'
+        if: matrix.service == 'data_gateway'
         working-directory: services/data_gateway
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -439,31 +411,6 @@ jobs:
           RATE_LIMIT_LOGIN_PER_MINUTE: '10000'
           RATE_LIMIT_API_PER_MINUTE: '10000'
           S3_ENDPOINT: http://localhost:9000
-          S3_ACCESS_KEY_ID: ci-access-key
-          S3_SECRET_ACCESS_KEY: ci-secret-key
-        run: python -m pytest tests/ -q -m integration
-
-      - name: Integration tests (admin_ops, live Postgres)
-        # The DPDP erasure executor, run for real against a migrated database.
-        #
-        # Until 2026-09-26 admin_ops had no database fixture at all: its whole
-        # suite was mocks, so the erasure step ordering — get it wrong and a
-        # candidate's rows survive their own erasure, keyed to nothing — was
-        # asserted by source-text position and by a copy of the SQL pasted into
-        # a DIFFERENT service's test. A change to the real statement that kept
-        # two substrings intact would have been caught by nothing.
-        #
-        # Cheap to run: the Postgres container is provisioned for this leg
-        # either way, and the suite is two tests.
-        if: matrix.service == 'admin_ops'
-        working-directory: services/admin_ops
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          APP_ENV: test
-          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
-          REDIS_URL: redis://localhost:6379/0
-          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
-          S3_ENDPOINT_URL: http://localhost:9000
           S3_ACCESS_KEY_ID: ci-access-key
           S3_SECRET_ACCESS_KEY: ci-secret-key
         run: python -m pytest tests/ -q -m integration
@@ -1056,6 +1003,92 @@ jobs:
               --quiet \
               intants-${{ matrix.image }}:ci
 
+  erasure-live:
+    # The DPDP erasure executor, run for real against a migrated database.
+    #
+    # WHY A JOB OF ITS OWN, rather than a step on the admin_ops matrix leg.
+    # This is the one test in the repo that needs TWO services' dependency
+    # sets at once: data_gateway's, because it owns the schema and the
+    # migration chain (one revision imports bcrypt to hash the bootstrap
+    # owner), and admin_ops', because the code under test lives there.
+    #
+    # The matrix legs deliberately install ONLY their own service's
+    # requirements, so that a leg fails when its service is missing a
+    # dependency its image would need. Adding data_gateway's packages to the
+    # admin_ops leg would destroy exactly that property — the leg would go
+    # green while admin_ops shipped a broken requirements.txt. I tried it the
+    # other way first and it walked straight into the trap: alembic missing,
+    # then bcrypt missing, each "fixed" by making the leg less like the image
+    # it is supposed to represent.
+    #
+    # So the purity stays where it earns its keep (the unit legs) and the
+    # cross-cutting need gets an honest home here.
+    #
+    # WHAT IT GUARDS. Until 2026-09-26 admin_ops had no database fixture at
+    # all: the most destructive code in the product was covered only by mocks,
+    # and the ordering rule that keeps an erasure from leaving rows behind —
+    # delete the memberships BEFORE applicants.user_id is nulled — was
+    # asserted by source-text position and by a copy of the SQL pasted into a
+    # different service's test.
+    name: erasure executor (live Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # pgvector, not stock postgres:16 — the first migration creates a
+        # halfvec column and dies on the stock image. Same reasoning as the
+        # services job.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install both services' requirements
+        # Both, deliberately and only here — see the job comment.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/data_gateway/requirements.txt
+          pip install -r services/admin_ops/requirements.txt
+          pip install pytest pytest-asyncio
+      - name: Migrate the database
+        working-directory: services/data_gateway
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+          EXAM_LINK_SECRET: ci-only-exam-secret-0123456789abcdef
+          INTERVIEW_LINK_SECRET: ci-only-interview-secret-0123456789ab
+          CONSENT_IP_SALT: ci-only-salt-0123456789abcdef
+          S3_ENDPOINT: http://localhost:9000
+          S3_ACCESS_KEY_ID: ci-access-key
+          S3_SECRET_ACCESS_KEY: ci-secret-key
+        run: python -m alembic upgrade head
+      - name: Run the live erasure tests
+        working-directory: services/admin_ops
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+          S3_ENDPOINT_URL: http://localhost:9000
+          S3_ACCESS_KEY_ID: ci-access-key
+          S3_SECRET_ACCESS_KEY: ci-secret-key
+        run: python -m pytest tests/ -q -m integration
+
   ci-ok:
     # The single required status. sync-to-space.yml keys its workflow_run gate
     # on this workflow's conclusion, and that is only `success` when every job
@@ -1063,7 +1096,7 @@ jobs:
     # check to require.
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [shared, services, invariants, migrations, web, security, docker]
+    needs: [shared, services, invariants, migrations, web, security, docker, erasure-live]
     if: always()
     steps:
       - name: Verify every job succeeded
@@ -1075,7 +1108,9 @@ jobs:
           echo "web=${{ needs.web.result }}"
           echo "security=${{ needs.security.result }}"
           echo "docker=${{ needs.docker.result }}"
-          if [ "${{ needs.shared.result }}" != "success" ] \
+          echo "erasure-live=${{ needs.erasure-live.result }}"
+          if [ "${{ needs['erasure-live'].result }}" != "success" ] \
+            || [ "${{ needs.shared.result }}" != "success" ] \
             || [ "${{ needs.services.result }}" != "success" ] \
             || [ "${{ needs.invariants.result }}" != "success" ] \
             || [ "${{ needs.migrations.result }}" != "success" ] \

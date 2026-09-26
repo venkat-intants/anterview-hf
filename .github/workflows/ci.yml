@@ -350,6 +350,25 @@ jobs:
           python -m pytest tests/ -q -m "not integration" \
             --cov=app --cov-report=term-missing --cov-report=xml
 
+      - name: Install alembic (admin_ops leg only)
+        # Each leg installs ONLY its own service's requirements.txt — that
+        # separation is deliberate, so a leg exercises the dependency set its
+        # image actually ships. alembic is consequently in data_gateway's
+        # requirements and nowhere else, because data_gateway owns the schema.
+        #
+        # admin_ops now has live-database tests, so its leg has to migrate,
+        # and the first attempt failed with a bare `alembic: command not
+        # found`. Installing the ONE missing package is the narrow fix.
+        # Installing data_gateway's whole requirements file here would have
+        # this leg testing against packages admin_ops does not ship, which is
+        # exactly what the per-service split exists to prevent. Everything
+        # else `alembic/env.py` needs, admin_ops already has: SQLAlchemy,
+        # asyncpg, pydantic-settings, structlog, and shared/ on PYTHONPATH.
+        #
+        # Pinned to data_gateway's own pin so both legs migrate identically.
+        if: matrix.service == 'admin_ops'
+        run: pip install "alembic==1.18.4"
+
       - name: Migrate the CI database
         # data_gateway owns the schema (its alembic/ is the only one in the
         # repo), so the migration ALWAYS runs from that directory — but it is

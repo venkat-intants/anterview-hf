@@ -535,8 +535,9 @@ def test_rediscovery_never_reads_ai_scored_or_unreviewed_evidence() -> None:
         automated and unreviewed by design, which PH4-D3 refused to let near a
         decision;
       * ``application_answers`` — prose written for one specific opening;
-      * ``stage_transitions`` — the decision rationale (AR-5: NOT redacted on
-        erasure), a negative human judgement about a DIFFERENT job;
+      * ``stage_transitions`` — the decision rationale (AR-5, closed: redacted
+        on erasure, but still a negative human judgement about a DIFFERENT
+        job, and not this module's to read either way);
       * ``interviewer_notes`` and ``candidate_accommodations`` —
         ``OMITTED_ALWAYS`` in the evidence graph;
       * ``applicants.ats_*`` — scored against one specific JD, and it survives

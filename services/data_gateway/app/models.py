@@ -1052,6 +1052,11 @@ class AuditLog(Base):
     ip_address: Mapped[str | None] = mapped_column(INET, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
     event_ts: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # AR-5 (closed): stamped by the erasure executor the moment a decision's
+    # `details.reason` / `details.rationale` is redacted to '[redacted]'. NULL
+    # means never redacted. The trigger (migration f2a4c6e8b0d3) makes this
+    # transition one-way and refuses any other change to an append-only row.
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1552,6 +1557,10 @@ class StageTransition(Base):
     automated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    # AR-5 (closed): stamped by the erasure executor the moment `reason` is
+    # redacted to '[redacted]'. NULL means never redacted. The trigger
+    # (migration f2a4c6e8b0d3) makes this transition one-way.
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class Workflow(Base):

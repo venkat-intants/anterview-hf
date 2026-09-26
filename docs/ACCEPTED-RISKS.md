@@ -237,65 +237,86 @@ was raised about.
 
 ---
 
-## AR-5 — Final-decision rationale in the audit log is not redacted on erasure
+## AR-5 — Free-text reason/rationale fields are redacted on erasure (CLOSED)
 
 | | |
 |---|---|
 | **Source finding** | PH4 Wave 1 security audit, M4(b), 2026-09-17 |
-| **Status** | **ACCEPTED — documented, not redacted** |
-| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` reviews when a trigger fires. An agent cannot act on a trigger by itself, so the accountable owner is a person. |
-| **Trigger to revisit** | Any of: (a) a data principal's erasure request or grievance that names text in a decision rationale; (b) any feature that displays audit-log `details` to someone other than the platform owner; (c) the Tier-2 migration, when the audit log's retention is set |
+| **Status** | **CLOSED 2026-09-26** — redacted at the source, in the erasure executor, not merely documented. Closed per this register's own rule 1: fixed in code, entry kept (not deleted) because roughly a dozen other files cite it by name as a stable anchor — see "Why this entry is kept, not deleted" below. |
+| **Owner** | `platform_owner` (support@intants.com) — accountable for the fix landing; `security-auditor` to confirm on next review. |
+| **Closed by** | `services/admin_ops/app/erasure_executor.py` step 5l + migration `f2a4c6e8b0d3` (`services/data_gateway/alembic/versions/20260926_0001_f2a4c6e8b0d3_ar5_erasure_redaction.py`). |
 
-**The decision.** When HR records a hire or a reject, the free-text reason they
-typed is written in two places: the stage ledger (`stage_transitions.reason`)
-and the append-only audit log (`details.reason` on `enrolment.decision.*`, or
-`details.rationale` on `applicant.decision.*`). Both are kept because they are
-the D-05 evidence that a **person** decided and why — the record the platform
-must be able to produce if an automated-decision complaint is made. DPDP erasure
-anonymises the applicant row (step 6), so the rationale then describes an
-applicant who is named nowhere else. It does not rewrite the rationale itself.
+**What this was.** When HR recorded a hire or a reject, the free-text reason
+they typed was written in two places — the stage ledger
+(`stage_transitions.reason`) and the append-only audit log (`details.reason` on
+`enrolment.decision.*`, or `details.rationale` on `applicant.decision.*`) — and
+neither table's append-only trigger had any redaction exception, so DPDP
+erasure anonymised the applicant (step 6) while the prose describing them lived
+on forever in both stores. A rationale such as "Priya's notice period at Acme is
+six months" survived, attached to an anonymised applicant. **A fresh search for
+the same class of field, not just the two named above, also found:**
+`enrolments.held_reason` (why HR held this candidate),
+`enrolments.reapply_override_reason` (why HR let them back in after a
+rejection) and its own audit row (`enrolment.reapply_override`), and
+`round_results.evidence` on a `human_review` round — a reviewer's own verdict
+note
+(`hr_workflows.py::post_round_review`'s `note`), not the AI prose the rest of
+that table's exclusion argument rests on. All were the same shape: a human's
+own words about a specific candidate, kept forever by an append-only structure
+built before anyone asked what erasure does to it.
 
-The interview scorecards added in PH4-A1 do **not** follow this pattern: their
-audit rows record only whether a correction or withdrawal reason was given and
-how long it was, and the text lives on the scorecard, where erasure step 5f
-redacts it. The decision rationale was left as it was because it predates this
-wave, sits in two append-only stores, and redacting it would need an explicit
-exception to the audit log's append-only trigger — a change to weigh on its own,
-not to slip into a feature.
+**What changed.** Two triggers each gained exactly one new permitted UPDATE
+shape — `redacted_at` NULL -> now(), the free-text column (or JSONB key) moving
+to the fixed marker `'[redacted]'`, and nothing else on the row changing — on
+the `interviewer_scorecards_protect()` pattern this entry's own path-to-closure
+named. A matching CHECK constraint on each table holds the same invariant
+independently of the trigger, so a row cannot carry live prose next to a
+non-NULL `redacted_at` even if the trigger were ever disabled by mistake.
+`enrolments.held_reason`/`reapply_override_reason` and `round_results.evidence`
+needed no schema change — neither table was append-only — so erasure step 5l
+redacts all four in one place: `stage_transitions.reason`,
+`audit_log.details.{reason,rationale}` on the three decision/override actions,
+`enrolments.held_reason`/`reapply_override_reason`, and `round_results.evidence`
+on a human-graded row. Scores, categories, ids, timestamps and who acted are
+untouched everywhere — only the prose a person wrote is gone.
 
-**What is NOT true.** It is not true that erasure leaves no candidate-describing
-prose in the database. A rationale such as "Priya's notice period at Acme is six
-months" survives, attached to an anonymised applicant. The erasure executor's
-inventory (`EXCLUDED_TABLES["audit_log"]`) says so; it used to claim the audit
-log held "action names only", which was wrong before this wave.
+**What is still true, and is not this risk.** `applicants.ats_*` /
+`enrolments.ats_*` prose is AI-generated commentary on a resume, not a human's
+own words about the candidate — outside this entry's scope, both before and
+after this fix, and unchanged by it. `corpus_chunks.content` (AR-8) is a
+different, structurally distinct gap: text an HR manager pasted into a company
+document that this executor has no key to find, let alone redact. Nothing in
+this fix touches either.
 
-**PH5-E3 (talent pools, Wave 4) is the same position, recorded rather than left
-to be inferred — the lead's ruling: extend this scope note, do not open a new
-risk entry.** `talent_pool_events` is append-only, on the `task_events` /
-`document_events` precedent, and it keeps a `member_added` (and
-`member_removed`, `member_evidence_reviewed`, `member_invited`) row naming the
-`applicant_id` a pool action concerned. After erasure step 6 anonymises that
-applicant (`full_name = '[redacted]'`, `email`/`user_id` NULL), the event row
-still says "this applicant was added to this pool, on this date, by this HR
-user" — it simply names nobody any more, because the applicant it points at no
-longer identifies anyone. This is not a fresh gap: it is exactly the
-`enrolments`/`round_results` position two paragraphs above states for the
-decision ledger, one table further along, with the same structural reason —
-the row is declared in `EXCLUDED_TABLES["talent_pool_events"]` with this stated
-there rather than left implicit. Unlike the audit log's decision rationale,
-`talent_pool_events.details` was DESIGNED facts-only from the start (action,
-ids, counts, a freshness band, a note's LENGTH — never the note, a removal
-reason's text, a name or any CV/scorecard prose), so the residue here is
-structurally bounded to "an anonymised id was once part of an action", not
-free text that could describe a person, which is the whole of what makes this
-an extension of AR-5's position rather than a new, separately-owned risk.
+**PH5-E3 (talent pools) is unaffected, and was never part of this gap.**
+`talent_pool_events` is append-only, on the `task_events` / `document_events`
+precedent, and keeps a `member_added` (and `member_removed`,
+`member_evidence_reviewed`, `member_invited`) row naming the `applicant_id` a
+pool action concerned. It was DESIGNED facts-only from the start (action, ids,
+counts, a freshness band, a note's LENGTH — never the note, a removal reason's
+text, a name or any CV/scorecard prose), so after step 6 anonymises the
+applicant it names, the row is structurally bounded to "an anonymised id was
+once part of an action" — never free text that could describe a person. This
+was recorded against AR-5 as a scope note rather than a new entry; it is
+restated here, against the closed entry, for the same reason: not a fresh gap,
+and not something this fix needed to touch. See
+`erasure_executor.py::EXCLUDED_TABLES["talent_pool_events"]`.
 
-**Path to closure.** Either (1) stop copying the rationale into audit `details`
-(keep has-reason and length, as scorecards now do) and add a redaction path for
-`stage_transitions.reason` that the ledger's append-only trigger permits only
-together with an erasure marker — the scorecard trigger is the pattern; or
-(2) guide HR at the point of entry that the rationale must not contain personal
-details, and accept the residue. (1) is the fix; (2) only reduces it.
+**Why this entry is kept, not deleted, despite rule 1 above.** `DATA-FLOW.md`,
+both PH4/PH5 acceptance checklists, the evidence graph
+(`app/evidence_graph/`), `rediscovery.py`, `hire_checkins.py` and
+`routers/agent.py` all cite "AR-5" by name as an established fact about the
+platform. Deleting the entry would turn every one of those into a dangling
+reference to nothing; keeping it, closed, lets each citation keep resolving to
+an accurate answer. The evidence graph in particular has its own reason to
+keep working exactly as it did: `candidate.erased` there goes true the moment
+an erasure is *requested*, not when the 30-day-later executor run actually
+redacts anything, so `_decision_nodes`' own withholding of
+`stage_transitions.reason` is still the only thing standing between a reader
+and live prose during that window. This fix closes the gap that mattered
+forever (the database after erasure runs); it does not, and was never asked
+to, shorten the 30-day grace period the whole erasure design already commits
+to elsewhere.
 
 ---
 
@@ -497,7 +518,7 @@ periodically. Neither is built this wave.
 | **AR-2** | One shared HS256 secret across five processes | SEC-2 / SEC-1 | `security-auditor` | Fifth verifier, secret exposure, or Tier-2 |
 | **AR-3** | Candidate code executes on JDoodle | AG-05 | `platform_owner` | Residency bid, confidential-IP customer, or free-tier exhaustion |
 | **AR-4** | No production avatar gate; `custom` unimplemented | AG-06 residue | `cto-architect` | Production `APP_ENV`, residency bid, or 2026-11-28 sunset review |
-| **AR-5** | Decision rationale in audit log / ledger not redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | Erasure grievance naming it, audit details shown to others, or Tier-2 |
+| **AR-5** | **CLOSED 2026-09-26** — decision rationale, ledger reason and three related fields are now redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | — (fixed; kept for citations, see the entry) |
 | **AR-6** | Preboarding documents, task artifacts, materials and the corpus are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4, PH5-E2 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | DPDP erasure cannot reach a candidate's name inside an HR-uploaded corpus document | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents requirement, a corpus document found to contain candidate data, or auto-ingested candidate content |

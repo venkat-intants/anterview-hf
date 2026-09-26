@@ -565,9 +565,10 @@ def test_new_tables_are_in_the_erasure_inventory() -> None:
     for table in ("round_tasks", "round_task_materials", "task_events"):
         assert f'"{table}"' in inv, table
     assert "Step 5i" in inv
-    # Bumped to 1.10 when PH5-D5-2's step 5j (hire check-ins) joined, and to
-    # 1.11 when PH5-E3's step 5k (talent-pool memberships) did.
-    assert 'executor_version": "1.11"' in inv
+    # Bumped to 1.10 when PH5-D5-2's step 5j (hire check-ins) joined, to
+    # 1.11 when PH5-E3's step 5k (talent-pool memberships) did, and to 1.12
+    # when AR-5's step 5l (free-text reason/rationale/evidence fields) did.
+    assert 'executor_version": "1.12"' in inv
 
 
 def _erasure_dict_keys(source: str, dict_name: str) -> set[str]:

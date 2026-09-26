@@ -11,8 +11,11 @@ consent withdrawal are inherited for free FOR EVERY SOURCE ROW THIS PACKAGE
 READS — they show up on the very next read of this graph, with no erasure
 step and no retention job of this package's own. There is exactly ONE named
 exception, and it lives in ``loaders.py``'s own docstring: a decision's
-free-text rationale, withheld once the candidate is erased even though its
-source row is not itself redacted (AR-5).
+free-text rationale is withheld from this graph the moment the candidate is
+erased, which is earlier than the source row itself is redacted — an erasure
+REQUEST marks the candidate erased at once, while ``stage_transitions.reason``
+is only redacted at the source when the executor actually runs, up to 30 days
+later (AR-5, closed 2026-09-26).
 
 "First-class" is expressed as: a closed, typed vocabulary
 (``app/schemas/evidence.py``), one ``STAGE_OF_ROUND_KIND`` map covering every

@@ -48,7 +48,21 @@ For each claimed request (one at a time, SKIP LOCKED) it:
      applicant semantically searchable via GET /hr/applicants?q=.
      Step 5k (PH5-E3) runs immediately before this one and MUST: it
      hard-deletes talent_pool_members keyed on applicants.user_id, which
-     this step then NULLs.
+     this step then NULLs. Step 5l (AR-5) runs immediately before 5k, for the
+     same reason.
+  5l. AR-5, closed. Redacts the free text a PERSON wrote about this candidate
+     everywhere it survived erasure: ``enrolments.held_reason`` and
+     ``reapply_override_reason``; a human_review round's verdict note
+     (``round_results.evidence``); the reason a person typed on every move of
+     theirs recorded in ``stage_transitions.reason``; and the rationale on
+     their final-decision audit rows (``audit_log.details.reason`` on
+     ``enrolment.decision.*``, ``details.rationale`` on
+     ``applicant.decision.*``, and ``details.reason`` on
+     ``enrolment.reapply_override``). Scores, categories, ids, timestamps and
+     who acted are untouched — only the prose. ``stage_transitions`` and
+     ``audit_log`` are append-only; migration ``f2a4c6e8b0d3`` gives each
+     trigger one narrow, structurally-enforced exception for exactly this
+     shape.
   7. Anonymises users columns in-place:
        email        → 'erased_{user_id}@deleted.invalid'
        full_name    → '[redacted]'
@@ -316,12 +330,17 @@ EXCLUDED_TABLES: dict[str, str] = {
                  "because this used to claim 'action names only': details are "
                  "not always free of prose. Scorecard rows (PH4-A1) record only "
                  "whether a correction or withdrawal reason was given and its "
-                 "length, never the text. But final-decision rows "
-                 "(enrolment.decision.*, applicant.decision.*) carry HR's "
-                 "free-text rationale, which can describe the candidate. It is "
-                 "kept as the D-05 record of why a person decided, and the "
-                 "applicant it concerns is anonymised in step 6; it is not "
-                 "redacted here. Recorded in docs/ACCEPTED-RISKS.md (AR-5).",
+                 "length, never the text. Final-decision rows "
+                 "(enrolment.decision.*, applicant.decision.*) and the "
+                 "reapply-cooldown override (enrolment.reapply_override) carry "
+                 "HR's free-text reason/rationale, which can describe the "
+                 "candidate — kept as the D-05 record of why a person decided, "
+                 "against an applicant step 6 anonymises. AR-5 (closed): step "
+                 "5l now redacts exactly that key of `details` to '[redacted]' "
+                 "and stamps `redacted_at`; every other key (reason_code, "
+                 "reason_label, reversal, ids, counts) and every other column "
+                 "is untouched. The append-only trigger "
+                 "(migration f2a4c6e8b0d3) permits only this one shape.",
     "dpdp_consent_ledger": "the consent record is the legal basis for the "
                            "processing that already happened; §7 requires being "
                            "able to demonstrate it. The request path stamps "
@@ -410,24 +429,40 @@ EXCLUDED_TABLES: dict[str, str] = {
                   "one thing that is NOT covered by that argument: "
                   "scored_resume_s3_key points at a real resume object, so "
                   "step 1c-ii collects it for deletion in step 8. Excluding "
-                  "the row must not mean orphaning the file.",
+                  "the row must not mean orphaning the file. AR-5 (closed): "
+                  "`held_reason` (why HR held THIS candidate) and "
+                  "`reapply_override_reason` (why HR let them back in after a "
+                  "cooldown) are HR's own free text about the person, found "
+                  "during the AR-5 audit and not previously redacted. Step 5l "
+                  "redacts both to '[redacted]' (NULL stays NULL); "
+                  "`held_at`/`reapply_override_at`/`reapply_override_by_user_id` "
+                  "and every ats_*/target_* column are untouched.",
     "round_results": "per-round scores for an enrolment — score, percent, "
                      "criterion_scores, axes. Numbers and competency ids "
                      "against an anonymised applicant; same reasoning as "
                      "exam_attempts. grader_user_id is the HR grader, not the "
-                     "candidate.",
+                     "candidate. AR-5 (closed): `evidence` is a free-text "
+                     "column too, and on a human_review round it is not AI "
+                     "prose — it is the reviewer's own verdict note "
+                     "(hr_workflows.py::post_round_review's `note`), found "
+                     "during the AR-5 audit. Step 5l NULLs it on every row of "
+                     "theirs, live or superseded; score, percent, passed, "
+                     "criterion_scores and axes are untouched.",
     "stage_transitions": "the audit trail of who moved a candidate between "
                          "statuses and whether a human or the workflow did it. "
                          "Status enums, timestamps, the ACTOR's user id and, "
                          "for a final decision, a reason category (PH4-O4 "
                          "reason_code / reason_label — company taxonomy, no "
                          "personal data). No candidate column beyond "
-                         "enrolment_id. NOTE: `reason` is free text a person "
-                         "wrote and can describe the candidate; it is kept, "
-                         "not redacted — docs/ACCEPTED-RISKS.md AR-5. This is "
-                         "the D-05 evidence that a person, not the AI, decided; "
-                         "deleting it would destroy proof the platform is "
-                         "required to be able to show.",
+                         "enrolment_id. AR-5 (closed): `reason` is free text a "
+                         "person wrote and can describe the candidate. Step 5l "
+                         "now redacts it to '[redacted]' (NULL stays NULL) and "
+                         "stamps `redacted_at`; the append-only trigger "
+                         "(migration f2a4c6e8b0d3) permits only that one shape. "
+                         "The row itself, and everything except that one "
+                         "column, is kept as the D-05 evidence that a person, "
+                         "not the AI, decided; deleting it would destroy proof "
+                         "the platform is required to be able to show.",
     "upload_batches": "one bulk upload: the opening, the HR uploader, a file count "
                       "and a status. No candidate column — the per-file rows, "
                       "which do carry filenames, are upload_items (erased).",
@@ -1598,6 +1633,141 @@ async def _execute_one_erasure(
     )
 
     # ------------------------------------------------------------------
+    # Step 5l: Free-text decision rationale and reason fields (AR-5, closed)
+    # ------------------------------------------------------------------
+    # AR-5 recorded two fields a HUMAN wrote about a candidate that survived
+    # erasure: the final-decision rationale in audit_log, and
+    # stage_transitions.reason. A fresh search for the same class of field
+    # (any note/reason/comment/rationale/summary column on a table this
+    # executor's own inventory EXCLUDES) turned up two more nobody had
+    # written down: enrolments.held_reason / reapply_override_reason, and
+    # round_results.evidence on a human_review round (a reviewer's verdict
+    # note, not the AI prose the rest of that table's exclusion argues from).
+    # All four are redacted here, in one place, because all four share the
+    # same ordering hazard: every one of them is reached through
+    # applicants.user_id, which step 6 is about to NULL.
+    #
+    # i. enrolments.held_reason / reapply_override_reason — HR's own free
+    #    text about why THIS candidate was held, or let back in after a
+    #    rejection. held_at / reapply_override_at / reapply_override_by_user_id
+    #    and every ats_*/target_* column are untouched: they are either
+    #    timestamps/ids or the company's own assessment content, not prose a
+    #    person wrote about the candidate.
+    enrolments_reasons_result = await db.execute(
+        text(
+            "UPDATE enrolments SET"
+            " held_reason = CASE WHEN held_reason IS NULL THEN NULL ELSE '[redacted]' END,"
+            " reapply_override_reason = CASE WHEN reapply_override_reason IS NULL THEN NULL"
+            "                                ELSE '[redacted]' END"
+            " WHERE applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
+            "   AND ((held_reason IS NOT NULL AND held_reason <> '[redacted]')"
+            "     OR (reapply_override_reason IS NOT NULL"
+            "         AND reapply_override_reason <> '[redacted]'))"
+        ),
+        {"uid": uid_str},
+    )
+    enrolments_reasons_redacted: int = getattr(enrolments_reasons_result, "rowcount", 0) or 0
+
+    # ii. round_results.evidence — on a `graded_by = 'human'` row this is the
+    #     reviewer's own free-text verdict on a human_review round
+    #     (hr_workflows.py::post_round_review's `note`), not AI output, and it
+    #     is exactly the interviewer_scorecard_scores.evidence precedent: a
+    #     person's prose about the candidate, redacted; score, percent,
+    #     passed, criterion_scores and axes — the company's own numbers —
+    #     kept. Every row of theirs, live or superseded, since a retake keeps
+    #     the earlier attempt readable and redaction must reach it too.
+    round_results_result = await db.execute(
+        text(
+            "UPDATE round_results SET evidence = NULL"
+            " WHERE evidence IS NOT NULL AND enrolment_id IN ("
+            "   SELECT e.id FROM enrolments e"
+            "     JOIN applicants a ON a.id = e.applicant_id"
+            "    WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    round_results_evidence_redacted: int = getattr(round_results_result, "rowcount", 0) or 0
+
+    # iii. stage_transitions.reason — the free text a person typed on every
+    #      move of this candidate: a final decision, a hold, a reapply grant.
+    #      The ledger itself is kept (who, from what, to what, when, human or
+    #      automated) — only the prose is replaced, and only once.
+    #      stage_transitions_block_mutation() (migration f2a4c6e8b0d3) permits
+    #      exactly this shape and nothing else; `redacted_at IS NULL` makes
+    #      the UPDATE idempotent across retries.
+    stage_transitions_result = await db.execute(
+        text(
+            "UPDATE stage_transitions SET"
+            " reason = CASE WHEN reason IS NULL THEN NULL ELSE '[redacted]' END,"
+            " redacted_at = now()"
+            " WHERE redacted_at IS NULL AND enrolment_id IN ("
+            "   SELECT e.id FROM enrolments e"
+            "     JOIN applicants a ON a.id = e.applicant_id"
+            "    WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    stage_transitions_redacted: int = getattr(stage_transitions_result, "rowcount", 0) or 0
+
+    # iv. audit_log — the final-decision rationale (enrolment.decision.*,
+    #     applicant.decision.*) and the reapply-cooldown override reason
+    #     (enrolment.reapply_override). Two statements, not one, because the
+    #     two action families key `resource_id` differently: an
+    #     enrolment.decision.* / enrolment.reapply_override row names the
+    #     ENROLMENT, reached through applicants; an applicant.decision.* row
+    #     names the APPLICANT directly (hr_applicants.py's no-application path
+    #     and the pipeline board both record it that way). Written out as
+    #     explicit action lists, on the decision_reasons.py precedent, rather
+    #     than an action LIKE 'enrolment.decision.%' pattern, so a future
+    #     unrelated enrolment.decision.* action is not swept in by accident.
+    #     audit_log_block_mutation() (migration f2a4c6e8b0d3) permits exactly
+    #     this shape: `redacted_at` NULL -> now(), and only the `reason` /
+    #     `rationale` key of `details` moving to the fixed marker — every
+    #     other key (reason_code, reason_label, reversal, ids, counts) and
+    #     every other column is frozen by the same trigger.
+    audit_enrolment_result = await db.execute(
+        text(
+            "UPDATE audit_log SET"
+            " details = jsonb_set(details, '{reason}', '\"[redacted]\"'::jsonb),"
+            " redacted_at = now()"
+            " WHERE redacted_at IS NULL AND details ->> 'reason' IS NOT NULL"
+            "   AND resource_type = 'enrolment'"
+            "   AND action IN ('enrolment.decision.hired', 'enrolment.decision.rejected',"
+            "                  'enrolment.reapply_override')"
+            "   AND resource_id IN ("
+            "     SELECT e.id FROM enrolments e"
+            "       JOIN applicants a ON a.id = e.applicant_id"
+            "      WHERE a.user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    audit_applicant_result = await db.execute(
+        text(
+            "UPDATE audit_log SET"
+            " details = jsonb_set(details, '{rationale}', '\"[redacted]\"'::jsonb),"
+            " redacted_at = now()"
+            " WHERE redacted_at IS NULL AND details ->> 'rationale' IS NOT NULL"
+            "   AND resource_type = 'applicant'"
+            "   AND action IN ('applicant.decision.hired', 'applicant.decision.rejected')"
+            "   AND resource_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    audit_log_decisions_redacted: int = (
+        (getattr(audit_enrolment_result, "rowcount", 0) or 0)
+        + (getattr(audit_applicant_result, "rowcount", 0) or 0)
+    )
+    log.info(
+        "erasure.executor.decision_rationale_redacted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        enrolments_reasons_redacted=enrolments_reasons_redacted,
+        round_results_evidence_redacted=round_results_evidence_redacted,
+        stage_transitions_redacted=stage_transitions_redacted,
+        audit_log_decisions_redacted=audit_log_decisions_redacted,
+    )
+
+    # ------------------------------------------------------------------
     # Step 6: Anonymise applicant rows linked to this user_id
     # ------------------------------------------------------------------
     # embedding is NOT decoration on this list. applicants.embedding is a
@@ -1827,10 +1997,14 @@ async def _execute_one_erasure(
         # output (PH4-D3), 1.8 → 1.9 when step 5i took in job simulation
         # / portfolio submissions (PH4-D4), and 1.9 → 1.10 when step 5j took
         # in 90-day hire check-ins (PH5-D5-2), and 1.10 → 1.11 when step 5k
-        # took in talent-pool memberships (PH5-E3): the artifacts record is
-        # what an auditor reads to know WHAT a given completion covered, so
-        # two records with different coverage must not claim the same version.
-        "executor_version": "1.11",
+        # took in talent-pool memberships (PH5-E3), and 1.11 → 1.12 when step
+        # 5l took in the free-text reason/rationale/evidence fields AR-5
+        # named (enrolments.held_reason/reapply_override_reason,
+        # round_results.evidence, stage_transitions.reason, and the
+        # audit_log decision rationale): the artifacts record is what an
+        # auditor reads to know WHAT a given completion covered, so two
+        # records with different coverage must not claim the same version.
+        "executor_version": "1.12",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
@@ -1859,6 +2033,10 @@ async def _execute_one_erasure(
         "task_responses_redacted": task_responses_redacted,
         "hire_checkins_deleted": hire_checkins_deleted,
         "talent_pool_members_deleted": talent_pool_members_deleted,
+        "enrolments_reasons_redacted": enrolments_reasons_redacted,
+        "round_results_evidence_redacted": round_results_evidence_redacted,
+        "stage_transitions_redacted": stage_transitions_redacted,
+        "audit_log_decisions_redacted": audit_log_decisions_redacted,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
         # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,

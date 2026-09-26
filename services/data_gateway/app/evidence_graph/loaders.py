@@ -14,14 +14,19 @@ of a candidate's screening answers, any AI-generated prose (an ATS summary, a
 scorer's rationale, a round result's own evidence text — reduced to a
 boolean), and candidate contact details. See ``OMITTED_ALWAYS``.
 
-AR-5: ``stage_transitions.reason`` (a decision's free-text rationale) is
-deliberately NOT redacted at its source on erasure (``erasure_executor.py``
-EXCLUDED_TABLES) — that is a defensible choice for HR reading their own
-history, but not for a NEW surface that also names the candidate
-(``candidate.erased``/``[redacted]``) right next to that prose and ships it to
-an LLM (``get_decision_trace``). ``_decision_nodes`` therefore withholds it —
-never the source row, only this graph's rendering of it — once the candidate
-is erased. See ``_ERASED_REASON_HIDDEN``/``_ERASED_REASON_OMISSION``.
+AR-5, closed 2026-09-26: ``stage_transitions.reason`` (a decision's free-text
+rationale) is now redacted to ``'[redacted]'`` at its source once erasure
+actually RUNS (``erasure_executor.py`` step 5l, migration ``f2a4c6e8b0d3``).
+That closes the gap this module's own withholding used to be the only defence
+against — but only from the moment the executor runs, 30 days after a request.
+``candidate.erased`` here goes true the moment an erasure is REQUESTED
+(``_erased_expr_true`` checks for an ``erasure_requests`` row, not a completed
+one), so for that whole grace window the source row still holds the original
+prose and this module's own masking is what stands between a reader (and an
+LLM, via ``get_decision_trace``) and it. ``_decision_nodes`` therefore keeps
+withholding the reason whenever ``candidate.erased`` is true, source redacted
+or not — never the source row, only this graph's rendering of it. See
+``_ERASED_REASON_HIDDEN``/``_ERASED_REASON_OMISSION``.
 
 KNOWN, DELIBERATE LIMIT — independence and ``round_result``
 A ``round_result`` node (a round's pass/fail outcome and per-criterion scores)
@@ -964,9 +969,11 @@ _ERASED_REASON_HIDDEN = "rationale withheld: the candidate has been erased (AR-5
 _ERASED_REASON_OMISSION = OmittedItem(
     kind="decision_reason",
     reason=(
-        "The candidate has been erased (AR-5). stage_transitions.reason is not "
-        "itself redacted at the source, but its free text is withheld from this "
-        "graph and from the copilot once the candidate is erased."
+        "The candidate has been erased (AR-5, closed). stage_transitions.reason "
+        "is redacted at the source once erasure runs, but not before — an "
+        "erasure request marks the candidate erased immediately, up to 30 days "
+        "before the executor redacts anything — so this graph and the copilot "
+        "withhold the free text from the moment of request regardless."
     ),
 )
 

@@ -11,9 +11,11 @@ consent withdrawal are inherited for free for every source row this graph
 reads — they show up on the very next read of this graph, with no erasure
 step and no retention job of this module's own to keep in sync. One named
 exception: a decision's free-text rationale (``stage_transitions.reason``) is
-NOT redacted at its source on erasure (AR-5), so ``app/evidence_graph.py``
-withholds it itself, at render time, once ``candidate.erased`` is true —
-see ``_ERASED_REASON_HIDDEN``/``_ERASED_REASON_OMISSION`` there.
+redacted at its source once erasure actually runs, but an erasure REQUEST
+marks the candidate erased immediately — up to 30 days before that (AR-5,
+closed 2026-09-26), so ``app/evidence_graph.py`` withholds it itself, at
+render time, for the whole window ``candidate.erased`` is true — see
+``_ERASED_REASON_HIDDEN``/``_ERASED_REASON_OMISSION`` there.
 
 "First-class" is expressed here as a closed, typed vocabulary (this module)
 plus one declared loader per node kind and two pure functions,

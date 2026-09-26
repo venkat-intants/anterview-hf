@@ -19,6 +19,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import type { PoolMemberOut, PoolOut } from '../api/pools';
+import type { Applicant } from '../api/applicants';
 
 const api = {
   listPools: vi.fn(),
@@ -50,6 +51,11 @@ vi.mock('../api/pools', async () => {
 const listRequisitions = vi.fn();
 vi.mock('../api/requisitions', () => ({
   listRequisitions: (...a: unknown[]) => listRequisitions(...a) as unknown,
+}));
+
+const listApplicants = vi.fn();
+vi.mock('../api/applicants', () => ({
+  listApplicants: (...a: unknown[]) => listApplicants(...a) as unknown,
 }));
 
 const toastError = vi.fn();
@@ -92,6 +98,25 @@ function member(over: Partial<PoolMemberOut> = {}): PoolMemberOut {
   };
 }
 
+function applicant(over: Partial<Applicant> = {}): Applicant {
+  return {
+    id: 'app-9',
+    full_name: 'Ravi Kumar',
+    email: 'ravi@example.com',
+    target_job_title: 'Welder',
+    target_level: 'mid',
+    status: 'new',
+    ats_overall: null,
+    ats_breakdown: null,
+    ats_strengths: null,
+    ats_concerns: null,
+    ats_recommendation: null,
+    ats_summary: null,
+    created_at: '2026-09-01T00:00:00Z',
+    ...over,
+  };
+}
+
 function renderPage(path = '/hr/pools') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -110,6 +135,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.listPools.mockResolvedValue({ pools: [], limits: { max_per_company: 100, max_members: 2000 } });
   listRequisitions.mockResolvedValue([{ id: 'req-1', title: 'Maintenance Fitter' }]);
+  listApplicants.mockResolvedValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -423,6 +449,27 @@ describe('TalentPools — pool detail', () => {
     expect(screen.getByText('Round 2')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Round 2' })).not.toBeInTheDocument();
   });
+
+  // -------------------------------------------------------------------------
+  // A manually-added member has no computed match, so the frozen-snapshot
+  // panel must be ABSENT for it, not an empty shell.
+  //
+  // MUTATION CHECK performed by hand: temporarily changed `MemberRow`'s
+  // `hasSnapshot` guard from `Boolean(m.match_reason)` to `true`
+  // unconditionally. This test went red (found a "Why this match?" toggle
+  // with nothing behind it). Reverted; green again.
+  // -------------------------------------------------------------------------
+  it('renders no frozen-snapshot panel for a manually added member (no match_reason)', async () => {
+    api.getPool.mockResolvedValue({
+      pool: pool(),
+      members: [member({ source: 'manual', match_reason: undefined })],
+    });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+
+    expect(screen.queryByRole('button', { name: /why this match/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Added from a rediscovery search on/)).not.toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -485,5 +532,143 @@ describe('TalentPools — invite to an opening', () => {
         acknowledgedStale: true,
       }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Add candidates manually — criterion 2 ("candidates can be added to a pool
+// manually"). Before this control existed, `addPoolMembers`'s only call site
+// anywhere in the app was Rediscovery.tsx, hard-coded to `source:
+// 'rediscovery'` — so this is the only place source: 'manual' is ever sent.
+// ---------------------------------------------------------------------------
+
+describe('TalentPools — add candidates manually', () => {
+  it('searches this company\'s applicants, selects one, and adds with source manual and NO match_reason', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [] });
+    listApplicants.mockResolvedValue([applicant({ id: 'app-9', full_name: 'Ravi Kumar' })]);
+    api.addPoolMembers.mockResolvedValue({ added: ['app-9'], skipped: [] });
+
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText(/No members yet/);
+
+    await user.click(screen.getByRole('button', { name: 'Add candidates' }));
+    const dialog = await screen.findByRole('dialog', { name: /Add candidates to Fitters, Vizag/i });
+
+    await user.type(within(dialog).getByLabelText('Search your applicants'), 'Ravi');
+    await waitFor(() => expect(listApplicants).toHaveBeenLastCalledWith({ q: 'Ravi' }));
+
+    await user.click(await within(dialog).findByRole('checkbox', { name: /Ravi Kumar/i }));
+    await user.click(within(dialog).getByRole('button', { name: /Add 1 candidate/i }));
+
+    // MUTATION CHECK performed by hand: added a fabricated `matchReason:
+    // matchReasonFromResult(...)`-shaped object to this call. This assertion
+    // went red (an unexpected `matchReason` key appeared). Reverted; green
+    // again — a manual add must never carry a computed match.
+    await waitFor(() =>
+      expect(api.addPoolMembers).toHaveBeenCalledWith('pool-1', {
+        applicantIds: ['app-9'],
+        source: 'manual',
+        note: null,
+      }),
+    );
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Added 1 candidate to the pool'));
+  });
+
+  it('sends the optional note, trimmed', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [] });
+    listApplicants.mockResolvedValue([applicant({ id: 'app-9', full_name: 'Ravi Kumar' })]);
+    api.addPoolMembers.mockResolvedValue({ added: ['app-9'], skipped: [] });
+
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText(/No members yet/);
+    await user.click(screen.getByRole('button', { name: 'Add candidates' }));
+
+    await user.click(await screen.findByRole('checkbox', { name: /Ravi Kumar/i }));
+    await user.type(screen.getByLabelText('Note (optional)'), '  Met at a job fair  ');
+    await user.click(screen.getByRole('button', { name: /Add 1 candidate/i }));
+
+    await waitFor(() =>
+      expect(api.addPoolMembers).toHaveBeenCalledWith('pool-1', {
+        applicantIds: ['app-9'],
+        source: 'manual',
+        note: 'Met at a job fair',
+      }),
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // A `skipped` response must be surfaced, not swallowed by a generic
+  // success toast.
+  //
+  // MUTATION CHECK performed by hand: temporarily removed the
+  // `setSkipped(...)` call in `AddCandidatesDialog`'s `onSuccess` (kept only
+  // the `toast.error` summary). This assertion went red (no per-candidate
+  // reason ever rendered). Reverted; green again.
+  // -------------------------------------------------------------------------
+  it('surfaces a skipped candidate with its reason, not just a generic toast', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [] });
+    listApplicants.mockResolvedValue([
+      applicant({ id: 'app-1', full_name: 'Meena Rao' }),
+      applicant({ id: 'app-2', full_name: 'Zara Khan' }),
+    ]);
+    api.addPoolMembers.mockResolvedValue({
+      added: ['app-1'],
+      skipped: [{ applicant_id: 'app-2', reason: 'already_a_member' }],
+    });
+
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText(/No members yet/);
+    await user.click(screen.getByRole('button', { name: 'Add candidates' }));
+
+    await user.click(await screen.findByRole('checkbox', { name: /Meena Rao/i }));
+    await user.click(screen.getByRole('checkbox', { name: /Zara Khan/i }));
+    await user.click(screen.getByRole('button', { name: /Add 2 candidates/i }));
+
+    // Scoped to the "not added" panel: Zara Khan still also appears as a
+    // (now unchecked) row in the picker list above it.
+    const notAdded = await screen.findByRole('status');
+    expect(within(notAdded).getByText(/Zara Khan/)).toBeInTheDocument();
+    expect(within(notAdded).getByText(/Already a member of this pool/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith('Added 1 candidate to the pool'),
+    );
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('1 candidate could not be added'),
+    );
+    // The dialog stays open on a partial skip — Cancel is still there.
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
+  it('does not offer applicants already in this pool as a fresh choice', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [member({ applicant_id: 'app-1' })] });
+    listApplicants.mockResolvedValue([
+      applicant({ id: 'app-1', full_name: 'Asha K' }),
+      applicant({ id: 'app-9', full_name: 'Ravi Kumar' }),
+    ]);
+
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+    await user.click(screen.getByRole('button', { name: 'Add candidates' }));
+
+    await screen.findByRole('checkbox', { name: /Ravi Kumar/i });
+    expect(screen.queryByRole('checkbox', { name: /Asha K/i })).not.toBeInTheDocument();
+  });
+
+  it('closes without calling the API on Cancel', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [] });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText(/No members yet/);
+
+    await user.click(screen.getByRole('button', { name: 'Add candidates' }));
+    await screen.findByRole('dialog');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(api.addPoolMembers).not.toHaveBeenCalled();
   });
 });

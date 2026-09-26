@@ -442,16 +442,21 @@ async def test_invite_is_idempotent_and_creates_no_second_enrolment(db: AsyncSes
     )
     member_id = uuid.UUID(added["added"][0])
 
+    # This member has no VERIFIED evidence at all (no scorecard, round result
+    # or exam attempt), so the criterion-14 gate's band is "none" — correctly
+    # not "fresh" (see rediscovery.verified_evidence_freshness_for_applicant)
+    # — and acknowledgement is needed to get past it. That gate is not what
+    # THIS test is about, so it is acknowledged rather than avoided.
     first = await pools.invite_member(
         db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
-        member_id=member_id, requisition_id=f.requisition, meta=META,
+        member_id=member_id, requisition_id=f.requisition, acknowledged_stale=True, meta=META,
     )
     assert first["already_enrolled"] is False
     assert first["enrolment_id"]
 
     second = await pools.invite_member(
         db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
-        member_id=member_id, requisition_id=f.requisition, meta=META,
+        member_id=member_id, requisition_id=f.requisition, acknowledged_stale=True, meta=META,
     )
     assert second["already_enrolled"] is True
     assert second["enrolment_id"] == first["enrolment_id"]
@@ -497,10 +502,14 @@ async def test_invite_against_a_closed_requisition_is_refused(db: AsyncSession) 
         db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
         applicant_ids=[f.applicant1], source="manual", note=None, match_reason=None, meta=META,
     )
+    # Acknowledge the criterion-14 gate up front (this member has no verified
+    # evidence, so its band is "none") so the refusal this test actually
+    # targets — the closed requisition — is the one that surfaces.
     with pytest.raises(pools.PoolError) as caught:
         await pools.invite_member(
             db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
-            member_id=uuid.UUID(added["added"][0]), requisition_id=f.requisition, meta=META,
+            member_id=uuid.UUID(added["added"][0]), requisition_id=f.requisition,
+            acknowledged_stale=True, meta=META,
         )
     assert caught.value.code == "requisition_not_open"
 
@@ -510,10 +519,17 @@ async def test_invite_against_a_closed_requisition_is_refused(db: AsyncSession) 
 # stale, unreviewed evidence is refused unless reviewed or acknowledged.
 # ===========================================================================
 async def _seed_stale_member(db: AsyncSession, f: F) -> tuple[uuid.UUID, uuid.UUID]:
-    """A pool member whose only evidence — the CV itself — is old enough to
-    band as ``stale`` (well past ``rediscovery_stale_days``), and who has
-    never been evidence-reviewed. The lowest-effort way to make
-    ``evidence_freshness_for_applicant`` return anything but ``fresh``."""
+    """A pool member with no VERIFIED evidence at all (no scorecard, round
+    result or exam attempt) and whose CV is aged well past
+    ``rediscovery_stale_days``, who has never been evidence-reviewed.
+
+    The gate itself (``rediscovery.verified_evidence_freshness_for_applicant``,
+    which never reads the CV) bands this member ``"none"`` — not ``"fresh"``,
+    so it still refuses unreviewed/unacknowledged, which is what every test
+    below exercises. The CV is aged anyway so the DISPLAY band
+    (``evidence_freshness_for_applicant``, which does read the CV) reads
+    ``"stale"`` rather than ``"none"`` too, matching what a real long-idle
+    manual add looks like on screen."""
     await _opt_in(db, f, user_id=f.cand1)
     await db.execute(
         text("UPDATE applicants SET updated_at = :t WHERE id = :a"),
@@ -593,7 +609,11 @@ async def test_the_acknowledgement_is_recorded_on_the_event_facts_only(db: Async
     ).mappings().first()
     assert event is not None
     assert event["details"]["acknowledged_stale"] is True
-    assert event["details"]["freshness"] in ("ageing", "stale", "unverifiable")
+    # "none" — this member has no verified evidence at all, which is
+    # correctly not "fresh" (see _seed_stale_member); the other three bands
+    # are what a member WITH verified evidence, but stale or unreadable, would
+    # show.
+    assert event["details"]["freshness"] in ("ageing", "stale", "unverifiable", "none")
     # Facts only: no note text, no candidate name, nothing beyond ids/booleans.
     blob = str(event["details"])
     assert "Asha" not in blob
@@ -632,12 +652,181 @@ async def test_the_gate_reads_live_evidence_not_the_frozen_add_time_column(
         {"t": datetime.now(tz=UTC) - timedelta(days=400), "a": f.applicant1},
     )
 
+    # NOTE: with the verified-only gate below, this member's band is already
+    # "none" (no scorecard/round result/exam attempt exists at all) the moment
+    # it is added — before the CV is ever aged. The aging step still proves
+    # the point (the STORED "fresh" column is never trusted), it simply no
+    # longer needs to be the thing that flips the live answer to do so.
     with pytest.raises(pools.PoolError) as caught:
         await pools.invite_member(
             db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
             member_id=member_id, requisition_id=f.requisition, meta=META,
         )
     assert caught.value.code == "stale_evidence_unreviewed"
+
+
+# ===========================================================================
+# Independent acceptance pass, criterion 14 hole: the gate's band must be
+# computed over VERIFIED evidence only (a human scorecard, a round result, an
+# exam attempt) — never the CV, and never the AI-interview fact. A CV's
+# upload date is candidate-authored and is not qualification.
+# ===========================================================================
+async def _seed_exam_attempt(
+    db: AsyncSession, f: F, *, applicant_id: uuid.UUID, age_days: int = 10,
+) -> None:
+    """One submitted exam attempt — the lightest-weight piece of VERIFIED
+    evidence ``_EVIDENCE_SQL`` recognises (no workflow/round/enrolment dance
+    needed, unlike a human scorecard or round result)."""
+    exam, exam_round = uuid.uuid4(), uuid.uuid4()
+    when = datetime.now(tz=UTC) - timedelta(days=age_days)
+    await db.execute(
+        text(
+            "INSERT INTO exams (id, company_id, title, status)"
+            " VALUES (:i,:c,'Trade test','published')"
+        ),
+        {"i": exam, "c": f.company_a},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO exam_rounds (id, exam_id, company_id, round_number, title, position)"
+            " VALUES (:i,:x,:c,1,'Paper 1',1)"
+        ),
+        {"i": exam_round, "x": exam, "c": f.company_a},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO exam_attempts (id, company_id, exam_id, round_id, applicant_id,"
+            " score_percent, passed, status, started_at, submitted_at, answers)"
+            " VALUES (:i,:c,:x,:r,:a,81,true,'submitted',:t,:t,CAST('{}' AS jsonb))"
+        ),
+        {"i": uuid.uuid4(), "c": f.company_a, "x": exam, "r": exam_round,
+         "a": applicant_id, "t": when},
+    )
+
+
+@pytest.mark.asyncio
+async def test_similarity_only_match_with_no_verified_evidence_is_refused_then_allowed_once_acknowledged(
+    db: AsyncSession,
+) -> None:
+    """THE REGRESSION TEST for the defect: a candidate matched on CV cosine
+    similarity ALONE (``explained: false`` — "matched on similarity only,
+    nothing here says why") with NO scorecard, round result or exam attempt to
+    their name, whose CV happens to be freshly uploaded. Before the fix, the
+    gate (``evidence_freshness_for_applicant``) folded the CV's own band in,
+    saw only a fresh CV, banded the member ``fresh`` and cleared the invite
+    with NO review and NO acknowledgement — exactly the overclaim design §6.3
+    refuses in words: an unexplained match must not be invited without the
+    acknowledgement, because there is nothing to review. This test fails
+    against that code (the first invite call succeeds instead of raising) and
+    passes once the gate is computed over verified evidence only."""
+    f = await _seed(db)
+    await _opt_in(db, f, user_id=f.cand1)  # applicant1's CV is fresh — see _seed
+    pool_id = await _create_pool(db, f)
+    added = await pools.add_members(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
+        applicant_ids=[f.applicant1], source="rediscovery", note=None,
+        match_reason={"why": [{"signal": "resume_similarity", "freshness": "fresh"}]},
+        meta=META,
+    )
+    member_id = uuid.UUID(added["added"][0])
+
+    with pytest.raises(pools.PoolError) as caught:
+        await pools.invite_member(
+            db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
+            member_id=member_id, requisition_id=f.requisition, meta=META,
+        )
+    assert caught.value.code == "stale_evidence_unreviewed"
+    assert caught.value.status_code == 422
+    enrolled = await db.scalar(
+        text("SELECT count(*) FROM enrolments WHERE applicant_id = :a"), {"a": f.applicant1},
+    )
+    assert enrolled == 0
+
+    # One recorded click clears it — not a hard block.
+    out = await pools.invite_member(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
+        member_id=member_id, requisition_id=f.requisition, acknowledged_stale=True, meta=META,
+    )
+    assert out["enrolment_id"]
+
+
+@pytest.mark.asyncio
+async def test_fresh_verified_evidence_invites_with_no_acknowledgement(db: AsyncSession) -> None:
+    """The fix is not a blanket refusal: a candidate with a genuinely fresh,
+    VERIFIED exam attempt clears the gate on its own, no review and no
+    acknowledgement needed."""
+    f = await _seed(db)
+    await _opt_in(db, f, user_id=f.cand1)
+    await _seed_exam_attempt(db, f, applicant_id=f.applicant1, age_days=10)
+    pool_id = await _create_pool(db, f)
+    added = await pools.add_members(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
+        applicant_ids=[f.applicant1], source="manual", note=None, match_reason=None, meta=META,
+    )
+    member_id = uuid.UUID(added["added"][0])
+
+    out = await pools.invite_member(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
+        member_id=member_id, requisition_id=f.requisition, meta=META,
+    )
+    assert out["enrolment_id"]
+
+
+@pytest.mark.asyncio
+async def test_fresh_verified_evidence_invites_even_with_a_long_stale_cv(db: AsyncSession) -> None:
+    """The other direction, which matters just as much: the fix must not be
+    "ignore the CV only when convenient". A candidate with fresh VERIFIED
+    evidence and a CV nobody has touched in well over a year still invites
+    with no acknowledgement — the CV no longer drags the gate's band down
+    either way."""
+    f = await _seed(db)
+    await _opt_in(db, f, user_id=f.cand1)
+    await _seed_exam_attempt(db, f, applicant_id=f.applicant1, age_days=10)
+    await db.execute(
+        text("UPDATE applicants SET updated_at = :t WHERE id = :a"),
+        {"t": datetime.now(tz=UTC) - timedelta(days=400), "a": f.applicant1},
+    )
+    pool_id = await _create_pool(db, f)
+    added = await pools.add_members(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
+        applicant_ids=[f.applicant1], source="manual", note=None, match_reason=None, meta=META,
+    )
+    member_id = uuid.UUID(added["added"][0])
+
+    out = await pools.invite_member(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
+        member_id=member_id, requisition_id=f.requisition, meta=META,
+    )
+    assert out["enrolment_id"]
+
+
+@pytest.mark.asyncio
+async def test_the_display_band_still_includes_the_cv_and_can_disagree_with_the_gate(
+    db: AsyncSession,
+) -> None:
+    """Pinned in both directions, because it is now deliberate in both:
+    ``evidence_freshness_for_applicant`` (the display band — the row's chips
+    and header) still folds the CV in, while
+    ``verified_evidence_freshness_for_applicant`` (the gate) never does. For a
+    candidate with fresh verified evidence and a long-stale CV the two
+    legitimately disagree — the display can show a stale chip while the gate
+    clears the invite unacknowledged (proven by the sibling test above)."""
+    f = await _seed(db)
+    await _opt_in(db, f, user_id=f.cand1)
+    await _seed_exam_attempt(db, f, applicant_id=f.applicant1, age_days=10)
+    await db.execute(
+        text("UPDATE applicants SET updated_at = :t WHERE id = :a"),
+        {"t": datetime.now(tz=UTC) - timedelta(days=400), "a": f.applicant1},
+    )
+
+    display_band = await rd.evidence_freshness_for_applicant(
+        db, company_id=f.company_a, applicant_id=f.applicant1, viewer_user_id=f.hr_a,
+    )
+    gate_band = await rd.verified_evidence_freshness_for_applicant(
+        db, company_id=f.company_a, applicant_id=f.applicant1, viewer_user_id=f.hr_a,
+    )
+    assert display_band == "stale"  # the long-stale CV drags the display header down
+    assert gate_band == "fresh"     # the gate never reads the CV at all
 
 
 # ===========================================================================

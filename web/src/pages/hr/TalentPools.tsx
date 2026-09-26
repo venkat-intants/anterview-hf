@@ -21,10 +21,12 @@
 // specific failure rather than pre-computing "does this member need it?"; see
 // `api/pools.ts::inviteMember`'s own comment.
 
-import { Fragment, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  addPoolMembers,
   createPool,
   deletePool,
   getPool,
@@ -35,10 +37,13 @@ import {
   poolErrorMessage,
   removePoolMember,
   updatePool,
+  type AddMemberSkipReason,
   type PoolMemberOut,
 } from '@/api/pools';
+import { listApplicants, type Applicant } from '@/api/applicants';
 import { listRequisitions, type Requisition } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
 import {
@@ -51,9 +56,11 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Search,
   ShieldCheck,
   Trash2,
   UserMinus,
+  UserPlus,
   Users,
 } from '@/design/components/icons';
 import RediscoveryWhyPanel from '@/components/hr/RediscoveryWhyPanel';
@@ -63,6 +70,18 @@ import {
   freshnessChipLabel,
   ineligibleReasonLabel,
 } from '@/components/hr/rediscoveryDisplay';
+
+/** Debounce a fast-changing value (search box) — same shape as
+ *  `Applicants.tsx`'s own local `useDebouncedValue`, kept local here too
+ *  rather than shared, on that file's own precedent. */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 export default function TalentPools(): JSX.Element {
   const { poolId } = useParams<{ poolId?: string }>();
@@ -453,6 +472,7 @@ function PoolsList(): JSX.Element {
 // ---------------------------------------------------------------------------
 
 function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const detail = useQuery({
     queryKey: ['hr', 'pools', 'detail', poolId],
@@ -464,6 +484,7 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [removeReason, setRemoveReason] = useState('');
   const [invitingMemberId, setInvitingMemberId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const removeMut = useMutation({
     mutationFn: ({ memberId, reason }: { memberId: string; reason: string }) =>
@@ -487,6 +508,14 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
   });
 
   const members = detail.data?.members ?? [];
+  // Depends on `detail.data?.members` (stable across re-renders until the
+  // query actually refetches), not the `members` fallback above — that `??
+  // []` makes a fresh array every render, which would recompute this on
+  // every keystroke in the dialog for no reason.
+  const existingApplicantIds = useMemo(
+    () => new Set((detail.data?.members ?? []).map((m) => m.applicant_id)),
+    [detail.data?.members],
+  );
 
   return (
     <div className="mx-auto max-w-[1080px] px-0 py-2 space-y-6">
@@ -508,10 +537,30 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
 
       <Reveal delay={0.05}>
         <GlassCard className="p-5">
-          <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-            <Users className="h-4 w-4" aria-hidden="true" />
-            Members
-          </h3>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
+              <Users className="h-4 w-4" aria-hidden="true" />
+              Members
+            </h3>
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-3.5 py-2 text-[13px] font-semibold text-primary-foreground"
+            >
+              <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('hrPools.addCandidates')}
+            </button>
+          </div>
+
+          {addOpen ? (
+            <AddCandidatesDialog
+              poolId={poolId}
+              poolName={detail.data?.pool.name ?? ''}
+              existingApplicantIds={existingApplicantIds}
+              onClose={() => setAddOpen(false)}
+              onAdded={invalidate}
+            />
+          ) : null}
 
           {detail.isLoading ? (
             <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
@@ -524,7 +573,7 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
             </p>
           ) : members.length === 0 ? (
             <p className="py-6 text-center text-[13px] text-muted-foreground">
-              No members yet. Add candidates from Rediscovery, or add them manually.
+              {t('hrPools.emptyState')}
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -880,6 +929,222 @@ function InviteDialog({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Add candidates (criterion 2: candidates can be added to a pool manually) —
+// searches this company's own applicants (the same `listApplicants` the
+// Applicants screen uses) and adds the selection with `source: 'manual'` and
+// NO `match_reason` — a manual add has no computed match, so nothing here
+// fabricates one (see `api/pools.ts::AddMembersInput`'s own note).
+// ---------------------------------------------------------------------------
+
+function AddCandidatesDialog({
+  poolId,
+  poolName,
+  existingApplicantIds,
+  onClose,
+  onAdded,
+}: {
+  poolId: string;
+  poolName: string;
+  existingApplicantIds: Set<string>;
+  onClose: () => void;
+  onAdded: () => void;
+}): JSX.Element {
+  const { t } = useTranslation();
+  const panelRef = useDialogFocus<HTMLDivElement>(onClose);
+  const [query, setQuery] = useState('');
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const trimmedQuery = debouncedQuery.trim();
+  const [selected, setSelected] = useState<Record<string, Applicant>>({});
+  const [note, setNote] = useState('');
+  const [skipped, setSkipped] = useState<
+    Array<{ applicantId: string; name: string; reason: AddMemberSkipReason }>
+  >([]);
+
+  const applicantsQuery = useQuery({
+    queryKey: ['hr', 'applicants', 'pool-picker', trimmedQuery],
+    queryFn: () => listApplicants({ q: trimmedQuery || undefined }),
+  });
+
+  // Already-in-this-pool applicants never show up as a fresh choice — the
+  // server would only tell us `already_a_member` for one anyway.
+  const results = (applicantsQuery.data ?? []).filter((a) => !existingApplicantIds.has(a.id));
+  const selectedIds = Object.keys(selected);
+
+  function toggle(a: Applicant): void {
+    setSelected((prev) => {
+      const next = { ...prev };
+      if (next[a.id]) delete next[a.id];
+      else next[a.id] = a;
+      return next;
+    });
+  }
+
+  const addMut = useMutation({
+    mutationFn: () =>
+      addPoolMembers(poolId, {
+        applicantIds: selectedIds,
+        source: 'manual',
+        note: note.trim() || null,
+      }),
+    onSuccess: (res) => {
+      if (res.added.length > 0) {
+        toast.success(t('hrPools.addedToast', { count: res.added.length }));
+        onAdded();
+      }
+      // Drop everything the server just processed (added or skipped) from
+      // the selection — resubmitting an unchanged skip would only skip again.
+      setSelected((prev) => {
+        const next = { ...prev };
+        res.added.forEach((id) => delete next[id]);
+        res.skipped.forEach((s) => delete next[s.applicant_id]);
+        return next;
+      });
+      if (res.skipped.length > 0) {
+        // Surfaced, not swallowed: named per candidate, in words an HR
+        // manager can act on, and left on screen rather than a toast alone.
+        toast.error(t('hrPools.skippedToast', { count: res.skipped.length }));
+        setSkipped(
+          res.skipped.map((s) => ({
+            applicantId: s.applicant_id,
+            name: selected[s.applicant_id]?.full_name ?? s.applicant_id,
+            reason: s.reason,
+          })),
+        );
+      } else {
+        setSkipped([]);
+        setNote('');
+        onClose();
+      }
+    },
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, t('hrPools.couldNotAdd'))),
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <button
+        type="button"
+        aria-label={t('hrPools.close')}
+        onClick={onClose}
+        className="absolute inset-0"
+      />
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-candidates-title"
+        tabIndex={-1}
+        className="relative z-10 max-h-[85vh] w-full max-w-[480px] space-y-3 overflow-y-auto rounded-[24px] border border-border bg-card p-5 outline-none"
+      >
+        <h3 id="add-candidates-title" className="text-[15px] font-semibold text-foreground">
+          {t('hrPools.dialogTitle', { pool: poolName })}
+        </h3>
+
+        <div>
+          <label htmlFor="pool-add-search" className="sr-only">
+            {t('hrPools.searchLabel')}
+          </label>
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <input
+              id="pool-add-search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('hrPools.searchPlaceholder')}
+              className="w-full rounded-[10px] border border-border bg-secondary py-2 pl-8 pr-3 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="max-h-[240px] space-y-0.5 overflow-y-auto rounded-[10px] border border-border p-2">
+          {applicantsQuery.isLoading ? (
+            <p className="flex items-center gap-2 py-3 text-[12.5px] text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              {t('hrPools.loading')}
+            </p>
+          ) : applicantsQuery.isError ? (
+            <p className="py-3 text-[12.5px] text-[var(--ui-danger)]">{t('hrPools.loadError')}</p>
+          ) : results.length === 0 ? (
+            <p className="py-3 text-center text-[12.5px] text-muted-foreground">
+              {trimmedQuery ? t('hrPools.noResults') : t('hrPools.noApplicants')}
+            </p>
+          ) : (
+            results.map((a) => (
+              <label
+                key={a.id}
+                className="flex items-center gap-2 rounded-[8px] px-2 py-1.5 text-[12.5px] text-foreground hover:bg-[var(--ui-inset-soft)]"
+              >
+                <input type="checkbox" checked={Boolean(selected[a.id])} onChange={() => toggle(a)} />
+                <span className="flex-1">
+                  <span className="font-medium">{a.full_name}</span>
+                  {a.current_title || a.current_company ? (
+                    <span className="ml-1.5 text-[11.5px] text-muted-foreground">
+                      {[a.current_title, a.current_company].filter(Boolean).join(' · ')}
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+            ))
+          )}
+        </div>
+
+        <p className="text-[11.5px] text-muted-foreground">
+          {t('hrPools.selected', { count: selectedIds.length })}
+        </p>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="pool-add-note" className="text-[12px] font-medium text-[var(--ui-soft)]">
+            {t('hrPools.noteLabel')}
+          </label>
+          <input
+            id="pool-add-note"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={500}
+            placeholder={t('hrPools.notePlaceholder')}
+            className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+          />
+        </div>
+
+        {skipped.length > 0 ? (
+          <div
+            role="status"
+            className="space-y-1 rounded-[10px] border border-[#e6714f]/30 bg-[#e6714f]/10 p-2.5"
+          >
+            <p className="text-[11.5px] font-medium text-[#ff8a66]">{t('hrPools.notAddedHeading')}</p>
+            <ul className="space-y-0.5 text-[11.5px] text-[#ff8a66]">
+              {skipped.map((s) => (
+                <li key={s.applicantId}>
+                  {s.name} — {t(`hrPools.skipReason.${s.reason}`)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => addMut.mutate()}
+            disabled={selectedIds.length === 0 || addMut.isPending}
+            className="rounded-[10px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {addMut.isPending
+              ? t('hrPools.adding')
+              : t('hrPools.addSelected', { count: selectedIds.length })}
+          </button>
+          <button type="button" onClick={onClose} className="text-[13px] text-muted-foreground">
+            {t('hrPools.cancel')}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

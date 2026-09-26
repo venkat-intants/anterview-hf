@@ -43,10 +43,32 @@ independently (a trigger, not only this module's discipline).
 
 CRITERION 14 IS A CONTROL, NOT A SENTENCE (design §6.6 point 3)
 -------------------------------------------------------------------
-``invite_member`` computes the member's freshness band FRESH, at read time
-(``rediscovery.evidence_freshness_for_applicant``) — never from
+``invite_member`` computes the member's freshness band at READ TIME, from
+``rediscovery.verified_evidence_freshness_for_applicant`` — never from
 ``talent_pool_members.evidence_freshness``, which is the band AS AT ADD TIME
 and would let a member added fresh sail through unreviewed a year later.
+
+WHOSE EVIDENCE COUNTS FOR THE GATE (independent acceptance pass, criterion 14
+hole). The gate's band is computed over VERIFIED evidence only — a human
+interviewer's submitted scorecard, a round result, an exam attempt — and
+NEVER over the CV (``applicants.updated_at``) or the ``ai_interview`` fact.
+A CV's upload date is candidate-authored and is not qualification: a
+similarity-only match (``explained: false``, nothing to review) whose CV
+happens to be recently uploaded must not sail through on that upload date
+alone. Before this fix the gate used
+``rediscovery.evidence_freshness_for_applicant``, which folds the CV in for
+DISPLAY — so a similarity-only candidate with a fresh CV and zero assessment
+history banded ``fresh`` and cleared with no acknowledgement, which is exactly
+the overclaim design §6.3 refuses in words ("an unexplained match cannot be
+invited without the acknowledgement, because there is nothing to review").
+With no verified evidence at all, the gate's band is ``"none"`` — never
+``"fresh"`` — so both a similarity-only match and a manually-added candidate
+with no assessment history need one recorded review or acknowledgement, not a
+hard block. The DISPLAY band (the per-item chips and the row header) still
+legitimately includes the CV via ``evidence_freshness_for_applicant``, so the
+two can and do disagree: a candidate with fresh verified evidence and a
+long-stale CV shows a stale chip but clears this gate unacknowledged.
+
 Anything other than ``fresh`` with nobody having CURRENTLY reviewed the
 evidence refuses with 422 ``stale_evidence_unreviewed`` unless the caller
 explicitly acknowledges — two ways through, and both leave a record: a review
@@ -753,11 +775,25 @@ async def invite_member(
     a pool member into an application on the strength of evidence nobody has
     looked at recently is exactly the overclaim this criterion exists to
     prevent. So: the freshness band is computed HERE, at read time, from the
-    member's OWN evidence rows (``rediscovery.evidence_freshness_for_applicant``
-    — never the frozen ``evidence_freshness`` column, which is the band AS AT
-    ADD TIME and would let a member added fresh sail through unreviewed a year
-    later). When that band is anything other than ``fresh`` AND nobody has
-    CURRENTLY marked the evidence reviewed — a review itself expires after
+    member's own VERIFIED evidence rows —
+    ``rediscovery.verified_evidence_freshness_for_applicant`` — never the
+    frozen ``evidence_freshness`` column, which is the band AS AT ADD TIME and
+    would let a member added fresh sail through unreviewed a year later.
+
+    "VERIFIED" excludes the CV and the AI-interview fact on purpose
+    (independent acceptance pass, criterion 14 hole): a CV's upload date is
+    candidate-authored and is not qualification, so a similarity-only match
+    with a freshly-uploaded CV and no scorecard, round result or exam attempt
+    must not clear this gate on the CV's date alone — its band is ``"none"``,
+    which is not ``"fresh"``, so it still needs a review or an
+    acknowledgement. See ``rediscovery.verified_evidence_freshness_for_applicant``
+    for the full rationale and ``_VERIFIED_EVIDENCE_SIGNALS`` for exactly what
+    counts. The DISPLAY band (the row's chips, which legitimately include the
+    CV) is a different function, ``evidence_freshness_for_applicant``, and the
+    two are expected to disagree.
+
+    When that band is anything other than ``fresh`` AND nobody has CURRENTLY
+    marked the evidence reviewed — a review itself expires after
     ``rediscovery_review_valid_days`` (FIX 1, ``_evidence_review_is_current``),
     for the same reason the frozen column above is not trusted — the invite
     refuses with 422 ``stale_evidence_unreviewed`` unless the caller explicitly
@@ -777,7 +813,7 @@ async def invite_member(
     if not elig.get(applicant_id, _NOT_ELIGIBLE)["eligible"]:
         raise PoolError(409, "not_eligible", "This person is not currently eligible for contact.")
 
-    band = await rediscovery.evidence_freshness_for_applicant(
+    band = await rediscovery.verified_evidence_freshness_for_applicant(
         db, company_id=company_id, applicant_id=applicant_id, viewer_user_id=actor,
     )
     # FIX 1 (code review): a review EXPIRES — see _evidence_review_is_current.

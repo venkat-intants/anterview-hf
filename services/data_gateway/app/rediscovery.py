@@ -1405,6 +1405,84 @@ async def evidence_freshness_for_applicant(
     return worst_band(bands)
 
 
+#: Signals that are VERIFIED — produced by somebody other than the candidate,
+#: under a process the company controls. Used only by
+#: ``verified_evidence_freshness_for_applicant``, never by the display path.
+#: ``ai_interview`` is deliberately excluded even though its ``produced_by`` is
+#: ``"ai"`` rather than the candidate: this module never reads that row's
+#: score (only the FACT that a session happened), so it is not evidence of
+#: qualification either — it is already ``unverifiable`` in
+#: ``_evidence_why_item`` and would only ever pull a band down, never up, for
+#: a reason unrelated to whether the person can do the job.
+_VERIFIED_EVIDENCE_SIGNALS = frozenset({"interviewer_scorecard", "round_result", "exam_attempt"})
+
+
+async def verified_evidence_freshness_for_applicant(
+    db: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    applicant_id: uuid.UUID,
+    viewer_user_id: uuid.UUID,
+) -> str:
+    """The freshness band a CONTROL may trust — answering "is there current,
+    VERIFIED evidence of qualification?", which is a different question from
+    ``evidence_freshness_for_applicant``'s "how fresh is everything we hold?".
+
+    THE DEFECT THIS EXISTS TO CLOSE (criterion 14, independent acceptance
+    pass). ``evidence_freshness_for_applicant`` folds the CV's own band
+    (``applicants.updated_at``) into its worst-band computation, for display —
+    reasonably, since a stale CV is worth flagging on screen. But a CV's
+    upload date is candidate-authored and proves nothing VERIFIED about
+    whether the person can do the job: a candidate matched on cosine
+    similarity alone, with no scorecard, round result or exam attempt to their
+    name, whose CV happens to have been uploaded last week, banded ``fresh``
+    on that function alone — clearing ``talent_pools.py::invite_member``'s
+    gate with no review and no acknowledgement, which is exactly the overclaim
+    design §6.3 says a control must refuse ("an unexplained match cannot be
+    invited without the acknowledgement, because there is nothing to
+    review").
+
+    So THIS function computes the worst band over VERIFIED evidence only — a
+    human interviewer's submitted scorecard (still under the PH4-A1
+    independence predicate for *viewer_user_id*), a round result, an exam
+    attempt — never the CV, and never the ``ai_interview`` fact (see
+    ``_VERIFIED_EVIDENCE_SIGNALS``). Reuses the exact per-row SQL
+    (``_EVIDENCE_SQL``) and per-item banding (``_evidence_why_item``) the
+    display path uses, filtered to the verified signals, rather than a third
+    definition of "how stale is this evidence" — and the same ``worst_band``
+    (never the best, never a mean).
+
+    Returns ``"none"`` when there is no verified evidence at all — a
+    similarity-only match, or a manually-added candidate with no assessment
+    history. ``"none"`` is not ``"fresh"``, so a caller gating on this band
+    still requires a current review or an explicit acknowledgement for that
+    candidate; that is the correct outcome (design §6.3), and it costs the HR
+    manager one recorded click, not a hard block.
+
+    A caller wanting the DISPLAY band — the per-item chips and the row header,
+    which legitimately include the CV — must call
+    ``evidence_freshness_for_applicant`` instead. The two are expected to
+    disagree: a fresh-verified-evidence candidate with a long-stale CV shows a
+    stale chip but clears this gate with no acknowledgement, because the CV's
+    age is not the question this function answers.
+    """
+    now = datetime.now(tz=UTC)
+    bands: list[str | None] = []
+    evidence_rows = (
+        await db.execute(
+            text(_EVIDENCE_SQL),
+            {"company_id": company_id, "ids": [str(applicant_id)],
+             "viewer": viewer_user_id, "cap": _EVIDENCE_ROW_CAP},
+        )
+    ).mappings().all()
+    for ev_row in evidence_rows:
+        if ev_row["signal"] not in _VERIFIED_EVIDENCE_SIGNALS:
+            continue
+        item = _evidence_why_item(ev_row, applicant_id=str(applicant_id), now=now)
+        bands.append(item.get("freshness"))
+    return worst_band(bands)
+
+
 def _scored_competency_ids(items: list[dict[str, Any]]) -> set[str]:
     """Competency ids this candidate has a VERIFIABLE score against.
 

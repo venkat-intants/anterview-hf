@@ -12,18 +12,18 @@
 // (never `=== null`) is correct either way, so nothing here had to change
 // once that became knowable; only this comment did.
 //
-// KNOWN GAP (report this, do not silently work around it further): the
-// contract's criterion-14 acknowledgement gate — inviting a member whose
-// evidence `requires_review` should 422 `stale_evidence_unreviewed` until HR
-// sends `acknowledged_stale: true` — is NOT implemented server-side.
-// `MemberInviteIn` (schemas/pools.py) takes only `requisition_id` and is
-// `extra="forbid"`, and `talent_pools.py::invite_member` has no staleness
-// check at all. `inviteMember` below still supports `acknowledgedStale`
-// (sent only when explicitly true, so the normal path never trips the
-// server's `extra="forbid"`) and `TalentPools.tsx` still reacts to the 422 if
-// it ever arrives — but today that branch is unreachable dead code, and HR
-// can invite a member with two-year-old evidence with no server-side gate at
-// all. This needs a backend change, not a frontend workaround.
+// The criterion-14 acknowledgement gate is implemented server-side (fixed at
+// `421e350`, after being reported as missing at `d0f31c6`): `MemberInviteIn`
+// (schemas/pools.py) accepts `acknowledged_stale`, and inviting a member whose
+// evidence needs review refuses with 422 `stale_evidence_unreviewed` until HR
+// sends `acknowledged_stale: true`. `inviteMember` below sends
+// `acknowledgedStale` only when explicitly true (so the normal, non-stale path
+// never sends the field at all), `isStaleEvidenceUnreviewed` recognises that
+// specific failure code, and `TalentPools.tsx`'s invite control reacts to it
+// by prompting for the acknowledgement and retrying — a live, tested path,
+// not dead code. Exactly which evidence trips the gate is the server's rule
+// to enforce and to change, not something this client duplicates or needs to
+// track.
 //
 // `hr_manager` ONLY. A pool names candidates, so it is `candidate_pii`
 // (`shared/agents/schema.py::DATA_CLASS_ROLES`), and a company `super_admin`

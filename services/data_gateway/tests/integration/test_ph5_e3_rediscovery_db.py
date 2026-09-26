@@ -313,7 +313,8 @@ async def test_the_row_record_opt_in_writes_satisfies_the_eligibility_predicate(
     matched = await db.scalar(
         text(svc.ELIGIBLE_CTE + " SELECT count(*) FROM eligible WHERE id = :a"),
         {"company_id": f.company_a, "months": settings.rediscovery_consent_months,
-         "a": f.applicant1},
+         "a": f.applicant1,
+         "ct": svc.REDISCOVERY_CONSENT_TYPE, "pu": svc.REDISCOVERY_PURPOSE},
     )
     assert matched == 1
     stored = await db.scalar(

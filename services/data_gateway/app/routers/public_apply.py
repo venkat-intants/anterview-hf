@@ -395,6 +395,15 @@ class DraftStartIn(BaseModel):
     # Not defaulted to True and not inferred from the request reaching us.
     # DPDP consent has to be an act the person took.
     consent_granted: bool = False
+    # PH5-E3 (D5-1), code review FIX 2 — a SECOND, INDEPENDENT opt-in, default
+    # false, on exactly the same terms as `submit_application`'s Form field of
+    # the same name: not defaulted to True and not inferred from the request
+    # reaching us, because DPDP consent has to be an act the person took, and
+    # doubly so for an optional one nothing else requires. Stored on the draft
+    # by `start_draft`; `submit_draft` is what actually records it, since a
+    # draft is not an application and this consent is about being considered
+    # for a FUTURE opening. A false value writes nothing at all.
+    rediscovery_opt_in: bool = False
     language: Literal["en", "hi", "te"] = "en"
     src: str | None = Field(default=None, max_length=200)
 
@@ -601,6 +610,7 @@ async def start_draft(
             user_id=user_id,
             source=normalise_source(body.src, default=DIRECT),
             now=now,
+            rediscovery_opt_in=body.rediscovery_opt_in,
         )
         # SAME TRANSACTION as the draft row. This is the invariant that
         # CLAUDE.md hard constraint 3 requires, and it is why the consent
@@ -1097,6 +1107,23 @@ async def submit_draft(
                 applicant_id=applicant_id, company_id=company_id,
                 requisition_id=requisition_id, now=now,
             )
+            # PH5-E3, code review FIX 2. A FALSE value writes nothing at all —
+            # `record_opt_in` is only ever called when the draft actually
+            # stored a true flag. Same terms as the single-shot path
+            # (submit_application): `source="public_apply_form"`, so a
+            # withdrawn candidate is not silently re-granted through this
+            # door either — this one is no more authenticated than that one.
+            if row.get("rediscovery_opt_in"):
+                await rediscovery.record_opt_in(
+                    db, user_id=uuid.UUID(str(owner_user_id)), company_id=company_id,
+                    applicant_id=applicant_id, requisition_id=requisition_id,
+                    source="public_apply_form",
+                    meta=rediscovery.OptInMeta(
+                        ip_address=extract_client_ip(request),
+                        user_agent=extract_user_agent(request),
+                    ),
+                    now=now,
+                )
         await draft_store.mark_submitted(db, draft_id=row["id"], now=now)
         await db.commit()
     except IntegrityError:

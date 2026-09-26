@@ -17,17 +17,20 @@ not need Postgres.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
 from app import talent_pools as pools
+from app.config import settings
 from app.interviewer_scorecards import RequestMeta
 
 COMPANY = uuid.uuid4()
 ACTOR = uuid.uuid4()
 POOL = uuid.uuid4()
 META = RequestMeta(ip_address="127.0.0.1", user_agent="pytest")
+NOW = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
 
 
 class _NoDb:
@@ -132,6 +135,41 @@ def test_sanitise_match_reason_drops_malformed_input_rather_than_raising() -> No
     }
 
 
+# ---------------------------------------------------------------------------
+# _evidence_review_is_current — FIX 1 (code review): a review EXPIRES.
+# Boundary test in the test_freshness_bands_at_their_boundaries style
+# (tests/unit/test_ph5_e3_rediscovery_rules.py): call the real function at the
+# real boundary, never re-implement the day arithmetic here and assert it
+# against itself.
+# ---------------------------------------------------------------------------
+def test_a_never_reviewed_member_is_never_current() -> None:
+    assert pools._evidence_review_is_current(None, now=NOW) is False
+
+
+@pytest.mark.parametrize(
+    ("age_days", "expected"),
+    [
+        (0, True),
+        (365, True),   # rediscovery_review_valid_days, inclusive
+        (366, False),
+    ],
+)
+def test_a_review_is_current_only_within_its_validity_window(
+    age_days: int, expected: bool,
+) -> None:
+    assert settings.rediscovery_review_valid_days == 365  # the boundary this test pins
+    reviewed_at = NOW - timedelta(days=age_days)
+    assert pools._evidence_review_is_current(reviewed_at, now=NOW) is expected
+
+
+def test_review_validity_defaults_equal_to_stale_days_today_deliberately() -> None:
+    """Per the setting's own comment in app/config.py: a review lapses at the
+    same point the evidence it accepted would newly cross into "stale". Equal
+    today, but two separate settings -- this pins that they have NOT drifted,
+    not that they may never be given different values."""
+    assert settings.rediscovery_review_valid_days == settings.rediscovery_stale_days
+
+
 def test_match_reason_evidence_freshness_is_the_worst_band() -> None:
     sanitised = {"why": [{"freshness": "fresh"}, {"freshness": "stale"}]}
     assert pools._match_reason_evidence_freshness(sanitised) == "stale"
@@ -179,7 +217,13 @@ def test_talent_pools_module_writes_enrolments_only_through_enrol_applicant() ->
     import re
 
     src = inspect.getsource(pools)
-    for table in ("enrolments", "round_results", "interviewer_scorecards"):
+    # `stage_transitions` was missing from this tuple while the docstring above
+    # already claimed it was covered, so a change that advanced a candidate's
+    # stage on invite — the exact hiring-outcome write this design forbids
+    # structurally — would have passed here. Found in code review, 2026-09-26.
+    for table in (
+        "enrolments", "round_results", "stage_transitions", "interviewer_scorecards",
+    ):
         assert re.search(rf"(?i)\b(insert into|update|delete from)\s+{table}\b", src) is None, (
             f"talent_pools.py writes {table} directly"
         )

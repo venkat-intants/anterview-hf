@@ -326,7 +326,16 @@ export interface DraftFields {
 
 export async function startDraft(
   requisitionId: string,
-  input: { email: string; consentGranted: boolean; language?: 'en' | 'hi' | 'te'; src?: string | null },
+  input: {
+    email: string;
+    consentGranted: boolean;
+    /** PH5-E3. Carried on the draft so a tick made before "Save for later" is
+     *  not thrown away. The ledger row is written when the draft is SUBMITTED,
+     *  because the opt-in needs an applicant row to attach to. */
+    rediscoveryOptIn?: boolean;
+    language?: 'en' | 'hi' | 'te';
+    src?: string | null;
+  },
 ): Promise<DraftStarted> {
   const res = await fetch(`${API_BASE}/apply/${requisitionId}/draft`, {
     method: 'POST',
@@ -334,6 +343,7 @@ export async function startDraft(
     body: JSON.stringify({
       email: input.email,
       consent_granted: input.consentGranted,
+      rediscovery_opt_in: input.rediscoveryOptIn ?? false,
       language: input.language ?? 'en',
       src: input.src ?? null,
     }),

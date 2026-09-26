@@ -641,6 +641,66 @@ async def test_the_gate_reads_live_evidence_not_the_frozen_add_time_column(
 
 
 # ===========================================================================
+# FIX 1 (code review) — a review EXPIRES, closing the hole where one review in
+# 2026 cleared the gate forever while the evidence it accepted kept ageing.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_a_review_that_has_expired_no_longer_clears_the_gate(db: AsyncSession) -> None:
+    """Review the member, invite (succeeds), then move the clock past
+    ``rediscovery_review_valid_days`` by BACKDATING THE STORED TIMESTAMP —
+    never by re-deriving the bound in Python and asserting against it — and
+    the SAME member on the SAME requisition is refused again. Idempotency
+    does not mask this: ``invite_member`` re-checks the gate before it ever
+    reaches the idempotent ``enrol_applicant`` call."""
+    f = await _seed(db)
+    pool_id, member_id = await _seed_stale_member(db, f)
+    await pools.mark_evidence_reviewed(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id, member_id=member_id, meta=META,
+    )
+    first = await pools.invite_member(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id,
+        member_id=member_id, requisition_id=f.requisition, meta=META,
+    )
+    assert first["enrolment_id"]
+
+    await db.execute(
+        text("UPDATE talent_pool_members SET evidence_reviewed_at = :t WHERE id = :i"),
+        {"t": datetime.now(tz=UTC) - timedelta(days=settings.rediscovery_review_valid_days + 1),
+         "i": member_id},
+    )
+    with pytest.raises(pools.PoolError) as caught:
+        await pools.invite_member(
+            db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id,
+            member_id=member_id, requisition_id=f.requisition, meta=META,
+        )
+    assert caught.value.code == "stale_evidence_unreviewed"
+    assert caught.value.status_code == 422
+
+
+# ===========================================================================
+# FIX 4 (code review) — pin the refusal order: candidate-side-first (not
+# eligible, then stale evidence) beats a requisition-state refusal, so a
+# future reorder is a visible test failure rather than an accident.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_stale_evidence_is_refused_before_a_closed_requisition_is_even_considered(
+    db: AsyncSession,
+) -> None:
+    f = await _seed(db)
+    pool_id, member_id = await _seed_stale_member(db, f)
+    await db.execute(
+        text("UPDATE job_requisitions SET status = 'closed' WHERE id = :r"),
+        {"r": f.requisition},
+    )
+    with pytest.raises(pools.PoolError) as caught:
+        await pools.invite_member(
+            db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id,
+            member_id=member_id, requisition_id=f.requisition, meta=META,
+        )
+    assert caught.value.code == "stale_evidence_unreviewed"
+
+
+# ===========================================================================
 # The append-only trigger (criterion 16)
 # ===========================================================================
 @pytest.mark.asyncio

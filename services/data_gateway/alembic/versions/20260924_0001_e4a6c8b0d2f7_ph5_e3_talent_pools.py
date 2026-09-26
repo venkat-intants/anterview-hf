@@ -44,10 +44,18 @@ nothing to synchronise.
 
 ``ix_dpdp_consent_rediscovery_unique`` is keyed on
 ``(user_id, (evidence ->> 'company_id'))``: this consent is unique per
-(person, COMPANY), not per (person, type, purpose) — one candidate may hold
-applicant rows at several companies under one ``user_id`` after activating an
-account, and each company's opt-in is a separate decision. That index is also
-the one the eligibility query in ``app/rediscovery.py`` reads through.
+(person, COMPANY), not per (person, type, purpose) — each company's opt-in is
+its own decision, so one person may hold a separate active row per company
+they have dealt with. (``uq_applicants_user_id``, migration ``a7b8c9d0e1f2``,
+is a PLATFORM-WIDE unique index on ``applicants.user_id``, so today one
+account holds at most one applicant row anywhere — the per-company shape here
+is about the CONSENT, which is deliberately not limited to one company the
+way an applicant row currently is, and is the reason ``app/rediscovery.py``'s
+eligibility join checks ``evidence ->> 'company_id'`` rather than trusting
+``user_id`` alone. See that module's docstring and ``docs/DATA-FLOW.md``'s
+rediscovery-consent row for what changes if that index is ever relaxed.) That
+index is also the one the eligibility query in ``app/rediscovery.py`` reads
+through.
 
 The ``evidence ->> 'company_id'`` string comparison has no schema-level
 guarantee that the text is a well-formed, lowercase-hyphenated UUID; the
@@ -72,6 +80,18 @@ nothing currently depends on is a separate, reviewable change.
 Eligibility computes expiry from ``granted_at`` (see
 ``app/rediscovery.py::ELIGIBLE_CTE``), so a wrong or stale ``expires_at_iso``
 can never widen who is findable.
+
+ALSO HERE (code review FIX 2): ``application_drafts.rediscovery_opt_in``
+------------------------------------------------------------------------
+``boolean NOT NULL DEFAULT false``. The rediscovery checkbox was wired only to
+the single-shot ``POST /apply/{id}``; the draft path had nowhere to keep a
+tick and ``submit_draft`` never looked for one, so a candidate who ticked it
+and clicked "Save for later" had their consent silently dropped — worse than
+never offering the checkbox at all. This migration is unmerged and has never
+been deployed, so the column joins it here rather than opening a second
+migration for one boolean. ``POST /apply/{id}/draft`` stores it at the first
+save; ``submit_draft`` reads it back and calls ``app/rediscovery.py
+::record_opt_in`` on exactly the terms the single-shot path already uses.
 
 WHAT DOES NOT LIVE HERE
   * The erasure-inventory declarations for these three tables
@@ -333,8 +353,23 @@ def upgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ix_dpdp_consent_rediscovery_unique")
     op.execute(_REDISCOVERY_UNIQUE)
 
+    # ------------------------------------------------------------------
+    # application_drafts: one new column (code review FIX 2). See the
+    # module docstring's "ALSO HERE" section — this migration is unmerged,
+    # so the column joins it here rather than opening a second migration.
+    # ------------------------------------------------------------------
+    op.add_column(
+        "application_drafts",
+        sa.Column(
+            "rediscovery_opt_in", sa.Boolean(), nullable=False,
+            server_default=sa.text("false"),
+        ),
+    )
+
 
 def downgrade() -> None:
+    op.drop_column("application_drafts", "rediscovery_opt_in")
+
     op.execute("DROP INDEX IF EXISTS ix_dpdp_consent_rediscovery_unique")
     op.execute("DROP INDEX IF EXISTS ix_dpdp_consent_active_unique")
     # Back to a5d7f9b1c3e8's shape. A rediscovery consent row that still reads

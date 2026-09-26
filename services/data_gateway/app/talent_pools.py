@@ -47,11 +47,20 @@ CRITERION 14 IS A CONTROL, NOT A SENTENCE (design §6.6 point 3)
 (``rediscovery.evidence_freshness_for_applicant``) — never from
 ``talent_pool_members.evidence_freshness``, which is the band AS AT ADD TIME
 and would let a member added fresh sail through unreviewed a year later.
-Anything other than ``fresh`` with nobody having reviewed the evidence refuses
-with 422 ``stale_evidence_unreviewed`` unless the caller explicitly
-acknowledges — two ways through, and both leave a record: a review stamps
-``evidence_reviewed_at``/``_by``; an acknowledgement is written onto the
+Anything other than ``fresh`` with nobody having CURRENTLY reviewed the
+evidence refuses with 422 ``stale_evidence_unreviewed`` unless the caller
+explicitly acknowledges — two ways through, and both leave a record: a review
+stamps ``evidence_reviewed_at``/``_by``; an acknowledgement is written onto the
 ``member_invited`` event itself, facts only.
+
+A REVIEW ITSELF EXPIRES (code review FIX 1). ``evidence_reviewed_at`` never
+clearing was the same defect class this section already refuses two
+paragraphs up, applied to the review instead of the evidence: a stored fact
+about freshness that itself goes stale. ``_evidence_review_is_current`` bounds
+a review's validity at ``rediscovery_review_valid_days`` (365 by default —
+deliberately equal to ``rediscovery_stale_days`` today, but its own setting),
+so a two-year-old "Mark evidence reviewed" click no longer clears the gate on
+its own.
 
 MATCH_REASON IS SANITISED ON THE WAY IN, NOT ONLY ON THE WAY OUT
 -------------------------------------------------------------------
@@ -165,6 +174,27 @@ def _sanitise_match_reason(raw: dict[str, Any] | None) -> dict[str, Any] | None:
             if isinstance(query_terms, list) else []
         ),
     }
+
+
+def _evidence_review_is_current(reviewed_at: datetime | None, *, now: datetime) -> bool:
+    """Whether a past ``mark_evidence_reviewed`` action still clears the
+    criterion-14 gate — code review FIX 1.
+
+    A review is not forever: it records that a named person accepted the
+    evidence AS IT STOOD on that day, and the evidence keeps ageing underneath
+    it. Without an expiry, ``already_reviewed = row["evidence_reviewed_at"] is
+    not None`` never becomes false again, so one review in 2026 would clear
+    the gate for the rest of this member's life while the evidence it accepted
+    goes on ageing — exactly the failure mode ``evidence_freshness`` (the
+    frozen add-time column, §6.5) is deliberately NOT trusted for the gate,
+    applied a second time to the review itself.
+
+    ``settings.rediscovery_review_valid_days`` is the bound. ``None`` (never
+    reviewed) is never current.
+    """
+    if reviewed_at is None:
+        return False
+    return (now - reviewed_at).days <= int(settings.rediscovery_review_valid_days)
 
 
 def _match_reason_evidence_freshness(sanitised: dict[str, Any] | None) -> str | None:
@@ -727,11 +757,14 @@ async def invite_member(
     — never the frozen ``evidence_freshness`` column, which is the band AS AT
     ADD TIME and would let a member added fresh sail through unreviewed a year
     later). When that band is anything other than ``fresh`` AND nobody has
-    marked the evidence reviewed, the invite refuses with 422
-    ``stale_evidence_unreviewed`` unless the caller explicitly acknowledges —
-    two legitimate ways through (mark it reviewed, or acknowledge), and both
-    leave a record: a review stamps ``evidence_reviewed_at``/``_by``: an
-    acknowledgement is written onto the ``member_invited`` event itself.
+    CURRENTLY marked the evidence reviewed — a review itself expires after
+    ``rediscovery_review_valid_days`` (FIX 1, ``_evidence_review_is_current``),
+    for the same reason the frozen column above is not trusted — the invite
+    refuses with 422 ``stale_evidence_unreviewed`` unless the caller explicitly
+    acknowledges — two legitimate ways through (mark it reviewed, or
+    acknowledge), and both leave a record: a review stamps
+    ``evidence_reviewed_at``/``_by``: an acknowledgement is written onto the
+    ``member_invited`` event itself.
     """
     row = await _member_row(db, company_id=company_id, pool_id=pool_id, member_id=member_id)
     if row is None:
@@ -747,8 +780,14 @@ async def invite_member(
     band = await rediscovery.evidence_freshness_for_applicant(
         db, company_id=company_id, applicant_id=applicant_id, viewer_user_id=actor,
     )
-    already_reviewed = row["evidence_reviewed_at"] is not None
-    if band != "fresh" and not already_reviewed and not acknowledged_stale:
+    # FIX 1 (code review): a review EXPIRES — see _evidence_review_is_current.
+    # A review older than rediscovery_review_valid_days no longer clears the
+    # gate, so a member reviewed once years ago is treated exactly like one
+    # never reviewed at all: refused unless acknowledged.
+    review_is_current = _evidence_review_is_current(
+        row["evidence_reviewed_at"], now=datetime.now(tz=UTC),
+    )
+    if band != "fresh" and not review_is_current and not acknowledged_stale:
         raise PoolError(
             422, "stale_evidence_unreviewed",
             "This candidate's evidence has not been reviewed recently. Mark it "

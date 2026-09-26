@@ -218,12 +218,30 @@ def _hash_value(raw: str) -> str:
 #: The eligible universe for one company. Parameters: ``:company_id`` (from the
 #: authenticated session, NEVER from request input) and ``:months``.
 #:
-#: WHY THE COMPANY CHECK IS IN THE JOIN AND NOT A LATER WHERE. After activating
-#: an account a candidate may hold applicant rows at several companies under
-#: ONE ``user_id`` (``apply_activation.py::_link_to_existing``). Without
-#: ``l.evidence ->> 'company_id' = a.company_id::text``, company B's search
-#: would match B's applicant row against the consent given to company A. That
-#: is a real disclosure, not a tidiness point.
+#: WHY THE COMPANY CHECK IS IN THE JOIN AND NOT A LATER WHERE. Without
+#: ``l.evidence ->> 'company_id' = a.company_id::text``, ``l.user_id =
+#: a.user_id`` alone would match ANY of that person's rediscovery consents
+#: against ANY of their applicant rows, regardless of which company each names.
+#:
+#: TODAY that cannot cross companies: ``uq_applicants_user_id`` (migration
+#: ``a7b8c9d0e1f2``, "one guest user per applicant") is a PLATFORM-WIDE unique
+#: index on ``applicants.user_id``, so one account holds at most one applicant
+#: row anywhere on the platform — "a candidate may hold applicant rows at
+#: several companies under one user_id after activation" does not currently
+#: happen (security review, confirmed against Postgres; the disclosure IS
+#: reachable the other way round instead — one identity whose single applicant
+#: row is at company B and whose consent names company A — which is what
+#: ``test_company_b_never_sees_a_candidate_whose_consent_names_company_a``
+#: actually builds).
+#:
+#: The predicate is required either way and costs one indexed join column, so
+#: it stays exactly as it is. What it defends against today is a state the
+#: schema currently forecloses; what it will go on defending the moment
+#: ``uq_applicants_user_id`` is ever relaxed to per-company (a plausible change
+#: for a multi-tenant ATS — "one candidate, one company, ever" is an odd
+#: platform-wide limit) is the scenario this comment used to describe as
+#: already real. See ``docs/DATA-FLOW.md``'s rediscovery-consent row for the
+#: dependency note aimed at whoever makes that change.
 #:
 #: ``a.user_id IS NULL`` drops out for free — the join cannot match — which is
 #: exactly the "a bulk-uploaded CV is not rediscoverable until its candidate
@@ -246,9 +264,14 @@ def _hash_value(raw: str) -> str:
 #: ``consent_withdrawn``, immediately rather than at a boundary.
 ELIGIBLE_CTE = (
     # B608 is suppressed on the next line because this is a CONSTANT: every
-    # varying value (:company_id, :months) is a bound parameter, and nothing is
-    # interpolated into it here or at any call site — which the tenancy DB test
-    # asserts on the statement Postgres actually received.
+    # varying value (:company_id, :months, :ct, :pu) is a bound parameter, and
+    # nothing is interpolated into it here or at any call site — which the
+    # tenancy DB test asserts on the statement Postgres actually received.
+    # ``:ct``/``:pu`` are always REDISCOVERY_CONSENT_TYPE/REDISCOVERY_PURPOSE —
+    # this module's own fixed literals, never caller input — bound rather than
+    # spliced in (code review FIX 3) so this is not the interpolation habit a
+    # future reader copies onto something that DOES vary; every call site below
+    # supplies them.
     "WITH eligible AS ("  # nosec B608
     " SELECT a.id, a.company_id, a.user_id, a.full_name, a.resume_text, a.embedding,"
     "        a.years_experience, a.current_title, a.current_company, a.updated_at,"
@@ -258,8 +281,8 @@ ELIGIBLE_CTE = (
     "   JOIN companies c ON c.id = a.company_id AND c.deleted_at IS NULL"
     "   JOIN dpdp_consent_ledger l"
     "     ON l.user_id = a.user_id"
-    f"    AND l.consent_type = '{REDISCOVERY_CONSENT_TYPE}'"
-    f"    AND l.purpose = '{REDISCOVERY_PURPOSE}'"
+    "    AND l.consent_type = :ct"
+    "    AND l.purpose = :pu"
     "    AND l.granted"
     "    AND l.revoked_at IS NULL"
     "    AND l.evidence ->> 'company_id' = a.company_id::text"
@@ -1018,7 +1041,8 @@ async def universe_counts(
     months = int(settings.rediscovery_consent_months if months is None else months)
     eligible = await db.scalar(
         text(ELIGIBLE_CTE + " SELECT count(*) FROM eligible"),  # nosec B608
-        {"company_id": company_id, "months": months},
+        {"company_id": company_id, "months": months,
+         "ct": REDISCOVERY_CONSENT_TYPE, "pu": REDISCOVERY_PURPOSE},
     )
     total = await db.scalar(
         text(
@@ -1079,7 +1103,8 @@ async def eligibility_for_applicants(
                 + " SELECT id, opted_in_at, opt_in_expires_at FROM eligible"  # nosec B608
                 "   WHERE id = ANY(CAST(:ids AS uuid[]))"
             ),
-            {"company_id": company_id, "months": months, "ids": ids},
+            {"company_id": company_id, "months": months, "ids": ids,
+             "ct": REDISCOVERY_CONSENT_TYPE, "pu": REDISCOVERY_PURPOSE},
         )
     ).mappings().all()
     out: dict[uuid.UUID, dict[str, Any]] = {
@@ -1644,6 +1669,7 @@ async def search(
     params: dict[str, Any] = {
         "company_id": company_id, "months": months, "q": query,
         "limit": int(settings.rediscovery_search_limit),
+        "ct": REDISCOVERY_CONSENT_TYPE, "pu": REDISCOVERY_PURPOSE,
     }
     if qvec:
         params["qvec"] = to_pgvector_literal(qvec)
@@ -1663,9 +1689,10 @@ async def search(
     # Every fragment concatenated below is a FIXED expression built from this
     # module's own constants and the two hand-written expressions above; the
     # only values that vary per call (:company_id, :months, :q, :qvec, :limit)
-    # are bound parameters. Tenancy and eligibility are IN this one statement by
-    # construction — the app/corpus.py::search_corpus discipline, and the reason
-    # the one B608 suppression is anchored to the first line.
+    # are bound parameters — as are :ct/:pu, which never vary but are bound
+    # rather than spliced in (FIX 3). Tenancy and eligibility are IN this one
+    # statement by construction — the app/corpus.py::search_corpus discipline,
+    # and the reason the one B608 suppression is anchored to the first line.
     ranked = (
         await db.execute(
             text(
@@ -1692,13 +1719,15 @@ async def search(
         "company_id": company_id, "months": months, "q": query,
         "ids": [str(i) for i in ids], "words": query_terms(query),
         "hl": _HEADLINE_OPTIONS, "cap": SNIPPET_CHARS,
+        "ct": REDISCOVERY_CONSENT_TYPE, "pu": REDISCOVERY_PURPOSE,
     }
     rows = (
         await db.execute(
             text(
                 ELIGIBLE_CTE
                 # nosec B608: the only interpolation is lexical_expr, this
-                # module's own constant expression; :q/:ids/:words are bound.
+                # module's own constant expression; :q/:ids/:words/:ct/:pu are
+                # bound.
                 + " SELECT e.id, e.full_name, e.current_title, e.current_company,"  # nosec B608
                 "        e.years_experience, e.updated_at, e.opted_in_at, e.opt_in_expires_at,"
                 "        (SELECT coalesce(array_agg(w ORDER BY w), ARRAY[]::text[])"

@@ -647,11 +647,17 @@ export default function PublicApply(): JSX.Element {
   // PH3-B4c. Starting a draft is what records consent — it is the first moment
   // this person's email is stored — so it carries the checkbox's value rather
   // than assuming it, and the server refuses without it.
+  // PH5-E3: the rediscovery tick travels with the draft too. It sits directly
+  // above "Save for later", so leaving it off this path meant a candidate who
+  // ticked it and saved would have that choice silently discarded — and no
+  // screen would ever say so. A dropped consent is worse than an absent
+  // feature. Found in code review, 2026-09-26.
   const saveLater = useMutation({
     mutationFn: () =>
       startDraft(requisitionId, {
         email: email.trim(),
         consentGranted: consent,
+        rediscoveryOptIn: rediscoveryConsent,
         language,
         src: posting.data?.source,
       }),

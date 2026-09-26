@@ -50,9 +50,11 @@ const POSTING: Posting = {
 
 const getPosting = vi.fn();
 const submitApplication = vi.fn();
+const startDraft = vi.fn();
 vi.mock('../api/publicApply', () => ({
   getPosting: (...a: unknown[]) => getPosting(...a) as unknown,
   submitApplication: (...a: unknown[]) => submitApplication(...a) as unknown,
+  startDraft: (...a: unknown[]) => startDraft(...a) as unknown,
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -141,6 +143,10 @@ beforeEach(() => {
     full_name: 'Priya Sharma',
     already_applied: false,
     message: 'Thanks — your application is in. We will be in touch by email.',
+  });
+  startDraft.mockResolvedValue({
+    resume_token: 'tok-1',
+    draft: { requisition_id: 'req-1', title: 'Backend Engineer' },
   });
 });
 
@@ -274,6 +280,42 @@ describe('PublicApply — the rediscovery opt-in is independent of submission', 
 
     await fillToReview(user);
     expect(rediscoveryCheckbox()).toHaveProperty('checked', false);
+  });
+
+  // The checkbox sits directly above "Save and finish later". Before this was
+  // wired, a candidate who ticked it and saved had the tick silently thrown
+  // away: the draft carried no such field, and no screen ever said so. A
+  // dropped consent is worse than an absent feature, so both exits from this
+  // form carry the choice. Found in code review, 2026-09-26.
+  it('carries the tick onto a saved draft rather than discarding it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    // Saving a draft is what records the application consent, so the server
+    // refuses without it and the button stays disabled — tick it first.
+    await user.click(consentCheckbox());
+    await user.click(rediscoveryCheckbox());
+    await user.click(screen.getByRole('button', { name: /save and finish later/i }));
+
+    await waitFor(() => expect(startDraft).toHaveBeenCalledTimes(1));
+    const [, payload] = startDraft.mock.calls[0] as [string, { rediscoveryOptIn?: boolean }];
+    expect(payload.rediscoveryOptIn).toBe(true);
+  });
+
+  it('saves a draft with the opt-in false when the box was left alone', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    await user.click(consentCheckbox());
+    await user.click(screen.getByRole('button', { name: /save and finish later/i }));
+
+    await waitFor(() => expect(startDraft).toHaveBeenCalledTimes(1));
+    const [, payload] = startDraft.mock.calls[0] as [string, { rediscoveryOptIn?: boolean }];
+    expect(payload.rediscoveryOptIn).toBe(false);
   });
 
   it('does NOT gate the submit button — application consent alone is enough', async () => {

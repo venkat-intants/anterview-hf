@@ -354,6 +354,20 @@ class Settings(BaseSettings):
     # mode the indicator exists to prevent.
     rediscovery_fresh_days: int = 180
     rediscovery_stale_days: int = 365
+    # Criterion 14 (code review, FIX 1): how long a "mark evidence reviewed"
+    # action keeps clearing the invite gate. Without a bound, one review in
+    # 2026 clears the gate forever while the evidence it accepted keeps
+    # ageing underneath it — the same defect class the frozen
+    # `evidence_freshness` column exists to avoid two settings above, applied
+    # this time to the review itself.
+    #
+    # Equal to `rediscovery_stale_days` today DELIBERATELY: a review lapses at
+    # the same point the evidence it accepted would newly cross into "stale".
+    # It is its own setting rather than a reference to that one because a
+    # review's validity and evidence staleness are different concepts that
+    # only happen to share a number — a future change to one must not
+    # silently move the other.
+    rediscovery_review_valid_days: int = 365
     # The cap on the evidence boost — evidence informs the ORDER, it cannot
     # invent a match out of an irrelevant CV. Unvalidated (PH5 Wave 4 design
     # §11.8): shipped as a named constant with a change note, to be revisited

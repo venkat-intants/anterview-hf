@@ -90,6 +90,13 @@ type User = ReturnType<typeof userEvent.setup>;
 const cont = (user: User) => user.click(screen.getByRole('button', { name: 'Continue' }));
 const contButton = () => screen.getByRole<HTMLButtonElement>('button', { name: 'Continue' });
 
+// PH5-E3 — the review step now carries a SECOND checkbox (the independent
+// rediscovery opt-in, below the application consent), so "the only checkbox
+// on the review step" is no longer true. Scoped by accessible name, on the
+// same precedent as PublicApply.test.tsx's own `consentCheckbox` helper.
+const consentCheckbox = () =>
+  screen.getByRole<HTMLInputElement>('checkbox', { name: /may store my name, email and CV/i });
+
 /** Walk to the questions step. */
 async function toQuestions(user: User): Promise<void> {
   await user.type(screen.getByLabelText('Your name'), 'Priya Sharma');
@@ -266,9 +273,10 @@ describe('the answers reach the server', () => {
     await user.click(screen.getByText('Yes'));
     await user.click(screen.getByText('Python'));
     await cont(user);
-    // The consent box, which is the only checkbox on the review step — the
-    // multi-choice ones belong to the questions step and are gone by now.
-    await user.click(screen.getByRole('checkbox'));
+    // The application-consent box specifically — the multi-choice checkboxes
+    // belong to the questions step and are gone by now, and the rediscovery
+    // opt-in (the other checkbox on this step) is left untouched on purpose.
+    await user.click(consentCheckbox());
     await user.click(screen.getByRole('button', { name: 'Send application' }));
 
     await waitFor(() =>

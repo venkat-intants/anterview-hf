@@ -124,6 +124,16 @@ export interface ApplicationInput {
   resume: File;
   /** The applicant's own act. Never defaulted. */
   consentGranted: boolean;
+  /**
+   * PH5-E3 (D5-1) — a SECOND, independent opt-in: may this company search
+   * this CV again for a FUTURE opening. Optional, defaults false server-side,
+   * and never derived from `consentGranted` — the two checkboxes on the form
+   * are unticked independently, and bundling them here would silently
+   * recreate the non-optional consent D5-1 rules out. Omitted (not `false`)
+   * when untouched, so "no field" and "declined" read the same way to the
+   * server, which is the contract: "a false value writes nothing at all."
+   */
+  rediscoveryOptIn?: boolean;
   /** The language of the emails about this application. English when omitted. */
   language?: 'en' | 'hi' | 'te';
   /**
@@ -160,6 +170,8 @@ export async function submitApplication(
   form.append('email', input.email);
   form.append('resume', input.resume);
   form.append('consent_granted', String(input.consentGranted));
+  // Only sent when ticked — see the field's own doc comment on ApplicationInput.
+  if (input.rediscoveryOptIn) form.append('rediscovery_opt_in', 'true');
   if (input.language) form.append('language', input.language);
   // The normalised channel goes back as `src`; the server normalises again,
   // which is why sending the already-normalised value is safe and sending
@@ -314,7 +326,16 @@ export interface DraftFields {
 
 export async function startDraft(
   requisitionId: string,
-  input: { email: string; consentGranted: boolean; language?: 'en' | 'hi' | 'te'; src?: string | null },
+  input: {
+    email: string;
+    consentGranted: boolean;
+    /** PH5-E3. Carried on the draft so a tick made before "Save for later" is
+     *  not thrown away. The ledger row is written when the draft is SUBMITTED,
+     *  because the opt-in needs an applicant row to attach to. */
+    rediscoveryOptIn?: boolean;
+    language?: 'en' | 'hi' | 'te';
+    src?: string | null;
+  },
 ): Promise<DraftStarted> {
   const res = await fetch(`${API_BASE}/apply/${requisitionId}/draft`, {
     method: 'POST',
@@ -322,6 +343,7 @@ export async function startDraft(
     body: JSON.stringify({
       email: input.email,
       consent_granted: input.consentGranted,
+      rediscovery_opt_in: input.rediscoveryOptIn ?? false,
       language: input.language ?? 'en',
       src: input.src ?? null,
     }),

@@ -147,6 +147,7 @@ async def start(
     user_id: uuid.UUID,
     source: tuple[str, str | None] = ("direct", None),
     now: datetime | None = None,
+    rediscovery_opt_in: bool = False,
 ) -> tuple[dict[str, Any], str]:
     """Create a draft for this opening. Caller commits.
 
@@ -158,6 +159,16 @@ async def start(
     because this function is the last place before a row carrying a person's
     email is written. Returns ``(draft, raw_token)``; the raw token is returned
     once and never stored.
+
+    ``rediscovery_opt_in`` (PH5-E3, code review FIX 2) is stored, never acted
+    on here: a false value is the default and writes nothing more than the
+    column says. ``submit_draft`` is what reads it back and calls
+    ``rediscovery.record_opt_in`` — the same ``public_apply_form`` writer the
+    single-shot endpoint already uses — because a draft is not an application
+    and this consent is about being considered for a FUTURE opening, not about
+    storing the draft itself. Before this the checkbox was wired only to the
+    single-shot endpoint, so ticking it here and clicking "Save for later" had
+    silently recorded nothing at all.
 
     ALWAYS CREATES. ``user_id`` must be an identity the caller has just minted,
     never one resolved from user input — see the comment in the body.
@@ -189,12 +200,14 @@ async def start(
         text(
             "INSERT INTO application_drafts"
             " (id, company_id, requisition_id, user_id, token_hash, email,"
-            "  source, source_detail, status, expires_at, created_at, updated_at)"
-            " VALUES (:i,:c,:r,:u,:h,:e,:src,:srcd,'draft',:exp,:n,:n)"
+            "  source, source_detail, status, expires_at, created_at, updated_at,"
+            "  rediscovery_opt_in)"
+            " VALUES (:i,:c,:r,:u,:h,:e,:src,:srcd,'draft',:exp,:n,:n,:redis)"
         ),
         {"i": draft_id, "c": company_id, "r": requisition_id, "u": user_id,
          "h": token_hash, "e": address, "src": channel, "srcd": channel_detail,
-         "exp": now + timedelta(days=DRAFT_TTL_DAYS), "n": now},
+         "exp": now + timedelta(days=DRAFT_TTL_DAYS), "n": now,
+         "redis": bool(rediscovery_opt_in)},
     )
     log.info(
         "application_draft.started",
@@ -211,6 +224,7 @@ async def start(
             "created_at": now, "updated_at": now,
             **dict.fromkeys(DRAFT_FIELDS),
             "language": "en",
+            "rediscovery_opt_in": bool(rediscovery_opt_in),
         },
         raw,
     )

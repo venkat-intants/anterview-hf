@@ -428,6 +428,28 @@ def test_panel_current_scorecard_sql_matches_the_derivation_rule() -> None:
 # not be; the outcome module and the band SQL never reference AI-scored or
 # purged-at-90-days tables.
 # ---------------------------------------------------------------------------
+def _code_without_prose(path: pathlib.Path) -> str:
+    """A module's code and SQL, with comments and docstrings removed.
+
+    A plain grep is enough for ``calibration_core``/``panel_workload``, which
+    never discuss the tables they must not read. It is NOT enough for
+    ``app/rediscovery.py``, whose docstring deliberately LISTS every excluded
+    source with the reason for excluding it (the project's documentation rule):
+    a raw grep there fails on the explanation instead of on the code, which is a
+    guard that can never pass and therefore proves nothing.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (
+            isinstance(body, list)
+            and body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body[0] = ast.Pass()
+    return ast.unparse(ast.fix_missing_locations(tree)).lower()
 def test_hire_checkins_is_never_referenced_outside_its_approved_readers() -> None:
     forbidden_dirs = [
         pathlib.Path(__file__).resolve().parents[3] / "feedback_billing" / "app",
@@ -447,6 +469,17 @@ def test_hire_checkins_is_never_referenced_outside_its_approved_readers() -> Non
     if admin_analytics.exists():
         for path in admin_analytics.rglob("*.py"):
             assert "hire_checkins" not in path.read_text(encoding="utf-8"), path
+    # PH5-E3 joins the list, as a FILE rather than a directory: a rediscovery
+    # match must not know that somebody left their last job. `hire_checkins` is
+    # aggregate-only and OMITTED_ALWAYS in the evidence graph, and a
+    # forward-looking "should we contact this person again?" surface is exactly
+    # where that boundary would be crossed by accident.
+    forbidden_files = [APP / "rediscovery.py", APP / "routers" / "hr_rediscovery.py"]
+    for path in forbidden_files:
+        assert path.exists(), f"{path} is gone; this guard would otherwise scan nothing"
+        assert "hire_checkins" not in _code_without_prose(path), (
+            f"{path} references hire_checkins"
+        )
 
 
 def test_calibration_and_outcome_modules_never_reference_ai_scored_tables() -> None:
@@ -454,7 +487,16 @@ def test_calibration_and_outcome_modules_never_reference_ai_scored_tables() -> N
     only HUMAN interviewer_scorecards feed calibration or the outcome
     measure. Checked by table name, on calibration_core, panel_workload and
     the band SQL/measure themselves."""
-    forbidden = ("round_results", "ats_", "exam_attempts")
+    # PH5-E3 added the last five. None of them appeared in these two modules
+    # before either — the point is that "an unreviewed automated suspicion, a
+    # screening answer, or a rejection reason written for another opening must
+    # not become an input" is now stated for E4 as well as for rediscovery,
+    # instead of being true only by luck.
+    forbidden = (
+        "round_results", "ats_", "exam_attempts",
+        "code_similarity_signals", "code_quality_reports", "code_fingerprints",
+        "application_answers", "stage_transitions",
+    )
     for module in ("calibration_core.py", "panel_workload.py"):
         src = (APP / module).read_text(encoding="utf-8").lower()
         for name in forbidden:
@@ -475,6 +517,65 @@ def test_calibration_and_outcome_modules_never_reference_ai_scored_tables() -> N
     # The measure is built from interviewer_scorecard_scores/hsc, never
     # sessions or round_results.
     assert "hsc" in measure_sql or "mean_score" in measure_sql
+
+
+def test_rediscovery_never_reads_ai_scored_or_unreviewed_evidence() -> None:
+    """PH5-E3's structural exclusions, EXTENDING this file's scan rather than
+    repeating it somewhere else.
+
+    Rediscovery's forbidden set is not E4's: it legitimately reads
+    ``round_results`` and ``exam_attempts`` (a number against an anonymised
+    applicant is the company's own assessment record), but it must never reach
+
+      * the AI interview's SCORE (``scorecards`` via ``sessions``) — purged at
+        90 days, so it exists for recent candidates and is absent for older
+        ones, and using it would rank recent candidates higher for a reason
+        that is not about them;
+      * coding similarity / quality / fingerprint / integrity findings —
+        automated and unreviewed by design, which PH4-D3 refused to let near a
+        decision;
+      * ``application_answers`` — prose written for one specific opening;
+      * ``stage_transitions`` — the decision rationale (AR-5: NOT redacted on
+        erasure), a negative human judgement about a DIFFERENT job;
+      * ``interviewer_notes`` and ``candidate_accommodations`` —
+        ``OMITTED_ALWAYS`` in the evidence graph;
+      * ``applicants.ats_*`` — scored against one specific JD, and it survives
+        erasure.
+
+    PH5 Wave 4 EXTENDS this same scan, rather than copying it, to the pools
+    half of E3 (``app/talent_pools.py`` and ``app/routers/hr_pools.py``): a
+    pool member's row is never an occasion to go read an AI interview's score,
+    a rejection reason written for a different opening, or any of the other
+    excluded sources — the module reads and writes ``talent_pool_members``/
+    ``talent_pool_events`` and asks ``rediscovery.eligibility_for_applicants``
+    for eligibility, and nothing else.
+    """
+    forbidden = (
+        "code_similarity_signals", "code_quality_reports", "code_fingerprints",
+        "code_integrity_findings", "application_answers", "stage_transitions",
+        "interviewer_notes", "candidate_accommodations", "hire_checkins",
+        "ats_overall", "ats_breakdown", "ats_summary", "graded_snapshot",
+    )
+    # The sentinel per module is a string the module certainly DOES contain, so
+    # a scan that silently read nothing (a moved file, a broken parse) fails
+    # here rather than passing vacuously — the Wave 3 lesson, where a structural
+    # guard inspected zero functions and stayed green.
+    for module, sentinel in (
+        ("rediscovery.py", "applicants"),          # its SQL
+        ("routers/hr_rediscovery.py", "search"),   # its route
+        ("talent_pools.py", "talent_pool_members"),        # its SQL
+        ("routers/hr_pools.py", "applicant_id"),           # its routes
+    ):
+        path = APP / module
+        assert path.exists(), f"{module} is gone; this guard would scan nothing"
+        src = _code_without_prose(path)
+        assert sentinel in src, f"{module} has no {sentinel!r} — has the scan gone blind?"
+        for name in forbidden:
+            assert name not in src, f"{module} references {name}"
+        assert re.search(r"\bfrom sessions\b", src) is None, module
+        assert re.search(r"\bjoin sessions\b", src) is None, module
+        assert re.search(r"\bfrom scorecards\b", src) is None, module
+        assert re.search(r"\bjoin scorecards\b", src) is None, module
 
 
 def test_hire_interviewer_score_measure_reads_only_human_scorecards() -> None:

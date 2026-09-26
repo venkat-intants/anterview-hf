@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import Update
+from sqlalchemy.sql.elements import TextClause
 
 from app.models import DpdpConsent
 from app.retention import CONSENT_WITHDRAWN_STATUS
@@ -31,19 +32,43 @@ _USER_ID = str(uuid.uuid4())
 
 
 class _FakeDb:
-    """Answers the two selects the revoke path makes, and records the UPDATE."""
+    """Answers the selects the revoke path makes, and records the UPDATE.
 
-    def __init__(self, *, active_types: set[str], sessions_updated: int) -> None:
+    PH5-E3 added a third statement shape: a raw ``text()`` UPDATE ... RETURNING
+    that revokes every company's talent-pool rediscovery opt-in in one go
+    (``app/rediscovery.py::revoke_opt_ins``), called WITH bound parameters —
+    which is why ``execute`` now takes them. It is answered from
+    ``rediscovery_rows`` (a list of ``(consent_id, company_id)`` pairs) so a test
+    can decide whether this person had any.
+    """
+
+    def __init__(
+        self,
+        *,
+        active_types: set[str],
+        sessions_updated: int,
+        rediscovery_rows: list[tuple[str, str]] | None = None,
+    ) -> None:
         self.active_types = active_types
         self.sessions_updated = sessions_updated
+        self.rediscovery_rows = rediscovery_rows or []
         self.updates: list[Update] = []
+        self.rediscovery_statements: list[str] = []
         self.committed = False
 
-    async def execute(self, stmt: Any) -> Any:
+    async def execute(self, stmt: Any, params: Any = None) -> Any:
         result = MagicMock()
         if isinstance(stmt, Update):
             self.updates.append(stmt)
             result.rowcount = self.sessions_updated
+            return result
+        if isinstance(stmt, TextClause):
+            self.rediscovery_statements.append(str(stmt))
+            now = datetime.now(UTC)
+            result.mappings.return_value.all.return_value = [
+                {"id": consent_id, "company_id": company_id, "revoked_at": now}
+                for consent_id, company_id in self.rediscovery_rows
+            ]
             return result
         # A _find_active_consent select. Which type it asks about is carried in
         # the compiled parameters, so answer per type rather than unconditionally.
@@ -165,6 +190,41 @@ async def test_revoking_only_interview_consents_tells_no_hiring_team(
     await consent_router.revoke_consent(current_user=_user(), db=db, request=_request())  # type: ignore[arg-type]
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_withdrawal_revokes_every_companys_rediscovery_opt_in() -> None:
+    """PH5-E3. DPDP §11 is "at any time WITHOUT RESTRICTION", and a rediscovery
+    opt-in is one row per COMPANY — so a global withdrawal has to take all of
+    them, in one statement, not "the" active row. The response names each one, so
+    the candidate is told what was turned off rather than just that something
+    was."""
+    rows = [(str(uuid.uuid4()), str(uuid.uuid4())), (str(uuid.uuid4()), str(uuid.uuid4()))]
+    db = _FakeDb(active_types=set(), sessions_updated=0, rediscovery_rows=rows)
+
+    resp = await consent_router.revoke_consent(current_user=_user(), db=db, request=MagicMock())  # type: ignore[arg-type]
+
+    assert resp.revoked is True
+    revoked = [i for i in resp.items if i.consent_type == "talent_pool_rediscovery"]
+    assert len(revoked) == 2
+    assert {i.consent_id for i in revoked} == {consent_id for consent_id, _ in rows}
+    # One statement, no company filter — that is what "every company" means here.
+    assert len(db.rediscovery_statements) == 1
+    assert "evidence ->> 'company_id' = :cid" not in db.rediscovery_statements[0]
+    assert db.committed is True
+
+
+@pytest.mark.asyncio
+async def test_a_rediscovery_opt_in_alone_is_enough_to_not_404() -> None:
+    """Before E3 this route had no notion of the type, so a candidate whose ONLY
+    live consent was a rediscovery opt-in got a 404 from the route that is
+    supposed to be their withdrawal door."""
+    db = _FakeDb(
+        active_types=set(), sessions_updated=0,
+        rediscovery_rows=[(str(uuid.uuid4()), str(uuid.uuid4()))],
+    )
+    resp = await consent_router.revoke_consent(current_user=_user(), db=db, request=MagicMock())  # type: ignore[arg-type]
+    assert [i.consent_type for i in resp.items] == ["talent_pool_rediscovery"]
 
 
 @pytest.mark.asyncio

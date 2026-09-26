@@ -15,9 +15,13 @@
 // DELETE is a data principal destroying their own application because the copy
 // read as something softer. The blanket caveat above is a whole-bundle,
 // pre-launch ask - too slow and too coarse for these. `resumeApply.delete*`,
-// `resumeApply.keepIt`, `resumeApply.deletedDesc` and the ConsentModal keys
-// want a targeted native-speaker pass, and want it BEFORE they are
-// candidate-facing rather than before launch.
+// `resumeApply.keepIt`, `resumeApply.deletedDesc`, the ConsentModal keys,
+// `apply.rediscoveryConsent` and every `rediscovery.*` key (PH5-E3 — the
+// rediscovery opt-in is a DPDP §6(1) consent in its own right, separate from
+// the application consent above it) want a targeted native-speaker pass, and
+// want it BEFORE they are candidate-facing rather than before launch. HI/TE
+// for these ship UNREVIEWED with this change — that is stated, not designed
+// away.
 //
 // Acted on once already: te.resumeApply.deleteDesc rendered "cannot be undone"
 // with a verb reading primarily as "cannot be CANCELLED" - a weaker claim than
@@ -912,6 +916,13 @@ const en = {
       continue: 'Continue',
       humanReview:
         'Your application is reviewed by people at {{company}}. Assessments may be scored automatically, but no hiring decision is made without a person.',
+      // PH5-E3 (D5-1) — a SECOND, independent, unticked checkbox below the
+      // application consent above. Deliberately never joins `ready`: bundling
+      // it with the application consent would make it non-optional, which
+      // DPDP §6(1) forbids. NEEDS NATIVE-SPEAKER + LEGAL REVIEW (HI/TE) before
+      // this is candidate-facing in production — see this file's header.
+      rediscoveryConsent:
+        'Also let {{company}} search my CV and this application to consider me for OTHER roles there in the future, for up to {{months}} months. This is separate from my application above, and I can turn it off at any time from my account.',
     },
     // ── PH4-A2: a candidate's own interview schedule (Applications page) ──
     // Candidate-facing, so EN/HI/TE like the rest of this file. There is
@@ -961,6 +972,73 @@ const en = {
       openOffer: 'Open offer',
       opening: 'Opening…',
       openError: 'Could not open your offer.',
+    },
+    // ── PH5-E3: a candidate's own rediscovery opt-in, per company (My
+    // applications page). CONSENT KEYS — see this file's header note: a
+    // targeted native-speaker and legal pass is wanted before these are
+    // candidate-facing, not before launch, and HI/TE ship unreviewed now.
+    // The turn-OFF confirm is deliberately two steps (`offer.withdraw*` /
+    // `task.withdrawConsent*` precedent) — this is a consent WITHDRAWAL, not
+    // a settings toggle.
+    rediscovery: {
+      heading: 'Future openings',
+      toggleLabel: 'Keep my profile for future openings at {{company}}',
+      onUntil: 'On until {{date}}',
+      on: 'On',
+      off: 'Off',
+      turnOn: 'Turn on',
+      turnOff: 'Turn off',
+      // The rule at offer.acceptConsent / task.consentNotice: say what is
+      // kept, who can see it, for how long, and that it can be withdrawn.
+      notice:
+        "If you turn this on, {{company}}'s hiring team may search your CV, application answers and interview results to consider you for new roles there, for up to {{months}} months from when you turn it on. Only {{company}}'s own hiring team can see this, and only for roles at {{company}} — no one else. You can turn it off at any time.",
+      turnOffConfirmTitle: 'Turn this off?',
+      turnOffConfirmDesc:
+        '{{company}} will no longer be able to find your profile in a search for future openings. Anything they already hold from your application stays as it is.',
+      turnOffConfirmYes: 'Yes, turn off',
+      cancel: 'Cancel',
+      turnedOn: 'Turned on — {{company}} can now find your profile for future openings.',
+      turnedOff: 'Turned off. {{company}} can no longer find your profile in a search.',
+      loading: 'Checking your rediscovery settings…',
+      loadError: 'Could not load your rediscovery settings.',
+      updateError: 'Could not update this setting. Please try again.',
+    },
+    // ── PH5-E3 criterion 2: HR adding candidates to a talent pool by hand
+    // (pages/hr/TalentPools.tsx). Ordinary HR-console UI copy, not a DPDP
+    // consent — the standing HI/TE first-pass caveat above applies, not the
+    // higher bar the rediscovery/consent keys carry.
+    hrPools: {
+      addCandidates: 'Add candidates',
+      dialogTitle: 'Add candidates to {{pool}}',
+      searchLabel: 'Search your applicants',
+      searchPlaceholder: 'Search by name, title or company…',
+      loading: 'Loading applicants…',
+      loadError: 'Could not load applicants.',
+      noResults: 'No applicants match this search.',
+      noApplicants: 'Your company has no applicants yet.',
+      selected_one: '{{count}} selected',
+      selected_other: '{{count}} selected',
+      noteLabel: 'Note (optional)',
+      notePlaceholder: 'Why you are adding them',
+      addSelected_one: 'Add {{count}} candidate',
+      addSelected_other: 'Add {{count}} candidates',
+      adding: 'Adding…',
+      cancel: 'Cancel',
+      close: 'Close',
+      addedToast_one: 'Added {{count}} candidate to the pool',
+      addedToast_other: 'Added {{count}} candidates to the pool',
+      skippedToast_one: '{{count}} candidate could not be added',
+      skippedToast_other: '{{count}} candidates could not be added',
+      couldNotAdd: 'Could not add candidates to this pool.',
+      notAddedHeading: 'Not added',
+      skipReason: {
+        already_a_member: 'Already a member of this pool',
+        not_this_company: "Not one of your company's applicants",
+        pool_full: 'This pool is already full',
+        not_eligible: 'Not eligible to be added right now',
+      },
+      emptyState:
+        'No members yet. Add candidates with the button above, or find matches with Rediscovery.',
     },
     // ── PH4-A3/A4: the public offer page (magic link, no login) ───────────
     offer: {
@@ -2001,6 +2079,10 @@ const hi = {
       continue: 'आगे बढ़ें',
       humanReview:
         'आपके आवेदन की समीक्षा {{company}} के लोग करते हैं। आकलन स्वतः अंकित हो सकते हैं, पर कोई भी नियुक्ति निर्णय बिना किसी व्यक्ति के नहीं लिया जाता।',
+      // NEEDS NATIVE-SPEAKER + LEGAL REVIEW before candidate-facing in
+      // production — see this file's header note on consent keys.
+      rediscoveryConsent:
+        'मैं यह भी चाहता/चाहती हूँ कि {{company}} मेरे CV और इस आवेदन के आधार पर मुझ पर भविष्य की अन्य भूमिकाओं के लिए भी विचार करे, अधिकतम {{months}} महीनों तक। यह ऊपर दिए गए मेरे आवेदन से अलग है, और मैं इसे अपने खाते से कभी भी बंद कर सकता/सकती हूँ।',
     },
     myInterviews: {
       heading: 'आपके इंटरव्यू',
@@ -2045,6 +2127,62 @@ const hi = {
       openOffer: 'पेशकश खोलें',
       opening: 'खोली जा रही है…',
       openError: 'आपकी पेशकश नहीं खोली जा सकी।',
+    },
+    // NEEDS NATIVE-SPEAKER + LEGAL REVIEW before candidate-facing in
+    // production — see this file's header note on consent keys.
+    rediscovery: {
+      heading: 'भविष्य की नौकरियां',
+      toggleLabel: '{{company}} पर भविष्य की नौकरियों के लिए मेरी प्रोफ़ाइल रखें',
+      onUntil: '{{date}} तक चालू',
+      on: 'चालू',
+      off: 'बंद',
+      turnOn: 'चालू करें',
+      turnOff: 'बंद करें',
+      notice:
+        'यदि आप इसे चालू करते हैं, तो {{company}} की भर्ती टीम आपके CV, आवेदन के उत्तर और इंटरव्यू परिणामों को वहां की नई भूमिकाओं के लिए विचार करने हेतु खोज सकती है, चालू करने के बाद अधिकतम {{months}} महीनों तक। इसे केवल {{company}} की अपनी भर्ती टीम देख सकती है, और केवल {{company}} की भूमिकाओं के लिए — किसी और के लिए नहीं। आप इसे कभी भी बंद कर सकते हैं।',
+      turnOffConfirmTitle: 'क्या इसे बंद करें?',
+      turnOffConfirmDesc:
+        '{{company}} अब भविष्य की नौकरियों की खोज में आपकी प्रोफ़ाइल नहीं पा सकेगा। आपके आवेदन से पहले से मौजूद जानकारी जैसी है वैसी ही रहेगी।',
+      turnOffConfirmYes: 'हां, बंद करें',
+      cancel: 'रद्द करें',
+      turnedOn: 'चालू कर दिया गया — {{company}} अब भविष्य की नौकरियों के लिए आपकी प्रोफ़ाइल पा सकता है।',
+      turnedOff: 'बंद कर दिया गया। {{company}} अब खोज में आपकी प्रोफ़ाइल नहीं पा सकता।',
+      loading: 'आपकी रीडिस्कवरी सेटिंग्स जांची जा रही हैं…',
+      loadError: 'आपकी रीडिस्कवरी सेटिंग्स लोड नहीं हो सकीं।',
+      updateError: 'यह सेटिंग अपडेट नहीं हो सकी। कृपया दोबारा कोशिश करें।',
+    },
+    hrPools: {
+      addCandidates: 'उम्मीदवार जोड़ें',
+      dialogTitle: '{{pool}} में उम्मीदवार जोड़ें',
+      searchLabel: 'अपने आवेदकों में खोजें',
+      searchPlaceholder: 'नाम, पदनाम या कंपनी से खोजें…',
+      loading: 'आवेदक लोड हो रहे हैं…',
+      loadError: 'आवेदक लोड नहीं हो सके।',
+      noResults: 'इस खोज से कोई आवेदक नहीं मिला।',
+      noApplicants: 'आपकी कंपनी के पास अभी कोई आवेदक नहीं है।',
+      selected_one: '{{count}} चुना गया',
+      selected_other: '{{count}} चुने गए',
+      noteLabel: 'टिप्पणी (वैकल्पिक)',
+      notePlaceholder: 'आप उन्हें क्यों जोड़ रहे हैं',
+      addSelected_one: '{{count}} उम्मीदवार जोड़ें',
+      addSelected_other: '{{count}} उम्मीदवार जोड़ें',
+      adding: 'जोड़ा जा रहा है…',
+      cancel: 'रद्द करें',
+      close: 'बंद करें',
+      addedToast_one: '{{count}} उम्मीदवार पूल में जोड़ा गया',
+      addedToast_other: '{{count}} उम्मीदवार पूल में जोड़े गए',
+      skippedToast_one: '{{count}} उम्मीदवार नहीं जोड़ा जा सका',
+      skippedToast_other: '{{count}} उम्मीदवार नहीं जोड़े जा सके',
+      couldNotAdd: 'उम्मीदवारों को इस पूल में नहीं जोड़ा जा सका।',
+      notAddedHeading: 'नहीं जोड़े गए',
+      skipReason: {
+        already_a_member: 'पहले से ही इस पूल का सदस्य है',
+        not_this_company: 'आपकी कंपनी का आवेदक नहीं है',
+        pool_full: 'यह पूल पहले से भरा हुआ है',
+        not_eligible: 'अभी जोड़े जाने के योग्य नहीं है',
+      },
+      emptyState:
+        'अभी कोई सदस्य नहीं है। ऊपर दिए गए बटन से उम्मीदवार जोड़ें, या रीडिस्कवरी से मेल खोजें।',
     },
     offer: {
       invalidTitle: 'यह पेशकश लिंक मान्य नहीं है',
@@ -3060,6 +3198,10 @@ const te = {
       continue: 'కొనసాగండి',
       humanReview:
         'మీ దరఖాస్తును {{company}}లోని వ్యక్తులు సమీక్షిస్తారు. మూల్యాంకనాలు స్వయంచాలకంగా స్కోర్ కావచ్చు, కానీ ఏ నియామక నిర్ణయమూ వ్యక్తి లేకుండా తీసుకోబడదు.',
+      // NEEDS NATIVE-SPEAKER + LEGAL REVIEW before candidate-facing in
+      // production — see this file's header note on consent keys.
+      rediscoveryConsent:
+        '{{company}} నా CVని మరియు ఈ దరఖాస్తును భవిష్యత్తులో ఇతర ఉద్యోగాల కోసం కూడా పరిశీలించడానికి ఉపయోగించుకోవచ్చని నేను అంగీకరిస్తున్నాను, గరిష్ఠంగా {{months}} నెలల వరకు. ఇది పైన ఉన్న నా దరఖాస్తు నుండి వేరుగా ఉంటుంది, మరియు నేను దీన్ని నా ఖాతా నుండి ఎప్పుడైనా ఆపివేయవచ్చు.',
     },
     myInterviews: {
       heading: 'మీ ఇంటర్వ్యూలు',
@@ -3104,6 +3246,62 @@ const te = {
       openOffer: 'ఆఫర్ తెరవండి',
       opening: 'తెరుస్తోంది…',
       openError: 'మీ ఆఫర్‌ను తెరవలేకపోయాము.',
+    },
+    // NEEDS NATIVE-SPEAKER + LEGAL REVIEW before candidate-facing in
+    // production — see this file's header note on consent keys.
+    rediscovery: {
+      heading: 'భవిష్యత్తు ఉద్యోగాలు',
+      toggleLabel: '{{company}}లో భవిష్యత్తు ఉద్యోగాల కోసం నా ప్రొఫైల్‌ను ఉంచండి',
+      onUntil: '{{date}} వరకు ఆన్',
+      on: 'ఆన్',
+      off: 'ఆఫ్',
+      turnOn: 'ఆన్ చేయండి',
+      turnOff: 'ఆఫ్ చేయండి',
+      notice:
+        'మీరు దీన్ని ఆన్ చేస్తే, {{company}} నియామక బృందం మీ CV, దరఖాస్తు సమాధానాలు మరియు ఇంటర్వ్యూ ఫలితాలను అక్కడి కొత్త ఉద్యోగాల కోసం పరిగణించడానికి శోధించవచ్చు, ఆన్ చేసినప్పటి నుండి గరిష్ఠంగా {{months}} నెలల వరకు. దీన్ని {{company}} యొక్క సొంత నియామక బృందం మాత్రమే చూడగలదు, మరియు కేవలం {{company}}లోని ఉద్యోగాల కోసమే — మరెవరికీ కాదు. మీరు దీన్ని ఎప్పుడైనా ఆఫ్ చేయవచ్చు.',
+      turnOffConfirmTitle: 'దీన్ని ఆఫ్ చేయాలా?',
+      turnOffConfirmDesc:
+        '{{company}} ఇకపై భవిష్యత్తు ఉద్యోగాల శోధనలో మీ ప్రొఫైల్‌ను కనుగొనలేరు. మీ దరఖాస్తు నుండి వారు ఇప్పటికే కలిగి ఉన్నది అలాగే ఉంటుంది.',
+      turnOffConfirmYes: 'అవును, ఆఫ్ చేయండి',
+      cancel: 'రద్దు చేయండి',
+      turnedOn: 'ఆన్ చేయబడింది — {{company}} ఇప్పుడు భవిష్యత్తు ఉద్యోగాల కోసం మీ ప్రొఫైల్‌ను కనుగొనగలదు.',
+      turnedOff: 'ఆఫ్ చేయబడింది. {{company}} ఇకపై శోధనలో మీ ప్రొఫైల్‌ను కనుగొనలేరు.',
+      loading: 'మీ రీడిస్కవరీ సెట్టింగ్‌లను తనిఖీ చేస్తున్నాం…',
+      loadError: 'మీ రీడిస్కవరీ సెట్టింగ్‌లను లోడ్ చేయలేకపోయాం.',
+      updateError: 'ఈ సెట్టింగ్‌ను అప్‌డేట్ చేయలేకపోయాం. దయచేసి మళ్ళీ ప్రయత్నించండి.',
+    },
+    hrPools: {
+      addCandidates: 'అభ్యర్థులను జోడించండి',
+      dialogTitle: '{{pool}}కి అభ్యర్థులను జోడించండి',
+      searchLabel: 'మీ దరఖాస్తుదారులలో వెతకండి',
+      searchPlaceholder: 'పేరు, హోదా లేదా కంపెనీ ద్వారా వెతకండి…',
+      loading: 'దరఖాస్తుదారులు లోడ్ అవుతున్నారు…',
+      loadError: 'దరఖాస్తుదారులను లోడ్ చేయలేకపోయాం.',
+      noResults: 'ఈ శోధనకు ఏ దరఖాస్తుదారుడు సరిపోలలేదు.',
+      noApplicants: 'మీ కంపెనీకి ఇంకా దరఖాస్తుదారులు లేరు.',
+      selected_one: '{{count}} ఎంపిక చేయబడింది',
+      selected_other: '{{count}} ఎంపిక చేయబడ్డాయి',
+      noteLabel: 'గమనిక (ఐచ్ఛికం)',
+      notePlaceholder: 'మీరు వారిని ఎందుకు జోడిస్తున్నారు',
+      addSelected_one: '{{count}} అభ్యర్థిని జోడించండి',
+      addSelected_other: '{{count}} అభ్యర్థులను జోడించండి',
+      adding: 'జోడిస్తున్నాం…',
+      cancel: 'రద్దు చేయండి',
+      close: 'మూసివేయండి',
+      addedToast_one: '{{count}} అభ్యర్థిని పూల్‌కు జోడించాం',
+      addedToast_other: '{{count}} అభ్యర్థులను పూల్‌కు జోడించాం',
+      skippedToast_one: '{{count}} అభ్యర్థిని జోడించలేకపోయాం',
+      skippedToast_other: '{{count}} అభ్యర్థులను జోడించలేకపోయాం',
+      couldNotAdd: 'అభ్యర్థులను ఈ పూల్‌కు జోడించలేకపోయాం.',
+      notAddedHeading: 'జోడించలేదు',
+      skipReason: {
+        already_a_member: 'ఇప్పటికే ఈ పూల్‌లో సభ్యుడు',
+        not_this_company: 'మీ కంపెనీ దరఖాస్తుదారుడు కాదు',
+        pool_full: 'ఈ పూల్ ఇప్పటికే నిండింది',
+        not_eligible: 'ప్రస్తుతం జోడించడానికి అర్హత లేదు',
+      },
+      emptyState:
+        'ఇంకా సభ్యులు లేరు. పైన ఉన్న బటన్‌తో అభ్యర్థులను జోడించండి, లేదా రీడిస్కవరీతో సరిపోలికలను కనుగొనండి.',
     },
     offer: {
       invalidTitle: 'ఈ ఆఫర్ లింక్ చెల్లదు',

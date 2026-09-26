@@ -21,6 +21,7 @@
 import {
   AlertTriangle,
   BarChart2,
+  Bookmark,
   BookText,
   Briefcase,
   Building2,
@@ -36,6 +37,7 @@ import {
   LayoutDashboard,
   Library,
   ListChecks,
+  Search,
   ShieldCheck,
   TrendingUp,
   Upload,
@@ -121,6 +123,16 @@ const HR_NAV: NavItem[] = [
   // the screen was reachable only by typing the URL, so "authorised HR users
   // can upload documents" was not true of the product.
   { to: '/hr/library', label: 'Documents', icon: <BookText className={ICON} aria-hidden="true" /> },
+  // PH5-E3 — talent pools (HR-curated lists for future openings) and the
+  // rediscovery search behind them. `hr_manager` only: a pool and a
+  // rediscovery result both name a candidate, and `candidate_pii` is
+  // `{hr_manager}` alone (CLAUDE.md) — a company super_admin is deliberately
+  // not a superset of HR, so neither entry is offered to that console. Filed
+  // beside Documents on the same reasoning Documents itself records: without
+  // a nav entry, "authorised HR users can create and manage talent pools" is
+  // not true of the product.
+  { to: '/hr/pools', label: 'Talent pools', icon: <Bookmark className={ICON} aria-hidden="true" /> },
+  { to: '/hr/rediscovery', label: 'Rediscovery', icon: <Search className={ICON} aria-hidden="true" /> },
   { to: '/hr/analytics', label: 'Analytics', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
   // D4-1: an HR manager can ALSO be assigned as an interviewer. Kept as an item
   // in THIS section (not a new one) so idsFor(['hr_manager']) still resolves to

@@ -79,6 +79,13 @@ type User = ReturnType<typeof userEvent.setup>;
 const cont = (user: User) => user.click(screen.getByRole('button', { name: 'Continue' }));
 const contButton = () => screen.getByRole<HTMLButtonElement>('button', { name: 'Continue' });
 
+// PH5-E3 — the review step now carries a SECOND checkbox (the independent
+// rediscovery opt-in, below the application consent). Every use below is
+// scoped to the application consent specifically, on the same precedent as
+// PublicApply.test.tsx's own `consentCheckbox` helper.
+const consentCheckbox = () =>
+  screen.getByRole<HTMLInputElement>('checkbox', { name: /may store my name, email and CV/i });
+
 async function identity(user: User): Promise<void> {
   await user.type(screen.getByLabelText('Your name'), 'Priya Sharma');
   await user.type(screen.getByLabelText('Email'), 'priya@example.com');
@@ -194,7 +201,7 @@ describe('PublicApply — consent stays last', () => {
     renderPage();
     await screen.findByText('Backend Engineer');
     await toReview(user);
-    expect(screen.getByRole('checkbox')).toHaveProperty('checked', false);
+    expect(consentCheckbox()).toHaveProperty('checked', false);
   });
 
   it('still gates the submit button', async () => {
@@ -205,7 +212,7 @@ describe('PublicApply — consent stays last', () => {
 
     const send = screen.getByRole<HTMLButtonElement>('button', { name: 'Send application' });
     expect(send.disabled).toBe(true);
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(consentCheckbox());
     expect(send.disabled).toBe(false);
   });
 
@@ -262,7 +269,7 @@ describe('PublicApply — the review step', () => {
     renderPage();
     await screen.findByText('Backend Engineer');
     await walkWithDetails(user);
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(consentCheckbox());
     await user.click(screen.getByRole('button', { name: 'Send application' }));
 
     await waitFor(() =>
@@ -288,7 +295,7 @@ describe('PublicApply — the review step', () => {
     await cont(user);
     await user.upload(screen.getByLabelText('Your CV (PDF)'), pdf());
     await cont(user);
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(consentCheckbox());
     await user.click(screen.getByRole('button', { name: 'Send application' }));
 
     await waitFor(() =>

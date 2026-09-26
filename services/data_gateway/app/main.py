@@ -74,7 +74,9 @@ from app.routers.hr_exams import router as hr_exams_router
 from app.routers.hr_interviews import router as hr_interviews_router
 from app.routers.hr_metrics import router as hr_metrics_router
 from app.routers.hr_pipeline import router as hr_pipeline_router
+from app.routers.hr_pools import router as hr_pools_router
 from app.routers.hr_questions import router as hr_questions_router
+from app.routers.hr_rediscovery import router as hr_rediscovery_router
 from app.routers.hr_requisitions import router as hr_requisitions_router
 from app.routers.hr_rounds import router as hr_rounds_router
 from app.routers.hr_scorecards import router as hr_scorecards_router
@@ -374,6 +376,38 @@ async def _run_retention_job() -> None:
             "corpus.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
         )
 
+    # Same tick: talent-pool rediscovery opt-ins past their 12 months (PH5-E3).
+    #
+    # This is a tidy-up of the RECORD, not a control. The eligibility query
+    # bounds on the ledger row's own granted_at, so an expired opt-in has
+    # already stopped matching — but the row would otherwise keep reading
+    # `granted = TRUE, revoked_at IS NULL` for ever, so GET /consent/status, an
+    # auditor's query and the candidate's own page would all say "you are opted
+    # in" while the search said otherwise. Stamping revoked_at makes every
+    # reader agree, and frees the partial unique index for a clean re-opt-in.
+    #
+    # Because the query keeps its own bound, a nightly run that never fires
+    # (a suspended container, a failing job) leaves a stale ledger — never a
+    # disclosure. Honours RETENTION_DRY_RUN like every block above: a dry run
+    # counts what it WOULD revoke and writes nothing.
+    try:
+        from app.rediscovery import expire_stale_opt_ins  # noqa: PLC0415
+
+        async with factory() as session:
+            expired_opt_ins = await expire_stale_opt_ins(
+                session, months=settings.rediscovery_consent_months,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info(
+            "rediscovery.consent.expiry.done", revoked=expired_opt_ins,
+            months=settings.rediscovery_consent_months, dry_run=settings.retention_dry_run,
+        )
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "rediscovery.consent.expiry.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
@@ -634,6 +668,12 @@ app.include_router(job_tasks_public_router)
 app.include_router(job_tasks_me_router)
 app.include_router(workflow_review_admin_router)
 app.include_router(hr_corpus_router)
+# PH5-E3. Narrower than the library above: hr_manager only, because a result
+# names a candidate (candidate_pii → {hr_manager}).
+app.include_router(hr_rediscovery_router)
+# PH5-E3. Same hr_manager-only narrowing as the search router above — a pool
+# names candidates too.
+app.include_router(hr_pools_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)
 app.include_router(careers_router)

@@ -413,6 +413,11 @@ def test_the_frozen_match_reason_keeps_facts_and_strips_every_piece_of_prose() -
     assert frozen["evidence_freshness"] == out["evidence_freshness"]
     scored = next(w for w in frozen["why"] if w["signal"] == "interviewer_scorecard")
     assert scored["competency_id"] == "problem_solving"
+    # Lead-authorised: the human-readable name travels with the id, because it
+    # is the company's own rubric label (round_criteria.competency_name), not
+    # candidate prose — without it a frozen pool snapshot could only ever show
+    # a raw id where the live search shows "Fault Diagnosis".
+    assert scored["competency"] == "Fault Diagnosis"
     assert scored["score"] == 4
     # The citation keeps (kind, id, label) so the pool can still link to the
     # record six weeks later. `label` names the round, the competency and the
@@ -420,6 +425,18 @@ def test_the_frozen_match_reason_keeps_facts_and_strips_every_piece_of_prose() -
     assert scored["citation"]["kind"] == "interviewer_scorecard"
     assert "href" not in scored["citation"]
     assert "snippet" not in str(frozen["why"])
+
+
+def test_freeze_match_reason_field_list_is_asserted_not_assumed() -> None:
+    """A field the frozen snapshot must carry cannot silently drop out of
+    ``keep_item`` without this test noticing — asserted against the actual
+    tuple, not against one example item's keys, since an item with a field
+    absent (``.get(...) is not None`` filtering) would hide a regression."""
+    assert set(r.FREEZE_KEEP_ITEM_FIELDS) >= {
+        "signal", "contribution", "explainable", "competency_id", "competency",
+        "score", "of", "percent", "passed", "recorded_at", "freshness",
+        "lifecycle", "produced_by", "terms_matched", "round_title",
+    }
 
 
 def test_add_months_is_calendar_arithmetic_and_clamps_the_day() -> None:

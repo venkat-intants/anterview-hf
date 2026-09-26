@@ -541,6 +541,14 @@ def test_rediscovery_never_reads_ai_scored_or_unreviewed_evidence() -> None:
         ``OMITTED_ALWAYS`` in the evidence graph;
       * ``applicants.ats_*`` — scored against one specific JD, and it survives
         erasure.
+
+    PH5 Wave 4 EXTENDS this same scan, rather than copying it, to the pools
+    half of E3 (``app/talent_pools.py`` and ``app/routers/hr_pools.py``): a
+    pool member's row is never an occasion to go read an AI interview's score,
+    a rejection reason written for a different opening, or any of the other
+    excluded sources — the module reads and writes ``talent_pool_members``/
+    ``talent_pool_events`` and asks ``rediscovery.eligibility_for_applicants``
+    for eligibility, and nothing else.
     """
     forbidden = (
         "code_similarity_signals", "code_quality_reports", "code_fingerprints",
@@ -555,6 +563,8 @@ def test_rediscovery_never_reads_ai_scored_or_unreviewed_evidence() -> None:
     for module, sentinel in (
         ("rediscovery.py", "applicants"),          # its SQL
         ("routers/hr_rediscovery.py", "search"),   # its route
+        ("talent_pools.py", "talent_pool_members"),        # its SQL
+        ("routers/hr_pools.py", "applicant_id"),           # its routes
     ):
         path = APP / module
         assert path.exists(), f"{module} is gone; this guard would scan nothing"

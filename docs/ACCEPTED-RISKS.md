@@ -269,6 +269,27 @@ months" survives, attached to an anonymised applicant. The erasure executor's
 inventory (`EXCLUDED_TABLES["audit_log"]`) says so; it used to claim the audit
 log held "action names only", which was wrong before this wave.
 
+**PH5-E3 (talent pools, Wave 4) is the same position, recorded rather than left
+to be inferred — the lead's ruling: extend this scope note, do not open a new
+risk entry.** `talent_pool_events` is append-only, on the `task_events` /
+`document_events` precedent, and it keeps a `member_added` (and
+`member_removed`, `member_evidence_reviewed`, `member_invited`) row naming the
+`applicant_id` a pool action concerned. After erasure step 6 anonymises that
+applicant (`full_name = '[redacted]'`, `email`/`user_id` NULL), the event row
+still says "this applicant was added to this pool, on this date, by this HR
+user" — it simply names nobody any more, because the applicant it points at no
+longer identifies anyone. This is not a fresh gap: it is exactly the
+`enrolments`/`round_results` position two paragraphs above states for the
+decision ledger, one table further along, with the same structural reason —
+the row is declared in `EXCLUDED_TABLES["talent_pool_events"]` with this stated
+there rather than left implicit. Unlike the audit log's decision rationale,
+`talent_pool_events.details` was DESIGNED facts-only from the start (action,
+ids, counts, a freshness band, a note's LENGTH — never the note, a removal
+reason's text, a name or any CV/scorecard prose), so the residue here is
+structurally bounded to "an anonymised id was once part of an action", not
+free text that could describe a person, which is the whole of what makes this
+an extension of AR-5's position rather than a new, separately-owned risk.
+
 **Path to closure.** Either (1) stop copying the rationale into audit `details`
 (keep has-reason and length, as scorecards now do) and add a redaction path for
 `stage_transitions.reason` that the ledger's append-only trigger permits only

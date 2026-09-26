@@ -138,7 +138,7 @@ def test_the_steps_read_in_order() -> None:
     """Code review: 5f used to sit between 5c and 5d."""
     body = _body()
     positions = [_at(f"# Step {step}:", where=body)
-                 for step in ("5b", "5c", "5d", "5e", "5f", "5g", "6")]
+                 for step in ("5b", "5c", "5d", "5e", "5f", "5g", "5k", "6")]
     assert positions == sorted(positions)
 
 
@@ -211,3 +211,47 @@ def test_hire_checkins_delete_matches_through_enrolments() -> None:
 def test_hire_checkins_count_reaches_the_completion_record() -> None:
     body = _body()
     assert body.count('"hire_checkins_deleted": hire_checkins_deleted') == 1
+
+
+# ===========================================================================
+# 6. Talent pool memberships (step 5k, PH5-E3) — deleted outright, before the
+#    applicants row it is keyed on is anonymised
+# ===========================================================================
+def test_talent_pool_members_are_deleted_before_applicants_lose_their_user_id() -> None:
+    """5k keys on applicants.user_id directly; step 6 NULLs it — the same
+    ordering hazard application_drafts records for users.email above."""
+    body = _body()
+    delete_members = _at("DELETE FROM talent_pool_members", where=body)
+    anonymise = _at("UPDATE applicants", where=body)
+    assert delete_members < anonymise
+
+
+def test_talent_pool_members_delete_matches_through_applicants_user_id() -> None:
+    """There is no talent_pool_members.user_id column of its own — the match
+    must go through applicants, on the applicant_id foreign key."""
+    delete = SOURCE[SOURCE.index("DELETE FROM talent_pool_members"):][:400]
+    assert "applicant_id IN" in delete
+    assert "FROM applicants WHERE user_id = :uid" in delete
+
+
+def test_talent_pool_members_count_reaches_the_completion_record() -> None:
+    body = _body()
+    assert body.count(
+        '"talent_pool_members_deleted": talent_pool_members_deleted'
+    ) == 1
+
+
+def test_talent_pool_members_deleted_before_the_hire_checkins_that_precede_it() -> None:
+    """Step 5k sits immediately after step 5j in the docstring's own step
+    list (§ the module ordering) — a code-review regression that moved it
+    ahead of 5j would still be correct (order among 5-lettered steps does not
+    matter to each other, only to step 6), but moving it BEFORE step 5 proper
+    (turns/resumes/scorecards/sessions, which do not touch applicants at all)
+    would be harmless too. What must never happen is 5k landing after step 6,
+    which the first test in this section already guards; this one additionally
+    pins 5k to sit after 5j specifically, matching the docstring's own
+    numbering, so a reader of the code and a reader of the docstring agree."""
+    body = _body()
+    hire_checkins = _at("DELETE FROM hire_checkins", where=body)
+    pool_members = _at("DELETE FROM talent_pool_members", where=body)
+    assert hire_checkins < pool_members

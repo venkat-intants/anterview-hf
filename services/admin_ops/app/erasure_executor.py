@@ -46,6 +46,9 @@ For each claimed request (one at a time, SKIP LOCKED) it:
      ``embedding`` is a halfvec(3072) derived from resume_text — leaving it
      behind keeps a dense representation of the erased CV and keeps the
      applicant semantically searchable via GET /hr/applicants?q=.
+     Step 5k (PH5-E3) runs immediately before this one and MUST: it
+     hard-deletes talent_pool_members keyed on applicants.user_id, which
+     this step then NULLs.
   7. Anonymises users columns in-place:
        email        → 'erased_{user_id}@deleted.invalid'
        full_name    → '[redacted]'
@@ -289,6 +292,18 @@ ERASED_TABLES: dict[str, str] = {
                      "structural record against the anonymised applicant, step 5j DELETES "
                      "every row outright. Ordinary 24-month retention "
                      "(app.hire_checkins.purge) deletes what erasure does not reach sooner.",
+    "talent_pool_members": "PH5-E3 — one candidate's membership of a company's talent pool, "
+                           "with HR's note, the frozen match reason and the "
+                           "evidence-freshness band as at the time they were added. "
+                           "Hard-deleted outright in step 5k, which MUST run before step 6 "
+                           "(it keys on applicants.user_id, which step 6 NULLs). Deleted "
+                           "rather than kept-against-an-anonymised-applicant, unlike "
+                           "enrolments/round_results: a pool is a forward-looking list of "
+                           "people to contact about FUTURE openings, so a membership row "
+                           "has no backward-looking value as the company's hiring record "
+                           "once the person behind it cannot be contacted again — and "
+                           "`note` is prose HR wrote about the person, with no structural "
+                           "residue worth keeping once it is gone.",
 }
 
 #: Tables deliberately left standing, each with the reason it is defensible.
@@ -555,6 +570,22 @@ EXCLUDED_TABLES: dict[str, str] = {
                      "indexed, superseded, deleted, ...): action, actor (HR staff) and facts "
                      "(version numbers, chunk counts) — never document content. See the "
                      "corpus_documents note.",
+    # --- PH5-E3: talent pools -----------------------------------------------
+    "talent_pools": "PH5-E3 — a company's own named list (name, description, who created "
+                    "it). Company-authored configuration on the question_banks/round_tasks "
+                    "precedent; no candidate column.",
+    "talent_pool_events": "PH5-E3 — append-only history of a pool and its membership "
+                          "(created, renamed, member_added, member_removed, "
+                          "member_evidence_reviewed, member_invited, ...): action, actor "
+                          "(HR staff), the applicant it concerned, and facts (freshness "
+                          "band, note length, ids) — never the note, the removal reason, "
+                          "or any candidate prose. Kept on the task_events/document_events "
+                          "precedent. AR-5's neighbour, not a new gap: after step 6 the "
+                          "applicant an event names is already anonymised "
+                          "(full_name='[redacted]', email/user_id NULL), so this table "
+                          "keeps saying an applicant was added to a pool without naming "
+                          "anybody — the same position enrolments/round_results are "
+                          "already in, recorded rather than left for a reader to infer.",
 }
 
 
@@ -1533,6 +1564,40 @@ async def _execute_one_erasure(
     )
 
     # ------------------------------------------------------------------
+    # Step 5k: Talent pool memberships (PH5-E3)
+    # ------------------------------------------------------------------
+    # Hard-deleted outright, on the hire_checkins precedent immediately above:
+    # a pool is a forward-looking list of people to contact about a FUTURE
+    # opening, so once this person cannot be contacted again a membership row
+    # (and the note HR wrote about them, and the frozen match-reason snapshot)
+    # has no structural value as a hiring record the way enrolments/
+    # round_results do. `talent_pools` and `talent_pool_events` are NOT
+    # touched here — they carry no candidate column of their own and are
+    # declared in EXCLUDED_TABLES.
+    #
+    # MUST run before step 6: this DELETE keys on applicants.user_id, and
+    # step 6 sets that column to NULL — the same ordering hazard
+    # application_drafts records above for users.email. Matched through
+    # applicants directly (talent_pool_members.applicant_id -> applicants.id)
+    # rather than through enrolments, because a pool member need never have
+    # applied to the opening they were invited to — that is the whole point
+    # of rediscovery.
+    talent_pool_members_result = await db.execute(
+        text(
+            "DELETE FROM talent_pool_members"
+            " WHERE applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
+        ),
+        {"uid": uid_str},
+    )
+    talent_pool_members_deleted: int = getattr(talent_pool_members_result, "rowcount", 0) or 0
+    log.info(
+        "erasure.executor.talent_pool_members_deleted",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        count=talent_pool_members_deleted,
+    )
+
+    # ------------------------------------------------------------------
     # Step 6: Anonymise applicant rows linked to this user_id
     # ------------------------------------------------------------------
     # embedding is NOT decoration on this list. applicants.embedding is a
@@ -1761,10 +1826,11 @@ async def _execute_one_erasure(
         # 1.7 → 1.8 when step 5h took in coding-round source and program
         # output (PH4-D3), 1.8 → 1.9 when step 5i took in job simulation
         # / portfolio submissions (PH4-D4), and 1.9 → 1.10 when step 5j took
-        # in 90-day hire check-ins (PH5-D5-2): the artifacts record is what an
-        # auditor reads to know WHAT a given completion covered, so two
-        # records with different coverage must not claim the same version.
-        "executor_version": "1.10",
+        # in 90-day hire check-ins (PH5-D5-2), and 1.10 → 1.11 when step 5k
+        # took in talent-pool memberships (PH5-E3): the artifacts record is
+        # what an auditor reads to know WHAT a given completion covered, so
+        # two records with different coverage must not claim the same version.
+        "executor_version": "1.11",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
@@ -1792,6 +1858,7 @@ async def _execute_one_erasure(
         "task_submissions_redacted": task_submissions_redacted,
         "task_responses_redacted": task_responses_redacted,
         "hire_checkins_deleted": hire_checkins_deleted,
+        "talent_pool_members_deleted": talent_pool_members_deleted,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
         # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,

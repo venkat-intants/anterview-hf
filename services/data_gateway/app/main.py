@@ -74,6 +74,7 @@ from app.routers.hr_exams import router as hr_exams_router
 from app.routers.hr_interviews import router as hr_interviews_router
 from app.routers.hr_metrics import router as hr_metrics_router
 from app.routers.hr_pipeline import router as hr_pipeline_router
+from app.routers.hr_pools import router as hr_pools_router
 from app.routers.hr_questions import router as hr_questions_router
 from app.routers.hr_rediscovery import router as hr_rediscovery_router
 from app.routers.hr_requisitions import router as hr_requisitions_router
@@ -670,6 +671,9 @@ app.include_router(hr_corpus_router)
 # PH5-E3. Narrower than the library above: hr_manager only, because a result
 # names a candidate (candidate_pii → {hr_manager}).
 app.include_router(hr_rediscovery_router)
+# PH5-E3. Same hr_manager-only narrowing as the search router above — a pool
+# names candidates too.
+app.include_router(hr_pools_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)
 app.include_router(careers_router)

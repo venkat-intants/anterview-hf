@@ -58,6 +58,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app import application_drafts as draft_store
+from app import rediscovery
 from app.application_questions import (
     AnswerError,
     list_questions,
@@ -1234,6 +1235,13 @@ async def submit_application(
     # Not a default of True, and not inferred from the request reaching us.
     # DPDP consent has to be an act the person took.
     consent_granted: Annotated[bool, Form()] = False,
+    # PH5-E3 (D5-1) — a SECOND, INDEPENDENT opt-in, default false. Deliberately
+    # not folded into `consent_granted`, and not required for anything: DPDP
+    # §6(1) requires consent to be granular, and D5-1 calls this one "opt-in"
+    # specifically, so bundling it with the application consent would make it
+    # non-optional in substance even with its own checkbox. A false value
+    # writes NOTHING at all — record_opt_in is only ever called when true.
+    rediscovery_opt_in: Annotated[bool, Form()] = False,
     # The rest of the multi-step form. Every one optional, and that is not
     # laziness — a candidate who abandons the application at step two has told
     # us nothing, and a required field here would turn "I would rather not say
@@ -1497,6 +1505,20 @@ async def submit_application(
             db, request=request, user_id=guest_user_id, applicant_id=applicant_id,
             company_id=company_id, requisition_id=requisition_id, now=now,
         )
+        # PH5-E3. A FALSE value writes nothing at all — this is the only
+        # writer of this consent type reached from this route, and it is
+        # never called except when the candidate actually ticked the box.
+        if rediscovery_opt_in:
+            await rediscovery.record_opt_in(
+                db, user_id=guest_user_id, company_id=company_id,
+                applicant_id=applicant_id, requisition_id=requisition_id,
+                source="public_apply_form",
+                meta=rediscovery.OptInMeta(
+                    ip_address=extract_client_ip(request),
+                    user_agent=extract_user_agent(request),
+                ),
+                now=now,
+            )
         await db.flush()
 
         outcome = await enrol_applicant(
@@ -1543,6 +1565,18 @@ async def submit_application(
             already_applied=True,
             message="You have already applied for this role. We have your application.",
         )
+    except rediscovery.RediscoveryError as exc:
+        # Unreachable in practice — `source` above is the fixed literal
+        # "public_apply_form", never caller input — but rendered with the
+        # same `failure_code` shape as every other refusal in this service
+        # rather than falling through to the generic 503 below, in case that
+        # ever stops being true.
+        await db.rollback()
+        await _delete_from_s3(s3_key)
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"failure_code": exc.code, "message": exc.message},
+        ) from exc
     except Exception as exc:  # noqa: BLE001 — the upload must not outlive the row
         await db.rollback()
         # Orphaned object otherwise: a CV in storage belonging to nobody is PII

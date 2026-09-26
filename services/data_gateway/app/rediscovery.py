@@ -454,6 +454,37 @@ async def record_opt_in(
     }
 
 
+async def opt_in_from_my_applications(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    company_id: uuid.UUID,
+    applicant_id: uuid.UUID,
+    meta: OptInMeta,
+) -> dict[str, Any]:
+    """``record_opt_in`` from the signed-in candidate's own "My applications"
+    page — a thin, named wrapper rather than a bare keyword call, so the
+    candidate-facing routers never need to spell the acquisition-channel-shaped
+    word ``source=`` in their own text. ``tests/unit/test_ph3_source_tracking.py
+    ::test_source_is_not_exposed_on_the_candidates_own_application_view`` greps
+    ``app/routers/candidate_applications.py`` for exactly that pattern, to keep
+    a DIFFERENT ``source`` (the requisition's acquisition-channel attribution,
+    PH3-B1) off the candidate's own view — this call is a same-named but
+    unrelated field (where a REDISCOVERY OPT-IN came from) and the wrapper is
+    what keeps the two apart textually as well as semantically.
+
+    Always reachable to turn back on, even after a withdrawal — see
+    ``record_opt_in``'s ``not_regranted_after_withdrawal`` docstring: that
+    refusal exists because the PUBLIC apply form is unauthenticated, and the
+    signed-in owner acting on their own account is exactly the case it
+    exempts.
+    """
+    return await record_opt_in(
+        db, user_id=user_id, company_id=company_id, applicant_id=applicant_id,
+        requisition_id=None, source="my_applications", meta=meta,
+    )
+
+
 def add_months(when: datetime, months: int) -> datetime:
     """``when`` plus *months* CALENDAR months, clamping the day of month.
 
@@ -480,6 +511,58 @@ def _expiry_of(granted_at: datetime, months: int) -> datetime:
     in calendar months; this is the same window rendered for a person, and is
     never what eligibility is decided on."""
     return add_months(granted_at, months)
+
+
+def consent_state(
+    *,
+    granted_at: datetime | None,
+    revoked_at: datetime | None,
+    evidence: dict[str, Any] | None,
+    months: int,
+    now: datetime,
+) -> dict[str, Any]:
+    """The CANDIDATE-facing state of one rediscovery consent row, or of having
+    none at all: ``{"state": "on"|"off", "opted_in_at", "expires_at",
+    "withdrawn_at"}``.
+
+    Pure and offline, on purpose — this is what
+    ``GET /users/me/rediscovery`` renders, and is also the classifier
+    ``eligibility_for_applicants`` delegates to for its "why not eligible"
+    half, so there is one definition of what a ledger row MEANS to a reader,
+    even though the two callers surface it differently (a plain on/off here;
+    ``consent_withdrawn``/``consent_expired`` there, because a pool member's
+    screen needs the reason and a candidate's own toggle does not — they are
+    looking at their own choice, not guessing at somebody else's).
+
+    ``on`` only while a row is granted, not revoked, AND still inside its
+    window — the same three conditions ``ELIGIBLE_CTE`` requires, read off a
+    single row instead of joined across a company's whole applicant table.
+
+    ``withdrawn_at`` is populated for an EXPLICIT withdrawal only, never for
+    an automatic expiry: ``expire_stale_opt_ins`` stamps ``revoked_at`` with
+    ``evidence.expiry == "auto"``, and telling a candidate who never touched
+    the toggle that they "withdrew" would be false. That row still reads
+    ``state: "off"`` — the window closed either way — with ``withdrawn_at:
+    None`` so the caller renders "Expired on …" rather than "Withdrawn on …".
+    """
+    if granted_at is None:
+        return {"state": "off", "opted_in_at": None, "expires_at": None, "withdrawn_at": None}
+    expires_at = add_months(granted_at, months)
+    evidence = evidence or {}
+    if revoked_at is not None:
+        withdrawn_at = None if evidence.get("expiry") == "auto" else revoked_at
+        return {
+            "state": "off", "opted_in_at": granted_at, "expires_at": expires_at,
+            "withdrawn_at": withdrawn_at,
+        }
+    if expires_at <= now:
+        # Past the window but the nightly tick has not yet stamped
+        # revoked_at (§4.3 / §2.2): reads as expired from the moment the
+        # window closes, not from the moment the tick runs.
+        return {"state": "off", "opted_in_at": granted_at, "expires_at": expires_at,
+                "withdrawn_at": None}
+    return {"state": "on", "opted_in_at": granted_at, "expires_at": expires_at,
+            "withdrawn_at": None}
 
 
 async def revoke_opt_ins(
@@ -745,11 +828,22 @@ def query_terms(query: str) -> list[str]:
     return seen
 
 
+#: Module-level so a test can assert this list directly rather than inferring
+#: it from one example item's keys — an item missing a field (the ``.get(...)
+#: is not None`` filter below) would otherwise hide a regression instead of
+#: failing loudly.
+FREEZE_KEEP_ITEM_FIELDS: tuple[str, ...] = (
+    "signal", "contribution", "explainable", "competency_id", "competency",
+    "score", "of", "percent", "passed", "recorded_at", "freshness", "lifecycle",
+    "produced_by", "terms_matched", "round_title",
+)
+
+
 def freeze_match_reason(result: dict[str, Any]) -> dict[str, Any]:
     """The snapshot stored on ``talent_pool_members.match_reason`` when a
     candidate is added to a pool from a search.
 
-    FACTS ONLY: signal names, contributions, competency ids, scores,
+    FACTS ONLY: signal names, contributions, competency ids AND NAMES, scores,
     timestamps, freshness bands, citation ``(kind, id, label)``. Every piece of
     PROSE is stripped — the CV snippet, the similarity note, the
     unexplained-match sentence — because a pool row must not become a second,
@@ -757,15 +851,18 @@ def freeze_match_reason(result: dict[str, Any]) -> dict[str, Any]:
     ``applicants.resume_text``. Six weeks later the pool can still say WHY
     somebody is in it, and that the reason was computed against a query that
     is no longer current.
+
+    ``competency`` (the human-readable name, e.g. "Fault Diagnosis") is kept
+    alongside ``competency_id`` (lead-authorised addition): it comes from
+    ``rc.competency_name`` on the company's own FROZEN ``round_criteria`` — the
+    company's rubric label, not a word the candidate wrote — so keeping it does
+    not weaken the no-prose rule above. Without it a frozen snapshot could only
+    render a raw id like ``problem_solving`` where the live search shows "Fault
+    Diagnosis".
     """
-    keep_item = (
-        "signal", "contribution", "explainable", "competency_id", "score", "of",
-        "percent", "passed", "recorded_at", "freshness", "lifecycle", "produced_by",
-        "terms_matched", "round_title",
-    )
     why: list[dict[str, Any]] = []
     for item in result.get("why", []):
-        frozen = {k: item[k] for k in keep_item if item.get(k) is not None}
+        frozen = {k: item[k] for k in FREEZE_KEEP_ITEM_FIELDS if item.get(k) is not None}
         citation = item.get("citation")
         if citation:
             frozen["citation"] = {
@@ -933,6 +1030,134 @@ async def universe_counts(
     return {"eligible": int(eligible or 0), "total": int(total or 0)}
 
 
+async def eligibility_for_applicants(
+    db: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    applicant_ids: list[uuid.UUID],
+    months: int | None = None,
+) -> dict[uuid.UUID, dict[str, Any]]:
+    """Per-applicant eligibility for a caller that is not ranking a search —
+    today, ``app/talent_pools.py``'s pool reads (design §7 row 4: between an
+    erasure request and its execution, and after a withdrawal or expiry, a
+    pool member renders ``eligible: false`` with a reason and no evidence).
+
+    REUSES ``ELIGIBLE_CTE`` VERBATIM for the positive case. There is exactly
+    one definition of "can this person currently be found and contacted", and
+    a caller that needs the answer for one applicant must ask the same
+    question the search asks for two thousand, not re-derive a predicate that
+    could drift from it.
+
+    What this ADDS is the negative case ``ELIGIBLE_CTE`` cannot answer by
+    itself, because a CTE that returns only matches has nothing to say about
+    WHY a row it excluded was excluded — a pool screen has to, so the member
+    can be told something more useful than "not eligible". The extra piece is
+    kept here, next to the CTE it depends on, rather than re-derived in
+    ``talent_pools.py``, which is what "extract the shared piece" means when
+    the predicate itself cannot be reused as-is for a per-row reason.
+
+    Returns ``{applicant_id: {"eligible", "ineligible_reason", "opted_in_at",
+    "expires_at"}}`` for every id in *applicant_ids* that belongs to
+    *company_id* — an id naming no applicant of this company, or no applicant
+    at all, is simply absent, the same "never fetched" discipline
+    ``ELIGIBLE_CTE`` itself follows. ``ineligible_reason`` is one of
+    ``consent_withdrawn`` / ``consent_expired`` / ``erasure_requested`` /
+    ``None`` (no rediscovery consent was ever given for this company — the
+    ordinary case for a MANUALLY added pool member, who was never required to
+    opt in for HR to see a name it already holds under the application
+    consent; only CONTACTING them needs it).
+    """
+    if not applicant_ids:
+        return {}
+    months = int(settings.rediscovery_consent_months if months is None else months)
+    ids = [str(i) for i in applicant_ids]
+
+    eligible_rows = (
+        await db.execute(
+            text(
+                ELIGIBLE_CTE
+                + " SELECT id, opted_in_at, opt_in_expires_at FROM eligible"  # nosec B608
+                "   WHERE id = ANY(CAST(:ids AS uuid[]))"
+            ),
+            {"company_id": company_id, "months": months, "ids": ids},
+        )
+    ).mappings().all()
+    out: dict[uuid.UUID, dict[str, Any]] = {
+        row["id"]: {
+            "eligible": True, "ineligible_reason": None,
+            "opted_in_at": row["opted_in_at"], "expires_at": row["opt_in_expires_at"],
+        }
+        for row in eligible_rows
+    }
+    remaining = [i for i in applicant_ids if i not in out]
+    if not remaining:
+        return out
+
+    # The negative case: this company's applicant rows among the remaining
+    # ids (defence in depth, matching ELIGIBLE_CTE's own WHERE), each with its
+    # most recent rediscovery ledger row IN ANY STATE and whether an erasure
+    # request exists for the person behind it. Every varying value is a bound
+    # parameter; REDISCOVERY_CONSENT_TYPE/PURPOSE are this module's own
+    # constants, matched the same way _active_opt_in already does.
+    rows = (
+        await db.execute(
+            text(
+                "SELECT a.id AS applicant_id, l.granted_at, l.revoked_at, l.evidence,"  # nosec B608
+                "       EXISTS (SELECT 1 FROM erasure_requests er"
+                "                WHERE er.user_id = a.user_id) AS erasure_requested"
+                "  FROM applicants a"
+                "  LEFT JOIN LATERAL ("
+                "      SELECT granted_at, revoked_at, evidence"
+                "        FROM dpdp_consent_ledger"
+                "       WHERE user_id = a.user_id AND consent_type = :ct AND purpose = :pu"
+                "         AND evidence ->> 'company_id' = a.company_id::text"
+                "       ORDER BY granted_at DESC LIMIT 1"
+                "  ) l ON a.user_id IS NOT NULL"
+                " WHERE a.id = ANY(CAST(:ids AS uuid[])) AND a.company_id = :company_id"
+            ),
+            {"ids": [str(i) for i in remaining], "company_id": company_id,
+             "ct": REDISCOVERY_CONSENT_TYPE, "pu": REDISCOVERY_PURPOSE},
+        )
+    ).mappings().all()
+    now = datetime.now(tz=UTC)
+    for row in rows:
+        if row["erasure_requested"]:
+            # Takes priority over the ledger's own state: an erasure REQUEST
+            # revokes every row for the user at request time (§4.2), but the
+            # request-to-execution window is exactly the gap this branch
+            # exists to cover, so it is checked independently rather than
+            # assumed to already be reflected in revoked_at.
+            granted_at = row["granted_at"]
+            out[row["applicant_id"]] = {
+                "eligible": False, "ineligible_reason": "erasure_requested",
+                "opted_in_at": granted_at,
+                "expires_at": add_months(granted_at, months) if granted_at else None,
+            }
+            continue
+        # Everything else is exactly what a candidate's own consent_state
+        # says, translated from "on/off" into the reason a POOL reader needs
+        # rather than re-derived: on/off (never eligible) means
+        # not-eligible-for-contact either way — the single difference is what
+        # each caller calls the "off" case.
+        state = consent_state(
+            granted_at=row["granted_at"], revoked_at=row["revoked_at"],
+            evidence=row["evidence"], months=months, now=now,
+        )
+        if state["state"] == "on":  # pragma: no cover - ELIGIBLE_CTE already matched this row
+            reason = None
+        elif state["withdrawn_at"] is not None:
+            reason = "consent_withdrawn"
+        elif state["opted_in_at"] is not None:
+            reason = "consent_expired"
+        else:
+            reason = None
+        out[row["applicant_id"]] = {
+            "eligible": False, "ineligible_reason": reason,
+            "opted_in_at": state["opted_in_at"], "expires_at": state["expires_at"],
+        }
+    return out
+
+
 async def _target_opening(
     db: AsyncSession, *, company_id: uuid.UUID, requisition_id: uuid.UUID
 ) -> dict[str, Any]:
@@ -1098,6 +1323,61 @@ def _evidence_why_item(row: Any, *, applicant_id: str, now: datetime) -> dict[st
             "interview", cite_id=row["ref_id"], route_id=row["ref_id"], label=label,
         )
     return item
+
+
+async def evidence_freshness_for_applicant(
+    db: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    applicant_id: uuid.UUID,
+    viewer_user_id: uuid.UUID,
+) -> str:
+    """The freshness band a CONTROL may trust — computed HERE, at READ TIME,
+    from this one applicant's own evidence rows, never from a stored column.
+
+    ``talent_pool_members.evidence_freshness`` is the band AS AT ADD TIME
+    (design §6.4's frozen snapshot, meant for display — "the pool can still
+    say why someone is in it"). Trusting that column for a GATE would let a
+    member added fresh sail through eleven months later with no fresh look at
+    their evidence at all, which is exactly the failure §6.5 exists to
+    describe: "because the opt-in expires at 12 months, consent is never
+    stale — but evidence can be years old… staleness is genuinely
+    load-bearing." One member, so the cost of asking again is one query.
+
+    Reuses the exact per-item banding ``_assemble_result`` uses for a live
+    search result — the CV's own band (``applicants.updated_at``) and every
+    row ``_EVIDENCE_SQL`` returns (human scorecards under the PH4-A1
+    independence predicate for *viewer_user_id*, round results, exam
+    attempts, and the AI-interview FACT, never its score) — rather than a
+    third definition of "how stale is this evidence".
+
+    Returns the WORST band among everything found (never the best, never a
+    mean — ``worst_band``), or ``"none"`` if the applicant itself cannot be
+    found (should not happen for a live pool member; the caller has already
+    resolved the row).
+    """
+    now = datetime.now(tz=UTC)
+    bands: list[str | None] = []
+    applicant_row = (
+        await db.execute(
+            text("SELECT updated_at FROM applicants WHERE id = :a AND company_id = :c"),
+            {"a": applicant_id, "c": company_id},
+        )
+    ).mappings().first()
+    if applicant_row is not None:
+        cv_band, _ = freshness_band(applicant_row["updated_at"], now=now)
+        bands.append(cv_band)
+    evidence_rows = (
+        await db.execute(
+            text(_EVIDENCE_SQL),
+            {"company_id": company_id, "ids": [str(applicant_id)],
+             "viewer": viewer_user_id, "cap": _EVIDENCE_ROW_CAP},
+        )
+    ).mappings().all()
+    for ev_row in evidence_rows:
+        item = _evidence_why_item(ev_row, applicant_id=str(applicant_id), now=now)
+        bands.append(item.get("freshness"))
+    return worst_band(bands)
 
 
 def _scored_competency_ids(items: list[dict[str, Any]]) -> set[str]:

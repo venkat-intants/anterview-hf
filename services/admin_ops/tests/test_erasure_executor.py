@@ -575,12 +575,13 @@ async def test_execute_one_erasure_stamps_completed() -> None:
     # (PH4-A3/A4), 1.7 since step 5g took in candidate accommodations (PH4-D2),
     # 1.8 since step 5h took in coding-round source and program output
     # (PH4-D3), 1.9 since step 5i took in job simulation / portfolio
-    # submissions (PH4-D4), and 1.10 since step 5j took in 90-day hire
-    # check-ins (PH5-D5-2). The version
+    # submissions (PH4-D4), 1.10 since step 5j took in 90-day hire
+    # check-ins (PH5-D5-2), and 1.11 since step 5k took in talent-pool
+    # memberships (PH5-E3). The version
     # is asserted rather than ignored because the artifacts blob is the auditor's
     # record of WHAT a completion covered, so widening coverage without moving
     # the version leaves two incomparable records claiming the same one.
-    assert artifacts["executor_version"] == "1.10"
+    assert artifacts["executor_version"] == "1.11"
 
 
 # ---------------------------------------------------------------------------

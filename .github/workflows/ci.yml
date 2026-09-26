@@ -352,11 +352,20 @@ jobs:
 
       - name: Migrate the CI database
         # data_gateway owns the schema (its alembic/ is the only one in the
-        # repo), so only this leg has a database to migrate. A SEPARATE step
-        # from the tests below on purpose: a migration that fails to apply and a
+        # repo), so the migration ALWAYS runs from that directory — but it is
+        # needed by any leg that has live-database tests. A SEPARATE step from
+        # the tests below on purpose: a migration that fails to apply and a
         # test that fails against a correctly-migrated schema are different
         # defects with different owners, and one step reports them as one red X.
-        if: matrix.service == 'data_gateway'
+        #
+        # admin_ops was added on 2026-09-26. Its Postgres container was always
+        # provisioned (`services:` cannot take an `if:`, so every leg gets one)
+        # and was never migrated, so admin_ops could not have a live-database
+        # test even in principle. The security review found the consequence:
+        # the DPDP erasure executor — the most destructive code in the product
+        # — was covered only by mocks, and its step ordering was "proved"
+        # against a hand-copied SQL string in a different service.
+        if: matrix.service == 'data_gateway' || matrix.service == 'admin_ops'
         working-directory: services/data_gateway
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -411,6 +420,31 @@ jobs:
           RATE_LIMIT_LOGIN_PER_MINUTE: '10000'
           RATE_LIMIT_API_PER_MINUTE: '10000'
           S3_ENDPOINT: http://localhost:9000
+          S3_ACCESS_KEY_ID: ci-access-key
+          S3_SECRET_ACCESS_KEY: ci-secret-key
+        run: python -m pytest tests/ -q -m integration
+
+      - name: Integration tests (admin_ops, live Postgres)
+        # The DPDP erasure executor, run for real against a migrated database.
+        #
+        # Until 2026-09-26 admin_ops had no database fixture at all: its whole
+        # suite was mocks, so the erasure step ordering — get it wrong and a
+        # candidate's rows survive their own erasure, keyed to nothing — was
+        # asserted by source-text position and by a copy of the SQL pasted into
+        # a DIFFERENT service's test. A change to the real statement that kept
+        # two substrings intact would have been caught by nothing.
+        #
+        # Cheap to run: the Postgres container is provisioned for this leg
+        # either way, and the suite is two tests.
+        if: matrix.service == 'admin_ops'
+        working-directory: services/admin_ops
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+          S3_ENDPOINT_URL: http://localhost:9000
           S3_ACCESS_KEY_ID: ci-access-key
           S3_SECRET_ACCESS_KEY: ci-secret-key
         run: python -m pytest tests/ -q -m integration

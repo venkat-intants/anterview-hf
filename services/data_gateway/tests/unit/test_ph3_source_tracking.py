@@ -318,7 +318,51 @@ def test_source_reaches_the_hr_view() -> None:
 
 
 def test_source_is_not_exposed_on_the_candidates_own_application_view() -> None:
-    """The company's attribution of a person is the company's, not theirs."""
+    """The company's attribution of a person is the company's, not theirs.
+
+    Matches the ACQUISITION-CHANNEL CONCEPT (PH3-B1's ``enrolments.source`` /
+    ``source_detail`` pair, and the governed vocabulary in
+    ``app/application_source.py`` that fills it), not the bare English word
+    ``source``. The old ``r"\\bsource\\b\\s*[:=]"`` pattern matched the WORD,
+    and this file has a second, legitimately-spelled-the-same field:
+    ``rediscovery.record_opt_in``'s ``source`` parameter — where a
+    REDISCOVERY OPT-IN came from (``rediscovery.OPT_IN_SOURCES`` =
+    ``{"my_applications", "public_apply_form"}``), a candidate-own-account
+    concept this router is right to use. PH5-E3 could not tell the two apart
+    either and paid for it: ``rediscovery.opt_in_from_my_applications`` exists
+    ONLY as a same-named wrapper so this file need not spell ``source=``
+    itself and trip the old check — a contortion of production code around a
+    test that was matching the wrong thing.
+
+    Three checks, each aimed at the concept rather than the word:
+
+      1. ``source_detail`` — verified (2026-09) to mean nothing else anywhere
+         in this codebase: every reader/writer is PH3-B1 acquisition-channel
+         code (``app/models.py``'s ``Enrolment``, ``app/application_source.py``,
+         ``app/workflow_runner.py``, ``app/application_drafts.py``, and the
+         ``hr_requisitions.py`` / ``hr_applicants.py`` / ``public_apply.py``
+         routers). This candidate-facing router needs it for nothing.
+      2. ``application_source`` — the governed-vocabulary module itself
+         (``SOURCES``, ``normalise_source``, ``validate_hr_source``, ...).
+         A candidate's own view has no legitimate reason to import or
+         reference it.
+      3. ``.source`` / ``["source"]`` / ``['source']`` — an ATTRIBUTE or
+         SUBSCRIPT read, the shape the real leak takes in
+         ``hr_requisitions.py`` (``source=r["source"]``): you cannot hand a
+         company's attribution data to a response without reading it off a
+         row first. Deliberately NOT the bare keyword ``source=``, which is
+         also how ``rediscovery.record_opt_in(..., source="my_applications")``
+         would read if ever inlined here — a literal opt-in-origin constant,
+         never a column read off an enrolment/application_drafts row.
+
+    Each of these is confirmed absent from the file's current, correct
+    content (so none is a latent false positive), and the whole test is
+    mutation-checked in the sibling test immediately below: injecting the
+    real hr_requisitions.py leak shape into this router turns it red.
+    """
     app = Path(__file__).resolve().parents[2] / "app"
     src = (app / "routers" / "candidate_applications.py").read_text(encoding="utf-8")
-    assert not re.search(r"\bsource\b\s*[:=]", src)
+    assert "source_detail" not in src
+    assert "application_source" not in src
+    assert not re.search(r"\.source\b", src)
+    assert not re.search(r"\[[\"']source[\"']\]", src)

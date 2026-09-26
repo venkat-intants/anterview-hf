@@ -1003,6 +1003,92 @@ jobs:
               --quiet \
               intants-${{ matrix.image }}:ci
 
+  erasure-live:
+    # The DPDP erasure executor, run for real against a migrated database.
+    #
+    # WHY A JOB OF ITS OWN, rather than a step on the admin_ops matrix leg.
+    # This is the one test in the repo that needs TWO services' dependency
+    # sets at once: data_gateway's, because it owns the schema and the
+    # migration chain (one revision imports bcrypt to hash the bootstrap
+    # owner), and admin_ops', because the code under test lives there.
+    #
+    # The matrix legs deliberately install ONLY their own service's
+    # requirements, so that a leg fails when its service is missing a
+    # dependency its image would need. Adding data_gateway's packages to the
+    # admin_ops leg would destroy exactly that property — the leg would go
+    # green while admin_ops shipped a broken requirements.txt. I tried it the
+    # other way first and it walked straight into the trap: alembic missing,
+    # then bcrypt missing, each "fixed" by making the leg less like the image
+    # it is supposed to represent.
+    #
+    # So the purity stays where it earns its keep (the unit legs) and the
+    # cross-cutting need gets an honest home here.
+    #
+    # WHAT IT GUARDS. Until 2026-09-26 admin_ops had no database fixture at
+    # all: the most destructive code in the product was covered only by mocks,
+    # and the ordering rule that keeps an erasure from leaving rows behind —
+    # delete the memberships BEFORE applicants.user_id is nulled — was
+    # asserted by source-text position and by a copy of the SQL pasted into a
+    # different service's test.
+    name: erasure executor (live Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # pgvector, not stock postgres:16 — the first migration creates a
+        # halfvec column and dies on the stock image. Same reasoning as the
+        # services job.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install both services' requirements
+        # Both, deliberately and only here — see the job comment.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/data_gateway/requirements.txt
+          pip install -r services/admin_ops/requirements.txt
+          pip install pytest pytest-asyncio
+      - name: Migrate the database
+        working-directory: services/data_gateway
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+          EXAM_LINK_SECRET: ci-only-exam-secret-0123456789abcdef
+          INTERVIEW_LINK_SECRET: ci-only-interview-secret-0123456789ab
+          CONSENT_IP_SALT: ci-only-salt-0123456789abcdef
+          S3_ENDPOINT: http://localhost:9000
+          S3_ACCESS_KEY_ID: ci-access-key
+          S3_SECRET_ACCESS_KEY: ci-secret-key
+        run: python -m alembic upgrade head
+      - name: Run the live erasure tests
+        working-directory: services/admin_ops
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          APP_ENV: test
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+          S3_ENDPOINT_URL: http://localhost:9000
+          S3_ACCESS_KEY_ID: ci-access-key
+          S3_SECRET_ACCESS_KEY: ci-secret-key
+        run: python -m pytest tests/ -q -m integration
+
   ci-ok:
     # The single required status. sync-to-space.yml keys its workflow_run gate
     # on this workflow's conclusion, and that is only `success` when every job
@@ -1010,7 +1096,7 @@ jobs:
     # check to require.
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [shared, services, invariants, migrations, web, security, docker]
+    needs: [shared, services, invariants, migrations, web, security, docker, erasure-live]
     if: always()
     steps:
       - name: Verify every job succeeded
@@ -1022,7 +1108,9 @@ jobs:
           echo "web=${{ needs.web.result }}"
           echo "security=${{ needs.security.result }}"
           echo "docker=${{ needs.docker.result }}"
-          if [ "${{ needs.shared.result }}" != "success" ] \
+          echo "erasure-live=${{ needs.erasure-live.result }}"
+          if [ "${{ needs['erasure-live'].result }}" != "success" ] \
+            || [ "${{ needs.shared.result }}" != "success" ] \
             || [ "${{ needs.services.result }}" != "success" ] \
             || [ "${{ needs.invariants.result }}" != "success" ] \
             || [ "${{ needs.migrations.result }}" != "success" ] \

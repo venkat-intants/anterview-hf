@@ -136,6 +136,68 @@ def test_sanitise_match_reason_drops_malformed_input_rather_than_raising() -> No
 
 
 # ---------------------------------------------------------------------------
+# MemberAddIn.match_reason — the size bound AHEAD of _sanitise_match_reason
+# (security review, LOW): the field was `dict[str, Any] | None` with no bound
+# at all, so an arbitrarily large or deeply nested body was fully parsed and
+# held in memory before anything ever walked it looking for fields to keep.
+# ---------------------------------------------------------------------------
+def test_a_realistic_frozen_snapshot_is_well_under_the_bound() -> None:
+    """The bound must not bite a genuine search result — generous headroom,
+    not a target size."""
+    from app.schemas.pools import MemberAddIn
+
+    snapshot = {
+        "breakdown": {"semantic": 0.7, "lexical": 0.2},
+        "searched_at": "2026-09-24T00:00:00+00:00",
+        "query_terms": ["hydraulics", "maintenance"],
+        "why": [
+            {"signal": "resume_terms", "contribution": 4, "explainable": True,
+             "terms_matched": ["hydraulics"],
+             "citation": {"kind": "applicant", "id": "a1", "label": "CV"}},
+        ],
+    }
+    parsed = MemberAddIn(
+        applicant_ids=[str(uuid.uuid4())], source="rediscovery", match_reason=snapshot,
+    )
+    assert parsed.match_reason == snapshot
+
+
+def test_an_oversized_match_reason_is_refused_before_it_is_walked() -> None:
+    """A hand-crafted body large enough to matter is rejected at parse time —
+    a 422 at the FastAPI boundary, never handed to `_sanitise_match_reason`."""
+    from pydantic import ValidationError
+
+    from app.schemas.pools import MemberAddIn
+
+    huge = {"why": [{"signal": "resume_terms", "note": "x" * 1000}] * 100}
+    with pytest.raises(ValidationError) as caught:
+        MemberAddIn(applicant_ids=[str(uuid.uuid4())], source="manual", match_reason=huge)
+    assert "match_reason is too large" in str(caught.value)
+
+
+def test_a_deeply_nested_match_reason_is_refused_too() -> None:
+    """Nesting depth alone, not just raw byte count, must not sail through —
+    a body built to be expensive to walk rather than merely large."""
+    from pydantic import ValidationError
+
+    from app.schemas.pools import MemberAddIn
+
+    nested: dict[str, Any] = {"v": "leaf"}
+    for _ in range(2000):
+        nested = {"child": nested, "padding": "x" * 20}
+    with pytest.raises(ValidationError) as caught:
+        MemberAddIn(applicant_ids=[str(uuid.uuid4())], source="manual", match_reason=nested)
+    assert "match_reason is too large" in str(caught.value)
+
+
+def test_match_reason_left_absent_is_unaffected() -> None:
+    from app.schemas.pools import MemberAddIn
+
+    parsed = MemberAddIn(applicant_ids=[str(uuid.uuid4())], source="manual")
+    assert parsed.match_reason is None
+
+
+# ---------------------------------------------------------------------------
 # _evidence_review_is_current — FIX 1 (code review): a review EXPIRES.
 # Boundary test in the test_freshness_bands_at_their_boundaries style
 # (tests/unit/test_ph5_e3_rediscovery_rules.py): call the real function at the

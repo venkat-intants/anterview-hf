@@ -18,13 +18,27 @@ precedent:
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Source = Literal["manual", "rediscovery"]
 IneligibleReason = Literal["consent_withdrawn", "consent_expired", "erasure_requested"]
 Freshness = Literal["fresh", "ageing", "stale", "unverifiable", "none"]
+
+#: Second gate on ``MemberAddIn.match_reason``, ahead of
+#: ``app.talent_pools._sanitise_match_reason`` — that function re-applies the
+#: field allowlist and its own per-item/per-term bounds (``_MAX_MATCH_REASON_WHY``,
+#: ``_MAX_QUERY_TERMS``, ``_MAX_TERM_CHARS``) regardless of what arrived, but
+#: only AFTER Pydantic has already parsed an untyped ``dict[str, Any]`` and held
+#: the whole thing in memory — an arbitrarily large or deeply nested body is
+#: fully validated and constructed before anything ever walks it looking for
+#: fields to keep. This bounds the SERIALISED size at the door instead, so a
+#: hand-crafted body is rejected with a 422 rather than accepted and processed.
+#: A real frozen snapshot (``rediscovery.freeze_match_reason``, itself bounded)
+#: is a few KB at most; this is generous headroom for that, not a target size.
+_MAX_MATCH_REASON_BYTES = 16 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +136,25 @@ class MemberAddIn(BaseModel):
     #: reasons calls this once per applicant, each with its own snapshot and
     #: a single-element ``applicant_ids``.
     match_reason: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _bound_match_reason_size(self) -> MemberAddIn:
+        """Reject an oversized or unserialisable ``match_reason`` before it is
+        ever walked — see ``_MAX_MATCH_REASON_BYTES`` above. Keeps the existing
+        field-level sanitisation in ``app.talent_pools``; this is a second gate,
+        not a replacement for it."""
+        if self.match_reason is None:
+            return self
+        try:
+            serialised = json.dumps(self.match_reason, default=str)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("match_reason must be a JSON-serialisable object.") from exc
+        size = len(serialised.encode("utf-8"))
+        if size > _MAX_MATCH_REASON_BYTES:
+            raise ValueError(
+                f"match_reason is too large ({size} bytes; max {_MAX_MATCH_REASON_BYTES})."
+            )
+        return self
 
 
 class MemberSkip(BaseModel):

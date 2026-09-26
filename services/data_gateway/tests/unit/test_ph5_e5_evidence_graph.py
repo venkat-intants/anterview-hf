@@ -533,8 +533,10 @@ def test_a_human_review_round_result_is_cited_as_interview_not_exam_attempt() ->
 
 
 # ===========================================================================
-# AR-5: a decision's free-text rationale is withheld once the candidate is
-# erased, even though stage_transitions.reason is not redacted at the source
+# AR-5 (closed): a decision's free-text rationale is withheld by this graph
+# the moment the candidate is erased, which fires on an erasure REQUEST — up
+# to 30 days before stage_transitions.reason is actually redacted at the
+# source, once the executor runs
 # ===========================================================================
 def test_decision_trace_withholds_reason_when_candidate_erased() -> None:
     decided_at = _dt()

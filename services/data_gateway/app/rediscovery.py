@@ -53,7 +53,9 @@ Never read by this module, and pinned by a source scan in
   * ``hire_checkins`` — a rediscovery match must not know that somebody left
     their last job.
   * ``stage_transitions.reason`` — a negative human judgement about a
-    DIFFERENT opening, and not redacted on erasure (AR-5).
+    DIFFERENT opening. Redacted to ``[redacted]`` once erasure runs (AR-5,
+    closed), which would make it useless as a match signal anyway even if
+    this module were allowed to read it.
   * ``application_answers``, ``interviewer_notes``,
     ``candidate_accommodations``, ``ats_*`` — see the design's §5.1 table.
 

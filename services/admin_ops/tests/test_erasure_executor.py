@@ -306,6 +306,10 @@ async def test_execute_one_erasure_happy_path() -> None:
     assert artifacts["accommodations_redacted"] == 3
     assert artifacts["code_attempts_redacted"] == 0
     assert artifacts["code_reports_deleted"] == 0
+    assert artifacts["enrolments_reasons_redacted"] == 3
+    assert artifacts["round_results_evidence_redacted"] == 3
+    assert artifacts["stage_transitions_redacted"] == 3
+    assert artifacts["audit_log_decisions_redacted"] == 6
     assert "completed_at" in artifacts
     assert "scorecard_s3_keys" in artifacts
 
@@ -576,12 +580,13 @@ async def test_execute_one_erasure_stamps_completed() -> None:
     # 1.8 since step 5h took in coding-round source and program output
     # (PH4-D3), 1.9 since step 5i took in job simulation / portfolio
     # submissions (PH4-D4), 1.10 since step 5j took in 90-day hire
-    # check-ins (PH5-D5-2), and 1.11 since step 5k took in talent-pool
-    # memberships (PH5-E3). The version
+    # check-ins (PH5-D5-2), 1.11 since step 5k took in talent-pool
+    # memberships (PH5-E3), and 1.12 since step 5l took in the free-text
+    # reason/rationale/evidence fields AR-5 named. The version
     # is asserted rather than ignored because the artifacts blob is the auditor's
     # record of WHAT a completion covered, so widening coverage without moving
     # the version leaves two incomparable records claiming the same one.
-    assert artifacts["executor_version"] == "1.11"
+    assert artifacts["executor_version"] == "1.12"
 
 
 # ---------------------------------------------------------------------------

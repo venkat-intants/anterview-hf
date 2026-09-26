@@ -138,7 +138,7 @@ def test_the_steps_read_in_order() -> None:
     """Code review: 5f used to sit between 5c and 5d."""
     body = _body()
     positions = [_at(f"# Step {step}:", where=body)
-                 for step in ("5b", "5c", "5d", "5e", "5f", "5g", "5k", "6")]
+                 for step in ("5b", "5c", "5d", "5e", "5f", "5g", "5k", "5l", "6")]
     assert positions == sorted(positions)
 
 
@@ -255,3 +255,93 @@ def test_talent_pool_members_deleted_before_the_hire_checkins_that_precede_it() 
     hire_checkins = _at("DELETE FROM hire_checkins", where=body)
     pool_members = _at("DELETE FROM talent_pool_members", where=body)
     assert hire_checkins < pool_members
+
+
+# ===========================================================================
+# 7. Free-text decision rationale and reason fields (step 5l, AR-5, closed)
+# ===========================================================================
+def test_step_5l_reaches_all_four_fields_before_applicants_lose_their_user_id() -> None:
+    """Every 5l statement joins through applicants.user_id, which step 6 NULLs."""
+    body = _body()
+    anonymise = _at("UPDATE applicants", where=body)
+    for needle in (
+        "UPDATE enrolments SET",
+        "UPDATE round_results SET evidence = NULL",
+        "UPDATE stage_transitions SET",
+        "UPDATE audit_log SET",
+    ):
+        assert _at(needle, where=body) < anonymise, needle
+
+
+def test_step_5l_sits_immediately_after_talent_pool_members() -> None:
+    """5l is the last of the 5-lettered steps in the docstring's own numbering
+    — a code-review regression that moved it earlier among them would still be
+    correct (order among 5-lettered steps does not matter to each other, only
+    to step 6), but a reader of the code and a reader of the docstring must
+    still agree on the order they are WRITTEN in."""
+    body = _body()
+    pool_members = _at("DELETE FROM talent_pool_members", where=body)
+    enrolments_reasons = _at(
+        "held_reason = CASE WHEN held_reason IS NULL THEN NULL ELSE '[redacted]' END",
+        where=body,
+    )
+    assert pool_members < enrolments_reasons
+
+
+def test_enrolments_held_and_reapply_reasons_preserve_null() -> None:
+    """A CASE-WHEN-NULL guard, on the pattern every other redaction in this
+    file uses: a column that was already empty must not gain a spurious
+    '[redacted]' — that would falsely claim a person wrote something."""
+    body = _body()
+    update = body[_at("UPDATE enrolments SET", where=body):][:500]
+    assert "held_reason = CASE WHEN held_reason IS NULL THEN NULL ELSE '[redacted]' END" in update
+    assert (
+        "reapply_override_reason = CASE WHEN reapply_override_reason IS NULL THEN NULL"
+        in update
+    )
+
+
+def test_round_results_evidence_matches_through_enrolments_and_applicants() -> None:
+    """There is no round_results.user_id — the match must go through the
+    enrolment, exactly like the hire_checkins precedent."""
+    update = SOURCE[SOURCE.index("UPDATE round_results SET evidence = NULL"):][:400]
+    assert "FROM enrolments e" in update
+    assert "JOIN applicants a ON a.id = e.applicant_id" in update
+    assert "a.user_id = :uid" in update
+
+
+def test_stage_transitions_reason_redaction_is_idempotency_guarded() -> None:
+    """`redacted_at IS NULL` makes the UPDATE safe to retry across poll cycles
+    — the same guard every other redacted_at-bearing step in this file uses."""
+    update = SOURCE[SOURCE.index("UPDATE stage_transitions SET"):][:400]
+    assert "redacted_at = now()" in update
+    assert "WHERE redacted_at IS NULL" in update
+
+
+def test_audit_log_decision_rationale_uses_two_explicit_action_lists() -> None:
+    """Two statements, not an action LIKE pattern: an enrolment.decision.* /
+    enrolment.reapply_override row names the ENROLMENT; an
+    applicant.decision.* row names the APPLICANT directly. A pattern match
+    would blur that distinction and could sweep in an unrelated future action
+    that happens to share the 'enrolment.decision.' prefix."""
+    body = _body()
+    enrolment_update = body[_at("details ->> 'reason' IS NOT NULL", where=body):][:400]
+    assert "'enrolment.decision.hired', 'enrolment.decision.rejected'," in enrolment_update
+    assert "'enrolment.reapply_override'" in enrolment_update
+    assert "resource_type = 'enrolment'" in enrolment_update
+
+    applicant_update = body[_at("details ->> 'rationale' IS NOT NULL", where=body):][:400]
+    assert "'applicant.decision.hired', 'applicant.decision.rejected'" in applicant_update
+    assert "resource_type = 'applicant'" in applicant_update
+
+
+def test_step_5l_counts_reach_the_completion_record() -> None:
+    body = _body()
+    for key in (
+        "enrolments_reasons_redacted",
+        "round_results_evidence_redacted",
+        "stage_transitions_redacted",
+        "audit_log_decisions_redacted",
+    ):
+        assert body.count(f"{key}: int") >= 1, key
+        assert SOURCE.count(f'"{key}": {key}') == 1, key  # artifacts record only

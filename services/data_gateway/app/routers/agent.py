@@ -346,9 +346,11 @@ def _citation_audit_rows(citations: list[Any]) -> list[dict[str, Any]]:
     already identify the record, which is all an audit trail needs; a
     ``locator`` is specified (PH5-E2) to sometimes carry a document HEADING
     lifted verbatim from an HR-uploaded file, and this row is written to
-    ``audit_log`` — append-only for three years and, per AR-5, not touched by
-    erasure. A heading naming a person would become permanently unerasable the
-    moment it landed here. The rule a locator must follow is "name a POSITION
+    ``audit_log`` — append-only for three years, and erasure reaches only the
+    decision ``reason``/``rationale`` keys that step 5l redacts (AR-5). A
+    ``locator`` is NOT one of them, so a heading naming a person would become
+    permanently unerasable the moment it landed here. Closing AR-5 narrowed
+    what survives an erasure in this table; it did not make this row safe. The rule a locator must follow is "name a POSITION
     in a record, never quote its content" — but this function has no way to
     tell a safe locator ("page 4") from an unsafe one ("Notes on Priya's
     performance") short of re-parsing free text, so it does not try: it is

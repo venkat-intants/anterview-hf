@@ -121,7 +121,13 @@ class Settings(BaseSettings):
     # between "publish at 09:00" and the opening actually going live, so it is
     # deliberately small; the cost of a pass is one probe against a partial
     # index. Floored at 60s in scheduled_publishing.interval_seconds().
-    scheduled_publish_interval_seconds: int = Field(default=60, ge=60, le=3600)
+    #
+    # 60 -> 300 on 2026-09-26. Five minutes is still a small tolerance for a
+    # recruiter, and the old value was one of five loops that between them kept
+    # a serverless Postgres permanently awake — see the note on
+    # email_poll_interval_seconds below, which explains why a poller's cost is
+    # set by how OFTEN it runs rather than by how much work it does.
+    scheduled_publish_interval_seconds: int = Field(default=300, ge=60, le=3600)
 
     jwt_secret: str
     jwt_algorithm: str = "HS256"
@@ -187,8 +193,26 @@ class Settings(BaseSettings):
     # and never blocks a request. Set EMAIL_OUTBOX_ENABLED=false to disable the
     # worker (rows still queue; useful in tests / one-off scripts).
     email_outbox_enabled: bool = True
-    # Worker poll cadence. Small enough that password-reset links feel instant.
-    email_poll_interval_seconds: int = 5
+    # Worker poll cadence. 5 -> 60 on 2026-09-26; a password-reset link still
+    # arrives inside a minute.
+    #
+    # WHY THIS MATTERS MORE THAN IT LOOKS, because it cost the demo its whole
+    # database. At 5s this one loop opened a session ~17,000 times a day
+    # whether or not a single mail was queued. On a SERVERLESS Postgres billed
+    # by compute hours (Neon's free plan), the unit that costs money is a
+    # WAKE-UP, not a query: one cheap SELECT keeps the compute alive for the
+    # whole ~5-minute autosuspend window, so the database never once suspended
+    # and a month's allowance was gone in under a week with nobody using the
+    # product.
+    #
+    # The trap when fixing it is to count queries. Raising all five pollers'
+    # intervals cut queries ~99x and compute only from ~24 h/day to ~16 h/day,
+    # because the wake-ups still blanket the day. On a metered serverless
+    # database the answer is to switch the optional loops OFF — see the
+    # free-tier profile in space.env.example. On AWS RDS (the Tier-2 target) or
+    # any always-on Postgres none of this applies and these defaults are simply
+    # polite.
+    email_poll_interval_seconds: int = 60
     # Rows claimed per drain tick (bounds burst send rate against the relay).
     email_batch_size: int = 20
     # Give up (status='failed', no further retry) after this many attempts.
@@ -498,7 +522,11 @@ class Settings(BaseSettings):
     # HR manager is still in the console, and long enough that a backlog does
     # not hammer the scorer.
     reconciliation_enabled: bool = True
-    reconciliation_interval_seconds: int = Field(default=600, ge=60, le=86_400)
+    # 600 -> 1800 on 2026-09-26 (see email_poll_interval_seconds). A failed
+    # upload self-heals within half an hour rather than ten minutes; on a
+    # metered serverless database set RECONCILIATION_ENABLED=false instead,
+    # because halving a poll rate is not what saves compute — not polling is.
+    reconciliation_interval_seconds: int = Field(default=1800, ge=60, le=86_400)
 
     # ── Deadline reminders (A2) ───────────────────────────────────────────
     # Every 5 minutes — the floor this field allows, down from hourly.
@@ -523,7 +551,11 @@ class Settings(BaseSettings):
     # sends, a one-way status flip for completion), so running it more often
     # cannot double-send or double-notify.
     reminders_enabled: bool = True
-    reminders_interval_seconds: int = Field(default=300, ge=300, le=86_400)
+    # 300 -> 3600 on 2026-09-26 (see email_poll_interval_seconds). Deadline
+    # reminders are about days, so hourly gives every reminder its own window,
+    # and the sweep is idempotent by construction — nothing depended on the
+    # old cadence for correctness, only for a promptness it never needed.
+    reminders_interval_seconds: int = Field(default=3600, ge=300, le=86_400)
 
     # UTC hour for the daily retention cron.  03:00 UTC = ~08:30 IST (off-peak).
     retention_cron_hour: int = 3

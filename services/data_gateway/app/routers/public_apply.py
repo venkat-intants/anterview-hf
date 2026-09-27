@@ -77,7 +77,8 @@ from app.local_storage import LocalStorageError
 from app.models import Applicant
 from app.publishing import visible_sql
 from app.rate_limit import rate_limit
-from app.reapplication import check as cooldown_check, consume_override
+from app.reapplication import check as cooldown_check
+from app.reapplication import consume_override
 from app.requisitions import record_transition
 from app.resume_details import extract_contact_details
 from app.routers.consent import _hash_value

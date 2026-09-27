@@ -473,10 +473,22 @@ describe('PublicOffer — documents, once accepted', () => {
     );
   });
 
-  // The full pipeline test saw a 500 on this upload and the row still reading
-  // "Not uploaded yet" with no message — a candidate would believe their PAN
-  // card had gone through. These pin that a failure is said out loud, for a
-  // server error and for a request that never reached the server at all.
+  // Characterisation tests, not a fix — and the distinction matters enough to
+  // write down, because the comment here used to claim the opposite.
+  //
+  // A full pipeline test hit a 500 on this upload, and the conclusion drawn at
+  // the time was that the page had swallowed it: the row still read "Not
+  // uploaded yet" with no message, so a candidate would believe their PAN card
+  // had gone through. That was wrong. The 500 was real and is fixed server-side
+  // in document_storage.py; the component was already correct and is unchanged
+  // by that work — errText() falls through to e.message, isUnauthorized is 401
+  // only, and the fallback key exists in all three bundles. These two cases
+  // pass on the unfixed tree as well, which is exactly why they must not be
+  // cited as evidence that anything here was repaired.
+  //
+  // They are still worth keeping. "A failed upload is said out loud" is a
+  // property a candidate depends on, it had no test, and the next refactor of
+  // this mutation could quietly lose it.
   it.each([
     ['the server fails', new Error('Internal server error.'), /Internal server error/],
     ['the request never arrives', new TypeError('Failed to fetch'), /Failed to fetch/],

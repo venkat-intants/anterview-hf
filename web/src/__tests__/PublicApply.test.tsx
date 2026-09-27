@@ -50,9 +50,11 @@ const POSTING: Posting = {
 
 const getPosting = vi.fn();
 const submitApplication = vi.fn();
+const startDraft = vi.fn();
 vi.mock('../api/publicApply', () => ({
   getPosting: (...a: unknown[]) => getPosting(...a) as unknown,
   submitApplication: (...a: unknown[]) => submitApplication(...a) as unknown,
+  startDraft: (...a: unknown[]) => startDraft(...a) as unknown,
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -120,6 +122,18 @@ async function goToCvStep(user: ReturnType<typeof userEvent.setup>): Promise<voi
 const submitButton = (): HTMLButtonElement =>
   screen.getByRole<HTMLButtonElement>('button', { name: 'Send application' });
 
+// PH5-E3 — the review step now carries TWO checkboxes: the application
+// consent (existing) and the independent rediscovery opt-in (new, below it).
+// `getByRole('checkbox')` with no name throws once there is more than one
+// match, so every existing test that used it is scoped by accessible name
+// (the wrapping <label>'s own text) rather than position — which is also
+// what makes "these two boxes are independent" a checkable property rather
+// than an assumption.
+const consentCheckbox = (): HTMLInputElement =>
+  screen.getByRole<HTMLInputElement>('checkbox', { name: /may store my name, email and CV/i });
+const rediscoveryCheckbox = (): HTMLInputElement =>
+  screen.getByRole<HTMLInputElement>('checkbox', { name: /search my CV and this application/i });
+
 beforeEach(() => {
   vi.clearAllMocks();
   getPosting.mockResolvedValue(POSTING);
@@ -129,6 +143,10 @@ beforeEach(() => {
     full_name: 'Priya Sharma',
     already_applied: false,
     message: 'Thanks — your application is in. We will be in touch by email.',
+  });
+  startDraft.mockResolvedValue({
+    resume_token: 'tok-1',
+    draft: { requisition_id: 'req-1', title: 'Backend Engineer' },
   });
 });
 
@@ -167,7 +185,7 @@ describe('PublicApply — consent gates everything', () => {
     await screen.findByText('Backend Engineer');
 
     await fillToReview(user);
-    expect(screen.getByRole('checkbox')).toHaveProperty('checked', false);
+    expect(consentCheckbox()).toHaveProperty('checked', false);
   });
 
   it('is not asked for before there is anything to consent to', async () => {
@@ -187,7 +205,7 @@ describe('PublicApply — consent gates everything', () => {
     await fillToReview(user);
     expect(submitButton().disabled).toBe(true);
 
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(consentCheckbox());
     expect(submitButton().disabled).toBe(false);
   });
 
@@ -208,7 +226,7 @@ describe('PublicApply — consent gates everything', () => {
     await screen.findByText('Backend Engineer');
 
     await fillToReview(user);
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(consentCheckbox());
     await user.click(submitButton());
 
     await waitFor(() => expect(submitApplication).toHaveBeenCalledTimes(1));
@@ -229,7 +247,7 @@ describe('PublicApply — consent gates everything', () => {
 
     await fillToReview(user);
     await user.selectOptions(screen.getByLabelText('Emails about this application in'), 'hi');
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(consentCheckbox());
     await user.click(submitButton());
 
     await waitFor(() => expect(submitApplication).toHaveBeenCalledTimes(1));
@@ -246,6 +264,114 @@ describe('PublicApply — consent gates everything', () => {
 
     await fillToReview(user);
     expect(screen.getByText(/I agree that Acme may store my name, email and CV/)).toBeTruthy();
+  });
+});
+
+// PH5-E3 (D5-1) — the rediscovery checkbox is a SECOND, INDEPENDENT consent.
+// It must never join `ready`: bundling it with the application consent above
+// would make it non-optional, which DPDP §6(1) forbids. This is the single
+// worst outcome the task brief for this feature names, so it gets its own
+// describe block rather than one assertion buried in the block above.
+describe('PublicApply — the rediscovery opt-in is independent of submission', () => {
+  it('renders unticked by default, below the application consent', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    expect(rediscoveryCheckbox()).toHaveProperty('checked', false);
+  });
+
+  // The checkbox sits directly above "Save and finish later". Before this was
+  // wired, a candidate who ticked it and saved had the tick silently thrown
+  // away: the draft carried no such field, and no screen ever said so. A
+  // dropped consent is worse than an absent feature, so both exits from this
+  // form carry the choice. Found in code review, 2026-09-26.
+  it('carries the tick onto a saved draft rather than discarding it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    // Saving a draft is what records the application consent, so the server
+    // refuses without it and the button stays disabled — tick it first.
+    await user.click(consentCheckbox());
+    await user.click(rediscoveryCheckbox());
+    await user.click(screen.getByRole('button', { name: /save and finish later/i }));
+
+    await waitFor(() => expect(startDraft).toHaveBeenCalledTimes(1));
+    const [, payload] = startDraft.mock.calls[0] as [string, { rediscoveryOptIn?: boolean }];
+    expect(payload.rediscoveryOptIn).toBe(true);
+  });
+
+  it('saves a draft with the opt-in false when the box was left alone', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    await user.click(consentCheckbox());
+    await user.click(screen.getByRole('button', { name: /save and finish later/i }));
+
+    await waitFor(() => expect(startDraft).toHaveBeenCalledTimes(1));
+    const [, payload] = startDraft.mock.calls[0] as [string, { rediscoveryOptIn?: boolean }];
+    expect(payload.rediscoveryOptIn).toBe(false);
+  });
+
+  it('does NOT gate the submit button — application consent alone is enough', async () => {
+    // The property that matters: ticking ONLY the application consent (never
+    // touching the rediscovery box) must fully enable submission.
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    expect(submitButton().disabled).toBe(true);
+
+    await user.click(consentCheckbox());
+    expect(rediscoveryCheckbox()).toHaveProperty('checked', false);
+    expect(submitButton().disabled).toBe(false);
+  });
+
+  it('submits with the application consent alone, sending no rediscovery opt-in', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    await user.click(consentCheckbox());
+    await user.click(submitButton());
+
+    await waitFor(() => expect(submitApplication).toHaveBeenCalledTimes(1));
+    const [, input] = submitApplication.mock.calls[0] as [string, { rediscoveryOptIn?: boolean }];
+    expect(input.rediscoveryOptIn).toBeFalsy();
+  });
+
+  it('sends the opt-in as true only when it was actually ticked', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    await user.click(consentCheckbox());
+    await user.click(rediscoveryCheckbox());
+    await user.click(submitButton());
+
+    await waitFor(() => expect(submitApplication).toHaveBeenCalledTimes(1));
+    expect(submitApplication).toHaveBeenCalledWith(
+      'req-1',
+      expect.objectContaining({ rediscoveryOptIn: true }),
+    );
+  });
+
+  it('ticking the rediscovery box alone never enables submit — it is not an alternative consent', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    await user.click(rediscoveryCheckbox());
+    expect(submitButton().disabled).toBe(true);
   });
 });
 
@@ -285,7 +411,7 @@ describe('PublicApply — afterwards', () => {
     await screen.findByText('Backend Engineer');
 
     await fillToReview(user);
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(consentCheckbox());
     await user.click(submitButton());
 
     expect(await screen.findByText('Application received')).toBeTruthy();
@@ -305,7 +431,7 @@ describe('PublicApply — afterwards', () => {
     await screen.findByText('Backend Engineer');
 
     await fillToReview(user);
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(consentCheckbox());
     await user.click(submitButton());
 
     expect(await screen.findByText('You have already applied')).toBeTruthy();
@@ -321,7 +447,7 @@ describe('PublicApply — afterwards', () => {
     await screen.findByText('Backend Engineer');
 
     await fillToReview(user);
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(consentCheckbox());
     await user.click(submitButton());
 
     expect(await screen.findByRole('alert')).toHaveProperty(

@@ -36,7 +36,7 @@ from app.applicant_enrichment import (
     store_embedding,
     valid_email_or_none,
 )
-from app.application_source import INTERNAL
+from app.application_source import INTERNAL, validate_hr_source
 from app.bulk_ingest import StagedFile, batch_progress, create_batch, recent_batches
 from app.database import DbSessionDep
 from app.decision_reasons import ReasonError
@@ -316,6 +316,7 @@ async def _file_under(
     applicant: Applicant,
     opening: dict[str, Any],
     hr_uid: uuid.UUID,
+    source: str = INTERNAL,
 ) -> uuid.UUID | None:
     """Create the applicant's enrolment in ``opening``. Caller commits.
 
@@ -338,7 +339,12 @@ async def _file_under(
         resume_s3_key=applicant.resume_s3_key,
         # HR put this person in; the candidate did not arrive through a channel
         # (PH3-B1). Distinct from 'unknown', which means nobody was tracking.
-        source=INTERNAL,
+        # PH5-C1: HR may now say which channel this candidate actually came
+        # through (a referral, a job board, campus) — validated by the caller
+        # (app.application_source.validate_hr_source) before it reaches here;
+        # still 'internal' when HR does not say. No source_detail from HR: see
+        # that function's docstring.
+        source=source,
     )
     return uuid.UUID(outcome.enrolment_id) if outcome.enrolment_id else None
 
@@ -606,10 +612,20 @@ async def create_applicant(
     # (see _resolve_opening). When present it wins, and the applicant's target
     # role is the opening's, not whatever was typed alongside it.
     requisition_id: Annotated[uuid.UUID | None, Form()] = None,
+    # PH5-C1: the channel this candidate actually came through — a referral, a
+    # job board, campus — from the governed vocabulary only. No free-text
+    # detail: see app.application_source.validate_hr_source. Defaults to
+    # 'internal', as before this existed.
+    source: Annotated[str | None, Form()] = None,
 ) -> ApplicantOut:
     """Upload an applicant's resume, store it, file them under an opening, and
     ATS-score the application (best-effort)."""
     hr_uid, company_id = ctx
+
+    try:
+        validated_source = validate_hr_source(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF resumes are accepted.")
@@ -714,7 +730,7 @@ async def create_applicant(
         db.add(applicant)
     try:
         enrolment_id = await _file_under(db, applicant=applicant, opening=opening,
-                                         hr_uid=hr_uid)
+                                         hr_uid=hr_uid, source=validated_source)
         await db.commit()
     except Exception as exc:  # noqa: BLE001
         await db.rollback()
@@ -819,6 +835,11 @@ async def bulk_upload_applicants(
     requisition_id: Annotated[uuid.UUID, Form()],
     ctx: HrCtxDep,
     db: DbSessionDep,
+    # PH5-C1: the channel this WHOLE batch came through (one bulk upload is
+    # already one opening, and in practice one channel too). Governed
+    # vocabulary only, no free-text detail — see validate_hr_source. Defaults
+    # to 'internal', as before this existed.
+    source: Annotated[str | None, Form()] = None,
 ) -> BulkUploadAccepted:
     """Accept many resumes for ONE opening and return straight away — E5.
 
@@ -839,6 +860,10 @@ async def bulk_upload_applicants(
     matches one — and must belong to the caller's company (404 otherwise).
     """
     hr_uid, company_id = ctx
+    try:
+        validated_source = validate_hr_source(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not files:
         raise HTTPException(status_code=400, detail="No files were uploaded.")
     if len(files) > _MAX_BULK_FILES:
@@ -905,7 +930,8 @@ async def bulk_upload_applicants(
 
     try:
         await create_batch(db, batch_id=batch_id, company_id=company_id,
-                           requisition_id=requisition_id, uploaded_by=hr_uid, files=staged)
+                           requisition_id=requisition_id, uploaded_by=hr_uid, files=staged,
+                           source=validated_source)
         await db.commit()
     except Exception as exc:
         await db.rollback()
@@ -1274,6 +1300,11 @@ class ApplicationOut(BaseModel):
     scorecard_id: str | None
     applied_at: datetime
     is_latest: bool
+    # Where this application came from (PH3-B1/PH5-C1). 'unknown' for history
+    # predating that story; HR-added applications carry source_detail=NULL —
+    # HR's own inputs never set a free-text detail (app.application_source).
+    source: str = "unknown"
+    source_detail: str | None = None
 
 
 _APPLICATIONS_SQL = text(
@@ -1281,7 +1312,8 @@ _APPLICATIONS_SQL = text(
 SELECT p.enrolment_id, p.requisition_id, p.opening_title, p.status, p.stored_status,
        e.ats_overall, e.ats_breakdown, e.ats_strengths, e.ats_concerns,
        e.ats_recommendation, e.ats_summary,
-       p.best_exam_percent, p.exam_passed, p.interview_score, p.scorecard_id, p.applied_at
+       p.best_exam_percent, p.exam_passed, p.interview_score, p.scorecard_id, p.applied_at,
+       e.source, e.source_detail
   FROM application_progress p
   JOIN enrolments e ON e.id = p.enrolment_id
  WHERE p.company_id = :c AND p.applicant_id = :a
@@ -1323,6 +1355,8 @@ async def list_applications(
             scorecard_id=str(r["scorecard_id"]) if r["scorecard_id"] else None,
             applied_at=r["applied_at"],
             is_latest=i == len(rows) - 1,
+            source=r["source"],
+            source_detail=r["source_detail"],
         )
         for i, r in enumerate(rows)
     ]

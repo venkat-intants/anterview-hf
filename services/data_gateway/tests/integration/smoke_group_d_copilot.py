@@ -290,6 +290,41 @@ async def main() -> None:
             )
         check("still exactly one workflow", int(n) == 1, str(n))
 
+        print("\n--- the other three draft tools cite the opening too (PH5-E1) ---")
+        # Before this fix, draft_workflow_round / draft_round_criteria /
+        # draft_workflow_settings put a citation on the PROPOSAL but not on the
+        # ToolOutput itself — so the run-level "sources" strip under the
+        # copilot's reply had nothing for these three, unlike every other tool.
+        async with factory() as db:
+            ctx2 = ToolContext(
+                actor_id=str(hr_uid), role="hr_manager", company_id=str(cid),
+                resources={"db": db, "requisition_id": str(req_id)},
+            )
+            res, _data = await call(
+                "draft_workflow_round",
+                {"title": "Culture screen", "kind": "human_review"},
+                ctx2,
+            )
+            check("draft_workflow_round succeeds", res.ok, res.error or "")
+            check("its ToolOutput carries the opening citation",
+                  any(c.kind == "job" for c in res.citations), str(res.citations))
+
+            res, _data = await call(
+                "draft_round_criteria",
+                {"round_id": str(wf["rounds"][0]["id"]), "competency_ids": [good_ids[0]]},
+                ctx2,
+            )
+            check("draft_round_criteria succeeds", res.ok, res.error or "")
+            check("its ToolOutput carries the opening citation",
+                  any(c.kind == "job" for c in res.citations), str(res.citations))
+
+            res, _data = await call(
+                "draft_workflow_settings", {"reminders_enabled": True}, ctx2,
+            )
+            check("draft_workflow_settings succeeds", res.ok, res.error or "")
+            check("its ToolOutput carries the opening citation",
+                  any(c.kind == "job" for c in res.citations), str(res.citations))
+
         print("\n--- atomicity ---")
         # Discard, then apply a payload whose LAST round is invalid. Nothing
         # should survive: a half-built process that looks complete is worse

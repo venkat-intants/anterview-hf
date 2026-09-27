@@ -1390,13 +1390,23 @@ async def test_the_ops_endpoint_flags_a_job_that_went_quiet(
     """A dead loop does not report failures; it stops reporting. Overdue is
     judged from the last finish, against each job's own expected gap."""
     import app.routers.admin_hr as admin
+    from app.config import settings
 
     now = datetime.now(tz=UTC)
+    # DERIVED from the same settings `_expected_gap` reads, not hardcoded.
+    # These ages were once literal ("2 hours ago is overdue"), which was true
+    # only while reminders swept every 5 minutes; raising that interval on
+    # 2026-09-26 to let a serverless database autosuspend made a 2-hour-old
+    # sweep perfectly healthy and turned this test red. The behaviour under
+    # test is "older than its own allowance", so the fixture has to be
+    # expressed in that allowance.
+    quiet = timedelta(seconds=4 * max(300, settings.reminders_interval_seconds))
+    recent = timedelta(seconds=max(60, settings.reconciliation_interval_seconds) // 2)
 
     async def _status(_f: object) -> list[dict]:
         return [
-            {"job_id": "reminders_sweep", "last_finished_at": (now - timedelta(hours=2)).isoformat()},
-            {"job_id": "reconciliation_loop", "last_finished_at": (now - timedelta(minutes=5)).isoformat()},
+            {"job_id": "reminders_sweep", "last_finished_at": (now - quiet).isoformat()},
+            {"job_id": "reconciliation_loop", "last_finished_at": (now - recent).isoformat()},
             {"job_id": "retention_purge", "last_finished_at": None},
             {"job_id": "something_new", "last_finished_at": None},
         ]

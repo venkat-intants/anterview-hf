@@ -34,6 +34,7 @@ import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitiv
 import { Reveal } from '@/design/components/Reveal';
 import YourInterviews from '@/components/candidate/YourInterviews';
 import YourOffers from '@/components/candidate/YourOffers';
+import YourRediscovery from '@/components/candidate/YourRediscovery';
 import {
   AlertCircle,
   Briefcase,
@@ -507,6 +508,11 @@ export default function Applications() {
 
       {/* PH4-A3 — offers, once an application has been decided as a hire. */}
       <YourOffers />
+
+      {/* PH5-E3 (D5-1) — one row per company applied to: whether this
+          candidate has opted in to be found again for a future opening,
+          above the application list itself. */}
+      <YourRediscovery />
 
       <div className="mt-6 flex flex-col gap-4">
         {isLoading && (

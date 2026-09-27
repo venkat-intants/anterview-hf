@@ -58,7 +58,56 @@ export interface PipelineResponse {
   offset: number;
 }
 
-/** Company-scoped funnel counts + averages. */
+export interface HrOpenings {
+  open: number;
+  paused: number;
+  closed: number;
+}
+
+export interface HrVelocity {
+  /**
+   * A MEDIAN, not a mean — one candidate who sat in a pipeline for eight
+   * months drags an average somewhere no real hire ever was. Null when nobody
+   * has been hired yet, which is not the same as zero days.
+   */
+  median_time_to_hire_days: number | null;
+  hires_measured: number;
+  applications_last_7d: number;
+  applications_prev_7d: number;
+}
+
+/**
+ * GOVERNED (PH5-C2) — every field here is a metric from
+ * `app.metrics.definitions`, recomputed live from the same registry the
+ * standalone `/hr/analytics/funnel` screen and the copilot read. `pct_*` is
+ * each stage as a share of APPLICATIONS (not of the stage before — HR can
+ * assign an exam without shortlisting first, so "% of the previous stage" can
+ * exceed 100 and mean nothing; against applications it is always readable).
+ * Null exactly when nobody has applied — a rate out of nothing is not 0%.
+ * These never suppress on small samples (see the backend model's docstring);
+ * a null value here always means "not enough data yet", never "too few to
+ * compare".
+ *
+ * PH5 wave-1 audit fix: this replaces a client-side `hires ÷ interviews`
+ * (and similar) computation that could read over 100% — a second,
+ * conflicting definition of the same numbers the governed layer already
+ * publishes. Never divide two fields from this response client-side; read
+ * the `pct_*` fields as sent.
+ */
+export interface HrConversion {
+  applied: number;
+  ever_shortlisted: number;
+  ever_sat_exam: number;
+  ever_interviewed: number;
+  ever_hired: number;
+  pct_shortlisted: number | null;
+  pct_sat_exam: number | null;
+  pct_interviewed: number | null;
+  pct_hired: number | null;
+}
+
+/** Company-scoped funnel counts + averages, plus the governed conversion +
+ *  velocity roll-ups (PH5-C2). */
 export interface HrAnalytics {
   funnel: {
     /** People. */
@@ -78,6 +127,9 @@ export interface HrAnalytics {
     avg_exam_percent: number | null; // 0-100
     avg_interview_composite: number | null; // 0-10
   };
+  openings: HrOpenings;
+  velocity: HrVelocity;
+  conversion: HrConversion;
 }
 
 export interface PipelineQuery {

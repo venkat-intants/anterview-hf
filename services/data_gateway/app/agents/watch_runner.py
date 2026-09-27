@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 
 import structlog
 from shared.agents import (
@@ -45,6 +45,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_session_factory
+from app.metrics.compute import CohortWindow, FunnelFilters, compute_funnel
+from app.metrics.definitions import current_metrics, uses_checkin_data
 from app.publishing import public_gate_open
 from app.redis_client import get_redis
 
@@ -208,22 +210,79 @@ STALLED_SQL = text(
     """
 )
 
-# Per OPENING (E6). It grouped by title, which merged two openings that shared
-# one and cited the title as if it were an id.
-FUNNEL_SQL = text(
+def _assert_watcher_metrics_are_checkin_safe(names: tuple[str, ...]) -> None:
+    """Raise if any name in ``names`` reads a check-in flag.
+
+    A nightly finding is text that reaches a person unreviewed; it must never
+    carry a post-hire outcome about a named former candidate
+    (:func:`~app.metrics.definitions.uses_checkin_data`). Runs at IMPORT —
+    the ``ToolSpec``/``DATA_CLASS_ROLES`` precedent — so a future change to
+    :data:`_WATCHER_FUNNEL_METRICS` that quietly adds a check-in metric fails
+    the service at startup, not silently in a 3am sweep. See
+    ``test_watcher_funnel_metrics_are_checkin_safe`` (offline, against the
+    real registry) for the same assertion run as a test rather than a
+    startup gate.
     """
-    SELECT p.requisition_id AS job_id, r.title,
-           COUNT(*) AS applicants,
-           COUNT(p.scorecard_id) AS interviewed
-      FROM application_progress p
-      JOIN job_requisitions r
-        ON r.id = p.requisition_id AND r.company_id = p.company_id
-       AND r.deleted_at IS NULL AND r.status IN ('open', 'paused')
-     WHERE p.company_id = CAST(:cid AS uuid)
-     GROUP BY p.requisition_id, r.title
-     LIMIT :limit
+    current = current_metrics()
+    unknown = [name for name in names if name not in current]
+    if unknown:
+        raise RuntimeError(
+            f"watch_runner._WATCHER_FUNNEL_METRICS names an unregistered metric {unknown!r}."
+        )
+    unsafe = [name for name in names if uses_checkin_data(current[name])]
+    if unsafe:
+        raise RuntimeError(
+            f"watch_runner._WATCHER_FUNNEL_METRICS names a check-in metric {unsafe!r} — "
+            "a nightly finding must never carry post-hire outcome data about a "
+            "named former candidate."
+        )
+
+
+# Per OPENING (E6), from the GOVERNED metric layer (PH5-C2) rather than a
+# bespoke query — `applicants`/`interviewed` are `applications@1`/
+# `interviewed@1`, the same flags the funnel endpoint and the copilot read,
+# so this watcher cannot disagree with either about what "interviewed" means
+# (see the cross-consumer consistency test). Neither metric reads a check-in
+# flag — enforced by `_assert_watcher_metrics_are_checkin_safe`, called
+# immediately below, plus `test_watcher_funnel_metrics_are_checkin_safe`, so a
+# future change to this tuple cannot quietly start feeding check-in data to a
+# nightly finding.
+_WATCHER_FUNNEL_METRICS: Final[tuple[str, str]] = ("applications", "interviewed")
+_assert_watcher_metrics_are_checkin_safe(_WATCHER_FUNNEL_METRICS)
+
+_OPEN_REQUISITIONS_SQL = text(
+    """
+    SELECT id FROM job_requisitions
+     WHERE company_id = CAST(:cid AS uuid) AND deleted_at IS NULL
+       AND status IN ('open', 'paused')
     """
 )
+
+
+async def _governed_funnel_rows(db: AsyncSession, company_id: str) -> list[FunnelRow]:
+    """Per-opening applicant/interviewed counts, restricted to open or paused
+    openings, all-time — the population ``watch_funnel_health`` has always
+    used, now sourced from :mod:`app.metrics.compute` instead of a
+    hand-copied funnel query."""
+    open_ids = {
+        str(r) for r in (await db.execute(_OPEN_REQUISITIONS_SQL, {"cid": company_id})).scalars()
+    }
+    if not open_ids:
+        return []
+    result = await compute_funnel(
+        db, company_id=uuid.UUID(company_id), cohort=CohortWindow(basis="application"),
+        filters=FunnelFilters(), group_by="requisition",
+    )
+    rows = [
+        FunnelRow(
+            job_id=group.key, job_title=group.label,
+            applicants=int(group.metrics["applications"]["value"]),
+            interviewed=int(group.metrics["interviewed"]["value"]),
+        )
+        for group in result.groups
+        if group.key is not None and group.key in open_ids
+    ]
+    return rows[:MAX_ROWS_PER_QUERY]
 
 # Candidates stuck on one round of one opening past that round's deadline (E6).
 #
@@ -311,9 +370,7 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
         await db.execute(STALLED_SQL, {"cid": company_id, "limit": MAX_ROWS_PER_QUERY})
     ).all()
 
-    funnels = (
-        await db.execute(FUNNEL_SQL, {"cid": company_id, "limit": MAX_ROWS_PER_QUERY})
-    ).all()
+    funnels = await _governed_funnel_rows(db, company_id)
 
     questions = (
         await db.execute(QUESTION_STATS_SQL, {"cid": company_id, "limit": MAX_ROWS_PER_QUERY})
@@ -335,17 +392,7 @@ async def gather_company_input(db: AsyncSession, company_id: str) -> WatcherInpu
             )
             for r in stalled
         ],
-        funnels=[
-            FunnelRow(
-                # The requisition id since E6; the title only for a row that
-                # somehow lacks one, so the rule still has a key.
-                job_id=_opt_str(getattr(r, "job_id", None)) or r.title,
-                job_title=r.title,
-                applicants=int(r.applicants),
-                interviewed=int(r.interviewed),
-            )
-            for r in funnels
-        ],
+        funnels=funnels,
         question_stats=[
             QuestionStat(
                 exam_id=str(r.exam_id),

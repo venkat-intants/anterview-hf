@@ -8,6 +8,7 @@ alerts.
 
 from __future__ import annotations
 
+import uuid as uuid_mod
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -70,29 +71,79 @@ def _db(sequence: list[list[Any]]) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-async def test_gather_maps_rows_onto_the_watcher_input() -> None:
-    db = _db(
+async def test_gather_maps_rows_onto_the_watcher_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PH5-C2: the funnel figures are now `app.metrics.compute.compute_funnel`
+    (governed), not a raw row the old `FUNNEL_SQL` returned — mocked at that
+    seam rather than as a `db.execute` row, since that is the real boundary
+    now. `_OPEN_REQUISITIONS_SQL` (a plain `db.execute(...).scalars()`) still
+    goes through the generic queue.
+
+    Uses a real UUID string for ``company_id`` rather than every other test's
+    placeholder ("co-1") — `_governed_funnel_rows` parses it with
+    `uuid.UUID(...)` to call `compute_funnel`, which every OTHER test here
+    never reaches (they either mock `gather_company_input` itself or stop
+    before the funnel section runs).
+    """
+    from app.metrics.compute import CohortWindow, FunnelFilters, FunnelGroup, FunnelResult
+
+    company_id = str(uuid_mod.uuid4())
+    queue: list[Any] = [
+        [_row(id="a-1", full_name="Asha", status="shortlisted", days=21)],  # STALLED_SQL
+    ]
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    async def _execute(statement: Any, *_a: Any, **_k: Any) -> MagicMock:
+        result = MagicMock()
+        if "id FROM job_requisitions" in str(statement):  # _OPEN_REQUISITIONS_SQL only
+            result.scalars.return_value = ["welder-req-id"]
+            return result
+        rows = queue.pop(0) if queue else []
+        result.all.return_value = rows
+        result.first.return_value = rows[0] if rows else None
+        result.scalars.return_value = []
+        return result
+
+    db.execute = _execute
+    # QUESTION_STATS_SQL is the next queued call after STALLED_SQL and the
+    # (separately branched) open-requisitions lookup.
+    queue.append(
         [
-            [_row(id="a-1", full_name="Asha", status="shortlisted", days=21)],
-            [_row(title="Welder", applicants=40, interviewed=1)],
-            [
-                _row(
-                    exam_id="e-1",
-                    title="CNC Basics",
-                    question_id="q-7",
-                    position=7,
-                    attempts=14,
-                    correct=1,
-                )
-            ],
+            _row(
+                exam_id="e-1", title="CNC Basics", question_id="q-7", position=7,
+                attempts=14, correct=1,
+            )
         ]
     )
-    data = await gather_company_input(db, "co-1")
 
-    assert data.company_id == "co-1"
+    governed = FunnelResult(
+        registry_hash="test-hash", cohort=CohortWindow(basis="application"),
+        filters=FunnelFilters(), group_by="requisition",
+        groups=[
+            FunnelGroup(
+                key="welder-req-id", label="Welder", in_progress=0,
+                metrics={
+                    "applications": {
+                        "metric": "applications", "version": 1, "kind": "count", "value": 40,
+                    },
+                    "interviewed": {
+                        "metric": "interviewed", "version": 1, "kind": "count", "value": 1,
+                    },
+                },
+            )
+        ],
+    )
+    monkeypatch.setattr(watch_runner, "compute_funnel", AsyncMock(return_value=governed))
+
+    data = await gather_company_input(db, company_id)
+
+    assert data.company_id == company_id
     assert data.stalled[0].name == "Asha"
     assert data.stalled[0].days_in_stage == 21
+    assert data.funnels[0].job_id == "welder-req-id"
+    assert data.funnels[0].job_title == "Welder"
     assert data.funnels[0].applicants == 40
+    assert data.funnels[0].interviewed == 1
     assert data.question_stats[0].correct == 1
 
 

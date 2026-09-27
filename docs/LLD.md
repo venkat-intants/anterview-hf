@@ -2829,7 +2829,7 @@ spec:
 | L4 | Avatar viseme driver | Rhubarb (free, deterministic) | **Decided** |
 | L5 | Audio retention | 90 days hot → archive; delete after 365 days unless contract amended | Open |
 | L6 | Session resume window | 60 seconds (configurable) | Open |
-| L7 | Embedding model | OpenAI `text-embedding-3-large` (1536 dim), India-region endpoint | **Decided** |
+| L7 | Embedding model | Google Gemini `gemini-embedding-001` (3072 dim), United States endpoint (not India-region) — corrected 2026-09-23; this row named OpenAI `text-embedding-3-large` at 1536 dim on an India-region endpoint, neither of which the implementation ever used (`a9c1e2f3b4d5`) | **Decided** |
 | L8 | Caching layer | Cloudflare for static + Redis for hot data | **Decided** |
 | L9 | Scoring fallback if Claude returns invalid JSON | Retry once with stricter prompt; on second failure use rule-based fallback | Open |
 | L10 | Virtual job moderation | Pre-generation safety filter + post-generation review | **Decided** |

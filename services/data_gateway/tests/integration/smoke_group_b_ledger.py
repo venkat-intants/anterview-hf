@@ -224,6 +224,12 @@ async def main() -> None:
     check("a person's move names them; a system move names nobody",
           any(h["actor"] == "HR" and not h["automated"] for h in hist)
           and all(h["actor"] is None for h in hist if h["automated"]))
+    check(
+        "every row carries its own stage_transitions id (PH5-E5: /hr/decisions/{id}/trace takes it)",
+        all(isinstance(h.get("id"), int) for h in hist)
+        and len({h["id"] for h in hist}) == len(hist),
+        str([h.get("id") for h in hist]),
+    )
     r = await ac.get(f"/hr/enrolments/{uuid.uuid4()}/history")
     check("another company's (or no) application is 404", r.status_code == 404)
     await ac.aclose()

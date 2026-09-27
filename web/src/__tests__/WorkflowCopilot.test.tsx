@@ -110,6 +110,25 @@ const CHAT_REPLY: AgentChatResponse = {
   citations: [],
   tools_used: [{ name: 'get_opening_under_design', ok: true, duration_ms: 12 }],
   stop_reason: 'completed',
+  evidence_used: false,
+};
+
+/** A reply that actually read a record, for the citation/evidence tests. */
+const CHAT_REPLY_WITH_EVIDENCE: AgentChatResponse = {
+  ...CHAT_REPLY,
+  reply: 'This role model weighs Python highest[S1].',
+  proposals: [],
+  citations: [
+    {
+      kind: 'role_profile',
+      id: 'rp-1',
+      label: 'Backend Engineer role model',
+      href: null,
+      ref: 'S1',
+      locator: null,
+    },
+  ],
+  evidence_used: true,
 };
 
 const askAgent = vi.fn();
@@ -318,6 +337,40 @@ describe('WorkflowCopilot — what it sends', () => {
     await screen.findByText('Backend Engineer');
 
     expect(screen.queryByLabelText('Ask the design assistant')).toBeNull();
+  });
+});
+
+describe('WorkflowCopilot — citations (PH5-E1)', () => {
+  it('shows the evidence banner and the source strip when the reply read a record', async () => {
+    askAgent.mockResolvedValue(CHAT_REPLY_WITH_EVIDENCE);
+    renderBuilder();
+    await ask('what does the role model weigh most?');
+
+    expect(
+      await screen.findByText(/Answered from your records/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Backend Engineer role model')).toBeInTheDocument();
+  });
+
+  it('renders an inline [S1] marker as a chip rather than literal text', async () => {
+    askAgent.mockResolvedValue(CHAT_REPLY_WITH_EVIDENCE);
+    renderBuilder();
+    await ask('what does the role model weigh most?');
+
+    await screen.findByText(/This role model weighs Python highest/);
+    // The marker text itself still reads "[S1]" (inside the chip), but it is
+    // now an element with a tooltip naming the kind — not bare text sitting
+    // in the reply.
+    expect(screen.getByTitle('Role model')).toBeInTheDocument();
+  });
+
+  it('says no records were read when the reply cites nothing', async () => {
+    renderBuilder();
+    await ask('design something short');
+
+    expect(
+      await screen.findByText(/No records were read for this answer/),
+    ).toBeInTheDocument();
   });
 });
 

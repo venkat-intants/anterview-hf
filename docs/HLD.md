@@ -180,7 +180,7 @@
 | Data fetched | Profile, resume, interested jobs, training history, assessments |
 | Jobs | Real (from Naipunyam) + Virtual (user-created with AI-assisted JD) |
 | Virtual JD generation | Claude Sonnet 4.6 with pre-generation safety filter + post-generation review |
-| Storage | Postgres `jobs` table + pgvector embeddings (OpenAI `text-embedding-3-large`) |
+| Storage | Postgres `jobs` table + pgvector embeddings (Google Gemini `gemini-embedding-001`, 3072-dim — corrected 2026-09-23; this row named OpenAI `text-embedding-3-large`, which the code has not used since migration `a9c1e2f3b4d5`) |
 | NOS KB | Curated JSON from skillindia.gov.in, indexed in pgvector |
 
 ### 4.4 Service: `feedback_billing`

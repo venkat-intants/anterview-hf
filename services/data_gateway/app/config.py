@@ -121,7 +121,13 @@ class Settings(BaseSettings):
     # between "publish at 09:00" and the opening actually going live, so it is
     # deliberately small; the cost of a pass is one probe against a partial
     # index. Floored at 60s in scheduled_publishing.interval_seconds().
-    scheduled_publish_interval_seconds: int = Field(default=60, ge=60, le=3600)
+    #
+    # 60 -> 300 on 2026-09-26. Five minutes is still a small tolerance for a
+    # recruiter, and the old value was one of five loops that between them kept
+    # a serverless Postgres permanently awake — see the note on
+    # email_poll_interval_seconds below, which explains why a poller's cost is
+    # set by how OFTEN it runs rather than by how much work it does.
+    scheduled_publish_interval_seconds: int = Field(default=300, ge=60, le=3600)
 
     jwt_secret: str
     jwt_algorithm: str = "HS256"
@@ -187,8 +193,26 @@ class Settings(BaseSettings):
     # and never blocks a request. Set EMAIL_OUTBOX_ENABLED=false to disable the
     # worker (rows still queue; useful in tests / one-off scripts).
     email_outbox_enabled: bool = True
-    # Worker poll cadence. Small enough that password-reset links feel instant.
-    email_poll_interval_seconds: int = 5
+    # Worker poll cadence. 5 -> 60 on 2026-09-26; a password-reset link still
+    # arrives inside a minute.
+    #
+    # WHY THIS MATTERS MORE THAN IT LOOKS, because it cost the demo its whole
+    # database. At 5s this one loop opened a session ~17,000 times a day
+    # whether or not a single mail was queued. On a SERVERLESS Postgres billed
+    # by compute hours (Neon's free plan), the unit that costs money is a
+    # WAKE-UP, not a query: one cheap SELECT keeps the compute alive for the
+    # whole ~5-minute autosuspend window, so the database never once suspended
+    # and a month's allowance was gone in under a week with nobody using the
+    # product.
+    #
+    # The trap when fixing it is to count queries. Raising all five pollers'
+    # intervals cut queries ~99x and compute only from ~24 h/day to ~16 h/day,
+    # because the wake-ups still blanket the day. On a metered serverless
+    # database the answer is to switch the optional loops OFF — see the
+    # free-tier profile in space.env.example. On AWS RDS (the Tier-2 target) or
+    # any always-on Postgres none of this applies and these defaults are simply
+    # polite.
+    email_poll_interval_seconds: int = 60
     # Rows claimed per drain tick (bounds burst send rate against the relay).
     email_batch_size: int = 20
     # Give up (status='failed', no further retry) after this many attempts.
@@ -290,6 +314,98 @@ class Settings(BaseSettings):
     # application is decided, or after the submission expired or was
     # withdrawn — the accommodation/code-evidence retention shape.
     task_submission_retention_days: int = 180
+
+    # --- PH5-D5-2: 90-day hire check-ins ---
+    # A check-in is deleted OUTRIGHT (not redacted) this many days after it was
+    # recorded — there is no free text on the row to redact, only structured
+    # employment/left_reason/performance values, so retention is disposal
+    # rather than the accommodation/code-evidence redaction shape. 24 months.
+    hire_checkin_retention_days: int = 730
+
+    # --- PH5-E2: document corpus RAG (the governed HR document library) ---
+    # Same 10 MB ceiling as every other upload in this service (preboarding,
+    # task materials/responses) — one number to reason about, not a new one.
+    corpus_document_max_bytes: int = 10 * 1024 * 1024
+    # Above this the parsed text is refused with `too_long` rather than
+    # truncated silently — a truncated policy document that still "matches" a
+    # query it was cut before reaching is worse than a refusal HR can act on.
+    corpus_max_chars_per_document: int = 400_000
+    # ~1,200-char chunks with overlap (see app/corpus.py::chunk_document) puts
+    # a full-size document at roughly this many chunks; a hard cap bounds a
+    # pathological document (huge repeated whitespace, e.g.) from producing an
+    # unbounded number of embedding calls.
+    corpus_max_chunks_per_document: int = 400
+    # Per-company ceilings, both refused at upload with `quota_exceeded`. Bound
+    # storage and one-off embedding spend per tenant (docs/PH5-Wave3 design §5)
+    # — the ₹12/session cap is untouched by either, since corpus embedding is a
+    # one-off per document, not a per-interview cost.
+    corpus_max_documents_per_company: int = 200
+    # Chunk quota only (code review CONSIDER): counted against the CURRENT,
+    # searchable generation of each document (app/corpus.py::_check_chunk_quota
+    # excludes superseded versions) — this is a budget on what a company can
+    # actively search, not a running total of every version it has ever
+    # uploaded. Superseded history still consumes storage/embedding spend
+    # until it is purged, but that is bounded separately by
+    # corpus_superseded_retention_days, not by this number.
+    corpus_max_chunks_per_company: int = 20_000
+    # A superseded version's TEXT (chunks + embeddings + the stored object) is
+    # purged this many days after a newer version replaces it. The VERSION ROW
+    # survives, so a citation naming it still resolves — to a "replaced, text
+    # removed" notice rather than a broken link. Honours RETENTION_DRY_RUN.
+    corpus_superseded_retention_days: int = 180
+    # MEDIUM-5 (security review): each upload/replace runs a parser in a
+    # worker thread for up to 30s (DOCX additionally bounded by the zip caps
+    # below) — a per-company ceiling on how often that can be triggered, on
+    # the code_analysis_ondemand_per_minute precedent (app/rate_limit.py::
+    # rate_limit_context).
+    corpus_upload_per_minute: int = 20
+
+    # --- PH5-E3: talent pools & rediscovery ---
+    # D5-1's 12 months. The eligibility query computes expiry from the ledger
+    # row's own granted_at (app/rediscovery.py::ELIGIBLE_CTE), so this is the
+    # ONLY place the window is defined — the `expires_at_iso` written into
+    # evidence is for display, and cannot widen who is findable.
+    rediscovery_consent_months: int = 12
+    # The same ceiling as hr_applicants._SEARCH_LIMIT, deliberately: one
+    # tuning question for both searches, not two.
+    rediscovery_search_limit: int = 200
+    # How many ranked rows the evidence hydration (the second statement) is
+    # allowed to touch. That join is per-candidate work, so it is bounded
+    # independently of the ranking scan.
+    rediscovery_evidence_limit: int = 50
+    # Freshness bands, in days since the evidence's OWN timestamp. Nothing is
+    # stored: a stored band would itself go stale, which is the one failure
+    # mode the indicator exists to prevent.
+    rediscovery_fresh_days: int = 180
+    rediscovery_stale_days: int = 365
+    # Criterion 14 (code review, FIX 1): how long a "mark evidence reviewed"
+    # action keeps clearing the invite gate. Without a bound, one review in
+    # 2026 clears the gate forever while the evidence it accepted keeps
+    # ageing underneath it — the same defect class the frozen
+    # `evidence_freshness` column exists to avoid two settings above, applied
+    # this time to the review itself.
+    #
+    # Equal to `rediscovery_stale_days` today DELIBERATELY: a review lapses at
+    # the same point the evidence it accepted would newly cross into "stale".
+    # It is its own setting rather than a reference to that one because a
+    # review's validity and evidence staleness are different concepts that
+    # only happen to share a number — a future change to one must not
+    # silently move the other.
+    rediscovery_review_valid_days: int = 365
+    # The cap on the evidence boost — evidence informs the ORDER, it cannot
+    # invent a match out of an irrelevant CV. Unvalidated (PH5 Wave 4 design
+    # §11.8): shipped as a named constant with a change note, to be revisited
+    # against real queries rather than retuned by guess. Do NOT retune the
+    # 0.7/0.3 relevance split in hr_applicants.py to compensate — that would
+    # put the existing applicant search (criterion 18) at risk for no
+    # measured gain.
+    rediscovery_evidence_weight: float = 0.15
+    # Per COMPANY, via rate_limit_context — each search costs one query
+    # embedding, on the corpus_upload_per_minute precedent.
+    rediscovery_search_per_minute: int = 30
+    # Ceilings for the pools service built on top of this schema.
+    talent_pool_max_per_company: int = 100
+    talent_pool_max_members: int = 2_000
 
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
@@ -406,7 +522,11 @@ class Settings(BaseSettings):
     # HR manager is still in the console, and long enough that a backlog does
     # not hammer the scorer.
     reconciliation_enabled: bool = True
-    reconciliation_interval_seconds: int = Field(default=600, ge=60, le=86_400)
+    # 600 -> 1800 on 2026-09-26 (see email_poll_interval_seconds). A failed
+    # upload self-heals within half an hour rather than ten minutes; on a
+    # metered serverless database set RECONCILIATION_ENABLED=false instead,
+    # because halving a poll rate is not what saves compute — not polling is.
+    reconciliation_interval_seconds: int = Field(default=1800, ge=60, le=86_400)
 
     # ── Deadline reminders (A2) ───────────────────────────────────────────
     # Every 5 minutes — the floor this field allows, down from hourly.
@@ -431,7 +551,11 @@ class Settings(BaseSettings):
     # sends, a one-way status flip for completion), so running it more often
     # cannot double-send or double-notify.
     reminders_enabled: bool = True
-    reminders_interval_seconds: int = Field(default=300, ge=300, le=86_400)
+    # 300 -> 3600 on 2026-09-26 (see email_poll_interval_seconds). Deadline
+    # reminders are about days, so hourly gives every reminder its own window,
+    # and the sweep is idempotent by construction — nothing depended on the
+    # old cadence for correctness, only for a promptness it never needed.
+    reminders_interval_seconds: int = Field(default=3600, ge=300, le=86_400)
 
     # UTC hour for the daily retention cron.  03:00 UTC = ~08:30 IST (off-peak).
     retention_cron_hour: int = 3

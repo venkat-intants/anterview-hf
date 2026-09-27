@@ -22,6 +22,7 @@ import { getAttention, type AttentionItem, type AttentionSeverity } from '@/api/
 import { GlassCard } from '@/design/components/primitives';
 import { AlertTriangle, CheckCircle2, ChevronRight, Info } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
+import CitationChips from './agent/CitationChips';
 
 /**
  * Severity is carried by an icon and a word as well as a colour.
@@ -43,61 +44,50 @@ function Finding({ item }: { item: AttentionItem }) {
   const tone = SEVERITY[item.severity] ?? SEVERITY.info;
   const Icon = tone.icon;
 
-  const inner = (
-    <>
-      <div className="flex items-start gap-2.5">
-        <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', tone.tint)} aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-medium text-foreground">
-            <span className="sr-only">{tone.label}: </span>
-            {item.title}
-          </p>
-          <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">{item.body}</p>
-        </div>
-        {item.link ? (
-          <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
-        ) : null}
+  const header = (
+    <div className="flex items-start gap-2.5">
+      <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', tone.tint)} aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-medium text-foreground">
+          <span className="sr-only">{tone.label}: </span>
+          {item.title}
+        </p>
+        <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">{item.body}</p>
       </div>
+      {item.link ? (
+        <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+      ) : null}
+    </div>
+  );
+
+  // The card is a plain container, never itself an <a> — a citation chip
+  // below can be its own link to its own record (E1's whole point), and an
+  // <a> nested inside an <a> is invalid HTML and breaks that link for a
+  // keyboard or screen-reader user. Only the header is the finding's link;
+  // `hover:`/`focus-within:` on the card react to that descendant, since
+  // hover state bubbles up the DOM without any JS.
+  return (
+    <div
+      className={cn(
+        'rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 text-left transition-colors',
+        item.link && 'hover:border-[var(--ui-line-strong)] focus-within:border-[var(--accent)]',
+      )}
+    >
+      {/* A finding with nowhere to go is rendered as text rather than a dead link. */}
+      {item.link ? (
+        <Link to={item.link} className="block rounded-[8px] outline-none">
+          {header}
+        </Link>
+      ) : (
+        header
+      )}
 
       {/* The specific records, when a finding is about more than one thing.
           Capped: "7 applicants stalled" wants a few names to make it real, not
-          a list that buries the next finding. */}
-      {item.citations.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1.5 pl-[26px]">
-          {item.citations.slice(0, 4).map((c) => (
-            <span
-              key={`${c.kind}-${c.id}`}
-              className="rounded-full border border-border bg-[var(--ui-inset-soft)] px-2 py-0.5 text-[11.5px] text-[var(--ui-soft)]"
-            >
-              {c.label}
-            </span>
-          ))}
-          {item.citations.length > 4 ? (
-            <span className="px-1 py-0.5 text-[11.5px] text-[var(--ui-faint)]">
-              +{item.citations.length - 4} more
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-    </>
-  );
-
-  const shell =
-    'block rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 text-left';
-
-  // A finding with nowhere to go is rendered as text rather than a dead link.
-  return item.link ? (
-    <Link
-      to={item.link}
-      className={cn(
-        shell,
-        'transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]',
-      )}
-    >
-      {inner}
-    </Link>
-  ) : (
-    <div className={shell}>{inner}</div>
+          a list that buries the next finding. Links now, deliberately — the
+          href was always there, this panel just used to discard it. */}
+      <CitationChips citations={item.citations} variant="strip" className="mt-2 pl-[26px]" />
+    </div>
   );
 }
 

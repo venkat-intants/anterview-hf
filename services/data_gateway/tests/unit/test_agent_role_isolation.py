@@ -72,6 +72,10 @@ EXPECTED: dict[str, set[str]] = {
         "get_role_model",
         "draft_interview_invites",
         "draft_shortlist",
+        "get_decision_trace",
+        # PH5-E2 — company_scoped, so both consoles that run one company's
+        # hiring get it, same as get_funnel_analytics.
+        "search_company_documents",
     },
     "super_admin": {
         "get_funnel_analytics",
@@ -79,6 +83,7 @@ EXPECTED: dict[str, set[str]] = {
         "get_role_model",
         "get_company_overview",
         "get_hr_workload",
+        "search_company_documents",
     },
     "platform_owner": {
         "get_platform_overview",
@@ -94,6 +99,9 @@ CANDIDATE_TOOLS = {
     "get_applicant_detail",
     "draft_interview_invites",
     "draft_shortlist",
+    # PH5-E5: what existed when a decision was recorded, for one named
+    # applicant's application — hr_manager only, same as every other tool here.
+    "get_decision_trace",
 }
 
 
@@ -290,6 +298,7 @@ async def test_the_panel_is_closed_to_the_super_admin_console() -> None:
             uuid.UUID("22222222-2222-2222-2222-222222222222"),
             _user("super_admin"),
             db,
+            MagicMock(),  # Request — never reached: the role check 403s first
         )
 
     assert exc.value.status_code == 403

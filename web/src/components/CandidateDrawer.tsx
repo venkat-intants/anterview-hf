@@ -20,6 +20,7 @@
 // read surface is how that ledger acquires gaps.
 
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getApplicant, listApplications } from '@/api/applicants';
 import { listAnswers, type ApplicationAnswer } from '@/api/questions';
@@ -44,7 +45,9 @@ import CodeEvidenceCounts from '@/components/hr/CodeEvidenceCounts';
 import ExceptionsSection from '@/components/ExceptionsSection';
 import InterviewLoopsSection from '@/components/InterviewLoopsSection';
 import OfferSection from '@/components/OfferSection';
-import { AlertTriangle, Info, User, X } from '@/design/components/icons';
+import CheckinSection from '@/components/hr/CheckinSection';
+import { getMetricDefinitions, sourceLabel } from '@/api/metrics';
+import { AlertTriangle, ExternalLink, Info, User, X } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 
 export interface DrawerCandidate {
@@ -68,6 +71,9 @@ export interface DrawerCandidate {
   linkedin_url?: string | null;
   github_url?: string | null;
   current_round_title?: string | null;
+  /** Where THIS application came from (PH5-C1/wave-1 follow-up B) — a code
+   *  from the closed source vocabulary, e.g. "referral" or "job_board". */
+  source?: string | null;
 }
 
 /* ── Why a score is what it is (§7, C8) ─────────────────────────────────── */
@@ -113,7 +119,7 @@ function RoundScores({
 
   if (isLoading) {
     return (
-      <div className="mt-5">
+      <div id="round-results" tabIndex={-1} className="mt-5 outline-none">
         <h3 className="text-[13px] font-medium text-foreground">Assessment</h3>
         <div className="mt-2 h-16 animate-pulse rounded-[10px] bg-[var(--ui-inset)]" />
       </div>
@@ -123,7 +129,7 @@ function RoundScores({
   // one of them would mislead a decision.
   if (isError) {
     return (
-      <div className="mt-5">
+      <div id="round-results" tabIndex={-1} className="mt-5 outline-none">
         <h3 className="text-[13px] font-medium text-foreground">Assessment</h3>
         <p className="mt-1.5 text-[12.5px] text-muted-foreground">
           Scores could not be loaded. Reopen to retry.
@@ -134,7 +140,7 @@ function RoundScores({
   if (!data?.length) return null;
 
   return (
-    <div className="mt-5">
+    <div id="round-results" tabIndex={-1} className="mt-5 outline-none">
       <h3 className="text-[13px] font-medium text-foreground">Assessment</h3>
       <ul className="mt-2 flex flex-col gap-3">
         {data.map((r: RoundResult) => (
@@ -407,7 +413,7 @@ function HumanInterviewSection({
   const rounds = scorecards.data?.rounds ?? [];
 
   return (
-    <div className="mt-5">
+    <div id="human-interview" tabIndex={-1} className="mt-5 outline-none">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-[13px] font-medium text-foreground">Human interview</h3>
         <button
@@ -634,6 +640,7 @@ export default function CandidateDrawer({
   applicantId,
   enrolmentId,
   onClose,
+  focusSection,
 }: {
   /** Null closes the drawer. */
   applicantId: string | null;
@@ -645,6 +652,14 @@ export default function CandidateDrawer({
    */
   enrolmentId?: string | null;
   onClose: () => void;
+  /**
+   * PH5 wave-1 follow-up (A2) — opened from the analytics page's "Check-ins
+   * due" card, which wants the drawer to land on the 90-day check-in section
+   * rather than the top of the drawer. Scrolled and focused once the section
+   * has mounted (`#checkin-section`, rendered by CheckinSection itself); a
+   * no-op if the application turns out not to be hired after all.
+   */
+  focusSection?: 'checkin';
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -678,6 +693,7 @@ export default function CandidateDrawer({
           ats_strengths: app.ats_strengths,
           ats_concerns: app.ats_concerns,
           ats_summary: app.ats_summary,
+          source: app.source,
         }
       : person;
 
@@ -693,6 +709,20 @@ export default function CandidateDrawer({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [applicantId, onClose]);
+
+  // PH5 wave-1 follow-up (A2) — land on the check-in section instead of the
+  // top of the drawer, once it has actually mounted (status hired). Runs
+  // after the effect above, so it wins the final focus placement over the
+  // close button's default. A no-op — the section simply never mounts — if
+  // this application turns out not to be hired.
+  useEffect(() => {
+    if (focusSection !== 'checkin' || !enrolmentId || candidate?.status !== 'hired') return;
+    const el = document.getElementById('checkin-section');
+    // Optional chained on the method itself, not just the element: jsdom (and
+    // some embedded webviews) have no scrollIntoView at all.
+    el?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    el?.focus();
+  }, [focusSection, enrolmentId, candidate?.status]);
 
   const answers = useQuery({
     queryKey: ['answers', enrolmentId],
@@ -710,6 +740,15 @@ export default function CandidateDrawer({
     enabled: Boolean(enrolmentId),
     retry: false,
     throwOnError: false,
+  });
+
+  // Same query key the analytics page uses for the source vocabulary — one
+  // shared cache entry, not a second fetch, wherever both mount.
+  const definitions = useQuery({
+    queryKey: ['hr', 'metrics', 'definitions'],
+    queryFn: getMetricDefinitions,
+    enabled: Boolean(applicantId),
+    staleTime: 5 * 60_000,
   });
 
   if (!applicantId) return null;
@@ -792,7 +831,7 @@ export default function CandidateDrawer({
             ) : null}
 
             {candidate.ats_overall != null ? (
-              <div className="mt-5">
+              <div id="screening" tabIndex={-1} className="mt-5 outline-none">
                 <div className="flex items-baseline justify-between">
                   <h3 className="text-[13px] font-medium text-foreground">Resume match</h3>
                   <span className="text-[20px] font-semibold text-foreground">
@@ -861,7 +900,11 @@ export default function CandidateDrawer({
             machinery; the pass/hold verdict is recorded on the decision
             queue, through the existing round-review action — nothing here
             does either. */}
-            {enrolmentId ? <TaskSubmissionSection enrolmentId={enrolmentId} /> : null}
+            {enrolmentId ? (
+              <div id="tasks" tabIndex={-1} className="outline-none">
+                <TaskSubmissionSection enrolmentId={enrolmentId} />
+              </div>
+            ) : null}
 
             {/* PH4-D3 -- counts only; the evidence is on the exam attempt. */}
             {enrolmentId ? <CodeEvidenceCounts enrolmentId={enrolmentId} /> : null}
@@ -883,11 +926,20 @@ export default function CandidateDrawer({
 
             {/* PH4-A3 — the offer, once this application is a hire. */}
             {enrolmentId ? (
-              <OfferSection
-                enrolmentId={enrolmentId}
-                jobTitle={candidate.target_job_title}
-                applicationStatus={candidate.status}
-              />
+              <div id="offers" tabIndex={-1} className="outline-none">
+                <OfferSection
+                  enrolmentId={enrolmentId}
+                  jobTitle={candidate.target_job_title}
+                  applicationStatus={candidate.status}
+                />
+              </div>
+            ) : null}
+
+            {/* PH5 wave-1 follow-up A1 — the 90-day check-in, once this
+            application has actually resulted in a hire. Nothing here can
+            move it back off "hired" or otherwise change a decision (D-05). */}
+            {enrolmentId && candidate.status === 'hired' ? (
+              <CheckinSection enrolmentId={enrolmentId} />
             ) : null}
 
             <div className="mt-5">
@@ -895,6 +947,10 @@ export default function CandidateDrawer({
                 <User size={13} aria-hidden="true" />
                 Details
               </h3>
+              <Row
+                label="Source"
+                value={candidate.source ? sourceLabel(candidate.source, definitions.data) : null}
+              />
               <Row label="Phone" value={candidate.phone} />
               <Row
                 label="Experience"
@@ -910,7 +966,7 @@ export default function CandidateDrawer({
 
             {/* Otherwise write-only: candidates fill these in and nobody reads them. */}
             {enrolmentId ? (
-              <div className="mt-5">
+              <div id="answers" tabIndex={-1} className="mt-5 outline-none">
                 <h3 className="mb-2 text-[13px] font-medium text-foreground">
                   Application answers
                 </h3>
@@ -949,22 +1005,55 @@ export default function CandidateDrawer({
             ) : null}
 
             {enrolmentId && (history.data?.length ?? 0) > 0 ? (
-              <div className="mt-5">
-                <h3 className="mb-2 text-[13px] font-medium text-foreground">History</h3>
-                <ol className="flex flex-col gap-2 border-l border-border pl-3">
-                  {history.data?.map((h, i) => (
-                    <li key={`${h.occurred_at}-${i}`} className="text-[12.5px]">
-                      <p className="text-[var(--ui-soft)]">{describeMove(h)}</p>
-                      <p className="text-[11.5px] text-[var(--ui-faint)]">
-                        {new Date(h.occurred_at).toLocaleString()}
-                        {/* O4: the structured reason label, when this move recorded
-                        one, alongside the free-text reason. Historical rows
-                        have neither and render exactly as before. */}
-                        {h.reason_label ? ` — ${h.reason_label}` : ''}
-                        {h.reason ? `${h.reason_label ? ': ' : ' — '}${h.reason}` : ''}
-                      </p>
-                    </li>
-                  ))}
+              <div id="history" tabIndex={-1} className="mt-5 outline-none">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-[13px] font-medium text-foreground">History</h3>
+                  {/* PH5-E5 — the full evidence trail behind this application:
+                  what existed when a decision was recorded, and what came
+                  after. Opens without preselecting a decision; the trail
+                  page's own picker handles more than one. */}
+                  <Link
+                    to={`/hr/enrolments/${enrolmentId}/evidence`}
+                    className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+                  >
+                    <ExternalLink size={11} aria-hidden="true" />
+                    Evidence trail
+                  </Link>
+                </div>
+                <ol className="mt-2 flex flex-col gap-2 border-l border-border pl-3">
+                  {history.data?.map((h, i) => {
+                    // A decision row (the ledger's single writer for a hire/
+                    // reject, never automated) also gets its own "Why?" —
+                    // `h.id` (the stage_transitions row's own id, PH5-E5) IS
+                    // the decision_id GET /hr/decisions/{id}/trace takes, so
+                    // this deep-links straight to that decision rather than
+                    // opening the trail's picker.
+                    const isDecision =
+                      !h.automated && (h.to_status === 'hired' || h.to_status === 'rejected');
+                    return (
+                      <li key={`${h.occurred_at}-${i}`} className="text-[12.5px]">
+                        <p className="flex items-center gap-2 text-[var(--ui-soft)]">
+                          {describeMove(h)}
+                          {isDecision ? (
+                            <Link
+                              to={`/hr/enrolments/${enrolmentId}/evidence?decision=${h.id}`}
+                              className="text-[11.5px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+                            >
+                              Why?
+                            </Link>
+                          ) : null}
+                        </p>
+                        <p className="text-[11.5px] text-[var(--ui-faint)]">
+                          {new Date(h.occurred_at).toLocaleString()}
+                          {/* O4: the structured reason label, when this move recorded
+                          one, alongside the free-text reason. Historical rows
+                          have neither and render exactly as before. */}
+                          {h.reason_label ? ` — ${h.reason_label}` : ''}
+                          {h.reason ? `${h.reason_label ? ': ' : ' — '}${h.reason}` : ''}
+                        </p>
+                      </li>
+                    );
+                  })}
                 </ol>
               </div>
             ) : null}

@@ -77,12 +77,13 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from shared.auth.base import User
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import rediscovery
 from app.config import settings
 from app.database import get_db_session
 from app.dependencies import get_current_user, reject_role
@@ -90,6 +91,7 @@ from app.exam_link import hash_exam_token, mint_exam_token
 from app.interview_link import hash_interview_token, mint_interview_token
 from app.publishing import visible_sql
 from app.rate_limit import rate_limit_actor
+from app.utils.request_ip import extract_client_ip, extract_user_agent
 
 log = structlog.get_logger(__name__)
 
@@ -937,3 +939,184 @@ async def mint_my_exam_link(
         exam_url=f"{base}/exam#{raw}",
         expires_at=row.expires_at.isoformat(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Rediscovery opt-in — PH5-E3
+#
+# One row per company this candidate has ever applied to, whether or not they
+# have opted in — the "My applications" card needs to offer the toggle for
+# EVERY company, not only the ones already on. `guest_candidate` is already
+# rejected at the router level (module docstring above), so a redeemed
+# interview link cannot reach this any more than it can reach the rest of
+# /users/me.
+# ---------------------------------------------------------------------------
+class RediscoveryCompanyOut(BaseModel):
+    """One company's rediscovery state, from the candidate's own side."""
+
+    company_id: str
+    company_name: str
+    applicant_id: str
+    state: str  # "on" | "off"
+    opted_in_at: str | None = None
+    expires_at: str | None = None
+    withdrawn_at: str | None = None
+
+
+class RediscoveryListOut(BaseModel):
+    companies: list[RediscoveryCompanyOut]
+    consent_months: int
+
+
+class RediscoveryToggleIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    on: bool
+
+
+# DISTINCT ON (a.company_id): a candidate can hold at most one applicant row
+# per company (D-06, `public_apply.py`), but this reaches across every
+# company they have applied to under ONE user_id — the same cross-tenant
+# shape `_LIST_SQL` above already uses, safe for the same reason: the join
+# starts from applicants.user_id and can only ever reach this user's own rows.
+_REDISCOVERY_COMPANIES_SQL = """
+SELECT a.company_id, c.name AS company_name, a.id AS applicant_id,
+       l.granted_at, l.revoked_at, l.evidence
+  FROM applicants a
+  JOIN companies c ON c.id = a.company_id AND c.deleted_at IS NULL
+  LEFT JOIN LATERAL (
+      SELECT granted_at, revoked_at, evidence
+        FROM dpdp_consent_ledger
+       WHERE user_id = a.user_id AND consent_type = :ct AND purpose = :pu
+         AND evidence ->> 'company_id' = a.company_id::text
+       ORDER BY granted_at DESC LIMIT 1
+  ) l ON true
+ WHERE a.user_id = :uid AND a.deleted_at IS NULL
+ ORDER BY c.name ASC
+"""
+
+#: The same shape, narrowed to one company — what the PUT route reads back
+#: after writing, so its response and the list route can never disagree about
+#: what a company's row means.
+_REDISCOVERY_ONE_COMPANY_SQL = """
+SELECT a.company_id, c.name AS company_name, a.id AS applicant_id,
+       l.granted_at, l.revoked_at, l.evidence
+  FROM applicants a
+  JOIN companies c ON c.id = a.company_id AND c.deleted_at IS NULL
+  LEFT JOIN LATERAL (
+      SELECT granted_at, revoked_at, evidence
+        FROM dpdp_consent_ledger
+       WHERE user_id = a.user_id AND consent_type = :ct AND purpose = :pu
+         AND evidence ->> 'company_id' = a.company_id::text
+       ORDER BY granted_at DESC LIMIT 1
+  ) l ON true
+ WHERE a.user_id = :uid AND a.company_id = :cid AND a.deleted_at IS NULL
+"""
+
+
+def _rediscovery_company_out(row: Any) -> RediscoveryCompanyOut:
+    months = int(settings.rediscovery_consent_months)
+    state = rediscovery.consent_state(
+        granted_at=row.granted_at, revoked_at=row.revoked_at, evidence=row.evidence,
+        months=months, now=datetime.now(tz=UTC),
+    )
+    return RediscoveryCompanyOut(
+        company_id=str(row.company_id), company_name=row.company_name,
+        applicant_id=str(row.applicant_id), state=state["state"],
+        opted_in_at=state["opted_in_at"].isoformat() if state["opted_in_at"] else None,
+        expires_at=state["expires_at"].isoformat() if state["expires_at"] else None,
+        withdrawn_at=state["withdrawn_at"].isoformat() if state["withdrawn_at"] else None,
+    )
+
+
+@router.get(
+    "/rediscovery",
+    response_model=RediscoveryListOut,
+    summary="This candidate's rediscovery opt-in at every company they applied to",
+)
+async def list_my_rediscovery(user: CurrentUserDep, db: DbSessionDep) -> RediscoveryListOut:
+    rows = (
+        await db.execute(
+            text(_REDISCOVERY_COMPANIES_SQL),
+            {
+                "uid": uuid.UUID(user.user_id),
+                "ct": rediscovery.REDISCOVERY_CONSENT_TYPE,
+                "pu": rediscovery.REDISCOVERY_PURPOSE,
+            },
+        )
+    ).all()
+    return RediscoveryListOut(
+        companies=[_rediscovery_company_out(r) for r in rows],
+        consent_months=int(settings.rediscovery_consent_months),
+    )
+
+
+@router.put(
+    "/rediscovery/{company_id}",
+    response_model=RediscoveryCompanyOut,
+    summary="Turn this candidate's rediscovery opt-in on or off for one company",
+)
+async def set_my_rediscovery(
+    company_id: uuid.UUID, body: RediscoveryToggleIn, request: Request,
+    user: CurrentUserDep, db: DbSessionDep,
+) -> RediscoveryCompanyOut:
+    """``{"on": true}`` opts in from this door (see
+    ``rediscovery.opt_in_from_my_applications``); ``{"on": false}`` withdraws.
+
+    UNLIKE the public apply form, ``on: true`` here can ALWAYS turn the opt-in
+    back on, even after a withdrawal: ``record_opt_in``'s sticky-withdrawal
+    refusal exists because the apply form is UNAUTHENTICATED (anybody can type
+    anybody's email into it), and that reasoning does not apply to the
+    signed-in owner acting on their own account. So this route never surfaces
+    ``not_regranted_after_withdrawal`` — if it ever did, that would be this
+    function's own bug, not the caller's.
+
+    404 — not 403 — for a company this candidate never applied to, so the
+    response cannot be used to learn whether an id names a real company.
+    """
+    uid = uuid.UUID(user.user_id)
+    row = (
+        await db.execute(
+            text(
+                "SELECT a.id AS applicant_id FROM applicants a"
+                " WHERE a.user_id = :uid AND a.company_id = :cid AND a.deleted_at IS NULL"
+            ),
+            {"uid": uid, "cid": company_id},
+        )
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No application on file with this company.",
+        )
+    applicant_id = uuid.UUID(str(row["applicant_id"]))
+
+    if body.on:
+        try:
+            await rediscovery.opt_in_from_my_applications(
+                db, user_id=uid, company_id=company_id, applicant_id=applicant_id,
+                meta=rediscovery.OptInMeta(
+                    ip_address=extract_client_ip(request), user_agent=extract_user_agent(request),
+                ),
+            )
+        except rediscovery.RediscoveryError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"failure_code": exc.code, "message": exc.message},
+            ) from exc
+    else:
+        await rediscovery.revoke_opt_ins(db, user_id=uid, company_id=company_id)
+
+    await db.commit()
+    log.info("candidate.rediscovery.set", company_id=str(company_id), on=body.on)
+
+    out_row = (
+        await db.execute(
+            text(_REDISCOVERY_ONE_COMPANY_SQL),
+            {
+                "uid": uid, "cid": company_id,
+                "ct": rediscovery.REDISCOVERY_CONSENT_TYPE, "pu": rediscovery.REDISCOVERY_PURPOSE,
+            },
+        )
+    ).first()
+    return _rediscovery_company_out(out_row)

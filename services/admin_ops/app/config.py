@@ -85,8 +85,17 @@ class Settings(BaseSettings):
         return validate_cors_origins(v)
 
     # DPDP erasure executor — how often (seconds) to check for due requests.
-    # Default 300 s (5 min); reduce in staging/testing; never below 60 s in prod.
-    erasure_poll_interval_seconds: int = 300
+    # 300 -> 900 on 2026-09-26, for the compute-hours reason documented at
+    # data_gateway's email_poll_interval_seconds.
+    #
+    # Weighed separately from the other pollers, because it is the only one
+    # with a statutory clock behind it. It moves NO DPDP deadline: the executor
+    # honours each request's own due time, and an erasure REQUEST already takes
+    # effect immediately everywhere it is visible — the consent ledger is
+    # revoked at request time and every read joins that. This interval decides
+    # only how soon the physical purge follows, and the Act works in days.
+    # Reduce in staging/testing; never below 60 s in prod.
+    erasure_poll_interval_seconds: int = 900
 
     # Peer microservice base URLs — used by the /admin/system/health aggregator.
     # Defaults to localhost dev ports; override in cloud via env. All optional so a

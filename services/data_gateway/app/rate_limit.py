@@ -18,7 +18,8 @@ either changes:
      protection is off" but "brute-force protection is off and nothing says so".
 
 Worth knowing when reading an incident: this and the JWT revocation-epoch check
-(``dependencies._token_epoch``) use the same Redis and therefore fail open
+(``shared.auth.jwt.is_token_revoked``, called from
+``dependencies.get_current_user``) use the same Redis and therefore fail open
 TOGETHER. During an Upstash outage, login throttling and the "log out all
 devices" kill switch are both inactive at once. Alert on
 ``rate_limit_check_skipped_total``.
@@ -33,8 +34,8 @@ dependency must have a callable dependency":
 from __future__ import annotations
 
 import hashlib
-import uuid
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import structlog
 from fastapi import Depends, HTTPException, Request, status
@@ -98,22 +99,29 @@ def rate_limit(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
     return Depends(_dep)
 
 
-def rate_limit_company(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
-    """Cap a route at *per_minute* requests per COMPANY rather than per client
-    IP (MEDIUM-4, PH4-D3). ``rate_limit`` above keys on IP, which is the right
-    boundary for an anonymous or per-account route — but several HR seats at
-    one company hitting an on-demand analysis route each get their own IP and
-    so, keyed that way, effectively their own budget. ``get_hr_company`` is
-    already a dependency of the route this guards, so FastAPI resolves it
-    once per request and both call sites share the cached result.
+def rate_limit_context(
+    bucket: str, per_minute: int, context_dep: Callable[..., Any],
+) -> Callable[..., Awaitable[None]]:
+    """Cap a route at *per_minute* requests per COMPANY, keyed off an
+    arbitrary tenant-context dependency rather than ``get_hr_company``
+    specifically (PH5-E2). A route shared by more than one role —
+    ``app/routers/hr_corpus.py``'s ``_corpus_ctx`` returns
+    ``(actor_id, company_id, role)`` for both ``hr_manager`` and
+    ``super_admin`` — cannot use ``rate_limit_company`` below, which
+    hardcodes the hr_manager-only ``get_hr_company``. *context_dep* must
+    return a tuple whose SECOND element is the company_id, the shape every
+    tenant-context dependency in this service already returns.
 
     Same fixed 60-second window and fail-open posture as ``rate_limit`` — see
     its docstring; a cache blip must not lock every HR seat out of the
-    console.
+    console. FastAPI caches a dependency's result per request by callable
+    identity, so a route that also takes *context_dep* as its own parameter
+    resolves it once and both call sites share the result — the
+    ``rate_limit_company`` precedent this generalises already relied on that.
     """
 
-    async def _dep(ctx: tuple[uuid.UUID, uuid.UUID] = Depends(get_hr_company)) -> None:  # noqa: B008
-        _uid, company_id = ctx
+    async def _dep(ctx: tuple[Any, ...] = Depends(context_dep)) -> None:  # noqa: B008
+        company_id = ctx[1]
         try:
             redis = get_redis()
             key = f"rl:{bucket}:{company_id}"
@@ -135,6 +143,13 @@ def rate_limit_company(bucket: str, per_minute: int) -> Callable[..., Awaitable[
             )
 
     return Depends(_dep)
+
+
+def rate_limit_company(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
+    """Cap a route at *per_minute* requests per COMPANY rather than per client
+    IP (MEDIUM-4, PH4-D3) — the ``get_hr_company``-scoped case of
+    ``rate_limit_context`` above."""
+    return rate_limit_context(bucket, per_minute, get_hr_company)
 
 
 def rate_limit_actor(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:

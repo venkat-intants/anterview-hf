@@ -28,7 +28,7 @@ A **voice-first AI interview platform**. A candidate logs in, picks a job role, 
 | Storage | Cloudflare R2 (S3-compatible) |
 | Email | Resend |
 | Hosting | Vercel (frontend) + Railway (backend) |
-| Embeddings | OpenAI text-embedding-3-large |
+| Embeddings | Google Gemini `gemini-embedding-001` (3072-dim) — same key as the Gemini LLM row; used for applicant resume search and (PH5-E2) the HR document corpus. Corrected 2026-09-23: this line previously said OpenAI `text-embedding-3-large`, which the code has not used since migration `a9c1e2f3b4d5` (2026-06-27). |
 | Errors | Sentry |
 
 **Tier 2 — Production stack (migrate post-revenue or pre-govt-bid):**

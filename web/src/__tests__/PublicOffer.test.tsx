@@ -14,7 +14,7 @@
 //     the states the state machine actually allows them from.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -471,6 +471,50 @@ describe('PublicOffer — documents, once accepted', () => {
         undefined,
       ),
     );
+  });
+
+  // Characterisation tests, not a fix — and the distinction matters enough to
+  // write down, because the comment here used to claim the opposite.
+  //
+  // A full pipeline test hit a 500 on this upload, and the conclusion drawn at
+  // the time was that the page had swallowed it: the row still read "Not
+  // uploaded yet" with no message, so a candidate would believe their PAN card
+  // had gone through. That was wrong. The 500 was real and is fixed server-side
+  // in document_storage.py; the component was already correct and is unchanged
+  // by that work — errText() falls through to e.message, isUnauthorized is 401
+  // only, and the fallback key exists in all three bundles. These two cases
+  // pass on the unfixed tree as well, which is exactly why they must not be
+  // cited as evidence that anything here was repaired.
+  //
+  // They are still worth keeping. "A failed upload is said out loud" is a
+  // property a candidate depends on, it had no test, and the next refactor of
+  // this mutation could quietly lose it.
+  it.each([
+    ['the server fails', new Error('Internal server error.'), /Internal server error/],
+    ['the request never arrives', new TypeError('Failed to fetch'), /Failed to fetch/],
+  ])('tells the candidate when an upload fails because %s', async (_why, failure, shown) => {
+    requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
+    openDocumentsSession.mockResolvedValue({
+      session_token: 'sess_tok',
+      expires_at: '2026-09-18T02:00:00.000Z',
+    });
+    getMyDocuments.mockResolvedValue(CHECKLIST);
+    uploadMyDocument.mockRejectedValue(failure);
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Your documents');
+    await user.click(screen.getByRole('button', { name: 'Get a code' }));
+    await screen.findByText(/Code sent/);
+    await user.type(screen.getByLabelText(/enter the code/i), '111111');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('PAN card');
+
+    const panRow = screen.getByText('PAN card').closest('li') as HTMLElement;
+    const input = panRow.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(['%PDF-1.4 test'], 'pan.pdf', { type: 'application/pdf' }));
+
+    expect(await within(panRow).findByText(shown)).toBeInTheDocument();
   });
 
   it('shows the completed state once preboarding is done, with no code step', async () => {

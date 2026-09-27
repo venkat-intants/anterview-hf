@@ -16,6 +16,10 @@ _SERVICE_DIR = pathlib.Path(__file__).resolve().parents[1]
 _REPO_ROOT = _SERVICE_DIR.parents[1]
 
 
+# Width of scorecards.scorer_model (migration d8e9f0a1b2c3).
+_MAX_MODEL_NAME = 64
+
+
 class Settings(BaseSettings):
     # ONE .env for the whole backend, at the repo root, plus an optional
     # per-service file that overrides it. Later files win (verified against
@@ -129,6 +133,23 @@ class Settings(BaseSettings):
     def _validate_cors_origins(cls, v: str) -> str:
         """Reject wildcard / non-http(s) origins (shared/security.py)."""
         return validate_cors_origins(v)
+
+    @field_validator("gemini_model", "groq_model")
+    @classmethod
+    def _fits_the_scorecard_column(cls, v: str) -> str:
+        """A model name must fit ``scorecards.scorer_model`` (varchar 64).
+
+        The scorer records the model it called on every scorecard. A longer
+        name would make that INSERT fail AFTER the paid LLM call has already
+        been made — a lost score and a wasted request, on every interview.
+        Refusing it here turns that into one clear error at startup.
+        """
+        if len(v) > _MAX_MODEL_NAME:
+            raise ValueError(
+                f"model name is {len(v)} characters; scorecards.scorer_model holds "
+                f"{_MAX_MODEL_NAME}. Use a shorter model id or widen the column."
+            )
+        return v
 
     # S3 / Cloudflare R2 settings for scorecard PDF storage
     s3_endpoint_url: str = ""

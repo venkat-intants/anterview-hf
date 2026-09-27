@@ -339,7 +339,14 @@ async def upload(db: AsyncSession, *, raw: str | None, session: str | None,
         raise
     # Rows first, bytes second: a failed insert leaves no orphan object. After
     # the bytes are in, anything that fails removes them again.
-    await store.store(settings, key, data, checked.content_type)
+    try:
+        await store.store(settings, key, data, checked.content_type)
+    except store.StorageUnavailableError as exc:
+        # Raising rolls the request's transaction back, so the row inserted
+        # above — and the "superseded" mark on the one it replaced — go with it.
+        raise OfferError(
+            503, "We could not store your document just now. Please try again in a few minutes."
+        ) from exc
     try:
         return await _after_upload(db, offer=offer, req=req, doc_id=doc_id, version=version,
                                    checked=checked, key=key, meta=meta)

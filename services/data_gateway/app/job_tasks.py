@@ -579,7 +579,10 @@ async def add_material(
          "n": checked.safe_name, "ct": checked.content_type, "sz": checked.size_bytes,
          "sha": checked.sha256, "p": position, "now": now},
     )
-    await store.store(settings, key, data, checked.content_type)
+    try:
+        await store.store(settings, key, data, checked.content_type)
+    except store.StorageUnavailableError as exc:
+        raise TaskError(503, "We could not store that file just now. Please try again.") from exc
     _audit(db, actor=actor, action="round_task_material.added", resource_id=material_id,
           details={"company_id": str(company_id), "round_id": str(round_id)}, meta=meta)
     row = (
@@ -1192,7 +1195,12 @@ async def add_artifact(
              "n": checked.safe_name, "ct": checked.content_type, "sz": checked.size_bytes,
              "sha": checked.sha256, "now": now},
         )
-        await store.store(settings, storage_key, data, checked.content_type)
+        try:
+            await store.store(settings, storage_key, data, checked.content_type)
+        except store.StorageUnavailableError as exc:
+            raise TaskError(
+                503, "We could not store your file just now. Please try again in a few minutes."
+            ) from exc
     elif kind == "link":
         if not sub["allow_links"]:
             raise TaskError(409, "This portfolio does not accept links.")

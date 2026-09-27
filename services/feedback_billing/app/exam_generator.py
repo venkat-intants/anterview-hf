@@ -276,7 +276,7 @@ async def generate_exam_questions(
         produced=len(questions),
         difficulty=difficulty,
         language=language,
-        model=settings.gemini_model,
+        model=settings.llm_model,
     )
     return questions[:count]
 
@@ -513,6 +513,6 @@ async def generate_coding_questions(
         produced=len(questions),
         difficulty=difficulty,
         language=language,
-        model=settings.gemini_model,
+        model=settings.llm_model,
     )
     return questions[:count]

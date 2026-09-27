@@ -49,6 +49,7 @@ PYGMENTS_LANGUAGE_ALIASES: dict[str, str] = {
     "rust": "rust",
 }
 
+# Deliberately NOT bumped by the 2026-09-22 overflow fix — see _STORABLE.
 ALGORITHM_VERSION = "sim-winnow-1.0"
 
 K_GRAM = 15
@@ -144,6 +145,24 @@ def _hash_gram(tokens: tuple[str, ...]) -> int:
     return int.from_bytes(digest, "big")
 
 
+# code_fingerprints.hashes is a SIGNED 64-bit array, and these hashes are
+# unsigned 64-bit. Any selected hash at or above 2**63 made the whole INSERT
+# fail — 58% of realistic submissions, measured on 2,000 generated Python
+# sources on 2026-09-22 — so almost nothing was ever stored.
+#
+# Fixed at the point of RETURNING a selection, not in _hash_gram, and that
+# placement is the point. Winnowing still orders and picks on the full 64-bit
+# value, so it chooses exactly the positions it always did; only a chosen
+# value at or above 2**63 loses its top bit. Every hash that could ever have
+# been stored before was already below 2**63 and comes out UNCHANGED, so no
+# fingerprint on record goes stale and ALGORITHM_VERSION stays put. That
+# matters more than it looks: the sweep picks work by quality report, not by
+# fingerprint, so a submission already reported would never be fingerprinted
+# again — a version bump would have silently dropped every one of them out of
+# similarity checks for good.
+_STORABLE = (1 << 63) - 1
+
+
 def fingerprints(
     tokens: list[str], *, k: int = K_GRAM, w: int = WINDOW
 ) -> tuple[list[int], list[int]]:
@@ -175,7 +194,7 @@ def fingerprints(
             selected[pos] = min_hash
             last_pos = pos
     positions = sorted(selected)
-    return [selected[p] for p in positions], positions
+    return [selected[p] & _STORABLE for p in positions], positions
 
 
 @dataclass(frozen=True)

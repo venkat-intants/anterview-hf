@@ -545,7 +545,11 @@ async def score_session(
             "improvements": json.dumps(improvements),
             "summary": summary,
             "lang": language,
-            "scorer_model": settings.gemini_model,
+            # The model that was CALLED — settings.llm_model follows
+            # LLM_PROVIDER. This used to write settings.gemini_model, so every
+            # scorecard scored under Groq was stored as scored by Gemini: the
+            # audit record of which AI evaluated a candidate was wrong.
+            "scorer_model": settings.llm_model,
             "scorer_version": SCORER_VERSION,
             "created_at": created_at,
         },
@@ -557,7 +561,7 @@ async def score_session(
         session_id=session_id,
         scorecard_id=scorecard_id,
         composite_score=composite,
-        model=settings.gemini_model,
+        model=settings.llm_model,
         # Count only, never the matched text — a marker's surrounding context is
         # candidate speech. Non-zero means this score is worth a human look.
         injection_marker_count=len(injection_markers),

@@ -94,6 +94,12 @@ export default function GovernancePanel({ requisition }: { requisition: Requisit
   const [basis, setBasis] = useState<BudgetBasis>(requisition.budget_basis ?? 'total');
   const [period, setPeriod] = useState<BudgetPeriod>(requisition.budget_period ?? 'annual');
   const [notes, setNotes] = useState(requisition.budget_notes ?? '');
+  // Blank means no waiting period, which is not the same as 0 — 0 days is a
+  // deliberate "may reapply immediately". Kept as a string so the field can
+  // be emptied without the value becoming 0.
+  const [cooldown, setCooldown] = useState(
+    requisition.reapply_cooldown_days == null ? '' : String(requisition.reapply_cooldown_days),
+  );
   const [submitNote, setSubmitNote] = useState('');
   const [publishAt, setPublishAt] = useState('');
 
@@ -125,6 +131,23 @@ export default function GovernancePanel({ requisition }: { requisition: Requisit
     },
     onError: (e: unknown) =>
       toast.error(e instanceof Error ? e.message : 'Could not save the budget.'),
+  });
+
+  const saveCooldown = useMutation({
+    mutationFn: () =>
+      updateRequisition(requisition.id, {
+        reapply_cooldown_days: cooldown === '' ? null : Number(cooldown),
+      }),
+    onSuccess: (updated) => {
+      client.setQueryData(['requisition', requisition.id], updated);
+      toast.success(
+        updated.reapply_cooldown_days == null
+          ? 'Rejected candidates may reapply at any time.'
+          : `Rejected candidates must wait ${updated.reapply_cooldown_days} days.`,
+      );
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof Error ? e.message : 'Could not save the waiting period.'),
   });
 
   const submit = useMutation({
@@ -388,6 +411,46 @@ export default function GovernancePanel({ requisition }: { requisition: Requisit
               Last published automatically on {when(schedule.data.published_at)}.
             </p>
           ) : null}
+        </div>
+
+        {/* ── Reapplying after a rejection (PH3-B4) ──────────────────── */}
+        <div className="mt-6 border-t border-white/[0.07] pt-5">
+          <h3 className="text-[13px] font-semibold text-[#d5d7da]">Reapplying</h3>
+          <p className="mt-1.5 text-[12px] text-[#6f7379]">
+            How long someone you rejected must wait before applying to this opening again.
+            They are told the date they may apply from. You can let an individual reapply
+            sooner from their own record.
+          </p>
+          <label htmlFor="r-cooldown" className={`${LABEL} mt-3`}>
+            Waiting period <span className="text-[#5a5f66]">(days)</span>
+          </label>
+          <input
+            id="r-cooldown"
+            type="number"
+            min={0}
+            max={1095}
+            step={1}
+            value={cooldown}
+            onChange={(e) => setCooldown(e.target.value)}
+            placeholder="No waiting period"
+            className={INPUT}
+          />
+          <p className="mt-1 text-[11.5px] text-[#6f7379]">
+            {/* 0 and blank are different answers, and the difference is the
+                whole feature: one says "straight away", the other says
+                "nobody decided". */}
+            Leave blank for no waiting period. 0 means they may apply again straight away.
+            Up to 1095 days (three years).
+          </p>
+          <div className="mt-3">
+            <Pill
+              onClick={() => saveCooldown.mutate()}
+              disabled={saveCooldown.isPending}
+              className="px-4 py-2"
+            >
+              {saveCooldown.isPending ? 'Saving…' : 'Save waiting period'}
+            </Pill>
+          </div>
         </div>
       </GlassCard>
     </section>

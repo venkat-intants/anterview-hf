@@ -36,7 +36,11 @@ import {
   type Applicant,
   type ApplicantStatus,
 } from '@/api/applicants';
-import { listRequisitions, type Requisition } from '@/api/requisitions';
+import {
+  listRequisitions,
+  overrideReapplyCooldown,
+  type Requisition,
+} from '@/api/requisitions';
 import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
 import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
 import { toast } from '@/lib/toast';
@@ -259,6 +263,97 @@ function RejectAction({
           aria-label={`Confirm ${ariaLabel.toLowerCase()}`}
         >
           Confirm reject
+        </Pill>
+        <Pill variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Pill>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Let one rejected candidate apply to this opening again now (PH3-B4).
+ *
+ * Only offered on a rejected application, because that is the only state a
+ * cooldown applies to. The reason is optional on purpose: the server records
+ * the override in the audit log either way, and a required box produces "ok" a
+ * hundred times — which looks like information and is not. It is still asked
+ * for, because an exception is exactly what someone is later asked to justify.
+ */
+function ReapplyOverrideAction({
+  enrolmentId,
+  openingTitle,
+  candidateName,
+}: {
+  enrolmentId: string;
+  openingTitle: string;
+  candidateName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [done, setDone] = useState(false);
+
+  const grant = useMutation({
+    mutationFn: () => overrideReapplyCooldown(enrolmentId, reason),
+    onSuccess: () => {
+      setDone(true);
+      setOpen(false);
+      setReason('');
+      toast.success(`${candidateName} can apply to ${openingTitle} again now.`);
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof Error ? e.message : 'Could not allow reapplying.'),
+  });
+
+  if (done) {
+    return (
+      <p className="text-[11.5px] text-[var(--ui-soft)]">
+        May reapply now
+      </p>
+    );
+  }
+
+  if (!open) {
+    return (
+      <Pill
+        variant="ghost"
+        onClick={() => setOpen(true)}
+        aria-label={`Let ${candidateName} reapply for ${openingTitle}`}
+      >
+        Let them reapply
+      </Pill>
+    );
+  }
+
+  return (
+    <div className="w-full space-y-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3">
+      <p className="text-[12px] text-[var(--ui-soft)]">
+        This skips the waiting period for {candidateName} on {openingTitle}. Their earlier
+        rejection stays on their record.
+      </p>
+      <div>
+        <label
+          htmlFor={`reapply-why-${enrolmentId}`}
+          className="block text-[12px] text-[var(--ui-soft)]"
+        >
+          Why <span className="text-[var(--ui-faint)]">(optional, kept in the audit log)</span>
+        </label>
+        <textarea
+          id={`reapply-why-${enrolmentId}`}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={2}
+          className={inputCls}
+        />
+      </div>
+      <div className="flex gap-2">
+        <Pill
+          disabled={grant.isPending}
+          onClick={() => grant.mutate()}
+          aria-label={`Confirm ${candidateName} may reapply for ${openingTitle}`}
+        >
+          {grant.isPending ? 'Saving…' : 'Allow reapplying'}
         </Pill>
         <Pill variant="ghost" onClick={() => setOpen(false)}>
           Cancel
@@ -539,6 +634,13 @@ function ApplicantDrawer({
                             onReject(a.id, app.enrolment_id, reasonCode, reason)
                           }
                         />
+                        {app.stored_status === 'rejected' && app.enrolment_id ? (
+                          <ReapplyOverrideAction
+                            enrolmentId={app.enrolment_id}
+                            openingTitle={app.opening_title ?? 'this opening'}
+                            candidateName={a.full_name}
+                          />
+                        ) : null}
                       </div>
                     </li>
                   ))}
@@ -618,6 +720,13 @@ function ApplicantDrawer({
                   onReject(a.id, only?.enrolment_id, reasonCode, reason)
                 }
               />
+              {a.status === 'rejected' && only?.enrolment_id ? (
+                <ReapplyOverrideAction
+                  enrolmentId={only.enrolment_id}
+                  openingTitle={only.opening_title ?? 'this opening'}
+                  candidateName={a.full_name}
+                />
+              ) : null}
             </>
           )}
         </div>

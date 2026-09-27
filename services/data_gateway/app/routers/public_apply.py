@@ -77,7 +77,8 @@ from app.local_storage import LocalStorageError
 from app.models import Applicant
 from app.publishing import visible_sql
 from app.rate_limit import rate_limit
-from app.reapplication import check as cooldown_check
+from app.reapplication import check as cooldown_check, consume_override
+from app.requisitions import record_transition
 from app.resume_details import extract_contact_details
 from app.routers.consent import _hash_value
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
@@ -1292,7 +1293,8 @@ async def submit_application(
     existing = (
         await db.execute(
             text(
-                "SELECT a.id, a.full_name, a.resume_s3_key, e.id AS enrolment_id"
+                "SELECT a.id, a.full_name, a.resume_s3_key, e.id AS enrolment_id,"
+                "       e.status AS enrolment_status"
                 "  FROM applicants a"
                 "  LEFT JOIN enrolments e ON e.applicant_id = a.id"
                 "   AND e.requisition_id = :r AND e.deleted_at IS NULL"
@@ -1349,7 +1351,27 @@ async def submit_application(
     # return the STORED name and ids for whatever address was typed, so anyone
     # holding a live link could learn, for free, whether someone had applied and
     # what their name was. The reply now echoes only what this request sent.
-    if existing is not None and existing["enrolment_id"] is not None:
+    # A REJECTED application is not a live one, so this branch must not answer
+    # for it. It used to: any enrolment at all, whatever its status, was told
+    # "we have your application" — which shadowed the whole reapplication rule
+    # below. The cooldown could never refuse anybody through this form, an
+    # override could never let anybody through, and the candidate was told
+    # their CV was with the hiring team when in fact they had been turned down.
+    #
+    # It went unseen because the PH3-B4b smoke soft-DELETES the enrolment
+    # before reapplying, which no real rejection does; with the row gone this
+    # branch missed and the cooldown ran. Found on 2026-09-27 by the first
+    # browser test of this rule.
+    reapplying_after_rejection = (
+        existing is not None
+        and existing["enrolment_id"] is not None
+        and existing["enrolment_status"] == "rejected"
+    )
+    if (
+        existing is not None
+        and existing["enrolment_id"] is not None
+        and not reapplying_after_rejection
+    ):
         return ApplicationOut(
             applicant_id="",
             enrolment_id=None,
@@ -1524,6 +1546,26 @@ async def submit_application(
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 answers=checked_answers,
             )
+
+        # A reapplication the rule allowed reopens the application it is a
+        # second attempt at. Without this the candidate is past the gate and
+        # nothing happens: one person is enrolled into an opening once, so
+        # enrol_applicant returns the REJECTED enrolment unchanged and the
+        # application HR sees stays rejected. The ledger keeps the whole story
+        # — the rejection, then this move back to new.
+        if reapplying_after_rejection and outcome.enrolment_id:
+            reopened = uuid.UUID(outcome.enrolment_id)
+            await record_transition(
+                db,
+                enrolment_id=reopened,
+                company_id=company_id,
+                to_status="new",
+                actor_user_id=None,  # the candidate applied; nobody moved them
+                automated=True,
+                reason="applied again after a rejection",
+            )
+            # The grant forgave THIS rejection, not every future one.
+            await consume_override(db, enrolment_id=reopened)
 
         await db.commit()
     except IntegrityError:

@@ -13,8 +13,25 @@ export interface Candidate {
   resumeScore: number;
 }
 
-/** A candidate with a unique email, so runs never collide. */
-export function aCandidate(name: string, resumeScore: number): Candidate {
+/**
+ * A candidate with a unique email AND a unique name, so runs never collide.
+ *
+ * The name used to be just the first name given ("Ananya"), and specs find
+ * their candidate on shared screens by it — "Open details for Ananya". That
+ * held while every run got a fresh tenant, and broke in UI mode, where global
+ * setup runs once per session: re-running a spec left a second "Ananya" on
+ * the same board and the click resolved to two buttons (strict-mode
+ * violation). So each candidate now carries a short tag: "Ananya Kvtz".
+ *
+ * Consonants only, deliberately. journey-candidate-view searches the page for
+ * words that must never appear (score, threshold, rank, percentile, points),
+ * and a tag with no vowels cannot spell any of them.
+ */
+export function aCandidate(first: string, resumeScore: number): Candidate {
+  const consonants = 'bcdfghjklmnpqrstvwxz';
+  const pick = () => consonants[Math.floor(Math.random() * consonants.length)];
+  const tag = pick().toUpperCase() + pick() + pick() + pick();
+  const name = `${first} ${tag}`;
   const stamp = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
   return { name, email: `${name.toLowerCase().replace(/\W+/g, '.')}.${stamp}@e2e-anthire.com`, resumeScore };
 }
@@ -24,9 +41,16 @@ export async function applyThroughPublicForm(
   page: Page,
   openingId: string,
   candidate: Candidate,
-  opts: { language?: 'en' | 'hi' | 'te' } = {},
+  // `expectReceived: false` submits and returns without asserting success —
+  // for the cases where the refusal IS the behaviour under test, such as
+  // applying again inside a reapplication waiting period (PH3-B4).
+  // `src` arrives through the link, exactly as a campaign or job board would
+  // tag it (PH3-B1). The page passes it through; the server decides what
+  // channel it means.
+  opts: { language?: 'en' | 'hi' | 'te'; expectReceived?: boolean; src?: string } = {},
 ): Promise<void> {
-  await page.goto(`/apply/${openingId}`);
+  const query = opts.src ? `?src=${encodeURIComponent(opts.src)}` : '';
+  await page.goto(`/apply/${openingId}${query}`);
   await page.locator('#name').fill(candidate.name);
   await page.locator('#email').fill(candidate.email);
   await page.getByRole('button', { name: 'Continue' }).click();
@@ -55,6 +79,7 @@ export async function applyThroughPublicForm(
   await expect(send).toBeEnabled();
   await send.click();
 
+  if (opts.expectReceived === false) return;
   await expect(page.getByText('Application received')).toBeVisible();
 }
 

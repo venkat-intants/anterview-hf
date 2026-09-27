@@ -301,3 +301,73 @@ def test_the_default_is_no_cooldown() -> None:
     sql = MIGRATION.read_text(encoding="utf-8")
     assert "nullable=True" in sql
     assert "server_default" not in sql.split("def upgrade")[1].split("def downgrade")[0]
+
+
+# ===========================================================================
+# A rejected application must not answer as a live one
+# ===========================================================================
+# The already-applied branch runs before the cooldown check, deliberately: a
+# person whose application is still open must never be told to wait. But it
+# matched ANY enrolment, whatever its status, so a REJECTED candidate was told
+# "we have your application" and the cooldown below could never run. That made
+# both of this story's remaining criteria untrue of the product: the rule could
+# refuse nobody through the form, and an override could let nobody through.
+#
+# The PH3-B4b smoke missed it because it soft-DELETES the enrolment before
+# reapplying, which no real rejection does; with the row gone the branch missed
+# and the cooldown ran. Found by the first browser test of this rule.
+
+
+def test_the_already_applied_branch_reads_the_enrolment_status() -> None:
+    from app.routers.public_apply import submit_application
+
+    src = inspect.getsource(submit_application)
+    assert "enrolment_status" in src, (
+        "the branch has to know whether the application it found is still live"
+    )
+
+
+def test_a_rejected_application_falls_through_to_the_cooldown() -> None:
+    from app.routers.public_apply import submit_application
+
+    src = inspect.getsource(submit_application)
+    # The flag is computed before the branch, and the branch is skipped for it.
+    assert src.index("reapplying_after_rejection") < src.index("already_applied=True")
+    assert "not reapplying_after_rejection" in src
+
+
+def test_the_apply_query_selects_the_enrolment_status() -> None:
+    """Whether the application found is live is a fact about the row, so it
+    comes from the same query rather than a second one."""
+    from app.routers.public_apply import submit_application
+
+    src = inspect.getsource(submit_application)
+    assert "e.status AS enrolment_status" in src
+
+
+def test_an_allowed_reapplication_reopens_the_application() -> None:
+    """Past the gate and nothing happens is the other half of the same bug: one
+    person is enrolled into an opening once, so the rejected enrolment comes
+    back unchanged and HR still sees a rejection."""
+    from app.routers.public_apply import submit_application
+
+    src = inspect.getsource(submit_application)
+    assert "record_transition" in src
+    assert 'to_status="new"' in src
+    # Recorded in the ledger as the candidate's own act, not a person's move.
+    assert "actor_user_id=None" in src
+
+
+def test_an_override_is_spent_when_it_is_used() -> None:
+    """The check honours reapply_override_at whenever it is set, so a grant
+    that is never cleared exempts that person from every future cooldown on
+    this opening. It forgives one rejection."""
+    from app.reapplication import consume_override
+    from app.routers.public_apply import submit_application
+
+    assert "consume_override" in inspect.getsource(submit_application)
+    src = inspect.getsource(consume_override)
+    assert "reapply_override_at = NULL" in src
+    # Who granted it and why stay: they are the record of the exception.
+    assert "reapply_override_by_user_id" not in src
+    assert "reapply_override_reason" not in src

@@ -140,3 +140,24 @@ async def grant_override(
         )
     ).mappings().first()
     return dict(row) if row else None
+
+
+async def consume_override(db: AsyncSession, *, enrolment_id: uuid.UUID) -> None:
+    """Spend the override once the person has actually applied again.
+
+    Without this a grant is permanent: the check honours
+    ``reapply_override_at`` whenever it is set, so one exception would exempt
+    that person from every future cooldown on this opening. An override
+    forgives ONE rejection, which is what it was granted for.
+
+    Only the timestamp is cleared. Who granted it and why stay on the row —
+    they are the record of the last exception, and HR reading the application
+    later should be able to see it. The audit log has it either way.
+    """
+    await db.execute(
+        text(
+            "UPDATE enrolments SET reapply_override_at = NULL, updated_at = now()"
+            " WHERE id = :i"
+        ),
+        {"i": enrolment_id},
+    )

@@ -393,3 +393,89 @@ describe('the approval queue', () => {
     await waitFor(() => expect(approveRequisition).toHaveBeenCalledWith('req-9', 'Go ahead'));
   });
 });
+
+// ===========================================================================
+// Reapplying after a rejection (PH3-B4, criterion 7)
+// ===========================================================================
+// The backend, its validation and its audit trail shipped with Phase 3; no
+// screen set the value, so an HR manager could not "define cooldown periods"
+// at all. These pin the screen that closes that.
+
+describe('the waiting period before reapplying', () => {
+  it('shows no waiting period as blank, not as zero', async () => {
+    // Blank and 0 are different answers: 0 says "apply again straight away",
+    // blank says nobody set one. Rendering null as "0" would silently claim
+    // the first.
+    renderPanel(requisition({ reapply_cooldown_days: null }));
+    const field = await screen.findByLabelText(/waiting period/i);
+    expect((field as HTMLInputElement).value).toBe('');
+    expect(screen.getByText(/Leave blank for no waiting period/)).toBeInTheDocument();
+  });
+
+  it('shows the days an opening already has', async () => {
+    renderPanel(requisition({ reapply_cooldown_days: 180 }));
+    expect(((await screen.findByLabelText(/waiting period/i)) as HTMLInputElement).value).toBe(
+      '180',
+    );
+  });
+
+  it('saves the days HR types', async () => {
+    const user = userEvent.setup();
+    updateRequisition.mockResolvedValue(requisition({ reapply_cooldown_days: 90 }));
+    renderPanel(requisition({ reapply_cooldown_days: null }));
+
+    await user.type(await screen.findByLabelText(/waiting period/i), '90');
+    await user.click(screen.getByRole('button', { name: /save waiting period/i }));
+
+    await waitFor(() =>
+      expect(updateRequisition).toHaveBeenCalledWith(requisition().id, {
+        reapply_cooldown_days: 90,
+      }),
+    );
+  });
+
+  it('clears it when the field is emptied', async () => {
+    const user = userEvent.setup();
+    updateRequisition.mockResolvedValue(requisition({ reapply_cooldown_days: null }));
+    renderPanel(requisition({ reapply_cooldown_days: 30 }));
+
+    await user.clear(await screen.findByLabelText(/waiting period/i));
+    await user.click(screen.getByRole('button', { name: /save waiting period/i }));
+
+    await waitFor(() =>
+      expect(updateRequisition).toHaveBeenCalledWith(requisition().id, {
+        reapply_cooldown_days: null,
+      }),
+    );
+  });
+
+  it('keeps zero as zero', async () => {
+    const user = userEvent.setup();
+    updateRequisition.mockResolvedValue(requisition({ reapply_cooldown_days: 0 }));
+    renderPanel(requisition({ reapply_cooldown_days: null }));
+
+    await user.type(await screen.findByLabelText(/waiting period/i), '0');
+    await user.click(screen.getByRole('button', { name: /save waiting period/i }));
+
+    await waitFor(() =>
+      expect(updateRequisition).toHaveBeenCalledWith(requisition().id, {
+        reapply_cooldown_days: 0,
+      }),
+    );
+  });
+
+  it('saves only the waiting period, leaving the budget alone', async () => {
+    // The panel holds several forms. Sending the whole panel's state would let
+    // saving one field quietly overwrite another; the server distinguishes
+    // "not sent" from "null", so each save sends only its own field.
+    const user = userEvent.setup();
+    renderPanel(requisition({ reapply_cooldown_days: null, budget_amount: 500000 }));
+
+    await user.type(await screen.findByLabelText(/waiting period/i), '45');
+    await user.click(screen.getByRole('button', { name: /save waiting period/i }));
+
+    await waitFor(() => expect(updateRequisition).toHaveBeenCalled());
+    const body = updateRequisition.mock.calls[0][1] as Record<string, unknown>;
+    expect(Object.keys(body)).toEqual(['reapply_cooldown_days']);
+  });
+});

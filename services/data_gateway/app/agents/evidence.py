@@ -28,6 +28,7 @@ from shared.agents import (
     Citation,
     PanelVerdict,
     SignalEvidence,
+    citation_href,
     detect_injection,
 )
 from sqlalchemy import text
@@ -165,7 +166,7 @@ def _resume_signal(row: Any) -> SignalEvidence:
                 kind="applicant",
                 id=str(row.id),
                 label=row.full_name,
-                href=f"/hr/applicants/{row.id}",
+                href=citation_href("applicant", str(row.id)),
             )
         ],
     )
@@ -240,7 +241,12 @@ async def _exam_signal(db: AsyncSession, company_id: str, applicant_id: str) -> 
                 kind="exam_attempt",
                 id=str(attempt.id),
                 label=f"Exam attempt — {attempt.title}",
-                href=f"/hr/exams/{attempt.exam_id}",
+                # The ATTEMPT's own id, and the kind's own route: /hr/exams/
+                # attempts/{id} is now mounted (ExamAttemptRedirect), so the chip
+                # lands on the attempt rather than on its exam. It used to send
+                # the exam's id to the exam page, which is why the table's entry
+                # described nothing anyone emitted.
+                href=citation_href("exam_attempt", str(attempt.id)),
             )
         ],
     )
@@ -285,7 +291,7 @@ async def _coding_signal(db: AsyncSession, company_id: str, applicant_id: str) -
                 kind="exam_attempt",
                 id=str(attempt.id),
                 label=f"Coding attempt — {attempt.title}",
-                href=f"/hr/exams/{attempt.exam_id}",
+                href=citation_href("exam_attempt", str(attempt.id)),
             )
         ],
     )
@@ -342,6 +348,11 @@ async def _interview_signal(
                 kind="scorecard",
                 id=str(row.scorecard_id),
                 label=f"Interview scorecard — {name}",
+                # Was unset, so the panel's scorecard chip was unopenable — the
+                # same defect PH5-E1 fixed in tools.get_applicant_detail and
+                # missed here. Built from the APPLICANT id, since there is no
+                # standalone scorecard page (CITATION_ROUTES["scorecard"]).
+                href=citation_href("scorecard", applicant_id),
             )
         ],
     )

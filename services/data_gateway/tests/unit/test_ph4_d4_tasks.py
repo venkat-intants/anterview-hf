@@ -305,30 +305,28 @@ def test_task_kinds_are_a_subset_of_human_evaluated() -> None:
 # ===========================================================================
 # The D4 migration's enrolment_awaits_human body lists exactly HUMAN_EVALUATED_KINDS
 # ===========================================================================
-def _d4_migration(revision: str = "a5d7f9b1c3e8") -> str:
-    """The source of ONE named D4 migration.
+def _d4_migration_src() -> str:
+    """The job-simulation/portfolio migration, by its REVISION ID.
 
-    By revision id, and asserting a single match, because `glob` returns
-    directory order and directory order is not sorted. Two files match
-    `*ph4_d4*` — a5d7f9b1c3e8 (job simulations and portfolio) and c8e0a2b4d6f8
-    (the consent invariant) — so `next(glob(...))` returned the right one on
-    NTFS and the wrong one on ext4, and these three tests passed on a laptop
-    and failed in CI. A test that depends on which file the filesystem happens
-    to hand back first is not testing the migration.
+    ``*ph4_d4*.py`` matches two files (this one and the consent invariant),
+    and `glob` hands them back in directory order — arbitrary on Linux, and it
+    shifted the moment PH5 added files to this directory, so these assertions
+    silently started reading the wrong migration in CI while passing locally.
+    The revision id is unique and never moves.
     """
-    matches = sorted(
-        (APP.parents[0] / "alembic" / "versions").glob(f"*{revision}*ph4_d4*.py")
-    )
-    assert len(matches) == 1, f"expected one migration for {revision}, found {matches}"
+    versions = APP.parents[0] / "alembic" / "versions"
+    matches = sorted(versions.glob("*a5d7f9b1c3e8*.py"))
+    assert len(matches) == 1, matches
     return matches[0].read_text(encoding="utf-8")
 
 
 def test_migration_enrolment_awaits_human_lists_human_evaluated_kinds() -> None:
-    assert "'human_review', 'job_simulation', 'portfolio'" in _d4_migration()
+    src = _d4_migration_src()
+    assert "'human_review', 'job_simulation', 'portfolio'" in src
 
 
 def test_migration_downgrade_refuses_while_task_rounds_exist() -> None:
-    src = _d4_migration()
+    src = _d4_migration_src()
     assert "stuck" in src
     assert "raise RuntimeError" in src
 
@@ -338,7 +336,7 @@ def test_composite_fks_with_a_not_null_company_id_never_set_null() -> None:
     that includes ``company_id`` (NOT NULL on task_submissions) would try to
     null it too — the defect already fixed twice elsewhere this wave.
     RESTRICT instead, for both FKs that shape applies to."""
-    src = _d4_migration()
+    src = _d4_migration_src()
     for name in ("fk_task_submissions_accommodation", "fk_task_submissions_superseded_by"):
         idx = src.index(f'name="{name}"')
         # ondelete is the very next keyword argument on these two calls.
@@ -372,15 +370,31 @@ def test_job_tasks_never_calls_lifecycle_mutators() -> None:
 
 
 def test_no_agent_module_references_job_tasks() -> None:
+    """No agent module may import ``job_tasks`` (the config/lifecycle
+    machinery), touch ``round_tasks`` (HR's authored brief), or read
+    ``task_response`` (a candidate's own answer) — those stay behind their own
+    audited routes.
+
+    PH5-E5's ``get_decision_trace`` (``app/agents/tools.py``) is the one
+    reviewed exception to the ``task_submission`` word appearing at all: it
+    cites a ``task_submission`` NODE from the evidence graph
+    (``app/evidence_graph.py``, itself outside ``app/agents/``) — status,
+    timing and consent state only, never a candidate's answer, and never by
+    importing ``job_tasks`` directly. The companion assertions below hold that
+    line: ``tools.py`` still never imports ``job_tasks`` and never mentions
+    ``round_tasks`` or ``task_response``.
+    """
+    exempt_for_task_submission = {APP / "agents" / "tools.py"}
     for base in (APP / "agents", APP.parents[2] / "shared" / "agents"):
         if not base.exists():
             continue
         for path in base.rglob("*.py"):
             text_ = path.read_text(encoding="utf-8").lower()
-            assert "job_tasks" not in text_
-            assert "round_tasks" not in text_
-            assert "task_submission" not in text_
-            assert "task_response" not in text_
+            assert "job_tasks" not in text_, path
+            assert "round_tasks" not in text_, path
+            assert "task_response" not in text_, path
+            if path not in exempt_for_task_submission:
+                assert "task_submission" not in text_, path
 
 
 def test_no_module_here_imports_an_llm_client() -> None:
@@ -551,7 +565,10 @@ def test_new_tables_are_in_the_erasure_inventory() -> None:
     for table in ("round_tasks", "round_task_materials", "task_events"):
         assert f'"{table}"' in inv, table
     assert "Step 5i" in inv
-    assert 'executor_version": "1.9"' in inv
+    # Bumped to 1.10 when PH5-D5-2's step 5j (hire check-ins) joined, to
+    # 1.11 when PH5-E3's step 5k (talent-pool memberships) did, and to 1.12
+    # when AR-5's step 5l (free-text reason/rationale/evidence fields) did.
+    assert 'executor_version": "1.12"' in inv
 
 
 def _erasure_dict_keys(source: str, dict_name: str) -> set[str]:

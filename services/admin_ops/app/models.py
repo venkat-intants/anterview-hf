@@ -149,6 +149,9 @@ class AuditLog(Base):
     ip_address: Mapped[str | None] = mapped_column(INET, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
     event_ts: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # AR-5 (closed): stamped when the erasure executor redacts a decision's
+    # `details.reason` / `details.rationale`. NULL means never redacted.
+    redacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 # ---------------------------------------------------------------------------

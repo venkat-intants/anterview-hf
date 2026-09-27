@@ -46,6 +46,7 @@ from app.config import settings
 from app.database import dispose_engine, get_db_session, get_session_factory, init_engine
 from app.dependencies import set_auth_provider
 from app.health import router as health_router
+from app.hire_checkins import purge as purge_hire_checkins
 from app.interview_kits import purge_expired_notes
 from app.job_tasks import purge as purge_task_submissions
 from app.mailer import purge_old_email_events, start_email_worker, stop_email_worker
@@ -62,14 +63,20 @@ from app.routers.company_board import router as company_board_router
 from app.routers.consent import router as consent_router
 from app.routers.decision_reasons import admin_router as decision_reasons_admin_router
 from app.routers.decision_reasons import hr_router as decision_reasons_hr_router
+from app.routers.evidence_graph import router as evidence_graph_router
 from app.routers.exam_take import router as exam_take_router
 from app.routers.hr_applicants import router as hr_applicants_router
 from app.routers.hr_attention import router as hr_attention_router
+from app.routers.hr_checkins import router as hr_checkins_router
 from app.routers.hr_coding import router as hr_coding_router
+from app.routers.hr_corpus import router as hr_corpus_router
 from app.routers.hr_exams import router as hr_exams_router
 from app.routers.hr_interviews import router as hr_interviews_router
+from app.routers.hr_metrics import router as hr_metrics_router
 from app.routers.hr_pipeline import router as hr_pipeline_router
+from app.routers.hr_pools import router as hr_pools_router
 from app.routers.hr_questions import router as hr_questions_router
+from app.routers.hr_rediscovery import router as hr_rediscovery_router
 from app.routers.hr_requisitions import router as hr_requisitions_router
 from app.routers.hr_rounds import router as hr_rounds_router
 from app.routers.hr_scorecards import router as hr_scorecards_router
@@ -297,6 +304,25 @@ async def _run_retention_job() -> None:
             "job_tasks.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
         )
 
+    # Same tick: 90-day hire check-ins whose 24-month retention has elapsed
+    # (PH5-D5-2). No free text on the row, so this DELETES outright rather
+    # than redacting; honours RETENTION_DRY_RUN like every purge above.
+    try:
+        async with factory() as session:
+            purged_checkins = await purge_hire_checkins(
+                session, retention_days=settings.hire_checkin_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info(
+            "hire_checkin.retention.done", purged=purged_checkins,
+            dry_run=settings.retention_dry_run,
+        )
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "hire_checkin.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft
     # holds a name, an email, a phone number and a CV — personal data past its
     # purpose, which is exactly what this cron is for. Deliberately NOT a
@@ -327,6 +353,59 @@ async def _run_retention_job() -> None:
     except Exception as exc:  # broad — never let draft cleanup kill the scheduler
         log.error(
             "draft.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc)
+        )
+
+    # Same tick: the document corpus (PH5-E2) — a document past its expiry
+    # date, and a superseded version's TEXT (chunks, embeddings, the stored
+    # object) once CORPUS_SUPERSEDED_RETENTION_DAYS has passed since it was
+    # replaced. The VERSION ROW survives either way, so a citation naming it
+    # still resolves — to "removed under retention" rather than a 404.
+    # Honours RETENTION_DRY_RUN like every purge above.
+    try:
+        from app.corpus import purge_corpus  # noqa: PLC0415
+
+        async with factory() as session:
+            purged_corpus = await purge_corpus(
+                session, superseded_days=settings.corpus_superseded_retention_days,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info("corpus.retention.done", purged=purged_corpus, dry_run=settings.retention_dry_run)
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "corpus.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
+    # Same tick: talent-pool rediscovery opt-ins past their 12 months (PH5-E3).
+    #
+    # This is a tidy-up of the RECORD, not a control. The eligibility query
+    # bounds on the ledger row's own granted_at, so an expired opt-in has
+    # already stopped matching — but the row would otherwise keep reading
+    # `granted = TRUE, revoked_at IS NULL` for ever, so GET /consent/status, an
+    # auditor's query and the candidate's own page would all say "you are opted
+    # in" while the search said otherwise. Stamping revoked_at makes every
+    # reader agree, and frees the partial unique index for a clean re-opt-in.
+    #
+    # Because the query keeps its own bound, a nightly run that never fires
+    # (a suspended container, a failing job) leaves a stale ledger — never a
+    # disclosure. Honours RETENTION_DRY_RUN like every block above: a dry run
+    # counts what it WOULD revoke and writes nothing.
+    try:
+        from app.rediscovery import expire_stale_opt_ins  # noqa: PLC0415
+
+        async with factory() as session:
+            expired_opt_ins = await expire_stale_opt_ins(
+                session, months=settings.rediscovery_consent_months,
+                dry_run=settings.retention_dry_run,
+            )
+            await session.commit()
+        log.info(
+            "rediscovery.consent.expiry.done", revoked=expired_opt_ins,
+            months=settings.rediscovery_consent_months, dry_run=settings.retention_dry_run,
+        )
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "rediscovery.consent.expiry.error", exc_type=type(exc).__name__, exc_msg=str(exc),
         )
 
 
@@ -558,6 +637,7 @@ app.include_router(exam_take_router)
 app.include_router(hr_interviews_router)
 app.include_router(interview_take_router)
 app.include_router(hr_pipeline_router)
+app.include_router(hr_metrics_router)
 app.include_router(hr_attention_router)
 app.include_router(hr_questions_router)
 app.include_router(hr_requisitions_router)
@@ -565,6 +645,9 @@ app.include_router(hr_workflows_router)
 # PH4-A1: HR assigns interviewers and reads scorecards; interviewers see only
 # their own assignments.
 app.include_router(hr_scorecards_router)
+app.include_router(hr_checkins_router)
+# PH5-E5: the read-time evidence graph, and one decision's trace through it.
+app.include_router(evidence_graph_router)
 app.include_router(interviewer_router)
 # PH4-O4: decision reason categories (HR reads, super admin configures).
 app.include_router(decision_reasons_hr_router)
@@ -584,6 +667,13 @@ app.include_router(job_tasks_iv_router)
 app.include_router(job_tasks_public_router)
 app.include_router(job_tasks_me_router)
 app.include_router(workflow_review_admin_router)
+app.include_router(hr_corpus_router)
+# PH5-E3. Narrower than the library above: hr_manager only, because a result
+# names a candidate (candidate_pii → {hr_manager}).
+app.include_router(hr_rediscovery_router)
+# PH5-E3. Same hr_manager-only narrowing as the search router above — a pool
+# names candidates too.
+app.include_router(hr_pools_router)
 # Public, unauthenticated (rate-limited): the candidate-facing front door.
 app.include_router(public_apply_router)
 app.include_router(careers_router)

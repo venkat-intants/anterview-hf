@@ -20,13 +20,7 @@ export type RequisitionStatus = 'open' | 'paused' | 'closed';
  * the hold band under a round's pass threshold. No HR action produces it and
  * no automation clears it — releasing a hold is a human decision (D-05).
  */
-export type EnrolmentStatus =
-  | 'new'
-  | 'shortlisted'
-  | 'interviewed'
-  | 'held'
-  | 'hired'
-  | 'rejected';
+export type EnrolmentStatus = 'new' | 'shortlisted' | 'interviewed' | 'held' | 'hired' | 'rejected';
 
 /** Statuses that end a candidacy. Only a person may write these (D-05). */
 export const TERMINAL_ENROLMENT_STATUSES: readonly EnrolmentStatus[] = ['hired', 'rejected'];
@@ -41,12 +35,7 @@ export interface FunnelStage {
  * and the database check constraint — a value outside this union is a 422, so
  * the dropdown and the API cannot drift apart silently.
  */
-export type EmploymentType =
-  | 'full_time'
-  | 'part_time'
-  | 'contract'
-  | 'internship'
-  | 'temporary';
+export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'internship' | 'temporary';
 
 export const EMPLOYMENT_TYPE_LABELS: Record<EmploymentType, string> = {
   full_time: 'Full-time',
@@ -259,14 +248,11 @@ export async function setRequisitionStatus(
   opts: { reason?: string; acknowledgeUnresolved?: boolean } = {},
 ): Promise<Requisition & { unresolved?: number }> {
   try {
-    return await apiPost<Requisition & { unresolved?: number }>(
-      `/hr/requisitions/${id}/status`,
-      {
-        status,
-        ...(opts.reason ? { reason: opts.reason } : {}),
-        ...(opts.acknowledgeUnresolved ? { acknowledge_unresolved: true } : {}),
-      },
-    );
+    return await apiPost<Requisition & { unresolved?: number }>(`/hr/requisitions/${id}/status`, {
+      status,
+      ...(opts.reason ? { reason: opts.reason } : {}),
+      ...(opts.acknowledgeUnresolved ? { acknowledge_unresolved: true } : {}),
+    });
   } catch (err) {
     const detail = (err as { status?: number; detail?: unknown })?.detail;
     if (
@@ -326,6 +312,11 @@ export function setEnrolmentStatus(
 /** One requisition the backfill minted by grouping applicants on a normalised title. */
 /** One move in an application's history, from the transition ledger (B2). */
 export interface StageHistoryEntry {
+  /** The `stage_transitions` row's own id (PH5-E5). For a real (non-automated)
+   *  hire or reject row, this is exactly the `decision_id`
+   *  `GET /hr/decisions/{decision_id}/trace` takes — the row id for any other
+   *  move is a stable per-row key but is not itself traceable. */
+  id: number;
   occurred_at: string;
   from_status: string | null;
   to_status: string;
@@ -576,7 +567,6 @@ export function getRequisitionDashboard(id: string): Promise<RequisitionDashboar
   return apiGet<RequisitionDashboard>(`/hr/requisitions/${id}/dashboard`);
 }
 
-
 // ---------------------------------------------------------------------------
 // Requisition approval — PH3-B2
 //
@@ -608,10 +598,7 @@ export interface PendingApproval {
 export type BudgetBasis = 'per_hire' | 'total';
 export type BudgetPeriod = 'annual' | 'monthly' | 'one_time';
 
-export function submitRequisitionForApproval(
-  id: string,
-  note?: string,
-): Promise<Requisition> {
+export function submitRequisitionForApproval(id: string, note?: string): Promise<Requisition> {
   return apiPost<Requisition>(`/hr/requisitions/${id}/approval/submit`, { note: note ?? null });
 }
 
@@ -679,10 +666,7 @@ export function getJdDraft(requisitionId: string): Promise<JdVersion | null> {
   return apiGet<JdVersion | null>(`/hr/requisitions/${requisitionId}/jd/draft`);
 }
 
-export function saveJdDraft(
-  requisitionId: string,
-  input: JdDraftInput,
-): Promise<JdVersion> {
+export function saveJdDraft(requisitionId: string, input: JdDraftInput): Promise<JdVersion> {
   return apiPut<JdVersion>(`/hr/requisitions/${requisitionId}/jd/draft`, input);
 }
 
@@ -690,10 +674,7 @@ export function discardJdDraft(requisitionId: string): Promise<void> {
   return apiDelete<void>(`/hr/requisitions/${requisitionId}/jd/draft`);
 }
 
-export function publishJdVersion(
-  requisitionId: string,
-  versionId: string,
-): Promise<JdVersion> {
+export function publishJdVersion(requisitionId: string, versionId: string): Promise<JdVersion> {
   return apiPost<JdVersion>(
     `/hr/requisitions/${requisitionId}/jd/versions/${versionId}/publish`,
     {},

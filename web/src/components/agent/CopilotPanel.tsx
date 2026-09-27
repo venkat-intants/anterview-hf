@@ -25,6 +25,8 @@ import {
   type Proposal,
 } from '@/api/agent';
 import { GlassCard } from '@/design/components/primitives';
+import CitationChips, { CitedText } from './CitationChips';
+import EvidenceBanner from './EvidenceBanner';
 import ProposalCard from './ProposalCard';
 
 interface Turn {
@@ -34,6 +36,12 @@ interface Turn {
   citations?: AgentChatResponse['citations'];
   toolsUsed?: AgentChatResponse['tools_used'];
   stopReason?: AgentChatResponse['stop_reason'];
+  /**
+   * Undefined for a user turn and for an error message that never reached the
+   * server — the banner only speaks about an actual answer, computed by the
+   * server, never assumed here from whether `citations` happens to be empty.
+   */
+  evidenceUsed?: boolean;
 }
 
 /** Console-specific starter prompts. Keyed by the backend's console string. */
@@ -94,7 +102,14 @@ export default function CopilotPanel({
   });
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    // Feature-detected rather than called outright, same reason as the
+    // workflow copilot's auto-scroll: jsdom does not implement `scrollTo` on
+    // an element at all, and auto-scrolling is a convenience that must never
+    // be the reason a turn fails to render.
+    const el = scrollRef.current;
+    if (typeof el?.scrollTo === 'function') {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
   }, [turns, busy]);
 
   async function send(message: string): Promise<void> {
@@ -118,6 +133,7 @@ export default function CopilotPanel({
           citations: res.citations,
           toolsUsed: res.tools_used,
           stopReason: res.stop_reason,
+          evidenceUsed: res.evidence_used,
         },
       ]);
     } catch (err) {
@@ -207,26 +223,19 @@ export default function CopilotPanel({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{turn.text}</p>
+                  {turn.evidenceUsed !== undefined && (
+                    <EvidenceBanner evidenceUsed={turn.evidenceUsed} />
+                  )}
+
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed">
+                    <CitedText text={turn.text} citations={turn.citations ?? []} />
+                  </p>
 
                   {turn.stopReason && STOP_NOTE[turn.stopReason] && (
                     <p className="text-xs opacity-50 italic">{STOP_NOTE[turn.stopReason]}</p>
                   )}
 
-                  {turn.citations && turn.citations.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {turn.citations.map((c) => (
-                        <a
-                          key={`${c.kind}:${c.id}`}
-                          href={c.href ?? '#'}
-                          className="text-xs px-2 py-0.5 rounded-full bg-white/5 hover:bg-white/10 transition"
-                          title={c.kind}
-                        >
-                          {c.label}
-                        </a>
-                      ))}
-                    </div>
-                  )}
+                  <CitationChips citations={turn.citations ?? []} variant="strip" />
 
                   {turn.proposals?.map((p) => (
                     <ProposalCard key={p.id} proposal={p} onCommitted={onCommitted} />

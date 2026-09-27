@@ -237,44 +237,86 @@ was raised about.
 
 ---
 
-## AR-5 — Final-decision rationale in the audit log is not redacted on erasure
+## AR-5 — Free-text reason/rationale fields are redacted on erasure (CLOSED)
 
 | | |
 |---|---|
 | **Source finding** | PH4 Wave 1 security audit, M4(b), 2026-09-17 |
-| **Status** | **ACCEPTED — documented, not redacted** |
-| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` reviews when a trigger fires. An agent cannot act on a trigger by itself, so the accountable owner is a person. |
-| **Trigger to revisit** | Any of: (a) a data principal's erasure request or grievance that names text in a decision rationale; (b) any feature that displays audit-log `details` to someone other than the platform owner; (c) the Tier-2 migration, when the audit log's retention is set |
+| **Status** | **CLOSED 2026-09-26** — redacted at the source, in the erasure executor, not merely documented. Closed per this register's own rule 1: fixed in code, entry kept (not deleted) because roughly a dozen other files cite it by name as a stable anchor — see "Why this entry is kept, not deleted" below. |
+| **Owner** | `platform_owner` (support@intants.com) — accountable for the fix landing; `security-auditor` to confirm on next review. |
+| **Closed by** | `services/admin_ops/app/erasure_executor.py` step 5l + migration `f2a4c6e8b0d3` (`services/data_gateway/alembic/versions/20260926_0001_f2a4c6e8b0d3_ar5_erasure_redaction.py`). |
 
-**The decision.** When HR records a hire or a reject, the free-text reason they
-typed is written in two places: the stage ledger (`stage_transitions.reason`)
-and the append-only audit log (`details.reason` on `enrolment.decision.*`, or
-`details.rationale` on `applicant.decision.*`). Both are kept because they are
-the D-05 evidence that a **person** decided and why — the record the platform
-must be able to produce if an automated-decision complaint is made. DPDP erasure
-anonymises the applicant row (step 6), so the rationale then describes an
-applicant who is named nowhere else. It does not rewrite the rationale itself.
+**What this was.** When HR recorded a hire or a reject, the free-text reason
+they typed was written in two places — the stage ledger
+(`stage_transitions.reason`) and the append-only audit log (`details.reason` on
+`enrolment.decision.*`, or `details.rationale` on `applicant.decision.*`) — and
+neither table's append-only trigger had any redaction exception, so DPDP
+erasure anonymised the applicant (step 6) while the prose describing them lived
+on forever in both stores. A rationale such as "Priya's notice period at Acme is
+six months" survived, attached to an anonymised applicant. **A fresh search for
+the same class of field, not just the two named above, also found:**
+`enrolments.held_reason` (why HR held this candidate),
+`enrolments.reapply_override_reason` (why HR let them back in after a
+rejection) and its own audit row (`enrolment.reapply_override`), and
+`round_results.evidence` on a `human_review` round — a reviewer's own verdict
+note
+(`hr_workflows.py::post_round_review`'s `note`), not the AI prose the rest of
+that table's exclusion argument rests on. All were the same shape: a human's
+own words about a specific candidate, kept forever by an append-only structure
+built before anyone asked what erasure does to it.
 
-The interview scorecards added in PH4-A1 do **not** follow this pattern: their
-audit rows record only whether a correction or withdrawal reason was given and
-how long it was, and the text lives on the scorecard, where erasure step 5f
-redacts it. The decision rationale was left as it was because it predates this
-wave, sits in two append-only stores, and redacting it would need an explicit
-exception to the audit log's append-only trigger — a change to weigh on its own,
-not to slip into a feature.
+**What changed.** Two triggers each gained exactly one new permitted UPDATE
+shape — `redacted_at` NULL -> now(), the free-text column (or JSONB key) moving
+to the fixed marker `'[redacted]'`, and nothing else on the row changing — on
+the `interviewer_scorecards_protect()` pattern this entry's own path-to-closure
+named. A matching CHECK constraint on each table holds the same invariant
+independently of the trigger, so a row cannot carry live prose next to a
+non-NULL `redacted_at` even if the trigger were ever disabled by mistake.
+`enrolments.held_reason`/`reapply_override_reason` and `round_results.evidence`
+needed no schema change — neither table was append-only — so erasure step 5l
+redacts all four in one place: `stage_transitions.reason`,
+`audit_log.details.{reason,rationale}` on the three decision/override actions,
+`enrolments.held_reason`/`reapply_override_reason`, and `round_results.evidence`
+on a human-graded row. Scores, categories, ids, timestamps and who acted are
+untouched everywhere — only the prose a person wrote is gone.
 
-**What is NOT true.** It is not true that erasure leaves no candidate-describing
-prose in the database. A rationale such as "Priya's notice period at Acme is six
-months" survives, attached to an anonymised applicant. The erasure executor's
-inventory (`EXCLUDED_TABLES["audit_log"]`) says so; it used to claim the audit
-log held "action names only", which was wrong before this wave.
+**What is still true, and is not this risk.** `applicants.ats_*` /
+`enrolments.ats_*` prose is AI-generated commentary on a resume, not a human's
+own words about the candidate — outside this entry's scope, both before and
+after this fix, and unchanged by it. `corpus_chunks.content` (AR-8) is a
+different, structurally distinct gap: text an HR manager pasted into a company
+document that this executor has no key to find, let alone redact. Nothing in
+this fix touches either.
 
-**Path to closure.** Either (1) stop copying the rationale into audit `details`
-(keep has-reason and length, as scorecards now do) and add a redaction path for
-`stage_transitions.reason` that the ledger's append-only trigger permits only
-together with an erasure marker — the scorecard trigger is the pattern; or
-(2) guide HR at the point of entry that the rationale must not contain personal
-details, and accept the residue. (1) is the fix; (2) only reduces it.
+**PH5-E3 (talent pools) is unaffected, and was never part of this gap.**
+`talent_pool_events` is append-only, on the `task_events` / `document_events`
+precedent, and keeps a `member_added` (and `member_removed`,
+`member_evidence_reviewed`, `member_invited`) row naming the `applicant_id` a
+pool action concerned. It was DESIGNED facts-only from the start (action, ids,
+counts, a freshness band, a note's LENGTH — never the note, a removal reason's
+text, a name or any CV/scorecard prose), so after step 6 anonymises the
+applicant it names, the row is structurally bounded to "an anonymised id was
+once part of an action" — never free text that could describe a person. This
+was recorded against AR-5 as a scope note rather than a new entry; it is
+restated here, against the closed entry, for the same reason: not a fresh gap,
+and not something this fix needed to touch. See
+`erasure_executor.py::EXCLUDED_TABLES["talent_pool_events"]`.
+
+**Why this entry is kept, not deleted, despite rule 1 above.** `DATA-FLOW.md`,
+both PH4/PH5 acceptance checklists, the evidence graph
+(`app/evidence_graph/`), `rediscovery.py`, `hire_checkins.py` and
+`routers/agent.py` all cite "AR-5" by name as an established fact about the
+platform. Deleting the entry would turn every one of those into a dangling
+reference to nothing; keeping it, closed, lets each citation keep resolving to
+an accurate answer. The evidence graph in particular has its own reason to
+keep working exactly as it did: `candidate.erased` there goes true the moment
+an erasure is *requested*, not when the 30-day-later executor run actually
+redacts anything, so `_decision_nodes`' own withholding of
+`stage_transitions.reason` is still the only thing standing between a reader
+and live prose during that window. This fix closes the gap that mattered
+forever (the database after erasure runs); it does not, and was never asked
+to, shorten the 30-day grace period the whole erasure design already commits
+to elsewhere.
 
 ---
 
@@ -322,6 +364,42 @@ marked `submitted` (ClamAV in a sidecar, or the object store's managed
 scanner at Tier 2), with a `quarantined` state the review trigger refuses to
 verify.
 
+**PH5-E2 amendment (2026-09-23) — the document corpus fires trigger (b).**
+`app/corpus.py` parses a fourth upload path server-side (PDF, DOCX, TXT, MD
+into the company's document library), which is exactly "any feature that ...
+processes it server-side". Recorded here rather than treated as a new
+decision, because the trigger firing does not by itself change the answer —
+what changed is worth stating plainly:
+
+- **The threat model is different, not absent.** Every uploader on this path
+  is an authenticated `hr_manager` or `super_admin` of the tenant, not an
+  anonymous candidate — the same person who could otherwise type the same
+  content straight into the chat. This narrows, but does not remove, the
+  surface: a compromised or malicious staff account is still a real actor, and
+  a scanner would still be worth having against one.
+- **The controls E2 adds, on top of D4-3's allow-list and isolation:**
+  parsing runs in a thread (`app/corpus.py::extract_text`) with a
+  **30-second bound on the REQUEST**, not on the thread itself —
+  `asyncio.to_thread` can cancel the `await`, never the running thread, so
+  what the timeout actually buys is that the caller gets its 422/500 back and
+  the connection is freed at 30s; the worker THREAD is released only when the
+  parser call returns, which is bounded in practice by the input the parser
+  ever sees (the 10 MB upload cap, `pypdf`'s per-page loop, and DOCX's own
+  caps below) rather than by the timeout cancelling anything. Security
+  sign-off on this amendment is conditional on this paragraph, not the
+  earlier "cannot hang a worker" wording it replaces, which overstated what
+  `asyncio.to_thread` provides. DOCX is read with `defusedxml` (no DTD/entity
+  expansion, so no XXE) and hard caps of **200 zip entries and 8 MB
+  uncompressed**, enforced against ACTUAL bytes read, not only the archive's
+  declared sizes; the PDF active-content refusal (`document_storage.py`) is
+  unchanged and applies identically; and a corpus document is never rendered
+  in-browser — download only, through the same five-minute signed link as
+  every other document here. Uploads are also rate-limited per company
+  (`CORPUS_UPLOAD_PER_MINUTE`, default 20/minute) as a coarse bound on how
+  often the parse pool can be triggered at all.
+- **No scanner added this wave**, per the recommendation on file. If a lead
+  wants one, it is a separate story, not folded into this wave's checklist.
+
 ---
 
 ## AR-7 — Portfolio external links are never fetched, and reviewers see them cold
@@ -366,6 +444,72 @@ regardless.
 
 ---
 
+## AR-8 — DPDP erasure cannot reach a candidate's name inside an HR-uploaded document
+
+| | |
+|---|---|
+| **Source finding** | PH5 Wave 3 (E2 — document corpus RAG), 2026-09-23 |
+| **Status** | **ACCEPTED — mitigated by attestation, default audience and immediate purge on delete, not solved** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` reviews when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a customer or bid requiring erasure to reach text inside uploaded documents; (b) a corpus document found to contain candidate data; (c) any feature that auto-ingests candidate-derived content into the corpus |
+
+**The decision.** PH5-E2 gives a company's HR managers and super admins a
+document library the staff copilot can search — policies, handbooks, process
+notes. `corpus_chunks.content` is free text extracted from whatever they
+upload, and there is no key from an applicant row to a chunk of that text: not
+a foreign key, not a shared identifier, nothing an erasure executor could join
+on. **If an uploader pasted a real candidate's name into a document — a
+worked example in a training handbook, an old memo copied in whole — this
+platform cannot find it and cannot erase it.** That is a real limit, not a
+gap to be quietly designed around, and `services/admin_ops/app/
+erasure_executor.py::EXCLUDED_TABLES` says so for all four corpus tables
+rather than presenting the inventory as complete.
+
+**What exists instead — real controls, none of them detection:**
+
+- **An upload-time attestation.** The upload dialog requires HR to confirm
+  "This is a company document, not a record about a candidate" before the
+  request is accepted (`app/corpus.py::ingest_document` refuses with
+  `attestation_required` otherwise); the confirmation is recorded on the
+  `corpus.document.uploaded` audit row.
+- **`hr_only` as the UI's default audience for an `hr_manager` upload.**
+  Qualified deliberately: this default applies only when the uploader IS an
+  `hr_manager`. A `super_admin`'s upload is not "defaulted to `hr_only`" — it
+  **can only ever be `all_staff`**, full stop (design decision Q3;
+  `app/corpus.py::ingest_document` refuses `audience="hr_only"` from a
+  `super_admin` with a 422). So the narrowest-population default is real for
+  one uploader role and inapplicable, not merely different, for the other.
+- **Immediate, complete purge on delete — the ORIGINAL FILE included, not
+  only the derived chunks.** `app/corpus.py::delete_document` removes the
+  chunks, the embeddings, AND the originally uploaded file from object
+  storage (Cloudflare R2 in the demo tier) in the same request — no 30-day
+  grace window — so a document uploaded in error can be fully gone within
+  seconds of HR noticing, rather than waiting out a retention clock. Stated
+  explicitly because the limit above is about TEXT an erasure executor cannot
+  search; the original file is a second copy of exactly the same risk, and
+  the purge control covers both, not only the searchable copy.
+- **A `super_admin` can never create or read back an `hr_only` document**
+  (design decision Q3) — narrowing who could have put candidate-shaped text
+  in front of the widest company-level audience in the first place.
+
+**What is NOT true.** It is not true that the corpus is scanned, sampled or
+otherwise checked for candidate-identifying content, at upload or ever. It is
+not true that `hr_only` limits WHAT can be uploaded — only who can later read
+it. And the structural claim this wave is entitled to make is that **a
+retrieved document cannot change system behaviour** (no write tool exists for
+a document to steer); it is emphatically not entitled to claim that **a
+retrieved document cannot influence the model's prose** — see
+`shared/agents/guardrails.py` and `app/corpus.py::detect_injection` usage,
+which reports an injection attempt rather than claiming to neutralise it.
+
+**Path to closure.** Table-stakes if this ever needs closing: a client-side
+PII scanner over extracted text at upload (report, do not block, on the
+steering-resume precedent), and/or a documented process for HR to attest
+per-document that it contains no third-party personal data, reviewed
+periodically. Neither is built this wave.
+
+---
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -374,6 +518,7 @@ regardless.
 | **AR-2** | One shared HS256 secret across five processes | SEC-2 / SEC-1 | `security-auditor` | Fifth verifier, secret exposure, or Tier-2 |
 | **AR-3** | Candidate code executes on JDoodle | AG-05 | `platform_owner` | Residency bid, confidential-IP customer, or free-tier exhaustion |
 | **AR-4** | No production avatar gate; `custom` unimplemented | AG-06 residue | `cto-architect` | Production `APP_ENV`, residency bid, or 2026-11-28 sunset review |
-| **AR-5** | Decision rationale in audit log / ledger not redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | Erasure grievance naming it, audit details shown to others, or Tier-2 |
-| **AR-6** | Preboarding documents, task artifacts and materials are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
+| **AR-5** | **CLOSED 2026-09-26** — decision rationale, ledger reason and three related fields are now redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | — (fixed; kept for citations, see the entry) |
+| **AR-6** | Preboarding documents, task artifacts, materials and the corpus are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4, PH5-E2 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
+| **AR-8** | DPDP erasure cannot reach a candidate's name inside an HR-uploaded corpus document | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents requirement, a corpus document found to contain candidate data, or auto-ingested candidate content |

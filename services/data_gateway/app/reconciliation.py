@@ -62,7 +62,8 @@ from app.applicant_enrichment import (
 )
 from app.bulk_ingest import ingest_pass
 from app.config import settings
-from app.embedding_client import embed_texts_remote
+from app.corpus import mark_version_failed, mark_version_indexed, mark_versions_indexing
+from app.embedding_client import embed_texts_remote, to_pgvector_literal
 from app.models import Applicant
 from app.notifications_util import create_notification
 from app.requisitions import applicant_by_email
@@ -100,6 +101,15 @@ KIND_ENROLMENT_ATS = "enrolment_ats"  # one application's score (D-06a)
 KIND_EMBED = "applicant_embedding"
 KIND_SCORECARD = "session_scorecard"
 KIND_PDF = "scorecard_pdf"
+# PH5-E2: reconciliation_state.ref_id is the corpus VERSION, not the chunk —
+# a version's chunks fail or succeed together as one embedding job, and
+# MAX_ATTEMPTS/backoff are tracked per version for exactly that reason.
+KIND_CORPUS_CHUNK = "corpus_chunk"
+
+# Same shape as EMBED_BATCH/EMBED_CHUNK above, for the corpus's chunk table
+# rather than the applicants table.
+CORPUS_EMBED_BATCH = 32
+CORPUS_EMBED_CHUNK = 16
 
 # Interviews are re-scored a few at a time: each is a paid LLM call that can
 # take a minute, and a pass must finish inside its ten-minute interval.
@@ -144,6 +154,11 @@ class PassResult:
     # Bulk uploads whose last outstanding row finished during this pass, and
     # which therefore produced one "upload complete" notification (A4).
     batches_finished: int = 0
+    # PH5-E2: corpus chunks embedded, and corpus document versions that
+    # graduated to 'indexed' (every one of their chunks now has a vector),
+    # this pass.
+    corpus_embedded: int = 0
+    corpus_indexed: int = 0
     failed: int = 0
     gave_up: int = 0
     outstanding: dict[str, int] = field(default_factory=dict)
@@ -160,6 +175,8 @@ class PassResult:
             "pdfs_rendered": self.pdfs_rendered,
             "named": self.named,
             "batches_finished": self.batches_finished,
+            "corpus_embedded": self.corpus_embedded,
+            "corpus_indexed": self.corpus_indexed,
             "failed": self.failed,
             "gave_up": self.gave_up,
             "outstanding": self.outstanding,
@@ -603,6 +620,162 @@ async def _embed_pass(db: AsyncSession, result: PassResult) -> None:
         await db.commit()
 
 
+async def _corpus_embed_pass(db: AsyncSession, result: PassResult) -> None:
+    """Backfill corpus chunk embeddings — the network-flaky half of ingestion
+    that ``app/corpus.py::ingest_document``/``add_version`` deliberately do
+    NOT do inline (design §4.2)."""
+    # Carry over unchanged chunks FIRST: a document re-uploaded with one
+    # paragraph edited should cost one embedder call, not four hundred. Content
+    # hash is scoped to (company_id, document_id) so this never crosses a
+    # document boundary, let alone a tenant one.
+    await db.execute(
+        text(
+            "UPDATE corpus_chunks c SET embedding = p.embedding "
+            "FROM corpus_chunks p "
+            "WHERE c.embedding IS NULL AND p.embedding IS NOT NULL "
+            "  AND p.content_sha256 = c.content_sha256 "
+            "  AND p.company_id = c.company_id AND p.document_id = c.document_id"
+        )
+    )
+    await db.commit()
+
+    # A re-upload whose content is 100% unchanged (or a fix that only touched
+    # the title/audience, re-uploading identical text) has EVERY chunk filled
+    # by the carry-over above, so the `rows` SELECT below comes back empty and
+    # this function used to return at `if not rows: return` before the
+    # version was ever promoted — it sat at 'parsed' forever, and
+    # search_corpus's `v.status = 'indexed'` filter excluded it silently
+    # (code review MUST finding). Checked unconditionally, not only when
+    # `rows` turns out empty: a version made fully-embedded by carry-over
+    # alone must graduate exactly like one this pass embeds itself below.
+    fully_embedded = (
+        await db.execute(
+            text(
+                "SELECT v.id, v.company_id, v.document_id FROM corpus_document_versions v"
+                " WHERE v.status IN ('parsed', 'indexing') AND v.superseded_at IS NULL"
+                "   AND v.redacted_at IS NULL"
+                "   AND EXISTS (SELECT 1 FROM corpus_chunks c WHERE c.version_id = v.id)"
+                "   AND NOT EXISTS ("
+                "     SELECT 1 FROM corpus_chunks c WHERE c.version_id = v.id AND c.embedding IS NULL)"
+                " LIMIT :lim"
+            ),
+            {"lim": CORPUS_EMBED_BATCH},
+        )
+    ).all()
+    for version_id, company_id, document_id in fully_embedded:
+        if await mark_version_indexed(
+            db, company_id=company_id, document_id=document_id, version_id=version_id
+        ):
+            await _clear_state(db, KIND_CORPUS_CHUNK, version_id)
+            result.corpus_indexed += 1
+    if fully_embedded:
+        await db.commit()
+
+    now = datetime.now(tz=UTC)
+    rows = (
+        await db.execute(
+            text(
+                "SELECT c.id, c.company_id, c.content, c.version_id, c.document_id"
+                " FROM corpus_chunks c"
+                " JOIN corpus_document_versions v ON v.id = c.version_id"
+                " WHERE c.embedding IS NULL AND v.status IN ('parsed', 'indexing')"
+                "   AND v.superseded_at IS NULL AND v.redacted_at IS NULL"
+                "   AND NOT EXISTS ("
+                "     SELECT 1 FROM reconciliation_state rs"
+                "      WHERE rs.kind = :kind AND rs.ref_id = v.id"
+                "        AND (rs.gave_up_at IS NOT NULL"
+                "             OR (rs.next_attempt_at IS NOT NULL AND rs.next_attempt_at > :now)))"
+                " ORDER BY c.created_at LIMIT :lim"
+            ),
+            {"kind": KIND_CORPUS_CHUNK, "now": now, "lim": CORPUS_EMBED_BATCH},
+        )
+    ).all()
+    if not rows:
+        return
+
+    touched_versions: dict[uuid.UUID, uuid.UUID] = {r[3]: r[4] for r in rows}  # version_id -> document_id
+    try:
+        await mark_versions_indexing(db, list(touched_versions))
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 — HIGH-1: a trigger refusal here (a version
+        # superseded or redacted in the narrow window between the SELECT above and this
+        # UPDATE) must park the affected version, not raise past this function and wedge
+        # every OTHER company's indexing behind it. mark_versions_indexing's own WHERE
+        # clause already excludes superseded/redacted rows, so this is defence for
+        # whatever else a future trigger might refuse — not the primary fix.
+        await db.rollback()
+        for version_id, document_id in touched_versions.items():
+            company_id = next(r[1] for r in rows if r[3] == version_id)
+            if await _record_failure(db, KIND_CORPUS_CHUNK, version_id, f"{type(exc).__name__}: {exc}"):
+                await mark_version_failed(
+                    db, company_id=company_id, document_id=document_id, version_id=version_id,
+                    failure_code="embedding_unavailable",
+                )
+                result.gave_up += 1
+            result.failed += 1
+        await db.commit()
+        return
+
+    for i in range(0, len(rows), CORPUS_EMBED_CHUNK):
+        batch = rows[i : i + CORPUS_EMBED_CHUNK]
+        try:
+            # LOW-3 (security review): batch[0][1] is a company_id, not a
+            # user -- a distinct, recognisably-system convention for
+            # feedback_billing's own attribution logs (see app/corpus.py's
+            # matching fix in search_corpus).
+            vecs = await embed_texts_remote(
+                texts=[r[2] for r in batch], task_type="document",
+                acting_user_id=f"system:corpus:{batch[0][1]}",
+            )
+        except Exception as exc:  # noqa: BLE001 — one bad batch must not stop the pass
+            await db.rollback()
+            # Dedupe by version: several chunks of the SAME version can land in
+            # one failing batch, and MAX_ATTEMPTS counts attempts on the
+            # version, not on each of its chunks.
+            for version_id in {r[3] for r in batch}:
+                document_id = touched_versions[version_id]
+                if await _record_failure(db, KIND_CORPUS_CHUNK, version_id, f"{type(exc).__name__}: {exc}"):
+                    await mark_version_failed(
+                        db, company_id=next(r[1] for r in batch if r[3] == version_id),
+                        document_id=document_id, version_id=version_id,
+                        failure_code="embedding_unavailable",
+                    )
+                    result.gave_up += 1
+                result.failed += 1
+            await db.commit()
+            continue
+
+        for (chunk_id, company_id, _content, _version_id, _document_id), vec in zip(
+            batch, vecs, strict=False
+        ):
+            if not vec:
+                continue
+            await db.execute(
+                text(
+                    "UPDATE corpus_chunks SET embedding = CAST(:e AS halfvec)"
+                    " WHERE id = :i AND company_id = :c"
+                ),
+                {"e": to_pgvector_literal(vec), "i": chunk_id, "c": company_id},
+            )
+            result.corpus_embedded += 1
+        await db.commit()
+
+    for version_id, document_id in touched_versions.items():
+        remaining = await db.scalar(
+            text("SELECT count(*) FROM corpus_chunks WHERE version_id = :v AND embedding IS NULL"),
+            {"v": version_id},
+        )
+        if remaining:
+            continue
+        company_id = next(r[1] for r in rows if r[3] == version_id)
+        if await mark_version_indexed(
+            db, company_id=company_id, document_id=document_id, version_id=version_id
+        ):
+            await _clear_state(db, KIND_CORPUS_CHUNK, version_id)
+            result.corpus_indexed += 1
+    await db.commit()
+
+
 # ---------------------------------------------------------------------------
 # Interviews without a scorecard, scorecards without a PDF
 # ---------------------------------------------------------------------------
@@ -935,6 +1108,7 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> PassResult:
             # After scoring, so a row scored this pass is not also "settled".
             ("settle", _settle_pass),
             ("embed", _embed_pass),
+            ("corpus_embed", _corpus_embed_pass),
             ("scorecard", _scorecard_pass),
             ("pdf", _pdf_pass),
         ):
@@ -947,7 +1121,8 @@ async def run_once(factory: async_sessionmaker[AsyncSession]) -> PassResult:
                           error_type=type(exc).__name__, error=str(exc)[:300])
         result.outstanding = await _outstanding(db)
     if (result.scored or result.ingested or result.embedded or result.interviews_scored
-            or result.pdfs_rendered or result.failed):
+            or result.pdfs_rendered or result.corpus_embedded or result.corpus_indexed
+            or result.failed):
         log.info("reconcile.pass", **result.as_dict())
     return result
 

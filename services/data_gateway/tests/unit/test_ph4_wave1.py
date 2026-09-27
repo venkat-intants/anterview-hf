@@ -240,7 +240,15 @@ def test_every_interviewer_route_goes_through_the_interviewer_gate() -> None:
     "fragment",
     ["/hr/interviewers", "/hr/enrolments/{enrolment_id}/scorecards",
      "/hr/scorecards/{scorecard_id}/withdraw", "/hr/rounds/{round_id}/kit",
-     "/hr/decision-reasons"],
+     "/hr/decision-reasons",
+     # PH5-D5-2: the 90-day hire check-in (all four routes; the first
+     # fragment covers both GET and POST on that path).
+     "/hr/enrolments/{enrolment_id}/checkins", "/hr/checkins/{checkin_id}/correct",
+     "/hr/checkins/due",
+     # PH5-C2: the governed funnel and its drill-down, which lists named
+     # candidates. /hr/metrics/definitions is not here on purpose: it holds no
+     # candidate data and a super_admin may read it too.
+     "/hr/analytics/funnel", "/hr/analytics/members"],
 )
 def test_hr_routes_go_through_the_hr_gate(fragment: str) -> None:
     from app.dependencies import get_hr_company

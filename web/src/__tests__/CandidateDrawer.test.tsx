@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Applicant } from '../api/applicants';
 import type { ApplicationAnswer } from '../api/questions';
@@ -196,6 +197,32 @@ vi.mock('../api/codeEvidence', () => ({
     }),
 }));
 
+// PH5 wave-1 follow-up (B) — the drawer now reads the metric layer's
+// definitions for the Source row's label. `vi.importActual` keeps the real
+// sourceLabel/metricLabel pure functions; only the network call is stubbed.
+const getMetricDefinitions = vi.fn();
+vi.mock('../api/metrics', async () => {
+  const actual = await vi.importActual<typeof import('../api/metrics')>('../api/metrics');
+  return {
+    ...actual,
+    getMetricDefinitions: (...a: unknown[]) => getMetricDefinitions(...a) as unknown,
+  };
+});
+
+// PH5 wave-1 follow-up (A1) — the 90-day check-in section, mounted only for a
+// hired application. Mocked so every existing (non-hired) drawer test stays
+// deterministic; its own behaviour is covered in CheckinSection.test.tsx.
+const checkinsApi = {
+  getEnrolmentCheckins: vi.fn(),
+  createCheckin: vi.fn(),
+  correctCheckin: vi.fn(),
+};
+vi.mock('../api/checkins', () => ({
+  getEnrolmentCheckins: (...a: unknown[]) => checkinsApi.getEnrolmentCheckins(...a) as unknown,
+  createCheckin: (...a: unknown[]) => checkinsApi.createCheckin(...a) as unknown,
+  correctCheckin: (...a: unknown[]) => checkinsApi.correctCheckin(...a) as unknown,
+}));
+
 import CandidateDrawer from '../components/CandidateDrawer';
 
 function applicant(over: Partial<Applicant> = {}): Applicant {
@@ -221,17 +248,21 @@ function renderDrawer(
   props: {
     applicantId?: string | null;
     enrolmentId?: string | null;
+    focusSection?: 'checkin';
   } = {},
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onClose = vi.fn();
   const view = render(
     <QueryClientProvider client={client}>
-      <CandidateDrawer
-        applicantId={props.applicantId === undefined ? 'ap-1' : props.applicantId}
-        enrolmentId={props.enrolmentId}
-        onClose={onClose}
-      />
+      <MemoryRouter>
+        <CandidateDrawer
+          applicantId={props.applicantId === undefined ? 'ap-1' : props.applicantId}
+          enrolmentId={props.enrolmentId}
+          onClose={onClose}
+          focusSection={props.focusSection}
+        />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return { ...view, onClose };
@@ -253,6 +284,118 @@ beforeEach(() => {
   accommodationsApi.listAccommodations.mockResolvedValue([]);
   accommodationsApi.getEffectiveAccommodation.mockResolvedValue({ effective: false });
   jobTasksApi.listEnrolmentTasks.mockResolvedValue([]);
+  getMetricDefinitions.mockResolvedValue({
+    registry_hash: 'test-hash',
+    flags: [],
+    measures: [],
+    metrics: [],
+    dimensions: [
+      {
+        name: 'source',
+        version: 1,
+        label: 'Source',
+        description: 'Where the application came from.',
+        values: [{ key: 'referral', label: 'Referral' }],
+      },
+    ],
+  });
+  checkinsApi.getEnrolmentCheckins.mockResolvedValue({
+    checkins: [],
+    notice: 'Recorded by HR, aggregate-only.',
+    window: { start: null, employed_from: null, closes_at: null, open: true },
+  });
+});
+
+describe('CandidateDrawer — 90-day check-in (PH5 wave-1 follow-up A1)', () => {
+  it('shows the check-in section only once the application is hired', async () => {
+    getApplicant.mockResolvedValue(applicant({ status: 'shortlisted' }));
+    listApplications.mockResolvedValue([
+      {
+        enrolment_id: 'en-1',
+        requisition_id: 'r1',
+        opening_title: 'Backend Engineer',
+        status: 'shortlisted',
+        stored_status: 'shortlisted',
+        ats_overall: 78,
+        ats_breakdown: null,
+        ats_strengths: [],
+        ats_concerns: [],
+        ats_recommendation: null,
+        ats_summary: null,
+        best_exam_percent: null,
+        exam_passed: null,
+        interview_score: null,
+        scorecard_id: null,
+        applied_at: '2026-09-01T00:00:00Z',
+        is_latest: true,
+      },
+    ]);
+    renderDrawer({ enrolmentId: 'en-1' });
+
+    await screen.findByText('Nadia Newbie');
+    expect(screen.queryByText('90-day check-in')).not.toBeInTheDocument();
+  });
+
+  it('shows it, with the source row, once the application is hired', async () => {
+    // The DISPLAYED status is the application's (merged in from listApplications),
+    // not the applicant's own — hired is not even in ApplicantStatus.
+    getApplicant.mockResolvedValue(applicant());
+    listApplications.mockResolvedValue([
+      {
+        enrolment_id: 'en-1',
+        requisition_id: 'r1',
+        opening_title: 'Backend Engineer',
+        status: 'hired',
+        stored_status: 'hired',
+        ats_overall: 78,
+        ats_breakdown: null,
+        ats_strengths: [],
+        ats_concerns: [],
+        ats_recommendation: null,
+        ats_summary: null,
+        best_exam_percent: null,
+        exam_passed: null,
+        interview_score: null,
+        scorecard_id: null,
+        applied_at: '2026-09-01T00:00:00Z',
+        is_latest: true,
+        source: 'referral',
+      },
+    ]);
+    renderDrawer({ enrolmentId: 'en-1' });
+
+    expect(await screen.findByText('90-day check-in')).toBeInTheDocument();
+    expect(await screen.findByText('Referral')).toBeInTheDocument();
+  });
+
+  it('focuses the check-in section when opened from "Check-ins due" (focusSection)', async () => {
+    getApplicant.mockResolvedValue(applicant());
+    listApplications.mockResolvedValue([
+      {
+        enrolment_id: 'en-1',
+        requisition_id: 'r1',
+        opening_title: 'Backend Engineer',
+        status: 'hired',
+        stored_status: 'hired',
+        ats_overall: 78,
+        ats_breakdown: null,
+        ats_strengths: [],
+        ats_concerns: [],
+        ats_recommendation: null,
+        ats_summary: null,
+        best_exam_percent: null,
+        exam_passed: null,
+        interview_score: null,
+        scorecard_id: null,
+        applied_at: '2026-09-01T00:00:00Z',
+        is_latest: true,
+      },
+    ]);
+    renderDrawer({ enrolmentId: 'en-1', focusSection: 'checkin' });
+
+    await screen.findByText('90-day check-in');
+    await waitFor(() => expect(document.activeElement?.id).toBe('checkin-section'));
+  });
 });
 
 describe('CandidateDrawer', () => {
@@ -975,6 +1118,123 @@ describe('CandidateDrawer', () => {
       await waitFor(() =>
         expect(stageSlaApi.reassignException).toHaveBeenCalledWith('exc-1', 'u-hr-2'),
       );
+    });
+  });
+
+  // PH5-E5 — deep-link anchors the evidence graph's hrefs land on
+  // (services/data_gateway/app/evidence_graph.py HREF_ANCHOR), and the
+  // entry points into the evidence trail.
+  describe('evidence trail deep links (PH5-E5)', () => {
+    beforeEach(() => {
+      // Not the focus of these tests — an application match is irrelevant to
+      // whether a section carries its anchor id — but `apps` is enabled
+      // whenever both ids are set, and react-query rejects an `undefined`
+      // resolution from an un-mocked queryFn.
+      listApplications.mockResolvedValue([]);
+    });
+
+    it('gives the Resume match, Application answers and History sections their evidence-graph anchor ids', async () => {
+      getApplicant.mockResolvedValue(applicant({ ats_overall: 82 }));
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      await screen.findByText('Resume match');
+      expect(document.getElementById('screening')).toBeInTheDocument();
+      expect(document.getElementById('answers')).toBeInTheDocument();
+    });
+
+    it('gives the Assessment, Human interview, tasks and offers sections their anchor ids', async () => {
+      renderDrawer({ enrolmentId: 'en-1' });
+      await screen.findByText('Human interview');
+      expect(document.getElementById('human-interview')).toBeInTheDocument();
+      expect(document.getElementById('tasks')).toBeInTheDocument();
+      expect(document.getElementById('offers')).toBeInTheDocument();
+    });
+
+    it('offers an "Evidence trail" button in History, linking to the enrolment’s trail', async () => {
+      getEnrolmentHistory.mockResolvedValue([
+        {
+          id: 1234,
+          occurred_at: '2026-08-15T10:00:00.000Z',
+          from_status: 'interviewed',
+          to_status: 'hired',
+          from_round: null,
+          to_round: null,
+          automated: false,
+          actor: 'Priya Menon',
+          reason: 'Strong system design round.',
+          reason_code: 'skills_fit',
+          reason_label: 'Skills / competency fit',
+        },
+      ]);
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      // The button in the History header opens the trail unfocused on any
+      // one decision — the trail page's own picker handles more than one.
+      const trailLink = await screen.findByRole('link', { name: /Evidence trail/ });
+      expect(trailLink).toHaveAttribute('href', '/hr/enrolments/en-1/evidence');
+      expect(document.getElementById('history')).toBeInTheDocument();
+    });
+
+    it('adds a "Why?" link deep-linking to that row’s decision, but not on an ordinary stage move', async () => {
+      getEnrolmentHistory.mockResolvedValue([
+        {
+          id: 1200,
+          occurred_at: '2026-07-01T10:00:00.000Z',
+          from_status: 'new',
+          to_status: 'shortlisted',
+          from_round: null,
+          to_round: null,
+          automated: false,
+          actor: 'Priya Menon',
+          reason: null,
+          reason_code: null,
+          reason_label: null,
+        },
+        {
+          id: 1234,
+          occurred_at: '2026-08-15T10:00:00.000Z',
+          from_status: 'interviewed',
+          to_status: 'hired',
+          from_round: null,
+          to_round: null,
+          automated: false,
+          actor: 'Priya Menon',
+          reason: 'Strong system design round.',
+          reason_code: 'skills_fit',
+          reason_label: 'Skills / competency fit',
+        },
+      ]);
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      const whyLinks = await screen.findAllByRole('link', { name: 'Why?' });
+      // One decision row (new -> shortlisted is not a decision) — never a
+      // "Why?" on an ordinary stage move. The link carries THAT row's own
+      // id (the stage_transitions row id, which is the decision_id
+      // GET /hr/decisions/{id}/trace takes) — never the picker fallback.
+      expect(whyLinks).toHaveLength(1);
+      expect(whyLinks[0]).toHaveAttribute('href', '/hr/enrolments/en-1/evidence?decision=1234');
+    });
+
+    it('adds no "Why?" for an automated move even into hired/rejected', async () => {
+      getEnrolmentHistory.mockResolvedValue([
+        {
+          id: 999,
+          occurred_at: '2026-08-15T10:00:00.000Z',
+          from_status: null,
+          to_status: 'rejected',
+          from_round: null,
+          to_round: null,
+          automated: true,
+          actor: null,
+          reason: 'backfill: status at migration',
+          reason_code: null,
+          reason_label: null,
+        },
+      ]);
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      await screen.findByText('History');
+      expect(screen.queryByRole('link', { name: 'Why?' })).not.toBeInTheDocument();
     });
   });
 });

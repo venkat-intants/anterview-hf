@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 
 import structlog
 
-from shared.agents.schema import Citation, WatcherFinding
+from shared.agents.schema import Citation, WatcherFinding, citation_href
 
 log = structlog.get_logger(__name__)
 
@@ -201,7 +201,7 @@ def watch_stalled_applicants(data: WatcherInput) -> list[WatcherFinding]:
         where = f" for {worst.requisition_title}" if opening else ""
         citations = (
             [Citation(kind="job", id=rid, label=worst.requisition_title,
-                      href=f"/hr/requisitions/{rid}")]
+                      href=citation_href("job", rid))]
             if opening
             else []
         )
@@ -210,7 +210,7 @@ def watch_stalled_applicants(data: WatcherInput) -> list[WatcherFinding]:
                 kind="applicant",
                 id=a.applicant_id,
                 label=a.name,
-                href=f"/hr/applicants/{a.applicant_id}",
+                href=citation_href("applicant", a.applicant_id),
             )
             for a in group[:10]
         ]
@@ -261,7 +261,7 @@ def watch_funnel_health(data: WatcherInput) -> list[WatcherFinding]:
                 dedupe_key=f"funnel:{row.job_id}:{row.applicants // 10}",
                 citations=[
                     Citation(kind="job", id=row.job_id, label=row.job_title,
-                             href=f"/hr/requisitions/{row.job_id}")
+                             href=citation_href("job", row.job_id))
                 ],
             )
         )
@@ -296,7 +296,7 @@ def watch_exam_quality(data: WatcherInput) -> list[WatcherFinding]:
                             kind="exam",
                             id=stat.exam_id,
                             label=stat.exam_title,
-                            href=f"/hr/exams/{stat.exam_id}",
+                            href=citation_href("exam", stat.exam_id),
                         )
                     ],
                 )
@@ -320,7 +320,7 @@ def watch_exam_quality(data: WatcherInput) -> list[WatcherFinding]:
                             kind="exam",
                             id=stat.exam_id,
                             label=stat.exam_title,
-                            href=f"/hr/exams/{stat.exam_id}",
+                            href=citation_href("exam", stat.exam_id),
                         )
                     ],
                 )
@@ -420,7 +420,11 @@ def watch_decision_backlog(data: WatcherInput) -> list[WatcherFinding]:
                         kind="job",
                         id=opening.requisition_id,
                         label=opening.title,
-                        href=f"/hr/requisitions/{opening.requisition_id}/decisions",
+                        # The decision QUEUE, not the dashboard: the finding is
+                        # "this queue needs working". A declared view.
+                        href=citation_href(
+                            "job", opening.requisition_id, view="decisions"
+                        ),
                     )
                 ],
             )
@@ -471,10 +475,10 @@ def watch_round_stalls(data: WatcherInput) -> list[WatcherFinding]:
                 ),
                 citations=[
                     Citation(kind="job", id=s.requisition_id, label=s.requisition_title,
-                             href=f"/hr/requisitions/{s.requisition_id}"),
+                             href=citation_href("job", s.requisition_id)),
                     *[
                         Citation(kind="applicant", id=aid, label=name,
-                                 href=f"/hr/applicants/{aid}")
+                                 href=citation_href("applicant", aid))
                         for aid, name in s.candidates[:10]
                     ],
                 ],
@@ -520,7 +524,7 @@ def watch_ready_to_shortlist(data: WatcherInput) -> list[WatcherFinding]:
                     kind="job",
                     id=o.requisition_id,
                     label=o.title,
-                    href=f"/hr/requisitions/{o.requisition_id}",
+                    href=citation_href("job", o.requisition_id),
                 )
             ],
         )
@@ -565,7 +569,12 @@ def watch_openings_without_workflow(data: WatcherInput) -> list[WatcherFinding]:
                         kind="job",
                         id=opening.requisition_id,
                         label=opening.title,
-                        href=f"/hr/requisitions/{opening.requisition_id}/workflow",
+                        # The builder CANVAS: the finding is "this opening has
+                        # no workflow", so the fix starts there, not on the
+                        # dashboard. A declared view.
+                        href=citation_href(
+                            "job", opening.requisition_id, view="workflow"
+                        ),
                     )
                 ],
             )

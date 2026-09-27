@@ -1251,6 +1251,12 @@ async def get_enrolment_history(
     way to see how someone got where they are, who moved them, or whether a
     person or the system did it. Round moves carry the round titles. The actor
     is named only when it was a person; a system move says so.
+
+    ``id`` is the ``stage_transitions`` row's own id (PH5-E5). For a real
+    (non-automated) hire or reject row, it is exactly the ``decision_id`` that
+    ``GET /hr/decisions/{decision_id}/trace`` takes — the row id for any other
+    move is returned for the same reason (a stable per-row key) but is not
+    itself traceable.
     """
     _hr_uid, company_id = ctx
     owned = await db.scalar(
@@ -1262,7 +1268,7 @@ async def get_enrolment_history(
     rows = (
         await db.execute(
             text(
-                "SELECT t.occurred_at, t.from_status, t.to_status, t.automated, t.reason,"
+                "SELECT t.id, t.occurred_at, t.from_status, t.to_status, t.automated, t.reason,"
                 "       t.reason_code, t.reason_label,"
                 "       fr.title AS from_round, tr.title AS to_round, u.full_name AS actor"
                 "  FROM stage_transitions t"
@@ -1277,6 +1283,7 @@ async def get_enrolment_history(
     ).mappings().all()
     return [
         {
+            "id": r["id"],
             "occurred_at": r["occurred_at"].isoformat(),
             "from_status": r["from_status"],
             "to_status": r["to_status"],

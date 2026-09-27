@@ -392,11 +392,16 @@ def tolerance_note() -> str:
     still has to be said, because that is the case a console would otherwise
     quietly misrepresent.
     """
+    # Both halves of this sentence are derived, not written, because the poll
+    # interval is now a deployment-tuned COST setting (it was raised on
+    # 2026-09-26 so a serverless database can autosuspend). A hardcoded "within
+    # a few seconds" silently became untrue the moment that changed, which is
+    # exactly the kind of promise a console must not make on the service's
+    # behalf.
     return (
-        "Scheduled openings go live within a few seconds of the chosen time "
-        "while the service is running; if the service is asleep, shortly after "
-        f"it next wakes, and never more than about {interval_seconds() // 60 or 1} "
-        "minute(s) late."
+        f"Scheduled openings go live within about {interval_seconds() // 60 or 1} "
+        "minute(s) of the chosen time while the service is running; if the "
+        "service is asleep, shortly after it next wakes."
     )
 
 

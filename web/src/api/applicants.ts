@@ -75,9 +75,7 @@ export function listApplicants(params: ListApplicantsParams = {}): Promise<Appli
 
 /** Lazy one-sentence explanation of why a candidate matches the search phrase. */
 export function whyMatch(id: string, q: string): Promise<{ reason: string }> {
-  return apiGet<{ reason: string }>(
-    `/hr/applicants/${id}/why-match?q=${encodeURIComponent(q)}`,
-  );
+  return apiGet<{ reason: string }>(`/hr/applicants/${id}/why-match?q=${encodeURIComponent(q)}`);
 }
 
 export interface ReindexResult {
@@ -102,7 +100,15 @@ export function getApplicant(id: string): Promise<Applicant> {
 
 /**
  * Upload + auto-score an applicant resume. `form` must contain: file (PDF),
- * full_name, target_job_title, and optionally email, target_level, target_jd_text.
+ * full_name, target_job_title, and optionally email, target_level,
+ * target_jd_text, source (PH5-C1 — a code from the closed source vocabulary;
+ * omitted means "internal").
+ *
+ * NOT currently called from any page — there is no single-add applicant form
+ * in this console yet, only the bulk upload in Applicants.tsx (which posts to
+ * this endpoint's plural sibling, /hr/applicants/bulk, regardless of file
+ * count). Kept accepting `source` so it is ready the day a single-add form
+ * exists.
  */
 export function uploadApplicant(
   form: FormData,
@@ -154,11 +160,7 @@ export function bulkUploadApplicants(
   form: FormData,
   onProgress?: (pct: number) => void,
 ): Promise<BulkUploadAccepted> {
-  return uploadWithProgress<BulkUploadAccepted>(
-    `${API_BASE}/hr/applicants/bulk`,
-    form,
-    onProgress,
-  );
+  return uploadWithProgress<BulkUploadAccepted>(`${API_BASE}/hr/applicants/bulk`, form, onProgress);
 }
 
 export function getUploadProgress(batchId: string): Promise<UploadProgress> {
@@ -223,6 +225,10 @@ export interface Application {
   scorecard_id: string | null;
   applied_at: string;
   is_latest: boolean;
+  /** Where this application came from (PH5-C1) — a code from the closed
+   *  source vocabulary; label it via api/metrics.ts's sourceLabel(). Optional
+   *  because older server builds may not send it yet. */
+  source?: string | null;
 }
 
 /** Every live application this person holds, oldest first. */

@@ -229,3 +229,148 @@ async def test_a_prompt_written_for_one_console_cannot_run_as_another() -> None:
 
     assert run.stop_reason == "role_mismatch"
     assert called is False
+
+
+# ---------------------------------------------------------------------------
+# PH5 Wave 3 (E1) — a citation cannot hand a caller a record their role could
+# not open, independently of whether the TOOL itself was permitted.
+#
+# This is the test the design calls out as one that FAILS without §3.1(5):
+# a ``company_scoped`` tool is offered to both ``hr_manager`` and
+# ``super_admin``, so nothing about ``ToolSpec.allowed_roles`` stops it handing
+# a super admin a citation kind — ``applicant`` — that ``DATA_CLASS_ROLES``
+# says only ``hr_manager`` may ever be shown a named candidate through.
+# ---------------------------------------------------------------------------
+
+
+def _registry_with_an_overreaching_tool() -> ToolRegistry:
+    """A ``company_scoped`` tool, open to both consoles, whose handler returns
+    a ``candidate_pii``-class citation. Nothing in ``ToolSpec`` catches this —
+    the tool's OWN data class is honestly declared and genuinely aggregate —
+    it just also happens to cite a named record, which only ``invoke``'s
+    citation filter is positioned to catch.
+    """
+    reg = ToolRegistry()
+
+    @reg.tool(
+        name="funnel_with_an_example",
+        description="an aggregate that names one example candidate",
+        parameters=OBJ_SCHEMA,
+        data_class="company_scoped",
+        allowed_roles=("hr_manager", "super_admin"),
+    )
+    async def _handler(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+        from shared.agents.schema import Citation
+
+        return ToolOutput(
+            data={"top_candidate": "Asha"},
+            citations=[Citation(kind="applicant", id="a1", label="Asha")],
+        )
+
+    return reg
+
+
+async def test_a_citation_outside_the_callers_remit_is_dropped_not_the_call() -> None:
+    """The FAILING-TODAY case: invoked as super_admin, the citation must not
+    survive — even though the TOOL itself was one super_admin may call."""
+    reg = _registry_with_an_overreaching_tool()
+    ctx = ToolContext(actor_id="u-1", role="super_admin", company_id="co-1")
+
+    result = await reg.invoke("funnel_with_an_example", {}, ctx, call_id="c1")
+
+    # Dropping the citation must not cost the call (E1-11) — the aggregate
+    # data itself was genuinely permitted and still comes back.
+    assert result.ok is True
+    assert "Asha" in result.content  # the DATA is untouched; only the citation is not
+    assert result.citations == []
+
+
+async def test_the_same_tool_keeps_the_citation_for_the_role_it_belongs_to() -> None:
+    reg = _registry_with_an_overreaching_tool()
+    ctx = ToolContext(actor_id="u-1", role="hr_manager", company_id="co-1")
+
+    result = await reg.invoke("funnel_with_an_example", {}, ctx, call_id="c1")
+
+    assert result.ok is True
+    assert len(result.citations) == 1
+    assert result.citations[0].kind == "applicant"
+
+
+async def test_citation_overreach_is_logged_at_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shared.agents import registry as registry_module
+
+    captured: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        registry_module.log, "error", lambda event, **kw: captured.append((event, kw))
+    )
+
+    reg = _registry_with_an_overreaching_tool()
+    ctx = ToolContext(actor_id="u-1", role="super_admin", company_id="co-1")
+    await reg.invoke("funnel_with_an_example", {}, ctx, call_id="c1")
+
+    assert len(captured) == 1
+    event, fields = captured[0]
+    assert event == "agents.tool.citation_overreach"
+    assert fields["role"] == "super_admin"
+    assert fields["kind"] == "applicant"
+    # NEVER the label — it can be a candidate's name.
+    assert "Asha" not in str(fields)
+
+
+async def test_citation_overreach_raises_under_the_test_flag() -> None:
+    """Production always drops (the two tests above); this flag exists only so
+    a test can assert on the detection itself rather than only on the length
+    of what came back. Never read outside this module's registry logic, and
+    reset in a ``finally`` so one test cannot leave the whole suite strict."""
+    from shared.agents import registry as registry_module
+    from shared.agents.registry import CitationOverreachError
+
+    reg = _registry_with_an_overreaching_tool()
+    ctx = ToolContext(actor_id="u-1", role="super_admin", company_id="co-1")
+
+    registry_module.RAISE_ON_CITATION_OVERREACH = True
+    try:
+        with pytest.raises(CitationOverreachError):
+            await reg.invoke("funnel_with_an_example", {}, ctx, call_id="c1")
+    finally:
+        registry_module.RAISE_ON_CITATION_OVERREACH = False
+
+
+async def test_an_overreaching_citation_on_a_proposal_is_also_dropped() -> None:
+    """The same rule applies to a citation riding on a ``Proposal`` — a draft
+    tool's review panel must not smuggle a named candidate past the matrix
+    either, even though nothing today actually does this (defence in depth)."""
+    from shared.agents.schema import Citation, CommitSpec, Proposal
+
+    reg = ToolRegistry()
+
+    @reg.tool(
+        name="draft_with_an_example",
+        description="x",
+        parameters=OBJ_SCHEMA,
+        effect="draft",
+        data_class="company_scoped",
+        allowed_roles=("hr_manager", "super_admin"),
+    )
+    async def _handler(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+        return ToolOutput(
+            data={"drafted": True},
+            proposals=[
+                Proposal(
+                    kind="note",
+                    title="x",
+                    summary="x",
+                    commit=CommitSpec(method="POST", path="/hr/x", label="x"),
+                    citations=[Citation(kind="applicant", id="a1", label="Asha")],
+                )
+            ],
+        )
+
+    ctx = ToolContext(actor_id="u-1", role="super_admin", company_id="co-1")
+    result = await reg.invoke("draft_with_an_example", {}, ctx, call_id="c1")
+
+    assert result.ok is True
+    assert len(result.proposals) == 1
+    assert result.proposals[0].citations == []

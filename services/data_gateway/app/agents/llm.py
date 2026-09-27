@@ -27,7 +27,15 @@ from typing import Any
 
 import httpx
 import structlog
-from shared.agents import AgentLLM, AgentMessage, AssistantStep, PanelLLM, ToolCall, ToolSpec
+from shared.agents import (
+    AgentLLM,
+    AgentMessage,
+    AssistantStep,
+    PanelLLM,
+    ToolCall,
+    ToolSpec,
+    tool_wire_content,
+)
 
 from app.config import settings
 
@@ -120,12 +128,15 @@ def _to_gemini_contents(messages: list[AgentMessage]) -> list[dict[str, Any]]:
                                 "name": result.name,
                                 # Wrapped in an object: Gemini requires the
                                 # response to be a struct, and our tools return
-                                # JSON text.
+                                # JSON text. ``tool_wire_content`` is what
+                                # actually puts the untrusted-data notice (and
+                                # any SOURCES line) on the wire — this used to
+                                # send ``result.content`` raw, which is why
+                                # SAFETY_CLAUSE's "[UNTRUSTED DATA] block" never
+                                # existed on this path (see runtime.py).
                                 "response": {
                                     "ok": result.ok,
-                                    "content": result.content
-                                    if result.ok
-                                    else (result.error or "failed"),
+                                    "content": tool_wire_content(result),
                                 },
                             }
                         }

@@ -33,12 +33,22 @@ def test_stalled_applicants_are_per_opening_live_openings_and_ledger_time() -> N
     assert "NOT enrolment_awaits_human(e.status, e.current_round_id)" in sql
 
 
-def test_the_funnel_is_grouped_by_opening_not_title() -> None:
-    from app.agents.watch_runner import FUNNEL_SQL
+def test_the_funnel_population_is_open_or_paused_openings() -> None:
+    """PH5-C2: the funnel watcher's counts now come from the governed metric
+    layer (``app.metrics.compute.compute_funnel``, grouped by requisition),
+    not a bespoke query — this used to assert ``FUNNEL_SQL``'s own GROUP BY
+    text, which no longer exists. What still belongs to this module, and is
+    still worth pinning, is which openings are in scope: open or paused, by
+    id (never by title, which merged two openings that shared one)."""
+    from app.agents.watch_runner import _OPEN_REQUISITIONS_SQL, _WATCHER_FUNNEL_METRICS
 
-    sql = _sql(FUNNEL_SQL)
-    assert "GROUP BY p.requisition_id, r.title" in sql
-    assert "r.status IN ('open', 'paused')" in sql
+    sql = _sql(_OPEN_REQUISITIONS_SQL)
+    assert "status IN ('open', 'paused')" in sql
+    assert "id FROM job_requisitions" in sql
+    # Neither metric may read a check-in flag — see
+    # test_ph5_w1_metrics_definitions.test_watcher_funnel_metrics_are_checkin_safe
+    # for why, and for the assertion against the real registry.
+    assert _WATCHER_FUNNEL_METRICS == ("applications", "interviewed")
 
 
 def test_round_stalls_use_the_rounds_deadline_and_skip_what_others_cover() -> None:

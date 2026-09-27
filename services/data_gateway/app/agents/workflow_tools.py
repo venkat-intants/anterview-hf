@@ -38,6 +38,8 @@ from shared.agents import (
     Proposal,
     ToolContext,
     ToolOutput,
+    citation_href,
+    strip_invisible,
 )
 from shared.intelligence import baseline_profile, compute_profile_id
 from shared.intelligence.schema import Seniority
@@ -133,7 +135,11 @@ def _requisition_citation(req: dict[str, Any]) -> Citation:
         kind="job",
         id=str(req["id"]),
         label=f"Opening — {req['title']}",
-        href=f"/hr/requisitions/{req['id']}/workflow",
+        # The workflow CANVAS, not the requisition dashboard: this copilot only
+        # ever runs from the builder, and the answer is always about the process
+        # being designed. A declared view rather than an inline path — the
+        # table's own entry for "job" is the dashboard, and both are real.
+        href=citation_href("job", str(req["id"]), view="workflow"),
     )
 
 
@@ -196,7 +202,9 @@ async def _get_opening_under_design(_args: dict[str, Any], ctx: ToolContext) -> 
                 "target_hires": req["target_hires"],
                 # Truncated: a full JD can be 40k characters and would crowd
                 # the actual question out of the model's attention.
-                "job_description_excerpt": jd[:1500] or None,
+                # ``strip_invisible``: a JD is sometimes pasted from an
+                # external posting, not always HR-authored from scratch.
+                "job_description_excerpt": strip_invisible(jd[:1500]) or None,
             },
             "occupational_family": profile.domain_label,
             "competencies": [
@@ -350,7 +358,7 @@ async def _list_available_exams(_args: dict[str, Any], ctx: ToolContext) -> Tool
         },
         citations=[
             Citation(kind="exam", id=str(r["exam_id"]), label=str(r["exam_title"]),
-                     href=f"/hr/exams/{r['exam_id']}")
+                     href=citation_href("exam", str(r["exam_id"])))
             for r in rows
             if r["round_id"]
         ][:10],
@@ -710,6 +718,10 @@ async def _draft_workflow_round(args: dict[str, Any], ctx: ToolContext) -> ToolO
             "note": "Nothing was added. This is a preview for the user to accept.",
         },
         proposals=[proposal],
+        # Lifted to the run level too, same as the proposal's own citation —
+        # a run-level citation is what lets the console render a source strip
+        # under the reply text, not only inside the proposal review panel.
+        citations=[_requisition_citation(req)],
     )
 
 
@@ -790,6 +802,7 @@ async def _draft_round_criteria(args: dict[str, Any], ctx: ToolContext) -> ToolO
             ),
         },
         proposals=[proposal],
+        citations=[_requisition_citation(req)],
     )
 
 
@@ -897,4 +910,5 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
                 citations=[_requisition_citation(req)],
             )
         ],
+        citations=[_requisition_citation(req)],
     )

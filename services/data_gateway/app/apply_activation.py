@@ -51,6 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth_tokens import hash_token, mint_token
 from app.config import settings
 from app.mailer import enqueue_email
+from app.rediscovery import REDISCOVERY_CONSENT_TYPE
 
 log = structlog.get_logger(__name__)
 
@@ -385,6 +386,19 @@ async def _link_to_existing(
     # row per SUBMISSION, not per person: every one always moves. Skipping it
     # left a submission's consent on the tombstoned guest, where erasing the
     # real account (which revokes by user_id) never reached it (NEW-10).
+    #
+    # PH5-E3 — the same bug, one shape along. A rediscovery opt-in
+    # ('talent_pool_rediscovery') is unique per (person, COMPANY), not per
+    # (person, type, purpose): a candidate opted in at two companies holds TWO
+    # active rows with the same type and purpose. Under the rule above, the
+    # first one the target already held made the SECOND look like a duplicate,
+    # so one company's opt-in stayed on the guest identity that :401 then
+    # tombstones. That is a false negative rather than a disclosure — the
+    # eligibility query joins the ledger to applicants by user_id, and the
+    # applicant rows all moved — but it means "consent honoured" would not be
+    # true: the candidate would silently stop being findable at one of the two
+    # companies they chose. So for this type the "already holds it" test is
+    # company-aware, and both rows move.
     await db.execute(
         text(
             "UPDATE dpdp_consent_ledger SET user_id = :new"
@@ -394,9 +408,30 @@ async def _link_to_existing(
             "      WHERE t.user_id = :new"
             "        AND t.consent_type = dpdp_consent_ledger.consent_type"
             "        AND t.purpose = dpdp_consent_ledger.purpose"
+            "        AND (dpdp_consent_ledger.consent_type <> :rediscovery"
+            "             OR t.evidence ->> 'company_id'"
+            "                = dpdp_consent_ledger.evidence ->> 'company_id')"
             "        AND t.granted = true AND t.revoked_at IS NULL))"
         ),
-        {"new": target_user_id, "old": guest_user_id},
+        {"new": target_user_id, "old": guest_user_id,
+         "rediscovery": REDISCOVERY_CONSENT_TYPE},
+    )
+    # A rediscovery row that genuinely could not move — the target already holds
+    # an active opt-in for that same company, so the unique index would refuse a
+    # second — is revoked rather than left reading `granted = TRUE` on an
+    # identity that the next statement tombstones and that nothing can reach
+    # again. The consent itself is not lost: the row the target already holds
+    # says the same thing, with an earlier granted_at, which is the rule this
+    # whole block follows.
+    await db.execute(
+        text(
+            "UPDATE dpdp_consent_ledger SET revoked_at = :now,"
+            " evidence = (coalesce(evidence::jsonb, '{}'::jsonb)"
+            "             || '{\"revoked_reason\": \"superseded_by_activation\"}'::jsonb)::json"
+            " WHERE user_id = :old AND consent_type = :rediscovery"
+            "   AND granted = true AND revoked_at IS NULL"
+        ),
+        {"now": now, "old": guest_user_id, "rediscovery": REDISCOVERY_CONSENT_TYPE},
     )
     await db.execute(
         text(

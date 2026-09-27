@@ -38,7 +38,9 @@ describe.each(NAMESPACES)('%s i18n bundle', (ns) => {
 
   it('exists in all three languages', () => {
     for (const lang of LANGS) {
-      expect(Object.keys(namespace(lang, ns)).length, `${lang}.${ns} is missing`).toBeGreaterThan(0);
+      expect(Object.keys(namespace(lang, ns)).length, `${lang}.${ns} is missing`).toBeGreaterThan(
+        0,
+      );
     }
   });
 

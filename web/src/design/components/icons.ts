@@ -25,6 +25,8 @@ export {
   GripVertical, Library,
   // additional — admin pages
   CalendarDays, MessageSquare, ToggleLeft, KeyRound, UserPlus,
+  // PH5-E3 — talent pools & rediscovery
+  Archive, ArchiveRestore, UserMinus,
 } from 'lucide-react';
 
 export type { LucideIcon } from 'lucide-react';

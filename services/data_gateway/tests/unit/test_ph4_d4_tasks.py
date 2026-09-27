@@ -305,17 +305,30 @@ def test_task_kinds_are_a_subset_of_human_evaluated() -> None:
 # ===========================================================================
 # The D4 migration's enrolment_awaits_human body lists exactly HUMAN_EVALUATED_KINDS
 # ===========================================================================
+def _d4_migration(revision: str = "a5d7f9b1c3e8") -> str:
+    """The source of ONE named D4 migration.
+
+    By revision id, and asserting a single match, because `glob` returns
+    directory order and directory order is not sorted. Two files match
+    `*ph4_d4*` — a5d7f9b1c3e8 (job simulations and portfolio) and c8e0a2b4d6f8
+    (the consent invariant) — so `next(glob(...))` returned the right one on
+    NTFS and the wrong one on ext4, and these three tests passed on a laptop
+    and failed in CI. A test that depends on which file the filesystem happens
+    to hand back first is not testing the migration.
+    """
+    matches = sorted(
+        (APP.parents[0] / "alembic" / "versions").glob(f"*{revision}*ph4_d4*.py")
+    )
+    assert len(matches) == 1, f"expected one migration for {revision}, found {matches}"
+    return matches[0].read_text(encoding="utf-8")
+
+
 def test_migration_enrolment_awaits_human_lists_human_evaluated_kinds() -> None:
-    migrations = (APP.parents[0] / "alembic" / "versions").glob("*ph4_d4*.py")
-    path = next(migrations)
-    src = path.read_text(encoding="utf-8")
-    assert "'human_review', 'job_simulation', 'portfolio'" in src
+    assert "'human_review', 'job_simulation', 'portfolio'" in _d4_migration()
 
 
 def test_migration_downgrade_refuses_while_task_rounds_exist() -> None:
-    migrations = (APP.parents[0] / "alembic" / "versions").glob("*ph4_d4*.py")
-    path = next(migrations)
-    src = path.read_text(encoding="utf-8")
+    src = _d4_migration()
     assert "stuck" in src
     assert "raise RuntimeError" in src
 
@@ -325,9 +338,7 @@ def test_composite_fks_with_a_not_null_company_id_never_set_null() -> None:
     that includes ``company_id`` (NOT NULL on task_submissions) would try to
     null it too — the defect already fixed twice elsewhere this wave.
     RESTRICT instead, for both FKs that shape applies to."""
-    migrations = (APP.parents[0] / "alembic" / "versions").glob("*ph4_d4*.py")
-    path = next(migrations)
-    src = path.read_text(encoding="utf-8")
+    src = _d4_migration()
     for name in ("fk_task_submissions_accommodation", "fk_task_submissions_superseded_by"):
         idx = src.index(f'name="{name}"')
         # ondelete is the very next keyword argument on these two calls.

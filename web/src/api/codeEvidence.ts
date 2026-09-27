@@ -205,6 +205,13 @@ export interface SimilarityExcerpt {
   excerpt: string;
   /** Render from this, not `excerpt` — see `ExcerptBlock`. */
   blocks: ExcerptBlock[];
+  /** True when this side is another candidate's submission whose fingerprint
+   *  could not be paired with the signal's, so there is deliberately nothing
+   *  to show. Distinct from "the two programs have nothing in common": the
+   *  server refuses to fall back to a head of the file here, because that
+   *  would put a whole uninvolved submission on screen. Absent on the
+   *  reference-solution side, which may show a head. */
+  regions_unavailable?: boolean;
 }
 
 export interface SimilarityCompare {

@@ -91,23 +91,18 @@ test.describe('an application saved for later', () => {
     ).toBeVisible();
 
     // ── Finishing from here is an ordinary application ───────────────────────
-    // Two things stand between a draft and an application, and the page names
-    // both: a CV, and details confirmed.
-    await expect(later.getByText('CV uploaded — still needed')).toBeVisible();
-    // Choosing the file uploads it — there is no second press, and waiting for
-    // one waits forever, because the button is replaced by the uploaded state.
-    await later.locator('input[type="file"]').first().setInputFiles({
-      name: 'cv.pdf',
-      mimeType: 'application/pdf',
-      buffer: makeCvPdf([candidate.name, candidate.email, `E2E-SCORE: ${candidate.resumeScore}`]),
-    });
+    // What they had already given us came with them. Saving used to record
+    // only who they were, so a person came back to an empty form — their name
+    // and their CV gone, which is not "continue where you left off".
+    await expect(
+      later.getByRole('textbox', { name: 'Full name' }),
+      'the name they typed came back',
+    ).toHaveValue(candidate.name, { timeout: 30_000 });
     await expect(
       later.getByRole('button', { name: 'Replace CV' }),
-      'the CV is on the server, and can be swapped rather than re-added',
-    ).toBeVisible({ timeout: 60_000 });
+      'and so did the CV they chose — it is on the server, not just named',
+    ).toBeVisible();
     await expect(later.getByText('CV uploaded — still needed')).toHaveCount(0);
-
-    await later.getByRole('textbox', { name: 'Full name' }).fill(candidate.name);
     const correct = later.getByRole('button', { name: 'These details are correct' });
     await expect(correct, 'confirming is refused until the details are filled in').toBeEnabled({
       timeout: 60_000,

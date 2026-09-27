@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { PendingApproval, PublishSchedule, Requisition } from '../api/requisitions';
 
@@ -23,6 +23,7 @@ const cancelPublishSchedule = vi.fn();
 const submitRequisitionForApproval = vi.fn();
 const updateRequisition = vi.fn();
 const listPendingApprovals = vi.fn();
+const fetchRequisition = vi.fn();
 const approveRequisition = vi.fn();
 const rejectRequisition = vi.fn();
 
@@ -414,9 +415,7 @@ describe('the waiting period before reapplying', () => {
 
   it('shows the days an opening already has', async () => {
     renderPanel(requisition({ reapply_cooldown_days: 180 }));
-    expect(((await screen.findByLabelText(/waiting period/i)) as HTMLInputElement).value).toBe(
-      '180',
-    );
+    expect(await screen.findByLabelText(/waiting period/i)).toHaveValue(180);
   });
 
   it('saves the days HR types', async () => {
@@ -477,5 +476,48 @@ describe('the waiting period before reapplying', () => {
     await waitFor(() => expect(updateRequisition).toHaveBeenCalled());
     const body = updateRequisition.mock.calls[0][1] as Record<string, unknown>;
     expect(Object.keys(body)).toEqual(['reapply_cooldown_days']);
+  });
+});
+
+// ===========================================================================
+// What the panel saves has to reach the screen around it
+// ===========================================================================
+//
+// Every test above hands GovernancePanel a requisition as a prop, so none of
+// them could see the bug this one exists for: the panel refreshed the cache
+// entry ['requisition', id] while the page that renders it reads
+// ['hr', 'requisition', id]. Saving worked, the server was right, and the
+// badge on screen still said "Not submitted" until someone reloaded the tab.
+//
+// So this renders the panel the way WorkflowBuilder does — fed by a query on
+// the page's own key — and asserts on what the person ends up looking at.
+describe('a save reaching the page around the panel', () => {
+  function Host({ id }: { id: string }) {
+    const req = useQuery({
+      queryKey: ['hr', 'requisition', id],
+      queryFn: () => fetchRequisition() as Promise<Requisition>,
+    });
+    if (!req.data) return <p>Loading</p>;
+    return <GovernancePanel requisition={req.data} />;
+  }
+
+  it('updates the approval badge without a reload', async () => {
+    // The server has moved on; the question is whether the page notices.
+    fetchRequisition
+      .mockResolvedValueOnce(requisition({ approval_status: 'draft' }))
+      .mockResolvedValue(requisition({ approval_status: 'pending_approval' }));
+
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <Host id="req-1" />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /Submit for approval/ }));
+    expect(await screen.findByText('Waiting for approval')).toBeInTheDocument();
   });
 });

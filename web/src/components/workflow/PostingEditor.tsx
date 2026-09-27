@@ -155,7 +155,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
         nice_to_have_skills: form.nice_to_have_skills ?? [],
       }),
     onSuccess: (updated) => {
-      client.setQueryData(['requisition', requisition.id], updated);
+      client.setQueryData(['hr', 'requisition', requisition.id], updated);
       toast.success('Posting updated.');
     },
     onError: (err: unknown) =>

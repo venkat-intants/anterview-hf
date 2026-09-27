@@ -93,7 +93,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
 
   function refresh(): void {
     void client.invalidateQueries({ queryKey: ['jd-history', requisition.id] });
-    void client.invalidateQueries({ queryKey: ['requisition', requisition.id] });
+    void client.invalidateQueries({ queryKey: ['hr', 'requisition', requisition.id] });
   }
 
   const save = useMutation({

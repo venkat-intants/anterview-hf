@@ -108,8 +108,13 @@ export default function GovernancePanel({ requisition }: { requisition: Requisit
     queryFn: () => getPublishSchedule(requisition.id),
   });
 
+  // The key has to be the one the page around us reads. It used to be
+  // ['requisition', id] here and ['hr', 'requisition', id] there, so every
+  // save landed in a cache entry nobody was watching: the approval badge
+  // still read "Not submitted" after it had been submitted, and only a
+  // manual reload told the truth.
   function refresh(): void {
-    void client.invalidateQueries({ queryKey: ['requisition', requisition.id] });
+    void client.invalidateQueries({ queryKey: ['hr', 'requisition', requisition.id] });
     void client.invalidateQueries({ queryKey: ['publish-schedule', requisition.id] });
   }
 
@@ -126,7 +131,7 @@ export default function GovernancePanel({ requisition }: { requisition: Requisit
         budget_notes: notes || null,
       }),
     onSuccess: (updated) => {
-      client.setQueryData(['requisition', requisition.id], updated);
+      client.setQueryData(['hr', 'requisition', requisition.id], updated);
       toast.success('Budget saved.');
     },
     onError: (e: unknown) =>
@@ -139,7 +144,7 @@ export default function GovernancePanel({ requisition }: { requisition: Requisit
         reapply_cooldown_days: cooldown === '' ? null : Number(cooldown),
       }),
     onSuccess: (updated) => {
-      client.setQueryData(['requisition', requisition.id], updated);
+      client.setQueryData(['hr', 'requisition', requisition.id], updated);
       toast.success(
         updated.reapply_cooldown_days == null
           ? 'Rejected candidates may reapply at any time.'

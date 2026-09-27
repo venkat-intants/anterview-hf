@@ -32,7 +32,9 @@ import {
 } from '@/design/components/icons';
 import {
   getPosting,
+  saveDraft,
   startDraft,
+  uploadDraftResume,
   submitApplication,
   type ApplicationResult,
   type AnswerValue,
@@ -641,13 +643,44 @@ export default function PublicApply(): JSX.Element {
   // this person's email is stored — so it carries the checkbox's value rather
   // than assuming it, and the server refuses without it.
   const saveLater = useMutation({
-    mutationFn: () =>
-      startDraft(requisitionId, {
+    mutationFn: async () => {
+      const draft = await startDraft(requisitionId, {
         email: email.trim(),
         consentGranted: consent,
         language,
         src: posting.data?.source,
-      }),
+      });
+
+      // Carry over what they have already given us. Starting a draft only
+      // records who they are and that they agreed; without this the person
+      // comes back to a form they have to fill in again — their name gone,
+      // their CV gone — which is not "continue where you left off", and is
+      // exactly what somebody saving on a phone at a bus stop cannot afford
+      // to redo.
+      //
+      // Best effort, deliberately: the draft EXISTS by this point and its link
+      // is the only way back to it, so a failure here must still show them the
+      // link. Losing a typed name is a papercut; losing the draft is the
+      // application.
+      try {
+        await saveDraft(draft.resume_token, {
+          full_name: fullName.trim() || null,
+          phone: phone.trim() || null,
+          years_experience: yearsExperience === '' ? null : Number(yearsExperience),
+          current_company: currentCompany.trim() || null,
+          current_title: currentTitle.trim() || null,
+          linkedin_url: linkedinUrl.trim() || null,
+          github_url: githubUrl.trim() || null,
+          language,
+          answers,
+        });
+        if (resume) await uploadDraftResume(draft.resume_token, resume);
+      } catch {
+        // Nothing to say here: the draft is safe and the link is about to be
+        // shown. What did not carry over is asked for again on the draft page.
+      }
+      return draft;
+    },
   });
 
   function pickFile(file: File | null): void {

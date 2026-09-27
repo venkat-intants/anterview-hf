@@ -14,7 +14,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import type { ApplicationDraft } from '../api/publicApply';
+import type { ApplicationDraft, ParsedDetails } from '../api/publicApply';
 import i18n from '../lib/i18n';
 
 const getDraft = vi.fn();
@@ -44,6 +44,18 @@ import ResumeApplication from '../pages/ResumeApplication';
 // Relative to the web/ root, which is vitest's cwd.
 const appSource = readFileSync('src/App.tsx', 'utf-8');
 
+/** What the CV parser read. Everything it produces, defaulting to nothing. */
+function parsed(over: Partial<ParsedDetails> = {}): ParsedDetails {
+  return {
+    full_name: null,
+    email: null,
+    phone: null,
+    linkedin_url: null,
+    github_url: null,
+    ...over,
+  };
+}
+
 function draft(over: Partial<ApplicationDraft> = {}): ApplicationDraft {
   return {
     requisition_id: 'req-1',
@@ -61,7 +73,7 @@ function draft(over: Partial<ApplicationDraft> = {}): ApplicationDraft {
     answers: {},
     resume_filename: null,
     has_resume: false,
-    parsed: { full_name: null, email: null },
+    parsed: parsed(),
     confirmed: false,
     expires_at: '2099-01-01T00:00:00Z',
     ...over,
@@ -134,15 +146,50 @@ describe('an invalid link', () => {
 // ===========================================================================
 describe('the confirmation step', () => {
   it('pre-fills the name the parser read', async () => {
-    getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
+    getDraft.mockResolvedValue(draft({ parsed: parsed({ full_name: 'Priya Sharma' }) }));
     renderPage();
     await waitFor(() =>
       expect(screen.getByLabelText(/Full name/)).toHaveValue('Priya Sharma'),
     );
   });
 
+  it('pre-fills every field the parser read, not only the name', async () => {
+    // The parser has always produced a phone number and two profile links as
+    // well. They were read, stored, and then dropped on the way to this
+    // screen — so a form headed "we read these from your CV" asked the
+    // candidate to type in a number the CV had already given us.
+    getDraft.mockResolvedValue(
+      draft({
+        parsed: parsed({
+          full_name: 'Priya Sharma',
+          phone: '+91 98200 11223',
+          linkedin_url: 'linkedin.com/in/priya',
+          github_url: 'github.com/priya',
+        }),
+      }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText(/Phone/)).toHaveValue('+91 98200 11223'));
+    expect(screen.getByLabelText(/LinkedIn/)).toHaveValue('linkedin.com/in/priya');
+    expect(screen.getByLabelText(/GitHub/)).toHaveValue('github.com/priya');
+  });
+
+  it('leaves a field the candidate already filled in alone', async () => {
+    // The parser is the starting point, never the answer. Someone who typed a
+    // second number into the first form does not get it replaced by the one
+    // printed on a CV they wrote in 2019.
+    getDraft.mockResolvedValue(
+      draft({ phone: '+91 90000 00000', parsed: parsed({ phone: '+91 98200 11223' }) }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText(/Phone/)).toHaveValue('+91 90000 00000'));
+    // And the CV's number is still quoted underneath, because the two disagree
+    // and the candidate is the one who should decide which is right.
+    expect(await screen.findByText(/Your CV says .+98200 11223/)).toBeInTheDocument();
+  });
+
   it('lets the candidate change it', async () => {
-    getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
+    getDraft.mockResolvedValue(draft({ parsed: parsed({ full_name: 'Priya Sharma' }) }));
     renderPage();
     const name = await screen.findByLabelText(/Full name/);
     // The field renders empty and is seeded from the parsed CV by an effect.
@@ -169,7 +216,7 @@ describe('the confirmation step', () => {
     // correction is what gets sent, not the parser's guess. Setting the value
     // in one step asserts exactly that and has no intermediate state to race.
     // The typing interaction itself is covered by the test above.
-    getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
+    getDraft.mockResolvedValue(draft({ parsed: parsed({ full_name: 'Priya Sharma' }) }));
     renderPage();
     const name = await screen.findByLabelText(/Full name/);
     // Same seeding race as "lets the candidate change it": change the value
@@ -189,7 +236,7 @@ describe('the confirmation step', () => {
 
   it('shows what the CV said when they have changed it', async () => {
     getDraft.mockResolvedValue(
-      draft({ full_name: 'Priya S. Sharma', parsed: { full_name: 'Priya Sharma', email: null } }),
+      draft({ full_name: 'Priya S. Sharma', parsed: parsed({ full_name: 'Priya Sharma' }) }),
     );
     renderPage();
     expect(await screen.findByText(/Your CV says/)).toBeInTheDocument();
@@ -470,7 +517,7 @@ describe('ResumeApplication — the seed is idempotent', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
+    getDraft.mockResolvedValue(draft({ parsed: parsed({ full_name: 'Priya Sharma' }) }));
     if (!window.location.hash) window.location.hash = '#tok-123';
 
     render(
@@ -486,7 +533,7 @@ describe('ResumeApplication — the seed is idempotent', () => {
     // only once the parsed name has been seeded, or the seed can overwrite it.
     await waitFor(() => expect(name).toHaveValue('Priya Sharma'));
     fireEvent.change(name, { target: { value: 'Priya S. Sharma' } });
-    getDraft.mockResolvedValue(draft({ parsed: { full_name: 'Priya Sharma', email: null } }));
+    getDraft.mockResolvedValue(draft({ parsed: parsed({ full_name: 'Priya Sharma' }) }));
     await client.refetchQueries({ queryKey: ['apply', 'draft'] });
 
     await waitFor(() =>

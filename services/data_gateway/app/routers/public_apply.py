@@ -420,10 +420,20 @@ class ParsedDetails(BaseModel):
     skills as examples; the resume scorer does not return them today, and
     showing an empty box labelled "Education" that can never fill in would be
     worse than not asking. PH3-B5b extends the scorer; this shape grows with it.
+
+    ALL FIVE, not just the name. extract_contact_details has always read a
+    phone number and the two profile links as well, and they were stored and
+    then dropped here — so a screen headed "we read these from your CV" showed
+    one of the four things it had read, and the candidate retyped a number the
+    parser already had. Criterion 2 is "extracted information is presented for
+    review"; presenting a fifth of it is not that.
     """
 
     full_name: str | None = None
     email: str | None = None
+    phone: str | None = None
+    linkedin_url: str | None = None
+    github_url: str | None = None
 
 
 class DraftOut(BaseModel):
@@ -482,6 +492,9 @@ def _draft_out(row: dict[str, Any]) -> DraftOut:
         parsed=ParsedDetails(
             full_name=parsed.get("full_name"),
             email=parsed.get("email"),
+            phone=parsed.get("phone"),
+            linkedin_url=parsed.get("linkedin_url"),
+            github_url=parsed.get("github_url"),
         ),
         confirmed=row.get("confirmed_at") is not None,
         expires_at=row["expires_at"].isoformat(),

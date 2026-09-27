@@ -733,12 +733,34 @@ def test_an_empty_or_unreadable_cv_returns_nothing_and_does_not_raise() -> None:
     assert extract_contact_details("\x00\x01\x02") == {}
 
 
-def test_the_confirmation_screen_only_offers_fields_the_parser_produces() -> None:
-    """An empty box labelled "Education" that can never fill in is worse than
-    not asking. PH3-B5b grows this shape when the parser grows."""
+def test_the_confirmation_screen_offers_exactly_what_the_parser_produces() -> None:
+    """Both directions, and the second one is the one that was wrong.
+
+    Nothing extra: an empty box labelled "Education" that can never fill in is
+    worse than not asking, so the shape may not grow ahead of the parser.
+
+    And nothing MISSING, which is what this test used to allow. It pinned the
+    literal set {full_name, email} while extract_contact_details had always
+    returned five keys, so the phone number and the two profile links were
+    read off the CV, stored, and then dropped on the way to the screen headed
+    "we read these from your CV". A test written against a remembered list
+    agrees with whatever it was written next to; this one asks the parser.
+    """
+    from app.resume_details import extract_contact_details
     from app.routers.public_apply import ParsedDetails
 
-    assert set(ParsedDetails.model_fields) == {"full_name", "email"}
+    cv = "\n".join(
+        [
+            "Priya Sharma",
+            "+91 98200 11223",
+            "priya@example.com",
+            "linkedin.com/in/priya",
+            "github.com/priya",
+        ]
+    )
+    produced = set(extract_contact_details(cv))
+    assert produced == {"full_name", "email", "phone", "linkedin_url", "github_url"}
+    assert set(ParsedDetails.model_fields) == produced
 
 
 # ===========================================================================

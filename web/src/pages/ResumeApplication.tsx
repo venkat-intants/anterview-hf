@@ -52,6 +52,23 @@ function parsedAnything(draft: ApplicationDraft): boolean {
   return Boolean(draft.parsed.full_name || draft.parsed.email);
 }
 
+/**
+ * "Your CV says X" under a field the candidate has changed.
+ *
+ * Only when it DIFFERS from what is in the box: the CV is quoted, never
+ * overwritten, so correcting a form never turns into a claim that the document
+ * said something else. Silent while the two agree, which is most of the time.
+ */
+function CvHint({ parsed, current }: { parsed: string | null; current: string }) {
+  const { t } = useTranslation();
+  if (!parsed || parsed === current) return null;
+  return (
+    <p className="mt-1 text-[11.5px] text-[#6f7379]">
+      {t('resumeApply.cvSays', { value: parsed })}
+    </p>
+  );
+}
+
 export default function ResumeApplication(): JSX.Element {
   // SECURITY: the token comes from window.location.hash — NOT from the path.
   // A fragment is never sent to a server, so the credential stays out of access
@@ -104,6 +121,9 @@ export default function ResumeApplication(): JSX.Element {
     const signature = JSON.stringify([
       d.full_name,
       d.parsed.full_name,
+      d.parsed.phone,
+      d.parsed.linkedin_url,
+      d.parsed.github_url,
       d.phone,
       d.years_experience,
       d.current_company,
@@ -116,13 +136,16 @@ export default function ResumeApplication(): JSX.Element {
     setForm({
       // The parser's reading is the STARTING POINT, not the answer: it fills
       // the box only where the candidate has not already given us something.
+      // All four of the fields it produces, not just the name — a screen that
+      // says "we read these from your CV" and then asks for a phone number it
+      // already read is asking someone to do the work twice.
       full_name: d.full_name ?? d.parsed.full_name ?? '',
-      phone: d.phone ?? '',
+      phone: d.phone ?? d.parsed.phone ?? '',
       years_experience: d.years_experience,
       current_company: d.current_company ?? '',
       current_title: d.current_title ?? '',
-      linkedin_url: d.linkedin_url ?? '',
-      github_url: d.github_url ?? '',
+      linkedin_url: d.linkedin_url ?? d.parsed.linkedin_url ?? '',
+      github_url: d.github_url ?? d.parsed.github_url ?? '',
     });
   }, [draft.data]);
 
@@ -320,11 +343,7 @@ export default function ResumeApplication(): JSX.Element {
               onChange={(e) => set('full_name', e.target.value)}
               className={INPUT}
             />
-            {d.parsed.full_name && d.parsed.full_name !== (form.full_name ?? '') ? (
-              <p className="mt-1 text-[11.5px] text-[#6f7379]">
-                {t('resumeApply.cvSays', { value: d.parsed.full_name })}
-              </p>
-            ) : null}
+            <CvHint parsed={d.parsed.full_name} current={form.full_name ?? ''} />
           </div>
           <div>
             <label htmlFor="c-phone" className={LABEL}>
@@ -337,6 +356,7 @@ export default function ResumeApplication(): JSX.Element {
               onChange={(e) => set('phone', e.target.value)}
               className={INPUT}
             />
+            <CvHint parsed={d.parsed.phone} current={form.phone ?? ''} />
           </div>
           <div>
             <label htmlFor="c-years" className={LABEL}>
@@ -390,6 +410,7 @@ export default function ResumeApplication(): JSX.Element {
               onChange={(e) => set('linkedin_url', e.target.value)}
               className={INPUT}
             />
+            <CvHint parsed={d.parsed.linkedin_url} current={form.linkedin_url ?? ''} />
           </div>
           <div>
             <label htmlFor="c-github" className={LABEL}>
@@ -402,6 +423,7 @@ export default function ResumeApplication(): JSX.Element {
               onChange={(e) => set('github_url', e.target.value)}
               className={INPUT}
             />
+            <CvHint parsed={d.parsed.github_url} current={form.github_url ?? ''} />
           </div>
         </div>
 

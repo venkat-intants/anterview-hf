@@ -27,6 +27,8 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import code_evidence as svc
+from app.code_quality import ANALYSER_VERSION
+from app.code_similarity import ALGORITHM_VERSION
 from app.config import settings
 from app.interviewer_scorecards import RequestMeta
 
@@ -173,12 +175,12 @@ def _report_insert(f: F, rid: uuid.UUID, *, attempt_id: uuid.UUID | None = None,
         "INSERT INTO code_quality_reports (id, company_id, attempt_id, coding_question_id, exam_id,"
         " language, analyser, analyser_version, status, metrics, findings, coverage, source_sha256,"
         " created_at)"
-        " VALUES (:i, :c, :a, :q, :x, 'python', 'python-ast', 'v1', 'complete', '{}'::jsonb,"
+        " VALUES (:i, :c, :a, :q, :x, 'python', 'python-ast', :av, 'complete', '{}'::jsonb,"
         " '[]'::jsonb, CAST(:cov AS jsonb), 'deadbeef', now())"
     )
     return sql, {
         "i": rid, "c": company_id or f.company, "a": attempt_id or f.attempt_a,
-        "q": coding_question_id or f.question, "x": f.exam,
+        "q": coding_question_id or f.question, "x": f.exam, "av": ANALYSER_VERSION,
         "cov": json.dumps({"available": False}),
     }
 
@@ -188,10 +190,11 @@ def _fingerprint_insert(f: F, fid: uuid.UUID, *, attempt_id: uuid.UUID | None = 
     sql = (
         "INSERT INTO code_fingerprints (id, company_id, attempt_id, coding_question_id, hashes,"
         " lines, token_count, algorithm_version, created_at)"
-        " VALUES (:i, :c, :a, :q, ARRAY[1,2,3]::bigint[], ARRAY[1,2,3]::int[], 60, 'v1', now())"
+        " VALUES (:i, :c, :a, :q, ARRAY[1,2,3]::bigint[], ARRAY[1,2,3]::int[], 60, :av, now())"
     )
     return sql, {
         "i": fid, "c": company_id or f.company, "a": attempt_id or f.attempt_a, "q": f.question,
+        "av": ALGORITHM_VERSION,
     }
 
 
@@ -205,13 +208,13 @@ def _signal_insert(
         " jaccard, shared_fingerprints, tokens_low, tokens_high, matched_regions, thresholds,"
         " algorithm_version, created_at)"
         " VALUES (:i, :c, :q, :x, :low, :high, :rk, 0.9, :ch, 0.8, 12, 60, :th, '[]'::jsonb,"
-        " '{}'::jsonb, 'v1', now())"
+        " '{}'::jsonb, :av, now())"
     )
     low_id = low if low is not None else f.attempt_low
     high_id = high if high is not None else (f.attempt_high if reference_kind == "submission" else None)
     return sql, {
         "i": sid, "c": company_id or f.company, "q": f.question, "x": f.exam,
-        "low": low_id, "high": high_id, "rk": reference_kind,
+        "low": low_id, "high": high_id, "rk": reference_kind, "av": ALGORITHM_VERSION,
         "ch": 0.7 if high_id is not None else None, "th": 60 if high_id is not None else None,
     }
 
@@ -1203,12 +1206,13 @@ async def test_compare_view_excerpts_only_the_matched_region(db: AsyncSession) -
             text(
                 "INSERT INTO code_fingerprints (id, company_id, attempt_id, coding_question_id,"
                 " hashes, lines, token_count, algorithm_version, created_at)"
-                " VALUES (:i, :c, :a, :q, CAST(:h AS bigint[]), CAST(:ln AS int[]), :tc, 'sim-winnow-1.0',"
+                " VALUES (:i, :c, :a, :q, CAST(:h AS bigint[]), CAST(:ln AS int[]), :tc, :av,"
                 " now())"
             ),
             {
                 "i": uuid.uuid4(), "c": f.company, "a": attempt_id, "q": f.question,
                 "h": fp.hashes, "ln": fp.lines, "tc": fp.token_count,
+                "av": ALGORITHM_VERSION,
             },
         )
     sid = uuid.uuid4()

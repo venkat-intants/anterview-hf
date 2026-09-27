@@ -152,6 +152,12 @@ class SweepResult:
     # Submissions whose analysis failed this pass and were skipped, not
     # allowed to stop the pass. Non-zero on every sweep means one keeps failing.
     failed: int = 0
+    # Questions whose COMPARISON failed. Counted separately because the
+    # consequence is different and worse: the report is already committed, so
+    # _PENDING_SQL will not return that submission again, and nobody is ever
+    # compared against it unless someone re-runs it by hand. A quality report
+    # can be retried by the next sweep; a missed comparison cannot.
+    compare_failed: int = 0
 
 
 async def analyse_pending(db: AsyncSession, *, limit: int | None = None) -> SweepResult:
@@ -216,7 +222,12 @@ async def analyse_pending(db: AsyncSession, *, limit: int | None = None) -> Swee
             log.warning(
                 "code_evidence.submission_failed",
                 attempt_id=str(row["attempt_id"]), coding_question_id=str(qid),
-                error_type=type(exc).__name__,
+                # The message, not only the class. The overflow this commit
+                # fixes would have logged as "DBAPIError", which says nothing;
+                # "bigint out of range" is the whole diagnosis. Bounded, and
+                # it carries no candidate data — the values in these
+                # statements are hashes, uuids and counts.
+                error_type=type(exc).__name__, error=str(exc)[:300],
             )
             continue
         reports_written += 1 if report else 0
@@ -227,22 +238,49 @@ async def analyse_pending(db: AsyncSession, *, limit: int | None = None) -> Swee
             ).append(row["attempt_id"])
     await db.commit()
 
+    # Per question, for the same reason the loop above is per row — one
+    # question's comparison failing must not cost every other question in the
+    # pass. It needs its own savepoint rather than riding on the one above:
+    # db.commit() has already run, so the reports are durable and _PENDING_SQL
+    # (which selects on the ABSENCE of a quality report) will not offer these
+    # submissions again. An unhandled failure here is therefore permanent — the
+    # submissions are never compared, and HR reads that as "no matches", which
+    # is a quieter and worse outcome than the crash this replaced.
     signals_written = 0
+    compare_failed = 0
     for (company_id, exam_id, qid), new_attempt_ids in touched.items():
-        signals_written += await _compare_question(
-            db, company_id=company_id, exam_id=exam_id, coding_question_id=qid,
-            new_attempt_ids=new_attempt_ids,
-        )
+        try:
+            async with db.begin_nested():
+                signals_written += await _compare_question(
+                    db, company_id=company_id, exam_id=exam_id, coding_question_id=qid,
+                    new_attempt_ids=new_attempt_ids,
+                )
+        except Exception as exc:  # noqa: BLE001 — isolate the question, keep the pass going
+            compare_failed += 1
+            log.warning(
+                "code_evidence.compare_failed",
+                coding_question_id=str(qid), exam_id=str(exam_id),
+                attempts=len(new_attempt_ids),
+                error_type=type(exc).__name__, error=str(exc)[:300],
+                remedy="re-run analyse_attempt for these attempts; the sweep will not return to them",
+            )
     await db.commit()
+    # A whole batch failing is a code defect, not a bad submission — a refactor
+    # that breaks _analyse_one's signature fails every row identically, and
+    # `except Exception` above catches that as happily as it catches a poison
+    # row. At warning level per row that reads as fifty bad submissions; it is
+    # one bad deploy, and it deserves to be loud.
+    if rows and failed == len(rows):
+        log.error("code_evidence.sweep_all_failed", attempts_scanned=len(rows))
     log.info(
         "code_evidence.sweep", attempts_scanned=len(rows), reports_written=reports_written,
         fingerprints_written=fingerprints_written, signals_written=signals_written,
-        failed=failed,
+        failed=failed, compare_failed=compare_failed,
     )
     return SweepResult(
         attempts_scanned=len(rows), reports_written=reports_written,
         fingerprints_written=fingerprints_written, signals_written=signals_written,
-        failed=failed,
+        failed=failed, compare_failed=compare_failed,
     )
 
 
@@ -857,7 +895,8 @@ async def compare_view(
     signal = (
         await db.execute(
             text(
-                "SELECT id, coding_question_id, attempt_low_id, attempt_high_id, reference_kind"
+                "SELECT id, coding_question_id, attempt_low_id, attempt_high_id,"
+                "       reference_kind, algorithm_version"
                 "  FROM code_similarity_signals WHERE id = :i AND company_id = :c"
             ),
             {"i": signal_id, "c": company_id},
@@ -866,9 +905,17 @@ async def compare_view(
     if signal is None:
         raise CodeEvidenceError(404, "Signal not found.")
 
-    low_fp = await _fingerprint_for(db, company_id, signal["attempt_low_id"], signal["coding_question_id"])
+    version = signal["algorithm_version"]
+    low_fp = await _fingerprint_for(
+        db, company_id, signal["attempt_low_id"], signal["coding_question_id"], version
+    )
     low_source = await _raw_source(db, company_id, signal["attempt_low_id"], signal["coding_question_id"])
-    if signal["reference_kind"] == "reference_solution":
+    # Whose code the high side is. The low side is always the candidate whose
+    # record HR is reading; the high side is either HR's own authored solution
+    # or A DIFFERENT CANDIDATE, and only the first may fall back to a head of
+    # the file when there are no regions to cut around.
+    high_is_reference = signal["reference_kind"] == "reference_solution"
+    if high_is_reference:
         ref = (
             await db.execute(
                 text("SELECT reference_solution FROM coding_questions WHERE id = :q AND company_id = :c"),
@@ -879,7 +926,7 @@ async def compare_view(
         high_fp = None
     else:
         high_fp = await _fingerprint_for(
-            db, company_id, signal["attempt_high_id"], signal["coding_question_id"]
+            db, company_id, signal["attempt_high_id"], signal["coding_question_id"], version
         )
         high_source = await _raw_source(
             db, company_id, signal["attempt_high_id"], signal["coding_question_id"]
@@ -904,8 +951,16 @@ async def compare_view(
                 "excerpt": _excerpt_from_regions(low_source["text"], low_bounds),
                 "blocks": _excerpt_blocks(low_source["text"], low_bounds)},
         "high": {"language": high_source["language"],
-                 "excerpt": _excerpt_from_regions(high_source["text"], high_bounds),
-                 "blocks": _excerpt_blocks(high_source["text"], high_bounds)},
+                 "excerpt": _excerpt_from_regions(
+                     high_source["text"], high_bounds, head_fallback=high_is_reference
+                 ),
+                 "blocks": _excerpt_blocks(
+                     high_source["text"], high_bounds, head_fallback=high_is_reference
+                 ),
+                 # So the screen can say "we cannot line these up, re-run the
+                 # analysis" instead of rendering an empty panel that reads as
+                 # "there is nothing here".
+                 "regions_unavailable": bool(not high_is_reference and not high_bounds)},
         "matched_regions": matched,
         "caption": "Automated, unreviewed — similar code is not evidence of misconduct "
                    "on its own.",
@@ -913,8 +968,18 @@ async def compare_view(
 
 
 async def _fingerprint_for(
-    db: AsyncSession, company_id: uuid.UUID, attempt_id: uuid.UUID | None, coding_question_id: uuid.UUID,
+    db: AsyncSession, company_id: uuid.UUID, attempt_id: uuid.UUID | None,
+    coding_question_id: uuid.UUID, algorithm_version: str,
 ) -> Fingerprint | None:
+    """The fingerprint a given signal was computed from.
+
+    Filtered on ``algorithm_version``, not merely the newest row. Hashes from
+    two algorithm versions share no vocabulary, so pairing a v1 signal against
+    a v2 fingerprint yields an empty intersection — which is not "these two
+    programs are unrelated", it is "these two numbers cannot be compared". The
+    caller cannot tell those apart from an empty region list, so the mismatch
+    has to be refused here.
+    """
     if attempt_id is None:
         return None
     row = (
@@ -922,9 +987,10 @@ async def _fingerprint_for(
             text(
                 "SELECT hashes, lines FROM code_fingerprints"
                 " WHERE company_id = :c AND attempt_id = :a AND coding_question_id = :q"
+                "   AND algorithm_version = :v"
                 " ORDER BY created_at DESC LIMIT 1"
             ),
-            {"c": company_id, "a": attempt_id, "q": coding_question_id},
+            {"c": company_id, "a": attempt_id, "q": coding_question_id, "v": algorithm_version},
         )
     ).first()
     if row is None:
@@ -954,21 +1020,32 @@ _MAX_EXCERPT_LINES = 200
 _EXCERPT_CONTEXT_LINES = 3
 
 
-def _excerpt_from_regions(text_: str | None, region_bounds: list[tuple[int, int]]) -> str:
+def _excerpt_from_regions(
+    text_: str | None, region_bounds: list[tuple[int, int]], *, head_fallback: bool = True,
+) -> str:
     """MEDIUM-3: an excerpt built from ONLY the matched line ranges, ±3 lines
     of context each, merged where they overlap or touch, capped at 200 lines
     total. Adjacent excerpted blocks are separated by an ``...`` marker.
 
-    When there is nothing to cut around — a reference-solution signal (no
-    fingerprint on the reference side to pair regions against), or a
-    fingerprint that is no longer available — this falls back to a capped
-    head of the text rather than nothing; that side is either HR's own
-    authored reference solution or the requesting candidate's own code, never
-    a second candidate's, so the whole-program exposure MEDIUM-3 is about
-    does not apply to it.
+    ``head_fallback`` decides what happens when there is nothing to cut
+    around, and the answer is not the same for both sides of a comparison.
+
+    It is TRUE for a reference-solution signal, which has no fingerprint on
+    the reference side by construction, and for the candidate's own code: a
+    capped head is more useful than nothing, and that text is either HR's own
+    authored solution or the code of the candidate whose record HR is reading.
+
+    It must be FALSE for a second candidate's submission. That was the gap
+    here. A security review found the whole-program exposure once already
+    (MEDIUM-3) and the fix cut the excerpt down to the matched regions — but
+    left a fallback that fires exactly when those regions come back empty, so
+    an unpairable submission still rendered its first 200 lines in the dialog
+    where HR records a misconduct finding. Empty regions on a submission side
+    mean "these two fingerprints cannot be paired"; that is a reason to show
+    less, not a licence to show the whole program.
     """
     out: list[str] = []
-    for block in _excerpt_blocks(text_, region_bounds):
+    for block in _excerpt_blocks(text_, region_bounds, head_fallback=head_fallback):
         if out:
             out.append("...")
         out.extend(block["lines"])
@@ -976,7 +1053,7 @@ def _excerpt_from_regions(text_: str | None, region_bounds: list[tuple[int, int]
 
 
 def _excerpt_blocks(
-    text_: str | None, region_bounds: list[tuple[int, int]],
+    text_: str | None, region_bounds: list[tuple[int, int]], *, head_fallback: bool = True,
 ) -> list[dict[str, Any]]:
     """The excerpt as blocks, each carrying the source line it starts on.
 
@@ -991,13 +1068,15 @@ def _excerpt_blocks(
 
     Same rules as before: +/-3 lines of context around each matched range,
     merged where they touch, 200 lines in total; with nothing to cut around
-    -- a reference-solution side -- a capped head of the text.
+    -- a reference-solution side -- a capped head of the text, unless
+    ``head_fallback`` is False. See _excerpt_from_regions for why that
+    distinction is not cosmetic.
     """
     lines = (text_ or "").splitlines()
     if not lines:
         return []
     if not region_bounds:
-        return [{"start_line": 1, "lines": lines[:_MAX_EXCERPT_LINES]}]
+        return [{"start_line": 1, "lines": lines[:_MAX_EXCERPT_LINES]}] if head_fallback else []
     padded = sorted(
         (max(1, start - _EXCERPT_CONTEXT_LINES), min(len(lines), end + _EXCERPT_CONTEXT_LINES))
         for start, end in region_bounds

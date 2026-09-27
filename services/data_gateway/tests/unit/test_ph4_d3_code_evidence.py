@@ -689,6 +689,25 @@ def test_excerpt_from_regions_falls_back_to_a_capped_head_with_no_regions() -> N
     assert lines[0] == "line1"
 
 
+def test_excerpt_refuses_the_head_fallback_for_a_second_candidates_code() -> None:
+    """The gap the MEDIUM-3 fix left behind.
+
+    Cutting the excerpt down to the matched regions is correct, but the
+    fallback for "no regions to cut around" fires in exactly the case where
+    the two fingerprints could not be paired. On a reference-solution signal
+    that is harmless — the text is HR's own. On a submission signal the text
+    is a DIFFERENT CANDIDATE, so the old fallback handed HR the first 200
+    lines of an uninvolved person's program, in the dialog where a misconduct
+    finding is recorded. Fail closed instead.
+    """
+    text_ = "\n".join(f"line{i}" for i in range(1, 300))
+    assert svc._excerpt_from_regions(text_, [], head_fallback=False) == ""  # noqa: SLF001
+    assert svc._excerpt_blocks(text_, [], head_fallback=False) == []  # noqa: SLF001
+    # And the permitted case still works, so this is a distinction and not a
+    # blanket removal.
+    assert svc._excerpt_from_regions(text_, [], head_fallback=True) != ""  # noqa: SLF001
+
+
 def test_excerpt_from_regions_never_returns_the_rest_of_a_long_program() -> None:
     """MEDIUM-3's own scenario: a match near the top of a long program must
     not pull the rest of the file in alongside it."""
@@ -996,3 +1015,57 @@ async def test_one_failing_submission_does_not_stop_the_pass() -> None:
     assert result.failed == 1
     assert result.reports_written == 2, "the two behind the poison one were analysed"
     db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_one_failing_comparison_does_not_stop_the_others() -> None:
+    """The second loop, which the first fix left unisolated.
+
+    Worse than the crash it replaced, and quietly so. ``db.commit()`` runs
+    before the comparisons, so the quality reports are durable by then — and
+    ``_PENDING_SQL`` selects on the ABSENCE of a quality report. An unhandled
+    failure in the compare loop therefore lost those comparisons permanently:
+    the sweep never offers those submissions again, nobody is ever compared
+    against them, and HR reads the result as "no matches found".
+    """
+    company, exam = uuid.uuid4(), uuid.uuid4()
+    rows = [
+        {"attempt_id": uuid.uuid4(), "company_id": company, "exam_id": exam,
+         "coding_question_id": str(uuid.uuid4()),
+         "answer": {"language": "python", "source": f"print({i})"}}
+        for i in range(3)
+    ]
+    from unittest.mock import MagicMock
+
+    result_rows = MagicMock()
+    result_rows.mappings.return_value.all.return_value = rows
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result_rows)
+    db.begin_nested = lambda: _Savepoint()
+
+    compared: list[uuid.UUID] = []
+    poison = uuid.UUID(rows[0]["coding_question_id"])
+
+    async def compare(db_: object, *, coding_question_id: uuid.UUID, **_: object) -> int:
+        compared.append(coding_question_id)
+        if coding_question_id == poison:
+            raise RuntimeError("this comparison is poison")
+        return 1
+
+    with (
+        patch.object(svc.settings, "code_analysis_enabled", True),
+        patch.object(svc, "_analyse_one", AsyncMock(return_value=True)),
+        patch.object(svc, "_starter_code", AsyncMock(return_value=None)),
+        patch.object(svc, "_fingerprint_one", AsyncMock(return_value=True)),
+        patch.object(svc, "_compare_question", compare),
+    ):
+        result = await svc.analyse_pending(db)
+
+    assert len(compared) == 3, "every question was attempted, not just up to the failure"
+    assert result.compare_failed == 1
+    assert result.signals_written == 2, "the two behind the poison one were compared"
+    # Counted apart from `failed` on purpose: a failed ANALYSIS comes back next
+    # sweep, a failed COMPARISON does not, so an operator reading the log needs
+    # to be able to tell which of the two happened.
+    assert result.failed == 0

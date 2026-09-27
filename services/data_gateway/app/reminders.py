@@ -110,6 +110,14 @@ class SweepResult:
     # no-op, not skipped silently.
     code_reports: int = 0
     similarity_signals: int = 0
+    # Failures the analysis stage absorbed rather than raised. They used to
+    # raise, which put the stage in `failed_stages` — so isolating them per
+    # row, without counting them here, turned a loud stage failure into a
+    # healthy-looking zero. `code_analysis_failures` is a submission the next
+    # sweep will retry; `code_analysis_compare_failures` is a comparison
+    # nobody will retry, so they are reported separately.
+    code_analysis_failures: int = 0
+    code_analysis_compare_failures: int = 0
     # PH4-D4: task submissions the sweep auto-closed — a timed-out
     # in-progress one becomes 'submitted' (closed_by='time_limit'); an
     # untouched 'assigned' one past due becomes 'expired'.
@@ -889,12 +897,23 @@ async def _code_analysis(db: AsyncSession, result: SweepResult) -> None:
     — ``code_evidence.analyse_pending`` itself checks the flag and returns a
     zero result, so disabling analysis is not "the stage silently vanished"
     but "the stage ran and did nothing", visible the same way every other
-    stage's zero would be."""
+    stage's zero would be.
+
+    A failure inside the sweep no longer raises — it is isolated per row and
+    per question so one bad submission cannot stop the pass. That trade only
+    holds if the count comes back out, otherwise a stage that failed on every
+    single row reports the same zeros as a stage that was switched off. Hence
+    the two failure counters."""
     from app.code_evidence import analyse_pending  # noqa: PLC0415 — keep the sweep import light
 
     swept = await analyse_pending(db)
     result.code_reports += swept.reports_written
     result.similarity_signals += swept.signals_written
+    # Not added to total(): total() counts work DONE, and these are work that
+    # did not happen. They belong in the sweep's log line, where a non-zero is
+    # the only thing that says the zeros above are not good news.
+    result.code_analysis_failures += swept.failed
+    result.code_analysis_compare_failures += swept.compare_failed
 
 
 async def _stage_sla(db: AsyncSession, result: SweepResult) -> None:

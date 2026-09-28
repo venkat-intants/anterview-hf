@@ -432,6 +432,69 @@ async def test_retention_purges_submitted_evidence_after_the_application_is_deci
     assert redacted is not None
 
 
+def _fake_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _no_keys(*_a: object, **_kw: object) -> list[str]:
+        return []
+
+    async def _no_remove(*_a: object, **_kw: object) -> int:
+        return 0
+
+    monkeypatch.setattr(svc.store, "keys_under", _no_keys)
+    monkeypatch.setattr(svc.store, "remove", _no_remove)
+
+
+async def _decided_submission(db: AsyncSession, f: F) -> uuid.UUID:
+    sub_id, raw = await _issue(db, f)
+    await svc.start(db, raw=raw, consent=True, meta=_META)
+    await svc.save_response(
+        db, raw=raw, item_key="q1", text_value="an answer", link_url=None, meta=_META,
+    )
+    await svc.submit(db, raw=raw, consent=True, meta=_META)
+    await db.execute(text("UPDATE enrolments SET status = 'rejected' WHERE id = :e"), {"e": f.enrolment})
+    await db.execute(
+        text(
+            "INSERT INTO stage_transitions (company_id, enrolment_id, from_status, to_status,"
+            " actor_user_id, automated, reason, reason_code, reason_label, occurred_at)"
+            " VALUES (:c, :e, 'shortlisted', 'rejected', :u, false, 'not a fit',"
+            " 'role_fit', 'Role fit', now() - interval '200 days')"
+        ),
+        {"c": f.company, "e": f.enrolment, "u": f.hr},
+    )
+    return sub_id
+
+
+@pytest.mark.asyncio
+async def test_retention_dry_run_count_matches_the_live_redact_count(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_storage(monkeypatch)
+    f = await _build(db)
+    await _decided_submission(db, f)
+
+    dry_count = await svc.purge(db, retention_days=180, dry_run=True)
+    live_count = await svc.purge(db, retention_days=180, dry_run=False)
+
+    assert dry_count == live_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retention_purging_twice_redacts_nothing_new(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_storage(monkeypatch)
+    f = await _build(db)
+    sub_id = await _decided_submission(db, f)
+
+    first = await svc.purge(db, retention_days=180, dry_run=False)
+    assert first == 1
+    second = await svc.purge(db, retention_days=180, dry_run=False)
+    assert second == 0
+    redacted = await db.scalar(
+        text("SELECT redacted_at FROM task_submissions WHERE id = :i"), {"i": sub_id},
+    )
+    assert redacted is not None
+
+
 # ===========================================================================
 # M1 — a reviewer / HR reads submitted, consented work only
 # ===========================================================================

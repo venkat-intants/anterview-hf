@@ -294,6 +294,49 @@ CITATION_MIN_ROLES: dict[str, frozenset[str]] = {
 }
 
 
+# PH5-E1 criteria 4/5 — the state a block of agent-authored prose is in with
+# respect to the records behind it. Two states existed before this
+# (``AgentRun.evidence_used`` was a bare bool); the gap they left is a model
+# that reads records and then writes prose with NO ``[S_]`` marker at all. The
+# banner still said "answered from your records" — true of the TURN, not of
+# any one claim in it — and nothing distinguished that from a turn where every
+# claim really was tied to a source. Three states name that gap instead of
+# hiding it:
+#
+#   "unread"       — no record was read. The text is the model's own reasoning
+#                    and nothing else.
+#   "sourced"      — at least one record was read AND at least one surviving
+#                    inline marker ties a claim to it (or, for a surface with
+#                    no marker convention because it has only ONE possible
+#                    source per block — see ``shared.agents.panel`` — the
+#                    citation itself is unambiguous, so there is nothing a
+#                    marker would disambiguate).
+#   "unattributed" — at least one record was read but NOT ONE claim is tied to
+#                    it. This reads exactly like "sourced" prose and is not
+#                    backed the same way, so it must say so rather than share
+#                    the confident banner.
+#
+# Computed on the SERVER, always, and carried on the response — never left for
+# the frontend to infer from whether ``citations`` happens to be non-empty.
+CitationState = Literal["sourced", "unattributed", "unread"]
+
+
+def derive_citation_state(*, records_read: bool, has_valid_marker: bool) -> CitationState:
+    """The banner state for one block of text, from two already-decided facts.
+
+    ``has_valid_marker`` must be counted AFTER whatever filtering the caller
+    applies — ``shared.agents.runtime.bind_refs`` for the console copilot and
+    workflow copilot, which strips any ``[S_]`` naming a ref the run never
+    issued. An invented marker that was stripped must never count here: a
+    model earning the confident "sourced" state by inventing refs would be
+    strictly worse than a model that wrote no markers at all, which is exactly
+    the defect this type closes.
+    """
+    if not records_read:
+        return "unread"
+    return "sourced" if has_valid_marker else "unattributed"
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex[:16]
 
@@ -591,6 +634,17 @@ class AgentRun(BaseModel):
     # ``trace`` carried a citation. The console renders this — not the model's
     # say-so — as "answered from your records" vs "no records were read".
     evidence_used: bool = False
+    # PH5-E1 criteria 4/5 — the three-way read of this reply's OWN prose, next
+    # to the two-way ``evidence_used`` above rather than replacing it: a turn
+    # can have read records (``evidence_used=True``) and still owe the reader
+    # this extra fact — whether any claim in ``reply`` is actually tied to one
+    # of them. Computed by ``run_agent`` from ``evidence_used`` and
+    # ``cited_refs`` (never claimed, never inferred by a frontend): "unread" if
+    # nothing was read, "sourced" if something was read and at least one
+    # marker survived ``bind_refs``, "unattributed" if something was read and
+    # NOTHING survived — including a reply whose every marker was invented,
+    # which must land here and never in "sourced".
+    citation_state: CitationState = "unread"
 
 
 # ---------------------------------------------------------------------------
@@ -620,6 +674,13 @@ class SignalAssessment(BaseModel):
     concerns: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
+    # PH5-E1 criteria 4/5's three-way state, set alongside ``citations`` in
+    # ``shared.agents.panel._assess_signal``. "unattributed" is structurally
+    # unreachable here rather than merely unobserved: a specialist sees EXACTLY
+    # ONE evidence source and writes only about it, so there is no per-claim
+    # ambiguity a marker would resolve — the whole strip either read that one
+    # source ("sourced") or the round has not happened yet ("unread").
+    citation_state: CitationState = "unread"
 
 
 class Contradiction(BaseModel):

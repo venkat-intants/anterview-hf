@@ -21,6 +21,7 @@ import {
   askAgent,
   getAgentStatus,
   type AgentChatResponse,
+  type CitationState,
   type HistoryTurn,
   type Proposal,
 } from '@/api/agent';
@@ -41,7 +42,7 @@ interface Turn {
    * server — the banner only speaks about an actual answer, computed by the
    * server, never assumed here from whether `citations` happens to be empty.
    */
-  evidenceUsed?: boolean;
+  citationState?: CitationState;
 }
 
 /** Console-specific starter prompts. Keyed by the backend's console string. */
@@ -133,7 +134,7 @@ export default function CopilotPanel({
           citations: res.citations,
           toolsUsed: res.tools_used,
           stopReason: res.stop_reason,
-          evidenceUsed: res.evidence_used,
+          citationState: res.citation_state,
         },
       ]);
     } catch (err) {
@@ -223,8 +224,8 @@ export default function CopilotPanel({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {turn.evidenceUsed !== undefined && (
-                    <EvidenceBanner evidenceUsed={turn.evidenceUsed} />
+                  {turn.citationState !== undefined && (
+                    <EvidenceBanner citationState={turn.citationState} />
                   )}
 
                   <p className="text-sm whitespace-pre-wrap leading-relaxed">
@@ -238,7 +239,12 @@ export default function CopilotPanel({
                   <CitationChips citations={turn.citations ?? []} variant="strip" />
 
                   {turn.proposals?.map((p) => (
-                    <ProposalCard key={p.id} proposal={p} onCommitted={onCommitted} />
+                    <ProposalCard
+                      key={p.id}
+                      proposal={p}
+                      onCommitted={onCommitted}
+                      citationState={turn.citationState}
+                    />
                   ))}
                 </div>
               )}

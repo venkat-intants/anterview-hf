@@ -143,6 +143,48 @@ async def test_panel_runs_without_a_model() -> None:
     assert "A human reviewer decides" in verdict.summary
 
 
+# ---------------------------------------------------------------------------
+# citation_state — PH5-E1 criteria 4/5, the panel's per-signal half. No marker
+# convention exists here (a specialist reads exactly ONE source and writes
+# only about it, so there is no per-claim ambiguity to resolve): the strip
+# either has a citable record behind it ("sourced") or it does not ("unread").
+# ---------------------------------------------------------------------------
+
+
+async def test_citation_state_is_sourced_for_an_available_signal_with_a_citation() -> None:
+    verdict = await assess_candidate(_evidence(), llm=None)
+    resume = next(s for s in verdict.signals if s.signal == "resume")
+    assert resume.available is True
+    assert resume.citations
+    assert resume.citation_state == "sourced"
+
+
+async def test_citation_state_is_unread_for_an_unavailable_signal() -> None:
+    verdict = await assess_candidate(_evidence(), llm=None)
+    coding = next(s for s in verdict.signals if s.signal == "coding")
+    assert coding.available is False
+    assert coding.citation_state == "unread"
+
+
+async def test_citation_state_is_unread_for_an_available_signal_with_no_citation() -> None:
+    """An available signal can still have no citable record behind it (the
+    fixture's exam/interview rows carry a score with no Citation attached) —
+    exactly the same rule the console copilot's evidence_used uses: a citable
+    record, not merely data, is what earns 'sourced'."""
+    verdict = await assess_candidate(_evidence(), llm=None)
+    exam = next(s for s in verdict.signals if s.signal == "exam")
+    assert exam.available is True
+    assert exam.citations == []
+    assert exam.citation_state == "unread"
+
+
+async def test_citation_state_never_reaches_unattributed_from_the_real_panel() -> None:
+    """Not claimed as reachable, and pinned as such: a specialist has no marker
+    convention to fail at, so nothing here can ever produce the caution."""
+    verdict = await assess_candidate(_evidence(), llm=None)
+    assert all(s.citation_state != "unattributed" for s in verdict.signals)
+
+
 async def test_absent_signal_is_reported_as_absent_not_as_zero() -> None:
     verdict = await assess_candidate(_evidence(), llm=None)
     coding = next(s for s in verdict.signals if s.signal == "coding")

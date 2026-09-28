@@ -24,6 +24,7 @@ import {
 } from '@/api/agent';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import CitationChips from './CitationChips';
+import EvidenceBanner from './EvidenceBanner';
 
 const SEVERITY_STYLE: Record<Contradiction['severity'], { bg: string; fg: string; label: string }> =
   {
@@ -73,6 +74,11 @@ function SignalRow({ signal }: { signal: SignalAssessment }): JSX.Element {
           ))}
         </ul>
       )}
+      {/* PH5-E1 criteria 4/5's banner. Omitted for an unavailable signal on
+          purpose — there is no narrative at all there ("Not taken yet" above
+          is the whole row), so a banner about text that does not exist would
+          be noise rather than a caution. */}
+      {signal.available && <EvidenceBanner citationState={signal.citation_state} />}
       <CitationChips citations={signal.citations} variant="strip" />
     </div>
   );

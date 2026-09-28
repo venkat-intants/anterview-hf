@@ -91,6 +91,7 @@ from shared.agents.schema import (
     AssistantStep,
     Citation,
     CitationKind,
+    CitationState,
     CommitSpec,
     Contradiction,
     PanelVerdict,
@@ -103,6 +104,7 @@ from shared.agents.schema import (
     WatcherFinding,
     citation_href,
     citation_href_for_role,
+    derive_citation_state,
 )
 from shared.agents.watchers import (
     WATCHERS,
@@ -139,6 +141,7 @@ __all__ = [
     "Citation",
     "CitationKind",
     "CitationOverreachError",
+    "CitationState",
     "CommitSpec",
     "Contradiction",
     "ErasureRequest",
@@ -172,6 +175,7 @@ __all__ = [
     "build_wire_messages",
     "citation_href",
     "citation_href_for_role",
+    "derive_citation_state",
     "detect_contradictions",
     "detect_injection",
     "digest",

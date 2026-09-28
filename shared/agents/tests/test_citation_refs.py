@@ -29,6 +29,7 @@ from shared.agents.schema import (
     ToolResult,
     citation_href,
     citation_href_for_role,
+    derive_citation_state,
 )
 
 OBJ_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
@@ -558,3 +559,140 @@ async def test_an_invented_marker_is_stripped_from_the_final_reply() -> None:
     assert "[S9]" not in run.reply
     assert run.cited_refs == ["S1"]
     assert run.invented_refs == 1
+
+
+# ---------------------------------------------------------------------------
+# citation_state — PH5-E1 criteria 4/5. Three states, computed on the server
+# from exactly two already-decided facts (evidence_used, cited_refs), so a
+# model has no way to talk its way into the confident state.
+# ---------------------------------------------------------------------------
+
+
+def test_derive_citation_state_unread_when_nothing_was_read() -> None:
+    assert derive_citation_state(records_read=False, has_valid_marker=False) == "unread"
+
+
+def test_derive_citation_state_unread_even_if_a_marker_flag_is_somehow_set() -> None:
+    """records_read is the gate: a marker cannot exist without SOMETHING having
+    been read, so this combination should never occur in practice, but the
+    function must still fail toward the honest answer rather than "sourced" —
+    a bug feeding it bad inputs must not manufacture false confidence."""
+    assert derive_citation_state(records_read=False, has_valid_marker=True) == "unread"
+
+
+def test_derive_citation_state_sourced_when_read_and_attributed() -> None:
+    assert derive_citation_state(records_read=True, has_valid_marker=True) == "sourced"
+
+
+def test_derive_citation_state_unattributed_when_read_but_not_attributed() -> None:
+    """The state this whole story exists for: records were read, but nothing
+    ties a claim to any of them."""
+    assert derive_citation_state(records_read=True, has_valid_marker=False) == "unattributed"
+
+
+async def test_citation_state_is_sourced_when_a_marker_survives() -> None:
+    reg = _registry_with_two_citing_tools()
+    spec = build_agent("hr_manager", reg)
+    run = await run_agent(
+        spec,
+        _ctx(),
+        "who is asha",
+        llm=_scripted_llm(
+            [
+                AssistantStep(tool_calls=[ToolCall(name="list_applicants")]),
+                AssistantStep(text="Asha[S1] looks strong."),
+            ]
+        ),
+    )
+    assert run.evidence_used is True
+    assert run.cited_refs == ["S1"]
+    assert run.citation_state == "sourced"
+
+
+async def test_citation_state_is_unread_with_no_tool_calls() -> None:
+    reg = _registry_with_two_citing_tools()
+    spec = build_agent("hr_manager", reg)
+    run = await run_agent(
+        spec, _ctx(), "hello", llm=_scripted_llm([AssistantStep(text="Hi there")])
+    )
+    assert run.evidence_used is False
+    assert run.citation_state == "unread"
+
+
+async def test_citation_state_is_unattributed_when_the_model_writes_no_marker_at_all() -> None:
+    """The exact defect PH5-E1 criteria 4/5 name: the run reads a record, the
+    model's prose contains not one [S_] marker, and the reply must not be
+    indistinguishable from a properly-sourced one."""
+    reg = _registry_with_two_citing_tools()
+    spec = build_agent("hr_manager", reg)
+    run = await run_agent(
+        spec,
+        _ctx(),
+        "who should I interview next?",
+        llm=_scripted_llm(
+            [
+                AssistantStep(tool_calls=[ToolCall(name="list_applicants")]),
+                AssistantStep(text="Most candidates for this role tend to interview well."),
+            ]
+        ),
+    )
+    assert run.evidence_used is True
+    assert run.cited_refs == []
+    assert run.citation_state == "unattributed"
+
+
+async def test_citation_state_is_unattributed_not_sourced_when_every_marker_is_invented() -> None:
+    """THE adversarial test: a reply whose every marker is invented must land
+    on 'unattributed' (records read, nothing attributed) — never 'sourced'.
+    Inventing refs must never be a cheaper way to earn the confident banner
+    than writing no markers at all; both must land in the same honest place."""
+    reg = _registry_with_two_citing_tools()
+    spec = build_agent("hr_manager", reg)
+    run = await run_agent(
+        spec,
+        _ctx(),
+        "who is asha",
+        llm=_scripted_llm(
+            [
+                AssistantStep(tool_calls=[ToolCall(name="list_applicants")]),
+                AssistantStep(text="Per policy[S9], and precedent[S17], she is strong."),
+            ]
+        ),
+    )
+    assert run.evidence_used is True
+    assert run.invented_refs == 2
+    assert run.cited_refs == []
+    assert run.citation_state == "unattributed"
+    assert run.citation_state != "sourced"
+
+
+async def test_citation_state_is_unread_when_the_only_call_cites_nothing() -> None:
+    """A tool ran but produced no citation at all: evidence_used stays False
+    (nothing was actually read), so this is 'unread', not 'unattributed' —
+    'unattributed' means something WAS read, just not tied to a claim."""
+    reg = ToolRegistry()
+
+    @reg.tool(
+        name="uncited",
+        description="x",
+        parameters=OBJ_SCHEMA,
+        data_class="candidate_pii",
+        allowed_roles=("hr_manager",),
+    )
+    async def _uncited(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
+        return ToolOutput(data={"n": 0})
+
+    spec = build_agent("hr_manager", reg)
+    run = await run_agent(
+        spec,
+        _ctx(),
+        "how many",
+        llm=_scripted_llm(
+            [
+                AssistantStep(tool_calls=[ToolCall(name="uncited")]),
+                AssistantStep(text="Zero."),
+            ]
+        ),
+    )
+    assert run.evidence_used is False
+    assert run.citation_state == "unread"

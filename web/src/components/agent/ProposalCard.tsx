@@ -12,10 +12,11 @@
 //      it would defeat the point of asking.
 
 import { useState } from 'react';
-import { commitProposal, type Proposal } from '@/api/agent';
+import { commitProposal, type CitationState, type Proposal } from '@/api/agent';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { toast } from '@/lib/toast';
 import CitationChips from './CitationChips';
+import EvidenceBanner from './EvidenceBanner';
 
 type CommitState = 'idle' | 'committing' | 'done' | 'failed';
 
@@ -38,9 +39,24 @@ interface ProposalCardProps {
   proposal: Proposal;
   /** Called after a successful commit so the parent can refetch lists. */
   onCommitted?: (proposal: Proposal) => void;
+  /**
+   * PH5-E1 criteria 4/5 — the citation state of the CHAT TURN this proposal
+   * was drafted in (see `CitationState`). A proposal's own `rationale` is
+   * model-written prose with no marker convention of its own — nothing stamps
+   * a `[S_]` ref onto `proposal.citations` the way a reply's inline markers
+   * are validated — so the honest signal available for it is the turn's own
+   * read of whether IT tied a claim to a record. Undefined when the caller
+   * has no turn context (e.g. a bare render in isolation): the banner is then
+   * omitted rather than guessed.
+   */
+  citationState?: CitationState;
 }
 
-export default function ProposalCard({ proposal, onCommitted }: ProposalCardProps): JSX.Element {
+export default function ProposalCard({
+  proposal,
+  onCommitted,
+  citationState,
+}: ProposalCardProps): JSX.Element {
   const [state, setState] = useState<CommitState>('idle');
   const [error, setError] = useState<string>('');
 
@@ -84,6 +100,8 @@ export default function ProposalCard({ proposal, onCommitted }: ProposalCardProp
           {proposal.rationale}
         </p>
       )}
+
+      {citationState !== undefined && <EvidenceBanner citationState={citationState} />}
 
       {/* The exact request that will be sent. Shown because "trust me" is not
           a reviewable proposition — the user should be able to see what the

@@ -523,3 +523,114 @@ async def test_purge_deletes_the_scorecard_row_too(client: AsyncClient) -> None:
             "The scorecard must be deleted with its session. It does not cascade "
             "— session_id is not a FK — so retention.py deletes it explicitly."
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — consent_withdrawn purges at the NEXT nightly window, no age wait
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_purge_deletes_a_consent_withdrawn_session_with_no_age_wait(
+    client: AsyncClient,
+) -> None:
+    """DPDP §6(4): storing a recording after consent is withdrawn is itself
+    processing, so this status is purged the next tick regardless of age —
+    the one status the ordinary N-day window does not apply to. A session
+    created moments ago, not 90 days ago, must still go."""
+    factory = get_session_factory()
+    user_id = await _insert_user(factory)
+    withdrawn = await _insert_session(factory, user_id, "consent_withdrawn", None)
+
+    live_settings = _settings_with(dry_run=False)
+    async with factory() as db:
+        await purge_expired_sessions(db=db, settings=live_settings)
+
+    assert await _count_sessions(factory, [withdrawn]) == 0, (
+        "consent_withdrawn must be purged at the next run regardless of age"
+    )
+
+
+@pytest.mark.asyncio
+async def test_purge_leaves_a_fresh_in_progress_session_alone(client: AsyncClient) -> None:
+    """The other half: an ACTIVE session (not consent_withdrawn, not
+    terminal) must never be touched, however the predicate is written."""
+    factory = get_session_factory()
+    user_id = await _insert_user(factory)
+    active = await _insert_session(factory, user_id, "in_progress", None)
+
+    live_settings = _settings_with(dry_run=False)
+    async with factory() as db:
+        await purge_expired_sessions(db=db, settings=live_settings)
+
+    assert await _count_sessions(factory, [active]) == 1, (
+        "an in-progress session must never be deleted mid-flight"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — the dry run predicts the live count exactly, on identical seed data
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dry_run_count_matches_the_live_delete_count_on_identical_seed(
+    client: AsyncClient,
+) -> None:
+    """The whole point of a dry run is that it predicts the real one: run it
+    against ONE seed, touch nothing (dry-run never deletes), then run the
+    live purge against that SAME, still-untouched data and compare counts
+    exactly. Any leftover rows from other tests inflate both counts equally,
+    so the equality holds regardless of what else lives in this database —
+    unlike a ``>=`` check, which would not catch a dry run that UNDER-counts
+    relative to what the live run actually deletes."""
+    factory = get_session_factory()
+
+    user_id = await _insert_user(factory)
+    seeded = [
+        await _insert_session(factory, user_id, "completed", _EXPIRED_AT),
+        await _insert_session(factory, user_id, "completed", _EXPIRED_AT),
+        await _insert_session(factory, user_id, "consent_withdrawn", None),
+    ]
+
+    dry_settings = _settings_with(dry_run=True)
+    async with factory() as db:
+        dry_count = await purge_expired_sessions(db=db, settings=dry_settings)
+    # Dry-run must have touched nothing: the seed is still there for the live
+    # half to act on unmodified.
+    assert await _count_sessions(factory, seeded) == 3
+
+    live_settings = _settings_with(dry_run=False)
+    async with factory() as db:
+        live_count = await purge_expired_sessions(db=db, settings=live_settings)
+
+    assert await _count_sessions(factory, seeded) == 0
+    assert dry_count == live_count, (
+        f"dry run predicted {dry_count} but the live run deleted {live_count} — "
+        "on IDENTICAL, untouched data these must be exactly equal"
+    )
+    assert dry_count >= 3, "dry run must have counted at least this test's own 3-row seed"
+
+
+# ---------------------------------------------------------------------------
+# Test 10 — idempotency: running it twice changes nothing the second time
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_purging_twice_deletes_nothing_new_the_second_time(client: AsyncClient) -> None:
+    factory = get_session_factory()
+    user_id = await _insert_user(factory)
+    expired = await _insert_session(factory, user_id, "completed", _EXPIRED_AT)
+    survivor = await _insert_session(factory, user_id, "completed", _RECENT_AT)
+
+    live_settings = _settings_with(dry_run=False)
+    async with factory() as db:
+        first = await purge_expired_sessions(db=db, settings=live_settings)
+    assert first >= 1
+    assert await _count_sessions(factory, [expired]) == 0
+
+    async with factory() as db:
+        second = await purge_expired_sessions(db=db, settings=live_settings)
+    assert second == 0, "a second run over the same data must delete nothing new"
+    assert await _count_sessions(factory, [survivor]) == 1

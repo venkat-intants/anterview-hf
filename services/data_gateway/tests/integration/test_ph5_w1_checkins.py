@@ -1096,3 +1096,22 @@ async def test_purge_deletes_a_whole_chain_when_the_original_is_old_enough(
 
     assert await db.scalar(text("SELECT 1 FROM hire_checkins WHERE id = :id"), {"id": original}) is None
     assert await db.scalar(text("SELECT 1 FROM hire_checkins WHERE id = :id"), {"id": correction}) is None
+
+
+async def test_purging_twice_deletes_nothing_new_the_second_time(db: AsyncSession) -> None:
+    f = await _build(db)
+    checkin_id = uuid.uuid4()
+    old = datetime.now(tz=UTC) - timedelta(days=800)
+    await db.execute(
+        text(
+            "INSERT INTO hire_checkins (id, company_id, enrolment_id, kind, employment,"
+            " left_reason, performance, recorded_by_user_id, recorded_at, created_at,"
+            " updated_at) VALUES (:id, :c, :e, '90_day', 'left', 'voluntary', NULL, :by,"
+            " :old, :old, :old)"
+        ),
+        {"id": checkin_id, "c": f.company, "e": f.hired, "by": f.hr, "old": old},
+    )
+    first = await purge(db, retention_days=730, dry_run=False)
+    assert first >= 1
+    second = await purge(db, retention_days=730, dry_run=False)
+    assert second == 0

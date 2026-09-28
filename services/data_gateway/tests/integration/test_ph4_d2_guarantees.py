@@ -809,3 +809,80 @@ async def test_retention_redacts_the_revoke_reason_of_an_already_revoked_row(
     assert row[0] == "revoked"          # unchanged -- already revoked, no re-flip needed
     assert row[1] == "[redacted]", row  # BLOCKING 2: the revoke reason is not left readable
     assert row[2] is not None
+
+
+# ===========================================================================
+# The survivor that matters more than the positive case: not yet due
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_retention_leaves_a_row_inside_its_window_untouched(db: AsyncSession) -> None:
+    from app import accommodations as accommodations_svc
+
+    f = await _build(db)
+    aid = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO candidate_accommodations (id, company_id, applicant_id,"
+            " other_adjustment, basis, effective_from, effective_until, status,"
+            " recorded_by_user_id, created_at, updated_at)"
+            " VALUES (:i, :c, :a, 'Quiet room', 'hr_initiated', now() - interval '30 days',"
+            " now() - interval '10 days', 'active', :rec, now(), now())"
+        ),
+        {"i": aid, "c": f.company, "a": f.applicant, "rec": f.hr},
+    )
+    purged = await accommodations_svc.purge(db, retention_days=180, dry_run=False)
+    assert purged == 0
+    row = (
+        await db.execute(
+            text("SELECT other_adjustment, redacted_at FROM candidate_accommodations WHERE id = :i"),
+            {"i": aid},
+        )
+    ).first()
+    assert row is not None
+    assert row[0] == "Quiet room"
+    assert row[1] is None
+
+
+@pytest.mark.asyncio
+async def test_retention_dry_run_count_matches_the_live_purge_count(db: AsyncSession) -> None:
+    from app import accommodations as accommodations_svc
+
+    f = await _build(db)
+    aid = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO candidate_accommodations (id, company_id, applicant_id,"
+            " other_adjustment, basis, effective_from, effective_until, status,"
+            " recorded_by_user_id, created_at, updated_at)"
+            " VALUES (:i, :c, :a, 'Quiet room', 'hr_initiated', now() - interval '400 days',"
+            " now() - interval '200 days', 'active', :rec, now(), now())"
+        ),
+        {"i": aid, "c": f.company, "a": f.applicant, "rec": f.hr},
+    )
+
+    dry_count = await accommodations_svc.purge(db, retention_days=180, dry_run=True)
+    live_count = await accommodations_svc.purge(db, retention_days=180, dry_run=False)
+
+    assert dry_count == live_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retention_purging_twice_redacts_nothing_new(db: AsyncSession) -> None:
+    from app import accommodations as accommodations_svc
+
+    f = await _build(db)
+    aid = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO candidate_accommodations (id, company_id, applicant_id,"
+            " other_adjustment, basis, effective_from, effective_until, status,"
+            " recorded_by_user_id, created_at, updated_at)"
+            " VALUES (:i, :c, :a, 'Quiet room', 'hr_initiated', now() - interval '400 days',"
+            " now() - interval '200 days', 'active', :rec, now(), now())"
+        ),
+        {"i": aid, "c": f.company, "a": f.applicant, "rec": f.hr},
+    )
+    first = await accommodations_svc.purge(db, retention_days=180, dry_run=False)
+    assert first == 1
+    second = await accommodations_svc.purge(db, retention_days=180, dry_run=False)
+    assert second == 0

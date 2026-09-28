@@ -778,6 +778,33 @@ async def test_retention_ignores_a_decision_that_was_later_reversed(db: AsyncSes
     assert reopened not in await _purgeable_ids(db, retention_days=180)
 
 
+@pytest.mark.asyncio
+async def test_retention_dry_run_count_matches_the_live_redact_count(db: AsyncSession) -> None:
+    """The whole point of a dry run is that it predicts the real one."""
+    f = await _build(db)
+    await _attempt_on_an_application(db, f, status="rejected", decided_days_ago=200)
+
+    dry_count = await svc.purge(db, retention_days=180, dry_run=True)
+    live_count = await svc.purge(db, retention_days=180, dry_run=False)
+
+    assert dry_count == live_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retention_purging_twice_redacts_nothing_new(db: AsyncSession) -> None:
+    f = await _build(db)
+    attempt = await _attempt_on_an_application(db, f, status="rejected", decided_days_ago=200)
+
+    first = await svc.purge(db, retention_days=180, dry_run=False)
+    assert first == 1
+    second = await svc.purge(db, retention_days=180, dry_run=False)
+    assert second == 0
+    redacted_at = await db.scalar(
+        text("SELECT code_redacted_at FROM exam_attempts WHERE id = :a"), {"a": attempt},
+    )
+    assert redacted_at is not None
+
+
 # ===========================================================================
 # MEDIUM-1(a): a BEFORE INSERT trigger refuses new evidence once an attempt's
 # code is redacted, on all four evidence tables.

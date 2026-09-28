@@ -70,6 +70,7 @@ runs it WITH that marker — as of this writing, none does for admin_ops.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -296,6 +297,121 @@ async def _count(db: AsyncSession, sql: str, params: dict[str, Any]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# AR-8 narrowing (PH5-E2 criterion 13) seed helpers — a company staff member
+# who can be notified, and a minimal, schema-valid corpus document.
+# ---------------------------------------------------------------------------
+
+
+def _sha256_hex(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+async def _seed_erasure_request(db: AsyncSession, *, request_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """A real, pending ``erasure_requests`` row for *request_id* — without
+    one, step 9's ``UPDATE ... WHERE request_id = :rid`` matches zero rows
+    and the request silently never reads back as 'completed'."""
+    await db.execute(
+        text(
+            "INSERT INTO erasure_requests"
+            " (request_id, user_id, requested_by, reason, status, scheduled_for, created_at)"
+            " VALUES (:r, :u, :u, 'test erasure', 'pending', :sched, :created)"
+        ),
+        {
+            "r": request_id, "u": user_id,
+            "sched": datetime.now(tz=UTC) - timedelta(days=1),
+            "created": datetime.now(tz=UTC) - timedelta(days=31),
+        },
+    )
+
+
+async def _seed_hr_manager(db: AsyncSession, *, company_id: uuid.UUID, tag: str) -> uuid.UUID:
+    """A real ``hr_manager`` of *company_id* — the AR-8 notification's
+    intended recipient. ``roles`` is migration-seeded data (id fixed, name
+    stable), so this joins on the name rather than assuming an id."""
+    hr_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO users (id, email, full_name, company_id)"
+            " VALUES (:u, :e, 'HR Manager', :c)"
+        ),
+        {"u": hr_id, "e": f"hr-{tag}@erasure.test", "c": company_id},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO user_roles (user_id, role_id)"
+            " SELECT :u, id FROM roles WHERE name = 'hr_manager'"
+        ),
+        {"u": hr_id},
+    )
+    return hr_id
+
+
+async def _seed_corpus_document(
+    db: AsyncSession, *, company_id: uuid.UUID, title: str, content: str,
+    audience: str = "all_staff",
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """One minimal, schema-valid corpus document: a document row, its one
+    version, and one chunk carrying *content* verbatim — matching every CHECK
+    constraint migration ``d3f5b7a9c1e6`` puts on these tables (a real sha256,
+    a real content type, a size inside the 10 MB ceiling)."""
+    doc_id = uuid.uuid4()
+    version_id = uuid.uuid4()
+    now = datetime.now(tz=UTC)
+    await db.execute(
+        text(
+            "INSERT INTO corpus_documents"
+            " (id, company_id, title, audience, doc_kind, created_at, updated_at)"
+            " VALUES (:d, :c, :t, :a, 'policy', :now, :now)"
+        ),
+        {"d": doc_id, "c": company_id, "t": title, "a": audience, "now": now},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO corpus_document_versions"
+            " (id, company_id, document_id, version, status, storage_key, original_name,"
+            "  content_type, size_bytes, sha256, char_count, chunk_count, uploaded_at)"
+            " VALUES (:v, :c, :d, 1, 'indexed', :key, :name, 'text/plain', :sz, :sha, :cc, 1, :now)"
+        ),
+        {
+            "v": version_id, "c": company_id, "d": doc_id,
+            "key": f"corpus/{company_id}/{doc_id}/v1", "name": "document.txt",
+            "sz": max(1, len(content.encode("utf-8"))), "sha": _sha256_hex(f"version:{version_id}"),
+            "cc": len(content), "now": now,
+        },
+    )
+    await db.execute(
+        text("UPDATE corpus_documents SET current_version_id = :v WHERE id = :d"),
+        {"v": version_id, "d": doc_id},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO corpus_chunks"
+            " (id, company_id, document_id, version_id, ordinal, content, char_count,"
+            "  content_sha256, created_at)"
+            " VALUES (gen_random_uuid(), :c, :d, :v, 0, :content, :cc, :sha, :now)"
+        ),
+        {
+            "c": company_id, "d": doc_id, "v": version_id, "content": content,
+            "cc": len(content), "sha": _sha256_hex(content), "now": now,
+        },
+    )
+    return doc_id, version_id
+
+
+async def _delete_corpus_document(db: AsyncSession, document_id: uuid.UUID) -> None:
+    await db.execute(text("DELETE FROM corpus_chunks WHERE document_id = :d"), {"d": document_id})
+    await db.execute(
+        text("DELETE FROM corpus_document_versions WHERE document_id = :d"), {"d": document_id},
+    )
+    await db.execute(text("DELETE FROM corpus_documents WHERE id = :d"), {"d": document_id})
+
+
+async def _delete_staff_user(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """``notifications`` and ``user_roles`` both cascade off ``users.id``."""
+    await db.execute(text("DELETE FROM users WHERE id = :u"), {"u": user_id})
+
+
+# ---------------------------------------------------------------------------
 # The main proof: erase one real subject, against real Postgres, no mocks.
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
@@ -504,4 +620,203 @@ async def test_step_5k_does_not_touch_another_applicants_membership_in_the_same_
         assert other_applicant["full_name"] == "Bala Rao", "the OTHER applicant must be untouched"
         assert other_applicant["user_id"] == s.other_user_id
     finally:
+        await _cleanup(committed_db, s)
+
+
+# ---------------------------------------------------------------------------
+# AR-8 narrowing (PH5-E2 criterion 13) — step 5m against REAL Postgres full-
+# text search. The mock suite (test_erasure_executor.py) proves the
+# orchestration (facts into the artifacts, one notification per recipient,
+# the savepoint swallows a failure); it cannot prove `to_tsvector` /
+# `plainto_tsquery` actually finds the right document and only the right
+# document, scoped to the right tenant, which is what these tests are for.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_step_5m_flags_a_document_naming_the_subject_and_notifies_without_leaking_text(
+    committed_db: AsyncSession,
+) -> None:
+    s = _Subject()
+    await _seed(committed_db, s)
+    hr_id: uuid.UUID | None = None
+    doc_id: uuid.UUID | None = None
+    try:
+        hr_id = await _seed_hr_manager(committed_db, company_id=s.company_id, tag=s.tag)
+        # A sentinel string standing in for "the surrounding text" the task
+        # asks us to prove never appears anywhere in the artifacts or the
+        # notification — distinctive enough that it could only get there by
+        # this exact chunk's content leaking.
+        surrounding = f"once ran the payroll cutover project SENTINEL-{s.tag}"
+        doc_id, version_id = await _seed_corpus_document(
+            committed_db, company_id=s.company_id, title=f"Onboarding Handbook {s.tag}",
+            content=f"Priya Sharma {surrounding}",
+        )
+        request_id = uuid.uuid4()
+        await _seed_erasure_request(committed_db, request_id=request_id, user_id=s.user_id)
+        await committed_db.commit()
+
+        request = ErasureRequest(
+            request_id=request_id, user_id=s.user_id, requested_by=s.user_id,
+            reason="test erasure", status="pending",
+            scheduled_for=datetime.now(tz=UTC) - timedelta(days=1),
+            completed_at=None, artifacts=None,
+            created_at=datetime.now(tz=UTC) - timedelta(days=31),
+        )
+        with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_fake_delete_objects)):
+            artifacts = await _execute_one_erasure(
+                db=committed_db, request=request, system_actor_id=_SYSTEM_ACTOR,
+                settings=_FakeS3Settings(),  # type: ignore[arg-type]
+            )
+        await committed_db.commit()
+
+        # The hit is reported as FACTS ONLY.
+        assert artifacts["corpus_scan_error"] is False
+        assert artifacts["corpus_matches_found"] == 1
+        assert artifacts["corpus_documents_flagged"] == [
+            {
+                "company_id": str(s.company_id), "document_id": str(doc_id),
+                "version": 1, "chunk_count": 1,
+            }
+        ]
+        # Nowhere in the artifacts JSON does the matched text, or the name
+        # itself, appear — checked over the WHOLE blob, not just the one key
+        # a less careful test might think to look at.
+        artifacts_blob = repr(artifacts)
+        assert "Priya Sharma" not in artifacts_blob
+        assert surrounding not in artifacts_blob
+
+        # The erasure completed regardless of the corpus hit.
+        req_row = (
+            await committed_db.execute(
+                text("SELECT status FROM erasure_requests WHERE request_id = :r"),
+                {"r": request.request_id},
+            )
+        ).mappings().first()
+        assert req_row is not None
+        assert req_row["status"] == "completed"
+
+        # A human was notified — naming the document, never quoting it.
+        notif = (
+            await committed_db.execute(
+                text("SELECT kind, title, body, link FROM notifications WHERE user_id = :u"),
+                {"u": hr_id},
+            )
+        ).mappings().first()
+        assert notif is not None, "the company's hr_manager must be notified"
+        assert notif["kind"] == "corpus_review_needed"
+        assert f"Onboarding Handbook {s.tag}" in notif["title"]
+        assert str(doc_id) in notif["link"]
+        for field in ("title", "body"):
+            assert "Priya Sharma" not in notif[field]
+            assert surrounding not in notif[field]
+
+        # Detection, never deletion: the document is untouched.
+        chunk_row = (
+            await committed_db.execute(
+                text("SELECT content FROM corpus_chunks WHERE document_id = :d"),
+                {"d": doc_id},
+            )
+        ).mappings().first()
+        assert chunk_row is not None
+        assert "Priya Sharma" in chunk_row["content"]
+    finally:
+        if doc_id is not None:
+            await _delete_corpus_document(committed_db, doc_id)
+        if hr_id is not None:
+            await _delete_staff_user(committed_db, hr_id)
+        await committed_db.commit()
+        await _cleanup(committed_db, s)
+
+
+@pytest.mark.asyncio
+async def test_step_5m_does_not_flag_a_document_that_does_not_name_the_subject(
+    committed_db: AsyncSession,
+) -> None:
+    s = _Subject()
+    await _seed(committed_db, s)
+    doc_id: uuid.UUID | None = None
+    try:
+        doc_id, _version_id = await _seed_corpus_document(
+            committed_db, company_id=s.company_id, title=f"Unrelated Policy {s.tag}",
+            content="This handbook never mentions any candidate by name.",
+        )
+        request_id = uuid.uuid4()
+        await _seed_erasure_request(committed_db, request_id=request_id, user_id=s.user_id)
+        await committed_db.commit()
+
+        request = ErasureRequest(
+            request_id=request_id, user_id=s.user_id, requested_by=s.user_id,
+            reason="test erasure", status="pending",
+            scheduled_for=datetime.now(tz=UTC) - timedelta(days=1),
+            completed_at=None, artifacts=None,
+            created_at=datetime.now(tz=UTC) - timedelta(days=31),
+        )
+        with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_fake_delete_objects)):
+            artifacts = await _execute_one_erasure(
+                db=committed_db, request=request, system_actor_id=_SYSTEM_ACTOR,
+                settings=_FakeS3Settings(),  # type: ignore[arg-type]
+            )
+        await committed_db.commit()
+
+        assert artifacts["corpus_scan_error"] is False
+        assert artifacts["corpus_matches_found"] == 0
+        assert artifacts["corpus_documents_flagged"] == []
+        assert await _count(
+            committed_db, "SELECT count(*) FROM notifications WHERE link = :l",
+            {"l": f"/hr/library/{doc_id}"},
+        ) == 0
+    finally:
+        if doc_id is not None:
+            await _delete_corpus_document(committed_db, doc_id)
+        await _cleanup(committed_db, s)
+
+
+@pytest.mark.asyncio
+async def test_step_5m_does_not_scan_another_companys_document(
+    committed_db: AsyncSession,
+) -> None:
+    """Scoping: the subject has no applicant row with company B, so company
+    B's document — containing the exact same name — is never searched, let
+    alone flagged, even though the subject's OWN company (A) is searched in
+    the same run."""
+    s = _Subject()
+    other_company_id = uuid.uuid4()
+    await _seed(committed_db, s)
+    doc_id: uuid.UUID | None = None
+    try:
+        await committed_db.execute(
+            text("INSERT INTO companies (id, name, slug) VALUES (:c, 'Other Co', :slug)"),
+            {"c": other_company_id, "slug": f"erasure-live-other-{s.tag}"},
+        )
+        doc_id, _version_id = await _seed_corpus_document(
+            committed_db, company_id=other_company_id, title=f"Other Co Handbook {s.tag}",
+            content="Priya Sharma used to work here before joining us.",
+        )
+        request_id = uuid.uuid4()
+        await _seed_erasure_request(committed_db, request_id=request_id, user_id=s.user_id)
+        await committed_db.commit()
+
+        request = ErasureRequest(
+            request_id=request_id, user_id=s.user_id, requested_by=s.user_id,
+            reason="test erasure", status="pending",
+            scheduled_for=datetime.now(tz=UTC) - timedelta(days=1),
+            completed_at=None, artifacts=None,
+            created_at=datetime.now(tz=UTC) - timedelta(days=31),
+        )
+        with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_fake_delete_objects)):
+            artifacts = await _execute_one_erasure(
+                db=committed_db, request=request, system_actor_id=_SYSTEM_ACTOR,
+                settings=_FakeS3Settings(),  # type: ignore[arg-type]
+            )
+        await committed_db.commit()
+
+        assert artifacts["corpus_scan_error"] is False
+        assert artifacts["corpus_matches_found"] == 0
+        assert artifacts["corpus_documents_flagged"] == []
+    finally:
+        if doc_id is not None:
+            await _delete_corpus_document(committed_db, doc_id)
+        await committed_db.execute(text("DELETE FROM companies WHERE id = :c"), {"c": other_company_id})
+        await committed_db.commit()
         await _cleanup(committed_db, s)

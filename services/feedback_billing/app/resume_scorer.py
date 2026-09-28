@@ -204,7 +204,7 @@ async def score_resume(
         "resume_scorer.complete",
         job_title=job_title,
         overall=overall,
-        model=settings.gemini_model,
+        model=settings.llm_model,
         injection_marker_count=len(injection_markers),
     )
     return result

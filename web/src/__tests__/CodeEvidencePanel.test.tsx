@@ -514,3 +514,77 @@ describe('CodeSimilarityCompare — blocks are numbered and highlighted by absol
     expect(within(gap).queryByText(/^\d+$/)).not.toBeInTheDocument();
   });
 });
+
+// A security review found the server's excerpt fallback could hand HR the
+// first 200 lines of an UNINVOLVED candidate's program whenever the two
+// fingerprints could not be paired. The server now refuses — it returns no
+// blocks and sets `regions_unavailable`. That leaves this screen with an empty
+// pane, and an empty pane in the dialog where a misconduct finding is recorded
+// would be read as "nothing similar here", which is a conclusion rather than
+// the absence of one. It has to say which of the two it is.
+describe('CodeSimilarityCompare — a pair that cannot be lined up', () => {
+  it('says so, rather than showing an empty pane', async () => {
+    api.getSimilarityCompare.mockResolvedValue({
+      signal_id: 'sig-1',
+      low: {
+        language: 'python',
+        excerpt: 'def this_candidate():\n    return 1\n',
+        blocks: [{ start_line: 1, lines: ['def this_candidate():', '    return 1'] }],
+      },
+      high: {
+        language: 'python',
+        excerpt: '',
+        blocks: [],
+        regions_unavailable: true,
+      },
+      matched_regions: [],
+      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+    });
+
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole('button', { name: /compare & record a finding/i }));
+    await screen.findByRole('dialog');
+    await waitFor(() => expect(api.getSimilarityCompare).toHaveBeenCalledWith('sig-1'));
+
+    expect(
+      await screen.findByText(/cannot be lined up|different versions of the comparison/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Re-run the analysis/i),
+      'and what to do about it, since the counts above are still real',
+    ).toBeInTheDocument();
+    // The candidate's OWN side still renders — this is a distinction between
+    // the two sides, not a blanked-out dialog.
+    expect(screen.getByText('def this_candidate():')).toBeInTheDocument();
+  });
+
+  it('still says "no matched line ranges" when the pair simply did not match', async () => {
+    // The wording has to separate "we could not compare these" from "we
+    // compared these and found nothing", because they point at different
+    // actions and only one of them is about the code.
+    api.getSimilarityCompare.mockResolvedValue({
+      signal_id: 'sig-1',
+      low: {
+        language: 'python',
+        excerpt: 'a = 1',
+        blocks: [{ start_line: 1, lines: ['a = 1'] }],
+      },
+      high: {
+        language: 'python',
+        excerpt: 'b = 2',
+        blocks: [{ start_line: 1, lines: ['b = 2'] }],
+      },
+      matched_regions: [],
+      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+    });
+
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole('button', { name: /compare & record a finding/i }));
+    await screen.findByRole('dialog');
+
+    expect(await screen.findByText(/No matched line ranges could be located/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Re-run the analysis/i)).not.toBeInTheDocument();
+  });
+});

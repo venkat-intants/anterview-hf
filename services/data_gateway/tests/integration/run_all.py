@@ -22,13 +22,15 @@ Two stages, because there are two incompatible starting states:
   2. Every other smoke seeds (and often TRUNCATEs) what it needs, and collides
      with the Group B seed's companies. They get a clean database at head.
 
-Two of them need more than a database, and are handled after the rest:
-``smoke_ph3_apply`` gets its own database, created here; and
+Three of them need more than a database, and are handled after the rest:
+``smoke_ph3_apply`` gets its own database, created here;
 ``smoke_group_a_scorecard_retry`` runs only when a real feedback_billing is
 answering and object storage is configured, because it scores an interview with
-a live model and uploads a real PDF (README.md has the command). Neither is
-skipped silently — a skip prints its reason, so a run that covers less than the
-whole set says so rather than reporting a healthy-looking total.
+a live model and uploads a real PDF (README.md has the command); and
+``smoke_ph4_wave4`` runs only when object storage is configured, because it
+stores a preboarding document. None of the three is skipped silently — a skip
+prints its reason, so a run that covers less than the whole set says so rather
+than reporting a healthy-looking total.
 
 Exits non-zero if any smoke fails, and prints the failed checks of each.
 """
@@ -36,9 +38,11 @@ Exits non-zero if any smoke fails, and prints the failed checks of each.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -52,10 +56,26 @@ if not Path(PY_EXE).exists():  # POSIX layout
 PRE_GROUP_B = "c5e7a9b1d3f6"
 BACKFILL_PAIR = ["smoke_group_b_api.py", "smoke_group_b_requisitions.py"]
 
-# These two do not run on the shared database, so the main loop leaves them
-# alone; each is handled by its own stage below, and each is skipped with a
-# reason rather than silently, so "32/34" can never be mistaken for health.
-SPECIAL = {"smoke_group_a_scorecard_retry.py", "smoke_ph3_apply.py"}
+# These do not run in the main loop; each is handled by its own stage below,
+# and each is skipped with a reason rather than silently, so "32/34" can never
+# be mistaken for health.
+SPECIAL = {
+    "smoke_group_a_scorecard_retry.py",
+    "smoke_ph3_apply.py",
+    "smoke_ph4_wave4.py",
+}
+
+# smoke_ph4_wave4 puts offer documents in object storage, so it needs a bucket.
+# Without one, boto3 falls back to Amazon's default endpoint and the smoke dies
+# on a network error that reads like a product failure — which is exactly how
+# the 2026-09-22 pipeline test first reported it. Named here, skipped with a
+# reason when absent. (data_gateway reads S3_ENDPOINT, not S3_ENDPOINT_URL.)
+S3_FOR_DOCUMENTS = {
+    "S3_ENDPOINT": os.environ.get("S3_ENDPOINT", ""),
+    "S3_ACCESS_KEY_ID": os.environ.get("S3_ACCESS_KEY_ID", ""),
+    "S3_SECRET_ACCESS_KEY": os.environ.get("S3_SECRET_ACCESS_KEY", ""),
+    "S3_BUCKET_NAME": os.environ.get("S3_BUCKET_NAME", ""),
+}
 
 # smoke_ph3_apply seeds a whole tenant of its own and wants its own database.
 PH3_DB = os.environ.get("SMOKE_PH3_DB", "ph3_smoke")
@@ -85,7 +105,75 @@ ENV = {
     "PYTHONUTF8": "1",
     "PYTHONPATH": f".{os.pathsep}..{os.sep}..",
     "DATABASE_URL": DB_URL,
+    # The PH4 smokes read SMOKE_DATABASE_URL, and each defaults to a database
+    # of its own (ph4_w5, ph4_dev, ph4_w4) as the `ph3` role — databases this
+    # runner never created, so a clean run reported eight failures that were
+    # not failures. They run on the shared clean database like everything else
+    # now. As the postgres user rather than `ph3`: nothing in the schema uses
+    # row-level security and no PH4 smoke asserts a permission, and
+    # smoke_ph4_wave4's backdate() needs superuser to set
+    # session_replication_role.
+    "SMOKE_DATABASE_URL": DB_URL,
 }
+
+
+# LOCAL ONLY. These smokes drop and recreate databases, write test tenants and
+# upload test documents. Pointed at anything but this machine they would do
+# that to real data — which happened once already (2026-09-07: 571 test rows
+# in the live Neon database, deleted by hand; see tests/integration/conftest.py).
+# The database is checked before anything runs and the whole run refuses.
+# Storage and the scoring service are checked where they are used, and a
+# non-local one skips its smoke with the reason rather than being sent test
+# files. There is no override: a smoke has no business on a remote host.
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _is_local(url: str) -> bool:
+    host = urllib.parse.urlsplit(url.replace("+asyncpg", "")).hostname or ""
+    return host in _LOCAL_HOSTS
+
+
+#: Database names these smokes may touch. They TRUNCATE, and _fresh_database()
+#: drops and recreates, so the name is as load-bearing as the host.
+_SMOKE_DB_SUFFIX = "_smoke"
+
+#: Both database names are interpolated unquoted into `psql -c "DROP DATABASE
+#: {name}"`. Anyone who can set the environment can already run code here, so
+#: this is not a privilege boundary — but the statement being built is a DROP,
+#: the validation is one line, and an identifier that needs quoting is a typo
+#: rather than a request worth honouring.
+_DB_IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+
+
+def _refuse_unless_valid_identifier(name: str, var: str) -> None:
+    if not _DB_IDENTIFIER.match(name):
+        sys.exit(f"refusing: {var}={name!r} is not a plain lowercase identifier, and it is about "
+                 "to be interpolated into a DROP DATABASE statement.")
+
+
+def _refuse_unless_local() -> None:
+    if not _is_local(DB_URL):
+        host = urllib.parse.urlsplit(DB_URL.replace("+asyncpg", "")).hostname
+        sys.exit(f"refusing: the smoke database is on {host!r}, not this machine. "
+                 "run_all.py only ever runs against local Postgres.")
+    # THE NAME, NOT ONLY THE HOST. SMOKE_DB_NAME and SMOKE_DATABASE_URL are
+    # separate variables: _fresh_database() drops and recreates SMOKE_DB_NAME,
+    # but every smoke connects to whatever database SMOKE_DATABASE_URL names,
+    # and many of them TRUNCATE. So setting the URL alone to
+    # postgresql://…@127.0.0.1:55432/intants_dev passed the host check and
+    # emptied the developer's own database — "local" and "not real" are not
+    # the same claim, and only the second one is the one that matters here.
+    _refuse_unless_valid_identifier(DB_NAME, "SMOKE_DB_NAME")
+    _refuse_unless_valid_identifier(PH3_DB, "SMOKE_PH3_DB")
+    target = urllib.parse.urlsplit(DB_URL.replace("+asyncpg", "")).path.lstrip("/")
+    if target != DB_NAME:
+        sys.exit(f"refusing: SMOKE_DATABASE_URL names database {target!r} but SMOKE_DB_NAME is "
+                 f"{DB_NAME!r}. The runner would prepare one database and the smokes would "
+                 "truncate another. Set both or neither.")
+    if not target.endswith(_SMOKE_DB_SUFFIX):
+        sys.exit(f"refusing: {target!r} does not end in {_SMOKE_DB_SUFFIX!r}. These smokes drop, "
+                 "recreate and truncate — they run only against a database named as disposable.")
+
 
 Result = tuple[str, bool, str, str]
 results: list[Result] = []
@@ -174,6 +262,12 @@ def _run_scorecard_retry() -> None:
             f"({', '.join(missing)} unset). See README.md."
         )
         return
+    for what, url in (("S3_ENDPOINT_URL", S3_FOR_SCORECARDS["S3_ENDPOINT_URL"]),
+                      ("FEEDBACK_BILLING_URL", FEEDBACK_BILLING_URL)):
+        if not _is_local(url):
+            skipped.append(f"smoke_group_a_scorecard_retry.py — {what} is not local; "
+                           "smokes only write to local services.")
+            return
     try:
         with urllib.request.urlopen(f"{FEEDBACK_BILLING_URL}/health/live", timeout=5) as r:
             r.read()
@@ -188,7 +282,24 @@ def _run_scorecard_retry() -> None:
          {**ENV, "FEEDBACK_BILLING_URL": FEEDBACK_BILLING_URL, **S3_FOR_SCORECARDS})
 
 
+def _run_wave4() -> None:
+    """Offers and preboarding, which store candidate documents in a bucket."""
+    missing = [k for k, v in S3_FOR_DOCUMENTS.items() if not v]
+    if missing:
+        skipped.append(
+            "smoke_ph4_wave4.py — object storage is not configured "
+            f"({', '.join(missing)} unset). See README.md."
+        )
+        return
+    if not _is_local(S3_FOR_DOCUMENTS["S3_ENDPOINT"]):
+        skipped.append("smoke_ph4_wave4.py — S3_ENDPOINT is not local; "
+                       "smokes only upload to a local bucket.")
+        return
+    _run(["smoke_ph4_wave4.py"], {**ENV, **S3_FOR_DOCUMENTS})
+
+
 def main() -> int:
+    _refuse_unless_local()
     for name in BACKFILL_PAIR:
         _seeded_at_head()
         print(f"— seeded before Group B, migrated to head, for {name}", flush=True)
@@ -204,6 +315,7 @@ def main() -> int:
     # The scorecard smoke shares this database with feedback_billing, so it goes
     # after the rest rather than on a database of its own.
     _run_scorecard_retry()
+    _run_wave4()
     _run_ph3()
 
     failed = [r for r in results if not r[1]]

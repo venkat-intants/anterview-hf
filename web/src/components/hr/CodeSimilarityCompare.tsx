@@ -56,11 +56,13 @@ function ExcerptPane({
   language,
   blocks,
   highlightRanges,
+  unavailable = false,
 }: {
   title: string;
   language: string | null;
   blocks: ExcerptBlock[];
   highlightRanges: Array<[number, number]>;
+  unavailable?: boolean;
 }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-[10px] border border-border bg-[#0b0c0e]">
@@ -68,6 +70,18 @@ function ExcerptPane({
         {title}
         {language ? ` · ${language}` : ''}
       </div>
+      {/* An empty pane is not self-explanatory, and this is the dialog where a
+          misconduct finding gets recorded — blank space here would be read as
+          "nothing similar", which is a conclusion rather than the absence of
+          one. Said inside the pane, where the missing code would have been. */}
+      {unavailable && blocks.length === 0 ? (
+        <p className="px-2.5 py-6 text-[12px] leading-relaxed text-[var(--ui-faint)]">
+          This submission cannot be lined up against the other one — the two were
+          fingerprinted by different versions of the comparison, so there is nothing to
+          highlight. Re-run the analysis for this attempt to compare them. The counts
+          above still stand.
+        </p>
+      ) : null}
       <pre className="max-h-[380px] overflow-auto p-0 text-[12px] leading-[1.55]">
         {blocks.map((block, bi) => (
           <Fragment key={block.start_line}>
@@ -263,9 +277,10 @@ export default function CodeSimilarityCompare({
                   language={otherExcerpt.language}
                   blocks={otherExcerpt.blocks}
                   highlightRanges={otherRanges}
+                  unavailable={otherExcerpt.regions_unavailable}
                 />
               </div>
-              {matchedRegions.length === 0 ? (
+              {matchedRegions.length === 0 && !otherExcerpt.regions_unavailable ? (
                 <p className="mt-2 text-[11.5px] text-[var(--ui-faint)]">
                   {signal.reference_kind === 'reference_solution'
                     ? 'Matched line ranges are not available for a reference-solution comparison — see the raw counts above.'

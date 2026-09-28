@@ -35,6 +35,7 @@ from shared.agents.schema import (
     StopReason,
     ToolResult,
     ToolSpec,
+    derive_citation_state,
 )
 
 log = structlog.get_logger(__name__)
@@ -236,6 +237,15 @@ async def run_agent(
     # your records" vs "no records were read" banner renders — not the
     # model's own account of what it did.
     run.evidence_used = any(r.ok and r.citations for r in run.trace)
+    # PH5-E1 criteria 4/5: the three-way read of ``run.reply`` itself, from the
+    # two facts just computed. ``cited_refs`` is ALREADY the post-bind_refs
+    # survivor list (invented markers removed above), so a reply whose every
+    # marker was invented has ``cited_refs == []`` and lands on
+    # "unattributed" here, never on "sourced" — a model cannot buy the
+    # confident banner by inventing refs.
+    run.citation_state = derive_citation_state(
+        records_read=run.evidence_used, has_valid_marker=bool(run.cited_refs)
+    )
 
     log.info(
         "agents.run",
@@ -248,6 +258,7 @@ async def run_agent(
         cited_refs=len(run.cited_refs),
         invented_refs=run.invented_refs,
         evidence_used=run.evidence_used,
+        citation_state=run.citation_state,
         stop_reason=stop_reason,
         prompt_tokens=run.prompt_tokens,
         output_tokens=run.output_tokens,

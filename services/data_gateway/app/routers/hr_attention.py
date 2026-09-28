@@ -51,7 +51,7 @@ from typing import Annotated
 import structlog
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
-from shared.agents import filter_citations_for_role, run_watchers
+from shared.agents import CitationState, filter_citations_for_role, run_watchers
 
 from app.agents.watch_runner import gather_company_input
 from app.database import DbSessionDep
@@ -95,6 +95,16 @@ class AttentionItem(BaseModel):
     link: str | None = None
     dedupe_key: str = ""
     citations: list[AttentionCitation] = Field(default_factory=list)
+    # PH5-E1 criteria 4/5's three-way state (see shared.agents.schema
+    # .derive_citation_state), computed the same honest way every other
+    # surface computes it: "sourced" when this finding names specific records,
+    # "unread" when it is a platform/aggregate rule with none to name.
+    # "unattributed" is structurally unreachable here — every watcher rule is
+    # deterministic SQL plus arithmetic (see shared/agents/watchers.py's module
+    # docstring), never a model's free prose, so a finding's body is never
+    # "read records and then said something unattributed" — it is either about
+    # specific records (and names them) or it is not.
+    citation_state: CitationState = "unread"
 
 
 class AttentionOut(BaseModel):
@@ -148,10 +158,17 @@ async def get_attention(
         critical=sum(1 for f in findings if f.severity == "critical"),
     )
 
-    return AttentionOut(
-        generated_at=datetime.now(tz=UTC).isoformat(),
-        total=len(findings),
-        items=[
+    items: list[AttentionItem] = []
+    for f in findings:
+        # The same citation-permission gate ToolRegistry.invoke applies to
+        # every tool result. Watcher findings are built directly by
+        # shared.agents.watchers, never through invoke(), so nothing else
+        # enforces CITATION_MIN_ROLES on this path. A no-op today (this route
+        # is hr_manager-only and every watcher citation here is candidate_pii
+        # or company_scoped, both of which hr_manager may open) — kept
+        # structural rather than assumed.
+        permitted = filter_citations_for_role(f.citations, _ROLE, source="hr_attention")
+        items.append(
             AttentionItem(
                 watcher=f.watcher,
                 severity=f.severity,
@@ -159,20 +176,21 @@ async def get_attention(
                 body=f.body,
                 link=f.link,
                 dedupe_key=f.dedupe_key,
-                # The same citation-permission gate ToolRegistry.invoke applies
-                # to every tool result. Watcher findings are built directly by
-                # shared.agents.watchers, never through invoke(), so nothing
-                # else enforces CITATION_MIN_ROLES on this path. A no-op today
-                # (this route is hr_manager-only and every watcher citation
-                # here is candidate_pii or company_scoped, both of which
-                # hr_manager may open) — kept structural rather than assumed.
                 citations=[
                     AttentionCitation(
                         kind=c.kind, id=c.id, label=c.label, href=getattr(c, "href", None)
                     )
-                    for c in filter_citations_for_role(f.citations, _ROLE, source="hr_attention")
+                    for c in permitted
                 ],
+                # From what THIS caller was actually handed, post-permission
+                # filter — a citation dropped for their role must not count as
+                # "records read" toward their own banner.
+                citation_state="sourced" if permitted else "unread",
             )
-            for f in findings
-        ],
+        )
+
+    return AttentionOut(
+        generated_at=datetime.now(tz=UTC).isoformat(),
+        total=len(findings),
+        items=items,
     )

@@ -31,6 +31,7 @@ from shared.agents import (
     CROSS_TENANT_ROLES,
     AgentMessage,
     AgentRun,
+    CitationState,
     PanelVerdict,
     ToolContext,
     UnknownConsoleError,
@@ -133,6 +134,13 @@ class ChatOut(BaseModel):
     # answer" — the one E1-5 control that does not depend on the model
     # remembering to say so.
     evidence_used: bool
+    # PH5-E1 criteria 4/5 — the three-way read of ``reply`` beside the two-way
+    # ``evidence_used`` above: "unread" (nothing was read), "sourced"
+    # (something was read AND a claim is tied to it), or "unattributed"
+    # (something was read but NOTHING survived to tie a claim to it —
+    # including a reply whose every marker was invented and stripped). See
+    # ``shared.agents.schema.derive_citation_state``.
+    citation_state: CitationState
 
 
 # ---------------------------------------------------------------------------
@@ -372,10 +380,11 @@ async def _write_agent_audit(
     """One ``agent.chat.answered`` row per chat turn.
 
     Carries the console, the agent, the stop reason, which tools ran, which
-    records were cited (kind + id only), and the marker integrity counters.
-    NEVER the user's message, the model's reply, or a citation's label — those
-    are exactly the fields that can carry a candidate's name or other PII into
-    a table operators and auditors read.
+    records were cited (kind + id only), and the marker integrity counters —
+    now including ``citation_state``, a fact about what survived server-side
+    validation, not a claim. NEVER the user's message, the model's reply, or a
+    citation's label — those are exactly the fields that can carry a
+    candidate's name or other PII into a table operators and auditors read.
     """
     db.add(
         AuditLog(
@@ -396,6 +405,7 @@ async def _write_agent_audit(
                 "cited_refs": len(run.cited_refs),
                 "invented_refs": run.invented_refs,
                 "evidence_used": run.evidence_used,
+                "citation_state": run.citation_state,
             },
             ip_address=extract_client_ip(request),
             user_agent=extract_user_agent(request),
@@ -512,6 +522,7 @@ async def agent_chat(
         stop_reason=run.stop_reason,
         evidence_used=run.evidence_used,
         invented_refs=run.invented_refs,
+        citation_state=run.citation_state,
         # NEVER log the message or the reply — both carry candidate PII.
     )
 
@@ -525,6 +536,7 @@ async def agent_chat(
         ],
         stop_reason=run.stop_reason,
         evidence_used=run.evidence_used,
+        citation_state=run.citation_state,
     )
 
 

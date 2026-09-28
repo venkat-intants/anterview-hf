@@ -198,6 +198,12 @@ async def _assess_signal(
         available=evidence.available,
         score_0_100=evidence.score_0_100,
         citations=evidence.citations,
+        # PH5-E1 criteria 4/5: no marker convention exists here on purpose (see
+        # SignalAssessment.citation_state's docstring) — a specialist sees one
+        # source and writes only about it, so "sourced" is exactly "there was
+        # something to read", never something a model could earn by inventing
+        # a ref it does not have the machinery to write in the first place.
+        citation_state="sourced" if (evidence.available and evidence.citations) else "unread",
     )
 
     if not evidence.available:

@@ -23,6 +23,7 @@ import { GlassCard } from '@/design/components/primitives';
 import { AlertTriangle, CheckCircle2, ChevronRight, Info } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 import CitationChips from './agent/CitationChips';
+import EvidenceBanner from './agent/EvidenceBanner';
 
 /**
  * Severity is carried by an icon and a word as well as a colour.
@@ -87,6 +88,15 @@ function Finding({ item }: { item: AttentionItem }) {
           a list that buries the next finding. Links now, deliberately — the
           href was always there, this panel just used to discard it. */}
       <CitationChips citations={item.citations} variant="strip" className="mt-2 pl-[26px]" />
+
+      {/* PH5-E1 criteria 4/5's banner, on this surface too: a finding with
+          records named beside it says so plainly, and one with none is
+          honest about being a general rule rather than about anyone
+          specific. 'unattributed' never fires here — every rule is
+          deterministic SQL plus arithmetic, not a model's free prose — but
+          the same component is used for the same reason CitationChips is:
+          one renderer, everywhere the answer is the same question. */}
+      <EvidenceBanner citationState={item.citation_state} className="mt-2 pl-[26px]" />
     </div>
   );
 }

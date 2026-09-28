@@ -15,6 +15,7 @@ import pytest
 from fastapi import HTTPException
 from shared.agents import (
     AgentMessage,
+    AgentRun,
     Citation,
     PanelVerdict,
     SignalAssessment,
@@ -31,6 +32,7 @@ from app.routers.agent import (
     _agent_context,
     _filter_panel_citations,
     _primary_role,
+    _write_agent_audit,
     agent_status,
 )
 
@@ -490,6 +492,70 @@ def test_citation_audit_rows_never_carries_a_label() -> None:
     assert rows == [{"kind": "applicant", "id": "a-1"}]
     assert "label" not in rows[0]
     assert "href" not in rows[0]
+
+
+# ---------------------------------------------------------------------------
+# _write_agent_audit — PH5-E1 criteria 4/5's citation_state, alongside the
+# existing citation counts, facts only (no message, no reply, no label).
+# ---------------------------------------------------------------------------
+
+
+def _fake_audit_request() -> MagicMock:
+    request = MagicMock()
+    request.client = None
+    request.headers = {}
+    return request
+
+
+def _fake_audit_ctx() -> ToolContext:
+    return ToolContext(
+        actor_id="11111111-1111-1111-1111-111111111111", role="hr_manager", company_id="c-1"
+    )
+
+
+async def _audit_details(run: AgentRun) -> dict[str, Any]:
+    db = MagicMock()
+    db.commit = AsyncMock()
+    await _write_agent_audit(
+        db,
+        _fake_audit_request(),
+        action="agent.chat.answered",
+        ctx=_fake_audit_ctx(),
+        run=run,
+        surface=None,
+    )
+    added = db.add.call_args[0][0]
+    return dict(added.details)
+
+
+async def test_the_audit_row_carries_citation_state_sourced() -> None:
+    run = AgentRun(agent="hr_copilot", reply="Asha[S1] looks strong.", cited_refs=["S1"])
+    run.citation_state = "sourced"
+    details = await _audit_details(run)
+    assert details["citation_state"] == "sourced"
+
+
+async def test_the_audit_row_carries_citation_state_unattributed() -> None:
+    """The adversarial case, at the audit layer too: a run that read records
+    but tied no claim to any of them must be recorded as such, not folded into
+    a generic 'evidence_used=True' that reads the same as a sourced answer."""
+    run = AgentRun(
+        agent="hr_copilot",
+        reply="Most candidates for this role interview well.",
+        evidence_used=True,
+        cited_refs=[],
+    )
+    run.citation_state = "unattributed"
+    details = await _audit_details(run)
+    assert details["citation_state"] == "unattributed"
+    assert details["evidence_used"] is True
+
+
+async def test_the_audit_row_carries_citation_state_unread() -> None:
+    run = AgentRun(agent="hr_copilot", reply="Hi there.")
+    details = await _audit_details(run)
+    assert details["citation_state"] == "unread"
+    assert details["evidence_used"] is False
 
 
 # ---------------------------------------------------------------------------

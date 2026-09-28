@@ -14,6 +14,26 @@
 
 import { apiGet, apiPost, apiRequest } from './client';
 
+/**
+ * PH5-E1 criteria 4/5 — the server-computed, three-way read of one block of
+ * agent-authored text with respect to the records it drew on:
+ *
+ *   'sourced'      — records were read AND at least one claim is tied to one
+ *                    of them (a surviving `[S_]` marker, or — for a surface
+ *                    with no marker convention at all — the one evidence
+ *                    source a block is unambiguously about).
+ *   'unattributed' — records were read but NOTHING ties a claim to any of
+ *                    them. Reads exactly like 'sourced' prose and is not
+ *                    backed the same way, so it says so rather than share the
+ *                    confident banner.
+ *   'unread'       — no record was read at all.
+ *
+ * Always computed server-side — never inferred here from whether `citations`
+ * happens to be non-empty. Mirrors `shared.agents.schema.CitationState`
+ * (Python), diffed against it by a parity test.
+ */
+export type CitationState = 'sourced' | 'unattributed' | 'unread';
+
 /** Where a claim came from — rendered as a clickable source chip. */
 export interface Citation {
   kind:
@@ -127,6 +147,8 @@ export interface AgentChatResponse {
    * server is the one place that actually saw every tool result.
    */
   evidence_used: boolean;
+  /** The three-way read of `reply` above. See `CitationState`. */
+  citation_state: CitationState;
 }
 
 export interface AgentStatus {
@@ -204,6 +226,15 @@ export interface SignalAssessment {
   concerns: string[];
   evidence: string[];
   citations: Citation[];
+  /**
+   * The three-way read of this signal's strip (see `CitationState`).
+   * 'unattributed' never actually arrives here — a specialist reads exactly
+   * one source and writes only about it, so there is no per-claim ambiguity
+   * a marker would resolve — but the type stays the full union rather than a
+   * narrower one so a future per-claim convention here would not need a type
+   * change to render.
+   */
+  citation_state: CitationState;
 }
 
 export interface Contradiction {

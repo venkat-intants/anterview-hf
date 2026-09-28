@@ -12,7 +12,7 @@ import inspect
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -229,22 +229,26 @@ def test_only_hr_can_override() -> None:
 # ===========================================================================
 # The apply path
 # ===========================================================================
-def test_a_live_application_is_never_told_to_wait() -> None:
-    """"You have already applied" is a reassurance, not a refusal, and must
-    keep coming first."""
-    from app.routers.public_apply import submit_application
-
-    src = inspect.getsource(submit_application)
-    assert src.index("already_applied=True") < src.index("cooldown_check")
-
-
+# Two ORDERING properties, and they are structural assertions on purpose.
+#
+# Both are about what has already happened by the time the gate runs, which is
+# a property of the function's shape rather than of any value it returns —
+# there is nothing to observe from outside. A behavioural version would need
+# the whole route driven against a real database with a real upload, which is
+# `reapply-cooldown.spec.ts` in the browser suite; these are the cheap guard
+# next to the code. Read them as such, and not as coverage of the rule itself
+# — that is the executing tests further down.
+#
+# ("a live application is never told to wait" used to live here as a third
+# string assertion. It is now `test_a_live_application_is_answered_not_refused`
+# below, which calls the gate and reads the answer.)
 def test_the_cooldown_is_checked_before_the_cv_is_stored() -> None:
     """A refusal should cost no stored object — the same ordering the consent
     and answer checks already use."""
     from app.routers.public_apply import submit_application
 
     src = inspect.getsource(submit_application)
-    assert src.index("cooldown_check") < src.index("_upload_to_s3")
+    assert src.index("reapplication_gate") < src.index("_upload_to_s3")
 
 
 def test_the_cooldown_is_checked_after_the_cv_is_read() -> None:
@@ -253,7 +257,22 @@ def test_the_cooldown_is_checked_after_the_cv_is_read() -> None:
     from app.routers.public_apply import submit_application
 
     src = inspect.getsource(submit_application)
-    assert src.index("_extract_pdf_text") < src.index("cooldown_check")
+    assert src.index("_extract_pdf_text") < src.index("reapplication_gate")
+
+
+def test_both_doors_into_an_application_use_the_same_gate() -> None:
+    """The draft route had its own copy of this decision and only the one-shot
+    copy was fixed, so a rejected candidate who had saved their application for
+    later was still told "we have your application" — the cooldown never ran on
+    that route and an override let nobody through. Neither route may spell the
+    rule out for itself again."""
+    from app.routers.public_apply import submit_application, submit_draft
+
+    for fn in (submit_application, submit_draft):
+        src = inspect.getsource(fn)
+        assert "reapplication_gate" in src, f"{fn.__name__} does not use the shared gate"
+        assert "reapplication_reopen" in src, f"{fn.__name__} never reopens"
+        assert "cooldown_check" not in src, f"{fn.__name__} still has its own copy"
 
 
 def test_a_blocked_application_is_a_conflict_not_a_forbidden() -> None:
@@ -318,56 +337,189 @@ def test_the_default_is_no_cooldown() -> None:
 # and the cooldown ran. Found by the first browser test of this rule.
 
 
-def test_the_already_applied_branch_reads_the_enrolment_status() -> None:
-    from app.routers.public_apply import submit_application
+# ===========================================================================
+# The gate itself — one predicate, both doors
+# ===========================================================================
+# These replace five tests that asserted on inspect.getsource() substrings.
+# Those could not fail on any version of the code that compiled: one of them
+# asserted that a variable appears before it is used. All three defects a code
+# review later found in this path — an unadopted CV, the draft route never
+# fixed at all, and an override spent when it was never consulted — survived
+# them untouched. What follows executes the code instead.
 
-    src = inspect.getsource(submit_application)
-    assert "enrolment_status" in src, (
-        "the branch has to know whether the application it found is still live"
+
+@pytest.mark.asyncio
+async def test_a_live_application_is_answered_not_refused() -> None:
+    from app.reapplication import gate
+
+    result = await gate(
+        _db(None), requisition_id=REQ, cooldown_days=30,
+        applicant_id=APPLICANT, enrolment_id=uuid.uuid4(),
+        enrolment_status="shortlisted",
+    )
+    assert result.already_applied is True
+    assert result.reapplying is False
+    # And the cooldown is never consulted for someone whose application is open.
+    assert result.verdict.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_application_reaches_the_cooldown() -> None:
+    """The defect this whole story turned on: `already_applied` matched ANY
+    enrolment, so a rejected candidate never reached the rule."""
+    from app.reapplication import gate
+
+    db = _db(_prior(rejected_at=NOW - timedelta(days=2)))
+    result = await gate(
+        db, requisition_id=REQ, cooldown_days=30,
+        applicant_id=APPLICANT, enrolment_id=uuid.uuid4(), enrolment_status="rejected",
+    )
+    assert result.already_applied is False, "a rejection is not a live application"
+    assert result.reapplying is True
+    assert result.verdict.allowed is False, "two days into a thirty-day window"
+
+
+@pytest.mark.asyncio
+async def test_a_first_time_applicant_passes_everything() -> None:
+    from app.reapplication import gate
+
+    result = await gate(
+        _db(None), requisition_id=REQ, cooldown_days=30,
+        applicant_id=None, enrolment_id=None, enrolment_status=None,
+    )
+    assert (result.already_applied, result.reapplying, result.verdict.allowed) == (
+        False,
+        False,
+        True,
     )
 
 
-def test_a_rejected_application_falls_through_to_the_cooldown() -> None:
-    from app.routers.public_apply import submit_application
+# ===========================================================================
+# Spending the override — only when it is what let them through
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_an_override_is_spent_when_it_is_what_allowed_the_reapplication() -> None:
+    from app.reapplication import gate
 
-    src = inspect.getsource(submit_application)
-    # The flag is computed before the branch, and the branch is skipped for it.
-    assert src.index("reapplying_after_rejection") < src.index("already_applied=True")
-    assert "not reapplying_after_rejection" in src
-
-
-def test_the_apply_query_selects_the_enrolment_status() -> None:
-    """Whether the application found is live is a fact about the row, so it
-    comes from the same query rather than a second one."""
-    from app.routers.public_apply import submit_application
-
-    src = inspect.getsource(submit_application)
-    assert "e.status AS enrolment_status" in src
-
-
-def test_an_allowed_reapplication_reopens_the_application() -> None:
-    """Past the gate and nothing happens is the other half of the same bug: one
-    person is enrolled into an opening once, so the rejected enrolment comes
-    back unchanged and HR still sees a rejection."""
-    from app.routers.public_apply import submit_application
-
-    src = inspect.getsource(submit_application)
-    assert "record_transition" in src
-    assert 'to_status="new"' in src
-    # Recorded in the ledger as the candidate's own act, not a person's move.
-    assert "actor_user_id=None" in src
+    db = _db(_prior(reapply_override_at=NOW, rejected_at=NOW - timedelta(days=2)))
+    result = await gate(
+        db, requisition_id=REQ, cooldown_days=30,
+        applicant_id=APPLICANT, enrolment_id=uuid.uuid4(), enrolment_status="rejected",
+    )
+    assert result.verdict.allowed is True
+    assert result.verdict.reason == "override"
+    assert result.spend_override is True
 
 
-def test_an_override_is_spent_when_it_is_used() -> None:
-    """The check honours reapply_override_at whenever it is set, so a grant
-    that is never cleared exempts that person from every future cooldown on
-    this opening. It forgives one rejection."""
-    from app.reapplication import consume_override
-    from app.routers.public_apply import submit_application
+@pytest.mark.asyncio
+async def test_an_override_is_not_spent_when_no_cooldown_is_configured() -> None:
+    """`check` returns early without reading the grant when cooldown_days is
+    falsy, so spending it here destroys an exception nobody used — on an
+    opening that may be given a waiting period tomorrow."""
+    from app.reapplication import gate
 
-    assert "consume_override" in inspect.getsource(submit_application)
-    src = inspect.getsource(consume_override)
-    assert "reapply_override_at = NULL" in src
-    # Who granted it and why stay: they are the record of the exception.
-    assert "reapply_override_by_user_id" not in src
-    assert "reapply_override_reason" not in src
+    db = _db(_prior(reapply_override_at=NOW))
+    result = await gate(
+        db, requisition_id=REQ, cooldown_days=None,
+        applicant_id=APPLICANT, enrolment_id=uuid.uuid4(), enrolment_status="rejected",
+    )
+    assert result.reapplying is True
+    assert result.verdict.allowed is True
+    assert result.verdict.reason is None
+    assert result.spend_override is False, "nothing consulted the grant"
+
+
+@pytest.mark.asyncio
+async def test_an_override_is_not_spent_when_the_window_had_simply_elapsed() -> None:
+    from app.reapplication import gate
+
+    db = _db(_prior(reapply_override_at=None, rejected_at=NOW - timedelta(days=99)))
+    result = await gate(
+        db, requisition_id=REQ, cooldown_days=30,
+        applicant_id=APPLICANT, enrolment_id=uuid.uuid4(), enrolment_status="rejected",
+    )
+    assert result.verdict.allowed is True
+    assert result.spend_override is False
+
+
+@pytest.mark.asyncio
+async def test_spending_the_override_makes_the_next_check_refuse() -> None:
+    """End to end on the two functions that matter: granted, allowed, spent,
+    refused. `consume_override` had no executing coverage at all."""
+    from app.reapplication import check, consume_override
+
+    granted = _prior(reapply_override_at=NOW, rejected_at=NOW - timedelta(days=2))
+    db = _db(granted)
+    before = await check(
+        db, requisition_id=REQ, applicant_id=APPLICANT, cooldown_days=30
+    )
+    assert before.allowed is True
+    assert before.reason == "override"
+
+    await consume_override(db, enrolment_id=uuid.UUID(str(granted["id"])))
+    sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
+    assert "reapply_override_at = NULL" in sql
+    assert "reapply_override_by_user_id" not in sql, "who granted it stays on the row"
+
+    spent = await check(
+        _db(_prior(reapply_override_at=None, rejected_at=NOW - timedelta(days=2))),
+        requisition_id=REQ,
+        applicant_id=APPLICANT,
+        cooldown_days=30,
+    )
+    assert spent.allowed is False, "the grant forgave one rejection, not all of them"
+
+
+# ===========================================================================
+# Reopening adopts the CV the reapplication was submitted with
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_reopening_adopts_the_new_cv_so_erasure_can_find_it() -> None:
+    """One person is enrolled into an opening once, so enrol_applicant returns
+    the rejected row untouched and never stores the CV this request uploaded.
+    Erasure collects resume objects by reading the columns that name them, so
+    an unadopted object has NO deletion path: a DPDP erasure completes and
+    leaves the candidate's CV in the bucket.
+    """
+    from app import reapplication
+
+    db = AsyncMock()
+    with (
+        patch.object(reapplication, "consume_override", AsyncMock()) as spent,
+        patch("app.requisitions.record_transition", AsyncMock(return_value="rejected")),
+    ):
+        await reapplication.reopen(
+            db,
+            enrolment_id=uuid.uuid4(),
+            company_id=uuid.uuid4(),
+            resume_s3_key="applicants/c/a-deadbeef.pdf",
+            spend_override=False,
+        )
+    sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
+    assert "applied_resume_s3_key = :k" in sql, "the new CV needs a column naming it"
+    params = [c.args[1] for c in db.execute.await_args_list if len(c.args) > 1]
+    assert any(p.get("k") == "applicants/c/a-deadbeef.pdf" for p in params)
+    spent.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reopening_does_not_release_a_key_that_still_names_an_object() -> None:
+    """For a first-time applicant `applied_resume_s3_key` and
+    `applicants.resume_s3_key` are the SAME object, so releasing the one this
+    replaces would destroy the person's own CV. It is left named."""
+    from app import reapplication
+
+    db = AsyncMock()
+    with patch(
+        "app.requisitions.record_transition", AsyncMock(return_value="rejected")
+    ):
+        await reapplication.reopen(
+            db,
+            enrolment_id=uuid.uuid4(),
+            company_id=uuid.uuid4(),
+            resume_s3_key="applicants/c/a-new.pdf",
+            spend_override=False,
+        )
+    sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
+    assert "scored_resume_s3_key = NULL" not in sql
+    assert "DELETE" not in sql.upper()

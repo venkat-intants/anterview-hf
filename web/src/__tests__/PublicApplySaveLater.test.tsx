@@ -146,5 +146,51 @@ describe('saving an application for later', () => {
     ).toBeInTheDocument();
     const link = screen.getByLabelText<HTMLInputElement>('Your resume link');
     expect(link.value).toContain('draft_tok_123456');
+    // ...and it SAYS the CV did not travel. This test used to stop at the line
+    // above, which did not merely fail to cover the silence — it codified it:
+    // the only failure case asserted that the unqualified success message
+    // appears. A person told "Saved" comes back expecting their CV to be there.
+    expect(
+      await screen.findByText(/Your CV did not upload/i),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the link even if the CV upload never finishes', async () => {
+    // The bus-stop case. The draft exists the moment startDraft returns, and
+    // the token is the only way back into it — so it goes on screen before a
+    // 5MB upload, not after. Rendering from the settled mutation meant a tab
+    // closed mid-upload left a draft holding their email, consent and CV, and
+    // a token they had never seen.
+    let release: (() => void) | undefined;
+    uploadDraftResume.mockImplementation(
+      () => new Promise<void>((resolve) => { release = resolve; }),
+    );
+    const user = userEvent.setup();
+    await fillToConsent(user);
+    await user.click(
+      screen.getByRole('checkbox', { name: /may store my name, email and CV/i }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Save and finish later' }));
+
+    const link = await screen.findByLabelText<HTMLInputElement>('Your resume link');
+    expect(link.value).toContain('draft_tok_123456');
+    expect(uploadDraftResume).toHaveBeenCalled();
+    release?.();
+  });
+
+  it('still carries the CV when saving the typed details fails', async () => {
+    // Two independent attempts, not one. They shared a try, so a transient
+    // failure on the cheap JSON save skipped the upload entirely — the cheap
+    // thing killed the one that costs a person real effort to reproduce.
+    saveDraft.mockRejectedValue(new Error('network'));
+    const user = userEvent.setup();
+    await fillToConsent(user);
+    await user.click(
+      screen.getByRole('checkbox', { name: /may store my name, email and CV/i }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Save and finish later' }));
+
+    await waitFor(() => expect(uploadDraftResume).toHaveBeenCalled());
+    expect(screen.queryByText(/Your CV did not upload/i)).not.toBeInTheDocument();
   });
 });

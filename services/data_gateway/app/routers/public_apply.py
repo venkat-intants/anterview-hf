@@ -78,9 +78,8 @@ from app.local_storage import LocalStorageError
 from app.models import Applicant
 from app.publishing import visible_sql
 from app.rate_limit import rate_limit
-from app.reapplication import check as cooldown_check
-from app.reapplication import consume_override
-from app.requisitions import record_transition
+from app.reapplication import gate as reapplication_gate
+from app.reapplication import reopen as reapplication_reopen
 from app.resume_details import extract_contact_details
 from app.routers.consent import _hash_value
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
@@ -981,7 +980,7 @@ async def submit_draft(
     existing = (
         await db.execute(
             text(
-                "SELECT a.id, e.id AS enrolment_id"
+                "SELECT a.id, e.id AS enrolment_id, e.status AS enrolment_status"
                 "  FROM applicants a"
                 "  LEFT JOIN enrolments e ON e.applicant_id = a.id"
                 "   AND e.requisition_id = :r AND e.deleted_at IS NULL"
@@ -993,7 +992,22 @@ async def submit_draft(
         )
     ).mappings().first()
 
-    if existing is not None and existing["enrolment_id"] is not None:
+    # The SAME gate the one-shot form uses. This route had its own copy of the
+    # decision and only the other copy was fixed, so a rejected candidate who
+    # had used "Save and finish later" was still told "we have your
+    # application": the cooldown never ran on this route, an override let
+    # nobody through, and the branch below was dead code for exactly the people
+    # it was written for. Two copies of one predicate is how it drifted.
+    gate = await reapplication_gate(
+        db,
+        requisition_id=requisition_id,
+        cooldown_days=req.get("reapply_cooldown_days"),
+        applicant_id=uuid.UUID(str(existing["id"])) if existing is not None else None,
+        enrolment_id=existing["enrolment_id"] if existing is not None else None,
+        enrolment_status=existing["enrolment_status"] if existing is not None else None,
+    )
+
+    if gate.already_applied:
         # Nothing adopts the uploaded CV on this branch: no Applicant is created
         # and no enrolment is made, so neither applicants.resume_s3_key nor
         # enrolments.applied_resume_s3_key ever comes to reference it. Every
@@ -1018,17 +1032,15 @@ async def submit_draft(
             message="You have already applied for this role. We have your application.",
         )
 
-    if existing is not None:
-        verdict = await cooldown_check(
-            db,
-            requisition_id=requisition_id,
-            applicant_id=uuid.UUID(str(existing["id"])),
-            cooldown_days=req.get("reapply_cooldown_days"),
+    if not gate.verdict.allowed:
+        log.info(
+            "public_apply.cooldown_blocked",
+            requisition_id=str(requisition_id),
+            until=gate.verdict.until.isoformat() if gate.verdict.until else None,
         )
-        if not verdict.allowed:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=verdict.message()
-            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=gate.verdict.message()
+        )
 
     applicant_id = uuid.UUID(str(existing["id"])) if existing is not None else uuid.uuid4()
     is_new_person = existing is None
@@ -1107,6 +1119,18 @@ async def submit_draft(
                 company_id=company_id,
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 answers=checked_answers,
+            )
+        # Same reopening as the one-shot route, for the same reasons: one
+        # person is enrolled into an opening once, so enrol_applicant above
+        # returned the REJECTED row untouched — the application stays rejected
+        # and the draft's CV is referenced by nobody — until this runs.
+        if gate.reapplying and outcome.enrolment_id:
+            await reapplication_reopen(
+                db,
+                enrolment_id=uuid.UUID(outcome.enrolment_id),
+                company_id=company_id,
+                resume_s3_key=row["resume_s3_key"],
+                spend_override=gate.spend_override,
             )
         # The draft's consent row hangs off the throwaway guest identity that
         # created it. Record it against the identity that owns the application
@@ -1411,16 +1435,19 @@ async def submit_application(
     # before reapplying, which no real rejection does; with the row gone this
     # branch missed and the cooldown ran. Found on 2026-09-27 by the first
     # browser test of this rule.
-    reapplying_after_rejection = (
-        existing is not None
-        and existing["enrolment_id"] is not None
-        and existing["enrolment_status"] == "rejected"
+    #
+    # Decided by reapplication.gate, which BOTH doors into an application share
+    # — this one and the saved-draft route below. They used to hold two
+    # hand-written copies of it and only one was fixed.
+    gate = await reapplication_gate(
+        db,
+        requisition_id=requisition_id,
+        cooldown_days=req.get("reapply_cooldown_days"),
+        applicant_id=uuid.UUID(str(existing["id"])) if existing is not None else None,
+        enrolment_id=existing["enrolment_id"] if existing is not None else None,
+        enrolment_status=existing["enrolment_status"] if existing is not None else None,
     )
-    if (
-        existing is not None
-        and existing["enrolment_id"] is not None
-        and not reapplying_after_rejection
-    ):
+    if gate.already_applied:
         return ApplicationOut(
             applicant_id="",
             enrolment_id=None,
@@ -1442,24 +1469,17 @@ async def submit_application(
     # ordering is the same one the consent and answer checks use, and for the
     # same stated reason: refusing after the upload would mean deleting a file
     # we had just written.
-    if existing is not None:
-        verdict = await cooldown_check(
-            db,
-            requisition_id=requisition_id,
-            applicant_id=uuid.UUID(str(existing["id"])),
-            cooldown_days=req.get("reapply_cooldown_days"),
+    if not gate.verdict.allowed:
+        log.info(
+            "public_apply.cooldown_blocked",
+            requisition_id=str(requisition_id),
+            until=gate.verdict.until.isoformat() if gate.verdict.until else None,
         )
-        if not verdict.allowed:
-            log.info(
-                "public_apply.cooldown_blocked",
-                requisition_id=str(requisition_id),
-                until=verdict.until.isoformat() if verdict.until else None,
-            )
-            # 409, not 403: nothing is wrong with their authority and nothing
-            # is wrong with the form. The state of the world says not yet, and
-            # the message carries the date so the refusal can be acted on.
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                                detail=verdict.message())
+        # 409, not 403: nothing is wrong with their authority and nothing is
+        # wrong with the form. The state of the world says not yet, and the
+        # message carries the date so the refusal can be acted on.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=gate.verdict.message())
 
     # ── Store ───────────────────────────────────────────────────────────────
     # An applicant already exists for this email (they applied to a DIFFERENT
@@ -1616,19 +1636,18 @@ async def submit_application(
         # enrol_applicant returns the REJECTED enrolment unchanged and the
         # application HR sees stays rejected. The ledger keeps the whole story
         # — the rejection, then this move back to new.
-        if reapplying_after_rejection and outcome.enrolment_id:
-            reopened = uuid.UUID(outcome.enrolment_id)
-            await record_transition(
+        if gate.reapplying and outcome.enrolment_id:
+            await reapplication_reopen(
                 db,
-                enrolment_id=reopened,
+                enrolment_id=uuid.UUID(outcome.enrolment_id),
                 company_id=company_id,
-                to_status="new",
-                actor_user_id=None,  # the candidate applied; nobody moved them
-                automated=True,
-                reason="applied again after a rejection",
+                # Adopted, or the object this request just wrote is referenced
+                # by nothing and erasure cannot find it.
+                resume_s3_key=s3_key,
+                # The grant forgave THIS rejection, and only if it is what let
+                # them through.
+                spend_override=gate.spend_override,
             )
-            # The grant forgave THIS rejection, not every future one.
-            await consume_override(db, enrolment_id=reopened)
 
         await db.commit()
     except IntegrityError:

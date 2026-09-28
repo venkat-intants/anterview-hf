@@ -150,9 +150,16 @@ async def consume_override(db: AsyncSession, *, enrolment_id: uuid.UUID) -> None
     that person from every future cooldown on this opening. An override
     forgives ONE rejection, which is what it was granted for.
 
-    Only the timestamp is cleared. Who granted it and why stay on the row —
-    they are the record of the last exception, and HR reading the application
-    later should be able to see it. The audit log has it either way.
+    Only the timestamp is cleared. Who granted it and why stay on the row, so
+    the exception is still on the record after it has been spent.
+
+    Be precise about where that record is readable, because this docstring
+    used to overstate it: NOTHING reads ``reapply_override_by_user_id`` or
+    ``reapply_override_reason`` — not a router, not a query, not a screen. They
+    are written here and in ``grant_override`` and read by nobody, so today the
+    only place HR can actually see a grant is the audit log. Surfacing them on
+    the applicant drawer is worth doing; until it is, do not let this claim be
+    read as more than "the columns hold it".
     """
     await db.execute(
         text(
@@ -161,3 +168,137 @@ async def consume_override(db: AsyncSession, *, enrolment_id: uuid.UUID) -> None
         ),
         {"i": enrolment_id},
     )
+
+
+@dataclass(frozen=True)
+class Gate:
+    """What the reapplication rule says about one incoming application.
+
+    ONE predicate, because there are TWO doors into an application — the
+    one-shot form (``POST /apply/{id}``) and a saved draft being finished
+    (``POST /apply/draft/submit``) — and they had two hand-written copies of
+    this decision. They drifted: the one-shot form was fixed so a rejected
+    candidate falls through to the cooldown, and the draft route was not, so
+    the same person was still told "we have your application" if they had used
+    "Save and finish later". Everything below is therefore decided here and
+    read by both.
+    """
+
+    #: Answer "we have your application" and stop. Not a refusal.
+    already_applied: bool
+    #: A rejected application is being made live again by a second attempt.
+    reapplying: bool
+    #: The cooldown's answer. ``allowed=True`` whenever it does not apply.
+    verdict: CooldownVerdict
+
+    @property
+    def spend_override(self) -> bool:
+        """Whether an override was actually what let this through.
+
+        Gated on the REASON, not merely on the reapplication succeeding.
+        ``check`` returns early with ``allowed=True`` when no cooldown is
+        configured and when the window has simply elapsed — neither of which
+        consults the grant. Spending it in those cases destroys an exception
+        somebody recorded, that nobody used, on an opening that may be given a
+        cooldown tomorrow.
+        """
+        return self.reapplying and self.verdict.reason == "override"
+
+
+async def gate(
+    db: AsyncSession,
+    *,
+    requisition_id: uuid.UUID,
+    cooldown_days: int | None,
+    applicant_id: uuid.UUID | None,
+    enrolment_id: uuid.UUID | None,
+    enrolment_status: str | None,
+) -> Gate:
+    """Decide what happens to an application from someone we may already hold.
+
+    The three arguments after ``cooldown_days`` are what the caller's own
+    lookup found for this email on this opening: no applicant, an applicant
+    with no application here, or an applicant with one and its status.
+    """
+    allowed = CooldownVerdict(allowed=True)
+    if applicant_id is None:
+        return Gate(already_applied=False, reapplying=False, verdict=allowed)
+
+    # A REJECTED application is not a live one, so the idempotent reply must
+    # not answer for it — that is what shadowed this whole rule.
+    reapplying = enrolment_id is not None and enrolment_status == "rejected"
+    if enrolment_id is not None and not reapplying:
+        return Gate(already_applied=True, reapplying=False, verdict=allowed)
+
+    verdict = await check(
+        db,
+        requisition_id=requisition_id,
+        applicant_id=applicant_id,
+        cooldown_days=cooldown_days,
+    )
+    return Gate(already_applied=False, reapplying=reapplying, verdict=verdict)
+
+
+async def reopen(
+    db: AsyncSession,
+    *,
+    enrolment_id: uuid.UUID,
+    company_id: uuid.UUID,
+    resume_s3_key: str | None,
+    spend_override: bool,
+) -> None:
+    """Make a rejected application live again for a second attempt.
+
+    Caller commits. Shared by both doors for the same reason ``gate`` is.
+
+    THE CV IS ADOPTED HERE, AND THAT IS NOT COSMETIC. One person is enrolled
+    into an opening once, so ``enrol_applicant`` finds the rejected row and
+    returns it untouched — which left the CV this application was just
+    submitted with referenced by nothing at all. Erasure collects a person's
+    resume objects by reading the columns that name them
+    (``applicants.resume_s3_key``, ``enrolments.applied_resume_s3_key`` and
+    ``scored_resume_s3_key``, ``application_drafts.resume_s3_key``); it does
+    not sweep the applicant prefix. So an unadopted object had no deletion
+    path: a DPDP erasure would complete and leave the candidate's CV in the
+    bucket. ``applied_resume_s3_key`` is the column whose documented meaning is
+    "the CV this application was SUBMITTED with", and on a second attempt that
+    is the new one.
+
+    The CV it replaces is NOT deleted. For a first-time applicant the same key
+    is also ``applicants.resume_s3_key``, so deleting it here would destroy the
+    person's own CV; leaving it keeps it named by that column and therefore
+    still reachable by erasure.
+
+    WHAT THIS DELIBERATELY DOES NOT DO IS RESCORE. The scorer reads
+    ``applicants.resume_text``, and the returning-applicant path refuses to
+    write that from an anonymous request — an unverified caller holding an
+    address could otherwise replace someone's CV and scores in a company's ATS.
+    So clearing ``ats_*`` here would not score the new CV; it would blank the
+    score and then refill it from the OLD text, which is churn that reads like
+    a rescore. The application therefore carries the first attempt's score, the
+    ledger entry below says a new CV arrived, and scoring a reapplication
+    properly needs a verified identity — see the note in the PH3 checklist.
+    """
+    # Imported here rather than at module scope: app.requisitions imports the
+    # workflow side of the world, and this module is imported by it.
+    from app.requisitions import record_transition  # noqa: PLC0415
+
+    await record_transition(
+        db,
+        enrolment_id=enrolment_id,
+        company_id=company_id,
+        to_status="new",
+        actor_user_id=None,  # the candidate applied; nobody moved them
+        automated=True,
+        reason="the candidate applied again after a rejection, with a new CV",
+    )
+    if resume_s3_key:
+        await db.execute(
+            text(
+                "UPDATE enrolments SET applied_resume_s3_key = :k, updated_at = now()"
+                " WHERE id = :i AND company_id = :c"
+            ),
+            {"k": resume_s3_key, "i": enrolment_id, "c": company_id},
+        )
+    if spend_override:
+        await consume_override(db, enrolment_id=enrolment_id)

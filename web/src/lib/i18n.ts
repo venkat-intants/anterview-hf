@@ -903,6 +903,8 @@ const en = {
       resumeLinkAria: 'Your resume link',
       savedAgainst:
         'We have also stored your progress against {{email}}. This link is the only way back in, so keep it somewhere safe.',
+      savedNoCv:
+        'Your CV did not upload, so you will need to add it again when you come back. Everything else was saved.',
       saving: 'Saving…',
       saveLater: 'Save and finish later',
       saveHint: 'We will give you a link that brings you back to this application.',
@@ -2066,6 +2068,8 @@ const hi = {
       resumeLinkAria: 'आपका पुनः शुरू करने का लिंक',
       savedAgainst:
         'हमने आपकी प्रगति {{email}} के विरुद्ध भी सहेज ली है। वापस आने का यही एकमात्र रास्ता है, इसलिए इसे सुरक्षित रखें।',
+      savedNoCv:
+        'आपका CV अपलोड नहीं हो सका, इसलिए वापस आने पर आपको इसे दोबारा जोड़ना होगा। बाकी सब सहेज लिया गया है।',
       saving: 'सहेजा जा रहा है…',
       saveLater: 'सहेजें और बाद में पूरा करें',
       saveHint: 'हम आपको एक लिंक देंगे जो आपको इसी आवेदन पर वापस लाएगा।',
@@ -3185,6 +3189,8 @@ const te = {
       resumeLinkAria: 'మీ తిరిగి ప్రారంభించే లింక్',
       savedAgainst:
         'మీ పురోగతిని {{email}} కింద కూడా భద్రపరిచాం. తిరిగి రావడానికి ఇదే ఏకైక మార్గం, కాబట్టి దీన్ని సురక్షితంగా ఉంచుకోండి.',
+      savedNoCv:
+        'మీ CV అప్‌లోడ్ కాలేదు, కాబట్టి తిరిగి వచ్చినప్పుడు దాన్ని మళ్లీ జోడించాలి. మిగతావన్నీ భద్రపరచబడ్డాయి.',
       saving: 'భద్రపరుస్తున్నాం…',
       saveLater: 'భద్రపరిచి తర్వాత పూర్తి చేయండి',
       saveHint: 'ఈ దరఖాస్తుకు మిమ్మల్ని తిరిగి తీసుకొచ్చే లింక్‌ను మేము ఇస్తాం.',

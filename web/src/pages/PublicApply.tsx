@@ -38,6 +38,7 @@ import {
   submitApplication,
   type ApplicationResult,
   type AnswerValue,
+  type DraftStarted,
   type Posting,
   type PostingQuestion,
 } from '@/api/publicApply';
@@ -593,6 +594,11 @@ export default function PublicApply(): JSX.Element {
   // D5-1's "opt-in" rules out. Getting this wrong (joining the gate, or
   // defaulting it true) would be the worst outcome this screen could ship.
   const [rediscoveryConsent, setRediscoveryConsent] = useState(false);
+  // The saved draft, held here rather than read from `saveLater.data`, so the
+  // link appears the moment the draft exists instead of when the CV upload
+  // after it finishes. See the mutation below.
+  const [savedDraft, setSavedDraft] = useState<DraftStarted | null>(null);
+  const [cvCarried, setCvCarried] = useState(true);
   // The language of the emails this application sends — EN, HI or TE.
   const [language, setLanguage] = useState<'en' | 'hi' | 'te'>('en');
   // Step two. All optional — see STEPS below for why the step exists at all.
@@ -664,17 +670,25 @@ export default function PublicApply(): JSX.Element {
         src: posting.data?.source,
       });
 
-      // Carry over what they have already given us. Starting a draft only
-      // records who they are and that they agreed; without this the person
-      // comes back to a form they have to fill in again — their name gone,
-      // their CV gone — which is not "continue where you left off", and is
-      // exactly what somebody saving on a phone at a bus stop cannot afford
-      // to redo.
+      // SHOW THE LINK NOW. The draft exists from this line onwards and the
+      // token is the only way back into it, so it goes on screen before the
+      // carry-over below rather than after: the carry-over uploads a CV of up
+      // to 5 MB, and a person saving on a phone at a bus stop is exactly the
+      // person who closes the tab during it. Waiting for the whole mutation to
+      // resolve meant that tab closed with a draft on the server holding their
+      // email, their consent and their CV — and a token they had never seen.
+      setSavedDraft(draft);
+
+      // Carry over what they have already given us. Starting a draft records
+      // only who they are and that they agreed; without this the person comes
+      // back to a form they have to fill in again — their name gone, their CV
+      // gone — which is not "continue where you left off".
       //
-      // Best effort, deliberately: the draft EXISTS by this point and its link
-      // is the only way back to it, so a failure here must still show them the
-      // link. Losing a typed name is a papercut; losing the draft is the
-      // application.
+      // TWO independent attempts, not one. They used to share a try, so a
+      // transient failure on the cheap JSON save skipped the CV upload
+      // entirely: the cheap thing killed the valuable one. The CV is the part
+      // that costs a person real effort to produce again.
+      let cvCarried = !resume;
       try {
         await saveDraft(draft.resume_token, {
           full_name: fullName.trim() || null,
@@ -687,11 +701,20 @@ export default function PublicApply(): JSX.Element {
           language,
           answers,
         });
-        if (resume) await uploadDraftResume(draft.resume_token, resume);
       } catch {
-        // Nothing to say here: the draft is safe and the link is about to be
-        // shown. What did not carry over is asked for again on the draft page.
+        // The typed details are asked for again on the draft page, under
+        // "Check your details", so this one is genuinely recoverable in place.
       }
+      try {
+        if (resume) {
+          await uploadDraftResume(draft.resume_token, resume);
+          cvCarried = true;
+        }
+      } catch {
+        // Not silent. "Saved" while their CV did not travel is a promise the
+        // page cannot keep — they would come back expecting it to be there.
+      }
+      setCvCarried(cvCarried);
       return draft;
     },
   });
@@ -1223,7 +1246,7 @@ export default function PublicApply(): JSX.Element {
               when consent is missing — it is visible and inert, so the reason
               it cannot be pressed is the checkbox directly above it. */}
           <div className="rounded-[12px] border border-border p-3">
-            {saveLater.data ? (
+            {savedDraft ? (
               <>
                 <p className="text-[12.5px] font-medium text-[var(--ui-text)]">
                   {t('apply.savedTitle')}
@@ -1231,13 +1254,21 @@ export default function PublicApply(): JSX.Element {
                 <input
                   readOnly
                   aria-label={t('apply.resumeLinkAria')}
-                  value={`${window.location.origin}/apply/draft#${saveLater.data.resume_token}`}
+                  value={`${window.location.origin}/apply/draft#${savedDraft.resume_token}`}
                   onFocus={(e) => e.currentTarget.select()}
                   className="mt-2 w-full rounded-[10px] border border-border bg-transparent px-2.5 py-2 text-[12px] text-[var(--ui-soft)]"
                 />
                 <p className="mt-1.5 text-[11.5px] text-[var(--ui-soft)]">
                   {t('apply.savedAgainst', { email: email.trim() })}
                 </p>
+                {/* Said out loud. "Saved" while the CV did not travel is a
+                    promise this page cannot keep — they would come back
+                    expecting to find it there. */}
+                {!cvCarried ? (
+                  <p className="mt-1.5 text-[11.5px] text-[var(--ui-warn)]">
+                    {t('apply.savedNoCv')}
+                  </p>
+                ) : null}
               </>
             ) : (
               <>

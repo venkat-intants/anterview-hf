@@ -116,6 +116,13 @@ export default function GovernancePanel({ requisition }: { requisition: Requisit
   function refresh(): void {
     void client.invalidateQueries({ queryKey: ['hr', 'requisition', requisition.id] });
     void client.invalidateQueries({ queryKey: ['publish-schedule', requisition.id] });
+    // The opening's own row is not the only screen that shows what changed:
+    // approving it, or renaming it, moves the openings LIST and the opening's
+    // dashboard too. DecisionQueue and RequisitionDashboard already invalidate
+    // all three together; this panel invalidated one, so the same staleness
+    // bug just moved one screen over.
+    void client.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
+    void client.invalidateQueries({ queryKey: ['hr', 'requisition-dashboard'] });
   }
 
   const saveBudget = useMutation({
@@ -132,6 +139,7 @@ export default function GovernancePanel({ requisition }: { requisition: Requisit
       }),
     onSuccess: (updated) => {
       client.setQueryData(['hr', 'requisition', requisition.id], updated);
+      refresh();
       toast.success('Budget saved.');
     },
     onError: (e: unknown) =>
@@ -145,6 +153,7 @@ export default function GovernancePanel({ requisition }: { requisition: Requisit
       }),
     onSuccess: (updated) => {
       client.setQueryData(['hr', 'requisition', requisition.id], updated);
+      refresh();
       toast.success(
         updated.reapply_cooldown_days == null
           ? 'Rejected candidates may reapply at any time.'

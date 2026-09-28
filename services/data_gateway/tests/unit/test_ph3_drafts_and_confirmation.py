@@ -541,7 +541,7 @@ def test_submission_applies_the_rules_a_draft_was_excused() -> None:
     src = inspect.getsource(submit_draft)
     assert "_open_posting" in src          # still live?
     assert "validate_answers" in src        # required questions answered?
-    assert "cooldown_check" in src          # cooldown passed?
+    assert "reapplication_gate" in src      # cooldown passed? (shared, not a copy)
 
 
 # ===========================================================================
@@ -842,7 +842,10 @@ def test_submit_reuses_the_drafts_key_rather_than_copying_it() -> None:
     from app.routers.public_apply import submit_draft
 
     src = inspect.getsource(submit_draft)
-    assert src.count('resume_s3_key=row["resume_s3_key"]') == 2
+    # Three now: the Applicant, enrol_applicant, and the reopen that adopts
+    # it onto a reapplication's enrolment. All the SAME key — the point of this
+    # test is that nothing copies the object.
+    assert src.count('resume_s3_key=row["resume_s3_key"]') == 3
 
 
 # ===========================================================================
@@ -953,7 +956,7 @@ def test_the_already_applied_branch_deletes_the_object_it_released() -> None:
     from app.routers.public_apply import submit_draft
 
     src = inspect.getsource(submit_draft)
-    branch = src[src.index('existing["enrolment_id"] is not None'):]
+    branch = src[src.index("if gate.already_applied:"):]
     branch = branch[: branch.index("return ApplicationOut")]
     assert "release_resume=True" in branch
     assert "_delete_from_s3" in branch

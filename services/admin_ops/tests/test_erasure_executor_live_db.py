@@ -63,9 +63,16 @@ through the SAME session to assert — real rows, real constraints, not a
 mock's memory of what it was asked to run.
 
 ``pytestmark = pytest.mark.integration`` — CI's ``-m "not integration"`` unit
-leg skips this file, exactly like data_gateway's DB-backed tests. See this
-file's own comment further down, and the task report, for whether any CI leg
-runs it WITH that marker — as of this writing, none does for admin_ops.
+leg skips this file, exactly like data_gateway's DB-backed tests. It IS run in
+CI, by the dedicated ``erasure-live`` job in ``.github/workflows/ci.yml``: it
+installs BOTH services' requirements (the schema lives in data_gateway, the
+code under test in admin_ops), migrates, and runs this file with
+``-m integration``. That job gates ``ci-ok`` like every other.
+
+This paragraph previously said no CI leg ran it for admin_ops. That was true
+when the file was written and stopped being true later in the same wave, when
+the ``erasure-live`` job landed. Caught by the security review — and exactly
+the kind of claim ``CLAUDE.md`` calls a defect rather than untidiness.
 """
 
 from __future__ import annotations

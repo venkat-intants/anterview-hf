@@ -34,7 +34,7 @@ from typing import Annotated
 import structlog
 from fastapi import APIRouter, Cookie, Header, HTTPException, Response, status
 from pydantic import BaseModel
-from shared.auth.jwt import issue_access_token
+from shared.auth.jwt import issue_access_token, resolve_signing_key
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -141,14 +141,16 @@ def _issue_guest_token(
 ) -> RedeemOut:
     """Mint the short-lived guest token (role guest_candidate ONLY, session_id-bound)
     and assemble the redeem response. Shared by the first-start and reconnect paths."""
+    algorithm, key, kid = resolve_signing_key(settings)
     access_token = issue_access_token(
         str(guest_user_id),
         ["guest_candidate"],
-        settings.jwt_secret,
-        algorithm=settings.jwt_algorithm,
+        key,
+        algorithm=algorithm,
         issuer=settings.jwt_issuer,
         audience=settings.jwt_audience,
         extra_claims={"session_id": str(session_id)},
+        kid=kid,
     )
     log.info(
         "interview.invite.redeemed",

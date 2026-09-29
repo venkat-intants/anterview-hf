@@ -94,9 +94,9 @@ a commercial contract.
 | | |
 |---|---|
 | **Source finding** | SEC-2 (MEDIUM / CONSIDER), with SEC-1 (no `kid`, no rotation) as its sibling |
-| **Status** | **ACCEPTED for the demo tier — asymmetric signing is the Tier-2 answer** |
+| **Status** | **CAPABILITY SHIPPED 2026-09-28, NOT YET LIVE ANYWHERE — asymmetric signing exists in code; every current deployment still signs HS256, and one HS256 signer outside `data_gateway` remains by design (see addendum)** |
 | **Owner** | `security-auditor`, with `cto-architect` on the key-management design |
-| **Trigger to revisit** | Any of: (a) a fifth service or any third-party integration needing to *verify* our tokens — verification would hand them signing power; (b) the first real `JWT_SECRET` exposure or suspected exposure; (c) Tier-2 migration; (d) any customer contract with a key-management or key-rotation clause |
+| **Trigger to revisit** | Any of: (a) a fifth service or any third-party integration needing to *verify* our tokens — verification would hand them signing power; (b) the first real `JWT_SECRET` exposure or suspected exposure; (c) Tier-2 migration; (d) any customer contract with a key-management or key-rotation clause; (e) the RS256 rollout below actually being run against a deployment — this entry stays open until it is |
 
 **The decision.** All four services plus the LiveKit worker share one HS256
 `JWT_SECRET` (`shared/auth/jwt.py`). Under HS256 the verification key *is* the
@@ -129,6 +129,56 @@ into a procedure.
 private key and is the only signer; the other services and the worker verify
 with the public key only. That makes compromising `admin_ops` unable to mint
 anything, which is the actual goal.
+
+**2026-09-28 addendum — the capability now exists; nothing has adopted it yet.**
+`shared/auth/jwt.py` gained RS256 issue/verify (EdDSA was the first choice but
+`python-jose==3.5.0` as pinned has no `EdDSA` member in `jose.constants.
+ALGORITHMS` — verified against the installed package, not assumed — so RS256
+is what this dependency actually supports), a `kid` header, and
+`VerificationKey` so a verifier can hold several public keys and a caller can
+hold both an HS256 secret and RS256 keys at once. `data_gateway`'s `Settings` gained
+`jwt_signing_algorithm` / `jwt_private_key` / `jwt_active_kid`; the other three
+services' `Settings` classes gained `jwt_verify_algorithms` / `jwt_public_keys`
+and NOTHING ELSE — no `jwt_private_key` field exists on them at all, and
+`shared.security.forbid_private_signing_key` refuses to boot any of them if one
+reaches their environment anyway (no environment exemption — it is wrong in
+dev too). `scripts/generate_jwt_rsa_keypair.py` generates a keypair and prints
+every setting an operator needs, in rollout order.
+
+**What this addendum does NOT claim.**
+* **Nothing is deployed this way.** Every default is HS256-only
+  (`JWT_SIGNING_ALGORITHM=HS256`, `JWT_VERIFY_ALGORITHMS=HS256`), so a
+  deployment that sets none of the new variables is byte-for-byte today's
+  behaviour. Turning RS256 on is a 4-step operator rollout (public keys +
+  dual-verify everywhere, THEN cut the issuer over, THEN wait out the token
+  TTL, THEN drop HS256 — see `shared/auth/jwt.py`'s module docstring) that has
+  not been run against any real environment.
+* **The HF Space demo deployment cannot safely turn this on as it stands.**
+  `space/entrypoint.sh` `export`s one shared environment into all four
+  supervisord-managed processes in a single container — there is no
+  per-service `.env` split the way the Railway/VM deploy has. Setting
+  `JWT_PRIVATE_KEY` in `space.env` hands it to all four processes, and
+  `forbid_private_signing_key` will then refuse to boot the three that must
+  never hold it. That guard doing its job, not a bug, but it means the Space
+  needs an `entrypoint.sh` change (scope `JWT_PRIVATE_KEY` to the
+  `data_gateway` process only) before RS256 can be turned on there — devops
+  work, not done as part of this change.
+* **One HS256 signer outside `data_gateway` remains, unchanged, by design.**
+  `interview_core`'s worker (`_mint_service_jwt` in
+  `app/worker/interview_worker.py`) still self-signs a `sub="interview_core",
+  roles=["service"]` token with the shared `JWT_SECRET` to call
+  `feedback_billing`'s `/internal/score` directly — this is precisely the
+  AR-2 exposure, for that one call path, and it is not this change's doing to
+  leave it but it is this change's job to say so plainly: closing it needs
+  `interview_core` to obtain a signed token from `data_gateway` instead of
+  minting one itself (a new internal RPC — endpoint, auth for it, client,
+  tests), which is materially larger than a JWT-library change and was judged
+  out of scope here. The functional fallback already exists independently of
+  this decision: `data_gateway`'s own reconciler retries a `/internal/score`
+  call that failed for any reason, so once HS256 is fully retired platform-
+  wide this one path degrades to "scored via the reconciler, not immediately"
+  rather than breaking outright — but the security exposure this paragraph
+  describes is real until either HS256 retires or this path is redesigned.
 
 ---
 
@@ -285,8 +335,9 @@ untouched everywhere — only the prose a person wrote is gone.
 own words about the candidate — outside this entry's scope, both before and
 after this fix, and unchanged by it. `corpus_chunks.content` (AR-8) is a
 different, structurally distinct gap: text an HR manager pasted into a company
-document that this executor has no key to find, let alone redact. Nothing in
-this fix touches either.
+document that this executor has no key to join on, so a match can only ever be
+found (since 2026-09-28) by a subject-specific name search and reported to a
+human — never redacted automatically. Nothing in this fix touches either.
 
 **PH5-E3 (talent pools) is unaffected, and was never part of this gap.**
 `talent_pool_events` is append-only, on the `task_events` / `document_events`
@@ -444,28 +495,54 @@ regardless.
 
 ---
 
-## AR-8 — DPDP erasure cannot reach a candidate's name inside an HR-uploaded document
+## AR-8 — DPDP erasure can now flag, but still cannot remove, a candidate's name inside an HR-uploaded document
 
 | | |
 |---|---|
 | **Source finding** | PH5 Wave 3 (E2 — document corpus RAG), 2026-09-23 |
-| **Status** | **ACCEPTED — mitigated by attestation, default audience and immediate purge on delete, not solved** |
+| **Status** | **ACCEPTED — NARROWED 2026-09-28 (detection added), still not solved.** Erasure now searches for and reports a name match; it still cannot remove one. |
 | **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` reviews when a trigger fires. |
-| **Trigger to revisit** | Any of: (a) a customer or bid requiring erasure to reach text inside uploaded documents; (b) a corpus document found to contain candidate data; (c) any feature that auto-ingests candidate-derived content into the corpus |
+| **Trigger to revisit** | Any of: (a) a customer or bid requiring erasure to REMOVE text inside uploaded documents, not merely flag it; (b) a corpus document confirmed (by the new detection, or otherwise) to contain candidate data; (c) any feature that auto-ingests candidate-derived content into the corpus |
 
-**The decision.** PH5-E2 gives a company's HR managers and super admins a
-document library the staff copilot can search — policies, handbooks, process
-notes. `corpus_chunks.content` is free text extracted from whatever they
-upload, and there is no key from an applicant row to a chunk of that text: not
-a foreign key, not a shared identifier, nothing an erasure executor could join
-on. **If an uploader pasted a real candidate's name into a document — a
-worked example in a training handbook, an old memo copied in whole — this
-platform cannot find it and cannot erase it.** That is a real limit, not a
-gap to be quietly designed around, and `services/admin_ops/app/
-erasure_executor.py::EXCLUDED_TABLES` says so for all four corpus tables
-rather than presenting the inventory as complete.
+**The decision, unchanged since Wave 3.** PH5-E2 gives a company's HR
+managers and super admins a document library the staff copilot can search —
+policies, handbooks, process notes. `corpus_chunks.content` is free text
+extracted from whatever they upload, and there is no key from an applicant row
+to a chunk of that text: not a foreign key, not a shared identifier, nothing
+an erasure executor could join on to find it, let alone remove it. **If an
+uploader pasted a real candidate's name into a document — a worked example in
+a training handbook, an old memo copied in whole — this platform still cannot
+ERASE it.** That is a real limit, not a gap to be quietly designed around, and
+`services/admin_ops/app/erasure_executor.py::EXCLUDED_TABLES` says so for all
+four corpus tables rather than presenting the inventory as complete.
 
-**What exists instead — real controls, none of them detection:**
+**What changed 2026-09-28 — detection, not removal.** Before step 6 redacts
+`applicants.full_name`, the erasure executor now runs a best-effort search
+(`erasure_executor.py::_scan_corpus_and_notify`, step 5m) for the erasure
+subject's own on-file name, scoped to the companies that subject actually has
+an `applicants` row with — never a scan of every tenant's library for one
+person's name. The search is the same full-text mechanism
+`app/corpus.py::search_corpus` already uses (`to_tsvector`/`plainto_tsquery`
+over `corpus_chunks.content`), so it needs no new index and no new capability
+over what retrieval already does — it is a differently-scoped READ of the same
+column. A hit:
+- is recorded on the erasure's `artifacts` as **facts only** — document id,
+  version, chunk count, company id — and the matched text is never read into
+  that record, never logged, never quoted anywhere;
+- raises one notification (`notifications.kind = "corpus_review_needed"`) per
+  document to every staff member of that company who could read it
+  (`hr_manager` always; `super_admin` too, unless the document is `hr_only`,
+  which a `super_admin` could not open anyway), naming the document by its
+  own title and linking to it, never quoting the matched passage;
+- changes nothing else. Nothing is deleted, redacted, or even opened by the
+  system on the strength of a match — a human decides.
+The scan runs inside its own database SAVEPOINT and swallows any failure
+(logged, not raised): a scan that cannot complete costs the erasure a finding,
+never its completion, and a corpus hit is information, not grounds to fail or
+delay the erasure itself.
+
+**What exists instead — the pre-existing controls, none of them detection
+until now:**
 
 - **An upload-time attestation.** The upload dialog requires HR to confirm
   "This is a company document, not a record about a candidate" before the
@@ -486,27 +563,46 @@ rather than presenting the inventory as complete.
   grace window — so a document uploaded in error can be fully gone within
   seconds of HR noticing, rather than waiting out a retention clock. Stated
   explicitly because the limit above is about TEXT an erasure executor cannot
-  search; the original file is a second copy of exactly the same risk, and
-  the purge control covers both, not only the searchable copy.
+  reach unprompted; the original file is a second copy of exactly the same
+  risk, and the purge control covers both, not only the searchable copy.
 - **A `super_admin` can never create or read back an `hr_only` document**
   (design decision Q3) — narrowing who could have put candidate-shaped text
   in front of the widest company-level audience in the first place.
 
-**What is NOT true.** It is not true that the corpus is scanned, sampled or
-otherwise checked for candidate-identifying content, at upload or ever. It is
-not true that `hr_only` limits WHAT can be uploaded — only who can later read
-it. And the structural claim this wave is entitled to make is that **a
-retrieved document cannot change system behaviour** (no write tool exists for
-a document to steer); it is emphatically not entitled to claim that **a
-retrieved document cannot influence the model's prose** — see
-`shared/agents/guardrails.py` and `app/corpus.py::detect_injection` usage,
-which reports an injection attempt rather than claiming to neutralise it.
+**What is still NOT true, even after the narrowing.** It is not true that a
+scan runs at upload — detection is triggered only by an erasure request, for
+that one subject's own name, never a proactive check of what a document
+contains when it is uploaded. It is not true that the scan reaches every
+candidate — only someone who is later the SUBJECT of a DPDP erasure request is
+ever searched for; nobody scans the corpus for candidates who never request
+erasure. It is not true that a scanned PDF with no extracted text is covered
+— the search runs over `corpus_chunks.content`, which is empty for exactly the
+documents `no_text` already refuses at upload; there was never anything to
+search there. It is not true that a name spelled, transliterated, abbreviated
+or given as a nickname differently from the one on the subject's own
+`applicants` row will be found — this is a literal, stemmed full-text match,
+not semantic or fuzzy. It is not true that the ORIGINAL FILE in object storage
+is reached — the search only ever touches the already-extracted, already-
+chunked text sitting in Postgres, never the stored object. It is not true that
+a company the subject has no `applicants` row with is searched — if a guest
+application was never linked to the subject's account, that company's corpus
+is not scoped in, even if it does hold text about them. And the pre-existing
+structural claim still stands unchanged: **a retrieved document cannot change
+system behaviour** (no write tool exists for a document to steer); it is still
+not entitled to claim that **a retrieved document cannot influence the
+model's prose** — see `shared/agents/guardrails.py` and
+`app/corpus.py::detect_injection` usage, which reports an injection attempt
+rather than claiming to neutralise it.
 
-**Path to closure.** Table-stakes if this ever needs closing: a client-side
-PII scanner over extracted text at upload (report, do not block, on the
-steering-resume precedent), and/or a documented process for HR to attest
-per-document that it contains no third-party personal data, reviewed
-periodically. Neither is built this wave.
+**Path to closure — unchanged, and detection does not shorten it.** Table-
+stakes if this ever needs closing: a client-side PII scanner over extracted
+text AT UPLOAD (report, do not block, on the steering-resume precedent, and
+broader than today's erasure-triggered, subject-specific search), and/or a
+documented process for HR to attest per-document that it contains no
+third-party personal data, reviewed periodically, and/or a way to actually
+REMOVE a confirmed match from a document's text rather than only ever
+flagging it for a human to edit or delete the whole document by hand. None of
+these is built.
 
 ---
 
@@ -515,10 +611,10 @@ periodically. Neither is built this wave.
 | ID | Risk | Source | Owner | Fires when |
 |---|---|---|---|---|
 | **AR-1** | Demo tier is not India-resident | DPDP-3 | `platform_owner` | Residency-asserting bid, or Bedrock Mumbai approval |
-| **AR-2** | One shared HS256 secret across five processes | SEC-2 / SEC-1 | `security-auditor` | Fifth verifier, secret exposure, or Tier-2 |
+| **AR-2** | **PARTIAL 2026-09-28** — RS256 capability shipped, HS256-only in every live deployment, one HS256 signer outside data_gateway remains by design | SEC-2 / SEC-1 | `security-auditor` | Fifth verifier, secret exposure, Tier-2, or the rollout actually being run |
 | **AR-3** | Candidate code executes on JDoodle | AG-05 | `platform_owner` | Residency bid, confidential-IP customer, or free-tier exhaustion |
 | **AR-4** | No production avatar gate; `custom` unimplemented | AG-06 residue | `cto-architect` | Production `APP_ENV`, residency bid, or 2026-11-28 sunset review |
 | **AR-5** | **CLOSED 2026-09-26** — decision rationale, ledger reason and three related fields are now redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | — (fixed; kept for citations, see the entry) |
 | **AR-6** | Preboarding documents, task artifacts, materials and the corpus are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4, PH5-E2 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
-| **AR-8** | DPDP erasure cannot reach a candidate's name inside an HR-uploaded corpus document | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents requirement, a corpus document found to contain candidate data, or auto-ingested candidate content |
+| **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |

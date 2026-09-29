@@ -43,6 +43,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from shared.auth.jwt import (
     USER_TOKEN_EPOCH_PREFIX,
+    build_verification_keys,
     is_token_revoked,
     verify_access_token,
 )
@@ -107,8 +108,8 @@ async def require_jwt(
     try:
         payload = verify_access_token(
             credentials.credentials,
-            secret=_app_settings.jwt_secret,
-            algorithm=_app_settings.jwt_algorithm,
+            build_verification_keys(_app_settings),
+            algorithm="HS256",
             expected_issuer=_app_settings.jwt_issuer,
             expected_audience=_app_settings.jwt_audience,
         )

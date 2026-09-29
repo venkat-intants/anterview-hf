@@ -51,7 +51,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from shared.auth.jwt import issue_access_token
+from shared.auth.jwt import issue_access_token, resolve_signing_key
 from shared.auth.local import mint_refresh_session
 from sqlalchemy import bindparam as sa_bindparam
 from sqlalchemy import text
@@ -686,13 +686,15 @@ async def callback(
     # ------------------------------------------------------------------
     # Step 6: Issue AntHire JWT (candidate-only)
     # ------------------------------------------------------------------
+    _algorithm, _key, _kid = resolve_signing_key(settings)
     intants_jwt = issue_access_token(
         user_id=str(final_user_id),
         roles=["candidate"],
-        secret=settings.jwt_secret,
-        algorithm=settings.jwt_algorithm,
+        secret=_key,
+        algorithm=_algorithm,
         issuer=settings.jwt_issuer,
         audience=settings.jwt_audience,
+        kid=_kid,
     )
 
     # ------------------------------------------------------------------

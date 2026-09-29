@@ -41,6 +41,7 @@ const VERDICT: PanelVerdict = {
           locator: null,
         },
       ],
+      citation_state: 'sourced',
     },
     {
       signal: 'exam',
@@ -51,6 +52,7 @@ const VERDICT: PanelVerdict = {
       concerns: [],
       evidence: [],
       citations: [],
+      citation_state: 'unread',
     },
   ],
   contradictions: [],
@@ -93,5 +95,47 @@ describe('CandidatePanel — citations', () => {
     expect(await screen.findByText('Not taken yet')).toBeInTheDocument();
     // Only the one citation from the resume signal, none from the exam row.
     expect(screen.getAllByRole('link')).toHaveLength(1);
+  });
+
+  // ---------------------------------------------------------------------
+  // PH5-E1 criteria 4/5 — the per-signal citation-state banner. CandidatePanel
+  // is one of the five surfaces required to carry it.
+  // ---------------------------------------------------------------------
+  it('shows the sourced banner under an available signal that cites its evidence', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Run assessment/ }));
+
+    expect(
+      await screen.findByText(/Answered from your records\. Claims marked/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no banner at all under a signal that has not been taken', async () => {
+    // There is no narrative to caution about — "Not taken yet" is the whole
+    // row — so a banner here would be noise, not a caution.
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Run assessment/ }));
+
+    await screen.findByText('Not taken yet');
+    expect(screen.queryByText(/No records were read for this answer/)).not.toBeInTheDocument();
+  });
+
+  it('renders the unattributed caution when the server says so', async () => {
+    // Structurally unreachable from the real panel today (a specialist sees
+    // exactly one source, so there is no per-claim ambiguity) — this pins the
+    // RENDERING contract, not that today's panel can reach it.
+    assessCandidate.mockResolvedValue({
+      ...VERDICT,
+      signals: [{ ...VERDICT.signals[0], citation_state: 'unattributed' }],
+    });
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Run assessment/ }));
+
+    expect(
+      await screen.findByText(/Records were read for this answer, but no claim in it/),
+    ).toBeInTheDocument();
   });
 });

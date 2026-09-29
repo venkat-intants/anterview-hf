@@ -54,6 +54,7 @@ from shared.agents.schema import (
     CITATION_ROUTES,
     CITATION_VIEWS,
     CitationKind,
+    CitationState,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -66,6 +67,13 @@ def _ts_citation_kinds() -> set[str]:
     # the closing `;` and pull every single-quoted literal out of it.
     match = re.search(r"export interface Citation \{.*?kind:\s*(.*?);", src, re.DOTALL)
     assert match is not None, "Citation.kind union not found in agent.ts"
+    return set(re.findall(r"'([a-z_]+)'", match.group(1)))
+
+
+def _ts_citation_states() -> set[str]:
+    src = AGENT_TS.read_text(encoding="utf-8")
+    match = re.search(r"export type CitationState = (.*?);", src)
+    assert match is not None, "CitationState union not found in agent.ts"
     return set(re.findall(r"'([a-z_]+)'", match.group(1)))
 
 
@@ -88,6 +96,20 @@ def test_citation_kind_matches_the_typescript_union() -> None:
     assert python_kinds == ts_kinds, (
         f"CitationKind (Python) and Citation.kind (TS) have drifted: "
         f"python only={python_kinds - ts_kinds}, ts only={ts_kinds - python_kinds}"
+    )
+
+
+def test_citation_state_matches_the_typescript_union() -> None:
+    """PH5-E1 criteria 4/5's three-way banner state — same closed vocabulary on
+    both sides, the same reason ``CitationKind`` is diffed above: a value added
+    to one and not the other would surface only as a banner rendering nothing,
+    or an unrecognised state falling through to a default, never as a build
+    failure."""
+    python_states = set(typing.get_args(CitationState))
+    ts_states = _ts_citation_states()
+    assert python_states == ts_states, (
+        f"CitationState (Python) and CitationState (TS) have drifted: "
+        f"python only={python_states - ts_states}, ts only={ts_states - python_states}"
     )
 
 

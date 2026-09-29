@@ -48,8 +48,9 @@ For each claimed request (one at a time, SKIP LOCKED) it:
      applicant semantically searchable via GET /hr/applicants?q=.
      Step 5k (PH5-E3) runs immediately before this one and MUST: it
      hard-deletes talent_pool_members keyed on applicants.user_id, which
-     this step then NULLs. Step 5l (AR-5) runs immediately before 5k, for the
-     same reason.
+     this step then NULLs. Step 5l (AR-5) and step 5m (AR-8) both run before
+     5k, for the same reason — all three read something step 6 is about to
+     null or redact.
   5l. AR-5, closed. Redacts the free text a PERSON wrote about this candidate
      everywhere it survived erasure: ``enrolments.held_reason`` and
      ``reapply_override_reason``; a human_review round's verdict note
@@ -63,6 +64,22 @@ For each claimed request (one at a time, SKIP LOCKED) it:
      ``audit_log`` are append-only; migration ``f2a4c6e8b0d3`` gives each
      trigger one narrow, structurally-enforced exception for exactly this
      shape.
+  5m. AR-8 narrowing (PH5-E2 criterion 13), detection only. Before
+     ``applicants.full_name`` is redacted, searches the document corpus of
+     every company this subject actually has an applicant row with — never
+     every tenant — for that company's on-file name, using the same
+     full-text index ``app/corpus.py::search_corpus`` already reads. A hit
+     changes nothing about the document: it is recorded in the artifacts as
+     FACTS ONLY (document id, version, chunk count, company — never the
+     matched text) and a notification naming the document is sent to the
+     company's staff who could read it, so a human decides what to do.
+     Runs inside its own SAVEPOINT (``_scan_corpus_and_notify``): a failure
+     here is logged and swallowed, never left to roll back or delay the
+     mandatory steps below — a corpus hit, or a failure to find one, is
+     information, not a completion criterion. Still does not erase anything
+     from the corpus (AR-8 remains open, narrowed rather than closed) and
+     still cannot reach a document with no extracted text, the original file
+     object, or a name spelled differently from the one on file.
   7. Anonymises users columns in-place:
        email        → 'erased_{user_id}@deleted.invalid'
        full_name    → '[redacted]'
@@ -573,20 +590,32 @@ EXCLUDED_TABLES: dict[str, str] = {
     # --- PH5-E2: the document corpus (company reference library) -----------
     # The judgement call this wave adds, so the reasoning is written out in
     # full rather than asserted, on the exam_assignments/enrolments precedent
-    # above of naming the limit rather than glossing over it. Recorded as
-    # ACCEPTED-RISKS AR-8 (owner platform_owner): there is no key from an
-    # applicant to a chunk of an HR-uploaded document, so this executor cannot
-    # find — let alone erase — a candidate's name typed INSIDE a policy PDF a
-    # company's own HR manager or super_admin uploaded. The controls that
-    # exist instead: an upload-time attestation ("this is a company document,
-    # not a record about a candidate", recorded in the corpus.document.uploaded
-    # audit row); `hr_only` as the UI's default audience; and an immediate,
-    # complete purge of text, chunks and embeddings the moment HR deletes a
-    # document (app/corpus.py::delete_document), rather than a 30-day grace
-    # window. None of the four tables below has a candidate_id, applicant_id
-    # or user_id column of any kind — they are keyed on company_id and the
-    # staff member who acted — which is also why none of them can be reached
+    # above of naming the limit rather than glossing over it. None of the four
+    # tables below has a candidate_id, applicant_id or user_id column of any
+    # kind — they are keyed on company_id and the staff member who acted —
+    # which is why they are excluded (kept, untouched) rather than reached
     # from `applicants` the way enrolments/round_results are two lists up.
+    #
+    # Recorded as ACCEPTED-RISKS AR-8 (owner platform_owner), NARROWED but not
+    # closed (2026-09-28): there is still no key from an applicant to a chunk
+    # of an HR-uploaded document, so this executor still cannot ERASE a
+    # candidate's name typed INSIDE a policy PDF. What changed is detection —
+    # step 5m (`_scan_corpus_and_notify`, above `_execute_one_erasure`) now
+    # searches, before this step redacts `applicants.full_name`, every company
+    # this subject has an applicant row with for that company's on-file name,
+    # and if it finds one, records facts only (never the matched text) on the
+    # erasure artifacts and notifies the company's staff to review it by hand.
+    # A hit is surfaced, never acted on — nothing here is deleted, redacted or
+    # even read back by a person automatically. AR-8's own text lists what
+    # this still does not reach: a document with no extracted text, the
+    # original file object, a name spelled differently, or a company this
+    # subject's applicant rows do not name. The controls that predate this
+    # narrowing are unchanged: an upload-time attestation ("this is a company
+    # document, not a record about a candidate", recorded in the
+    # corpus.document.uploaded audit row); `hr_only` as the UI's default
+    # audience; and an immediate, complete purge of text, chunks and
+    # embeddings the moment HR deletes a document (app/corpus.py::
+    # delete_document), rather than a 30-day grace window.
     "corpus_documents": "PH5-E2 — the identity of one company reference document (policy, "
                        "handbook, process note): title, audience tag and expiry. No "
                        "candidate column; see the AR-8 note above for the limit this "
@@ -599,8 +628,12 @@ EXCLUDED_TABLES: dict[str, str] = {
     "corpus_chunks": "PH5-E2 — the retrievable passages of an indexed corpus document, plus "
                      "their embeddings. No candidate column; see the corpus_documents note. "
                      "This is the table AR-8's limit is actually about: a chunk's `content` "
-                     "is free text from an HR-uploaded document and this executor has no way "
-                     "to know whether it names anyone.",
+                     "is free text from an HR-uploaded document, and this executor still "
+                     "cannot ERASE anything found here. Since 2026-09-28 step 5m DOES search "
+                     "`content` for the erasure subject's own on-file name before this table's "
+                     "sibling `applicants` row is redacted — a narrower question than 'does it "
+                     "name anyone' — reporting a hit rather than acting on it; see the note "
+                     "above.",
     "corpus_events": "PH5-E2 — append-only history of a corpus document (uploaded, parsed, "
                      "indexed, superseded, deleted, ...): action, actor (HR staff) and facts "
                      "(version numbers, chunk counts) — never document content. See the "
@@ -622,6 +655,206 @@ EXCLUDED_TABLES: dict[str, str] = {
                           "anybody — the same position enrolments/round_results are "
                           "already in, recorded rather than left for a reader to infer.",
 }
+
+
+# ---------------------------------------------------------------------------
+# AR-8 narrowing (PH5-E2 criterion 13) — step 5m: detect, never erase.
+#
+# docs/ACCEPTED-RISKS.md AR-8 records that this executor has no key from an
+# applicant row to a chunk of an HR-uploaded corpus document, so a candidate's
+# name typed INSIDE one is unreachable. That is still true after this: what
+# is added here is a best-effort SEARCH, run once per erasure, for the
+# subject's OWN on-file name in the documents of a company they actually had
+# an applicant relationship with — never a scan of every tenant's library,
+# and never anything that deletes, redacts or even downloads what it finds.
+# A hit is a fact (which document, which version, how many chunks, which
+# company) for the artifacts record, and a nudge to a human who can act; it is
+# never the matched text, which would recreate, in the erasure trail itself,
+# the very thing being erased.
+# ---------------------------------------------------------------------------
+
+# A cap on how many (document, version) hits one subject's name can add to one
+# erasure's artifacts — the MAX_ROWS_PER_QUERY convention this codebase's other
+# bounded background scans use (app/agents/watch_runner.py), so one heavily
+# reused name string cannot make a single erasure's read unbounded.
+_CORPUS_SCAN_MAX_HITS_PER_NAME = 50
+
+# notifications.kind is an opaque string (see app/agents/watch_runner.py's own
+# comment on the same column). Deliberately NOT "system" — HRConsole's
+# activity feed hides that kind because the live Attention panel already
+# covers watcher findings, and a corpus name-match is neither a watcher
+# finding nor shown anywhere else a human would see it.
+_CORPUS_REVIEW_NOTIFICATION_KIND = "corpus_review_needed"
+
+
+async def _corpus_review_recipients(
+    db: AsyncSession, *, company_id: str, audience: str,
+) -> list[str]:
+    """Who to tell about a possible name match in one document.
+
+    Mirrors ``app/corpus.py::CORPUS_AUDIENCE_ROLES`` (a separate service this
+    module cannot import) rather than ``watch_runner._recipients_for_company``'s
+    blanket hr_manager-and-super_admin list: an `hr_only` document is never
+    readable by a `super_admin` (design decision Q3), so telling one to review
+    it would point them at a document they cannot open. `all_staff` — the only
+    other value the `audience` CHECK constraint allows — is readable by both.
+    """
+    roles = ("hr_manager",) if audience == "hr_only" else ("hr_manager", "super_admin")
+    rows = (
+        await db.execute(
+            text(
+                "SELECT DISTINCT u.id FROM users u"
+                " JOIN user_roles ur ON ur.user_id = u.id"
+                " JOIN roles r ON r.id = ur.role_id"
+                " WHERE u.company_id = CAST(:cid AS uuid) AND u.deleted_at IS NULL"
+                "   AND r.name = ANY(:roles)"
+                " LIMIT 50"
+            ),
+            {"cid": company_id, "roles": list(roles)},
+        )
+    ).all()
+    return [str(r[0]) for r in rows]
+
+
+async def _notify_corpus_matches(
+    db: AsyncSession, *, request_id: uuid.UUID, flagged: list[dict[str, Any]],
+) -> None:
+    """One notification per matched DOCUMENT (not per chunk or per version — a
+    document with three matching passages across two versions is one nudge,
+    not three), naming the document so a human knows where to look, never
+    quoting what matched. Best-effort: a document deleted in the moment
+    between the scan and this call is simply skipped, not an error."""
+    now = datetime.now(tz=UTC)
+    seen: set[tuple[str, str]] = set()
+    for hit in flagged:
+        key = (hit["company_id"], hit["document_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        doc_row = (
+            await db.execute(
+                text(
+                    "SELECT title, audience FROM corpus_documents"
+                    " WHERE id = CAST(:d AS uuid) AND company_id = CAST(:c AS uuid)"
+                    "   AND deleted_at IS NULL"
+                ),
+                {"d": hit["document_id"], "c": hit["company_id"]},
+            )
+        ).mappings().first()
+        if doc_row is None:
+            continue
+        recipients = await _corpus_review_recipients(
+            db, company_id=hit["company_id"], audience=doc_row["audience"],
+        )
+        title = f"Review needed: \"{doc_row['title']}\" may name an erased candidate"
+        body = (
+            "A DPDP erasure request found a possible name match inside this document's "
+            "text. The document has not been changed. Please review it and remove or "
+            f"redact the reference if it identifies the candidate (version {hit['version']})."
+        )
+        link = f"/hr/library/{hit['document_id']}"
+        for user_id in recipients:
+            await db.execute(
+                text(
+                    "INSERT INTO notifications"
+                    " (id, user_id, kind, title, body, link, created_at, dedupe_key)"
+                    " VALUES (gen_random_uuid(), CAST(:uid AS uuid), :kind, :title, :body,"
+                    "         :link, :ts, :dedupe)"
+                    " ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING"
+                ),
+                {
+                    "uid": user_id, "kind": _CORPUS_REVIEW_NOTIFICATION_KIND,
+                    "title": title, "body": body, "link": link, "ts": now,
+                    "dedupe": f"corpus_review:{request_id}:{hit['document_id']}:{user_id}",
+                },
+            )
+
+
+async def _scan_corpus_and_notify(
+    db: AsyncSession, *, user_id: uuid.UUID, request_id: uuid.UUID,
+) -> list[dict[str, Any]] | None:
+    """AR-8 narrowing — step 5m. Search this subject's OWN companies' corpus
+    for their on-file name, before step 6 nulls ``applicants.full_name`` and
+    ``user_id``.
+
+    Scope, deliberately narrow: only the companies this subject actually has
+    an ``applicants`` row with — the one relationship this schema can name —
+    each searched with the full name on file for THAT company, never the
+    whole platform. A company this subject has no applicant row with (for
+    instance because a guest application was never linked to their account)
+    is not searched, and a name spelled, transliterated or abbreviated
+    differently from the one on file will not match: this is a literal
+    stemmed full-text search (the same index and operator
+    ``app/corpus.py::search_corpus`` already reads), not a semantic or fuzzy
+    one.
+
+    Returns the FACTS-ONLY hit list (document id, version, chunk count,
+    company id) for the caller to fold into the erasure artifacts — never the
+    matched text — or ``None`` if the scan itself could not complete, so the
+    caller can tell "searched, found nothing" from "could not search" rather
+    than conflating both into an empty list. Runs entirely inside one
+    SAVEPOINT: any failure — a bad query, a database hiccup — is logged and
+    swallowed here, so a scan that cannot complete costs this erasure a
+    finding, never its completion.
+    """
+    try:
+        async with db.begin_nested():
+            name_rows = (
+                await db.execute(
+                    text(
+                        "SELECT DISTINCT company_id, full_name FROM applicants"
+                        " WHERE user_id = :uid AND full_name IS NOT NULL"
+                        "   AND char_length(btrim(full_name)) >= 2"
+                    ),
+                    {"uid": str(user_id)},
+                )
+            ).all()
+
+            flagged: list[dict[str, Any]] = []
+            for company_id, full_name in name_rows:
+                rows = (
+                    await db.execute(
+                        text(
+                            "SELECT c.document_id, v.version, count(*) AS chunk_hits"
+                            " FROM corpus_chunks c"
+                            " JOIN corpus_document_versions v"
+                            "   ON v.id = c.version_id AND v.company_id = c.company_id"
+                            " JOIN corpus_documents d"
+                            "   ON d.id = c.document_id AND d.company_id = c.company_id"
+                            " WHERE d.company_id = :cid AND d.deleted_at IS NULL"
+                            "   AND v.redacted_at IS NULL"
+                            "   AND to_tsvector('english', c.content)"
+                            "       @@ plainto_tsquery('english', :name)"
+                            " GROUP BY c.document_id, v.version"
+                            " LIMIT :limit"
+                        ),
+                        {
+                            "cid": str(company_id), "name": full_name,
+                            "limit": _CORPUS_SCAN_MAX_HITS_PER_NAME,
+                        },
+                    )
+                ).all()
+                flagged.extend(
+                    {
+                        "company_id": str(company_id),
+                        "document_id": str(document_id),
+                        "version": int(version),
+                        "chunk_count": int(chunk_hits),
+                    }
+                    for document_id, version, chunk_hits in rows
+                )
+
+            if flagged:
+                await _notify_corpus_matches(db, request_id=request_id, flagged=flagged)
+            return flagged
+    except Exception as exc:  # noqa: BLE001 — a scan failure must never block or
+        # delay a DPDP erasure; see this function's docstring and step 5m above.
+        log.warning(
+            "erasure.executor.corpus_scan_failed",
+            request_id=str(request_id),
+            exc_type=type(exc).__name__,
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1798,6 +2031,26 @@ async def _execute_one_erasure(
     )
 
     # ------------------------------------------------------------------
+    # Step 5m: AR-8 narrowing (PH5-E2 criterion 13) — detect, never erase.
+    # ------------------------------------------------------------------
+    # Reads applicants.full_name / company_id, so it MUST run before step 6
+    # nulls the former and redacts the latter's user_id — the same ordering
+    # hazard 5k and 5l record above. See _scan_corpus_and_notify's own
+    # docstring for scope and failure handling; it never raises out of here.
+    corpus_scan_result = await _scan_corpus_and_notify(
+        db, user_id=user_id, request_id=request.request_id,
+    )
+    corpus_scan_error = corpus_scan_result is None
+    corpus_documents_flagged: list[dict[str, Any]] = corpus_scan_result or []
+    log.info(
+        "erasure.executor.corpus_scan_complete",
+        user_id=uid_str,
+        request_id=str(request.request_id),
+        documents_flagged=len(corpus_documents_flagged),
+        scan_failed=corpus_scan_error,
+    )
+
+    # ------------------------------------------------------------------
     # Step 6: Anonymise applicant rows linked to this user_id
     # ------------------------------------------------------------------
     # embedding is NOT decoration on this list. applicants.embedding is a
@@ -2031,10 +2284,13 @@ async def _execute_one_erasure(
         # 5l took in the free-text reason/rationale/evidence fields AR-5
         # named (enrolments.held_reason/reapply_override_reason,
         # round_results.evidence, stage_transitions.reason, and the
-        # audit_log decision rationale): the artifacts record is what an
-        # auditor reads to know WHAT a given completion covered, so two
-        # records with different coverage must not claim the same version.
-        "executor_version": "1.12",
+        # audit_log decision rationale), and 1.12 → 1.13 when step 5m added
+        # the AR-8 corpus name scan (detection only — see step 5m's own
+        # comment above; this field records what was FOUND, never erased):
+        # the artifacts record is what an auditor reads to know WHAT a given
+        # completion covered, so two records with different coverage must not
+        # claim the same version.
+        "executor_version": "1.13",
         "completed_at": now_utc.isoformat(),
         "turns_deleted": turns_deleted,
         "resumes_deleted": resumes_deleted,
@@ -2067,6 +2323,14 @@ async def _execute_one_erasure(
         "round_results_evidence_redacted": round_results_evidence_redacted,
         "stage_transitions_redacted": stage_transitions_redacted,
         "audit_log_decisions_redacted": audit_log_decisions_redacted,
+        # AR-8 narrowing (step 5m) — facts only, never the matched text: which
+        # document, which version, how many chunks matched, which company.
+        # corpus_scan_error distinguishes "searched, found nothing" (False,
+        # empty list) from "could not search" (True) — an auditor should not
+        # read the latter as a clean result.
+        "corpus_documents_flagged": corpus_documents_flagged,
+        "corpus_matches_found": len(corpus_documents_flagged),
+        "corpus_scan_error": corpus_scan_error,
         "scorecard_s3_keys": scorecard_keys,
         # Count what we actually deleted, not what we assumed. The old
         # expression was `len(scorecard_keys) * 2 + (1 if user_resume_s3_key)`,

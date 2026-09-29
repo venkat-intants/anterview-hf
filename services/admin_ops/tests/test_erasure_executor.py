@@ -29,7 +29,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.erasure_executor import (
+    _corpus_review_recipients,
     _execute_one_erasure,
+    _notify_corpus_matches,
+    _scan_corpus_and_notify,
     run_erasure_poll,
 )
 from app.models import AuditLog, ErasureRequest
@@ -584,12 +587,13 @@ async def test_execute_one_erasure_stamps_completed() -> None:
     # (PH4-D3), 1.9 since step 5i took in job simulation / portfolio
     # submissions (PH4-D4), 1.10 since step 5j took in 90-day hire
     # check-ins (PH5-D5-2), 1.11 since step 5k took in talent-pool
-    # memberships (PH5-E3), and 1.12 since step 5l took in the free-text
-    # reason/rationale/evidence fields AR-5 named. The version
+    # memberships (PH5-E3), 1.12 since step 5l took in the free-text
+    # reason/rationale/evidence fields AR-5 named, and 1.13 since step 5m
+    # added the AR-8 corpus name scan (detection only). The version
     # is asserted rather than ignored because the artifacts blob is the auditor's
     # record of WHAT a completion covered, so widening coverage without moving
     # the version leaves two incomparable records claiming the same one.
-    assert artifacts["executor_version"] == "1.12"
+    assert artifacts["executor_version"] == "1.13"
 
 
 # ---------------------------------------------------------------------------
@@ -1717,3 +1721,285 @@ async def test_a_reapplications_superseded_cv_is_erased_even_when_no_row_names_i
     deleted = delete_calls[0][settings.s3_bucket_name]
     assert superseded in deleted, "the CV no column names is the whole point"
     assert sorted(deleted) == sorted({first, superseded, current}), "and deduplicated"
+
+# ---------------------------------------------------------------------------
+# Step 5m — AR-8 narrowing (PH5-E2 criterion 13): detect, never erase.
+#
+# What each test below actually proves, so none of them join the "six tests
+# that proved nothing" list:
+#   - the scan/notify orchestration wires a real match into the artifacts and
+#     into one notification PER RECIPIENT, addressed by the role/audience
+#     rule (not the blanket hr_manager+super_admin list watch_runner uses);
+#   - a document matched on more than one version is still ONE notification;
+#   - the notification/scan SQL never selects corpus_chunks.content at all,
+#     structurally, not just "happens not to" in these fixtures;
+#   - a failure anywhere in the scan is swallowed by its own SAVEPOINT and
+#     never reaches the caller -- the erasure still completes.
+# The full-text MATCH itself (does it actually find "Priya Sharma" and not a
+# document that never mentions her, scoped to the right tenant) needs a real
+# Postgres `to_tsvector`/`plainto_tsquery`, so that is proven in
+# ``test_erasure_executor_live_db.py`` instead of faked here.
+# ---------------------------------------------------------------------------
+
+
+def _working_nested() -> MagicMock:
+    """A ``db.begin_nested()`` stand-in that behaves like a SAVEPOINT that
+    commits cleanly -- the ``test_group_b_identity.py`` precedent."""
+    nested = MagicMock()
+    nested.__aenter__ = AsyncMock(return_value=None)
+    nested.__aexit__ = AsyncMock(return_value=False)
+    return nested
+
+
+@pytest.mark.asyncio
+async def test_scan_corpus_and_notify_reports_facts_and_notifies_every_recipient() -> None:
+    """A match is reported as facts only and reaches every role allowed to
+    read an `all_staff` document -- both hr_manager and super_admin here,
+    each with their OWN dedupe key so neither insert silently no-ops the
+    other's via the partial unique index."""
+    company_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    hr_id = uuid.uuid4()
+    super_admin_id = uuid.uuid4()
+    request_id = uuid.uuid4()
+    executed: list[tuple[str, dict[str, Any]]] = []
+
+    async def _execute(stmt: Any, params: Any = None, *args: Any, **kwargs: Any) -> MagicMock:
+        sql = str(stmt)
+        executed.append((sql, params or {}))
+        result = MagicMock()
+        result.all.return_value = []
+        if "SELECT DISTINCT company_id, full_name FROM applicants" in sql:
+            result.all.return_value = [(company_id, "Priya Sharma")]
+        elif "FROM corpus_chunks c" in sql:
+            result.all.return_value = [(document_id, 1, 2)]
+        elif "SELECT title, audience FROM corpus_documents" in sql:
+            result.mappings.return_value.first.return_value = {
+                "title": "Onboarding Handbook", "audience": "all_staff",
+            }
+        elif "FROM users u" in sql and "user_roles" in sql:
+            result.all.return_value = [(hr_id,), (super_admin_id,)]
+        return result
+
+    db = AsyncMock()
+    db.execute = _execute
+    db.begin_nested = MagicMock(return_value=_working_nested())
+
+    flagged = await _scan_corpus_and_notify(db, user_id=uuid.uuid4(), request_id=request_id)
+
+    assert flagged == [
+        {
+            "company_id": str(company_id), "document_id": str(document_id),
+            "version": 1, "chunk_count": 2,
+        }
+    ]
+
+    inserts = [(sql, p) for sql, p in executed if sql.strip().startswith("INSERT INTO notifications")]
+    assert len(inserts) == 2, "one notification per recipient"
+    # _corpus_review_recipients returns ids as str (this module's convention
+    # for every id bound into a query -- see uid_str throughout this file).
+    notified = {p["uid"] for _, p in inserts}
+    assert notified == {str(hr_id), str(super_admin_id)}
+    dedupe_keys = {p["dedupe"] for _, p in inserts}
+    assert len(dedupe_keys) == 2, "each recipient needs their OWN dedupe key"
+    for _, p in inserts:
+        assert p["kind"] == "corpus_review_needed"
+        assert "Onboarding Handbook" in p["title"]
+        assert str(document_id) in p["link"]
+        assert str(request_id) in p["dedupe"]
+
+
+@pytest.mark.asyncio
+async def test_scan_corpus_and_notify_finds_nothing_for_a_subject_with_no_applicant_row() -> None:
+    """No applicant row anywhere -> no company to search -> no query against
+    corpus_chunks at all, not merely a query that finds zero rows."""
+    executed: list[str] = []
+
+    async def _execute(stmt: Any, params: Any = None, *args: Any, **kwargs: Any) -> MagicMock:
+        executed.append(str(stmt))
+        result = MagicMock()
+        result.all.return_value = []
+        return result
+
+    db = AsyncMock()
+    db.execute = _execute
+    db.begin_nested = MagicMock(return_value=_working_nested())
+
+    flagged = await _scan_corpus_and_notify(db, user_id=uuid.uuid4(), request_id=uuid.uuid4())
+
+    assert flagged == []
+    assert not any("FROM corpus_chunks" in s for s in executed)
+
+
+@pytest.mark.asyncio
+async def test_corpus_review_recipients_hr_only_excludes_super_admin() -> None:
+    """An `hr_only` document is never notified to a super_admin -- they could
+    not open it even if told to (design decision Q3)."""
+    seen_roles: list[list[str]] = []
+
+    async def _execute(stmt: Any, params: Any = None, *args: Any, **kwargs: Any) -> MagicMock:
+        seen_roles.append(list(params["roles"]))
+        result = MagicMock()
+        result.all.return_value = [(uuid.uuid4(),)]
+        return result
+
+    db = AsyncMock()
+    db.execute = _execute
+    await _corpus_review_recipients(db, company_id=str(uuid.uuid4()), audience="hr_only")
+    assert seen_roles == [["hr_manager"]]
+
+
+@pytest.mark.asyncio
+async def test_corpus_review_recipients_all_staff_includes_super_admin() -> None:
+    seen_roles: list[list[str]] = []
+
+    async def _execute(stmt: Any, params: Any = None, *args: Any, **kwargs: Any) -> MagicMock:
+        seen_roles.append(list(params["roles"]))
+        result = MagicMock()
+        result.all.return_value = []
+        return result
+
+    db = AsyncMock()
+    db.execute = _execute
+    await _corpus_review_recipients(db, company_id=str(uuid.uuid4()), audience="all_staff")
+    assert seen_roles == [["hr_manager", "super_admin"]]
+
+
+@pytest.mark.asyncio
+async def test_notify_corpus_matches_sends_one_notification_per_document_not_per_version() -> None:
+    """The SAME document flagged twice -- once per matching version -- is
+    still ONE nudge to review, not two."""
+    company_id = str(uuid.uuid4())
+    document_id = str(uuid.uuid4())
+    hr_id = uuid.uuid4()
+    inserts: list[dict[str, Any]] = []
+
+    async def _execute(stmt: Any, params: Any = None, *args: Any, **kwargs: Any) -> MagicMock:
+        sql = str(stmt)
+        result = MagicMock()
+        result.all.return_value = []
+        if "SELECT title, audience FROM corpus_documents" in sql:
+            result.mappings.return_value.first.return_value = {
+                "title": "Policy", "audience": "hr_only",
+            }
+        elif "FROM users u" in sql and "user_roles" in sql:
+            result.all.return_value = [(hr_id,)]
+        elif sql.strip().startswith("INSERT INTO notifications"):
+            inserts.append(params)
+        return result
+
+    db = AsyncMock()
+    db.execute = _execute
+
+    flagged = [
+        {"company_id": company_id, "document_id": document_id, "version": 1, "chunk_count": 1},
+        {"company_id": company_id, "document_id": document_id, "version": 2, "chunk_count": 3},
+    ]
+    await _notify_corpus_matches(db, request_id=uuid.uuid4(), flagged=flagged)
+
+    assert len(inserts) == 1, "one document, one notification, however many versions matched"
+
+
+@pytest.mark.asyncio
+async def test_step_5m_scan_query_select_list_never_includes_chunk_content() -> None:
+    """Structural guard, on the ``test_no_draft_handler_reads_the_corpus``
+    precedent: AR-8's own text promises the matched passage never leaves the
+    database.
+
+    This is the SECOND cut of this guard. The first read
+    ``inspect.getsource`` and asserted a marker string was present, which
+    kept passing even after injecting ``, c.content`` into the SELECT list —
+    the old marker is a PREFIX of the mutated one, and ``in`` only checks
+    containment. This version instead runs the real query construction and
+    inspects the actual SQL string SQLAlchemy would send, isolating the
+    SELECT list by splitting the captured statement on its own
+    ``SELECT``/``FROM`` (there is exactly one of each in it), so a column
+    appended anywhere in the list is caught regardless of what it sits next
+    to. ``c.content`` legitimately appears once, INSIDE
+    ``to_tsvector('english', c.content)`` in the WHERE clause — Postgres
+    computes that server-side and never returns it — which is exactly why a
+    substring-absence check over the WHOLE query would be wrong too."""
+    captured: list[str] = []
+
+    async def _execute(stmt: Any, params: Any = None, *args: Any, **kwargs: Any) -> MagicMock:
+        sql = str(stmt)
+        result = MagicMock()
+        result.all.return_value = []
+        if "SELECT DISTINCT company_id, full_name FROM applicants" in sql:
+            result.all.return_value = [(uuid.uuid4(), "Someone Name")]
+        elif "FROM corpus_chunks c" in sql:
+            captured.append(sql)
+        return result
+
+    db = AsyncMock()
+    db.execute = _execute
+    db.begin_nested = MagicMock(return_value=_working_nested())
+
+    await _scan_corpus_and_notify(db, user_id=uuid.uuid4(), request_id=uuid.uuid4())
+
+    assert captured, "the scan query must actually run once a name is on file"
+    scan_sql = captured[0]
+    select_list = scan_sql.split("SELECT", 1)[1].split("FROM", 1)[0]
+    assert "content" not in select_list, f"chunk content leaked into the SELECT list: {select_list!r}"
+    where_clause = scan_sql.split("WHERE", 1)[1]
+    assert "to_tsvector" in where_clause and "c.content" in where_clause, (
+        "the legitimate use of chunk content -- matching inside the database, "
+        "never fetching it -- must still be there"
+    )
+
+    import inspect
+
+    from app import erasure_executor as mod
+
+    notify_src = inspect.getsource(mod._notify_corpus_matches)
+    assert "content" not in notify_src, "the notify path must never even see chunk content"
+
+
+@pytest.mark.asyncio
+async def test_step_5m_corpus_scan_failure_does_not_block_completion() -> None:
+    """Mutation-checked guard (see the task report for the injected break):
+    if the AR-8 scan fails for any reason, the erasure must still reach
+    every later step and stamp 'completed' -- never roll back, never leave
+    the request 'pending'. The failure is forced by a raising SAVEPOINT
+    (``__aenter__`` itself raises), so this exercises the real
+    ``async with db.begin_nested():`` guard, not just a try/except around a
+    query call."""
+    db = AsyncMock()
+    db.add = MagicMock()
+
+    class _RaisingNested:
+        async def __aenter__(self) -> _RaisingNested:
+            raise RuntimeError("simulated corpus scan outage")
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    db.begin_nested = MagicMock(return_value=_RaisingNested())
+
+    async def _execute(stmt: Any, *args: Any, **kwargs: Any) -> MagicMock:
+        result = MagicMock()
+        result.rowcount = 1
+        result.fetchall.return_value = []
+        result.fetchone.return_value = None
+        result.all.return_value = []
+        return result
+
+    db.execute = _execute
+
+    with (
+        patch("app.s3_client.delete_objects", new=_fake_delete_objects()),
+        patch("app.s3_client.keys_under", new=AsyncMock(return_value=[])),
+    ):
+        artifacts = await _execute_one_erasure(
+            db=db, request=_make_erasure_request(), system_actor_id=_SYSTEM_ACTOR,
+            settings=_mock_s3_settings(),
+        )
+
+    assert artifacts["corpus_scan_error"] is True
+    assert artifacts["corpus_documents_flagged"] == []
+    assert artifacts["corpus_matches_found"] == 0
+    # Every later step still ran to completion -- the scan failure cost this
+    # erasure a finding, never its outcome.
+    assert artifacts["applicants_anonymised"] == 1
+    assert "completed_at" in artifacts
+    assert db.add.called, "step 10's audit row must still be written"

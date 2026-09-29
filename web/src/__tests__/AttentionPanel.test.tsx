@@ -35,6 +35,7 @@ function item(over: Partial<AttentionItem> = {}): AttentionItem {
     citations: [
       { kind: 'applicant', id: 'ap-1', label: 'Asha Rao', href: '/hr/applicants/ap-1' },
     ],
+    citation_state: 'sourced',
     ...over,
   };
 }
@@ -64,6 +65,38 @@ describe('AttentionPanel', () => {
     renderPanel();
     expect(await screen.findByText('7 applicants stalled over 7 days')).toBeInTheDocument();
     expect(screen.getByText('1 item')).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------
+  // PH5-E1 criteria 4/5 — the three-way citation-state banner, server-
+  // computed and rendered as-is (see EvidenceBanner). AttentionPanel is one
+  // of the five surfaces required to carry it.
+  // ---------------------------------------------------------------------
+  it('shows the sourced banner when the finding names specific records', async () => {
+    getAttention.mockResolvedValue(board([item({ citation_state: 'sourced' })]));
+    renderPanel();
+    expect(
+      await screen.findByText(/Answered from your records\. Claims marked/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the unread banner when the finding names nothing specific', async () => {
+    getAttention.mockResolvedValue(
+      board([item({ citations: [], citation_state: 'unread' })]),
+    );
+    renderPanel();
+    expect(await screen.findByText(/No records were read for this answer/)).toBeInTheDocument();
+  });
+
+  it('renders the unattributed caution when the server says so', async () => {
+    // Structurally unreachable from a real watcher today (deterministic rules
+    // have no free prose to misattribute) — this pins the RENDERING contract,
+    // not that today's watchers can reach it.
+    getAttention.mockResolvedValue(board([item({ citation_state: 'unattributed' })]));
+    renderPanel();
+    expect(
+      await screen.findByText(/Records were read for this answer, but no claim in it/),
+    ).toBeInTheDocument();
   });
 
   it('makes every finding actionable', async () => {
@@ -109,7 +142,9 @@ describe('AttentionPanel', () => {
     // Isolated from citations here: this test is about the FINDING's own
     // link, which is a separate assertion from whether a citation is
     // clickable (covered above and in CitationChips.test.tsx).
-    getAttention.mockResolvedValue(board([item({ link: null, citations: [] })]));
+    getAttention.mockResolvedValue(
+      board([item({ link: null, citations: [], citation_state: 'unread' })]),
+    );
     renderPanel();
     await screen.findByText('7 applicants stalled over 7 days');
     expect(screen.queryByRole('link')).not.toBeInTheDocument();

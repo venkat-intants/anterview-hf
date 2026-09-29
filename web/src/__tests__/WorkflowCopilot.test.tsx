@@ -111,6 +111,7 @@ const CHAT_REPLY: AgentChatResponse = {
   tools_used: [{ name: 'get_opening_under_design', ok: true, duration_ms: 12 }],
   stop_reason: 'completed',
   evidence_used: false,
+  citation_state: 'unread',
 };
 
 /** A reply that actually read a record, for the citation/evidence tests. */
@@ -129,6 +130,27 @@ const CHAT_REPLY_WITH_EVIDENCE: AgentChatResponse = {
     },
   ],
   evidence_used: true,
+  citation_state: 'sourced',
+};
+
+/** Read a record, but wrote no marker tying a claim to it — the PH5-E1
+ * criteria 4/5 gap. */
+const CHAT_REPLY_UNATTRIBUTED: AgentChatResponse = {
+  ...CHAT_REPLY,
+  reply: 'Most role models for this kind of position weigh Python highly.',
+  proposals: [],
+  citations: [
+    {
+      kind: 'role_profile',
+      id: 'rp-1',
+      label: 'Backend Engineer role model',
+      href: null,
+      ref: 'S1',
+      locator: null,
+    },
+  ],
+  evidence_used: true,
+  citation_state: 'unattributed',
 };
 
 const askAgent = vi.fn();
@@ -371,6 +393,20 @@ describe('WorkflowCopilot — citations (PH5-E1)', () => {
     expect(
       await screen.findByText(/No records were read for this answer/),
     ).toBeInTheDocument();
+  });
+
+  it('cautions rather than confirms when a record was read but nothing is attributed', async () => {
+    // The adversarial case PH5-E1 criteria 4/5 exist for: evidence_used is
+    // true, but no [S_] marker survived — the server says 'unattributed', and
+    // this must not read like the confident 'sourced' banner above.
+    askAgent.mockResolvedValue(CHAT_REPLY_UNATTRIBUTED);
+    renderBuilder();
+    await ask('what does the role model weigh most?');
+
+    expect(
+      await screen.findByText(/Records were read for this answer, but no claim in it is tied/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Answered from your records/)).not.toBeInTheDocument();
   });
 });
 

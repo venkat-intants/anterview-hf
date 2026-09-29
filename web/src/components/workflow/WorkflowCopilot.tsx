@@ -18,7 +18,7 @@
 // this panel that a conversation put a real process in front of real people.
 
 import { useEffect, useRef, useState } from 'react';
-import { askAgent, type AgentChatResponse, type Proposal } from '@/api/agent';
+import { askAgent, type AgentChatResponse, type CitationState, type Proposal } from '@/api/agent';
 import CitationChips, { CitedText } from '@/components/agent/CitationChips';
 import EvidenceBanner from '@/components/agent/EvidenceBanner';
 import { AlertTriangle, Loader2, Send, Sparkles } from '@/design/components/icons';
@@ -32,7 +32,7 @@ interface Turn {
   citations?: AgentChatResponse['citations'];
   /** Undefined for the user's own turn — the banner only speaks about an
    * answer, and only the server (never this component) decides its value. */
-  evidenceUsed?: boolean;
+  citationState?: CitationState;
 }
 
 interface Props {
@@ -107,7 +107,7 @@ export default function WorkflowCopilot({
           proposals: res.proposals,
           stopReason: res.stop_reason,
           citations: res.citations,
-          evidenceUsed: res.evidence_used,
+          citationState: res.citation_state,
         },
       ]);
       if (res.proposals.length > 0) onProposals(res.proposals);
@@ -167,8 +167,8 @@ export default function WorkflowCopilot({
                   </div>
                 ) : (
                   <div className="space-y-1.5">
-                    {turn.evidenceUsed !== undefined ? (
-                      <EvidenceBanner evidenceUsed={turn.evidenceUsed} className="text-[11px]" />
+                    {turn.citationState !== undefined ? (
+                      <EvidenceBanner citationState={turn.citationState} className="text-[11px]" />
                     ) : null}
                     <div className="max-w-[95%] whitespace-pre-wrap text-[12.5px] leading-relaxed text-foreground">
                       <CitedText text={turn.text} citations={turn.citations ?? []} />

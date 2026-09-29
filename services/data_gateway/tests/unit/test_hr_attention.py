@@ -166,6 +166,67 @@ async def test_a_finding_carries_its_link_and_citations(
     assert item.citations[0].label == "Asha Rao"
 
 
+# ===========================================================================
+# citation_state — PH5-E1 criteria 4/5's three-way banner state, computed the
+# same honest way as every other surface: from what this reader actually
+# received, never from the finding's raw citation list.
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_citation_state_is_sourced_when_the_finding_names_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import hr_attention
+
+    monkeypatch.setattr(
+        hr_attention, "gather_company_input",
+        AsyncMock(return_value=WatcherInput(company_id="c")),
+    )
+    monkeypatch.setattr(hr_attention, "run_watchers", lambda _d: [_finding()])
+
+    out = await hr_attention.get_attention(_ctx(), AsyncMock())
+    assert out.items[0].citation_state == "sourced"
+
+
+@pytest.mark.asyncio
+async def test_citation_state_is_unread_when_the_finding_names_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import hr_attention
+
+    monkeypatch.setattr(
+        hr_attention, "gather_company_input",
+        AsyncMock(return_value=WatcherInput(company_id="c")),
+    )
+    monkeypatch.setattr(hr_attention, "run_watchers", lambda _d: [_finding(citations=[])])
+
+    out = await hr_attention.get_attention(_ctx(), AsyncMock())
+    assert out.items[0].citation_state == "unread"
+
+
+@pytest.mark.asyncio
+async def test_citation_state_follows_what_survives_the_role_filter_not_the_raw_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A citation this caller's role may not open must not count toward their
+    OWN 'sourced' banner — the same rule the permission drop itself already
+    enforces for the chip strip, applied here to the new field too."""
+    from app.routers import hr_attention
+
+    overreach = _finding(
+        dedupe_key="overreach",
+        citations=[Citation(kind="audit", id="req-1", label="erasure request")],
+    )
+    monkeypatch.setattr(
+        hr_attention, "gather_company_input",
+        AsyncMock(return_value=WatcherInput(company_id="c")),
+    )
+    monkeypatch.setattr(hr_attention, "run_watchers", lambda _d: [overreach])
+
+    out = await hr_attention.get_attention(_ctx(), AsyncMock())
+    assert out.items[0].citations == []
+    assert out.items[0].citation_state == "unread"
+
+
 @pytest.mark.asyncio
 async def test_a_citation_outside_hr_managers_remit_is_dropped(
     monkeypatch: pytest.MonkeyPatch,

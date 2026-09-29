@@ -4,8 +4,10 @@ import pathlib
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from shared.auth.jwt import parse_public_keys, parse_verify_algorithms
 from shared.security import (
     assert_strong_secrets,
+    forbid_private_signing_key,
     normalise_app_env,
     validate_cors_origins,
     validate_database_ssl,
@@ -72,6 +74,14 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_issuer: str = "intants-data-gateway"
     jwt_audience: str = "intants-services"
+
+    # --- AR-2: asymmetric JWT verification --------------------------------
+    # feedback_billing only ever VERIFIES (user tokens via app/auth.py, the
+    # "service" role via routers/score.py) — never signs. No jwt_private_key
+    # field exists on this Settings class; validate_jwt_verification_config
+    # below fails loudly if one is set anyway.
+    jwt_verify_algorithms: str = "HS256"
+    jwt_public_keys: str = "{}"
 
     # Which provider serves the JSON-producing calls in this service: the
     # interview scorer, the resume/ATS scorer and the exam + coding generator.
@@ -163,6 +173,19 @@ class Settings(BaseSettings):
         """Fail fast in production/staging if JWT_SECRET is a weak placeholder
         (must match data_gateway's). No-op in development/test."""
         assert_strong_secrets(self.app_env, {"JWT_SECRET": self.jwt_secret})
+        return self
+
+    @model_validator(mode="after")
+    def validate_jwt_verification_config(self) -> Settings:
+        """AR-2: fail fast at boot, in every environment, not just hardened ones.
+
+        See interview_core's config for the twin of this validator; kept as a
+        duplicate rather than a shared model_validator for the same reason
+        validate_database_ssl is duplicated across all four services — each
+        one wires the shared functions into its OWN Settings class."""
+        forbid_private_signing_key(self.service_name)
+        parse_verify_algorithms(self.jwt_verify_algorithms)
+        parse_public_keys(self.jwt_public_keys)
         return self
 
     @model_validator(mode="after")

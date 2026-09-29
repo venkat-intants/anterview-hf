@@ -2,6 +2,13 @@
 run-scoped refs, an invented marker is stripped, evidence_used is computed, and
 one agent.chat.answered audit row lands with no candidate name in it.
 
+PH5-E1 close-out (criteria 4/5): a second scenario below drives the SAME
+endpoint with a reply whose every marker is invented, and checks that
+`citation_state` lands on 'unattributed' — records were read, nothing
+survived to tie a claim to them — never 'sourced'. This is the adversarial
+case those two criteria exist to close: a model that writes no honest marker
+at all must not get to look exactly like a properly-sourced answer.
+
     docker run -d --name intants-pgv -e POSTGRES_PASSWORD=postgres \
       -e POSTGRES_DB=intants_smoke -p 55432:5432 pgvector/pgvector:pg16
     cd services/data_gateway
@@ -53,6 +60,18 @@ async def _fake_llm(system, messages, tools):
         return AssistantStep(tool_calls=[ToolCall(name="list_applicants", arguments={})])
     return AssistantStep(
         text="Asha[S1] is the strongest candidate, per policy[S9]."
+    )
+
+
+async def _fake_llm_all_invented(system, messages, tools):
+    """The adversarial scripted model for the citation_state close-out: it DOES
+    read a record (so evidence_used must be true) but writes ONLY markers that
+    name refs it was never issued — the run's cited_refs must end up empty and
+    citation_state must be 'unattributed', not 'sourced'."""
+    if not any(m.role == "tool" for m in messages):
+        return AssistantStep(tool_calls=[ToolCall(name="list_applicants", arguments={})])
+    return AssistantStep(
+        text="Most candidates for this role interview well[S9], per policy[S17]."
     )
 
 
@@ -144,6 +163,11 @@ async def main() -> None:
             "welding" not in body["reply"].lower(),
             body["reply"],
         )
+        check(
+            "citation_state is 'sourced' when a valid marker survives",
+            body["citation_state"] == "sourced",
+            body["citation_state"],
+        )
 
     async with factory() as db:
         after_count = await db.scalar(
@@ -174,6 +198,11 @@ async def main() -> None:
             check("details carries the console", details.get("console") == "hr_manager")
             check("details carries invented_refs = 1", details.get("invented_refs") == 1)
             check("details carries evidence_used = true", details.get("evidence_used") is True)
+            check(
+                "details carries citation_state = 'sourced'",
+                details.get("citation_state") == "sourced",
+                str(details.get("citation_state")),
+            )
             check("details names the tool used", "list_applicants" in details.get("tools", []))
             check(
                 "details carries the citation's kind and id, never a label",
@@ -183,6 +212,49 @@ async def main() -> None:
             blob = str(details)
             check("the audit row never carries the candidate's name", "Asha" not in blob, blob)
             check("the audit row never carries the reply text", body["reply"] not in blob, blob)
+
+    # -----------------------------------------------------------------------
+    # PH5-E1 close-out — the adversarial case: every marker invented.
+    # -----------------------------------------------------------------------
+    agent_router.build_agent_llm = lambda: _fake_llm_all_invented
+
+    async with AsyncClient(transport=tr, base_url="http://t") as c:
+        r = await c.post("/agent/chat", json={"message": "who should I interview next?"})
+        check("second POST /agent/chat -> 200", r.status_code == 200, r.text[:300])
+        body2 = r.json()
+
+        check(
+            "the second reply carries a citation (a record WAS read)",
+            len(body2["citations"]) >= 1,
+            str(body2["citations"]),
+        )
+        check("second reply's evidence_used is true", body2["evidence_used"] is True)
+        check(
+            "both invented markers are stripped from the second reply",
+            "[S9]" not in body2["reply"] and "[S17]" not in body2["reply"],
+            body2["reply"],
+        )
+        check(
+            "citation_state is 'unattributed', never 'sourced', when every marker is invented",
+            body2["citation_state"] == "unattributed",
+            body2["citation_state"],
+        )
+
+    async with factory() as db:
+        row2 = (
+            await db.execute(
+                text(
+                    "SELECT details FROM audit_log WHERE action = 'agent.chat.answered'"
+                    " AND actor_id = :hr AND details->>'citation_state' = 'unattributed'"
+                ),
+                {"hr": hr_uid},
+            )
+        ).mappings().first()
+        check("an 'unattributed' audit row exists", row2 is not None)
+        if row2 is not None:
+            details2 = row2["details"]
+            check("its evidence_used is true", details2.get("evidence_used") is True)
+            check("its invented_refs is 2", details2.get("invented_refs") == 2)
 
     app.dependency_overrides.clear()
     del agent_router.build_agent_llm

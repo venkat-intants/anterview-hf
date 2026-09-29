@@ -6,6 +6,7 @@
 // has fixed keeps showing up until somebody fixes it.
 
 import { apiGet } from './client';
+import type { CitationState } from './agent';
 
 /** The record a finding is about, so the panel can link straight to it. */
 export interface AttentionCitation {
@@ -28,6 +29,13 @@ export interface AttentionItem {
   /** Stable across refreshes, which makes it the right list key. */
   dedupe_key: string;
   citations: AttentionCitation[];
+  /**
+   * The three-way read of this finding (see `CitationState`). 'unattributed'
+   * never actually arrives here — every watcher rule is deterministic SQL
+   * plus arithmetic, never a model's free prose — but the field is the full
+   * union so the component that renders it needs no special case.
+   */
+  citation_state: CitationState;
 }
 
 export interface AttentionBoard {

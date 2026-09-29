@@ -102,10 +102,15 @@ const BREAKDOWN: AttemptBreakdown = {
 const getExam = vi.fn();
 const listAttempts = vi.fn();
 const getAttemptBreakdown = vi.fn();
+// The camera-proctoring summary ExamAttemptDetail also renders is covered in
+// its own AttemptProctoringSummary.test.tsx — stub it to a quiet "nothing to
+// report" fixture here so it never errors against this file's fixtures.
+const getAttemptProctoring = vi.fn();
 vi.mock('../api/exams', () => ({
   getExam: (...a: unknown[]) => getExam(...a) as unknown,
   listAttempts: (...a: unknown[]) => listAttempts(...a) as unknown,
   getAttemptBreakdown: (...a: unknown[]) => getAttemptBreakdown(...a) as unknown,
+  getAttemptProctoring: (...a: unknown[]) => getAttemptProctoring(...a) as unknown,
   CODING_LANGUAGES: ['python', 'javascript'],
 }));
 
@@ -151,6 +156,12 @@ beforeEach(() => {
   getExam.mockResolvedValue(EXAM);
   listAttempts.mockResolvedValue([PASSED, FAILED, IN_PROGRESS]);
   getAttemptBreakdown.mockResolvedValue(BREAKDOWN);
+  getAttemptProctoring.mockResolvedValue({
+    camera_in_use: false,
+    integrity_score: null,
+    counts: {},
+    events: [],
+  });
   listSimilaritySignals.mockResolvedValue([]);
 });
 

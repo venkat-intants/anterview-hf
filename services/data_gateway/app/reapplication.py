@@ -247,7 +247,8 @@ async def stage(
     company_id: uuid.UUID,
     resume_s3_key: str | None,
     answers: dict[str, Any] | None,
-) -> None:
+    token_hash: str,
+) -> str | None:
     """Record a second attempt WITHOUT acting on it. Caller commits.
 
     The application is accepted — nobody is turned away, and the cooldown has
@@ -279,47 +280,74 @@ async def stage(
     which upserts per (enrolment, question) and would otherwise let a stranger
     overwrite what the real candidate had already answered.
     """
+    # What the attempt this one replaces was holding. Returned so the caller
+    # can delete it: these columns were the only thing naming that object, and
+    # an object nothing names is one erasure cannot find.
+    superseded = await db.scalar(
+        text(
+            "SELECT reapply_resume_s3_key FROM enrolments"
+            " WHERE id = :i AND company_id = :c FOR UPDATE"
+        ),
+        {"i": enrolment_id, "c": company_id},
+    )
     await db.execute(
         text(
             "UPDATE enrolments"
             "   SET reapply_requested_at = now(), reapply_resume_s3_key = :k,"
-            "       reapply_answers = CAST(:a AS jsonb), updated_at = now()"
+            "       reapply_answers = CAST(:a AS jsonb), reapply_token_hash = :th,"
+            "       updated_at = now()"
             " WHERE id = :i AND company_id = :c"
         ),
         {
             "i": enrolment_id,
             "c": company_id,
             "k": resume_s3_key,
-            "a": json.dumps(answers) if answers else None,
+            # str keys, because validate_answers returns (UUID, value) pairs
+            # and json.dumps refuses a UUID key outright. Rebuilt as UUIDs in
+            # `confirm`. Getting this wrong took every reapplication to an
+            # opening with screening questions to a 503, deterministically.
+            "a": json.dumps({str(k): v for k, v in answers.items()}) if answers else None,
+            "th": token_hash,
         },
     )
     log.info(
-        "reapply.staged", enrolment_id=str(enrolment_id), has_cv=bool(resume_s3_key)
+        "reapply.staged", enrolment_id=str(enrolment_id), has_cv=bool(resume_s3_key),
+        superseded=bool(superseded),
     )
+    return str(superseded) if superseded else None
 
 
-async def pending_for_user(
-    db: AsyncSession, *, user_id: uuid.UUID
-) -> list[dict[str, Any]]:
-    """Every staged reapplication belonging to this person. Read-only.
+async def staged_for_token(
+    db: AsyncSession, *, token_hash: str
+) -> dict[str, Any] | None:
+    """The ONE staged attempt a confirmation link was minted for.
 
-    Keyed through `applicants.user_id` rather than an email, because by the
-    time this is called the address has been proven and the user id is the
-    thing that proved it.
+    This replaces a lookup keyed on ``applicants.user_id``, which a security
+    re-audit found returned everything that person had staged — across every
+    company. Two consequences, both real: a link for company A also confirmed
+    whatever was staged at company B, and an attacker who knew a victim's
+    address could keep re-staging so that the victim, following their own
+    link, authenticated the attacker's CV and answers.
+
+    Binding the hash to the row makes both impossible. The index on it is
+    UNIQUE where not null, so one link can never name two attempts, and
+    re-staging overwrites the hash — which retires the previous link by
+    construction rather than by remembering to.
     """
-    rows = (
+    row = (
         await db.execute(
             text(
-                "SELECT e.id, e.company_id, e.reapply_resume_s3_key, e.reapply_answers"
-                "  FROM enrolments e"
-                "  JOIN applicants a ON a.id = e.applicant_id"
-                " WHERE a.user_id = :uid AND a.deleted_at IS NULL"
-                "   AND e.deleted_at IS NULL AND e.reapply_requested_at IS NOT NULL"
+                "SELECT id, company_id, applicant_id, status,"
+                "       reapply_resume_s3_key, reapply_answers"
+                "  FROM enrolments"
+                " WHERE reapply_token_hash = :th AND reapply_requested_at IS NOT NULL"
+                "   AND deleted_at IS NULL"
+                " FOR UPDATE"
             ),
-            {"uid": user_id},
+            {"th": token_hash},
         )
-    ).mappings().all()
-    return [dict(r) for r in rows]
+    ).mappings().first()
+    return dict(row) if row else None
 
 
 async def confirm(
@@ -327,7 +355,9 @@ async def confirm(
     *,
     enrolment_id: uuid.UUID,
     company_id: uuid.UUID,
-    spend_override: bool,
+    applicant_id: uuid.UUID,
+    requisition_id: uuid.UUID | None = None,
+    cooldown_days: int | None = None,
 ) -> bool:
     """Apply a staged reapplication now that the address has been proven.
 
@@ -356,6 +386,24 @@ async def confirm(
     if staged is None:
         return False
 
+    # RE-EVALUATED HERE, not trusted from submission. Time has passed — the
+    # window may have moved, and an override granted then may have been spent
+    # elsewhere since. Spending the grant is gated on it being what allows
+    # this, which is the whole point of Gate.spend_override; passing a literal
+    # True destroyed a recorded HR exception on every confirmation, including
+    # the two cases the property exists to exclude.
+    verdict = CooldownVerdict(allowed=True)
+    if requisition_id is not None:
+        verdict = await check(
+            db,
+            requisition_id=requisition_id,
+            applicant_id=applicant_id,
+            cooldown_days=cooldown_days,
+        )
+        if not verdict.allowed:
+            log.info("reapply.confirm_refused", enrolment_id=str(enrolment_id))
+            return False
+
     await record_transition(
         db,
         enrolment_id=enrolment_id,
@@ -381,10 +429,13 @@ async def confirm(
             db,
             company_id=company_id,
             enrolment_id=enrolment_id,
-            answers=list(dict(staged["reapply_answers"]).items()),
+            # Back to the (UUID, value) pairs store_answers binds as uuid.
+            answers=[
+                (uuid.UUID(k), v) for k, v in dict(staged["reapply_answers"]).items()
+            ],
         )
     await clear_staged(db, enrolment_id=enrolment_id, company_id=company_id)
-    if spend_override:
+    if verdict.reason == "override":
         await consume_override(db, enrolment_id=enrolment_id)
     log.info("reapply.confirmed", enrolment_id=str(enrolment_id))
     return True
@@ -416,7 +467,8 @@ async def clear_staged(
         text(
             "UPDATE enrolments"
             "   SET reapply_requested_at = NULL, reapply_resume_s3_key = NULL,"
-            "       reapply_answers = NULL, updated_at = now()"
+            "       reapply_answers = NULL, reapply_token_hash = NULL,"
+            "       updated_at = now()"
             " WHERE id = :i AND company_id = :c"
         ),
         {"i": enrolment_id, "c": company_id},

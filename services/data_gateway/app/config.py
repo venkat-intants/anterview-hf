@@ -443,6 +443,9 @@ class Settings(BaseSettings):
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""
+    #: PH3-B4b reapplication confirmation. Blank derives one from jwt_secret,
+    #: namespaced by kind, like the two above.
+    reapply_confirm_secret: str = ""
     # 7 days — verification window.
     email_verify_ttl_hours: int = 168
     # 7 days — how long an applicant has to activate the account their public

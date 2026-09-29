@@ -456,8 +456,15 @@ async def stage_reapply_confirmation(
     company_id: uuid.UUID,
     company_name: str | None,
     now: datetime,
+    raw: str,
 ) -> None:
     """Email the link that turns a staged reapplication into a real one.
+
+    ``raw`` is minted by the caller, which has already bound its hash to the
+    one staged attempt this link may apply — see ``reapplication.stage``. A
+    token minted here instead would be a link that could act on whatever the
+    person had staged anywhere, which is the flaw this argument exists to
+    close.
 
     Caller commits. Best-effort at the call site, like the activation email:
     the second attempt is already recorded, and what a failure here costs is
@@ -477,7 +484,6 @@ async def stage_reapply_confirmation(
     holder of the address already asked for, and the two should not be
     interchangeable if either is ever leaked.
     """
-    raw = mint_token()
     await db.execute(
         text(
             "INSERT INTO auth_tokens (id, user_id, kind, token_hash, expires_at, created_at)"

@@ -67,6 +67,7 @@ from app.application_questions import (
 )
 from app.application_source import DIRECT, normalise_source
 from app.apply_activation import (
+    REAPPLY_TOKEN_KIND,
     ActivationError,
     activate,
     activation_target,
@@ -74,6 +75,7 @@ from app.apply_activation import (
     stage_activation_email,
     stage_reapply_confirmation,
 )
+from app.auth_tokens import hash_token, mint_token
 from app.config import settings
 from app.database import DbSessionDep
 from app.local_storage import LocalStorageError
@@ -82,8 +84,8 @@ from app.publishing import visible_sql
 from app.rate_limit import rate_limit
 from app.reapplication import confirm as reapplication_confirm
 from app.reapplication import gate as reapplication_gate
-from app.reapplication import pending_for_user as reapplication_pending_for_user
 from app.reapplication import stage as reapplication_stage
+from app.reapplication import staged_for_token as reapplication_staged_for_token
 from app.resume_details import extract_contact_details
 from app.routers.consent import _hash_value
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
@@ -1126,13 +1128,16 @@ async def submit_draft(
                 answers=checked_answers,
             )
         # Staged, not applied. Same door, same reason.
+        superseded_cv: str | None = None
         if gate.reapplying and outcome.enrolment_id:
-            await reapplication_stage(
+            reapply_raw = mint_token()
+            superseded_cv = await reapplication_stage(
                 db,
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 company_id=company_id,
                 resume_s3_key=row["resume_s3_key"],
                 answers=dict(checked_answers) if checked_answers else None,
+                token_hash=hash_token(reapply_raw, REAPPLY_TOKEN_KIND),
             )
         # The draft's consent row hangs off the throwaway guest identity that
         # created it. Record it against the identity that owns the application
@@ -1218,6 +1223,7 @@ async def submit_draft(
                     company_id=company_id,
                     company_name=req.get("company_name"),
                     now=now,
+                    raw=reapply_raw,
                 )
             else:
                 await stage_activation_email(
@@ -1231,6 +1237,15 @@ async def submit_draft(
                     now=now,
                 )
             await db.commit()
+            if superseded_cv:
+                # The staged attempt this one replaced held this object, and
+                # those columns were the only thing naming it. Released after
+                # the commit, so a failure here strands an object rather than
+                # losing the application.
+                try:
+                    await _delete_from_s3(superseded_cv)
+                except Exception:  # noqa: BLE001 — the pointer is already gone
+                    log.warning("public_apply.superseded_reapply_cv_orphaned")
         except Exception:  # noqa: BLE001 — see above
             await db.rollback()
             log.warning(
@@ -1287,28 +1302,43 @@ async def confirm_reapplication(
     good but the work was already done.
     """
     try:
-        user_id = await redeem_reapply_token(db, body.token)
+        await redeem_reapply_token(db, body.token)
     except ActivationError as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
-    pending = await reapplication_pending_for_user(db, user_id=user_id)
+    # THE ONE attempt this link was minted for, found by its own hash. Keyed
+    # on the person instead, a link for company A also applied whatever was
+    # staged at company B — and an attacker who knew the address could
+    # re-stage until the victim's own confirmation authenticated the
+    # attacker's CV.
+    staged = await reapplication_staged_for_token(
+        db, token_hash=hash_token(body.token, REAPPLY_TOKEN_KIND)
+    )
     applied = 0
     try:
-        for row in pending:
-            # The cooldown is re-evaluated at confirmation, not trusted from
-            # submission time: an override granted then may have been spent
-            # elsewhere since, and the window may have moved. Same predicate
-            # both doors use.
+        if staged is not None:
+            req_row = (
+                await db.execute(
+                    text(
+                        "SELECT r.id, r.reapply_cooldown_days FROM enrolments e"
+                        "  JOIN job_requisitions r ON r.id = e.requisition_id"
+                        " WHERE e.id = :e"
+                    ),
+                    {"e": staged["id"]},
+                )
+            ).mappings().first()
             done = await reapplication_confirm(
                 db,
-                enrolment_id=uuid.UUID(str(row["id"])),
-                company_id=uuid.UUID(str(row["company_id"])),
-                spend_override=True,
+                enrolment_id=uuid.UUID(str(staged["id"])),
+                company_id=uuid.UUID(str(staged["company_id"])),
+                applicant_id=uuid.UUID(str(staged["applicant_id"])),
+                requisition_id=uuid.UUID(str(req_row["id"])) if req_row else None,
+                cooldown_days=req_row["reapply_cooldown_days"] if req_row else None,
             )
-            applied += 1 if done else 0
+            applied = 1 if done else 0
         await db.commit()
     except Exception as exc:  # noqa: BLE001
         await db.rollback()
@@ -1742,13 +1772,19 @@ async def submit_application(
         # status, replace their CV and spend an override granted to them. It
         # waits on the enrolment until a link emailed to the address is
         # followed — see reapplication.stage.
+        superseded_cv: str | None = None
         if gate.reapplying and outcome.enrolment_id:
-            await reapplication_stage(
+            # Minted HERE so its hash can be bound to this one attempt before
+            # the link goes out. A token that merely proves the address, and
+            # not which submission it belongs to, applies whatever is staged.
+            reapply_raw = mint_token()
+            superseded_cv = await reapplication_stage(
                 db,
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 company_id=company_id,
                 resume_s3_key=s3_key,
                 answers=dict(checked_answers) if checked_answers else None,
+                token_hash=hash_token(reapply_raw, REAPPLY_TOKEN_KIND),
             )
 
         await db.commit()
@@ -1813,6 +1849,7 @@ async def submit_application(
                 company_id=company_id,
                 company_name=req.get("company_name"),
                 now=now,
+                raw=reapply_raw,
             )
         else:
             await stage_activation_email(
@@ -1826,6 +1863,12 @@ async def submit_application(
                 now=now,
             )
         await db.commit()
+        if superseded_cv:
+            # See the draft route: the object the replaced attempt held.
+            try:
+                await _delete_from_s3(superseded_cv)
+            except Exception:  # noqa: BLE001 — the pointer is already gone
+                log.warning("public_apply.superseded_reapply_cv_orphaned")
     except Exception:  # noqa: BLE001 — see above
         await db.rollback()
         log.warning(

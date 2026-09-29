@@ -1,6 +1,6 @@
 """PH3-B4b: a reapplication is staged until the address is proven.
 
-Revision ID: a1c3e5f7b9d2
+Revision ID: 2577ba99b7fe
 Revises: f2a4c6e8b0d3
 Create Date: 2026-09-29
 
@@ -52,9 +52,11 @@ that somebody proved something.
 from __future__ import annotations
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
+
 from alembic import op
 
-revision = "a1c3e5f7b9d2"
+revision = "2577ba99b7fe"
 down_revision = "f2a4c6e8b0d3"
 branch_labels = None
 depends_on = None
@@ -70,7 +72,27 @@ def upgrade() -> None:
     )
     op.add_column(
         "enrolments",
-        sa.Column("reapply_answers", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.Column("reapply_answers", JSONB(), nullable=True),
+    )
+    # THE TOKEN IS BOUND TO THE ATTEMPT, not merely to the person.
+    #
+    # A security re-audit found that a token scoped to `applicants.user_id`
+    # applies EVERYTHING that person has staged — across companies — so an
+    # attacker who knows a victim's address could keep re-staging until the
+    # victim followed their own link, and the victim's confirmation would then
+    # authenticate the attacker's CV and answers. The hash of the outstanding
+    # link lives on the row it will act on, so a confirmation can only ever
+    # apply the one attempt that link was minted for, and re-staging replaces
+    # the hash — which invalidates the previous link by construction.
+    op.add_column(
+        "enrolments", sa.Column("reapply_token_hash", sa.Text(), nullable=True)
+    )
+    op.create_index(
+        "ix_enrolments_reapply_token",
+        "enrolments",
+        ["reapply_token_hash"],
+        unique=True,
+        postgresql_where=sa.text("reapply_token_hash IS NOT NULL"),
     )
     # Partial, because the rows that matter are the few awaiting confirmation —
     # the confirm path looks one up by token, and the retention sweep will want
@@ -111,6 +133,8 @@ def downgrade() -> None:
         "auth_tokens",
         "kind IN ('password_reset','email_verify')",
     )
+    op.drop_index("ix_enrolments_reapply_token", table_name="enrolments")
+    op.drop_column("enrolments", "reapply_token_hash")
     op.drop_index("ix_enrolments_reapply_pending", table_name="enrolments")
     op.drop_column("enrolments", "reapply_answers")
     op.drop_column("enrolments", "reapply_resume_s3_key")

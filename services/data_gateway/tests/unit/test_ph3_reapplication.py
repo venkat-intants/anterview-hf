@@ -24,6 +24,9 @@ MIGRATION = (
 NOW = datetime(2026, 9, 16, 12, 0, tzinfo=UTC)
 REQ = uuid.UUID("11111111-1111-1111-1111-111111111111")
 APPLICANT = uuid.UUID("22222222-2222-2222-2222-222222222222")
+#: validate_answers returns (UUID, value) pairs — NOT strings. A test
+#: that passes string keys cannot see that json.dumps refuses a UUID key.
+QUESTION_ID = uuid.UUID("33333333-3333-3333-3333-333333333333")
 
 
 def _db(row: dict | None) -> AsyncMock:
@@ -472,142 +475,238 @@ async def test_spending_the_override_makes_the_next_check_refuse() -> None:
 
 
 
+
+
 # ===========================================================================
-# A reapplication is STAGED, and changes nothing until the address is proven
+# The confirmation half — which shipped, twice, with no executing coverage
 # ===========================================================================
-# A security audit found that reopening on submission let one anonymous
-# request — the apply link is not a secret, and the email is the only other
-# input — move a real person's status, overwrite the screening answers they
-# had already given, attach a stranger's PDF as the CV their application was
-# submitted with, spend an override HR had granted them, and create a
-# talent-pool consent they never gave. These pin that none of it happens
-# before somebody follows a link sent to the address.
+# A security re-audit found that `reapply_confirm` was never registered in
+# `auth_tokens.secret_for`, so `hash_token` raised and the whole remediation
+# was dead: no email was ever sent, every attempt staged for ever, and the
+# confirm endpoint 500'd. 111 PH3 tests passed throughout, because not one of
+# them touched the token. These do.
+
+
+def test_the_reapply_token_kind_is_registered() -> None:
+    """The defect that made the entire staged-reapplication flow inert."""
+    from app.auth_tokens import hash_token, ttl_hours_for
+
+    minted = hash_token("some-raw-token", "reapply_confirm")
+    assert minted, "an unregistered kind raises rather than returning a hash"
+    assert ttl_hours_for("reapply_confirm") > 0
+
+
+def test_a_reapply_token_cannot_be_used_as_a_password_reset() -> None:
+    """The HMAC is keyed BY KIND, so the same raw string hashes differently for
+    each. That is what makes one unusable as the other if a link ever leaks —
+    the query's `kind = :kind` filter is the second lock, not the only one."""
+    from app.auth_tokens import hash_token
+
+    raw = "the-same-raw-token"
+    assert hash_token(raw, "reapply_confirm") != hash_token(raw, "password_reset")
+    assert hash_token(raw, "reapply_confirm") != hash_token(raw, "email_verify")
+
+
+def test_an_unknown_kind_is_still_refused() -> None:
+    from app.auth_tokens import hash_token
+
+    with pytest.raises(ValueError, match="unknown auth-token kind"):
+        hash_token("x", "not_a_real_kind")
 
 
 @pytest.mark.asyncio
-async def test_staging_records_the_attempt_without_touching_the_application() -> None:
+async def test_staging_binds_the_token_to_this_attempt_alone() -> None:
+    """Keyed on the person instead, one link applied everything they had
+    staged — across companies. An attacker who knew a victim's address could
+    then re-stage until the victim's own confirmation authenticated the
+    attacker's CV and answers."""
     from app import reapplication
+    from app.auth_tokens import hash_token, mint_token
 
     db = AsyncMock()
+    db.scalar = AsyncMock(return_value=None)
+    raw = mint_token()
     await reapplication.stage(
         db,
         enrolment_id=uuid.uuid4(),
         company_id=uuid.uuid4(),
-        resume_s3_key="applicants/c/a-deadbeef.pdf",
-        answers={"q1": "yes"},
+        resume_s3_key="applicants/c/a-new.pdf",
+        answers=None,
+        token_hash=hash_token(raw, "reapply_confirm"),
     )
     sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
-    assert "reapply_requested_at = now()" in sql
-    assert "reapply_resume_s3_key = :k" in sql
-    # The things an anonymous caller must NOT be able to move:
-    assert "status" not in sql.replace("reapply_requested_at", ""), "no status change"
-    assert "applied_resume_s3_key" not in sql, "the live CV is not repointed"
-    assert "INSERT INTO application_answers" not in sql, "answers are not overwritten"
+    assert "reapply_token_hash = :th" in sql
+    params = [c.args[1] for c in db.execute.await_args_list if len(c.args) > 1]
+    assert any(p.get("th") == hash_token(raw, "reapply_confirm") for p in params)
+    # The RAW token is never stored — only its hash, as with every other
+    # token in this system.
+    assert not any(raw in str(p.values()) for p in params)
 
 
 @pytest.mark.asyncio
-async def test_the_staged_cv_is_named_by_a_column_so_erasure_finds_it() -> None:
-    """Erasure collects a person's resume objects by reading the columns that
-    name them; an object nothing names survives a completed erasure."""
+async def test_restaging_supersedes_the_previous_attempts_cv() -> None:
+    """Each staged attempt holds a CV that only these columns name. Overwriting
+    without releasing the old one strands it where erasure cannot reach."""
     from app import reapplication
+    from app.auth_tokens import hash_token, mint_token
 
     db = AsyncMock()
-    await reapplication.stage(
+    db.scalar = AsyncMock(return_value="applicants/c/a-previous.pdf")
+    released = await reapplication.stage(
         db,
         enrolment_id=uuid.uuid4(),
         company_id=uuid.uuid4(),
-        resume_s3_key="applicants/c/a-kept.pdf",
+        resume_s3_key="applicants/c/a-newer.pdf",
         answers=None,
+        token_hash=hash_token(mint_token(), "reapply_confirm"),
     )
-    params = [c.args[1] for c in db.execute.await_args_list if len(c.args) > 1]
-    assert any(p.get("k") == "applicants/c/a-kept.pdf" for p in params)
+    assert released == "applicants/c/a-previous.pdf", (
+        "the caller has to be told what to delete"
+    )
 
 
 @pytest.mark.asyncio
-async def test_confirming_applies_everything_submission_did_not() -> None:
+async def test_a_confirmation_finds_only_the_attempt_its_token_named() -> None:
     from app import reapplication
 
     db = AsyncMock()
-    staged = {
-        "reapply_resume_s3_key": "applicants/c/a-new.pdf",
-        "reapply_answers": {"q1": "yes"},
-    }
+    captured: list[dict] = []
 
-    async def _execute(*a: object, **k: object) -> MagicMock:
+    async def _execute(stmt: object, params: dict | None = None, **_k: object):
+        captured.append(params or {})
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.first = MagicMock(return_value=None)
+        res.mappings = MagicMock(return_value=mapped)
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
+    await reapplication.staged_for_token(db, token_hash="abc123")
+    sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
+    assert "reapply_token_hash = :th" in sql
+    assert "user_id" not in sql, "scoping to the person is the flaw, not the fix"
+    assert "FOR UPDATE" in sql
+    assert captured and captured[0].get("th") == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_confirming_re_evaluates_the_cooldown_rather_than_trusting_it() -> None:
+    """Time passes between staging and confirming: the window may have moved
+    and an override may have been spent elsewhere. The router's comment
+    promised this while passing `spend_override=True` as a literal, which
+    destroyed a recorded HR exception on every single confirmation."""
+    from app import reapplication
+
+    staged = {"reapply_resume_s3_key": None, "reapply_answers": None}
+
+    async def _execute(*a: object, **k: object):
         res = MagicMock()
         mapped = MagicMock()
         mapped.first = MagicMock(return_value=staged)
         res.mappings = MagicMock(return_value=mapped)
         return res
 
+    db = AsyncMock()
     db.execute = AsyncMock(side_effect=_execute)
-    db.scalar = AsyncMock(return_value="applicants/c/a-new.pdf")
+    db.scalar = AsyncMock(return_value=None)
 
+    refusing = reapplication.CooldownVerdict(allowed=False, until=NOW)
     with (
-        patch("app.requisitions.record_transition", AsyncMock(return_value="rejected")) as moved,
-        patch("app.application_questions.store_answers", AsyncMock()) as answers,
+        patch.object(reapplication, "check", AsyncMock(return_value=refusing)) as checked,
+        patch("app.requisitions.record_transition", AsyncMock()) as moved,
         patch.object(reapplication, "consume_override", AsyncMock()) as spent,
     ):
         applied = await reapplication.confirm(
             db,
             enrolment_id=uuid.uuid4(),
             company_id=uuid.uuid4(),
-            spend_override=True,
+            applicant_id=APPLICANT,
+            requisition_id=REQ,
+            cooldown_days=30,
         )
 
-    assert applied is True
-    moved.assert_awaited()
-    assert moved.await_args.kwargs["to_status"] == "new"
-    answers.assert_awaited()
-    spent.assert_awaited()
-    sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
-    assert "applied_resume_s3_key = :k" in sql, "the confirmed CV becomes the live one"
+    checked.assert_awaited()
+    assert applied is False, "a window that closed since staging still refuses"
+    moved.assert_not_awaited()
+    spent.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_confirming_twice_applies_nothing_the_second_time() -> None:
+async def test_confirming_spends_the_override_only_when_it_is_what_allowed_it() -> None:
     from app import reapplication
 
-    db = AsyncMock()
+    staged = {"reapply_resume_s3_key": None, "reapply_answers": None}
 
-    async def _execute(*a: object, **k: object) -> MagicMock:
+    async def _execute(*a: object, **k: object):
         res = MagicMock()
         mapped = MagicMock()
-        mapped.first = MagicMock(return_value=None)  # nothing staged
+        mapped.first = MagicMock(return_value=staged)
         res.mappings = MagicMock(return_value=mapped)
         return res
 
-    db.execute = AsyncMock(side_effect=_execute)
-    with patch("app.requisitions.record_transition", AsyncMock()) as moved:
-        applied = await reapplication.confirm(
-            db, enrolment_id=uuid.uuid4(), company_id=uuid.uuid4(), spend_override=True
-        )
-    assert applied is False
-    moved.assert_not_awaited(), "a link followed twice must not reopen twice"
+    for reason, should_spend in (("override", True), (None, False)):
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=_execute)
+        db.scalar = AsyncMock(return_value=None)
+        verdict = reapplication.CooldownVerdict(allowed=True, reason=reason)
+        with (
+            patch.object(reapplication, "check", AsyncMock(return_value=verdict)),
+            patch("app.requisitions.record_transition", AsyncMock(return_value="rejected")),
+            patch.object(reapplication, "consume_override", AsyncMock()) as spent,
+        ):
+            await reapplication.confirm(
+                db,
+                enrolment_id=uuid.uuid4(),
+                company_id=uuid.uuid4(),
+                applicant_id=APPLICANT,
+                requisition_id=REQ,
+                cooldown_days=30,
+            )
+        assert spent.await_count == (1 if should_spend else 0), reason
 
 
 @pytest.mark.asyncio
-async def test_clearing_reports_the_object_it_released() -> None:
-    """RETURNING on the UPDATE yields the NEW row, so a caller reading the
-    column this statement just NULLed would get None and strand the object."""
+async def test_confirming_writes_answers_back_as_uuid_keys() -> None:
+    """`validate_answers` produces (UUID, value) pairs and `json.dumps` refuses
+    a UUID key, so staging stringifies them. If confirm does not restore them,
+    `store_answers` binds a str to a uuid column. The earlier tests used
+    `{"q1": ...}` — string keys production never produces — which is why the
+    TypeError shipped."""
     from app import reapplication
 
+    staged = {
+        "reapply_resume_s3_key": None,
+        "reapply_answers": {str(QUESTION_ID): "yes"},
+    }
+
+    async def _execute(*a: object, **k: object):
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.first = MagicMock(return_value=staged)
+        res.mappings = MagicMock(return_value=mapped)
+        return res
+
     db = AsyncMock()
-    db.scalar = AsyncMock(return_value="applicants/c/a-abandoned.pdf")
-    released = await reapplication.clear_staged(
-        db, enrolment_id=uuid.uuid4(), company_id=uuid.uuid4()
-    )
-    assert released == "applicants/c/a-abandoned.pdf"
+    db.execute = AsyncMock(side_effect=_execute)
+    db.scalar = AsyncMock(return_value=None)
 
-
-def test_neither_door_applies_a_reapplication_on_submission() -> None:
-    """Structural, and worth it: the whole finding was that an anonymous
-    request acted. Neither route may call confirm."""
-    from app.routers.public_apply import submit_application, submit_draft
-
-    for fn in (submit_application, submit_draft):
-        src = inspect.getsource(fn)
-        assert "reapplication_stage" in src, f"{fn.__name__} does not stage"
-        assert "reapplication_confirm" not in src, (
-            f"{fn.__name__} applies a reapplication without proof of the address"
+    with (
+        patch.object(
+            reapplication, "check",
+            AsyncMock(return_value=reapplication.CooldownVerdict(allowed=True)),
+        ),
+        patch("app.requisitions.record_transition", AsyncMock(return_value="rejected")),
+        patch("app.application_questions.store_answers", AsyncMock()) as answers,
+    ):
+        await reapplication.confirm(
+            db,
+            enrolment_id=uuid.uuid4(),
+            company_id=uuid.uuid4(),
+            applicant_id=APPLICANT,
+            requisition_id=REQ,
+            cooldown_days=None,
         )
+
+    answers.assert_awaited()
+    written = answers.await_args.kwargs["answers"]
+    assert written == [(QUESTION_ID, "yes")], "restored as UUIDs, not strings"

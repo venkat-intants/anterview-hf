@@ -16,10 +16,15 @@ import type { AttemptResult, ExamDetail, AttemptBreakdown } from '../api/exams';
 const getExam = vi.fn();
 const listAttempts = vi.fn();
 const getAttemptBreakdown = vi.fn();
+// The camera-proctoring summary this page also renders is covered in its own
+// AttemptProctoringSummary.test.tsx — stub the fetch here to a quiet "nothing
+// to report" fixture so it doesn't ever error against this file's fixtures.
+const getAttemptProctoring = vi.fn();
 vi.mock('../api/exams', () => ({
   getExam: (...a: unknown[]) => getExam(...a) as unknown,
   listAttempts: (...a: unknown[]) => listAttempts(...a) as unknown,
   getAttemptBreakdown: (...a: unknown[]) => getAttemptBreakdown(...a) as unknown,
+  getAttemptProctoring: (...a: unknown[]) => getAttemptProctoring(...a) as unknown,
   CODING_LANGUAGES: ['python', 'javascript'],
 }));
 
@@ -92,6 +97,12 @@ beforeEach(() => {
   getExam.mockResolvedValue(EXAM);
   listAttempts.mockResolvedValue([ATTEMPT]);
   getAttemptBreakdown.mockResolvedValue(CODING_BREAKDOWN);
+  getAttemptProctoring.mockResolvedValue({
+    camera_in_use: false,
+    integrity_score: null,
+    counts: {},
+    events: [],
+  });
 });
 
 describe('ExamAttemptDetail — the Code evidence tab', () => {

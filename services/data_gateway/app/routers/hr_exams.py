@@ -22,6 +22,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -46,6 +47,7 @@ from app.models import (
     Exam,
     ExamAssignment,
     ExamAttempt,
+    ExamIntegrityEvent,
     ExamQuestion,
     ExamRound,
     ExamSection,
@@ -301,6 +303,47 @@ class AttemptResultOut(BaseModel):
     status: str
     submitted_at: str | None
     attempt_no: int
+    # Camera proctoring contract §7. The API carries both so a caller can tell
+    # "not watched" from "watched and clean" without opening every attempt —
+    # but note that the HR CONSOLE deliberately renders neither on this list.
+    # A bare integrity score in a scannable table is exactly where a reviewer
+    # under time pressure pattern-matches "low score = cheated", with none of
+    # the context (which events, how long, and gaze called out as unreliable)
+    # that makes the per-attempt panel honest. If a list-level indicator is
+    # ever wanted, show camera on/off — never the score on its own.
+    integrity_score: int | None = None
+    camera_in_use: bool = False
+
+
+class ProctoringEventOut(BaseModel):
+    """One stored proctoring event, time-ordered. A ranged event (a camera
+    signal) carries its duration; an instantaneous one (fullscreen-exit /
+    tab-switch) does not."""
+
+    event_type: str
+    started_at: str
+    ended_at: str | None
+    duration_seconds: float | None
+
+
+class AttemptProctoringOut(BaseModel):
+    """The attempt's proctoring summary (camera-proctoring contract §7).
+
+    ``camera_in_use`` is the one field that tells HR whether "no camera
+    events" means clean or means never watched — say so rather than showing
+    the three camera counts as zero.
+    """
+
+    camera_in_use: bool
+    integrity_score: int | None
+    counts: dict[str, int]
+    events: list[ProctoringEventOut]
+    #: True when the rate limiter refused at least one event for this attempt
+    #: (security review HIGH-2). The client swallows a 429 like a lost packet,
+    #: so without this a reviewer cannot tell a quiet exam from one we stopped
+    #: recording. Shown as a caveat on the timeline, never as a mark against
+    #: the candidate — being throttled is not something they did.
+    events_dropped: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1267,9 +1310,77 @@ async def list_attempts(
             status=at.status,
             submitted_at=at.submitted_at.isoformat() if at.submitted_at else None,
             attempt_no=at.attempt_no,
+            integrity_score=at.integrity_score,
+            camera_in_use=at.camera_in_use,
         )
         for at, name in rows
     ]
+
+
+@router.get(
+    "/exams/{exam_id}/attempts/{aid}/proctoring", response_model=AttemptProctoringOut
+)
+async def attempt_proctoring(
+    exam_id: uuid.UUID, aid: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> AttemptProctoringOut:
+    """The attempt's full proctoring picture — score, per-type counts, and the
+    time-ordered events, each carrying its duration when it is a ranged
+    (camera) event. Camera-proctoring contract §7. Flags inform HR; nothing
+    here sets a stage, a status or a decision (CLAUDE.md hard constraint 9) —
+    HR reads this and decides."""
+    _hr_uid, company_id = ctx
+    await _get_owned_exam(db, company_id, exam_id)
+    at = await db.scalar(
+        select(ExamAttempt).where(
+            ExamAttempt.id == aid,
+            ExamAttempt.exam_id == exam_id,
+            ExamAttempt.company_id == company_id,
+            ExamAttempt.deleted_at.is_(None),
+        )
+    )
+    if at is None:
+        raise HTTPException(status_code=404, detail="Attempt not found.")
+    rows = (
+        await db.execute(
+            select(
+                ExamIntegrityEvent.event_type,
+                ExamIntegrityEvent.started_at,
+                ExamIntegrityEvent.ended_at,
+            )
+            .where(ExamIntegrityEvent.attempt_id == at.id)
+            .order_by(ExamIntegrityEvent.started_at.asc())
+        )
+    ).all()
+    # Counts are derived from the rows just read, NOT from the frozen
+    # exam_attempts.proctoring_summary JSON. The two agree today — the ingest
+    # recomputes that column with this same aggregation on every post, and
+    # exam_integrity_events sits in the erasure executor's EXCLUDED_TABLES with
+    # no retention clock of its own, so nothing deletes a row. But "nothing
+    # deletes a row" is a project-wide convention, not something this endpoint
+    # can enforce, and the failure mode if it ever stops holding is a screen
+    # that lies to a reviewer: a count with no event in the timeline to back it
+    # up. Deriving both numbers from one read makes the panel honest by
+    # construction rather than by coupling.
+    counts: dict[str, int] = dict(Counter(etype for etype, _started, _ended in rows))
+    events = [
+        ProctoringEventOut(
+            event_type=etype,
+            started_at=started.isoformat(),
+            ended_at=ended.isoformat() if ended else None,
+            duration_seconds=(
+                round((ended - started).total_seconds(), 1) if ended is not None else None
+            ),
+        )
+        for etype, started, ended in rows
+    ]
+    summary = at.proctoring_summary if isinstance(at.proctoring_summary, dict) else {}
+    return AttemptProctoringOut(
+        camera_in_use=at.camera_in_use,
+        integrity_score=at.integrity_score,
+        counts=counts,
+        events=events,
+        events_dropped=summary.get("events_dropped") is True,
+    )
 
 
 @router.get("/exams/{exam_id}/attempts/{aid}/breakdown")

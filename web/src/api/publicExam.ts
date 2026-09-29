@@ -74,6 +74,18 @@ export interface TakeExam {
   deadline: string | null;
   scheduled_at: string | null;
   max_integrity_violations: number;
+  /** Whether THIS round requires camera proctoring — the company's setting
+   *  (camera-proctoring contract §3). Gates a dedicated, never-bundled
+   *  consent step before the exam can start; declining when true blocks the
+   *  attempt. Optional so an older API response degrades safely to "no camera
+   *  gate, browser events only" rather than vanishing the Start button. */
+  camera_required?: boolean;
+  /** Whether this candidate has already granted `video_capture` consent —
+   *  informational only. Corrected 2026-09-29 (code review FIX 4): this used
+   *  to claim the UI reads this to skip asking again; it does not, and
+   *  PublicExam.tsx never reads this field. The candidate is always asked,
+   *  every round — the stronger DPDP position, and the one that ships. */
+  camera_consent_granted?: boolean;
   /** Null when no accommodation is effective for this attempt — "no
    *  adjustment" is a normal, common state, not an error. */
   adjustments?: ExamAdjustments | null;
@@ -93,6 +105,10 @@ export interface AttemptStart {
    *  candidate can trigger a single violation -- unlike the integrity-event
    *  response, which arrives only after one and is lost on a flaky link. */
   max_violations: number | null;
+  /** Frozen on the attempt at /start, from the ledger — not from anything the
+   *  client claimed. Drives whether the camera signal path (and its
+   *  candidate-visible indicator) ever turns on for this attempt. */
+  camera_in_use: boolean;
 }
 
 export interface ExamResult {
@@ -116,6 +132,41 @@ export function getPublicExam(token: string): Promise<TakeExam> {
   });
 }
 
+/**
+ * Record this candidate's camera-proctoring consent.
+ *
+ * A SEPARATE call, not a field on `startExam`. The server writes it straight
+ * to `dpdp_consent_ledger` as `video_capture` — the same consent type the AI
+ * interview uses, so a candidate who granted it there is not asked again —
+ * and `POST /exam/start` then gates on the LEDGER, not on anything this
+ * client claims. That ordering is the point: a consent the client merely
+ * asserts in a start payload is not evidence, and DPDP asks for evidence.
+ *
+ * Idempotent: called again while a grant is live it returns
+ * `already_granted: true` and writes no second row.
+ */
+export interface CameraConsentResult {
+  consented: boolean;
+  already_granted: boolean;
+  granted_at: string;
+}
+
+export function grantCameraConsent(token: string): Promise<CameraConsentResult> {
+  return clientFetch<CameraConsentResult>(`${API_BASE}/exam/camera-consent`, {
+    method: 'POST',
+    skipAuth: true,
+    headers: tokenHeaders(token),
+  });
+}
+
+/**
+ * Begin the attempt.
+ *
+ * Takes no consent argument. Camera consent is recorded by
+ * `grantCameraConsent` BEFORE this call and the server reads the ledger; a
+ * required round started without it returns 422 "Camera consent is required
+ * before starting this round."
+ */
 export function startExam(token: string): Promise<AttemptStart> {
   return clientFetch<AttemptStart>(`${API_BASE}/exam/start`, {
     method: 'POST',
@@ -206,13 +257,22 @@ export function submitRound(
   });
 }
 
-/** Post a single integrity event for an exam attempt. */
+/**
+ * Post a single integrity event for an exam attempt.
+ *
+ * There is deliberately NO `metadata` field, mirroring the server: its
+ * `IntegrityEventIn` is `extra="forbid"`, so any extra key 422s — and because
+ * `sendIntegrityEvent` swallows errors so proctoring can never interrupt an
+ * exam, that 422 would be invisible. A field the server refuses is therefore
+ * an invitation to lose a real signal silently. It is also the only shape in
+ * which a frame or landmark array could get a foothold on its way to the wire,
+ * which this design does not permit anywhere.
+ */
 export interface ExamIntegrityEventBody {
   attempt_id: string;
   event_type: string;
   started_at?: string;
   ended_at?: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface ExamIntegrityResult {

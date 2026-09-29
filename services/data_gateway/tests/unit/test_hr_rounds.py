@@ -52,6 +52,7 @@ def _round(**over: Any) -> ExamRound:
         "pass_threshold": 60,
         "time_limit_seconds": None,
         "advances_to_interview": False,
+        "camera_proctoring_required": False,
         "status": "draft",
         "position": 1,
         "created_at": _NOW,

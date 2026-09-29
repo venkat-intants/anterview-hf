@@ -197,62 +197,148 @@ def _token_fingerprint(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def rate_limit_task(bucket: str, per_token: int, per_ip: int) -> Callable[..., Awaitable[None]]:
-    """Cap a public job-simulation/portfolio task route primarily by the
-    candidate's OWN link — the ``X-Task-Token`` header, hashed — rather than
-    by client IP (M3, security review PH4-D4).
+def rate_limit_link(
+    bucket: str, header: str, per_token: int, per_ip: int
+) -> Callable[..., Awaitable[None]]:
+    """Cap a public magic-link route primarily by the candidate's OWN link —
+    the opaque token in *header*, hashed — rather than by client IP (M3,
+    security review PH4-D4).
 
     ``rate_limit`` keys everything from one route on one shared IP bucket,
-    which is the wrong boundary here for two independent reasons this fixes
-    together: (a) four routes (start/save/delete/submit) shared ONE bucket
-    name with four different caps, so autosaves could exhaust the budget a
-    submit needed; separate ``bucket`` values per call site fix that on their
-    own; (b) a college computer lab — the primary market — puts many
-    candidates, each working their OWN task, behind one NAT address, so an
-    IP-keyed cap punishes every candidate in the room for one candidate's
-    normal use. Keying on the token instead gives each candidate their own
-    budget regardless of how many others share their address.
+    which is the wrong boundary for a magic-link route for two independent
+    reasons this fixes together: (a) sibling routes sharing ONE bucket name
+    with different caps let a cheap, frequent call exhaust the budget an
+    important, rare one needed; separate ``bucket`` values per call site fix
+    that on their own; (b) a college computer lab — CLAUDE.md's #1 target
+    market — puts many candidates, each holding their OWN link, behind one NAT
+    address, so an IP-keyed cap punishes every candidate in the room for one
+    candidate's entirely normal use. Keying on the token instead gives each
+    candidate their own budget regardless of how many others share their
+    address.
 
     A request with no token (or an unrecognised one, since the header is
     opaque here) still hits a LOOSER per-IP ceiling — a backstop against
-    volumetric abuse, not the normal-use limit. Same fixed 60-second window
-    and fail-open posture as ``rate_limit``; see its docstring.
+    volumetric abuse, not the normal-use limit. Size *per_ip* from the busiest
+    REAL room you expect to serve, not as a tidy multiple of *per_token*: the
+    token cap is what actually protects the resource, because getting past it
+    needs as many valid, unexpired links as the flood has requests.
+
+    Same fixed 60-second window and fail-open posture as ``rate_limit``; see
+    its docstring. Starlette matches header names case-insensitively, so the
+    casing passed for *header* is cosmetic.
     """
 
     async def _dep(request: Request) -> None:
-        token = request.headers.get("X-Task-Token")
-        ip = extract_client_ip(request)
-        try:
-            redis = get_redis()
-            tok_count: int | None = None
-            if token:
-                tok_key = f"rl:{bucket}:tok:{_token_fingerprint(token)}"
-                tok_count = await redis.incr(tok_key)
-                if tok_count == 1:
-                    await redis.expire(tok_key, 60)
-            ip_key = f"rl:{bucket}:ip:{ip}"
-            ip_count: int = await redis.incr(ip_key)
-            if ip_count == 1:
-                await redis.expire(ip_key, 60)
-        except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
-            _rate_limit_skipped.labels(
-                bucket=bucket, error_type=type(exc).__name__
-            ).inc()
-            log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
-            return
-        if tok_count is not None and tok_count > per_token:
-            _rate_limit_exceeded.labels(bucket=bucket).inc()
-            log.warning("rate_limit.exceeded", bucket=bucket, keyed="token")
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many requests. Please wait a minute and try again.",
-            )
-        if ip_count > per_ip:
-            _rate_limit_exceeded.labels(bucket=bucket).inc()
-            log.warning("rate_limit.exceeded", bucket=bucket, keyed="ip")
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many requests from your network. Please wait a minute and try again.",
-            )
+        await enforce_link_limit(
+            request, bucket=bucket, header=header, per_token=per_token, per_ip=per_ip
+        )
 
     return Depends(_dep)
+
+
+async def enforce_link_limit(
+    request: Request, *, bucket: str, header: str, per_token: int, per_ip: int
+) -> None:
+    """``rate_limit_link``'s body, callable directly.
+
+    Exposed because one caller — the exam integrity-event ingest — has to pick
+    its bucket from the PARSED BODY (a violation signal and a clipboard event
+    must not share a budget), which a route-level dependency cannot see.
+
+    The IP budget is charged and enforced BEFORE the token budget, and the
+    token key is not touched at all once the IP budget is spent (security
+    review MEDIUM-1). The obvious ordering — token first — bounds how many
+    requests are SERVED but not how many distinct Redis keys are CREATED,
+    since every rejected request still minted a fresh
+    ``rl:{bucket}:tok:{sha256}``. That matters more than it sounds: this Redis
+    also carries the JWT revocation epoch, and rate limiting and the "log out
+    all devices" kill switch fail open together (see the module docstring), so
+    memory pressure here disables a platform-wide auth control.
+    """
+    token = request.headers.get(header)
+    ip = extract_client_ip(request)
+    try:
+        redis = get_redis()
+        ip_key = f"rl:{bucket}:ip:{ip}"
+        ip_count: int = await redis.incr(ip_key)
+        if ip_count == 1:
+            await redis.expire(ip_key, 60)
+        over_ip = ip_count > per_ip
+        tok_count: int | None = None
+        if token and not over_ip:
+            tok_key = f"rl:{bucket}:tok:{_token_fingerprint(token)}"
+            tok_count = await redis.incr(tok_key)
+            if tok_count == 1:
+                await redis.expire(tok_key, 60)
+    except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
+        _rate_limit_skipped.labels(
+            bucket=bucket, error_type=type(exc).__name__
+        ).inc()
+        log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+        return
+    if over_ip:
+        _rate_limit_exceeded.labels(bucket=bucket).inc()
+        log.warning("rate_limit.exceeded", bucket=bucket, keyed="ip")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests from your network. Please wait a minute and try again.",
+        )
+    if tok_count is not None and tok_count > per_token:
+        _rate_limit_exceeded.labels(bucket=bucket).inc()
+        log.warning("rate_limit.exceeded", bucket=bucket, keyed="token")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please wait a minute and try again.",
+        )
+
+
+async def enforce_token_budget(
+    request: Request, *, bucket: str, header: str, per_minute: int
+) -> None:
+    """Charge one request to a PER-TOKEN budget only — no IP dimension.
+
+    For a caller that already has a separate per-IP guard in front of it and
+    needs the token check somewhere it can react to the refusal. The exam
+    integrity ingest uses this twice, because a refusal there has to be
+    recorded on the attempt before the 429 goes out (security re-audit
+    MEDIUM-1): a drop the HR timeline cannot see is the whole defect that
+    review blocked on, and a route-level dependency raises before the handler
+    can write anything.
+
+    A request with no token is not charged and not refused — it has no budget
+    to exceed. Every such request 404s at the magic-link context anyway, and
+    the per-IP guard is what bounds it. Fails OPEN on any Redis error, like
+    every other limiter in this module; see the module docstring.
+    """
+    token = request.headers.get(header)
+    if not token:
+        return
+    try:
+        redis = get_redis()
+        key = f"rl:{bucket}:tok:{_token_fingerprint(token)}"
+        count: int = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, 60)
+    except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
+        _rate_limit_skipped.labels(bucket=bucket, error_type=type(exc).__name__).inc()
+        log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+        return
+    if count > per_minute:
+        _rate_limit_exceeded.labels(bucket=bucket).inc()
+        log.warning("rate_limit.exceeded", bucket=bucket, keyed="token")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please wait a minute and try again.",
+        )
+
+
+def rate_limit_task(bucket: str, per_token: int, per_ip: int) -> Callable[..., Awaitable[None]]:
+    """The job-simulation/portfolio task flavour of ``rate_limit_link`` — its
+    magic link travels in ``X-Task-Token``.
+
+    Kept as a named wrapper rather than inlined at its eight call sites in
+    ``routers/job_tasks.py`` so the header name is stated once; the behaviour
+    is entirely ``rate_limit_link``'s, including the reasoning in its
+    docstring for why a token beats an IP here.
+    """
+    return rate_limit_link(bucket, "X-Task-Token", per_token, per_ip)

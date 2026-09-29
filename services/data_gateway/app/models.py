@@ -380,6 +380,16 @@ class ExamRound(Base):
     advances_to_interview: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    # Camera-proctoring contract: the COMPANY's own setting for whether this
+    # round needs the candidate's camera. Not one of the fields
+    # exam_rounds_frozen() locks once published/taken (migration a3c5e7f9b1d4)
+    # -- it is a delivery setting, not a grading one, so it stays editable and
+    # each new attempt reads the CURRENT value at /exam/start, frozen onto the
+    # attempt (exam_attempts.camera_in_use) the same way PH4-D2 freezes an
+    # accommodation's allowance.
+    camera_proctoring_required: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     status: Mapped[str] = mapped_column(Text, default="draft", nullable=False)
     position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
@@ -659,6 +669,14 @@ class ExamAttempt(Base):
     accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     extra_time_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     auto_submit_relaxed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Camera-proctoring contract: whether THIS attempt actually had the camera
+    # on, frozen at /exam/start (exam_attempts_allowance_fixed, migration
+    # a3c5e7f9b1d4) from the round's camera_proctoring_required setting plus an
+    # active video_capture consent. Exists so HR reading a later attempt never
+    # has to guess, from the absence of camera events, whether nothing
+    # happened or there was no camera at all — "no events" and "not watched"
+    # must never look the same.
+    camera_in_use: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # PH4-D3: set once, together with redacting `answers`/`graded_snapshot`'s
     # coding source and program output (retention or DPDP erasure) — the ONE
     # exception exam_attempts_submission_frozen allows on a submitted/expired
@@ -677,10 +695,23 @@ class ExamIntegrityEvent(Base):
     analogue of interview ``integrity_events`` (which key off sessions.id). Exams
     have no session, so these key off the attempt instead.
 
-    event_type: fullscreen_exit | tab_blur | copy | paste | ... (instantaneous;
-        ended_at NULL) — extend as needed. Detection is client-side; raw input
-        never leaves the browser, only these lightweight events. The rolling
-        integrity_score + proctoring_summary live on exam_attempts (read path).
+    event_type: 'fullscreen_exit' | 'tab_blur' | 'copy' | 'paste'
+        (instantaneous; ended_at NULL) or 'face_absent' | 'multiple_faces' |
+        'gaze_away' (RANGED — carry started_at/ended_at and count ONCE per
+        debounced occurrence, decided by the client's proctorLogic state
+        machine, never per tick). The DB CHECK
+        ``ck_exam_integrity_events_event_type`` is the backstop (created by
+        migration a3c5e7f9b1d4, widened to include copy/paste by f6b8d0a2c4e6 —
+        keep the tuple below in step with whichever migration is latest,
+        because ``alembic revision --autogenerate`` diffs THIS declaration
+        against the live DB and would otherwise propose narrowing the
+        constraint back); the ingest endpoint (``routers/exam_take.py``)
+        rejects any other value rather than storing it. Detection is
+        client-side; raw camera/keystroke input never leaves the browser, only
+        these lightweight events — and the ingest schema has no field that can
+        carry an array or nested object, so a frame/landmark payload has
+        nowhere to go. The rolling integrity_score + proctoring_summary live on
+        exam_attempts (read path).
     """
 
     __tablename__ = "exam_integrity_events"
@@ -688,6 +719,11 @@ class ExamIntegrityEvent(Base):
         ForeignKeyConstraint(
             ["attempt_id"], ["exam_attempts.id"],
             name="fk_exam_integrity_events_attempt", ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "event_type IN ('fullscreen_exit','tab_blur','face_absent',"
+            "'multiple_faces','gaze_away','copy','paste')",
+            name="ck_exam_integrity_events_event_type",
         ),
     )
 

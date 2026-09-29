@@ -30,13 +30,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import accommodations
+from app import accommodations, exam_camera
 from app.coding_grader import run_tests, weighted_raw
 from app.config import settings
 from app.database import DbSessionDep
@@ -55,9 +55,10 @@ from app.models import (
     ExamSection,
 )
 from app.notifications_util import create_notification
-from app.rate_limit import rate_limit
+from app.rate_limit import enforce_token_budget, rate_limit, rate_limit_link
 from app.redis_client import get_redis
 from app.routers.hr_interviews import advance_applicant_to_interview
+from app.utils.request_ip import extract_client_ip, extract_user_agent
 from app.workflow_runner import enrolment_awaiting_exam_round, record_result
 
 log = structlog.get_logger(__name__)
@@ -67,7 +68,10 @@ router = APIRouter(prefix="/exam", tags=["exam-take"])
 _NOT_AVAILABLE = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not available.")
 
 # Integrity event types that count toward the auto-submit violation threshold.
-_VIOLATION_EVENTS = {"fullscreen_exit", "tab_blur"}
+# Camera proctoring contract: extended from the original two browser signals
+# to include the two higher-severity camera signals; gaze_away deliberately
+# never counts here — see app/exam_camera.py's module docstring.
+_VIOLATION_EVENTS = exam_camera.VIOLATION_EVENT_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +215,12 @@ class TakeExamOut(BaseModel):
     scheduled_at: str | None = None
     max_integrity_violations: int
     adjustments: AdjustmentsOut | None = None
+    # Camera proctoring contract §3: the company's OWN round setting, and
+    # whether THIS candidate already holds an active video_capture consent —
+    # so the UI knows whether to show the camera-consent screen before /start,
+    # and whether it can skip straight past it.
+    camera_required: bool = False
+    camera_consent_granted: bool = False
     sections: list[PublicSectionOut] = Field(default_factory=list)
     # Flattened, back-compat with the pre-rounds single-section taker.
     questions: list[PublicQuestionOut] = Field(default_factory=list)
@@ -339,11 +349,36 @@ class CodingSubmitIn(BaseModel):
 
 
 class IntegrityEventIn(BaseModel):
+    """One proctoring event. ``extra="forbid"`` is structural, not incidental:
+    a stray top-level ``frame``/``image``/``landmarks`` field is refused
+    outright rather than silently ignored — see app/exam_camera.py's module
+    docstring for why that distinction matters here."""
+
+    model_config = ConfigDict(extra="forbid")
+
     attempt_id: uuid.UUID
     event_type: str = Field(min_length=1, max_length=40)
     started_at: datetime | None = None
     ended_at: datetime | None = None
-    metadata: dict[str, object] | None = None
+    # NO `metadata` field, deliberately (code review FIX 3). It previously
+    # existed with a shape-checker that rejected lists, nested objects and long
+    # strings — but "looks innocuous" is not the same as "is not PII": a name, a
+    # phone number or a health detail all pass such a check comfortably. With
+    # the field gone, `extra="forbid"` above refuses every one of them, and
+    # `event_metadata` is NULL by construction for every row this endpoint
+    # writes rather than by convention.
+    @field_validator("event_type")
+    @classmethod
+    def _known_event_type(cls, v: str) -> str:
+        if v not in exam_camera.KNOWN_EVENT_TYPES:
+            raise ValueError(f"event_type must be one of {sorted(exam_camera.KNOWN_EVENT_TYPES)}")
+        return v
+
+    @model_validator(mode="after")
+    def _ranged_needs_ended_at(self) -> IntegrityEventIn:
+        if self.event_type in exam_camera.RANGED_EVENT_TYPES and self.ended_at is None:
+            raise ValueError(f"{self.event_type} is a ranged event and needs ended_at")
+        return self
 
 
 class IntegrityIngestOut(BaseModel):
@@ -374,6 +409,11 @@ class AttemptStartOut(BaseModel):
     # It discloses nothing new: the same value already goes to the same client
     # on the first violation, and it is the candidate's own accommodation.
     max_violations: int | None
+    # Camera proctoring contract: frozen from the round's camera_proctoring_
+    # required setting the moment this attempt started (mirrors max_violations
+    # above) — the definitive answer for whether THIS attempt should run the
+    # camera pipeline at all, for the life of the attempt.
+    camera_in_use: bool
 
 
 class ExamResultOut(BaseModel):
@@ -613,10 +653,57 @@ async def get_take_exam(ctx: ExamTakeCtxDep, db: DbSessionDep) -> TakeExamOut:
         ),
         max_integrity_violations=settings.exam_integrity_max_violations,
         adjustments=adjustments,
+        camera_required=bool(ctx.exam_round.camera_proctoring_required),
+        camera_consent_granted=await exam_camera.has_active_camera_consent(
+            db, ctx.applicant.user_id
+        ),
         sections=section_out,
         questions=[_public_question(q) for q in mcq],
         coding_questions=[_public_coding_question(q) for q in coding],
     )
+
+
+class CameraConsentOut(BaseModel):
+    consented: bool
+    already_granted: bool
+    granted_at: str
+
+
+@router.post(
+    "/camera-consent",
+    response_model=CameraConsentOut,
+    # Security review MEDIUM-2. Unauthenticated (magic-link), writes to
+    # dpdp_consent_ledger and can provision a guest users row — 5 DB queries
+    # per call, previously unbounded, against a serverless database this
+    # project has already had exhausted once by its own pollers. Row growth is
+    # bounded by the partial unique index and link_or_reuse_guest, so this is
+    # a cost/availability control, not an integrity one. Modest cap: a
+    # candidate grants consent once or twice per round.
+    dependencies=[
+        rate_limit_link(
+            "exam_camera_consent", "X-Exam-Token", per_token=10, per_ip=300
+        )
+    ],
+)
+async def record_camera_consent(
+    ctx: ExamTakeCtxDep, db: DbSessionDep, request: Request,
+) -> CameraConsentOut:
+    """Explicit, standalone DPDP video_capture consent for the candidate's
+    camera during this round — asked before the exam starts, on its own
+    screen, never bundled with anything else (camera-proctoring contract §3).
+    Idempotent: calling this again while a grant is already active returns it
+    unchanged. Recording is independent of whether the round actually
+    REQUIRES the camera — a candidate may grant it ahead of time, and
+    /exam/start is what actually gates on it for a required round."""
+    result = await exam_camera.record_camera_consent(
+        db,
+        applicant=ctx.applicant,
+        meta=exam_camera.CameraConsentMeta(
+            ip_address=extract_client_ip(request), user_agent=extract_user_agent(request),
+        ),
+    )
+    await db.commit()
+    return CameraConsentOut(**result)
 
 
 def _max_violations_for(attempt: ExamAttempt) -> int | None:
@@ -627,7 +714,17 @@ def _max_violations_for(attempt: ExamAttempt) -> int | None:
     return None if attempt.auto_submit_relaxed else settings.exam_integrity_max_violations
 
 
-@router.post("/start", response_model=AttemptStartOut)
+@router.post(
+    "/start",
+    response_model=AttemptStartOut,
+    # Security review MEDIUM-2: also an unauthenticated write with no cap.
+    # Idempotent (it returns the open attempt), so the risk is cost rather
+    # than duplicate attempts — but a retry loop on a flaky connection should
+    # not be able to hammer a serverless database unbounded.
+    dependencies=[
+        rate_limit_link("exam_start", "X-Exam-Token", per_token=20, per_ip=600)
+    ],
+)
 async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOut:
     # Idempotent: return the existing in-progress attempt if one is open.
     existing = await _in_progress_attempt(db, ctx)
@@ -638,6 +735,7 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
             started_at=existing.started_at.isoformat(),
             deadline=d.isoformat() if d else None,
             max_violations=_max_violations_for(existing),
+            camera_in_use=existing.camera_in_use,
         )
     # Block a fresh attempt on a single-shot round already submitted.
     if await _has_submitted(db, ctx) and not ctx.exam.allow_retake:
@@ -660,6 +758,20 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="The scheduled join window for this round has closed.",
             )
+
+    # Camera proctoring contract §3: a round the company marked as REQUIRING
+    # the camera cannot be started without an active video_capture consent for
+    # THIS applicant. Checked before creating the attempt, so a declined
+    # candidate never gets one at all — the screen the frontend shows for this
+    # 422 is what tells them why and what to do (grant it, or ask HR).
+    camera_required = bool(ctx.exam_round.camera_proctoring_required)
+    if camera_required and not await exam_camera.has_active_camera_consent(
+        db, ctx.applicant.user_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Camera consent is required before starting this round.",
+        )
 
     max_no = await db.scalar(
         select(func.max(ExamAttempt.attempt_no)).where(
@@ -694,6 +806,12 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
         accommodation_id=adj_row.id if adj_row else None,
         extra_time_seconds=extra_secs,
         auto_submit_relaxed=bool(adj_row.relax_auto_submit) if adj_row else False,
+        # Frozen from the round's CURRENT setting, exactly like the allowance
+        # fields above. Not required => camera not in use, full stop — even a
+        # candidate who separately holds a video_capture consent (say, from an
+        # earlier AI interview) does not get the camera pipeline turned on for
+        # a round that does not ask for it (contract §3).
+        camera_in_use=camera_required,
         created_at=now,
         updated_at=now,
     )
@@ -718,6 +836,7 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
             started_at=existing.started_at.isoformat(),
             deadline=d.isoformat() if d else None,
             max_violations=_max_violations_for(existing),
+            camera_in_use=existing.camera_in_use,
         )
     if adj_row is not None:
         await accommodations.record_applied(
@@ -731,6 +850,7 @@ async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOu
         started_at=attempt.started_at.isoformat(),
         deadline=d.isoformat() if d else None,
         max_violations=_max_violations_for(attempt),
+        camera_in_use=attempt.camera_in_use,
     )
 
 
@@ -1221,32 +1341,160 @@ async def run_code_custom(
 # ---------------------------------------------------------------------------
 # Proctoring — integrity event ingest (exam analogue of interview integrity)
 # ---------------------------------------------------------------------------
-def _score_from_violations(violations: int) -> int:
-    """Rolling integrity score: 100 minus a flat penalty per violation, floored at 0."""
-    return max(0, 100 - 15 * violations)
+async def _note_events_dropped(db: AsyncSession, attempt: ExamAttempt) -> None:
+    """Flag on the attempt that at least one proctoring event was refused by
+    the rate limiter, so the HR timeline can say it is incomplete.
+
+    Security review HIGH-2: the client swallows a 429 exactly like a lost
+    packet, so without this the ONLY trace of a drop is a Prometheus counter
+    nobody joins to an attempt. A reviewer would see a short timeline and have
+    no way to tell "nothing happened" from "we stopped recording".
+
+    Deliberately a flag and not a count: the number of refusals is not
+    evidence about the candidate, and storing it would invite exactly the
+    quantitative reading this feature is careful to avoid everywhere else.
+    """
+    summary = dict(attempt.proctoring_summary or {})
+    if summary.get("events_dropped") is True:
+        return  # already flagged; nothing to write
+    # A new dict, not an in-place mutation: SQLAlchemy does not track changes
+    # inside a JSONB value without MutableDict, so mutating would silently
+    # persist nothing.
+    summary["events_dropped"] = True
+    attempt.proctoring_summary = summary
+    attempt.updated_at = datetime.now(tz=UTC)
+    try:
+        await db.commit()
+    except Exception:  # noqa: BLE001 — never convert a 429 into a 500
+        # The caller is about to raise 429. If flagging fails we still want
+        # that 429, not a 500: the client swallows both identically, but a 500
+        # here would misreport a throttle as a server fault in every dashboard
+        # and log. The flag is lost, which is the already-accepted worst case
+        # of the drop itself (security re-audit LOW-4).
+        log.warning("exam.integrity_event.drop_flag_failed", attempt_id=str(attempt.id))
+        await db.rollback()
 
 
-@router.post("/integrity-event", response_model=IntegrityIngestOut)
+
+@router.post(
+    "/integrity-event",
+    response_model=IntegrityIngestOut,
+    # Route level: the EDGE guard, cutting a flood off before any database
+    # work. Note the bucket name differs from the in-handler one on purpose —
+    # they are separate Redis keys, and reusing the name would charge every
+    # request to the same counter twice and silently halve both ceilings.
+    #
+    # Its per-token ceiling deliberately sits ABOVE the in-handler one, so the
+    # handler's cap always fires first and flags the attempt; traffic that
+    # reaches this ceiling has therefore already been recorded as dropped.
+    # That keeps the pre-DB cut-off without reintroducing an unflaggable token
+    # refusal (security re-audit rounds 2-3, MEDIUM-1 then MEDIUM-2): without
+    # it, requests past the in-handler cap each cost 5 SELECTs before being
+    # refused, which on a serverless database this project has already had
+    # exhausted by its own pollers is a real cost regression.
+    #
+    # A per-IP refusal here CANNOT flag anything: at dependency time there is
+    # no attempt resolved to write to, and resolving one would forfeit the very
+    # cut-off this exists for. It is therefore an OPERATIONAL signal, not an HR
+    # one — watch rate_limit_exceeded_total{bucket="exam_integrity_edge"}.
+    dependencies=[
+        rate_limit_link(
+            "exam_integrity_edge",
+            "X-Exam-Token",
+            per_token=settings.exam_integrity_event_edge_per_minute,
+            per_ip=settings.exam_integrity_event_per_ip_per_minute,
+        )
+    ],
+)
 async def ingest_integrity_event(
-    body: IntegrityEventIn, ctx: ExamTakeCtxDep, db: DbSessionDep
+    request: Request, body: IntegrityEventIn, ctx: ExamTakeCtxDep, db: DbSessionDep
 ) -> IntegrityIngestOut:
-    """Record one proctoring event (fullscreen-exit / tab-switch / ...) against the
-    open attempt and update its rolling integrity score + summary. Detection is
-    client-side; only the lightweight event reaches us (raw input never leaves the
-    browser). The client decides auto-submit; this is the server-side audit trail."""
+    """Record one proctoring event (fullscreen-exit / tab-switch / copy / paste
+    / a camera signal) against the open attempt and update its rolling
+    integrity score + summary. Detection is client-side; only the lightweight
+    event reaches us (raw input never leaves the browser — see
+    app/exam_camera.py for the structural guarantee). The client decides
+    auto-submit; this is the server-side audit trail.
+
+    Rate-limited in TWO tiers, for two different reasons (code review FIX 2 +
+    security review HIGH-2, 2026-09-29). An unauthenticated magic-link
+    candidate could originally post unboundedly — verified live, 150
+    consecutive posts from one token all returned 200 — so:
+
+    * The route-level cap is keyed on the candidate's OWN link
+      (``X-Exam-Token``) with a much looser per-IP backstop, NOT the other way
+      round: a lab NATs every seat behind one address, so an IP-keyed cap
+      would let three ordinary candidates exhaust the budget and silently drop
+      the 4th's real camera events. It is set above any rate a real client can
+      reach, so it is a volumetric guard only.
+    * The per-type cap below charges NON-VIOLATION events (copy / paste /
+      gaze_away) to their own budget. Because the client swallows a 429 and a
+      dropped camera event loses the row, the violation count AND the
+      auto-submit trigger at once, a single shared budget would let a
+      candidate spend it on cheap clipboard events and suppress their own
+      ``multiple_faces`` for the rest of the minute — turning the rate limit
+      into an off switch for the evidence this endpoint exists to collect.
+
+    When either PER-TOKEN cap refuses an event the attempt records it, so HR is
+    told the timeline is incomplete rather than shown a short one that looks
+    clean. The per-IP edge refusal is the one exception and cannot be recorded:
+    it happens in a route dependency, before any attempt is resolved, and
+    resolving one there would forfeit the pre-database cut-off that guard
+    exists for. It is an operational signal instead — see the route decorator.
+
+    A camera-only event type (face_absent / multiple_faces / gaze_away) is
+    refused for an attempt that never had the camera on
+    (``attempt.camera_in_use`` is False) — that attempt was never watched, so
+    an event claiming a camera signal for it can only be a forged or stale
+    request, never a real one.
+    """
     attempt = await _in_progress_attempt(db, ctx)
     if attempt is None or attempt.id != body.attempt_id:
         raise _NOT_AVAILABLE
+    if body.event_type in exam_camera.CAMERA_EVENT_TYPES and not attempt.camera_in_use:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Camera proctoring is not enabled for this attempt.",
+        )
+    # Both per-token budgets, in the one place that can record a refusal.
+    #
+    # Outer: every event type, above any rate a real client produces — a
+    # volumetric bound per candidate. Inner: only the types that are NOT
+    # violations, on their own key, so clipboard noise can never starve a
+    # camera signal (see this function's docstring).
+    #
+    # Each refusal is flagged on the attempt BEFORE the 429 is raised. An
+    # incomplete timeline that says it is incomplete is honest; one that
+    # silently omits events invites HR to read a short record as a clean one.
+    try:
+        await enforce_token_budget(
+            request,
+            bucket="exam_integrity_event",
+            header="X-Exam-Token",
+            per_minute=settings.exam_integrity_event_per_minute,
+        )
+        if body.event_type not in exam_camera.VIOLATION_EVENT_TYPES:
+            await enforce_token_budget(
+                request,
+                bucket="exam_integrity_nonviolation",
+                header="X-Exam-Token",
+                per_minute=settings.exam_integrity_nonviolation_per_minute,
+            )
+    except HTTPException:
+        await _note_events_dropped(db, attempt)
+        raise
     now = datetime.now(tz=UTC)
     db.add(
         ExamIntegrityEvent(
             id=uuid.uuid4(),
             attempt_id=attempt.id,
             company_id=ctx.company_id,
-            event_type=body.event_type[:40],
+            event_type=body.event_type,
             started_at=body.started_at or now,
             ended_at=body.ended_at,
-            event_metadata=body.metadata,
+            # No `metadata` field exists on IntegrityEventIn (code review FIX
+            # 3) — event_metadata is therefore always NULL for every row this
+            # endpoint creates, by construction rather than convention.
             created_at=now,
         )
     )
@@ -1263,8 +1511,10 @@ async def ingest_integrity_event(
     ).all()
     counts: dict[str, int] = {et: int(n) for et, n in counts_rows}
     violations = sum(n for et, n in counts.items() if et in _VIOLATION_EVENTS)
-    score = _score_from_violations(violations)
-    attempt.proctoring_summary = {"counts": counts, "violations": violations}
+    score = exam_camera.score_from_counts(counts)
+    attempt.proctoring_summary = {
+        "counts": counts, "violations": violations, "camera_in_use": attempt.camera_in_use,
+    }
     attempt.integrity_score = score
     attempt.updated_at = now
     await db.commit()

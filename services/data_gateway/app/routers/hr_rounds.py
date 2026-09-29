@@ -63,6 +63,9 @@ class RoundCreateIn(BaseModel):
     pass_threshold: int = Field(default=60, ge=0, le=100)
     time_limit_seconds: int | None = Field(default=None, ge=10, le=86_400)
     advances_to_interview: bool = False
+    # Camera proctoring contract §3: the company's own setting for whether a
+    # candidate must grant camera consent to take this round at all.
+    camera_proctoring_required: bool = False
 
 
 class RoundUpdateIn(BaseModel):
@@ -70,6 +73,12 @@ class RoundUpdateIn(BaseModel):
     pass_threshold: int | None = Field(default=None, ge=0, le=100)
     time_limit_seconds: int | None = Field(default=None, ge=10, le=86_400)
     advances_to_interview: bool | None = None
+    # Not one of the grading fields exam_locks.assert_round_editable freezes —
+    # a delivery setting, not a scoring one, so it stays editable even once the
+    # round is published or taken. Each new attempt reads the CURRENT value at
+    # /exam/start; an attempt already in progress keeps whatever it started
+    # with (exam_attempts.camera_in_use, frozen by exam_attempts_allowance_fixed).
+    camera_proctoring_required: bool | None = None
     status: str | None = None
 
     @field_validator("status")
@@ -120,6 +129,7 @@ class RoundOut(BaseModel):
     pass_threshold: int
     time_limit_seconds: int | None
     advances_to_interview: bool
+    camera_proctoring_required: bool
     status: str
     position: int
     sections: list[SectionOut]
@@ -190,6 +200,7 @@ async def _round_out(db: AsyncSession, rnd: ExamRound) -> RoundOut:
         pass_threshold=rnd.pass_threshold,
         time_limit_seconds=rnd.time_limit_seconds,
         advances_to_interview=rnd.advances_to_interview,
+        camera_proctoring_required=rnd.camera_proctoring_required,
         status=rnd.status,
         position=rnd.position,
         sections=[await _section_out(db, s) for s in secs],
@@ -249,6 +260,7 @@ async def create_round(
         pass_threshold=body.pass_threshold,
         time_limit_seconds=body.time_limit_seconds,
         advances_to_interview=body.advances_to_interview,
+        camera_proctoring_required=body.camera_proctoring_required,
         status="draft",
         position=nxt,
         created_at=now,
@@ -354,6 +366,8 @@ async def update_round(
         rnd.time_limit_seconds = body.time_limit_seconds
     if body.advances_to_interview is not None:
         rnd.advances_to_interview = body.advances_to_interview
+    if body.camera_proctoring_required is not None:
+        rnd.camera_proctoring_required = body.camera_proctoring_required
     if body.status is not None:
         rnd.status = body.status
         # The candidate take path gates on the ROUND being published (and the
@@ -836,6 +850,7 @@ async def duplicate_round(
         pass_threshold=src.pass_threshold,
         time_limit_seconds=src.time_limit_seconds,
         advances_to_interview=src.advances_to_interview,
+        camera_proctoring_required=src.camera_proctoring_required,
         status="draft",
         position=nxt,
         created_at=now,

@@ -279,7 +279,8 @@ async def test_start_is_idempotent_for_an_open_attempt() -> None:
     from app.routers.exam_take import start_attempt
 
     open_attempt = ExamAttempt(
-        id=uuid.uuid4(), status="in_progress", started_at=datetime.now(tz=UTC)
+        id=uuid.uuid4(), status="in_progress", started_at=datetime.now(tz=UTC),
+        camera_in_use=False,
     )
     db = AsyncMock()
     db.add = MagicMock()

@@ -591,3 +591,40 @@ export function getAttemptBreakdown(
 ): Promise<AttemptBreakdown> {
   return apiGet<AttemptBreakdown>(`/hr/exams/${examId}/attempts/${attemptId}/breakdown`);
 }
+
+// ── Camera proctoring (exam-camera-proctoring contract §7) ───────────────────
+
+/** One stored proctoring event, time-ordered. A ranged event (a camera signal,
+ *  or any other event the server chose to close out) carries `ended_at` and
+ *  `duration_seconds`; an instantaneous one carries neither. */
+export interface ProctoringEvent {
+  event_type: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_seconds: number | null;
+}
+
+/**
+ * The attempt's full proctoring picture. `camera_in_use` is the one field
+ * that tells HR whether "no camera events" means clean or means never
+ * watched — the server never puts a camera-signal key in `counts` when it is
+ * false, so render that fact in words rather than as zero counts.
+ */
+export interface AttemptProctoring {
+  camera_in_use: boolean;
+  integrity_score: number | null;
+  counts: Record<string, number>;
+  events: ProctoringEvent[];
+  /** True when the rate limiter refused at least one event for this attempt.
+   *  The timeline is then incomplete and has to say so — a reviewer cannot
+   *  otherwise tell a quiet exam from one we stopped recording. Never a mark
+   *  against the candidate: being throttled is not something they did. */
+  events_dropped?: boolean;
+}
+
+export function getAttemptProctoring(
+  examId: string,
+  attemptId: string,
+): Promise<AttemptProctoring> {
+  return apiGet<AttemptProctoring>(`/hr/exams/${examId}/attempts/${attemptId}/proctoring`);
+}

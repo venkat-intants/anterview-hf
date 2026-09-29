@@ -55,7 +55,7 @@ from app.models import (
     ExamSection,
 )
 from app.notifications_util import create_notification
-from app.rate_limit import enforce_token_budget, rate_limit, rate_limit_link
+from app.rate_limit import enforce_token_budget, rate_limit_link
 from app.redis_client import get_redis
 from app.routers.hr_interviews import advance_applicant_to_interview
 from app.utils.request_ip import extract_client_ip, extract_user_agent
@@ -1225,7 +1225,14 @@ async def _grade_and_finalize(
 @router.post(
     "/submit",
     response_model=ExamResultOut,
-    dependencies=[rate_limit("exam_submit", settings.rate_limit_api_per_minute)],
+    dependencies=[
+        rate_limit_link(
+            "exam_submit",
+            "X-Exam-Token",
+            per_token=settings.exam_submit_per_minute,
+            per_ip=settings.exam_submit_per_ip_per_minute,
+        )
+    ],
 )
 async def submit_attempt(body: SubmitIn, ctx: ExamTakeCtxDep, db: DbSessionDep) -> ExamResultOut:
     """Submit a round (MCQ answers + optional coding submissions)."""
@@ -1236,7 +1243,14 @@ async def submit_attempt(body: SubmitIn, ctx: ExamTakeCtxDep, db: DbSessionDep) 
 @router.post(
     "/submit-round",
     response_model=ExamResultOut,
-    dependencies=[rate_limit("exam_submit", settings.rate_limit_api_per_minute)],
+    dependencies=[
+        rate_limit_link(
+            "exam_submit",
+            "X-Exam-Token",
+            per_token=settings.exam_submit_per_minute,
+            per_ip=settings.exam_submit_per_ip_per_minute,
+        )
+    ],
 )
 async def submit_round(body: SubmitIn, ctx: ExamTakeCtxDep, db: DbSessionDep) -> ExamResultOut:
     """Explicit round submit (alias of /submit) — the round-aware UI's primary path."""
@@ -1247,7 +1261,14 @@ async def submit_round(body: SubmitIn, ctx: ExamTakeCtxDep, db: DbSessionDep) ->
 @router.post(
     "/submit-coding",
     response_model=ExamResultOut,
-    dependencies=[rate_limit("exam_submit", settings.rate_limit_api_per_minute)],
+    dependencies=[
+        rate_limit_link(
+            "exam_submit",
+            "X-Exam-Token",
+            per_token=settings.exam_submit_per_minute,
+            per_ip=settings.exam_submit_per_ip_per_minute,
+        )
+    ],
 )
 async def submit_coding(
     body: CodingSubmitIn, ctx: ExamTakeCtxDep, db: DbSessionDep
@@ -1282,7 +1303,14 @@ async def _round_coding_question(
 @router.post(
     "/run-code",
     response_model=RunCodeOut,
-    dependencies=[rate_limit("exam_run_code", 20)],
+    dependencies=[
+        rate_limit_link(
+            "exam_run_code",
+            "X-Exam-Token",
+            per_token=settings.exam_run_code_per_minute,
+            per_ip=settings.exam_run_code_per_ip_per_minute,
+        )
+    ],
 )
 async def run_code_samples(body: RunCodeIn, ctx: ExamTakeCtxDep, db: DbSessionDep) -> RunCodeOut:
     """Candidate 'Run' — execute against the SAMPLE tests only. No score, no save."""
@@ -1314,7 +1342,14 @@ async def run_code_samples(body: RunCodeIn, ctx: ExamTakeCtxDep, db: DbSessionDe
 @router.post(
     "/run-code-custom",
     response_model=RunCodeCustomOut,
-    dependencies=[rate_limit("exam_run_code_custom", 20)],
+    dependencies=[
+        rate_limit_link(
+            "exam_run_code_custom",
+            "X-Exam-Token",
+            per_token=settings.exam_run_code_per_minute,
+            per_ip=settings.exam_run_code_per_ip_per_minute,
+        )
+    ],
 )
 async def run_code_custom(
     body: RunCodeCustomIn, ctx: ExamTakeCtxDep, db: DbSessionDep

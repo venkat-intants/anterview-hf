@@ -695,18 +695,23 @@ class ExamIntegrityEvent(Base):
     analogue of interview ``integrity_events`` (which key off sessions.id). Exams
     have no session, so these key off the attempt instead.
 
-    event_type: 'fullscreen_exit' | 'tab_blur' (instantaneous; ended_at NULL)
-        or 'face_absent' | 'multiple_faces' | 'gaze_away' (RANGED — carry
-        started_at/ended_at and count ONCE per debounced occurrence, decided by
-        the client's proctorLogic state machine, never per tick). The DB CHECK
-        ``ck_exam_integrity_events_event_type`` (migration a3c5e7f9b1d4) is the
-        backstop; the ingest endpoint (``routers/exam_take.py``) rejects any
-        other value rather than storing it. Detection is client-side; raw
-        camera/keystroke input never leaves the browser, only these lightweight
-        events — and the ingest schema structurally cannot carry an array or
-        nested object, so a frame/landmark payload has nowhere to go. The
-        rolling integrity_score + proctoring_summary live on exam_attempts
-        (read path).
+    event_type: 'fullscreen_exit' | 'tab_blur' | 'copy' | 'paste'
+        (instantaneous; ended_at NULL) or 'face_absent' | 'multiple_faces' |
+        'gaze_away' (RANGED — carry started_at/ended_at and count ONCE per
+        debounced occurrence, decided by the client's proctorLogic state
+        machine, never per tick). The DB CHECK
+        ``ck_exam_integrity_events_event_type`` is the backstop (created by
+        migration a3c5e7f9b1d4, widened to include copy/paste by f6b8d0a2c4e6 —
+        keep the tuple below in step with whichever migration is latest,
+        because ``alembic revision --autogenerate`` diffs THIS declaration
+        against the live DB and would otherwise propose narrowing the
+        constraint back); the ingest endpoint (``routers/exam_take.py``)
+        rejects any other value rather than storing it. Detection is
+        client-side; raw camera/keystroke input never leaves the browser, only
+        these lightweight events — and the ingest schema has no field that can
+        carry an array or nested object, so a frame/landmark payload has
+        nowhere to go. The rolling integrity_score + proctoring_summary live on
+        exam_attempts (read path).
     """
 
     __tablename__ = "exam_integrity_events"
@@ -717,7 +722,7 @@ class ExamIntegrityEvent(Base):
         ),
         CheckConstraint(
             "event_type IN ('fullscreen_exit','tab_blur','face_absent',"
-            "'multiple_faces','gaze_away')",
+            "'multiple_faces','gaze_away','copy','paste')",
             name="ck_exam_integrity_events_event_type",
         ),
     )

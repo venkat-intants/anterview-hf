@@ -243,6 +243,42 @@ describe("PublicExam — the proctor's max_violations wiring (security review)",
     // The relaxed attempt never shows a countdown to auto-submit.
     expect(screen.queryByText(/remaining/i)).not.toBeInTheDocument();
   });
+
+  // Code review FIX 1, 2026-09-29: copy/paste were restored to the exam
+  // integrity vocabulary after a regression silently 422'd every clipboard
+  // event. This is the regression's own repro, run against the fix: a real
+  // `paste` DOM event must still reach sendIntegrityEvent, not be swallowed.
+  it('still posts a paste event to sendIntegrityEvent (code review FIX 1)', async () => {
+    const user = userEvent.setup();
+    getPublicExam.mockResolvedValue(EXAM);
+    startExam.mockResolvedValue({
+      attempt_id: 'att-1',
+      started_at: '2026-09-16T00:00:00.000Z',
+      deadline: null,
+      max_violations: 3,
+    });
+    sendIntegrityEvent.mockResolvedValue({
+      accepted: true,
+      violation_count: 0,
+      max_violations: 3,
+      integrity_score: 90,
+    });
+
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Start exam' }));
+    await waitFor(() => expect(screen.queryByRole('checkbox')).not.toBeInTheDocument());
+
+    document.dispatchEvent(new Event('paste'));
+
+    await waitFor(() =>
+      expect(sendIntegrityEvent).toHaveBeenCalledWith(
+        'exam_tok_123456',
+        expect.objectContaining({ attempt_id: 'att-1', event_type: 'paste' }),
+      ),
+    );
+  });
 });
 
 // Camera-proctoring contract §3 — the dedicated, never-bundled consent step.

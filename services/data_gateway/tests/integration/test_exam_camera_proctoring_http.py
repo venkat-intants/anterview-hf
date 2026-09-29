@@ -312,6 +312,30 @@ async def test_weighted_score_and_hr_proctoring_read(
     assert body["integrity_score"] == 55
     assert body["violation_count"] == 2
 
+    # copy (5) -> score 50, violation_count STAYS 2 — restored (code review
+    # FIX 1) with a severity weight, but never a violation (too many innocent
+    # explanations for a bare clipboard event on its own).
+    r = await client.post(
+        "/exam/integrity-event", headers=headers,
+        json={"attempt_id": attempt_id, "event_type": "copy"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["integrity_score"] == 50
+    assert body["violation_count"] == 2
+
+    # paste (10) -> score 40, violation_count STILL 2 — weighted higher than
+    # copy (bringing content IN is judged stronger than copying OUT) but,
+    # like copy, never a violation.
+    r = await client.post(
+        "/exam/integrity-event", headers=headers,
+        json={"attempt_id": attempt_id, "event_type": "paste"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["integrity_score"] == 40
+    assert body["violation_count"] == 2
+
     # A ranged event with no ended_at is refused, not stored.
     r = await client.post(
         "/exam/integrity-event", headers=headers,
@@ -325,17 +349,19 @@ async def test_weighted_score_and_hr_proctoring_read(
     # An unknown event type is refused, not stored.
     r = await client.post(
         "/exam/integrity-event", headers=headers,
-        json={"attempt_id": attempt_id, "event_type": "copy"},
+        json={"attempt_id": attempt_id, "event_type": "screenshot"},
     )
     assert r.status_code == 422, r.text
 
-    # No frame, image or landmark data — ever. Refused, and no row created.
+    # No metadata field exists at all (code review FIX 3) — refused as an
+    # unrecognised field regardless of how innocuous its content looks, not
+    # merely when it looks like a frame or a landmark array.
     r = await client.post(
         "/exam/integrity-event", headers=headers,
         json={
             "attempt_id": attempt_id, "event_type": "gaze_away",
             "started_at": "2026-09-29T00:03:00Z", "ended_at": "2026-09-29T00:03:02Z",
-            "metadata": {"landmarks": [[0.1, 0.2, 0.0]] * 468},
+            "metadata": {"confidence": 0.9},
         },
     )
     assert r.status_code == 422, r.text
@@ -344,22 +370,26 @@ async def test_weighted_score_and_hr_proctoring_read(
         text("SELECT count(*) FROM exam_integrity_events WHERE attempt_id = :i"),
         {"i": uuid.UUID(attempt_id)},
     )
-    # Exactly the three ACCEPTED events above — the four refused payloads
-    # (unknown type, missing ended_at, landmark array, camera-off case tested
-    # elsewhere) never reached the table.
-    assert int(event_count or 0) == 3
+    # Exactly the five ACCEPTED events above — the three refused payloads
+    # (unknown type, missing ended_at, a metadata field) never reached the
+    # table.
+    assert int(event_count or 0) == 5
 
     # HR's proctoring read: score, per-type counts, durations, camera_in_use.
     r = await client.get(f"/hr/exams/{exam['exam_id']}/attempts/{attempt_id}/proctoring")
     assert r.status_code == 200, r.text
     report = r.json()
     assert report["camera_in_use"] is True
-    assert report["integrity_score"] == 55
-    assert report["counts"] == {"tab_blur": 1, "gaze_away": 1, "multiple_faces": 1}
+    assert report["integrity_score"] == 40
+    assert report["counts"] == {
+        "tab_blur": 1, "gaze_away": 1, "multiple_faces": 1, "copy": 1, "paste": 1,
+    }
     by_type = {e["event_type"]: e for e in report["events"]}
     assert by_type["tab_blur"]["duration_seconds"] is None
     assert by_type["gaze_away"]["duration_seconds"] == 4.0
     assert by_type["multiple_faces"]["duration_seconds"] == 3.0
+    assert by_type["copy"]["duration_seconds"] is None
+    assert by_type["paste"]["duration_seconds"] is None
 
     # And the list view carries the same headline numbers, so HR does not
     # have to open every attempt to see whether one was watched at all.
@@ -367,7 +397,7 @@ async def test_weighted_score_and_hr_proctoring_read(
     assert r.status_code == 200, r.text
     row = next(a for a in r.json() if a["attempt_id"] == attempt_id)
     assert row["camera_in_use"] is True
-    assert row["integrity_score"] == 55
+    assert row["integrity_score"] == 40
 
 
 # ---------------------------------------------------------------------------
@@ -438,3 +468,55 @@ async def test_relaxed_accommodation_suppresses_auto_submit_for_camera_events_to
     # auto-submit, never about hiding the signal from HR.
     assert body["violation_count"] == 1
     assert body["integrity_score"] == 100 - 20
+
+
+# ---------------------------------------------------------------------------
+# 5. Tenancy — one company can never read another's proctoring timeline
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_hr_proctoring_read_is_refused_across_companies(
+    client: AsyncClient, committed_db: AsyncSession,
+) -> None:
+    """Code review gap: the proctoring read was correctly company-scoped but
+    had no test proving it, and it returns candidate-derived behavioural data —
+    the last endpoint that should be taken on trust.
+
+    Asserts BOTH directions on the SAME url: 200 for the owning company, 404
+    for the other. Without the 200 leg a broken url would make this test pass
+    while proving nothing, which is the failure mode this repo keeps hitting.
+    """
+    tag = uuid.uuid4().hex[:10]
+    owner_company, owner_hr = await _company(committed_db, f"own-{tag}")
+    _hr(client, owner_hr, owner_company)
+    exam = await _mixed_round_exam(client, camera_required=True)
+    applicant_id = await _applicant(committed_db, owner_company, "Farida")
+    token = await _assign(client, exam["exam_id"], exam["round_id"], applicant_id)
+    headers = {"X-Exam-Token": token}
+
+    await client.post("/exam/camera-consent", headers=headers)
+    r = await client.post("/exam/start", headers=headers)
+    assert r.status_code == 200, r.text
+    attempt_id = r.json()["attempt_id"]
+    r = await client.post(
+        "/exam/integrity-event", headers=headers,
+        json={"attempt_id": attempt_id, "event_type": "tab_blur"},
+    )
+    assert r.status_code == 200, r.text
+
+    url = f"/hr/exams/{exam['exam_id']}/attempts/{attempt_id}/proctoring"
+
+    # The owning company sees it.
+    r = await client.get(url)
+    assert r.status_code == 200, r.text
+    assert r.json()["counts"] == {"tab_blur": 1}
+
+    # A DIFFERENT company, same url, gets 404 — not 200, and not 403 either:
+    # a 403 would confirm the attempt exists, which is itself a leak.
+    other_company, other_hr = await _company(committed_db, f"oth-{tag}")
+    _hr(client, other_hr, other_company)
+    r = await client.get(url)
+    assert r.status_code == 404, r.text
+
+    # And the other company's attempts list does not carry the row at all.
+    r = await client.get(f"/hr/exams/{exam['exam_id']}/attempts")
+    assert r.status_code == 404, r.text

@@ -645,16 +645,39 @@ async def test_event_type_check_constraint_is_the_backstop_for_the_vocabulary(
 ) -> None:
     """The ingest endpoint's Pydantic validator is the primary refusal
     (tests/unit/test_exam_camera_proctoring.py); this is the DB-level
-    backstop (migration a3c5e7f9b1d4) that holds even against a raw INSERT."""
+    backstop (migrations a3c5e7f9b1d4 + f6b8d0a2c4e6) that holds even against
+    a raw INSERT. 'screenshot' rather than 'copy'/'paste': those two are
+    valid event types again (code review FIX 1) — this test needs a name the
+    CHECK constraint has never allowed, under either migration."""
     f = await _build(db)
     attempt_id = await _new_attempt(db, f)
     await _refused(
         db,
         "INSERT INTO exam_integrity_events (id, attempt_id, company_id, event_type,"
-        " started_at, created_at) VALUES (:i, :a, :c, 'copy', now(), now())",
+        " started_at, created_at) VALUES (:i, :a, :c, 'screenshot', now(), now())",
         {"i": uuid.uuid4(), "a": attempt_id, "c": f.company},
         "ck_exam_integrity_events_event_type",
     )
+
+
+@pytest.mark.asyncio
+async def test_event_type_check_constraint_allows_the_restored_copy_and_paste(
+    db: AsyncSession,
+) -> None:
+    """The other direction of the fix (code review FIX 1, migration
+    f6b8d0a2c4e6): a raw INSERT of 'copy' or 'paste' must SUCCEED against the
+    DB CHECK, not merely against the Pydantic layer above it — a regression
+    here would silently re-introduce the exact bug this migration fixes."""
+    f = await _build(db)
+    attempt_id = await _new_attempt(db, f)
+    for event_type in ("copy", "paste"):
+        await _allowed(
+            db,
+            "INSERT INTO exam_integrity_events (id, attempt_id, company_id,"
+            " event_type, started_at, created_at)"
+            " VALUES (:i, :a, :c, :et, now(), now())",
+            {"i": uuid.uuid4(), "a": attempt_id, "c": f.company, "et": event_type},
+        )
 
 
 @pytest.mark.asyncio

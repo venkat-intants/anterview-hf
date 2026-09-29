@@ -80,9 +80,11 @@ export interface TakeExam {
    *  attempt. Optional so an older API response degrades safely to "no camera
    *  gate, browser events only" rather than vanishing the Start button. */
   camera_required?: boolean;
-  /** Whether this candidate has already granted `video_capture` consent — the
-   *  same consent type the AI interview uses, so someone who granted it there
-   *  is not asked twice. */
+  /** Whether this candidate has already granted `video_capture` consent —
+   *  informational only. Corrected 2026-09-29 (code review FIX 4): this used
+   *  to claim the UI reads this to skip asking again; it does not, and
+   *  PublicExam.tsx never reads this field. The candidate is always asked,
+   *  every round — the stronger DPDP position, and the one that ships. */
   camera_consent_granted?: boolean;
   /** Null when no accommodation is effective for this attempt — "no
    *  adjustment" is a normal, common state, not an error. */
@@ -255,13 +257,22 @@ export function submitRound(
   });
 }
 
-/** Post a single integrity event for an exam attempt. */
+/**
+ * Post a single integrity event for an exam attempt.
+ *
+ * There is deliberately NO `metadata` field, mirroring the server: its
+ * `IntegrityEventIn` is `extra="forbid"`, so any extra key 422s — and because
+ * `sendIntegrityEvent` swallows errors so proctoring can never interrupt an
+ * exam, that 422 would be invisible. A field the server refuses is therefore
+ * an invitation to lose a real signal silently. It is also the only shape in
+ * which a frame or landmark array could get a foothold on its way to the wire,
+ * which this design does not permit anywhere.
+ */
 export interface ExamIntegrityEventBody {
   attempt_id: string;
   event_type: string;
   started_at?: string;
   ended_at?: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface ExamIntegrityResult {

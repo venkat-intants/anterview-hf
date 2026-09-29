@@ -197,30 +197,39 @@ def _token_fingerprint(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def rate_limit_task(bucket: str, per_token: int, per_ip: int) -> Callable[..., Awaitable[None]]:
-    """Cap a public job-simulation/portfolio task route primarily by the
-    candidate's OWN link — the ``X-Task-Token`` header, hashed — rather than
-    by client IP (M3, security review PH4-D4).
+def rate_limit_link(
+    bucket: str, header: str, per_token: int, per_ip: int
+) -> Callable[..., Awaitable[None]]:
+    """Cap a public magic-link route primarily by the candidate's OWN link —
+    the opaque token in *header*, hashed — rather than by client IP (M3,
+    security review PH4-D4).
 
     ``rate_limit`` keys everything from one route on one shared IP bucket,
-    which is the wrong boundary here for two independent reasons this fixes
-    together: (a) four routes (start/save/delete/submit) shared ONE bucket
-    name with four different caps, so autosaves could exhaust the budget a
-    submit needed; separate ``bucket`` values per call site fix that on their
-    own; (b) a college computer lab — the primary market — puts many
-    candidates, each working their OWN task, behind one NAT address, so an
-    IP-keyed cap punishes every candidate in the room for one candidate's
-    normal use. Keying on the token instead gives each candidate their own
-    budget regardless of how many others share their address.
+    which is the wrong boundary for a magic-link route for two independent
+    reasons this fixes together: (a) sibling routes sharing ONE bucket name
+    with different caps let a cheap, frequent call exhaust the budget an
+    important, rare one needed; separate ``bucket`` values per call site fix
+    that on their own; (b) a college computer lab — CLAUDE.md's #1 target
+    market — puts many candidates, each holding their OWN link, behind one NAT
+    address, so an IP-keyed cap punishes every candidate in the room for one
+    candidate's entirely normal use. Keying on the token instead gives each
+    candidate their own budget regardless of how many others share their
+    address.
 
     A request with no token (or an unrecognised one, since the header is
     opaque here) still hits a LOOSER per-IP ceiling — a backstop against
-    volumetric abuse, not the normal-use limit. Same fixed 60-second window
-    and fail-open posture as ``rate_limit``; see its docstring.
+    volumetric abuse, not the normal-use limit. Size *per_ip* from the busiest
+    REAL room you expect to serve, not as a tidy multiple of *per_token*: the
+    token cap is what actually protects the resource, because getting past it
+    needs as many valid, unexpired links as the flood has requests.
+
+    Same fixed 60-second window and fail-open posture as ``rate_limit``; see
+    its docstring. Starlette matches header names case-insensitively, so the
+    casing passed for *header* is cosmetic.
     """
 
     async def _dep(request: Request) -> None:
-        token = request.headers.get("X-Task-Token")
+        token = request.headers.get(header)
         ip = extract_client_ip(request)
         try:
             redis = get_redis()
@@ -256,3 +265,15 @@ def rate_limit_task(bucket: str, per_token: int, per_ip: int) -> Callable[..., A
             )
 
     return Depends(_dep)
+
+
+def rate_limit_task(bucket: str, per_token: int, per_ip: int) -> Callable[..., Awaitable[None]]:
+    """The job-simulation/portfolio task flavour of ``rate_limit_link`` — its
+    magic link travels in ``X-Task-Token``.
+
+    Kept as a named wrapper rather than inlined at its eight call sites in
+    ``routers/job_tasks.py`` so the header name is stated once; the behaviour
+    is entirely ``rate_limit_link``'s, including the reasoning in its
+    docstring for why a token beats an IP here.
+    """
+    return rate_limit_link(bucket, "X-Task-Token", per_token, per_ip)

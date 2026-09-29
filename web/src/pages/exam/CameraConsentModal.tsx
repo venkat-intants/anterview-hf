@@ -14,6 +14,19 @@
 //
 // i18n: this copy is registered on the "higher bar" list at the top of
 // lib/i18n.ts (see publicExam.cameraConsent* below) — HI/TE ship unreviewed.
+//
+// WHAT `onAgree` ACTUALLY DOES — corrected 2026-09-29 (code review FIX 4).
+// This used to claim onAgree calls POST /exam/camera-consent
+// (grantCameraConsent) directly and that the modal stays open until that
+// ledger write completes. That is not what ships: consent recording was
+// rewired to happen at Start instead — PublicExam.tsx's onAgree is a
+// synchronous local state flip (`setCameraConsent('granted')`) that closes
+// this modal immediately, and the actual `grantCameraConsent(token)` call
+// happens later, awaited inside the "Start exam" button's own mutation,
+// immediately before `POST /exam/start` — which is what actually gates on
+// the dpdp_consent_ledger row, never on this modal's local state. A failure
+// there surfaces below the Start button (`startMut.isError`), not here. This
+// modal therefore has nothing to submit and no error of its own to show.
 
 import { useEffect, useRef, useCallback, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -21,27 +34,17 @@ import { ShieldCheck, Eye, Users, Video } from '@/design/components/icons';
 import { GlassCard, Pill } from '@/design/components/primitives';
 
 interface CameraConsentModalProps {
-  /** The candidate agreed — calls `POST /exam/camera-consent` (grantCameraConsent)
-   *  and only resolves once the ledger write has actually happened; the modal
-   *  stays up (isSubmitting) until then, matching ConsentModal's pattern. */
-  onAgree: () => Promise<void>;
+  /** The candidate agreed. Synchronous from this component's point of view —
+   *  see the module note above for where the actual consent call happens. */
+  onAgree: () => void;
   /** The candidate declined (Esc, "Decline" button, or backdrop is inert —
    *  there is no dismiss-without-deciding path, matching ConsentModal). */
   onDecline: () => void;
-  /** True while the grantCameraConsent call is in flight. */
-  isSubmitting: boolean;
-  /** Set if grantCameraConsent failed — shown inline, modal stays open. */
-  error: string | null;
 }
 
 const HEADING_ID = 'camera-consent-heading';
 
-export default function CameraConsentModal({
-  onAgree,
-  onDecline,
-  isSubmitting,
-  error,
-}: CameraConsentModalProps) {
+export default function CameraConsentModal({ onAgree, onDecline }: CameraConsentModalProps) {
   const { t } = useTranslation();
   const agreeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -78,8 +81,7 @@ export default function CameraConsentModal({
   );
 
   function handleAgreeClick() {
-    if (isSubmitting) return;
-    void onAgree();
+    onAgree();
   }
 
   return (
@@ -134,21 +136,11 @@ export default function CameraConsentModal({
 
           <p className="mt-4 text-caption text-fog">{t('publicExam.cameraConsentDeclineNote')}</p>
 
-          {error && (
-            <div
-              role="alert"
-              className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-caption text-destructive"
-            >
-              {error}
-            </div>
-          )}
-
           <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
             <Pill
               type="button"
               variant="outline"
               onClick={onDecline}
-              disabled={isSubmitting}
               className="w-full sm:w-auto"
             >
               {t('publicExam.cameraConsentDecline')}
@@ -157,24 +149,10 @@ export default function CameraConsentModal({
               ref={agreeRef}
               type="button"
               onClick={handleAgreeClick}
-              disabled={isSubmitting}
-              aria-busy={isSubmitting}
-              // Keep the accessible name stable across idle/submitting states,
-              // matching ConsentModal — the visible text still swaps.
               aria-label={t('publicExam.cameraConsentAgree')}
               className="w-full sm:w-auto"
             >
-              {isSubmitting ? (
-                <span className="flex items-center justify-center gap-2">
-                  <span
-                    className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent"
-                    aria-hidden="true"
-                  />
-                  {t('publicExam.cameraConsentSaving')}
-                </span>
-              ) : (
-                t('publicExam.cameraConsentAgree')
-              )}
+              {t('publicExam.cameraConsentAgree')}
             </Pill>
           </div>
         </GlassCard>

@@ -494,6 +494,14 @@ class Settings(BaseSettings):
     exam_integrity_weight_face_absent: int = 20
     exam_integrity_weight_fullscreen_exit: int = 15
     exam_integrity_weight_tab_blur: int = 15
+    # copy/paste (code review FIX 1, 2026-09-29): these two predate camera
+    # proctoring — the exam client has always fired them — and are scored for
+    # the first time here. A paste (brings outside content IN) outweighs a copy
+    # (takes content OUT), but both stay below the browser-integrity signals,
+    # because pasting is not evidence of leaving the exam environment the way
+    # tabbing away or exiting fullscreen is; neither counts as a violation.
+    exam_integrity_weight_paste: int = 10
+    exam_integrity_weight_copy: int = 5
     # Deliberately the LOWEST weight, and it must STAY low: gaze_away is the
     # least reliable signal and the most likely to penalise someone for
     # thinking, for a motor or visual difference, or for using assistive
@@ -502,6 +510,38 @@ class Settings(BaseSettings):
     # counts toward exam_integrity_max_violations either (see
     # app/routers/exam_take.py::_VIOLATION_EVENTS).
     exam_integrity_weight_gaze_away: int = 5
+    # Rate limit on POST /exam/integrity-event, per EXAM LINK (code review
+    # FIX 2, 2026-09-29; rekeyed from per-IP to per-token by the follow-up
+    # review the same day) — this write endpoint had none: 150 consecutive
+    # posts from one token all returned 200 against a live instance.
+    #
+    # PER TOKEN, NOT PER IP, and that distinction is the whole point. A
+    # college computer lab is CLAUDE.md's #1 target market, and a lab NATs
+    # every seat behind one address: an IP-keyed cap of 120 would be spent by
+    # three ordinary candidates sitting the same exam, and the 4th onwards
+    # would have real camera events silently dropped (the client swallows the
+    # 429 and returns null, exactly like a lost packet) for doing nothing
+    # wrong. Keyed on the candidate's own link, each seat gets its own budget.
+    #
+    # 120/minute has headroom above the busiest REALISTIC single candidate:
+    # ranged camera events are debounced at 1.2s per condition (proctorLogic's
+    # MIN_RANGED_MS) across at most 3 conditions, so even a flapping camera
+    # tops out near 150/min in a pathological worst case, while a genuinely
+    # working session sits far lower (well under 40/min) because a condition
+    # has to persist before it is emitted at all; fullscreen/tab/copy/paste are
+    # rarer still — a human cannot legitimately tab-switch or paste more than a
+    # few times a minute. 120 comfortably covers ordinary bursts (a shaky
+    # camera plus a candidate pasting code a few times) while still cutting off
+    # a 150-request flood within the same 60-second window.
+    exam_integrity_event_per_minute: int = 120
+    # The LOOSER per-IP backstop on the same route: volumetric-abuse protection
+    # only, never the normal-use limit. Sized from the busiest real room rather
+    # than as a neat multiple of the per-token cap — a 60-seat lab where every
+    # candidate is at the realistic 40/min ceiling is already 2400/min, so
+    # 3000 clears a full hall while still bounding a single-source flood. The
+    # per-token cap above is what actually protects the endpoint: passing it
+    # requires as many valid, unexpired exam links as the flood has requests.
+    exam_integrity_event_per_ip_per_minute: int = 3000
 
     # --- Coding round — code execution (HR workflow Phase 2) ---
     # Swappable provider:

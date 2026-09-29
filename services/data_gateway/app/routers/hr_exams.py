@@ -22,6 +22,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -302,8 +303,14 @@ class AttemptResultOut(BaseModel):
     status: str
     submitted_at: str | None
     attempt_no: int
-    # Camera proctoring contract §7 — surfaced at the list level too, so HR
-    # never has to open every attempt to see whether it was watched at all.
+    # Camera proctoring contract §7. The API carries both so a caller can tell
+    # "not watched" from "watched and clean" without opening every attempt —
+    # but note that the HR CONSOLE deliberately renders neither on this list.
+    # A bare integrity score in a scannable table is exactly where a reviewer
+    # under time pressure pattern-matches "low score = cheated", with none of
+    # the context (which events, how long, and gaze called out as unreliable)
+    # that makes the per-attempt panel honest. If a list-level indicator is
+    # ever wanted, show camera on/off — never the score on its own.
     integrity_score: int | None = None
     camera_in_use: bool = False
 
@@ -1338,11 +1345,17 @@ async def attempt_proctoring(
             .order_by(ExamIntegrityEvent.started_at.asc())
         )
     ).all()
-    summary = at.proctoring_summary if isinstance(at.proctoring_summary, dict) else {}
-    counts_raw = summary.get("counts", {})
-    counts: dict[str, int] = (
-        {str(k): int(v) for k, v in counts_raw.items()} if isinstance(counts_raw, dict) else {}
-    )
+    # Counts are derived from the rows just read, NOT from the frozen
+    # exam_attempts.proctoring_summary JSON. The two agree today — the ingest
+    # recomputes that column with this same aggregation on every post, and
+    # exam_integrity_events sits in the erasure executor's EXCLUDED_TABLES with
+    # no retention clock of its own, so nothing deletes a row. But "nothing
+    # deletes a row" is a project-wide convention, not something this endpoint
+    # can enforce, and the failure mode if it ever stops holding is a screen
+    # that lies to a reviewer: a count with no event in the timeline to back it
+    # up. Deriving both numbers from one read makes the panel honest by
+    # construction rather than by coupling.
+    counts: dict[str, int] = dict(Counter(etype for etype, _started, _ended in rows))
     events = [
         ProctoringEventOut(
             event_type=etype,

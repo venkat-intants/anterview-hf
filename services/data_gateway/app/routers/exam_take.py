@@ -55,7 +55,7 @@ from app.models import (
     ExamSection,
 )
 from app.notifications_util import create_notification
-from app.rate_limit import rate_limit
+from app.rate_limit import rate_limit, rate_limit_link
 from app.redis_client import get_redis
 from app.routers.hr_interviews import advance_applicant_to_interview
 from app.utils.request_ip import extract_client_ip, extract_user_agent
@@ -360,19 +360,19 @@ class IntegrityEventIn(BaseModel):
     event_type: str = Field(min_length=1, max_length=40)
     started_at: datetime | None = None
     ended_at: datetime | None = None
-    metadata: dict[str, object] | None = None
-
+    # NO `metadata` field, deliberately (code review FIX 3). It previously
+    # existed with a shape-checker that rejected lists, nested objects and long
+    # strings — but "looks innocuous" is not the same as "is not PII": a name, a
+    # phone number or a health detail all pass such a check comfortably. With
+    # the field gone, `extra="forbid"` above refuses every one of them, and
+    # `event_metadata` is NULL by construction for every row this endpoint
+    # writes rather than by convention.
     @field_validator("event_type")
     @classmethod
     def _known_event_type(cls, v: str) -> str:
         if v not in exam_camera.KNOWN_EVENT_TYPES:
             raise ValueError(f"event_type must be one of {sorted(exam_camera.KNOWN_EVENT_TYPES)}")
         return v
-
-    @field_validator("metadata")
-    @classmethod
-    def _no_frame_data(cls, v: dict[str, object] | None) -> dict[str, object] | None:
-        return exam_camera.check_metadata_shape(v)
 
     @model_validator(mode="after")
     def _ranged_needs_ended_at(self) -> IntegrityEventIn:
@@ -1316,16 +1316,36 @@ async def run_code_custom(
 # ---------------------------------------------------------------------------
 # Proctoring — integrity event ingest (exam analogue of interview integrity)
 # ---------------------------------------------------------------------------
-@router.post("/integrity-event", response_model=IntegrityIngestOut)
+@router.post(
+    "/integrity-event",
+    response_model=IntegrityIngestOut,
+    dependencies=[
+        rate_limit_link(
+            "exam_integrity_event",
+            "X-Exam-Token",
+            per_token=settings.exam_integrity_event_per_minute,
+            per_ip=settings.exam_integrity_event_per_ip_per_minute,
+        )
+    ],
+)
 async def ingest_integrity_event(
     body: IntegrityEventIn, ctx: ExamTakeCtxDep, db: DbSessionDep
 ) -> IntegrityIngestOut:
-    """Record one proctoring event (fullscreen-exit / tab-switch / a camera
-    signal) against the open attempt and update its rolling integrity score +
-    summary. Detection is client-side; only the lightweight event reaches us
-    (raw input never leaves the browser — see app/exam_camera.py for the
-    structural guarantee). The client decides auto-submit; this is the
-    server-side audit trail.
+    """Record one proctoring event (fullscreen-exit / tab-switch / copy / paste
+    / a camera signal) against the open attempt and update its rolling
+    integrity score + summary. Detection is client-side; only the lightweight
+    event reaches us (raw input never leaves the browser — see
+    app/exam_camera.py for the structural guarantee). The client decides
+    auto-submit; this is the server-side audit trail.
+
+    Rate-limited (code review FIX 2, 2026-09-29): an unauthenticated exam
+    magic-link candidate could otherwise post an unbounded number of events —
+    verified live, 150 consecutive posts from one token all returned 200. The
+    cap is keyed on the candidate's OWN link (``X-Exam-Token``) with a far
+    looser per-IP backstop, NOT the other way round: a lab NATs every seat
+    behind one address, so an IP-keyed cap would let three ordinary candidates
+    exhaust the budget and silently drop the 4th's real camera events. See
+    ``settings.exam_integrity_event_per_minute`` for the numbers.
 
     A camera-only event type (face_absent / multiple_faces / gaze_away) is
     refused for an attempt that never had the camera on
@@ -1350,7 +1370,9 @@ async def ingest_integrity_event(
             event_type=body.event_type,
             started_at=body.started_at or now,
             ended_at=body.ended_at,
-            event_metadata=body.metadata,
+            # No `metadata` field exists on IntegrityEventIn (code review FIX
+            # 3) — event_metadata is therefore always NULL for every row this
+            # endpoint creates, by construction rather than convention.
             created_at=now,
         )
     )

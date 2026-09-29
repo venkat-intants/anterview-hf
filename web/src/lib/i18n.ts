@@ -715,8 +715,6 @@ const en = {
       cameraConsentDeclineNote:
         'You can decline, but this round requires camera monitoring to start.',
       cameraConsentAgree: 'Turn on camera monitoring',
-      cameraConsentSaving: 'Saving…',
-      cameraConsentFailed: 'Could not turn on camera monitoring. Please try again.',
       cameraConsentDecline: 'Decline',
       // Shown instead of the generic "Could not start" when /exam/start 422s
       // because this round requires camera consent and none is on record yet

@@ -627,6 +627,37 @@ async def test_auto_submit_relaxed_is_frozen_once_the_attempt_exists(db: AsyncSe
 
 
 @pytest.mark.asyncio
+async def test_camera_in_use_is_frozen_once_the_attempt_exists(db: AsyncSession) -> None:
+    """Camera-proctoring contract: camera_in_use is frozen at /exam/start the
+    same way the allowance fields above are — added to
+    exam_attempts_allowance_fixed() by migration a3c5e7f9b1d4."""
+    f = await _build(db)
+    attempt_id = await _new_attempt(db, f)
+    await _refused(
+        db, "UPDATE exam_attempts SET camera_in_use = true WHERE id = :i",
+        {"i": attempt_id}, "keeps whether the camera was in use",
+    )
+
+
+@pytest.mark.asyncio
+async def test_event_type_check_constraint_is_the_backstop_for_the_vocabulary(
+    db: AsyncSession,
+) -> None:
+    """The ingest endpoint's Pydantic validator is the primary refusal
+    (tests/unit/test_exam_camera_proctoring.py); this is the DB-level
+    backstop (migration a3c5e7f9b1d4) that holds even against a raw INSERT."""
+    f = await _build(db)
+    attempt_id = await _new_attempt(db, f)
+    await _refused(
+        db,
+        "INSERT INTO exam_integrity_events (id, attempt_id, company_id, event_type,"
+        " started_at, created_at) VALUES (:i, :a, :c, 'copy', now(), now())",
+        {"i": uuid.uuid4(), "a": attempt_id, "c": f.company},
+        "ck_exam_integrity_events_event_type",
+    )
+
+
+@pytest.mark.asyncio
 async def test_accommodation_id_cannot_repoint_to_a_different_row(db: AsyncSession) -> None:
     f = await _build(db)
     acc_id = await _new_active(db, f)

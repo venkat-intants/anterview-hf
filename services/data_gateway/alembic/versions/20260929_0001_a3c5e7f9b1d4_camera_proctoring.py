@@ -1,0 +1,122 @@
+"""Camera proctoring for exams — event vocabulary, round setting, attempt flag.
+
+Revision ID: a3c5e7f9b1d4
+Revises: f2a4c6e8b0d3
+Create Date: 2026-09-29
+
+THE CONTRACT THIS IMPLEMENTS
+The camera proctoring contract (``exam_proctoring_contract.md``) extends the
+exam integrity pipeline from two browser signals (``fullscreen_exit``,
+``tab_blur``) to five, three of them RANGED (``face_absent``,
+``multiple_faces``, ``gaze_away``), each carried by the existing
+``exam_integrity_events.started_at``/``ended_at`` pair — no new event table.
+
+WHAT CHANGES
+1. ``exam_integrity_events.event_type`` gets a CHECK constraint naming the five
+   known types. The ingest endpoint already validates this in Pydantic; the
+   constraint is defense-in-depth on the DB.NEVER-store-junk rule this
+   project applies everywhere else (``ck_exams_kind``, ``ck_exams_status``, …).
+2. ``exam_rounds.camera_proctoring_required`` (boolean, default false) is the
+   COMPANY'S OWN setting for whether a round needs the candidate's camera —
+   HR-authored content, on the same footing as ``pass_threshold`` and
+   ``time_limit_seconds``, and NOT one of the columns
+   ``exam_rounds_frozen()`` locks once the round is published or taken: unlike
+   grading, turning a camera requirement on or off does not change how a past
+   attempt was scored, so it stays editable and each new attempt reads the
+   round's CURRENT value at ``/exam/start`` (the same freeze-at-start
+   discipline PH4-D2 already established for accommodations).
+3. ``exam_attempts.camera_in_use`` (boolean, default false) records whether
+   THIS attempt actually had the camera on — frozen at ``/exam/start`` from
+   the round's setting (and, going forward, an active ``video_capture``
+   consent), so HR reading a later attempt never has to guess from the
+   presence or absence of camera events whether the candidate had no camera
+   events because nothing happened, or because there was no camera at all.
+   Added to ``exam_attempts_allowance_fixed()`` (PH4-D2, migration
+   ``e3b5d7f9a1c5``) alongside ``extra_time_seconds`` /
+   ``auto_submit_relaxed`` / ``accommodation_id`` — the same "this attempt
+   keeps what it started with" guarantee, extended to the new column rather
+   than left as an application-only promise.
+"""
+
+from __future__ import annotations
+
+import sqlalchemy as sa
+
+from alembic import op
+
+revision: str = "a3c5e7f9b1d4"
+down_revision: str | None = "f2a4c6e8b0d3"
+branch_labels: str | None = None
+depends_on: str | None = None
+
+_EVENT_TYPES = (
+    "'fullscreen_exit','tab_blur','face_absent','multiple_faces','gaze_away'"
+)
+
+EXAM_ATTEMPTS_ALLOWANCE_FIXED = """
+CREATE OR REPLACE FUNCTION exam_attempts_allowance_fixed() RETURNS trigger AS $$
+BEGIN
+    IF NEW.extra_time_seconds IS DISTINCT FROM OLD.extra_time_seconds THEN
+        RAISE EXCEPTION 'exam attempt % keeps the extra time it started with', OLD.id;
+    END IF;
+    IF NEW.auto_submit_relaxed IS DISTINCT FROM OLD.auto_submit_relaxed THEN
+        RAISE EXCEPTION 'exam attempt % keeps whether auto-submit was relaxed', OLD.id;
+    END IF;
+    IF NEW.accommodation_id IS DISTINCT FROM OLD.accommodation_id
+       AND NEW.accommodation_id IS NOT NULL THEN
+        RAISE EXCEPTION 'exam attempt % keeps which accommodation applied, or clears it', OLD.id;
+    END IF;
+    IF NEW.camera_in_use IS DISTINCT FROM OLD.camera_in_use THEN
+        RAISE EXCEPTION 'exam attempt % keeps whether the camera was in use', OLD.id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+EXAM_ATTEMPTS_ALLOWANCE_FIXED_DOWN = """
+CREATE OR REPLACE FUNCTION exam_attempts_allowance_fixed() RETURNS trigger AS $$
+BEGIN
+    IF NEW.extra_time_seconds IS DISTINCT FROM OLD.extra_time_seconds THEN
+        RAISE EXCEPTION 'exam attempt % keeps the extra time it started with', OLD.id;
+    END IF;
+    IF NEW.auto_submit_relaxed IS DISTINCT FROM OLD.auto_submit_relaxed THEN
+        RAISE EXCEPTION 'exam attempt % keeps whether auto-submit was relaxed', OLD.id;
+    END IF;
+    IF NEW.accommodation_id IS DISTINCT FROM OLD.accommodation_id
+       AND NEW.accommodation_id IS NOT NULL THEN
+        RAISE EXCEPTION 'exam attempt % keeps which accommodation applied, or clears it', OLD.id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+
+def upgrade() -> None:
+    op.add_column(
+        "exam_rounds",
+        sa.Column(
+            "camera_proctoring_required", sa.Boolean(), nullable=False,
+            server_default=sa.false(),
+        ),
+    )
+    op.add_column(
+        "exam_attempts",
+        sa.Column("camera_in_use", sa.Boolean(), nullable=False, server_default=sa.false()),
+    )
+    op.execute(
+        "ALTER TABLE exam_integrity_events ADD CONSTRAINT"
+        f" ck_exam_integrity_events_event_type CHECK (event_type IN ({_EVENT_TYPES}))"
+    )
+    op.execute(EXAM_ATTEMPTS_ALLOWANCE_FIXED)
+
+
+def downgrade() -> None:
+    op.execute(EXAM_ATTEMPTS_ALLOWANCE_FIXED_DOWN)
+    op.execute(
+        "ALTER TABLE exam_integrity_events DROP CONSTRAINT"
+        " IF EXISTS ck_exam_integrity_events_event_type"
+    )
+    op.drop_column("exam_attempts", "camera_in_use")
+    op.drop_column("exam_rounds", "camera_proctoring_required")

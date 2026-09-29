@@ -481,10 +481,27 @@ class Settings(BaseSettings):
     # exam_assignments.scheduled_at. Unscheduled rounds may start any time before the
     # link expires. Mirrors interview_join_window_minutes (exams run longer → wider).
     exam_join_window_minutes: int = 30
-    # Number of proctoring violations (fullscreen-exit / tab-switch) after which the
-    # exam auto-submits. Surfaced to the candidate UI; enforced client-side, logged
-    # server-side via /exam/integrity-event.
+    # Number of proctoring violations (fullscreen-exit / tab-switch / camera
+    # face-absent / camera multiple-faces — NOT gaze_away, see below) after
+    # which the exam auto-submits. Surfaced to the candidate UI; enforced
+    # client-side, logged server-side via /exam/integrity-event.
     exam_integrity_max_violations: int = 3
+    # Per-event-type severity weights for the exam integrity score
+    # (max(0, 100 - sum of weights)), replacing the old flat 15-per-violation
+    # penalty (camera proctoring contract). Configurable so a retune never
+    # needs a code change.
+    exam_integrity_weight_multiple_faces: int = 25
+    exam_integrity_weight_face_absent: int = 20
+    exam_integrity_weight_fullscreen_exit: int = 15
+    exam_integrity_weight_tab_blur: int = 15
+    # Deliberately the LOWEST weight, and it must STAY low: gaze_away is the
+    # least reliable signal and the most likely to penalise someone for
+    # thinking, for a motor or visual difference, or for using assistive
+    # technology. It is context for a human reading the timeline, not
+    # evidence — do not raise this to "improve" the score, and it never
+    # counts toward exam_integrity_max_violations either (see
+    # app/routers/exam_take.py::_VIOLATION_EVENTS).
+    exam_integrity_weight_gaze_away: int = 5
 
     # --- Coding round — code execution (HR workflow Phase 2) ---
     # Swappable provider:

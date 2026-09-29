@@ -46,6 +46,7 @@ from app.models import (
     Exam,
     ExamAssignment,
     ExamAttempt,
+    ExamIntegrityEvent,
     ExamQuestion,
     ExamRound,
     ExamSection,
@@ -301,6 +302,35 @@ class AttemptResultOut(BaseModel):
     status: str
     submitted_at: str | None
     attempt_no: int
+    # Camera proctoring contract §7 — surfaced at the list level too, so HR
+    # never has to open every attempt to see whether it was watched at all.
+    integrity_score: int | None = None
+    camera_in_use: bool = False
+
+
+class ProctoringEventOut(BaseModel):
+    """One stored proctoring event, time-ordered. A ranged event (a camera
+    signal) carries its duration; an instantaneous one (fullscreen-exit /
+    tab-switch) does not."""
+
+    event_type: str
+    started_at: str
+    ended_at: str | None
+    duration_seconds: float | None
+
+
+class AttemptProctoringOut(BaseModel):
+    """The attempt's proctoring summary (camera-proctoring contract §7).
+
+    ``camera_in_use`` is the one field that tells HR whether "no camera
+    events" means clean or means never watched — say so rather than showing
+    the three camera counts as zero.
+    """
+
+    camera_in_use: bool
+    integrity_score: int | None
+    counts: dict[str, int]
+    events: list[ProctoringEventOut]
 
 
 # ---------------------------------------------------------------------------
@@ -1267,9 +1297,69 @@ async def list_attempts(
             status=at.status,
             submitted_at=at.submitted_at.isoformat() if at.submitted_at else None,
             attempt_no=at.attempt_no,
+            integrity_score=at.integrity_score,
+            camera_in_use=at.camera_in_use,
         )
         for at, name in rows
     ]
+
+
+@router.get(
+    "/exams/{exam_id}/attempts/{aid}/proctoring", response_model=AttemptProctoringOut
+)
+async def attempt_proctoring(
+    exam_id: uuid.UUID, aid: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> AttemptProctoringOut:
+    """The attempt's full proctoring picture — score, per-type counts, and the
+    time-ordered events, each carrying its duration when it is a ranged
+    (camera) event. Camera-proctoring contract §7. Flags inform HR; nothing
+    here sets a stage, a status or a decision (CLAUDE.md hard constraint 9) —
+    HR reads this and decides."""
+    _hr_uid, company_id = ctx
+    await _get_owned_exam(db, company_id, exam_id)
+    at = await db.scalar(
+        select(ExamAttempt).where(
+            ExamAttempt.id == aid,
+            ExamAttempt.exam_id == exam_id,
+            ExamAttempt.company_id == company_id,
+            ExamAttempt.deleted_at.is_(None),
+        )
+    )
+    if at is None:
+        raise HTTPException(status_code=404, detail="Attempt not found.")
+    rows = (
+        await db.execute(
+            select(
+                ExamIntegrityEvent.event_type,
+                ExamIntegrityEvent.started_at,
+                ExamIntegrityEvent.ended_at,
+            )
+            .where(ExamIntegrityEvent.attempt_id == at.id)
+            .order_by(ExamIntegrityEvent.started_at.asc())
+        )
+    ).all()
+    summary = at.proctoring_summary if isinstance(at.proctoring_summary, dict) else {}
+    counts_raw = summary.get("counts", {})
+    counts: dict[str, int] = (
+        {str(k): int(v) for k, v in counts_raw.items()} if isinstance(counts_raw, dict) else {}
+    )
+    events = [
+        ProctoringEventOut(
+            event_type=etype,
+            started_at=started.isoformat(),
+            ended_at=ended.isoformat() if ended else None,
+            duration_seconds=(
+                round((ended - started).total_seconds(), 1) if ended is not None else None
+            ),
+        )
+        for etype, started, ended in rows
+    ]
+    return AttemptProctoringOut(
+        camera_in_use=at.camera_in_use,
+        integrity_score=at.integrity_score,
+        counts=counts,
+        events=events,
+    )
 
 
 @router.get("/exams/{exam_id}/attempts/{aid}/breakdown")

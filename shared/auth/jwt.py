@@ -1,9 +1,62 @@
 """JWT helpers — issue and verify access tokens; manage refresh token lifecycle.
 
-Signing is HS256 with a single key. *Verification* accepts either that one key
-or a sequence of keys tried in order, which is what makes rotating a leaked
-``JWT_SECRET`` possible without logging every candidate out mid-interview — the
-procedure is written out above ``verify_access_token``.
+AR-2 (2026-09-28): signing is no longer HS256-only. ``issue_access_token``
+still signs with exactly ONE key — a second signing key would be a second thing
+to leak — but that key can now be an RSA private key (``algorithm="RS256"``),
+with a ``kid`` stamped into the header so a verifier can pick the right public
+key without trial-and-error. *Verification* generalises the same way:
+``verify_access_token`` takes an ordered sequence of candidates, each either a
+bare secret (legacy HS256, tried when the token carries no ``kid``) or a
+:class:`VerificationKey` (self-describing algorithm + key + ``kid``, tried only
+when its ``kid`` matches the token's header). ``build_verification_keys`` builds
+that sequence from a service's ``Settings`` object, and ``resolve_signing_key``
+picks the active signing key for an issuer — see both for the exact shape.
+
+Why RS256 and not EdDSA: this repo pins ``python-jose==3.5.0``, whose
+``jose.constants.ALGORITHMS`` has no ``EdDSA`` member (verified against the
+installed package — ``"EdDSA" in ALGORITHMS.SUPPORTED`` is ``False``). RS256 is
+the algorithm this dependency actually supports cleanly, and both a
+``cryptography`` and a pure-Python ``rsa`` backend are already pinned in every
+service's requirements.txt, so no new dependency was added.
+
+Only ``data_gateway`` is ever configured with an RSA *private* key
+(``jwt_private_key`` — a field that does not even exist on the other three
+services' ``Settings`` classes) and is therefore the only process that can
+issue an RS256 token. The other three services and the LiveKit worker hold only
+``jwt_public_keys`` and can verify, never sign. See
+``shared.security.forbid_private_signing_key`` for the loud-failure guard, and
+``docs/ACCEPTED-RISKS.md`` AR-2 for the risk this reduces once an operator runs
+the rollout below, and the one path it deliberately does not reach
+(interview_core's internal service-token mint — see the comment on
+``interview_worker.py::_mint_service_jwt`` for why that one path is unchanged).
+
+Rollout sequence for an operator moving a running deployment from HS256 to
+RS256 (see also the comment above ``verify_access_token``):
+
+  1. Generate a keypair (``scripts/generate_jwt_rsa_keypair.py``). Set
+     ``JWT_PUBLIC_KEYS`` (the new kid -> public key) on ALL FIVE processes
+     (four services + the worker), alongside the existing ``JWT_SECRET``.
+     Add ``"RS256"`` to ``JWT_VERIFY_ALGORITHMS`` everywhere, keeping
+     ``"HS256"`` — e.g. ``JWT_VERIFY_ALGORITHMS=HS256,RS256``. Deploy. Nothing
+     issues RS256 yet, so this step is a no-op for live traffic; it only makes
+     every verifier capable of accepting the new algorithm once it appears.
+  2. On ``data_gateway`` ONLY: set ``JWT_PRIVATE_KEY`` and ``JWT_ACTIVE_KID``
+     (the private half of the same keypair) and ``JWT_SIGNING_ALGORITHM=RS256``.
+     Redeploy data_gateway. New tokens are now RS256; verifiers everywhere
+     already accept them from step 1.
+  3. Wait out ``ACCESS_TOKEN_TTL_SECONDS`` (15 minutes) and confirm no verifier
+     is still seeing HS256 traffic (there is no drain-signal log event for this
+     transition the way key rotation has one — the token TTL is the bound).
+  4. Remove ``"HS256"`` from ``JWT_VERIFY_ALGORITHMS`` on all five processes
+     (``JWT_VERIFY_ALGORITHMS=RS256``) and redeploy. ``JWT_SECRET`` itself can
+     stay set — ``app/auth_tokens.py`` and friends still derive unrelated HMAC
+     secrets from it — but it no longer signs or verifies a JWT anywhere.
+
+Getting step 2 and step 4 backwards logs everyone out: signing RS256 before
+every verifier can accept it (skipping step 1) means every token minted after
+the cutover 401s everywhere except data_gateway itself; dropping HS256 before
+waiting out the TTL in step 3 does the same to whatever HS256 traffic is still
+in flight.
 
 Claims: ``iss`` and ``aud`` are validated on every decode; ``iat`` is required
 because the revocation epoch is compared against it; ``jti`` is required and
@@ -26,16 +79,21 @@ control.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import json
 import secrets
 import uuid
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from typing import Any, Protocol
 
 import structlog
-from jose import JWTError, jwt
-from jose.exceptions import ExpiredSignatureError, JWSError, JWTClaimsError
+from jose import JWTError, jwk, jwt
+from jose.exceptions import ExpiredSignatureError, JWKError, JWSError, JWTClaimsError
 
 log = structlog.get_logger(__name__)
 
@@ -68,6 +126,7 @@ def issue_access_token(
     audience: str = _DEFAULT_AUDIENCE,
     extra_claims: dict[str, Any] | None = None,
     ttl_seconds: int = ACCESS_TOKEN_TTL_SECONDS,
+    kid: str | None = None,
 ) -> str:
     """Sign and return a JWT access token.
 
@@ -91,6 +150,14 @@ def issue_access_token(
         because without it the only way to mint a short-lived token was to
         hand-roll the claims dict — which interview_core did, and which is how a
         second implementation of token minting came to exist.
+
+    kid: stamped into the JWT header (not a claim) when given. Meaningless for
+        HS256 — every verifier there is handed the one secret out of band and
+        there is nothing to select between — but required in practice for
+        RS256, where ``verify_access_token`` uses it to pick the right public
+        key out of ``JWT_PUBLIC_KEYS`` instead of trying every one in turn.
+        ``resolve_signing_key`` supplies it for RS256 callers; leave it ``None``
+        for HS256.
     """
     now = datetime.now(tz=UTC)
     claims: dict[str, Any] = {
@@ -104,8 +171,247 @@ def issue_access_token(
     }
     for key, value in (extra_claims or {}).items():
         claims.setdefault(key, value)
-    result: str = jwt.encode(claims, secret, algorithm=algorithm)
+    headers = {"kid": kid} if kid else None
+    result: str = jwt.encode(claims, secret, algorithm=algorithm, headers=headers)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Asymmetric key material (AR-2)
+#
+# A dataclass, some parsing/validation, and the two functions that decide
+# "what do I sign with" (resolve_signing_key, data_gateway only) and "what do
+# I verify against" (build_verification_keys, every service) from a Settings
+# object — see the module docstring for the full rollout sequence.
+# ---------------------------------------------------------------------------
+
+_PRIVATE_KEY_MARKER = "PRIVATE KEY"
+
+
+@dataclass(frozen=True, slots=True)
+class VerificationKey:
+    """One asymmetric verification candidate: its PEM key, algorithm and ``kid``.
+
+    Passed inside the SAME sequence ``verify_access_token`` already accepted
+    for HS256 rotation (``secret: str | Sequence[str | VerificationKey]``) —
+    per the brief for this change, building on that rather than inventing a
+    parallel parameter. A bare ``str`` in that sequence is still a legacy
+    HS256 secret with no ``kid``; a ``VerificationKey`` is everything a bare
+    string cannot express: its own algorithm, and a ``kid`` a token's header
+    can name to select it instead of being tried in order.
+    """
+
+    key: str
+    algorithm: str
+    kid: str
+
+
+def encode_key_material(pem: str) -> str:
+    """Base64-encode PEM *pem* for a single-line env var.
+
+    The inverse of the decoding in :func:`decode_private_key` /
+    :func:`parse_public_keys`. Base64, not raw PEM-with-embedded-newlines,
+    because a ``.env`` file, a shell export and most cloud providers' env-var
+    UIs each do their own quoting/escaping of multi-line values — the wrong
+    place to discover that when the value is a private key. Used by
+    ``scripts/generate_jwt_rsa_keypair.py`` so the encoding is defined once and
+    the operator-facing script and the config loader can never disagree about
+    the format.
+    """
+    return base64.b64encode(pem.encode("utf-8")).decode("ascii")
+
+
+def _b64decode_utf8(value: str, *, label: str) -> str:
+    """Decode base64 *value* to UTF-8 text, or raise ``ValueError`` naming *label*."""
+    try:
+        return base64.b64decode(value, validate=True).decode("utf-8")
+    except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
+        raise ValueError(f"{label} is not valid base64-encoded text") from exc
+
+
+def _validate_rsa_pem(pem: str, *, label: str, want_private: bool) -> None:
+    """Raise ``ValueError`` unless *pem* is a well-formed RSA key of the right half.
+
+    Two checks, deliberately both present:
+
+    * ``jose.jwk.construct`` proves the bytes actually parse as an RSA key —
+      catches truncated base64, a JSON blob, a double-encoded value, anything
+      that plainly is not a PEM key.
+    * The ``PRIVATE KEY`` marker check catches the operator mistake this
+      design exists to prevent: pasting the WRONG half of the keypair into the
+      WRONG setting. ``jose`` alone would not catch this — an RSA private key
+      parses equally well when handed to code that only wants to verify with
+      it (the public half is embedded inside a private key), so a private key
+      sitting in ``JWT_PUBLIC_KEYS`` would work by accident and quietly defeat
+      the entire point of AR-2 without ever raising.
+    """
+    try:
+        jwk.construct(pem, algorithm="RS256")
+    except JWKError as exc:
+        raise ValueError(f"{label} is not a valid RS256 PEM key: {exc}") from exc
+    is_private = _PRIVATE_KEY_MARKER in pem
+    if want_private and not is_private:
+        raise ValueError(
+            f"{label} looks like a PUBLIC key (no {_PRIVATE_KEY_MARKER!r} marker) "
+            "but a PRIVATE key is required here."
+        )
+    if not want_private and is_private:
+        raise ValueError(
+            f"{label} looks like a PRIVATE key (contains a {_PRIVATE_KEY_MARKER!r} "
+            "marker) but only a PUBLIC key belongs here. Only data_gateway may "
+            "ever hold a private key — see docs/ACCEPTED-RISKS.md AR-2."
+        )
+
+
+@lru_cache(maxsize=4)
+def decode_private_key(raw_b64: str) -> str:
+    """Decode+validate ``JWT_PRIVATE_KEY`` (base64 PKCS8 RSA private key PEM).
+
+    Cached: *raw_b64* is a Settings value, fixed for the life of the process,
+    and re-validating a PEM key (a real RSA parse) on every token issuance
+    would be pure waste. Called both by a config validator — so a malformed
+    key fails at boot, not on the first login — and by
+    :func:`resolve_signing_key` at issuance time, which then hits the cache.
+    """
+    pem = _b64decode_utf8(raw_b64, label="JWT_PRIVATE_KEY")
+    _validate_rsa_pem(pem, label="JWT_PRIVATE_KEY", want_private=True)
+    return pem
+
+
+@lru_cache(maxsize=16)
+def parse_public_keys(raw_json: str) -> dict[str, str]:
+    """Parse+validate ``JWT_PUBLIC_KEYS`` -> ``{kid: PEM}``.
+
+    Format: a JSON object mapping a ``kid`` to a base64-encoded RSA public key
+    (SubjectPublicKeyInfo PEM) — e.g. ``{"2026-09-28": "<base64>"}``. Multiple
+    entries express a rotation: a verifier can accept several kids at once; an
+    issuer (:func:`resolve_signing_key`) signs with exactly one.
+
+    Cached for the same reason as :func:`decode_private_key`: *raw_json* is a
+    fixed Settings value for the process lifetime, and every entry is
+    otherwise re-validated (a real RSA parse) on every authenticated request.
+    """
+    try:
+        raw: Any = json.loads(raw_json or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JWT_PUBLIC_KEYS is not valid JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("JWT_PUBLIC_KEYS must be a JSON object of {kid: base64-pem}")
+    parsed: dict[str, str] = {}
+    for kid, encoded in raw.items():
+        if not isinstance(kid, str) or not kid:
+            raise ValueError("JWT_PUBLIC_KEYS keys (kids) must be non-empty strings")
+        if not isinstance(encoded, str):
+            raise ValueError(f"JWT_PUBLIC_KEYS[{kid!r}] must be a base64 string")
+        pem = _b64decode_utf8(encoded, label=f"JWT_PUBLIC_KEYS[{kid!r}]")
+        _validate_rsa_pem(pem, label=f"JWT_PUBLIC_KEYS[{kid!r}]", want_private=False)
+        parsed[kid] = pem
+    return parsed
+
+
+_KNOWN_VERIFY_ALGORITHMS = frozenset({"HS256", "RS256"})
+
+
+@lru_cache(maxsize=8)
+def parse_verify_algorithms(raw: str) -> frozenset[str]:
+    """Parse+validate ``JWT_VERIFY_ALGORITHMS`` -> the set of accepted families.
+
+    ``"HS256,RS256"`` during the AR-2 transition; ``"RS256"`` once HS256 is
+    retired. Never empty — an operator who blanks this out has locked every
+    caller out of the platform, and that is a config error to catch at boot,
+    not a firewall rule to honour silently.
+    """
+    algorithms = frozenset(a.strip().upper() for a in raw.split(",") if a.strip())
+    if not algorithms:
+        raise ValueError("JWT_VERIFY_ALGORITHMS must name at least one algorithm")
+    unknown = algorithms - _KNOWN_VERIFY_ALGORITHMS
+    if unknown:
+        raise ValueError(
+            f"JWT_VERIFY_ALGORITHMS names unsupported algorithm(s): {sorted(unknown)}. "
+            f"Supported: {sorted(_KNOWN_VERIFY_ALGORITHMS)}"
+        )
+    return algorithms
+
+
+def build_verification_keys(settings: Any) -> list[str | VerificationKey]:
+    """Build the candidate list ``verify_access_token`` expects, from a
+    service's ``Settings`` object.
+
+    One function so every verifier (data_gateway, interview_core,
+    feedback_billing's two dependencies, admin_ops) moves together when an
+    operator edits ``JWT_VERIFY_ALGORITHMS`` — five call sites that used to
+    each read ``settings.jwt_secret``/``settings.jwt_algorithm`` directly is
+    exactly the copy-and-drift shape ``shared/security.py``'s own docstring
+    describes for the guards that live there.
+
+    Reads, from *settings*:
+
+    * ``jwt_verify_algorithms`` — comma-separated family list (see
+      :func:`parse_verify_algorithms`); defaults to ``"HS256"`` if the
+      attribute is absent, so a Settings object that predates this change
+      keeps its exact current behaviour.
+    * ``jwt_secret`` — included, with no ``kid``, when ``"HS256"`` is in the
+      family list.
+    * ``jwt_public_keys`` — parsed (see :func:`parse_public_keys`) and every
+      entry included, each tagged with its own ``kid``, when ``"RS256"`` is in
+      the family list. Defaults to ``"{}"`` if the attribute is absent.
+    """
+    algorithms = parse_verify_algorithms(
+        getattr(settings, "jwt_verify_algorithms", "HS256")
+    )
+    keys: list[str | VerificationKey] = []
+    if "HS256" in algorithms:
+        secret = getattr(settings, "jwt_secret", "") or ""
+        if secret:
+            keys.append(secret)
+    if "RS256" in algorithms:
+        public_keys = parse_public_keys(getattr(settings, "jwt_public_keys", "{}") or "{}")
+        keys.extend(
+            VerificationKey(key=pem, algorithm="RS256", kid=kid)
+            for kid, pem in public_keys.items()
+        )
+    return keys
+
+
+def resolve_signing_key(settings: Any) -> tuple[str, str, str | None]:
+    """Return ``(algorithm, key, kid)`` to sign a NEW token with, from an
+    ISSUER's ``Settings`` object.
+
+    The one place that decides HS256 vs RS256 for signing, so every issuance
+    call site in ``data_gateway`` — the only issuer, see the module docstring —
+    moves together the moment ``jwt_signing_algorithm`` flips from HS256 to
+    RS256, rather than some call sites migrating and others being missed.
+
+    Reads ``jwt_signing_algorithm`` (default ``"HS256"``, so a Settings object
+    that predates this change signs exactly as it always did); when it is
+    ``"RS256"`` also reads ``jwt_private_key`` (base64 PKCS8 PEM, decoded and
+    validated by :func:`decode_private_key`) and ``jwt_active_kid``.
+
+    Only ``data_gateway``'s ``Settings`` class defines ``jwt_private_key`` /
+    ``jwt_active_kid`` / ``jwt_signing_algorithm`` at all — the other three
+    services' Settings classes have no such fields, so calling this on one of
+    theirs hits the ``getattr`` defaults and returns the HS256 tuple; there is
+    no private key for them to read even by mistake.
+
+    Raises ``RuntimeError`` (not ``ValueError``) when RS256 signing is
+    selected but incompletely configured: this is an ISSUANCE-time check
+    reached from a request handler, not a Settings validator, so the failure
+    mode a caller should expect is "this request cannot be serviced" rather
+    than a Pydantic validation error. The corresponding config validator
+    raises ``ValueError`` at boot for the same condition so it is normally
+    caught long before any request reaches this function.
+    """
+    algorithm = str(getattr(settings, "jwt_signing_algorithm", "HS256")).strip().upper()
+    if algorithm == "RS256":
+        private_key_b64 = getattr(settings, "jwt_private_key", "") or ""
+        active_kid = getattr(settings, "jwt_active_kid", "") or ""
+        if not private_key_b64 or not active_kid:
+            raise RuntimeError(
+                "JWT_SIGNING_ALGORITHM=RS256 requires both JWT_PRIVATE_KEY and "
+                "JWT_ACTIVE_KID to be set."
+            )
+        return "RS256", decode_private_key(private_key_b64), active_kid
+    return "HS256", str(getattr(settings, "jwt_secret", "")), None
 
 
 def _is_signature_failure(exc: JWTError) -> bool:
@@ -161,16 +467,29 @@ def _is_signature_failure(exc: JWTError) -> bool:
 # not signed with this secret at all, so a refresh arriving mid-window simply
 # mints a new-key access token.
 #
-# This deliberately does NOT address SEC-2. HS256 means the verification key IS
+# AR-2 UPDATE (2026-09-28): implemented. HS256 meant the verification key WAS
 # the signing key, so one shared secret across four services plus the worker
-# gives read access in ANY of them the power to mint a token for any `sub` with
-# any `roles`, `service` included. The answer to that is asymmetric signing —
-# private key in data_gateway only, public key everywhere else, `kid` in the
-# header to select it — which is a Tier-2 change with a key-distribution story
-# of its own, not something to smuggle in behind a parameter type.
+# gave read access in ANY of them the power to mint a token for any `sub` with
+# any `roles`, `service` included. The answer is asymmetric signing — private
+# key in data_gateway only, public key everywhere else, `kid` in the header to
+# select it — and that is now what this function does when a caller supplies
+# :class:`VerificationKey` candidates rather than bare secrets. Plain ``str``
+# candidates (and the ``algorithm`` parameter) are untouched and remain the
+# HS256 path described above; the two compose in one sequence rather than
+# through a second parameter, because a rollout needs BOTH accepted at once
+# (see the module docstring's rollout sequence).
+#
+# `kid` is the selector: a candidate list can hold both a legacy HS256 secret
+# (no `kid`) and one or more RS256 `VerificationKey`s (each with a `kid`). A
+# token with no `kid` header is tried only against the kid-less candidate(s);
+# a token WITH a `kid` header is tried only against the candidate(s) that
+# declare that exact `kid`. An unknown `kid` therefore matches nothing and is
+# rejected immediately — it can never fall through and be tried against a
+# secret it was never signed with, which is what makes "reject an unrecognised
+# kid" a real guarantee rather than an accident of every key failing to match.
 def verify_access_token(
     token: str,
-    secret: str | Sequence[str],
+    secret: str | Sequence[str | VerificationKey],
     algorithm: str = "HS256",
     *,
     expected_issuer: str = _DEFAULT_ISSUER,
@@ -180,13 +499,19 @@ def verify_access_token(
 
     Returns the decoded payload dict.
 
-    ``secret`` is either a single key (what every caller passes today) or a
-    sequence of keys tried in order — first one whose signature matches wins.
+    ``secret`` is a single key, or a sequence of keys tried in order — first
+    one whose signature matches wins. Every element is either a bare ``str``
+    (a legacy HS256 secret, verified with *algorithm* and never selected by
+    ``kid``) or a :class:`VerificationKey` (its own algorithm and ``kid``,
+    selected by a matching ``kid`` header rather than tried in sequence). Most
+    callers do not build this by hand — see :func:`build_verification_keys`,
+    which assembles it from a service's ``Settings`` object.
 
     Raises:
         JWTError: if the token is invalid, expired, tampered, is missing
-                  required claims (iss, aud, jti, iat), or verifies against
-                  none of the supplied secrets.
+                  required claims (iss, aud, jti, iat), names a ``kid`` no
+                  supplied candidate declares, or verifies against none of the
+                  supplied secrets.
 
     iss and aud are validated against expected_issuer / expected_audience.
     jti presence is required — absence raises JWTError.
@@ -203,14 +528,46 @@ def verify_access_token(
     # `str` is itself a Sequence[str], so this test has to come before any
     # iteration — otherwise a plain secret "abc" would be tried as the three
     # one-character keys "a", "b", "c" and nothing would ever verify.
-    candidates: tuple[str, ...] = (secret,) if isinstance(secret, str) else tuple(secret)
-    if not candidates:
+    raw_candidates: tuple[str | VerificationKey, ...] = (
+        (secret,) if isinstance(secret, str) else tuple(secret)
+    )
+    # Normalise to (key, algorithm, kid) triples up front so the loop below
+    # never has to branch on the candidate's type.
+    all_candidates: list[tuple[str, str, str | None]] = [
+        (c.key, c.algorithm, c.kid) if isinstance(c, VerificationKey) else (c, algorithm, None)
+        for c in raw_candidates
+    ]
+    if not all_candidates:
         # An empty key list is a deployment mistake, never a bad token. Fail
         # closed, and do it as a JWTError so it lands on every caller's existing
         # `except JWTError -> 401` path instead of escaping as a 500 that a
         # generic handler would file under "server error".
         log.error("auth.jwt.no_verification_secret")
         raise JWTError("no verification secret configured")
+
+    # `kid`-based selection (see the comment block above this function). A
+    # token whose header cannot even be parsed is left UNFILTERED — every
+    # candidate is tried, so a malformed token still fails identically against
+    # each one, exactly as it did before `kid` existed (see
+    # `_is_signature_failure`'s docstring for why "everyone fails the same
+    # way" matters during a rotation window).
+    try:
+        token_kid: str | None = jwt.get_unverified_header(token).get("kid") or None
+    except JWTError:
+        candidates = all_candidates
+    else:
+        if token_kid is None:
+            candidates = [c for c in all_candidates if c[2] is None]
+        else:
+            candidates = [c for c in all_candidates if c[2] == token_kid]
+        if not candidates:
+            log.warning("auth.jwt.unknown_kid", kid=token_kid)
+            detail = (
+                f"no verification key for kid={token_kid!r}"
+                if token_kid
+                else "no legacy (kid-less) verification key configured"
+            )
+            raise JWTError(detail)
 
     # python-jose options dict: each "require_<claim>" key forces the claim to
     # be present; combining with audience/issuer args also validates values.
@@ -223,13 +580,13 @@ def verify_access_token(
         "require_iat": True,
     }
     errors: list[JWTError] = []
-    for index, candidate in enumerate(candidates):
+    for index, (candidate_key, candidate_algorithm, _candidate_kid) in enumerate(candidates):
         try:
             payload = dict(
                 jwt.decode(
                     token,
-                    candidate,
-                    algorithms=[algorithm],
+                    candidate_key,
+                    algorithms=[candidate_algorithm],
                     audience=expected_audience,
                     issuer=expected_issuer,
                     options=decode_options,
@@ -280,10 +637,12 @@ def verify_access_token(
     # Every collected error is now a signature-layer failure — a claim failure
     # against a key that DID match is raised at the point it happens, because
     # only that key's opinion is worth reporting. So what is left here is "this
-    # token verified against none of the deployed secrets", and candidates[0] is
-    # the current signing key, which makes its message the one an operator
-    # should read first. The list is non-empty: the loop is entered at least
-    # once and every other exit returns or raises.
+    # token verified against none of the eligible candidates" (the `kid` filter
+    # above already narrowed that set), and candidates[0] is either the current
+    # HS256 signing key (no `kid` in play) or the one key this token's `kid`
+    # named, which makes its message the one an operator should read first.
+    # The list is non-empty: the loop is entered at least once and every other
+    # exit returns or raises.
     raise errors[0]
 
 

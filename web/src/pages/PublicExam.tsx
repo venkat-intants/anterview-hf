@@ -36,6 +36,7 @@ import {
 import {
   getPublicExam,
   startExam,
+  grantCameraConsent,
   submitRound,
   type CodingAnswer,
   type ExamResult,
@@ -47,6 +48,8 @@ import { AuroraField } from '@/design/components/AuroraField';
 import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
 import CodingTaking from '@/pages/exam/CodingTaking';
 import { useExamProctor } from '@/pages/exam/useExamProctor';
+import CameraConsentModal from '@/pages/exam/CameraConsentModal';
+import ProctorIndicator from '@/pages/exam/ProctorIndicator';
 
 function fmt(totalSec: number): string {
   const s = Math.max(0, totalSec);
@@ -212,6 +215,12 @@ export default function PublicExam() {
   });
   const [consent, setConsent] = useState(false);
 
+  // ── Camera-proctoring consent (camera-proctoring contract §3) — its OWN
+  // gate, entirely separate from `consent` above (the recording/scoring
+  // consent). 'pending' only ever matters when the round requires it; a round
+  // that doesn't is simply never checked against this state.
+  const [cameraConsent, setCameraConsent] = useState<'pending' | 'granted' | 'declined'>('pending');
+
   useEffect(() => {
     if (window.location.hash) window.history.replaceState(null, '', '/exam');
   }, []);
@@ -254,9 +263,27 @@ export default function PublicExam() {
 
   const currentSection = sections[sectionIndex] ?? null;
 
+  // The company's own setting on this round (camera-proctoring contract §3).
+  // `Boolean(...)`: defaults an absent field to `false` (no camera gate,
+  // browser-events-only) rather than crashing on an older API response.
+  const cameraRequired = Boolean(examQ.data?.camera_required);
+
   // ── Start mutation ───────────────────────────────────────────────────────
   const startMut = useMutation({
-    mutationFn: () => startExam(token),
+    // `cameraConsent` only travels when the round actually requires it — a
+    // round with no camera gate has nothing to consent to, so this sends
+    // `undefined` (omitted from the request body) rather than `false`, which
+    // would misrecord a decision the candidate was never asked to make.
+    // Consent is RECORDED first, through its own endpoint, then the attempt
+    // starts — the server gates on the dpdp_consent_ledger, never on a field
+    // this client sends. A consent asserted in a start payload is not
+    // evidence, and DPDP asks for evidence.
+    mutationFn: async () => {
+      if (cameraRequired && cameraConsent === 'granted') {
+        await grantCameraConsent(token);
+      }
+      return startExam(token);
+    },
     onSuccess: (s) => {
       setAttemptId(s.attempt_id);
       setDeadline(s.deadline);
@@ -305,12 +332,29 @@ export default function PublicExam() {
       ? attemptMaxViolations
       : (examQ.data?.max_integrity_violations ?? 3);
 
-  const { isFullscreen, fullscreenSupported, violationCount, enterFullscreen } = useExamProctor({
+  const {
+    isFullscreen,
+    fullscreenSupported,
+    violationCount,
+    enterFullscreen,
+    cameraVideoRef,
+    cameraAvailable,
+    cameraSettled,
+    cameraDenied,
+    cameraModelReady,
+    cameraWarning,
+    cameraCalibrating,
+  } = useExamProctor({
     enabled: phase === 'taking',
     attemptId: attemptId ?? '',
     token,
     maxViolations,
     onAutoSubmit: doSubmit,
+    // Camera proctoring only ever runs once ALL THREE are true: the round
+    // requires it, the candidate gave the dedicated consent above, and the
+    // attempt is actually in progress. Declining or a round that doesn't use
+    // it at all both leave this false — browser-events-only, same as today.
+    cameraEnabled: phase === 'taking' && cameraRequired && cameraConsent === 'granted',
   });
 
   // Request fullscreen as soon as the round starts (triggered from the "Start
@@ -455,6 +499,30 @@ export default function PublicExam() {
         <p className="max-w-sm text-body-sm text-muted-foreground">
           {t('publicExam.completedDesc')}
         </p>
+      </PageWrap>
+    );
+  }
+
+  // ── Camera proctoring required and declined ──────────────────────────────
+  // Camera-proctoring contract §3: if the round requires it and the
+  // candidate declines, they cannot start, and the screen says why and what
+  // to do. Reconsidering re-opens the consent step rather than being a dead
+  // end — declining is the candidate's call to make, not a one-way door.
+  if (phase === 'intro' && cameraRequired && cameraConsent === 'declined') {
+    return (
+      <PageWrap>
+        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(255,183,100,0.15)] text-amber-glow">
+          <AlertCircle className="h-6 w-6" aria-hidden="true" />
+        </span>
+        <h1 className="text-subheading font-semibold text-foreground">
+          {t('publicExam.cameraRequiredTitle')}
+        </h1>
+        <p className="max-w-sm text-body-sm text-muted-foreground">
+          {t('publicExam.cameraRequiredDesc')}
+        </p>
+        <Pill className="mt-2 px-8 py-2.5" onClick={() => setCameraConsent('pending')}>
+          {t('publicExam.cameraReconsider')}
+        </Pill>
       </PageWrap>
     );
   }
@@ -617,7 +685,8 @@ export default function PublicExam() {
 
             {/* PH4-D2 — the fact only: never the percentage, never why. The
                 round/section limits below are already the scaled ones. */}
-            {exam.adjustments && (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
+            {exam.adjustments &&
+            (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
               <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
                 <Clock size={14} className="mt-0.5 shrink-0 text-vivid-mint" aria-hidden="true" />
                 <span>{t('publicExam.adjustmentNotice')}</span>
@@ -633,6 +702,27 @@ export default function PublicExam() {
               />
               <span>{t('publicExam.proctoringNotice')}</span>
             </div>
+
+            {/* Camera-proctoring status — informational only, never the consent
+                itself (camera-proctoring contract §3: consent is its own
+                separate step, the CameraConsentModal below). */}
+            {cameraRequired && (
+              <div className="mt-3 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
+                <ShieldCheck
+                  size={14}
+                  className={cn(
+                    'mt-0.5 shrink-0',
+                    cameraConsent === 'granted' ? 'text-vivid-mint' : 'text-amber-glow',
+                  )}
+                  aria-hidden="true"
+                />
+                <span>
+                  {cameraConsent === 'granted'
+                    ? t('publicExam.cameraConsentGrantedNotice')
+                    : t('publicExam.cameraConsentPendingNotice')}
+                </span>
+              </div>
+            )}
 
             {/* DPDP consent */}
             <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4 text-[12.5px] text-mist">
@@ -650,7 +740,9 @@ export default function PublicExam() {
 
             <Pill
               className="mt-6 w-full py-3.5"
-              disabled={!consent || startMut.isPending}
+              disabled={
+                !consent || startMut.isPending || (cameraRequired && cameraConsent !== 'granted')
+              }
               onClick={() => void handleStart()}
             >
               {startMut.isPending ? (
@@ -668,6 +760,16 @@ export default function PublicExam() {
             )}
           </GlassCard>
         </div>
+
+        {/* Camera-proctoring consent — its own gate, before anything else can
+            proceed. Never bundled with the DPDP recording/scoring consent
+            above (camera-proctoring contract §3). */}
+        {cameraRequired && cameraConsent === 'pending' && (
+          <CameraConsentModal
+            onAgree={() => setCameraConsent('granted')}
+            onDecline={() => setCameraConsent('declined')}
+          />
+        )}
       </div>
     );
   }
@@ -703,12 +805,28 @@ export default function PublicExam() {
               })}
             </p>
           )}
-          {exam.adjustments && (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
+          {exam.adjustments &&
+          (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
             <p className="text-caption text-vivid-mint">{t('publicExam.adjustmentNotice')}</p>
           ) : null}
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Camera-proctoring indicator — candidate-visible, never decoration
+              (camera-proctoring contract §4). Only rendered once the camera
+              is actually the active signal path; a declined/not-required
+              round shows nothing extra here. */}
+          {cameraRequired && cameraConsent === 'granted' && (
+            <ProctorIndicator
+              cameraSettled={cameraSettled}
+              cameraAvailable={cameraAvailable}
+              cameraDenied={cameraDenied}
+              cameraModelReady={cameraModelReady}
+              cameraCalibrating={cameraCalibrating}
+              cameraWarning={cameraWarning}
+            />
+          )}
+
           {/* Violation badge */}
           {violationCount > 0 && (
             <div
@@ -892,6 +1010,33 @@ export default function PublicExam() {
           </p>
         )}
       </div>
+
+      {/* Camera self-view (PiP) — local-only, never published anywhere; exists
+          so the candidate can SEE they are on camera, not just be told so
+          (camera-proctoring contract §4). Mirrored so it feels like a mirror,
+          matching the interview's own self-view. Kept in the DOM (not
+          display:none) whenever the camera is the active signal path, even
+          before the stream attaches, so MediaPipe always has a live element
+          to read from the moment frames arrive. */}
+      {cameraRequired && cameraConsent === 'granted' && (
+        <div
+          className={cn(
+            'fixed bottom-6 right-4 z-40 h-28 w-20 overflow-hidden rounded-xl',
+            'border border-white/10 bg-obsidian/80 shadow-elevated',
+            'transition-opacity duration-500',
+            cameraAvailable ? 'opacity-100' : 'opacity-0',
+          )}
+          aria-hidden="true"
+        >
+          <video
+            ref={cameraVideoRef}
+            autoPlay
+            playsInline
+            muted
+            className="h-full w-full object-cover scale-x-[-1]"
+          />
+        </div>
+      )}
     </div>
   );
 }

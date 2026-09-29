@@ -18,9 +18,11 @@ import i18n from '../lib/i18n';
 const getPublicExam = vi.fn();
 const startExam = vi.fn();
 const sendIntegrityEvent = vi.fn();
+const grantCameraConsent = vi.fn();
 vi.mock('../api/publicExam', () => ({
   getPublicExam: (...a: unknown[]) => getPublicExam(...a) as unknown,
   startExam: (...a: unknown[]) => startExam(...a) as unknown,
+  grantCameraConsent: (...a: unknown[]) => grantCameraConsent(...a) as unknown,
   submitRound: vi.fn(),
   sendIntegrityEvent: (...a: unknown[]) => sendIntegrityEvent(...a) as unknown,
 }));
@@ -47,6 +49,10 @@ const EXAM: TakeExam = {
   questions: [],
   coding_questions: [],
 };
+
+// A round whose company setting requires camera proctoring (camera-proctoring
+// contract §3).
+const EXAM_WITH_CAMERA: TakeExam = { ...EXAM, camera_required: true };
 
 function renderExam() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -140,7 +146,9 @@ describe('PublicExam — the accommodation banner (PH4-D2)', () => {
     });
     renderExam();
     await screen.findByRole('heading', { name: 'Backend fundamentals' });
-    expect(screen.getByText('Your time for this round includes an adjustment.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Your time for this round includes an adjustment.'),
+    ).toBeInTheDocument();
     // The fact only — never the percentage this test set up with.
     expect(screen.queryByText(/50%/)).toBeNull();
   });
@@ -152,7 +160,9 @@ describe('PublicExam — the accommodation banner (PH4-D2)', () => {
     });
     renderExam();
     await screen.findByRole('heading', { name: 'Backend fundamentals' });
-    expect(screen.getByText('Your time for this round includes an adjustment.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Your time for this round includes an adjustment.'),
+    ).toBeInTheDocument();
   });
 
   it('shows the banner in Hindi', async () => {
@@ -163,7 +173,9 @@ describe('PublicExam — the accommodation banner (PH4-D2)', () => {
     });
     renderExam();
     await screen.findByRole('heading', { name: 'Backend fundamentals' });
-    expect(screen.getByText('इस राउंड के लिए आपके समय में एक समायोजन शामिल है।')).toBeInTheDocument();
+    expect(
+      screen.getByText('इस राउंड के लिए आपके समय में एक समायोजन शामिल है।'),
+    ).toBeInTheDocument();
   });
 
   it('shows the banner in Telugu', async () => {
@@ -174,7 +186,9 @@ describe('PublicExam — the accommodation banner (PH4-D2)', () => {
     });
     renderExam();
     await screen.findByRole('heading', { name: 'Backend fundamentals' });
-    expect(screen.getByText('ఈ రౌండ్ కోసం మీ సమయంలో ఒక సర్దుబాటు చేర్చబడింది.')).toBeInTheDocument();
+    expect(
+      screen.getByText('ఈ రౌండ్ కోసం మీ సమయంలో ఒక సర్దుబాటు చేర్చబడింది.'),
+    ).toBeInTheDocument();
   });
 });
 
@@ -199,7 +213,7 @@ describe("PublicExam — the proctor's max_violations wiring (security review)",
     Object.defineProperty(document, 'fullscreenElement', { value: null, configurable: true });
   });
 
-  it("wires null max_violations into the proctor before it is enabled, driving the no-countdown copy", async () => {
+  it('wires null max_violations into the proctor before it is enabled, driving the no-countdown copy', async () => {
     const user = userEvent.setup();
     getPublicExam.mockResolvedValue(EXAM);
     startExam.mockResolvedValue({
@@ -228,5 +242,100 @@ describe("PublicExam — the proctor's max_violations wiring (security review)",
     expect(await screen.findByText('Violation 1 recorded.')).toBeInTheDocument();
     // The relaxed attempt never shows a countdown to auto-submit.
     expect(screen.queryByText(/remaining/i)).not.toBeInTheDocument();
+  });
+});
+
+// Camera-proctoring contract §3 — the dedicated, never-bundled consent step.
+describe('PublicExam — camera proctoring consent (camera-proctoring contract)', () => {
+  it('never shows the camera consent step for a round that does not require it', async () => {
+    getPublicExam.mockResolvedValue(EXAM);
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('shows a dedicated camera consent dialog, separate from the DPDP checkbox, and gates Start on it', async () => {
+    const user = userEvent.setup();
+    getPublicExam.mockResolvedValue(EXAM_WITH_CAMERA);
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+
+    // Its own dialog, with its own Agree/Decline — not a second checkbox
+    // bundled onto the existing DPDP consent control.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /turn on camera monitoring/i })).toBeInTheDocument();
+
+    // Ticking the (separate) DPDP checkbox alone is not enough to start.
+    await user.click(screen.getByRole('checkbox'));
+    expect(screen.getByRole('button', { name: 'Start exam' })).toBeDisabled();
+  });
+
+  it('declining when required blocks the exam, explains why, and offers a way to reconsider', async () => {
+    const user = userEvent.setup();
+    getPublicExam.mockResolvedValue(EXAM_WITH_CAMERA);
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+
+    await user.click(screen.getByRole('button', { name: /^decline$/i }));
+
+    expect(await screen.findByText(/needs your camera/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start exam' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // Declining is not a dead end — the candidate can reconsider.
+    await user.click(screen.getByRole('button', { name: /reconsider/i }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('records the granted consent through its own endpoint before starting', async () => {
+    const user = userEvent.setup();
+    getPublicExam.mockResolvedValue(EXAM_WITH_CAMERA);
+    startExam.mockResolvedValue({
+      attempt_id: 'att-cam-1',
+      started_at: '2026-09-16T00:00:00.000Z',
+      deadline: null,
+      max_violations: 3,
+    });
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+
+    await user.click(screen.getByRole('button', { name: /turn on camera monitoring/i }));
+    // The dialog is gone once agreed, and Start is still gated on the
+    // separate DPDP checkbox.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start exam' })).toBeDisabled();
+
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Start exam' }));
+
+    // Consent goes through its own endpoint and is written to the ledger;
+    // `startExam` carries no consent argument at all, because the server
+    // gates on the ledger rather than on anything this client asserts.
+    await waitFor(() => expect(grantCameraConsent).toHaveBeenCalledWith('exam_tok_123456'));
+    await waitFor(() => expect(startExam).toHaveBeenCalledWith('exam_tok_123456'));
+  });
+
+  it('never blocks the exam even when the camera itself cannot start after consent (graceful degradation)', async () => {
+    const user = userEvent.setup();
+    getPublicExam.mockResolvedValue(EXAM_WITH_CAMERA);
+    startExam.mockResolvedValue({
+      attempt_id: 'att-cam-2',
+      started_at: '2026-09-16T00:00:00.000Z',
+      deadline: null,
+      max_violations: 3,
+    });
+    renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+
+    await user.click(screen.getByRole('button', { name: /turn on camera monitoring/i }));
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Start exam' }));
+
+    // Reached "taking" regardless of the camera — jsdom has no getUserMedia,
+    // exactly like a real denied/unsupported browser, and the exam must not
+    // hang or block on that.
+    await waitFor(() => expect(screen.queryByRole('checkbox')).not.toBeInTheDocument());
+    expect(await screen.findByText(/camera unavailable/i)).toBeInTheDocument();
   });
 });

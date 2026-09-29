@@ -13,10 +13,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Loader2, AlertCircle, Clock, ShieldCheck, Maximize } from 'lucide-react';
+import {
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+  PhoneOff,
+  Loader2,
+  AlertCircle,
+  Clock,
+  ShieldCheck,
+  Maximize,
+} from 'lucide-react';
 import { useLiveKitInterview } from '@/hooks/useLiveKitInterview';
-import { useProctoring } from '@/features/interview/useProctoring';
-import { useFullscreen, requestFullscreen, exitFullscreen } from '@/features/interview/useFullscreen';
+import { useProctoring } from '@/features/proctoring/useProctoring';
+import type { ProctorEventSubmitter } from '@/features/proctoring/types';
+import { postIntegrityEvents } from '@/api/integrity';
+import {
+  useFullscreen,
+  requestFullscreen,
+  exitFullscreen,
+} from '@/features/interview/useFullscreen';
 import type { LiveKitStatus } from '@/hooks/useLiveKitInterview';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -31,7 +48,6 @@ interface LiveKitInterviewProps {
   cameraConsented?: boolean;
 }
 
-
 // Zero-pad a number to 2 digits.
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -44,7 +60,10 @@ function formatElapsed(totalSeconds: number): string {
   return `${pad2(m)}:${pad2(s)}`;
 }
 
-export default function LiveKitInterview({ sessionId, cameraConsented = false }: LiveKitInterviewProps) {
+export default function LiveKitInterview({
+  sessionId,
+  cameraConsented = false,
+}: LiveKitInterviewProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const {
@@ -63,11 +82,25 @@ export default function LiveKitInterview({ sessionId, cameraConsented = false }:
   // Phase B — proctoring runs only when the candidate consented to the camera
   // and the room is connected. It reads the SAME local self-view video element,
   // detects gaze/face/tab signals in-browser, and emits events to the backend.
+  // useProctoring is transport-agnostic (shared with the exam) — this adapter
+  // is the interview's own wiring to interview_core, unchanged in behaviour
+  // from before the module moved.
+  const submitProctorEvents: ProctorEventSubmitter = useCallback(
+    async (events) => {
+      const res = await postIntegrityEvents(sessionId, events);
+      return res ? { integrityScore: res.integrity_score } : null;
+    },
+    [sessionId],
+  );
   const isConnectedForProctoring = status === 'connected';
-  const { ready: proctoringReady, activeWarning, calibrating } = useProctoring({
-    sessionId,
+  const {
+    ready: proctoringReady,
+    activeWarning,
+    calibrating,
+  } = useProctoring({
     videoRef: localVideoRef,
     enabled: cameraConsented && isConnectedForProctoring,
+    submitEvents: submitProctorEvents,
   });
 
   // Fullscreen guard — the interview runs in fullscreen (entered at the intro
@@ -87,15 +120,18 @@ export default function LiveKitInterview({ sessionId, cameraConsented = false }:
 
   // Resolve translated status labels — memoised so the object is only rebuilt
   // when the active locale changes, not on every 1-second timer tick.
-  const STATUS_LABEL = useMemo<Record<LiveKitStatus, string>>(() => ({
-    idle: t('interview.statusIdle'),
-    'fetching-token': t('interview.statusFetchingToken'),
-    connecting: t('interview.statusConnecting'),
-    connected: t('interview.statusConnected'),
-    reconnecting: t('interview.statusReconnecting'),
-    disconnected: t('interview.statusDisconnected'),
-    error: t('interview.statusError'),
-  }), [t]);
+  const STATUS_LABEL = useMemo<Record<LiveKitStatus, string>>(
+    () => ({
+      idle: t('interview.statusIdle'),
+      'fetching-token': t('interview.statusFetchingToken'),
+      connecting: t('interview.statusConnecting'),
+      connected: t('interview.statusConnected'),
+      reconnecting: t('interview.statusReconnecting'),
+      disconnected: t('interview.statusDisconnected'),
+      error: t('interview.statusError'),
+    }),
+    [t],
+  );
 
   const [ending, setEnding] = useState(false);
 
@@ -187,7 +223,6 @@ export default function LiveKitInterview({ sessionId, cameraConsented = false }:
     // The chrome AROUND the session — device check, consent, error states —
     // does follow the mode; see pages/Interview.tsx and components/InterviewIntro.
     <div className="fixed inset-0 overflow-hidden bg-black text-white">
-
       {/* ── Avatar video — fills the entire viewport ──────────────────────── */}
       <video
         ref={videoRef}
@@ -358,7 +393,10 @@ export default function LiveKitInterview({ sessionId, cameraConsented = false }:
                 'text-body-sm text-white flex items-center gap-2',
               )}
             >
-              <Clock className="h-3.5 w-3.5 flex-shrink-0 text-electric-signal" aria-hidden="true" />
+              <Clock
+                className="h-3.5 w-3.5 flex-shrink-0 text-electric-signal"
+                aria-hidden="true"
+              />
               <span className="tabular-nums">{formatElapsed(elapsedSeconds)}</span>
             </div>
           )}
@@ -386,7 +424,10 @@ export default function LiveKitInterview({ sessionId, cameraConsented = false }:
       {isConnected && calibrating && !activeWarning && (
         <div className="absolute inset-x-0 top-20 z-30 flex justify-center px-4 pointer-events-none">
           <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.08] backdrop-blur border border-white/10 px-4 py-3 text-mist shadow-elevated max-w-md">
-            <Loader2 className="h-5 w-5 flex-shrink-0 animate-spin text-electric-signal" aria-hidden="true" />
+            <Loader2
+              className="h-5 w-5 flex-shrink-0 animate-spin text-electric-signal"
+              aria-hidden="true"
+            />
             <p className="text-body-sm font-medium">{t('interview.calibrating')}</p>
           </div>
         </div>

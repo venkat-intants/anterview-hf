@@ -1379,13 +1379,31 @@ async def _note_events_dropped(db: AsyncSession, attempt: ExamAttempt) -> None:
 @router.post(
     "/integrity-event",
     response_model=IntegrityIngestOut,
-    # Route level: the per-IP volumetric guard ONLY, so a flood is stopped
-    # before any database work. Both per-TOKEN budgets live inside the handler
-    # (security re-audit MEDIUM-1), because a refusal has to be recorded on the
-    # attempt before the 429 goes out and a dependency raises too early for
-    # that — a drop the HR timeline cannot see is the defect HIGH-2 blocked on.
+    # Route level: the EDGE guard, cutting a flood off before any database
+    # work. Note the bucket name differs from the in-handler one on purpose —
+    # they are separate Redis keys, and reusing the name would charge every
+    # request to the same counter twice and silently halve both ceilings.
+    #
+    # Its per-token ceiling deliberately sits ABOVE the in-handler one, so the
+    # handler's cap always fires first and flags the attempt; traffic that
+    # reaches this ceiling has therefore already been recorded as dropped.
+    # That keeps the pre-DB cut-off without reintroducing an unflaggable token
+    # refusal (security re-audit rounds 2-3, MEDIUM-1 then MEDIUM-2): without
+    # it, requests past the in-handler cap each cost 5 SELECTs before being
+    # refused, which on a serverless database this project has already had
+    # exhausted by its own pollers is a real cost regression.
+    #
+    # A per-IP refusal here CANNOT flag anything: at dependency time there is
+    # no attempt resolved to write to, and resolving one would forfeit the very
+    # cut-off this exists for. It is therefore an OPERATIONAL signal, not an HR
+    # one — watch rate_limit_exceeded_total{bucket="exam_integrity_edge"}.
     dependencies=[
-        rate_limit("exam_integrity_event", settings.exam_integrity_event_per_ip_per_minute)
+        rate_limit_link(
+            "exam_integrity_edge",
+            "X-Exam-Token",
+            per_token=settings.exam_integrity_event_edge_per_minute,
+            per_ip=settings.exam_integrity_event_per_ip_per_minute,
+        )
     ],
 )
 async def ingest_integrity_event(
@@ -1417,8 +1435,12 @@ async def ingest_integrity_event(
       ``multiple_faces`` for the rest of the minute — turning the rate limit
       into an off switch for the evidence this endpoint exists to collect.
 
-    When anything IS dropped, the attempt records it, so HR is told the
-    timeline is incomplete rather than shown a short one that looks clean.
+    When either PER-TOKEN cap refuses an event the attempt records it, so HR is
+    told the timeline is incomplete rather than shown a short one that looks
+    clean. The per-IP edge refusal is the one exception and cannot be recorded:
+    it happens in a route dependency, before any attempt is resolved, and
+    resolving one there would forfeit the pre-database cut-off that guard
+    exists for. It is an operational signal instead — see the route decorator.
 
     A camera-only event type (face_absent / multiple_faces / gaze_away) is
     refused for an attempt that never had the camera on

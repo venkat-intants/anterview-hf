@@ -536,6 +536,13 @@ class Settings(BaseSettings):
     # 300 clears that worst case with room to spare. The per-type fairness work
     # is done by exam_integrity_nonviolation_per_minute below, not here.
     exam_integrity_event_per_minute: int = 300
+    # The EDGE ceiling, on the route-level dependency, per token. Sits above
+    # the in-handler 300 on purpose: the handler's cap fires first and flags
+    # the attempt, so anything that reaches this one has already been recorded
+    # as dropped, and no unflaggable token refusal is reintroduced. Its job is
+    # only to restore the pre-DB cut-off — without it, every request past 300
+    # costs 5 SELECTs before being refused (security re-audit round 3).
+    exam_integrity_event_edge_per_minute: int = 400
     # The INNER budget, charged only to event types that are NOT violations
     # (copy / paste / gaze_away), on their own Redis key.
     #
@@ -563,22 +570,31 @@ class Settings(BaseSettings):
     # data, not a control, and the distinction matters to whoever reads this
     # next looking for an enforcement point.
     exam_integrity_nonviolation_per_minute: int = 120
-    # The LOOSER per-IP backstop on the same route: volumetric-abuse protection
-    # only, never the normal-use limit. Sized from the busiest real room rather
-    # than as a neat multiple of the per-token cap — a 60-seat lab where every
-    # candidate is at the realistic 40/min ceiling is already 2400/min, so
-    # 3000 clears a full hall while still bounding a single-source flood. The
-    # per-token cap above is what actually protects the endpoint: passing it
-    # requires as many valid, unexpired exam links as the flood has requests.
+    # The LOOSER per-IP backstop: volumetric protection only, never the
+    # normal-use limit, and a LAB ALLOWANCE rather than an abuse control.
     #
-    # Read this as a LAB ALLOWANCE, not as an abuse control (security review
-    # LOW-2). At 3000/min it is the loosest unauthenticated per-IP ceiling in
-    # the service, and each served request still costs at least one indexed
-    # SELECT on a database billed by wake-ups. The two goals genuinely
-    # conflict and this number resolves them in favour of not throttling a
-    # real exam hall; a true volumetric bound belongs at the edge proxy,
-    # where it can be enforced without touching the database at all.
-    exam_integrity_event_per_ip_per_minute: int = 3000
+    # Derived on the SAME basis as the per-token ceilings above — the
+    # pathological rate, not the realistic one. Security re-audit round 3
+    # caught the two being derived inconsistently: per_token was sized on the
+    # pathological 150/min while per_ip was sized on the realistic 40/min
+    # (60 seats x 40 = 2400, hence the old 3000). Mixed bases meant a hall of
+    # 50 ordinary candidates plus 7 with flapping cameras came to 3050 and lost
+    # events for EVERYONE in the room. On one basis: 60 seats x 150/min
+    # pathological = 9000.
+    #
+    # That is deliberately generous, because the failure it prevents is the one
+    # this whole feature is about — a room where many candidates have cheap
+    # cameras is a low-budget college, i.e. exactly CLAUDE.md's #1 market, and
+    # throttling it silently discards their evidence. Per-candidate DB cost is
+    # bounded by the edge per-token ceiling, not by this number, so raising it
+    # does not hand one link more database work.
+    #
+    # A real volumetric bound still belongs at the edge proxy, where it can be
+    # enforced without touching the database at all; this is the in-process
+    # backstop, and a refusal here is an OPERATIONAL signal (no attempt is
+    # resolved yet, so it cannot be flagged for HR) — alert on
+    # rate_limit_exceeded_total{bucket="exam_integrity_edge"}.
+    exam_integrity_event_per_ip_per_minute: int = 9000
 
     # --- Coding round — code execution (HR workflow Phase 2) ---
     # Swappable provider:

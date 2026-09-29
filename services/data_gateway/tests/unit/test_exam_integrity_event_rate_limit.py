@@ -166,10 +166,20 @@ def test_the_route_level_guard_is_the_per_ip_volumetric_one() -> None:
     on.
     """
     decorator = _route_decorator_source()
-    assert 'rate_limit("exam_integrity_event"' in decorator
     assert "exam_integrity_event_per_ip_per_minute" in decorator
-    # The per-token caps must NOT be here any more, or a refusal is unflaggable.
-    assert "per_token=" not in decorator
+    # Its bucket must DIFFER from the in-handler one: same name means one Redis
+    # key charged twice per request, silently halving both ceilings.
+    assert '"exam_integrity_edge"' in decorator
+    assert '"exam_integrity_event"' not in decorator
+    # The intent, asserted as intent rather than as "no per_token here at all":
+    # a route-level token ceiling is fine — required, even, for the pre-DB
+    # cut-off — PROVIDED it sits above the in-handler cap, so the handler
+    # always refuses (and flags) first and no unflaggable token refusal exists.
+    assert "per_token=settings.exam_integrity_event_edge_per_minute" in decorator
+    assert (
+        settings.exam_integrity_event_edge_per_minute
+        > settings.exam_integrity_event_per_minute
+    ), "the edge ceiling must exceed the in-handler cap, or refusals go unflagged"
 
 
 def test_both_token_budgets_are_charged_where_a_refusal_can_be_recorded() -> None:
@@ -190,9 +200,15 @@ def test_both_token_budgets_are_charged_where_a_refusal_can_be_recorded() -> Non
     assert '"X-Exam-Token"' in source
     # One except clause covering both, flagging before it re-raises.
     assert "except HTTPException:" in source
-    flag_at = source.index("_note_events_dropped")
-    raise_at = source.index("raise", flag_at)
-    assert flag_at < raise_at, "the attempt must be flagged BEFORE the 429 is re-raised"
+    # Searched from 0, NOT from flag_at. Searching from flag_at made this
+    # tautological (index() cannot return less than where it started), so it
+    # only ever failed by raising ValueError — by accident rather than design.
+    # Caught by the security re-audit; a guard that cannot fail is worse than
+    # no guard, which is the standard applied to everything else here.
+    handler = source[source.index("except HTTPException:") :]
+    assert handler.index("_note_events_dropped") < handler.index("raise"), (
+        "the attempt must be flagged BEFORE the 429 is re-raised"
+    )
 
 
 @pytest.mark.asyncio

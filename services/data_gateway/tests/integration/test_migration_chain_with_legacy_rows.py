@@ -52,7 +52,14 @@ SERVICE_DIR = Path(__file__).resolve().parents[2]
 
 
 def _dsn(database: str) -> str:
-    """An asyncpg DSN for *database* on the same server as settings.database_url."""
+    """An asyncpg DSN for *database* on the same server as settings.database_url.
+
+    Note that this DISCARDS any query string on the source URL (``?sslmode=``
+    and friends): the rpartition below splits on the last ``/``, so anything
+    after the database name goes with it. Harmless here — this only ever runs
+    against a loopback server, asserted in ``throwaway_db`` — but worth knowing
+    before reusing the helper somewhere that needs those parameters.
+    """
     base = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
     head, _, _old = base.rpartition("/")
     return f"{head}/{database}"
@@ -84,6 +91,31 @@ def _alembic(revision: str, database: str) -> subprocess.CompletedProcess[str]:
 @pytest_asyncio.fixture
 async def throwaway_db() -> AsyncIterator[str]:
     """A database of this test's own, dropped afterwards whatever happens."""
+    # Unconditional loopback assertion, NOT relying on the integration
+    # conftest's own gate. That gate honours ALLOW_REMOTE_TEST_DB=1, whose
+    # docstring frames the risk as "test fixtures written into production" —
+    # which understates this file: it runs CREATE/DROP DATABASE, so the escape
+    # hatch must not be able to reach it at all (security re-audit round 3).
+    from shared.security import _is_loopback_database
+
+    assert _is_loopback_database(settings.database_url), (
+        "this test performs database-level DDL and must only ever run against "
+        "a loopback server, whatever ALLOW_REMOTE_TEST_DB says"
+    )
+
+    # Sweep any database a previously KILLED run leaked — `finally` cannot run
+    # under SIGKILL, and these accumulate on a developer's machine (CI throws
+    # its postgres container away, so it only matters locally).
+    admin = await asyncpg.connect(_dsn("postgres"))
+    try:
+        stale = await admin.fetch(
+            "SELECT datname FROM pg_database WHERE datname LIKE 'chain_probe_%'"
+        )
+        for row in stale:
+            await admin.execute(f'DROP DATABASE IF EXISTS "{row["datname"]}" WITH (FORCE)')
+    finally:
+        await admin.close()
+
     name = f"chain_probe_{uuid.uuid4().hex[:10]}"
     admin = await asyncpg.connect(_dsn("postgres"))
     try:
@@ -176,6 +208,19 @@ async def test_upgrade_head_completes_on_a_database_holding_pre_branch_rows(
     assert first.returncode == 0, f"baseline migration failed:\n{first.stderr}"
 
     await _seed_legacy_rows(throwaway_db)
+
+    # Prove the seed actually wrote the PII BEFORE upgrading. Without this,
+    # `metadata_left == 0` afterwards could pass for the wrong reason — a
+    # future schema change that made the jsonb cast land as NULL would look
+    # like a successful purge (security re-audit round 3).
+    conn = await asyncpg.connect(_dsn(throwaway_db))
+    try:
+        seeded = await conn.fetchval(
+            "SELECT count(*) FROM exam_integrity_events WHERE event_metadata IS NOT NULL"
+        )
+        assert seeded == 3, f"the seed must plant 3 rows carrying PII, planted {seeded}"
+    finally:
+        await conn.close()
 
     result = _alembic("head", throwaway_db)
     assert result.returncode == 0, (

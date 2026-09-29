@@ -560,6 +560,21 @@ class Settings(BaseSettings):
     # only to restore the pre-DB cut-off — without it, every request past 300
     # costs 5 SELECTs before being refused (security re-audit round 3).
     exam_integrity_event_edge_per_minute: int = 400
+    # --- The other public exam routes, rekeyed from IP to link -------------
+    # Security review MEDIUM-5. These were IP-keyed, which is the same NAT
+    # failure the integrity endpoint had and worse in practice: a whole lab
+    # shared 20 run-code requests per minute on a button candidates press
+    # repeatedly during a TIMED coding round, so a 429 there is a user-visible
+    # mid-exam failure against a clock. Per candidate, 30/min is generous for
+    # someone testing their code by hand. The per-IP ceilings are sized for a
+    # 60-seat hall and stay volumetric backstops, never the normal-use limit.
+    exam_run_code_per_minute: int = 30
+    exam_run_code_per_ip_per_minute: int = 1800
+    # Submits are rare per candidate (one per section, plus retries on a flaky
+    # connection) but a whole hall submits at once when a clock expires, which
+    # is precisely when a throttle would do the most damage.
+    exam_submit_per_minute: int = 20
+    exam_submit_per_ip_per_minute: int = 1200
     # The INNER budget, charged only to event types that are NOT violations
     # (copy / paste / gaze_away), on their own Redis key.
     #

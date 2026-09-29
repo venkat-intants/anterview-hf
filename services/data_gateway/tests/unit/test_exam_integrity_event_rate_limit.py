@@ -355,3 +355,43 @@ def test_the_ip_backstop_clears_a_full_computer_lab() -> None:
         settings.exam_integrity_event_per_ip_per_minute
         > settings.exam_integrity_event_per_minute
     )
+
+
+def test_no_public_exam_route_is_keyed_on_ip_alone() -> None:
+    """Security review MEDIUM-5, closed for the whole router rather than one route.
+
+    /exam/run-code was IP-keyed at 20/min — the same NAT failure the integrity
+    endpoint had, and worse where it lands: a whole lab shares one address, and
+    run-code is a button candidates press repeatedly during a TIMED coding
+    round, so a 429 is a visible mid-exam failure against a clock. Submit was
+    IP-keyed too, and a hall submits together when the clock runs out.
+
+    Asserted over the module rather than per route, so a NEW public exam route
+    added with the IP-keyed factory is caught here instead of in a lab.
+    """
+    import inspect
+
+    source = inspect.getsource(exam_take)
+    assert 'rate_limit("exam_' not in source, (
+        "a public exam route is keyed on client IP alone; use rate_limit_link "
+        "so a NAT'd computer lab does not share one candidate's budget"
+    )
+    for bucket in ("exam_run_code", "exam_run_code_custom", "exam_submit"):
+        assert f'"{bucket}",\n            "X-Exam-Token"' in source, (
+            f"{bucket} is not keyed on the candidate's own exam link"
+        )
+
+
+def test_the_rekeyed_ceilings_clear_a_full_lab() -> None:
+    """Each per-IP ceiling must clear a 60-seat hall at its own per-candidate
+    rate, or it becomes the binding limit for a legitimate room — the exact
+    failure being fixed."""
+    seats = 60
+    assert (
+        settings.exam_run_code_per_ip_per_minute
+        >= seats * settings.exam_run_code_per_minute
+    )
+    assert (
+        settings.exam_submit_per_ip_per_minute
+        >= seats * settings.exam_submit_per_minute
+    )

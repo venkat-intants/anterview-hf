@@ -138,6 +138,73 @@ _APP_ENV_ALIASES = {
 }
 
 
+def strip_pasted_settings(values: object) -> object:
+    """Strip whitespace a paste added, across EVERY setting at once.
+
+    Use as ``@model_validator(mode="before")`` on each service's Settings. This
+    replaced a hand-written list of variable names, which was the wrong shape:
+    the list missed ``GROQ_MODEL``, and the failure came back a third time. Any
+    setting can be pasted, so every setting is covered — an allowlist of the
+    ones someone remembered is a guarantee of another outage, just later.
+
+    Two rules, because the safe treatment differs:
+
+    * Every string value has its ENDS stripped. Leading/trailing whitespace is
+      never meaningful in anything we accept, and ends-only is safe even for a
+      multi-line PEM (``JWT_PRIVATE_KEY``), whose internal newlines are load
+      bearing and must survive.
+    * A value whose field name ends in ``_api_key`` additionally has ALL inner
+      whitespace removed. These go straight into an ``Authorization`` header,
+      HTTP forbids newlines there, and no provider key contains whitespace
+      anywhere — so a key split across two lines by a wrapped paste is repaired
+      rather than sent as an illegal header. This is deliberately NOT applied to
+      passwords or DSNs, where an inner space can be genuine.
+
+    The incidents behind this, all one root cause and all invisible in the
+    settings UI: ``DATABASE_URL`` with a trailing newline (``database "neondb\\n"
+    does not exist`` — every route 503); ``GROQ_API_KEY`` split mid-value by a
+    wrapped paste (``Illegal header value``, which also printed the key into a
+    user-facing error); ``GROQ_MODEL`` with a trailing newline (``The model
+    `openai/gpt-oss-120b\\n` does not exist``).
+    """
+    if not isinstance(values, dict):
+        return values
+    cleaned: dict[object, object] = {}
+    for name, value in values.items():
+        if isinstance(value, str):
+            value = value.strip()
+            if isinstance(name, str) and name.lower().endswith("_api_key"):
+                value = "".join(value.split())
+        cleaned[name] = value
+    return cleaned
+
+
+def strip_connection_value(value: object) -> object:
+    """Remove surrounding whitespace, CR and LF from a connection string or key.
+
+    Use as a ``@field_validator(..., mode="before")`` in every service's
+    Settings, alongside :func:`normalise_app_env`. Non-strings pass through
+    untouched so pydantic still reports a proper type error.
+
+    A trailing newline on ``DATABASE_URL`` — pasted into a Hugging Face Space
+    secret, where the field keeps whatever the clipboard carried — took the
+    whole platform down with ``InvalidCatalogNameError: database "neondb<LF>"
+    does not exist``: every route 503, the cause invisible in the settings UI
+    and legible only as a line break inside the quotes, forty lines into a
+    traceback. The Space entrypoint now strips these at boot; this is the same
+    guarantee for every other way the app starts — a local ``.env``, Docker, a
+    future VM deploy.
+
+    Safe by construction: no URL, DSN or API key we accept has meaningful
+    leading or trailing whitespace, so this cannot change a value that already
+    worked. It deliberately does not touch inner characters — a password with a
+    space in the middle is still that password.
+    """
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
 def normalise_app_env(value: object) -> str:
     """Canonicalise ``APP_ENV``: strip, lowercase, then expand known shorthands.
 

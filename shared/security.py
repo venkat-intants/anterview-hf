@@ -29,8 +29,20 @@ Four guards live here rather than in each service's ``config.py``:
     endpoint, so one env var disabled database TLS to a remote Neon instance in
     production.
 
-All four are deliberate NO-OPs (or permissive) in development/test so local
-runs and the suite are unaffected.
+``forbid_private_signing_key``
+    AR-2 (asymmetric JWT signing): ``data_gateway`` is the only issuer and the
+    only service whose ``Settings`` class even declares a ``jwt_private_key``
+    field. The other three services' configs have no such field, so
+    ``pydantic-settings``' ``extra="ignore"`` would otherwise make a
+    ``JWT_PRIVATE_KEY`` set on one of them by mistake (a copy-pasted .env is
+    exactly how this repo's own history says that happens) silently do
+    nothing — which is safe, but invisible. This makes the same mistake loud:
+    call it from every Settings class EXCEPT data_gateway's.
+
+All five are deliberate NO-OPs (or permissive) in development/test so local
+runs and the suite are unaffected — except ``forbid_private_signing_key``,
+which has no environment exemption: a non-issuer holding a private key is
+wrong in every environment, not just the hardened ones.
 
 Why shared and not copied into each config: they WERE copied, and they drifted.
 ``normalise_app_env`` existed only in ``interview_core`` and ``validate_cors_origins``
@@ -48,6 +60,8 @@ plaintext Postgres link and say nothing (XS-04, CWE-319).
 from __future__ import annotations
 
 import ipaddress
+import os
+from collections.abc import Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
 
 # Substrings that mark a value as an unrotated placeholder. Real secrets are
@@ -195,6 +209,59 @@ def assert_strong_secrets(app_env: str | None, secrets: dict[str, str | None]) -
             f"{', '.join(weak)}. Set strong random values — generate one with: "
             'python -c "import secrets; print(secrets.token_hex(32))"'
         )
+
+
+# The only env-var spelling this guard recognises. Pydantic-settings' own
+# ``case_sensitive=False`` matching is irrelevant here — this function reads
+# the process environment directly, on purpose, because the field it is
+# guarding against does not exist for the services that call it (see below),
+# so there is no Settings attribute to inspect.
+_PRIVATE_KEY_ENV_VAR = "JWT_PRIVATE_KEY"
+
+
+def forbid_private_signing_key(service_name: str, env: Mapping[str, str] | None = None) -> None:
+    """Refuse to boot if THIS process has been handed a JWT private key (AR-2).
+
+    Asymmetric signing draws a hard line: ``data_gateway`` is the only issuer
+    and the only service whose ``Settings`` class declares a ``jwt_private_key``
+    field at all. Every other service's ``Settings`` simply has no attribute to
+    populate, so ``pydantic-settings``' own ``extra="ignore"`` would otherwise
+    make a stray ``JWT_PRIVATE_KEY`` in this process's environment silently do
+    nothing — safe, but invisible, and the exact way a production .env gets
+    copy-pasted between services in this codebase's own incident history. This
+    is the loud version of that safety: if a private key reaches an
+    environment it was never meant to, refuse to start rather than quietly
+    ignoring it, so the mistake is caught at the next deploy instead of never.
+
+    Call from every Settings class EXCEPT data_gateway's, in a
+    ``@model_validator(mode="after")``, passing ``self.service_name``. No
+    environment exemption (unlike ``assert_strong_secrets``): a non-issuer
+    holding a private key is wrong in development too, and dev is exactly
+    where an operator wants to find out, not in production.
+
+    :param env: defaults to ``os.environ``; overridable so a test can assert
+        the guard fires without mutating real process environment.
+    """
+    source = env if env is not None else os.environ
+    # Matched case-insensitively and whitespace-tolerantly on the NAME, not by
+    # an exact `source.get(...)`. Security review, 2026-09-28: an exact match
+    # meant `jwt_private_key` or `"JWT_PRIVATE_KEY "` (trailing space in the
+    # name) sailed past the guard on Linux, where env names are case-sensitive
+    # — landing in precisely the silent-ignore failure mode this function
+    # exists to make loud. It was not exploitable, because a non-issuer's
+    # Settings has no `jwt_private_key` field to populate whatever the name's
+    # casing; but a boot alarm that only fires for one spelling is not one to
+    # rely on during the rollout it exists to protect.
+    for name, value in source.items():
+        if name.strip().upper() != _PRIVATE_KEY_ENV_VAR:
+            continue
+        if (value or "").strip():
+            raise ValueError(
+                f"{service_name!r} must never hold {_PRIVATE_KEY_ENV_VAR} "
+                f"(found as {name!r}) — only data_gateway signs tokens (see "
+                "docs/ACCEPTED-RISKS.md AR-2). Remove it from this service's "
+                "environment; verification only ever needs JWT_PUBLIC_KEYS."
+            )
 
 
 # Names for the local machine that ``ipaddress`` cannot classify because they

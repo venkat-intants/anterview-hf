@@ -2,8 +2,10 @@ import pathlib
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from shared.auth.jwt import parse_public_keys, parse_verify_algorithms
 from shared.security import (
     assert_strong_secrets,
+    forbid_private_signing_key,
     normalise_app_env,
 )
 from shared.security import validate_cors_origins as _validate_cors_origins
@@ -239,6 +241,22 @@ class Settings(BaseSettings):
     jwt_issuer: str = "intants-data-gateway"
     jwt_audience: str = "intants-services"
 
+    # --- AR-2: asymmetric JWT verification --------------------------------
+    # interview_core VERIFIES tokens issued by data_gateway; it never signs
+    # one for a user (see shared/auth/jwt.py module docstring for the one
+    # documented exception: this service's worker still self-signs a narrow
+    # internal service-to-service token — _mint_service_jwt in
+    # app/worker/interview_worker.py — which this change does not touch).
+    # There is deliberately no jwt_private_key field on this Settings class;
+    # forbid_private_signing_key below fails loudly if one is set anyway.
+    #
+    # Comma-separated accepted algorithm families. "HS256" alone reproduces
+    # today's behaviour; add "RS256" in rollout step 1, drop "HS256" in step 4.
+    jwt_verify_algorithms: str = "HS256"
+    # JSON object {kid: base64-pem} of RSA PUBLIC keys, used when "RS256" is in
+    # jwt_verify_algorithms.
+    jwt_public_keys: str = "{}"
+
     feature_avatar_enabled: bool = True
     feature_voice_interruption: bool = True
     feature_multilingual: bool = True
@@ -285,6 +303,21 @@ class Settings(BaseSettings):
         """Fail fast in production/staging if JWT_SECRET is a weak placeholder
         (must match data_gateway's). No-op in development/test."""
         assert_strong_secrets(self.app_env, {"JWT_SECRET": self.jwt_secret})
+        return self
+
+    @model_validator(mode="after")
+    def validate_jwt_verification_config(self) -> "Settings":
+        """AR-2: fail fast at boot, in every environment, not just hardened ones.
+
+        Two independent failures, both worth catching before the first request:
+        a JWT_VERIFY_ALGORITHMS/JWT_PUBLIC_KEYS typo (would 401 every caller),
+        and this service having been handed a private key it must never sign
+        with (forbid_private_signing_key — there is no environment exemption
+        for that one; see shared/security.py).
+        """
+        forbid_private_signing_key(self.service_name)
+        parse_verify_algorithms(self.jwt_verify_algorithms)
+        parse_public_keys(self.jwt_public_keys)
         return self
 
     @model_validator(mode="after")

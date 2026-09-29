@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import httpx
 import structlog
-from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token
+from shared.auth.jwt import SERVICE_TOKEN_TTL_SECONDS, issue_access_token, resolve_signing_key
 
 from app.config import settings
 from app.fake_ai import fake_embeddings, fake_why_match
@@ -46,11 +46,12 @@ def _internal_token(acting_user_id: str) -> str:
     decision — the caller controls it, and the caller is the one being
     authorised.
     """
+    algorithm, key, kid = resolve_signing_key(settings)
     return issue_access_token(
         user_id=_SERVICE_SUB,
         roles=["service"],
-        secret=settings.jwt_secret,
-        algorithm=settings.jwt_algorithm,
+        secret=key,
+        algorithm=algorithm,
         issuer=settings.jwt_issuer,
         audience=settings.jwt_audience,
         extra_claims={"act_sub": acting_user_id},
@@ -61,6 +62,7 @@ def _internal_token(acting_user_id: str) -> str:
         # silently used 900s because that was issue_access_token's default and
         # there was no parameter to say otherwise.
         ttl_seconds=SERVICE_TOKEN_TTL_SECONDS,
+        kid=kid,
     )
 
 

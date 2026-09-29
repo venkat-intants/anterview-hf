@@ -5,7 +5,12 @@ import structlog
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.auth.jwt import decode_private_key, parse_public_keys, parse_verify_algorithms
-from shared.security import ENFORCED_ENVS, assert_strong_secrets, normalise_app_env
+from shared.security import (
+    ENFORCED_ENVS,
+    assert_strong_secrets,
+    normalise_app_env,
+    strip_pasted_settings,
+)
 from shared.security import validate_cors_origins as _validate_cors_origins
 from shared.security import validate_database_ssl as _validate_database_ssl
 
@@ -62,6 +67,18 @@ class Settings(BaseSettings):
     database_ssl: str = ""
 
     redis_url: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_pasted_settings(cls, values: object) -> object:
+        """Repair whitespace a paste added — to EVERY setting, not a chosen few.
+
+        This started as a list of variable names and missed GROQ_MODEL, so the
+        same outage returned a third time. See shared/security.py for the rule
+        (ends stripped everywhere; all inner whitespace removed from *_api_key,
+        which go into an Authorization header) and for the incidents.
+        """
+        return strip_pasted_settings(values)
 
     auth_provider: str = "local"
 

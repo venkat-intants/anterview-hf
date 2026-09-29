@@ -810,6 +810,36 @@ async def _execute_one_erasure(
                 settings=settings,
             )
 
+    # 1c-quater — every CV object under this person's own prefix, named by a
+    # column or not.
+    #
+    # WHY A SWEEP AND NOT ANOTHER COLUMN. A reapplication uploads a fresh key
+    # (`applicants/{company}/{applicant}-{hex}.pdf`) and adopts it into
+    # `enrolments.applied_resume_s3_key`. On the SECOND reapplication that
+    # column is repointed again, and the previous attempt's object is left
+    # named by nothing: `applicants.resume_s3_key` still holds the first CV,
+    # and `scored_resume_s3_key` never moves because a reopened enrolment
+    # keeps its score and so is never picked up for rescoring. Collecting
+    # strictly by column therefore completed an erasure and left a CV in the
+    # bucket — a §12 failure, and one that returns with every new column that
+    # names a resume.
+    #
+    # The prefix is the applicant's own id, which is a fixed-length UUID, so
+    # it cannot match a different applicant whose id merely starts the same
+    # way. Same mechanism, and the same reason, as the two prefix sweeps above.
+    applicant_prefixes = await db.execute(
+        text("SELECT company_id, id FROM applicants WHERE user_id = :uid"),
+        {"uid": uid_str},
+    )
+    if settings is not None:
+        from app.s3_client import keys_under  # noqa: PLC0415 — see step 8's import note
+
+        for company_id, applicant_id in applicant_prefixes.fetchall():
+            applicant_resume_keys += await keys_under(
+                settings.s3_bucket_name, f"applicants/{company_id}/{applicant_id}",
+                settings=settings,
+            )
+
     # 1c-ter — PH4-D4 task-round artifacts (job simulation / portfolio
     # submissions), same uploads bucket. Reached through applicants.user_id,
     # exactly like the preboarding documents above.

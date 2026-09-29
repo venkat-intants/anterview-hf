@@ -264,6 +264,35 @@ export async function activateAccount(
 }
 
 
+export interface ReapplyConfirmResult {
+  /** How many staged reapplications the link applied. 0 when already done. */
+  applied: number;
+  message: string;
+}
+
+/**
+ * Confirm a second application after a rejection — PH3-B4b.
+ *
+ * The public apply form is anonymous and identifies a person by an address
+ * typed into it, so a reapplication is recorded and then waits: acting on it
+ * when it arrives would let anyone holding the link move a real candidate's
+ * status and replace their CV. Following this link, which was emailed to the
+ * address, is the proof. The token rides in the fragment and is sent in the
+ * body, never a query string.
+ */
+export async function confirmReapplication(
+  token: string,
+): Promise<ReapplyConfirmResult> {
+  const res = await fetch(`${API_BASE}/apply/reapply/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as ReapplyConfirmResult;
+}
+
+
 // ---------------------------------------------------------------------------
 // Save & resume, and the confirmation step — PH3-B4c / PH3-B5
 //

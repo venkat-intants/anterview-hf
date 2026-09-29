@@ -851,6 +851,19 @@ const en = {
     // ── Public application form (no login) ─────────────────────────────
     // The advert's own meta/experience/salary lines reuse careers.* — same
     // strings, and two copies would drift.
+    reapply: {
+      title: 'Confirm your application',
+      lead:
+        'You have applied for this role before, so we need you to confirm it is really you before we send this application to the hiring team.',
+      confirmCta: 'Confirm my application',
+      confirming: 'Confirming…',
+      whatNext: 'The hiring team can see it now. We will email you when there is news.',
+      viewApplications: 'View my applications',
+      ignore:
+        'If you did not apply, you do not need to do anything. Close this page and nothing will be sent on.',
+      noToken: 'This page needs the link from your email. Open it from there.',
+      errConfirm: 'We could not confirm that just now. Please try the link again.',
+    },
     apply: {
       unavailableTitle: 'This opening is not accepting applications',
       unavailableDesc:
@@ -2016,6 +2029,19 @@ const hi = {
         temporary: 'अस्थायी',
       },
     },
+    reapply: {
+      title: 'अपने आवेदन की पुष्टि करें',
+      lead:
+        'आपने इस भूमिका के लिए पहले भी आवेदन किया है, इसलिए यह आवेदन भर्ती टीम को भेजने से पहले हमें पुष्टि चाहिए कि यह वाकई आप हैं।',
+      confirmCta: 'मेरे आवेदन की पुष्टि करें',
+      confirming: 'पुष्टि हो रही है…',
+      whatNext: 'भर्ती टीम अब इसे देख सकती है। कोई अपडेट होने पर हम आपको ईमेल करेंगे।',
+      viewApplications: 'मेरे आवेदन देखें',
+      ignore:
+        'अगर आपने आवेदन नहीं किया है तो आपको कुछ नहीं करना है। यह पृष्ठ बंद कर दें, कुछ भी आगे नहीं भेजा जाएगा।',
+      noToken: 'इस पृष्ठ के लिए आपके ईमेल वाला लिंक चाहिए। उसे वहीं से खोलें।',
+      errConfirm: 'हम अभी पुष्टि नहीं कर सके। कृपया लिंक दोबारा आज़माएँ।',
+    },
     apply: {
       unavailableTitle: 'यह भर्ती अभी आवेदन स्वीकार नहीं कर रही',
       unavailableDesc:
@@ -3136,6 +3162,19 @@ const te = {
         internship: 'ఇంటర్న్‌షిప్',
         temporary: 'తాత్కాలిక',
       },
+    },
+    reapply: {
+      title: 'మీ దరఖాస్తును నిర్ధారించండి',
+      lead:
+        'మీరు ఈ ఉద్యోగానికి గతంలో దరఖాస్తు చేశారు, కాబట్టి ఈ దరఖాస్తును నియామక బృందానికి పంపే ముందు ఇది నిజంగా మీరేనని నిర్ధారించాలి.',
+      confirmCta: 'నా దరఖాస్తును నిర్ధారించండి',
+      confirming: 'నిర్ధారిస్తున్నాం…',
+      whatNext: 'నియామక బృందం ఇప్పుడు దీన్ని చూడగలదు. ఏదైనా సమాచారం ఉంటే ఈమెయిల్ చేస్తాం.',
+      viewApplications: 'నా దరఖాస్తులు చూడండి',
+      ignore:
+        'మీరు దరఖాస్తు చేయకపోతే ఏమీ చేయనవసరం లేదు. ఈ పేజీని మూసివేయండి, ఏదీ ముందుకు పంపబడదు.',
+      noToken: 'ఈ పేజీకి మీ ఈమెయిల్‌లోని లింక్ అవసరం. దాన్ని అక్కడి నుండే తెరవండి.',
+      errConfirm: 'ఇప్పుడే నిర్ధారించలేకపోయాం. దయచేసి లింక్‌ను మళ్లీ ప్రయత్నించండి.',
     },
     apply: {
       unavailableTitle: 'ఈ ఉద్యోగానికి ప్రస్తుతం దరఖాస్తులు స్వీకరించడం లేదు',

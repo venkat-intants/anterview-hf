@@ -54,6 +54,7 @@ def _make_key_collecting_db(
     applicant_resume_keys: list[str] | None = None,
     turn_audio_keys: list[str] | None = None,
     offer_prefixes: list[tuple[str, str]] | None = None,
+    applicant_prefixes: list[tuple[str, str]] | None = None,
 ) -> tuple[AsyncMock, list[str]]:
     """A DB mock that answers each key-collection SELECT by matching its SQL.
 
@@ -80,6 +81,8 @@ def _make_key_collecting_db(
 
         if "SELECT o.company_id, o.id FROM offers o" in sql:
             result.fetchall.return_value = offer_prefixes or []
+        elif "SELECT company_id, id FROM applicants WHERE user_id" in sql:
+            result.fetchall.return_value = applicant_prefixes or []
         elif "FROM scorecards" in sql and "SELECT" in sql:
             result.fetchall.return_value = scorecard_keys or []
         elif "FROM resumes" in sql and sql.strip().startswith("SELECT"):
@@ -1668,3 +1671,49 @@ async def test_step_5h_redacts_a_finding_on_the_surviving_side_of_a_pair() -> No
     redact_idx = executed.index(cross_redact[0])
     null_idx = executed.index(signal_null[0])
     assert redact_idx < null_idx
+
+
+@pytest.mark.asyncio
+async def test_a_reapplications_superseded_cv_is_erased_even_when_no_row_names_it() -> None:
+    """The orphan a security audit found returning on the SECOND reapplication.
+
+    Each reapplication uploads a fresh key and adopts it into
+    `enrolments.applied_resume_s3_key`. The third application repoints that
+    column again, and the second's object is then named by nothing:
+    `applicants.resume_s3_key` still holds the FIRST CV, and
+    `scored_resume_s3_key` never moves because a reopened enrolment keeps its
+    score and so is never picked up for rescoring. Collecting strictly by
+    column therefore completed an erasure and left a CV in the bucket.
+    """
+    company = "c0ffee00-0000-4000-8000-000000000001"
+    applicant = "a9911100-0000-4000-8000-000000000003"
+    prefix = f"applicants/{company}/{applicant}"
+    first = f"{prefix}.pdf"                 # named by applicants.resume_s3_key
+    superseded = f"{prefix}-1a2b3c4d5e6f.pdf"   # named by nothing any more
+    current = f"{prefix}-99887766aabb.pdf"      # named by applied_resume_s3_key
+
+    db, _ = _make_key_collecting_db(
+        applicant_resume_keys=[first, current],
+        applicant_prefixes=[(company, applicant)],
+    )
+    listed: list[str] = []
+
+    async def _keys_under(bucket: str, pfx: str, *, settings: Any) -> list[str]:
+        listed.append(pfx)
+        return [first, superseded, current]
+
+    delete_calls: list[dict[str, list[str]]] = []
+    settings = _mock_s3_settings()
+    with (
+        patch("app.s3_client.delete_objects", new=_fake_delete_objects(delete_calls)),
+        patch("app.s3_client.keys_under", new=AsyncMock(side_effect=_keys_under)),
+    ):
+        await _execute_one_erasure(db=db, request=_make_erasure_request(),
+                                   system_actor_id=_SYSTEM_ACTOR, settings=settings)
+
+    # Swept by the applicant's own id, which is a fixed-length UUID and so
+    # cannot match a different applicant whose id merely starts the same way.
+    assert listed == [prefix]
+    deleted = delete_calls[0][settings.s3_bucket_name]
+    assert superseded in deleted, "the CV no column names is the whole point"
+    assert sorted(deleted) == sorted({first, superseded, current}), "and deduplicated"

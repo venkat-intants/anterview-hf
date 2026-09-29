@@ -99,6 +99,20 @@ class _FakeS3Settings:
     s3_scorecard_bucket = "test-scorecards"
 
 
+async def _fake_keys_under(bucket: str, prefix: str, *, settings: Any) -> list[str]:
+    """No unnamed objects in this fixture's bucket.
+
+    The applicant-prefix sweep (step 1c-quater) runs on every erasure rather
+    than only on one with offers or task submissions, so this suite reaches
+    ``keys_under`` where it previously did not. It is stubbed for the same
+    reason ``delete_objects`` is: there is no S3 here, and the real one
+    REFUSES when storage is unconfigured rather than returning nothing —
+    deliberately, because an empty answer would let an erasure report success
+    without ever having looked.
+    """
+    return []
+
+
 async def _fake_delete_objects(keys_by_bucket: dict[str, list[str]], *, settings: Any) -> int:
     """Reports every key handed to it as deleted — the mock suite's
     ``_fake_delete_objects`` contract (``test_erasure_executor.py``): the
@@ -325,7 +339,10 @@ async def test_execute_one_erasure_against_real_postgres_erases_and_excludes_cor
             created_at=datetime.now(tz=UTC) - timedelta(days=31),
         )
 
-        with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_fake_delete_objects)):
+        with (
+            patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_fake_delete_objects)),
+            patch("app.s3_client.keys_under", new=AsyncMock(side_effect=_fake_keys_under)),
+        ):
             artifacts = await _execute_one_erasure(
                 db=committed_db, request=request, system_actor_id=_SYSTEM_ACTOR,
                 settings=_FakeS3Settings(),  # type: ignore[arg-type]
@@ -478,7 +495,10 @@ async def test_step_5k_does_not_touch_another_applicants_membership_in_the_same_
             completed_at=None, artifacts=None,
             created_at=datetime.now(tz=UTC) - timedelta(days=31),
         )
-        with patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_fake_delete_objects)):
+        with (
+            patch("app.s3_client.delete_objects", new=AsyncMock(side_effect=_fake_delete_objects)),
+            patch("app.s3_client.keys_under", new=AsyncMock(side_effect=_fake_keys_under)),
+        ):
             await _execute_one_erasure(
                 db=committed_db, request=request, system_actor_id=_SYSTEM_ACTOR,
                 settings=_FakeS3Settings(),  # type: ignore[arg-type]

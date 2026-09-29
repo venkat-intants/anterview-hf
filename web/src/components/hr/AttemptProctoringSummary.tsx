@@ -141,6 +141,24 @@ export default function AttemptProctoringSummary({
         <h3 className="text-[13px] font-medium text-foreground">Proctoring timeline</h3>
       </div>
 
+      {/* ── The timeline is incomplete and must say so. The client swallows a
+          429 exactly like a lost packet, so without this a reviewer cannot
+          tell a quiet exam from one we stopped recording, and a short record
+          reads as a clean one. Worded as a fact about OUR collection, not
+          about the candidate — being throttled is not something they did. ── */}
+      {data.events_dropped && (
+        <p
+          className="mt-2.5 flex items-start gap-1.5 text-[12.5px] leading-relaxed text-muted-foreground"
+          data-testid="proctoring-incomplete-notice"
+        >
+          <Info size={13} className="mt-0.5 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+          <span>
+            This timeline is incomplete — some events could not be recorded during the attempt.
+            Read what follows as a partial record, and not as evidence about the candidate.
+          </span>
+        </p>
+      )}
+
       {/* ── Camera not in use — say so, rather than rendering the camera
           signals as zero (contract §7 item 4). ── */}
       {!data.camera_in_use && (

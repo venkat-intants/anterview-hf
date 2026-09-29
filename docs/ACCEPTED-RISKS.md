@@ -631,9 +631,18 @@ assumes it will sometimes be wrong about an innocent person:
 - **Never a violation.** It is absent from `VIOLATION_EVENT_TYPES`, so it can
   never contribute to the auto-submit threshold — a candidate cannot have an
   exam ended by looking away, at any frequency.
-- **Never decisive.** `PanelVerdict` has no field that can express an outcome
-  (CLAUDE.md hard constraint 9), and nothing in the proctoring path writes a
-  stage, a status or a decision.
+- **Never decisive — and this claim is about `gaze_away` specifically, not
+  about proctoring as a whole.** Because gaze is absent from
+  `VIOLATION_EVENT_TYPES` it cannot reach the auto-submit threshold, and that
+  mechanism is the reason it cannot reach any outcome. Be precise about the
+  rest: the four signals that ARE violations can end an exam early, and
+  `_grade_and_finalize` then writes `exam_attempts.passed` and `.status` and
+  may advance the applicant's stage. Proctoring as a whole is therefore not
+  consequence-free; gaze is. An earlier version of this entry claimed
+  "nothing in the proctoring path writes a stage, a status or a decision",
+  which was false and was corrected by the security review. `PanelVerdict`
+  still has no field that can express a hiring outcome (CLAUDE.md hard
+  constraint 9) — a separate control, unaffected by any of this.
 - **Separated in the HR UI, structurally.** `AttemptProctoringSummary.tsx`
   filters `gaze_away` out of the counted-signals list by an explicit predicate,
   not by styling, and renders it in its own block headed "informational only",

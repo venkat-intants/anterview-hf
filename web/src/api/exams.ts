@@ -615,6 +615,11 @@ export interface AttemptProctoring {
   integrity_score: number | null;
   counts: Record<string, number>;
   events: ProctoringEvent[];
+  /** True when the rate limiter refused at least one event for this attempt.
+   *  The timeline is then incomplete and has to say so — a reviewer cannot
+   *  otherwise tell a quiet exam from one we stopped recording. Never a mark
+   *  against the candidate: being throttled is not something they did. */
+  events_dropped?: boolean;
 }
 
 export function getAttemptProctoring(

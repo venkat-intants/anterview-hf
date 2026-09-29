@@ -2,9 +2,14 @@
 
 The finding: the ingest endpoint carried no rate limit at all — 150
 consecutive posts from one token all returned 200 against a live instance,
-while every OTHER write endpoint on ``routers/exam_take.py`` already carries
-``dependencies=[rate_limit(...)]`` (``exam_submit``, ``exam_run_code``,
-``exam_run_code_custom``).
+while the submit and run-code endpoints on ``routers/exam_take.py`` already
+carried ``dependencies=[rate_limit(...)]``.
+
+(An earlier version of this docstring said "every OTHER write endpoint"
+already carried one. That was false when written — ``/exam/camera-consent``
+and ``/exam/start`` did not — and security review MEDIUM-2 caught it. Both
+now do, and the claim is corrected here rather than left to mislead the next
+reader, per CLAUDE.md's documentation rule.)
 
 The follow-up review the same day found that the FIRST version of that limit
 was keyed on client IP alone, which is the wrong boundary for this endpoint:
@@ -38,7 +43,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.config import settings
-from app.rate_limit import rate_limit, rate_limit_link
+from app.rate_limit import _token_fingerprint, rate_limit, rate_limit_link
 from app.routers import exam_take
 
 
@@ -228,6 +233,20 @@ async def test_the_ip_backstop_still_bounds_a_flood_spread_across_many_links(
     assert exc.value.status_code == 429
     assert "network" in str(exc.value.detail).lower()
 
+    # Security review MEDIUM-1: the per-IP ceiling must bound the number of
+    # Redis KEYS CREATED, not merely the number of requests served. With the
+    # token charged first, every rejected request still minted a fresh
+    # `rl:...:tok:<sha256>` key, so key growth was bounded only by network
+    # throughput — and this Redis also carries the JWT revocation epoch, with
+    # which rate limiting fails open. The rejected token above must therefore
+    # have no key at all.
+    # (The raw token never appears in a key — it is hashed — so this checks
+    # the actual fingerprint, not a substring that could never match.)
+    rejected_key = f"rl:exam_integrity_event_test:tok:{_token_fingerprint('link-fresh')}"
+    assert rejected_key not in fake.counts
+    token_keys = [k for k in fake.counts if ":tok:" in k]
+    assert len(token_keys) == 3, f"one key per SERVED request, got {token_keys}"
+
 
 @pytest.mark.asyncio
 async def test_a_request_with_no_exam_token_falls_back_to_the_ip_ceiling(
@@ -249,12 +268,48 @@ async def test_a_request_with_no_exam_token_falls_back_to_the_ip_ceiling(
     assert exc.value.status_code == 429
 
 
-def test_exam_integrity_event_per_minute_has_headroom_above_ordinary_use() -> None:
-    """Pins the chosen per-token ceiling's shape, not just its presence: high
-    enough that a real proctored exam (debounced camera events plus occasional
-    browser bursts) cannot hit it, low enough that the auditor's 150-in-a-row
-    flood is cut off well before it completes."""
-    assert 60 <= settings.exam_integrity_event_per_minute < 150
+def test_the_outer_cap_sits_above_the_worst_case_a_real_client_can_produce() -> None:
+    """Security review HIGH-2: the outer per-token cap must exceed the
+    PATHOLOGICAL client rate, not sit under it.
+
+    The previous value (120) was below the 150/min a flapping camera can
+    produce — ranged events debounced at 1.2s across 3 conditions — so the
+    candidates most likely to be throttled were those with a cheap camera or
+    poor lighting, and the HR panel would have shown them a short, clean
+    timeline with their real evidence missing. The outer cap is a volumetric
+    guard; per-type fairness is the inner budget's job.
+    """
+    flapping_camera_worst_case = 150
+    assert settings.exam_integrity_event_per_minute > flapping_camera_worst_case
+
+
+def test_violations_and_chatter_do_not_share_a_budget() -> None:
+    """The anti-suppression property, pinned as an invariant.
+
+    A 429 on a camera event loses the row, the server's violation count and
+    the auto-submit trigger together, and the client swallows it. So if
+    clipboard events and violations shared one counter, a candidate could
+    spend the budget on `copy` in the first seconds of a minute and have their
+    own `multiple_faces` refused for the rest of it. The inner budget must
+    therefore stay strictly below the outer one (or it could never bind) AND
+    must never be charged to a violation type — the latter is asserted
+    directly against the route's source below.
+    """
+    assert (
+        settings.exam_integrity_nonviolation_per_minute
+        < settings.exam_integrity_event_per_minute
+    )
+
+
+def test_the_inner_budget_is_never_charged_to_a_violation_event() -> None:
+    import inspect
+
+    source = inspect.getsource(exam_take.ingest_integrity_event)
+    assert "not in exam_camera.VIOLATION_EVENT_TYPES" in source
+    assert "exam_integrity_nonviolation" in source
+    # And a refusal must be recorded on the attempt, not swallowed — an
+    # incomplete timeline has to say so.
+    assert "_note_events_dropped" in source
 
 
 def test_the_ip_backstop_clears_a_full_computer_lab() -> None:

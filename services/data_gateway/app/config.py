@@ -523,17 +523,36 @@ class Settings(BaseSettings):
     # 429 and returns null, exactly like a lost packet) for doing nothing
     # wrong. Keyed on the candidate's own link, each seat gets its own budget.
     #
-    # 120/minute has headroom above the busiest REALISTIC single candidate:
-    # ranged camera events are debounced at 1.2s per condition (proctorLogic's
-    # MIN_RANGED_MS) across at most 3 conditions, so even a flapping camera
-    # tops out near 150/min in a pathological worst case, while a genuinely
-    # working session sits far lower (well under 40/min) because a condition
-    # has to persist before it is emitted at all; fullscreen/tab/copy/paste are
-    # rarer still — a human cannot legitimately tab-switch or paste more than a
-    # few times a minute. 120 comfortably covers ordinary bursts (a shaky
-    # camera plus a candidate pasting code a few times) while still cutting off
-    # a 150-request flood within the same 60-second window.
-    exam_integrity_event_per_minute: int = 120
+    # This is the OUTER, volumetric guard, and it sits ABOVE any rate a real
+    # client can produce. Security review HIGH-2 caught the previous value
+    # (120) contradicting its own justification: ranged camera events are
+    # debounced at 1.2s per condition (proctorLogic's MIN_RANGED_MS) across 3
+    # conditions, so a flapping camera tops out near 150/min — i.e. the cap sat
+    # BELOW the pathological case the comment itself computed. A candidate with
+    # a cheap camera or bad lighting would have had real evidence dropped, and
+    # the HR panel would have shown them a short, clean-looking timeline. A
+    # genuinely working session sits far lower (well under 40/min).
+    #
+    # 300 clears that worst case with room to spare. The per-type fairness work
+    # is done by exam_integrity_nonviolation_per_minute below, not here.
+    exam_integrity_event_per_minute: int = 300
+    # The INNER budget, charged only to event types that are NOT violations
+    # (copy / paste / gaze_away), on their own Redis key.
+    #
+    # This exists because of the attack the outer cap alone cannot stop
+    # (security review HIGH-2). The client swallows a 429 and returns null, and
+    # for camera events that means the event row, the server's violation count
+    # and the auto-submit trigger are ALL lost with no trace. So with a single
+    # shared budget, a candidate could spend it on cheap `copy` events in the
+    # first seconds of each minute and have their own `multiple_faces` posts
+    # rejected for the rest of it — suppressing exactly the evidence this
+    # feature exists to collect, using the rate limit as the off switch.
+    #
+    # Keying the chatty types separately means a violation can never be
+    # starved by non-violations: they no longer share a counter. And a
+    # candidate cannot flood with violations instead, because the third one
+    # auto-submits their exam.
+    exam_integrity_nonviolation_per_minute: int = 120
     # The LOOSER per-IP backstop on the same route: volumetric-abuse protection
     # only, never the normal-use limit. Sized from the busiest real room rather
     # than as a neat multiple of the per-token cap — a 60-seat lab where every
@@ -541,6 +560,14 @@ class Settings(BaseSettings):
     # 3000 clears a full hall while still bounding a single-source flood. The
     # per-token cap above is what actually protects the endpoint: passing it
     # requires as many valid, unexpired exam links as the flood has requests.
+    #
+    # Read this as a LAB ALLOWANCE, not as an abuse control (security review
+    # LOW-2). At 3000/min it is the loosest unauthenticated per-IP ceiling in
+    # the service, and each served request still costs at least one indexed
+    # SELECT on a database billed by wake-ups. The two goals genuinely
+    # conflict and this number resolves them in favour of not throttling a
+    # real exam hall; a true volumetric bound belongs at the edge proxy,
+    # where it can be enforced without touching the database at all.
     exam_integrity_event_per_ip_per_minute: int = 3000
 
     # --- Coding round — code execution (HR workflow Phase 2) ---

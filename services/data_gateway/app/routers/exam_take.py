@@ -55,7 +55,7 @@ from app.models import (
     ExamSection,
 )
 from app.notifications_util import create_notification
-from app.rate_limit import rate_limit, rate_limit_link
+from app.rate_limit import enforce_link_limit, rate_limit, rate_limit_link
 from app.redis_client import get_redis
 from app.routers.hr_interviews import advance_applicant_to_interview
 from app.utils.request_ip import extract_client_ip, extract_user_agent
@@ -669,7 +669,22 @@ class CameraConsentOut(BaseModel):
     granted_at: str
 
 
-@router.post("/camera-consent", response_model=CameraConsentOut)
+@router.post(
+    "/camera-consent",
+    response_model=CameraConsentOut,
+    # Security review MEDIUM-2. Unauthenticated (magic-link), writes to
+    # dpdp_consent_ledger and can provision a guest users row — 5 DB queries
+    # per call, previously unbounded, against a serverless database this
+    # project has already had exhausted once by its own pollers. Row growth is
+    # bounded by the partial unique index and link_or_reuse_guest, so this is
+    # a cost/availability control, not an integrity one. Modest cap: a
+    # candidate grants consent once or twice per round.
+    dependencies=[
+        rate_limit_link(
+            "exam_camera_consent", "X-Exam-Token", per_token=10, per_ip=300
+        )
+    ],
+)
 async def record_camera_consent(
     ctx: ExamTakeCtxDep, db: DbSessionDep, request: Request,
 ) -> CameraConsentOut:
@@ -699,7 +714,17 @@ def _max_violations_for(attempt: ExamAttempt) -> int | None:
     return None if attempt.auto_submit_relaxed else settings.exam_integrity_max_violations
 
 
-@router.post("/start", response_model=AttemptStartOut)
+@router.post(
+    "/start",
+    response_model=AttemptStartOut,
+    # Security review MEDIUM-2: also an unauthenticated write with no cap.
+    # Idempotent (it returns the open attempt), so the risk is cost rather
+    # than duplicate attempts — but a retry loop on a flaky connection should
+    # not be able to hammer a serverless database unbounded.
+    dependencies=[
+        rate_limit_link("exam_start", "X-Exam-Token", per_token=20, per_ip=600)
+    ],
+)
 async def start_attempt(ctx: ExamTakeCtxDep, db: DbSessionDep) -> AttemptStartOut:
     # Idempotent: return the existing in-progress attempt if one is open.
     existing = await _in_progress_attempt(db, ctx)
@@ -1316,6 +1341,29 @@ async def run_code_custom(
 # ---------------------------------------------------------------------------
 # Proctoring — integrity event ingest (exam analogue of interview integrity)
 # ---------------------------------------------------------------------------
+async def _note_events_dropped(db: AsyncSession, attempt: ExamAttempt) -> None:
+    """Flag on the attempt that at least one proctoring event was refused by
+    the rate limiter, so the HR timeline can say it is incomplete.
+
+    Security review HIGH-2: the client swallows a 429 exactly like a lost
+    packet, so without this the ONLY trace of a drop is a Prometheus counter
+    nobody joins to an attempt. A reviewer would see a short timeline and have
+    no way to tell "nothing happened" from "we stopped recording".
+
+    Deliberately a flag and not a count: the number of refusals is not
+    evidence about the candidate, and storing it would invite exactly the
+    quantitative reading this feature is careful to avoid everywhere else.
+    """
+    summary = dict(attempt.proctoring_summary or {})
+    if summary.get("events_dropped") is True:
+        return  # already flagged; nothing to write
+    summary["events_dropped"] = True
+    attempt.proctoring_summary = summary
+    attempt.updated_at = datetime.now(tz=UTC)
+    await db.commit()
+
+
+
 @router.post(
     "/integrity-event",
     response_model=IntegrityIngestOut,
@@ -1329,7 +1377,7 @@ async def run_code_custom(
     ],
 )
 async def ingest_integrity_event(
-    body: IntegrityEventIn, ctx: ExamTakeCtxDep, db: DbSessionDep
+    request: Request, body: IntegrityEventIn, ctx: ExamTakeCtxDep, db: DbSessionDep
 ) -> IntegrityIngestOut:
     """Record one proctoring event (fullscreen-exit / tab-switch / copy / paste
     / a camera signal) against the open attempt and update its rolling
@@ -1338,14 +1386,27 @@ async def ingest_integrity_event(
     app/exam_camera.py for the structural guarantee). The client decides
     auto-submit; this is the server-side audit trail.
 
-    Rate-limited (code review FIX 2, 2026-09-29): an unauthenticated exam
-    magic-link candidate could otherwise post an unbounded number of events —
-    verified live, 150 consecutive posts from one token all returned 200. The
-    cap is keyed on the candidate's OWN link (``X-Exam-Token``) with a far
-    looser per-IP backstop, NOT the other way round: a lab NATs every seat
-    behind one address, so an IP-keyed cap would let three ordinary candidates
-    exhaust the budget and silently drop the 4th's real camera events. See
-    ``settings.exam_integrity_event_per_minute`` for the numbers.
+    Rate-limited in TWO tiers, for two different reasons (code review FIX 2 +
+    security review HIGH-2, 2026-09-29). An unauthenticated magic-link
+    candidate could originally post unboundedly — verified live, 150
+    consecutive posts from one token all returned 200 — so:
+
+    * The route-level cap is keyed on the candidate's OWN link
+      (``X-Exam-Token``) with a much looser per-IP backstop, NOT the other way
+      round: a lab NATs every seat behind one address, so an IP-keyed cap
+      would let three ordinary candidates exhaust the budget and silently drop
+      the 4th's real camera events. It is set above any rate a real client can
+      reach, so it is a volumetric guard only.
+    * The per-type cap below charges NON-VIOLATION events (copy / paste /
+      gaze_away) to their own budget. Because the client swallows a 429 and a
+      dropped camera event loses the row, the violation count AND the
+      auto-submit trigger at once, a single shared budget would let a
+      candidate spend it on cheap clipboard events and suppress their own
+      ``multiple_faces`` for the rest of the minute — turning the rate limit
+      into an off switch for the evidence this endpoint exists to collect.
+
+    When anything IS dropped, the attempt records it, so HR is told the
+    timeline is incomplete rather than shown a short one that looks clean.
 
     A camera-only event type (face_absent / multiple_faces / gaze_away) is
     refused for an attempt that never had the camera on
@@ -1361,6 +1422,24 @@ async def ingest_integrity_event(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Camera proctoring is not enabled for this attempt.",
         )
+    # The inner, per-type budget. Violations are deliberately NOT charged to
+    # it — see this function's docstring for why sharing one budget lets a
+    # candidate suppress their own camera evidence with clipboard noise.
+    if body.event_type not in exam_camera.VIOLATION_EVENT_TYPES:
+        try:
+            await enforce_link_limit(
+                request,
+                bucket="exam_integrity_nonviolation",
+                header="X-Exam-Token",
+                per_token=settings.exam_integrity_nonviolation_per_minute,
+                per_ip=settings.exam_integrity_event_per_ip_per_minute,
+            )
+        except HTTPException:
+            # Record the drop before refusing it. An incomplete timeline that
+            # SAYS it is incomplete is honest; one that silently omits events
+            # invites HR to read a short record as a clean one.
+            await _note_events_dropped(db, attempt)
+            raise
     now = datetime.now(tz=UTC)
     db.add(
         ExamIntegrityEvent(

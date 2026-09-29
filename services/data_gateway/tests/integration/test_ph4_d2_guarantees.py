@@ -661,16 +661,27 @@ async def test_event_type_check_constraint_is_the_backstop_for_the_vocabulary(
 
 
 @pytest.mark.asyncio
-async def test_event_type_check_constraint_allows_the_restored_copy_and_paste(
+async def test_the_db_check_accepts_every_event_type_the_app_will_emit(
     db: AsyncSession,
 ) -> None:
-    """The other direction of the fix (code review FIX 1, migration
-    f6b8d0a2c4e6): a raw INSERT of 'copy' or 'paste' must SUCCEED against the
-    DB CHECK, not merely against the Pydantic layer above it — a regression
-    here would silently re-introduce the exact bug this migration fixes."""
+    """Parametrised over the WHOLE vocabulary, not just copy/paste (security
+    review LOW-4).
+
+    The old version of this test pinned only the two names the copy/paste fix
+    restored, which left the real hazard open: adding an eighth event type to
+    ``exam_camera.KNOWN_EVENT_TYPES`` and ``models.py`` without a migration
+    would pass every unit test — including the model/app alignment test — and
+    then fail at ``db.flush()`` with an IntegrityError the first time a
+    candidate triggered it in production. Driving the loop from
+    KNOWN_EVENT_TYPES means the app's own vocabulary is what gets verified
+    against the live constraint, so a missing migration is caught here.
+    """
+    from app import exam_camera
+
     f = await _build(db)
     attempt_id = await _new_attempt(db, f)
-    for event_type in ("copy", "paste"):
+    assert exam_camera.KNOWN_EVENT_TYPES, "vocabulary must not be empty"
+    for event_type in sorted(exam_camera.KNOWN_EVENT_TYPES):
         await _allowed(
             db,
             "INSERT INTO exam_integrity_events (id, attempt_id, company_id,"
@@ -678,6 +689,44 @@ async def test_event_type_check_constraint_allows_the_restored_copy_and_paste(
             " VALUES (:i, :a, :c, :et, now(), now())",
             {"i": uuid.uuid4(), "a": attempt_id, "c": f.company, "et": event_type},
         )
+
+
+@pytest.mark.asyncio
+async def test_the_event_type_check_is_not_valid_so_migrating_cannot_abort_at_boot(
+    db: AsyncSession,
+) -> None:
+    """Security review HIGH-1 — the guard for a Space-down failure CI cannot see.
+
+    Before this branch, ``exam_integrity_events.event_type`` had no constraint
+    and the ingest endpoint stored ``body.event_type[:40]`` with no vocabulary
+    check, while the deployed client fired ``copy``/``paste`` on every clipboard
+    action. So a real database holds rows the five-name CHECK in a3c5e7f9b1d4
+    rejects. A validating ADD CONSTRAINT would therefore raise CheckViolation
+    during ``alembic upgrade head``, and ``space/entrypoint.sh`` treats a
+    migration failure on a reachable database as fatal: no boot, every route
+    503. CI stays green because CI migrates an EMPTY database.
+
+    ``convalidated = false`` is the whole fix, so it is what this asserts.
+    Postgres still enforces a NOT VALID CHECK on every INSERT/UPDATE — proven
+    by the two tests above and below this one — it simply never re-checks
+    history. If someone "tidies up" by dropping NOT VALID, or adds a
+    VALIDATE CONSTRAINT, this goes red here instead of at a customer's boot.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT convalidated FROM pg_constraint"
+                " WHERE conname = 'ck_exam_integrity_events_event_type'"
+            )
+        )
+    ).first()
+    assert row is not None, "the event_type CHECK constraint is missing entirely"
+    assert row[0] is False, (
+        "ck_exam_integrity_events_event_type is VALIDATED. A validating CHECK on "
+        "this column aborts `alembic upgrade head` on any database holding a "
+        "pre-branch copy/paste row, which takes the whole service down at boot. "
+        "See migration a3c5e7f9b1d4's comment."
+    )
 
 
 @pytest.mark.asyncio

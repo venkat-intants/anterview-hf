@@ -338,6 +338,12 @@ class AttemptProctoringOut(BaseModel):
     integrity_score: int | None
     counts: dict[str, int]
     events: list[ProctoringEventOut]
+    #: True when the rate limiter refused at least one event for this attempt
+    #: (security review HIGH-2). The client swallows a 429 like a lost packet,
+    #: so without this a reviewer cannot tell a quiet exam from one we stopped
+    #: recording. Shown as a caveat on the timeline, never as a mark against
+    #: the candidate — being throttled is not something they did.
+    events_dropped: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1367,11 +1373,13 @@ async def attempt_proctoring(
         )
         for etype, started, ended in rows
     ]
+    summary = at.proctoring_summary if isinstance(at.proctoring_summary, dict) else {}
     return AttemptProctoringOut(
         camera_in_use=at.camera_in_use,
         integrity_score=at.integrity_score,
         counts=counts,
         events=events,
+        events_dropped=summary.get("events_dropped") is True,
     )
 
 

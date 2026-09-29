@@ -31,13 +31,21 @@ instantaneous shape (no ``ended_at``). The Pydantic-level vocabulary
 before; this is the DB-level backstop, unchanged in kind from what
 ``a3c5e7f9b1d4`` already established for the other five types.
 
-No data migration is needed: no row in this table can have
-``event_type IN ('copy', 'paste')`` today, because the constraint being
-replaced has never allowed it (either the pre-a3c5e7f9b1d4 code path, which
-had no CHECK at all, or the current one, which forbids it) — the whole reason
-this migration exists is that those two names went from "briefly reachable,
-pre-camera-branch" to "unreachable" without a gap in which they could have
-been written under the current constraint.
+No data migration is needed — but NOT for the reason an earlier version of this
+docstring gave. It claimed no row can hold ``copy``/``paste`` "because the
+constraint being replaced has never allowed it". That reasoning was about the
+wrong predecessor state and security review HIGH-1 corrected it: before
+``a3c5e7f9b1d4`` there was no CHECK at all AND no vocabulary validation in the
+ingest endpoint, while the deployed client has been firing ``copy``/``paste`` on
+every clipboard action all along. So rows with those names — and in principle
+any <=40-char string a magic-link holder posted — very likely DO exist.
+
+The two revisions do not commute, and ``a3c5e7f9b1d4`` runs FIRST in the same
+``upgrade head``. That is why both revisions add the constraint ``NOT VALID``:
+Postgres keeps enforcing it on every INSERT and UPDATE (the only thing this
+backstop is for) without validating history that cannot be made to conform.
+Nothing here or later runs ``VALIDATE CONSTRAINT``. See ``a3c5e7f9b1d4``'s own
+comment for what a validating ADD CONSTRAINT would have done at boot.
 """
 
 from __future__ import annotations
@@ -66,16 +74,22 @@ def upgrade() -> None:
     op.execute(
         "ALTER TABLE exam_integrity_events ADD CONSTRAINT"
         f" ck_exam_integrity_events_event_type CHECK (event_type IN ({_NEW_EVENT_TYPES}))"
+        " NOT VALID"
     )
 
 
 def downgrade() -> None:
-    # A row written as 'copy'/'paste' while this migration was applied would
-    # violate the narrower constraint being restored below, so the ADD
-    # CONSTRAINT statement fails loudly on such a row rather than silently
-    # leaving the table in a state the constraint no longer describes — the
-    # correct outcome: a downgrade that removes support for two event types
-    # while data using them still exists should stop, not quietly succeed.
+    # Also NOT VALID, reversing an earlier decision here. This previously added
+    # a validating constraint so that a downgrade would "fail loudly" if a
+    # copy/paste row existed, on the argument that removing support for two
+    # event types while data uses them should stop rather than quietly succeed.
+    # The argument is wrong in one important way: after this migration has been
+    # live for any length of time such rows ALWAYS exist, so that downgrade
+    # could never run — an escape hatch that cannot be opened is not a safety
+    # feature, it is a trap, and the moment you want a downgrade is the moment
+    # you least want to be fighting a CheckViolation. NOT VALID restores the
+    # narrower vocabulary for everything WRITTEN from here on, which is what a
+    # downgrade actually means, and leaves the existing rows alone.
     op.execute(
         "ALTER TABLE exam_integrity_events DROP CONSTRAINT"
         " IF EXISTS ck_exam_integrity_events_event_type"
@@ -83,4 +97,5 @@ def downgrade() -> None:
     op.execute(
         "ALTER TABLE exam_integrity_events ADD CONSTRAINT"
         f" ck_exam_integrity_events_event_type CHECK (event_type IN ({_OLD_EVENT_TYPES}))"
+        " NOT VALID"
     )

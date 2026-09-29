@@ -105,9 +105,29 @@ def upgrade() -> None:
         "exam_attempts",
         sa.Column("camera_in_use", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
+    # NOT VALID, and deliberately never validated. Security review HIGH-1:
+    # before this branch, `exam_integrity_events.event_type` had NO constraint
+    # and the ingest endpoint did not check the vocabulary at all — it stored
+    # `body.event_type[:40]`. The DEPLOYED client has meanwhile been firing
+    # `copy`/`paste` on every clipboard action for a long time, so any database
+    # that has run one real exam already holds rows this five-name CHECK
+    # rejects, and in principle any <=40-char string a magic-link holder ever
+    # posted. A plain ADD CONSTRAINT validates every existing row, so it would
+    # raise CheckViolation here, `alembic upgrade head` would abort, and
+    # `space/entrypoint.sh` treats a migration failure on a reachable database
+    # as fatal — the Space would not boot, every route 503. CI cannot catch it:
+    # CI migrates a freshly created, empty database.
+    #
+    # NOT VALID is exactly the right tool and not a compromise: Postgres still
+    # enforces the constraint on every INSERT and UPDATE, which is all this is
+    # for (a backstop under the application-level vocabulary check). It simply
+    # does not re-litigate history we cannot retroactively make conform. We do
+    # NOT follow up with VALIDATE CONSTRAINT anywhere, and the widening
+    # revision f6b8d0a2c4e6 keeps NOT VALID for the same reason.
     op.execute(
         "ALTER TABLE exam_integrity_events ADD CONSTRAINT"
         f" ck_exam_integrity_events_event_type CHECK (event_type IN ({_EVENT_TYPES}))"
+        " NOT VALID"
     )
     op.execute(EXAM_ATTEMPTS_ALLOWANCE_FIXED)
 

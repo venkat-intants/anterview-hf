@@ -168,6 +168,28 @@ describe('AttemptProctoringSummary — camera not in use', () => {
   });
 });
 
+describe('AttemptProctoringSummary — an incomplete timeline says so', () => {
+  it('warns when events were dropped, and attributes it to our collection', async () => {
+    api.getAttemptProctoring.mockResolvedValue({ ...WITH_EVENTS, events_dropped: true });
+    renderSummary();
+
+    const notice = await screen.findByTestId('proctoring-incomplete-notice');
+    // Security review HIGH-2: the client swallows a 429 exactly like a lost
+    // packet, so a truncated record would otherwise read as a clean one.
+    expect(notice).toHaveTextContent(/timeline is incomplete/i);
+    expect(notice).toHaveTextContent(/partial record/i);
+    // Being throttled is not something the candidate did, and the wording
+    // must not let a reviewer read it that way.
+    expect(notice.textContent ?? '').not.toMatch(/candidate (?:did|caused|blocked|prevented)/i);
+  });
+
+  it('shows no such warning when the timeline is complete', async () => {
+    renderSummary(); // WITH_EVENTS carries no events_dropped
+    await screen.findByTestId('proctoring-event-groups');
+    expect(screen.queryByTestId('proctoring-incomplete-notice')).not.toBeInTheDocument();
+  });
+});
+
 describe('AttemptProctoringSummary — no verdict language', () => {
   it('never states or implies a conclusion about the candidate', async () => {
     renderSummary();

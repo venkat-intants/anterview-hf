@@ -520,3 +520,30 @@ async def test_hr_proctoring_read_is_refused_across_companies(
     # And the other company's attempts list does not carry the row at all.
     r = await client.get(f"/hr/exams/{exam['exam_id']}/attempts")
     assert r.status_code == 404, r.text
+
+    # Security review LOW-3: everything above is satisfied by the EXAM
+    # ownership gate alone (_get_owned_exam runs first), so deleting the
+    # attempt query's own `company_id` filter would not have been caught.
+    # Probe the cross-product explicitly: the other company's OWN exam, with
+    # the first company's attempt id. The exam gate now passes — the caller
+    # owns that exam — so only the attempt-level company filter can refuse it.
+    other_exam = await _mixed_round_exam(client, camera_required=True)
+    r = await client.get(
+        f"/hr/exams/{other_exam['exam_id']}/attempts/{attempt_id}/proctoring"
+    )
+    assert r.status_code == 404, r.text
+
+    # Sanity: that url shape IS reachable for an attempt the caller owns, so
+    # the 404 above is about ownership and not about a malformed request.
+    other_applicant = await _applicant(committed_db, other_company, "Gopal")
+    other_token = await _assign(
+        client, other_exam["exam_id"], other_exam["round_id"], other_applicant
+    )
+    other_headers = {"X-Exam-Token": other_token}
+    await client.post("/exam/camera-consent", headers=other_headers)
+    r = await client.post("/exam/start", headers=other_headers)
+    assert r.status_code == 200, r.text
+    r = await client.get(
+        f"/hr/exams/{other_exam['exam_id']}/attempts/{r.json()['attempt_id']}/proctoring"
+    )
+    assert r.status_code == 200, r.text

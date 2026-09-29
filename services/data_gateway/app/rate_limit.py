@@ -229,42 +229,67 @@ def rate_limit_link(
     """
 
     async def _dep(request: Request) -> None:
-        token = request.headers.get(header)
-        ip = extract_client_ip(request)
-        try:
-            redis = get_redis()
-            tok_count: int | None = None
-            if token:
-                tok_key = f"rl:{bucket}:tok:{_token_fingerprint(token)}"
-                tok_count = await redis.incr(tok_key)
-                if tok_count == 1:
-                    await redis.expire(tok_key, 60)
-            ip_key = f"rl:{bucket}:ip:{ip}"
-            ip_count: int = await redis.incr(ip_key)
-            if ip_count == 1:
-                await redis.expire(ip_key, 60)
-        except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
-            _rate_limit_skipped.labels(
-                bucket=bucket, error_type=type(exc).__name__
-            ).inc()
-            log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
-            return
-        if tok_count is not None and tok_count > per_token:
-            _rate_limit_exceeded.labels(bucket=bucket).inc()
-            log.warning("rate_limit.exceeded", bucket=bucket, keyed="token")
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many requests. Please wait a minute and try again.",
-            )
-        if ip_count > per_ip:
-            _rate_limit_exceeded.labels(bucket=bucket).inc()
-            log.warning("rate_limit.exceeded", bucket=bucket, keyed="ip")
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many requests from your network. Please wait a minute and try again.",
-            )
+        await enforce_link_limit(
+            request, bucket=bucket, header=header, per_token=per_token, per_ip=per_ip
+        )
 
     return Depends(_dep)
+
+
+async def enforce_link_limit(
+    request: Request, *, bucket: str, header: str, per_token: int, per_ip: int
+) -> None:
+    """``rate_limit_link``'s body, callable directly.
+
+    Exposed because one caller — the exam integrity-event ingest — has to pick
+    its bucket from the PARSED BODY (a violation signal and a clipboard event
+    must not share a budget), which a route-level dependency cannot see.
+
+    The IP budget is charged and enforced BEFORE the token budget, and the
+    token key is not touched at all once the IP budget is spent (security
+    review MEDIUM-1). The obvious ordering — token first — bounds how many
+    requests are SERVED but not how many distinct Redis keys are CREATED,
+    since every rejected request still minted a fresh
+    ``rl:{bucket}:tok:{sha256}``. That matters more than it sounds: this Redis
+    also carries the JWT revocation epoch, and rate limiting and the "log out
+    all devices" kill switch fail open together (see the module docstring), so
+    memory pressure here disables a platform-wide auth control.
+    """
+    token = request.headers.get(header)
+    ip = extract_client_ip(request)
+    try:
+        redis = get_redis()
+        ip_key = f"rl:{bucket}:ip:{ip}"
+        ip_count: int = await redis.incr(ip_key)
+        if ip_count == 1:
+            await redis.expire(ip_key, 60)
+        over_ip = ip_count > per_ip
+        tok_count: int | None = None
+        if token and not over_ip:
+            tok_key = f"rl:{bucket}:tok:{_token_fingerprint(token)}"
+            tok_count = await redis.incr(tok_key)
+            if tok_count == 1:
+                await redis.expire(tok_key, 60)
+    except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
+        _rate_limit_skipped.labels(
+            bucket=bucket, error_type=type(exc).__name__
+        ).inc()
+        log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+        return
+    if over_ip:
+        _rate_limit_exceeded.labels(bucket=bucket).inc()
+        log.warning("rate_limit.exceeded", bucket=bucket, keyed="ip")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests from your network. Please wait a minute and try again.",
+        )
+    if tok_count is not None and tok_count > per_token:
+        _rate_limit_exceeded.labels(bucket=bucket).inc()
+        log.warning("rate_limit.exceeded", bucket=bucket, keyed="token")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please wait a minute and try again.",
+        )
 
 
 def rate_limit_task(bucket: str, per_token: int, per_ip: int) -> Callable[..., Awaitable[None]]:

@@ -292,6 +292,46 @@ async def enforce_link_limit(
         )
 
 
+async def enforce_token_budget(
+    request: Request, *, bucket: str, header: str, per_minute: int
+) -> None:
+    """Charge one request to a PER-TOKEN budget only — no IP dimension.
+
+    For a caller that already has a separate per-IP guard in front of it and
+    needs the token check somewhere it can react to the refusal. The exam
+    integrity ingest uses this twice, because a refusal there has to be
+    recorded on the attempt before the 429 goes out (security re-audit
+    MEDIUM-1): a drop the HR timeline cannot see is the whole defect that
+    review blocked on, and a route-level dependency raises before the handler
+    can write anything.
+
+    A request with no token is not charged and not refused — it has no budget
+    to exceed. Every such request 404s at the magic-link context anyway, and
+    the per-IP guard is what bounds it. Fails OPEN on any Redis error, like
+    every other limiter in this module; see the module docstring.
+    """
+    token = request.headers.get(header)
+    if not token:
+        return
+    try:
+        redis = get_redis()
+        key = f"rl:{bucket}:tok:{_token_fingerprint(token)}"
+        count: int = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, 60)
+    except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
+        _rate_limit_skipped.labels(bucket=bucket, error_type=type(exc).__name__).inc()
+        log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+        return
+    if count > per_minute:
+        _rate_limit_exceeded.labels(bucket=bucket).inc()
+        log.warning("rate_limit.exceeded", bucket=bucket, keyed="token")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please wait a minute and try again.",
+        )
+
+
 def rate_limit_task(bucket: str, per_token: int, per_ip: int) -> Callable[..., Awaitable[None]]:
     """The job-simulation/portfolio task flavour of ``rate_limit_link`` — its
     magic link travels in ``X-Task-Token``.

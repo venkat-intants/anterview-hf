@@ -55,7 +55,7 @@ from app.models import (
     ExamSection,
 )
 from app.notifications_util import create_notification
-from app.rate_limit import enforce_link_limit, rate_limit, rate_limit_link
+from app.rate_limit import enforce_token_budget, rate_limit, rate_limit_link
 from app.redis_client import get_redis
 from app.routers.hr_interviews import advance_applicant_to_interview
 from app.utils.request_ip import extract_client_ip, extract_user_agent
@@ -1357,23 +1357,35 @@ async def _note_events_dropped(db: AsyncSession, attempt: ExamAttempt) -> None:
     summary = dict(attempt.proctoring_summary or {})
     if summary.get("events_dropped") is True:
         return  # already flagged; nothing to write
+    # A new dict, not an in-place mutation: SQLAlchemy does not track changes
+    # inside a JSONB value without MutableDict, so mutating would silently
+    # persist nothing.
     summary["events_dropped"] = True
     attempt.proctoring_summary = summary
     attempt.updated_at = datetime.now(tz=UTC)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:  # noqa: BLE001 — never convert a 429 into a 500
+        # The caller is about to raise 429. If flagging fails we still want
+        # that 429, not a 500: the client swallows both identically, but a 500
+        # here would misreport a throttle as a server fault in every dashboard
+        # and log. The flag is lost, which is the already-accepted worst case
+        # of the drop itself (security re-audit LOW-4).
+        log.warning("exam.integrity_event.drop_flag_failed", attempt_id=str(attempt.id))
+        await db.rollback()
 
 
 
 @router.post(
     "/integrity-event",
     response_model=IntegrityIngestOut,
+    # Route level: the per-IP volumetric guard ONLY, so a flood is stopped
+    # before any database work. Both per-TOKEN budgets live inside the handler
+    # (security re-audit MEDIUM-1), because a refusal has to be recorded on the
+    # attempt before the 429 goes out and a dependency raises too early for
+    # that — a drop the HR timeline cannot see is the defect HIGH-2 blocked on.
     dependencies=[
-        rate_limit_link(
-            "exam_integrity_event",
-            "X-Exam-Token",
-            per_token=settings.exam_integrity_event_per_minute,
-            per_ip=settings.exam_integrity_event_per_ip_per_minute,
-        )
+        rate_limit("exam_integrity_event", settings.exam_integrity_event_per_ip_per_minute)
     ],
 )
 async def ingest_integrity_event(
@@ -1422,24 +1434,33 @@ async def ingest_integrity_event(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Camera proctoring is not enabled for this attempt.",
         )
-    # The inner, per-type budget. Violations are deliberately NOT charged to
-    # it — see this function's docstring for why sharing one budget lets a
-    # candidate suppress their own camera evidence with clipboard noise.
-    if body.event_type not in exam_camera.VIOLATION_EVENT_TYPES:
-        try:
-            await enforce_link_limit(
+    # Both per-token budgets, in the one place that can record a refusal.
+    #
+    # Outer: every event type, above any rate a real client produces — a
+    # volumetric bound per candidate. Inner: only the types that are NOT
+    # violations, on their own key, so clipboard noise can never starve a
+    # camera signal (see this function's docstring).
+    #
+    # Each refusal is flagged on the attempt BEFORE the 429 is raised. An
+    # incomplete timeline that says it is incomplete is honest; one that
+    # silently omits events invites HR to read a short record as a clean one.
+    try:
+        await enforce_token_budget(
+            request,
+            bucket="exam_integrity_event",
+            header="X-Exam-Token",
+            per_minute=settings.exam_integrity_event_per_minute,
+        )
+        if body.event_type not in exam_camera.VIOLATION_EVENT_TYPES:
+            await enforce_token_budget(
                 request,
                 bucket="exam_integrity_nonviolation",
                 header="X-Exam-Token",
-                per_token=settings.exam_integrity_nonviolation_per_minute,
-                per_ip=settings.exam_integrity_event_per_ip_per_minute,
+                per_minute=settings.exam_integrity_nonviolation_per_minute,
             )
-        except HTTPException:
-            # Record the drop before refusing it. An incomplete timeline that
-            # SAYS it is incomplete is honest; one that silently omits events
-            # invites HR to read a short record as a clean one.
-            await _note_events_dropped(db, attempt)
-            raise
+    except HTTPException:
+        await _note_events_dropped(db, attempt)
+        raise
     now = datetime.now(tz=UTC)
     db.add(
         ExamIntegrityEvent(

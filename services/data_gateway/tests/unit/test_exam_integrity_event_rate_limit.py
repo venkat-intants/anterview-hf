@@ -156,30 +156,43 @@ def _route_decorator_source() -> str:
     return source[max(0, idx - 800) : idx]
 
 
-def test_integrity_event_route_is_rate_limited_by_the_named_settings() -> None:
-    decorator = _route_decorator_source()
-    assert "rate_limit_link(" in decorator
-    assert '"exam_integrity_event"' in decorator
-    assert "per_token=settings.exam_integrity_event_per_minute" in decorator
-    assert "per_ip=settings.exam_integrity_event_per_ip_per_minute" in decorator
+def test_the_route_level_guard_is_the_per_ip_volumetric_one() -> None:
+    """The route dependency bounds a flood before any DB work, per IP only.
 
-
-def test_integrity_event_route_is_keyed_on_the_exam_link_not_the_client_ip() -> None:
-    """The follow-up review's MUST FIX, pinned so it cannot silently revert.
-
-    A college computer lab — CLAUDE.md's #1 target market — NATs every seat
-    behind one address. The first version of this limiter was keyed on IP
-    alone, which by the ceiling's own arithmetic (a working candidate sits
-    "well under 40/min" against a 120/min cap) would be exhausted by THREE
-    ordinary candidates sitting the same exam; the 4th onward would have real
-    camera events dropped, invisibly, because the client swallows the 429 like
-    a lost packet. The token header is what makes the budget per-candidate.
+    The per-TOKEN budgets moved into the handler (security re-audit MEDIUM-1)
+    so a refusal can be recorded on the attempt before the 429 is raised — a
+    dependency raises too early to write anything, which left the outer cap as
+    a path that dropped events with no trace, the exact defect HIGH-2 blocked
+    on.
     """
     decorator = _route_decorator_source()
-    assert '"X-Exam-Token"' in decorator
-    # And specifically NOT the plain IP-keyed factory, whichever ceiling it is
-    # handed — that is the exact shape being guarded against.
-    assert 'rate_limit("exam_integrity_event"' not in decorator
+    assert 'rate_limit("exam_integrity_event"' in decorator
+    assert "exam_integrity_event_per_ip_per_minute" in decorator
+    # The per-token caps must NOT be here any more, or a refusal is unflaggable.
+    assert "per_token=" not in decorator
+
+
+def test_both_token_budgets_are_charged_where_a_refusal_can_be_recorded() -> None:
+    """The per-candidate caps, and that EVERY refusal path flags the attempt.
+
+    A college computer lab — CLAUDE.md's #1 target market — NATs every seat
+    behind one address, so the per-candidate budget has to key on the link and
+    not the IP. And both budgets sit inside one try/except whose handler calls
+    `_note_events_dropped`, so neither the outer nor the inner refusal can drop
+    an event silently.
+    """
+    import inspect
+
+    source = inspect.getsource(exam_take.ingest_integrity_event)
+    assert source.count("enforce_token_budget(") == 2
+    assert 'bucket="exam_integrity_event"' in source
+    assert 'bucket="exam_integrity_nonviolation"' in source
+    assert '"X-Exam-Token"' in source
+    # One except clause covering both, flagging before it re-raises.
+    assert "except HTTPException:" in source
+    flag_at = source.index("_note_events_dropped")
+    raise_at = source.index("raise", flag_at)
+    assert flag_at < raise_at, "the attempt must be flagged BEFORE the 429 is re-raised"
 
 
 @pytest.mark.asyncio

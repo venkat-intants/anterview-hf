@@ -549,9 +549,19 @@ class Settings(BaseSettings):
     # feature exists to collect, using the rate limit as the off switch.
     #
     # Keying the chatty types separately means a violation can never be
-    # starved by non-violations: they no longer share a counter. And a
-    # candidate cannot flood with violations instead, because the third one
-    # auto-submits their exam.
+    # starved by non-violations: they no longer share a counter.
+    #
+    # An earlier version of this comment added "and a candidate cannot flood
+    # with violations instead, because the third one auto-submits their exam".
+    # That named a control that does not exist and the security re-audit
+    # corrected it: exam_integrity_max_violations is only RETURNED to the
+    # client, auto-submit happens in the browser, and a malicious client
+    # ignores it. Flooding with violations is still not a useful attack, but
+    # for a different reason — it records 300 violations and a score of 0
+    # against the flooder, trading one concealed multiple_faces for the most
+    # damning timeline they could have produced. That is a property of the
+    # data, not a control, and the distinction matters to whoever reads this
+    # next looking for an enforcement point.
     exam_integrity_nonviolation_per_minute: int = 120
     # The LOOSER per-IP backstop on the same route: volumetric-abuse protection
     # only, never the normal-use limit. Sized from the busiest real room rather

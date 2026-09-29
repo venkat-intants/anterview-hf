@@ -19,6 +19,7 @@ is consulted, so the refusal below only ever means what it says.
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -239,66 +240,185 @@ async def gate(
     return Gate(already_applied=False, reapplying=reapplying, verdict=verdict)
 
 
-async def reopen(
+async def stage(
     db: AsyncSession,
     *,
     enrolment_id: uuid.UUID,
     company_id: uuid.UUID,
     resume_s3_key: str | None,
-    spend_override: bool,
+    answers: dict[str, Any] | None,
 ) -> None:
-    """Make a rejected application live again for a second attempt.
+    """Record a second attempt WITHOUT acting on it. Caller commits.
 
-    Caller commits. Shared by both doors for the same reason ``gate`` is.
+    The application is accepted — nobody is turned away, and the cooldown has
+    already decided whether it may be accepted at all. What does not happen
+    here is any change to what HR sees about this person.
 
-    THE CV IS ADOPTED HERE, AND THAT IS NOT COSMETIC. One person is enrolled
-    into an opening once, so ``enrol_applicant`` finds the rejected row and
-    returns it untouched — which left the CV this application was just
-    submitted with referenced by nothing at all. Erasure collects a person's
-    resume objects by reading the columns that name them
-    (``applicants.resume_s3_key``, ``enrolments.applied_resume_s3_key`` and
-    ``scored_resume_s3_key``, ``application_drafts.resume_s3_key``); it does
-    not sweep the applicant prefix. So an unadopted object had no deletion
-    path: a DPDP erasure would complete and leave the candidate's CV in the
-    bucket. ``applied_resume_s3_key`` is the column whose documented meaning is
-    "the CV this application was SUBMITTED with", and on a second attempt that
-    is the new one.
+    WHY NOT JUST REOPEN IT
+    Both doors into an application are anonymous by necessity and identify a
+    person by an address typed into a public form. `apply_activation` says
+    plainly what that is worth: "Anyone can type anyone's address into an
+    application form", and the requisition id is documented as not a secret. So
+    reopening on submission let one unauthenticated request move a real
+    person's status, overwrite the screening answers they had already given,
+    attach a stranger's PDF to their application as the CV it was submitted
+    with, and spend an override HR had granted them. `final_decision.py`
+    refuses an AUTHORISED HR manager from hiring over a rejection because
+    reopening someone is "a separate decision this does not make on anyone's
+    behalf"; letting an anonymous caller make it was the same decision with
+    less authority behind it.
 
-    The CV it replaces is NOT deleted. For a first-time applicant the same key
-    is also ``applicants.resume_s3_key``, so deleting it here would destroy the
-    person's own CV; leaving it keeps it named by that column and therefore
-    still reachable by erasure.
+    So the attempt waits here, on the rejected enrolment, until `confirm`
+    below is reached through a link emailed to the address. That link is the
+    proof the address never was.
 
-    WHAT THIS DELIBERATELY DOES NOT DO IS RESCORE. The scorer reads
-    ``applicants.resume_text``, and the returning-applicant path refuses to
-    write that from an anonymous request — an unverified caller holding an
-    address could otherwise replace someone's CV and scores in a company's ATS.
-    So clearing ``ats_*`` here would not score the new CV; it would blank the
-    score and then refill it from the OLD text, which is churn that reads like
-    a rescore. The application therefore carries the first attempt's score, the
-    ledger entry below says a new CV arrived, and scoring a reapplication
-    properly needs a verified identity — see the note in the PH3 checklist.
+    THE CV IS A COLUMN, NOT A LOOSE OBJECT. Erasure collects a person's resume
+    objects by reading the columns that name them, so an object nothing names
+    has no deletion path and survives a completed erasure (DPDP §12). The
+    answers are held here too rather than written to `application_answers`,
+    which upserts per (enrolment, question) and would otherwise let a stranger
+    overwrite what the real candidate had already answered.
     """
-    # Imported here rather than at module scope: app.requisitions imports the
-    # workflow side of the world, and this module is imported by it.
+    await db.execute(
+        text(
+            "UPDATE enrolments"
+            "   SET reapply_requested_at = now(), reapply_resume_s3_key = :k,"
+            "       reapply_answers = CAST(:a AS jsonb), updated_at = now()"
+            " WHERE id = :i AND company_id = :c"
+        ),
+        {
+            "i": enrolment_id,
+            "c": company_id,
+            "k": resume_s3_key,
+            "a": json.dumps(answers) if answers else None,
+        },
+    )
+    log.info(
+        "reapply.staged", enrolment_id=str(enrolment_id), has_cv=bool(resume_s3_key)
+    )
+
+
+async def pending_for_user(
+    db: AsyncSession, *, user_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    """Every staged reapplication belonging to this person. Read-only.
+
+    Keyed through `applicants.user_id` rather than an email, because by the
+    time this is called the address has been proven and the user id is the
+    thing that proved it.
+    """
+    rows = (
+        await db.execute(
+            text(
+                "SELECT e.id, e.company_id, e.reapply_resume_s3_key, e.reapply_answers"
+                "  FROM enrolments e"
+                "  JOIN applicants a ON a.id = e.applicant_id"
+                " WHERE a.user_id = :uid AND a.deleted_at IS NULL"
+                "   AND e.deleted_at IS NULL AND e.reapply_requested_at IS NOT NULL"
+            ),
+            {"uid": user_id},
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def confirm(
+    db: AsyncSession,
+    *,
+    enrolment_id: uuid.UUID,
+    company_id: uuid.UUID,
+    spend_override: bool,
+) -> bool:
+    """Apply a staged reapplication now that the address has been proven.
+
+    Caller commits. Returns False when there was nothing staged, so a link
+    followed twice is a no-op rather than a second reopening.
+
+    Everything the anonymous request deliberately did not do happens here, in
+    one transaction, on behalf of somebody who has demonstrated they receive
+    mail at the address: the status moves, the CV this attempt was submitted
+    with becomes the application's, the answers are written, and an override —
+    if one is what let them past the cooldown — is spent.
+    """
+    from app.application_questions import store_answers  # noqa: PLC0415
     from app.requisitions import record_transition  # noqa: PLC0415
+
+    staged = (
+        await db.execute(
+            text(
+                "SELECT reapply_resume_s3_key, reapply_answers FROM enrolments"
+                " WHERE id = :i AND company_id = :c AND reapply_requested_at IS NOT NULL"
+                " FOR UPDATE"
+            ),
+            {"i": enrolment_id, "c": company_id},
+        )
+    ).mappings().first()
+    if staged is None:
+        return False
 
     await record_transition(
         db,
         enrolment_id=enrolment_id,
         company_id=company_id,
         to_status="new",
-        actor_user_id=None,  # the candidate applied; nobody moved them
+        actor_user_id=None,
         automated=True,
-        reason="the candidate applied again after a rejection, with a new CV",
+        # Says what actually happened, and no more. The previous wording
+        # asserted the candidate had applied again, on a ledger that is
+        # append-only, at a point where nobody had proved who submitted it.
+        reason="the candidate applied again after a rejection and confirmed it by email",
     )
-    if resume_s3_key:
+    if staged["reapply_resume_s3_key"]:
         await db.execute(
             text(
                 "UPDATE enrolments SET applied_resume_s3_key = :k, updated_at = now()"
                 " WHERE id = :i AND company_id = :c"
             ),
-            {"k": resume_s3_key, "i": enrolment_id, "c": company_id},
+            {"k": staged["reapply_resume_s3_key"], "i": enrolment_id, "c": company_id},
         )
+    if staged["reapply_answers"]:
+        await store_answers(
+            db,
+            company_id=company_id,
+            enrolment_id=enrolment_id,
+            answers=list(dict(staged["reapply_answers"]).items()),
+        )
+    await clear_staged(db, enrolment_id=enrolment_id, company_id=company_id)
     if spend_override:
         await consume_override(db, enrolment_id=enrolment_id)
+    log.info("reapply.confirmed", enrolment_id=str(enrolment_id))
+    return True
+
+
+async def clear_staged(
+    db: AsyncSession, *, enrolment_id: uuid.UUID, company_id: uuid.UUID
+) -> str | None:
+    """Forget a staged reapplication, and say which CV object it was holding.
+
+    Caller commits, and the caller decides what to do with the returned key.
+    `confirm` ignores it, because by then the object is named by
+    `applied_resume_s3_key`; a path that ABANDONS a staged attempt must delete
+    it, since these columns were the only thing naming it and an object
+    nothing names is one erasure cannot find.
+
+    Read before write, not `UPDATE ... RETURNING`: RETURNING yields the NEW row,
+    so returning the column this statement just set to NULL would hand every
+    caller a None and quietly strand the object.
+    """
+    held = await db.scalar(
+        text(
+            "SELECT reapply_resume_s3_key FROM enrolments"
+            " WHERE id = :i AND company_id = :c FOR UPDATE"
+        ),
+        {"i": enrolment_id, "c": company_id},
+    )
+    await db.execute(
+        text(
+            "UPDATE enrolments"
+            "   SET reapply_requested_at = NULL, reapply_resume_s3_key = NULL,"
+            "       reapply_answers = NULL, updated_at = now()"
+            " WHERE id = :i AND company_id = :c"
+        ),
+        {"i": enrolment_id, "c": company_id},
+    )
+    return str(held) if held else None

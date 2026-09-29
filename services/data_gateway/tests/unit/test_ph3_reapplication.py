@@ -271,7 +271,7 @@ def test_both_doors_into_an_application_use_the_same_gate() -> None:
     for fn in (submit_application, submit_draft):
         src = inspect.getsource(fn)
         assert "reapplication_gate" in src, f"{fn.__name__} does not use the shared gate"
-        assert "reapplication_reopen" in src, f"{fn.__name__} never reopens"
+        assert "reapplication_stage" in src, f"{fn.__name__} never stages"
         assert "cooldown_check" not in src, f"{fn.__name__} still has its own copy"
 
 
@@ -470,56 +470,144 @@ async def test_spending_the_override_makes_the_next_check_refuse() -> None:
     assert spent.allowed is False, "the grant forgave one rejection, not all of them"
 
 
+
+
 # ===========================================================================
-# Reopening adopts the CV the reapplication was submitted with
+# A reapplication is STAGED, and changes nothing until the address is proven
 # ===========================================================================
+# A security audit found that reopening on submission let one anonymous
+# request — the apply link is not a secret, and the email is the only other
+# input — move a real person's status, overwrite the screening answers they
+# had already given, attach a stranger's PDF as the CV their application was
+# submitted with, spend an override HR had granted them, and create a
+# talent-pool consent they never gave. These pin that none of it happens
+# before somebody follows a link sent to the address.
+
+
 @pytest.mark.asyncio
-async def test_reopening_adopts_the_new_cv_so_erasure_can_find_it() -> None:
-    """One person is enrolled into an opening once, so enrol_applicant returns
-    the rejected row untouched and never stores the CV this request uploaded.
-    Erasure collects resume objects by reading the columns that name them, so
-    an unadopted object has NO deletion path: a DPDP erasure completes and
-    leaves the candidate's CV in the bucket.
-    """
+async def test_staging_records_the_attempt_without_touching_the_application() -> None:
     from app import reapplication
 
     db = AsyncMock()
-    with (
-        patch.object(reapplication, "consume_override", AsyncMock()) as spent,
-        patch("app.requisitions.record_transition", AsyncMock(return_value="rejected")),
-    ):
-        await reapplication.reopen(
-            db,
-            enrolment_id=uuid.uuid4(),
-            company_id=uuid.uuid4(),
-            resume_s3_key="applicants/c/a-deadbeef.pdf",
-            spend_override=False,
-        )
+    await reapplication.stage(
+        db,
+        enrolment_id=uuid.uuid4(),
+        company_id=uuid.uuid4(),
+        resume_s3_key="applicants/c/a-deadbeef.pdf",
+        answers={"q1": "yes"},
+    )
     sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
-    assert "applied_resume_s3_key = :k" in sql, "the new CV needs a column naming it"
+    assert "reapply_requested_at = now()" in sql
+    assert "reapply_resume_s3_key = :k" in sql
+    # The things an anonymous caller must NOT be able to move:
+    assert "status" not in sql.replace("reapply_requested_at", ""), "no status change"
+    assert "applied_resume_s3_key" not in sql, "the live CV is not repointed"
+    assert "INSERT INTO application_answers" not in sql, "answers are not overwritten"
+
+
+@pytest.mark.asyncio
+async def test_the_staged_cv_is_named_by_a_column_so_erasure_finds_it() -> None:
+    """Erasure collects a person's resume objects by reading the columns that
+    name them; an object nothing names survives a completed erasure."""
+    from app import reapplication
+
+    db = AsyncMock()
+    await reapplication.stage(
+        db,
+        enrolment_id=uuid.uuid4(),
+        company_id=uuid.uuid4(),
+        resume_s3_key="applicants/c/a-kept.pdf",
+        answers=None,
+    )
     params = [c.args[1] for c in db.execute.await_args_list if len(c.args) > 1]
-    assert any(p.get("k") == "applicants/c/a-deadbeef.pdf" for p in params)
-    spent.assert_not_awaited()
+    assert any(p.get("k") == "applicants/c/a-kept.pdf" for p in params)
 
 
 @pytest.mark.asyncio
-async def test_reopening_does_not_release_a_key_that_still_names_an_object() -> None:
-    """For a first-time applicant `applied_resume_s3_key` and
-    `applicants.resume_s3_key` are the SAME object, so releasing the one this
-    replaces would destroy the person's own CV. It is left named."""
+async def test_confirming_applies_everything_submission_did_not() -> None:
     from app import reapplication
 
     db = AsyncMock()
-    with patch(
-        "app.requisitions.record_transition", AsyncMock(return_value="rejected")
+    staged = {
+        "reapply_resume_s3_key": "applicants/c/a-new.pdf",
+        "reapply_answers": {"q1": "yes"},
+    }
+
+    async def _execute(*a: object, **k: object) -> MagicMock:
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.first = MagicMock(return_value=staged)
+        res.mappings = MagicMock(return_value=mapped)
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
+    db.scalar = AsyncMock(return_value="applicants/c/a-new.pdf")
+
+    with (
+        patch("app.requisitions.record_transition", AsyncMock(return_value="rejected")) as moved,
+        patch("app.application_questions.store_answers", AsyncMock()) as answers,
+        patch.object(reapplication, "consume_override", AsyncMock()) as spent,
     ):
-        await reapplication.reopen(
+        applied = await reapplication.confirm(
             db,
             enrolment_id=uuid.uuid4(),
             company_id=uuid.uuid4(),
-            resume_s3_key="applicants/c/a-new.pdf",
-            spend_override=False,
+            spend_override=True,
         )
+
+    assert applied is True
+    moved.assert_awaited()
+    assert moved.await_args.kwargs["to_status"] == "new"
+    answers.assert_awaited()
+    spent.assert_awaited()
     sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
-    assert "scored_resume_s3_key = NULL" not in sql
-    assert "DELETE" not in sql.upper()
+    assert "applied_resume_s3_key = :k" in sql, "the confirmed CV becomes the live one"
+
+
+@pytest.mark.asyncio
+async def test_confirming_twice_applies_nothing_the_second_time() -> None:
+    from app import reapplication
+
+    db = AsyncMock()
+
+    async def _execute(*a: object, **k: object) -> MagicMock:
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.first = MagicMock(return_value=None)  # nothing staged
+        res.mappings = MagicMock(return_value=mapped)
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
+    with patch("app.requisitions.record_transition", AsyncMock()) as moved:
+        applied = await reapplication.confirm(
+            db, enrolment_id=uuid.uuid4(), company_id=uuid.uuid4(), spend_override=True
+        )
+    assert applied is False
+    moved.assert_not_awaited(), "a link followed twice must not reopen twice"
+
+
+@pytest.mark.asyncio
+async def test_clearing_reports_the_object_it_released() -> None:
+    """RETURNING on the UPDATE yields the NEW row, so a caller reading the
+    column this statement just NULLed would get None and strand the object."""
+    from app import reapplication
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value="applicants/c/a-abandoned.pdf")
+    released = await reapplication.clear_staged(
+        db, enrolment_id=uuid.uuid4(), company_id=uuid.uuid4()
+    )
+    assert released == "applicants/c/a-abandoned.pdf"
+
+
+def test_neither_door_applies_a_reapplication_on_submission() -> None:
+    """Structural, and worth it: the whole finding was that an anonymous
+    request acted. Neither route may call confirm."""
+    from app.routers.public_apply import submit_application, submit_draft
+
+    for fn in (submit_application, submit_draft):
+        src = inspect.getsource(fn)
+        assert "reapplication_stage" in src, f"{fn.__name__} does not stage"
+        assert "reapplication_confirm" not in src, (
+            f"{fn.__name__} applies a reapplication without proof of the address"
+        )

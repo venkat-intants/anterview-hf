@@ -70,7 +70,9 @@ from app.apply_activation import (
     ActivationError,
     activate,
     activation_target,
+    redeem_reapply_token,
     stage_activation_email,
+    stage_reapply_confirmation,
 )
 from app.config import settings
 from app.database import DbSessionDep
@@ -78,8 +80,10 @@ from app.local_storage import LocalStorageError
 from app.models import Applicant
 from app.publishing import visible_sql
 from app.rate_limit import rate_limit
+from app.reapplication import confirm as reapplication_confirm
 from app.reapplication import gate as reapplication_gate
-from app.reapplication import reopen as reapplication_reopen
+from app.reapplication import pending_for_user as reapplication_pending_for_user
+from app.reapplication import stage as reapplication_stage
 from app.resume_details import extract_contact_details
 from app.routers.consent import _hash_value
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
@@ -1113,24 +1117,22 @@ async def submit_draft(
             source=source,
             source_detail=source_detail,
         )
-        if checked_answers and outcome.enrolment_id:
+        # Not on a reapplication — see the one-shot route for why.
+        if checked_answers and outcome.enrolment_id and not gate.reapplying:
             await store_answers(
                 db,
                 company_id=company_id,
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 answers=checked_answers,
             )
-        # Same reopening as the one-shot route, for the same reasons: one
-        # person is enrolled into an opening once, so enrol_applicant above
-        # returned the REJECTED row untouched — the application stays rejected
-        # and the draft's CV is referenced by nobody — until this runs.
+        # Staged, not applied. Same door, same reason.
         if gate.reapplying and outcome.enrolment_id:
-            await reapplication_reopen(
+            await reapplication_stage(
                 db,
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 company_id=company_id,
                 resume_s3_key=row["resume_s3_key"],
-                spend_override=gate.spend_override,
+                answers=dict(checked_answers) if checked_answers else None,
             )
         # The draft's consent row hangs off the throwaway guest identity that
         # created it. Record it against the identity that owns the application
@@ -1152,7 +1154,13 @@ async def submit_draft(
             # (submit_application): `source="public_apply_form"`, so a
             # withdrawn candidate is not silently re-granted through this
             # door either — this one is no more authenticated than that one.
-            if row.get("rediscovery_opt_in"):
+            # NOT on a reapplication. A talent-pool opt-in is its own DPDP
+            # §6 consent, and on this path nobody has proved they own the
+            # address — so an unverified request could create a first-ever
+            # rediscovery consent for a candidate who never gave one, with the
+            # sender's own IP stored as the evidence for it. It waits for the
+            # same confirmation the reopen does.
+            if row.get("rediscovery_opt_in") and not gate.reapplying:
                 await rediscovery.record_opt_in(
                     db, user_id=uuid.UUID(str(owner_user_id)), company_id=company_id,
                     applicant_id=applicant_id, requisition_id=requisition_id,
@@ -1195,16 +1203,33 @@ async def submit_draft(
     )
     if guest_user_id is not None:
         try:
-            await stage_activation_email(
-                db,
-                user_id=uuid.UUID(str(guest_user_id)),
-                applicant_email=address,
-                applicant_name=name,
-                job_title=req["title"],
-                company_id=company_id,
-                company_name=req.get("company_name"),
-                now=now,
-            )
+            # A staged reapplication gets the link that CONFIRMS it, not the
+            # "your application is in" email — which would be untrue (it is
+            # waiting), and which mints no token at all for somebody who has
+            # already claimed their account, leaving them nothing to confirm
+            # with.
+            if gate.reapplying:
+                await stage_reapply_confirmation(
+                    db,
+                    user_id=uuid.UUID(str(guest_user_id)),
+                    applicant_email=address,
+                    applicant_name=name,
+                    job_title=req["title"],
+                    company_id=company_id,
+                    company_name=req.get("company_name"),
+                    now=now,
+                )
+            else:
+                await stage_activation_email(
+                    db,
+                    user_id=uuid.UUID(str(guest_user_id)),
+                    applicant_email=address,
+                    applicant_name=name,
+                    job_title=req["title"],
+                    company_id=company_id,
+                    company_name=req.get("company_name"),
+                    now=now,
+                )
             await db.commit()
         except Exception:  # noqa: BLE001 — see above
             await db.rollback()
@@ -1225,6 +1250,81 @@ async def submit_draft(
         full_name=name,
         already_applied=False,
         message="Thanks — your application is in. We will be in touch by email.",
+    )
+
+
+
+class ReapplyConfirmIn(BaseModel):
+    token: str = Field(min_length=16, max_length=256)
+
+
+class ReapplyConfirmOut(BaseModel):
+    #: How many staged reapplications this link applied. Normally one; zero
+    #: when the link has already been followed, which is not an error.
+    applied: int
+    message: str
+
+
+@router.post(
+    "/reapply/confirm",
+    response_model=ReapplyConfirmOut,
+    summary="Confirm a reapplication from the link emailed to the address",
+    dependencies=[rate_limit("apply_reapply_confirm", settings.rate_limit_login_per_minute)],
+)
+async def confirm_reapplication(
+    body: ReapplyConfirmIn, db: DbSessionDep
+) -> ReapplyConfirmOut:
+    """Apply a second attempt that has been waiting for proof of the address.
+
+    Everything the anonymous submission deliberately did not do happens here:
+    the application moves back to `new`, the CV that attempt was submitted
+    with becomes the application's, its answers are written, and an override —
+    if one is what let it past the cooldown — is spent.
+
+    Following the link twice applies nothing the second time and says so
+    calmly. The token is single-use, so the usual answer to a stale link is
+    "invalid or expired"; `applied: 0` is for the case where the token was
+    good but the work was already done.
+    """
+    try:
+        user_id = await redeem_reapply_token(db, body.token)
+    except ActivationError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    pending = await reapplication_pending_for_user(db, user_id=user_id)
+    applied = 0
+    try:
+        for row in pending:
+            # The cooldown is re-evaluated at confirmation, not trusted from
+            # submission time: an override granted then may have been spent
+            # elsewhere since, and the window may have moved. Same predicate
+            # both doors use.
+            done = await reapplication_confirm(
+                db,
+                enrolment_id=uuid.UUID(str(row["id"])),
+                company_id=uuid.UUID(str(row["company_id"])),
+                spend_override=True,
+            )
+            applied += 1 if done else 0
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        await db.rollback()
+        log.exception("apply.reapply_confirm.failed", error_type=type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="We could not confirm that just now. Please try the link again.",
+        ) from exc
+
+    return ReapplyConfirmOut(
+        applied=applied,
+        message=(
+            "Thanks — your application is with the hiring team again."
+            if applied
+            else "This application has already been confirmed."
+        ),
     )
 
 
@@ -1591,7 +1691,8 @@ async def submit_application(
         # PH5-E3. A FALSE value writes nothing at all — this is the only
         # writer of this consent type reached from this route, and it is
         # never called except when the candidate actually ticked the box.
-        if rediscovery_opt_in:
+        # Not on a reapplication — see the draft route for why.
+        if rediscovery_opt_in and not gate.reapplying:
             await rediscovery.record_opt_in(
                 db, user_id=guest_user_id, company_id=company_id,
                 applicant_id=applicant_id, requisition_id=requisition_id,
@@ -1622,7 +1723,12 @@ async def submit_application(
         # Same transaction as the enrolment they belong to: an application
         # whose answers did not land is not a complete application, and the
         # required ones were a condition of accepting it at all.
-        if checked_answers and outcome.enrolment_id:
+        # NOT on a reapplication. store_answers upserts on
+        # (enrolment_id, question_id), so writing here would let an anonymous
+        # request overwrite the answers the real candidate had already given
+        # on an application that already exists. A second attempt's answers
+        # are staged below and written when the address has been proven.
+        if checked_answers and outcome.enrolment_id and not gate.reapplying:
             await store_answers(
                 db,
                 company_id=company_id,
@@ -1630,23 +1736,19 @@ async def submit_application(
                 answers=checked_answers,
             )
 
-        # A reapplication the rule allowed reopens the application it is a
-        # second attempt at. Without this the candidate is past the gate and
-        # nothing happens: one person is enrolled into an opening once, so
-        # enrol_applicant returns the REJECTED enrolment unchanged and the
-        # application HR sees stays rejected. The ledger keeps the whole story
-        # — the rejection, then this move back to new.
+        # A reapplication is STAGED, not applied. Both doors here are
+        # anonymous and identify a person by an address typed into a form, so
+        # acting on this request would let a stranger move a real person's
+        # status, replace their CV and spend an override granted to them. It
+        # waits on the enrolment until a link emailed to the address is
+        # followed — see reapplication.stage.
         if gate.reapplying and outcome.enrolment_id:
-            await reapplication_reopen(
+            await reapplication_stage(
                 db,
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 company_id=company_id,
-                # Adopted, or the object this request just wrote is referenced
-                # by nothing and erasure cannot find it.
                 resume_s3_key=s3_key,
-                # The grant forgave THIS rejection, and only if it is what let
-                # them through.
-                spend_override=gate.spend_override,
+                answers=dict(checked_answers) if checked_answers else None,
             )
 
         await db.commit()
@@ -1699,16 +1801,30 @@ async def submit_application(
     # statement on an aborted transaction fails too. The application is already
     # safe by this point; what is at risk is only the email.
     try:
-        await stage_activation_email(
-            db,
-            user_id=guest_user_id,
-            applicant_email=address,
-            applicant_name=name,
-            job_title=req["title"],
-            company_id=company_id,
-            company_name=req.get("company_name"),
-            now=now,
-        )
+        # A staged reapplication gets the link that confirms it — see the
+        # draft route for why it is not the activation email.
+        if gate.reapplying:
+            await stage_reapply_confirmation(
+                db,
+                user_id=guest_user_id,
+                applicant_email=address,
+                applicant_name=name,
+                job_title=req["title"],
+                company_id=company_id,
+                company_name=req.get("company_name"),
+                now=now,
+            )
+        else:
+            await stage_activation_email(
+                db,
+                user_id=guest_user_id,
+                applicant_email=address,
+                applicant_name=name,
+                job_title=req["title"],
+                company_id=company_id,
+                company_name=req.get("company_name"),
+                now=now,
+            )
         await db.commit()
     except Exception:  # noqa: BLE001 — see above
         await db.rollback()

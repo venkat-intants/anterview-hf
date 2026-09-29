@@ -11,7 +11,7 @@ import {
   pickWarning,
   type CondState,
   type GazeThresholds,
-} from '../features/interview/proctorLogic';
+} from '../features/proctoring/proctorLogic';
 
 const T0 = 1_780_000_000_000; // arbitrary fixed epoch ms
 const MIN = 1200;
@@ -29,7 +29,13 @@ const TH: GazeThresholds = {
 
 describe('advanceCondition', () => {
   it('records since on first true but does not open before minRangedMs', () => {
-    const { next, emit } = advanceCondition('gaze_away', { since: null, openIso: null }, true, T0, MIN);
+    const { next, emit } = advanceCondition(
+      'gaze_away',
+      { since: null, openIso: null },
+      true,
+      T0,
+      MIN,
+    );
     expect(next.since).toBe(T0);
     expect(next.openIso).toBeNull(); // not yet past the debounce
     expect(emit).toBeNull();
@@ -117,7 +123,9 @@ describe('isLookingAway', () => {
 
   it('uses the nose-ratio fallback only when head pose is absent', () => {
     // matrix absent → fwd null; nose pushed far right → away
-    expect(isLookingAway({ fwdX: null, fwdY: null, eyeMax: 0, horiz: 0.9, vert: 0.45 }, TH)).toBe(true);
+    expect(isLookingAway({ fwdX: null, fwdY: null, eyeMax: 0, horiz: 0.9, vert: 0.45 }, TH)).toBe(
+      true,
+    );
     // matrix present and centred → fallback ignored even if nose ratio looks off
     expect(isLookingAway({ fwdX: 0, fwdY: 0, eyeMax: 0, horiz: 0.9, vert: 0.45 }, TH)).toBe(false);
   });
@@ -187,5 +195,48 @@ describe('averageNeutral', () => {
     ]);
     expect(n.fwdX).toBeCloseTo(0.3);
     expect(n.fwdY).toBeCloseTo(0.2);
+  });
+});
+
+// Camera-proctoring contract §4 — no frame, image or landmark array may ever
+// leave this module. extractGazeSignals is the ONE function that ever
+// touches a raw landmark/frame; everything downstream (advanceCondition,
+// closeOpenConditions) only ever handles the {type, started_at, ended_at}
+// ranged-event shape. Both are asserted structurally here, not just by type.
+describe('no frame/landmark data ever leaves this module (camera-proctoring contract §4)', () => {
+  it('extractGazeSignals reduces a large landmark array to five scalar numbers, never the array itself', () => {
+    // A realistic MediaPipe face has 478 landmarks — build one, plus a
+    // populated transformation matrix, exactly as a real detection would.
+    const faceLm = Array.from({ length: 478 }, (_, i) => ({ x: i / 478, y: 1 - i / 478 }));
+    const matrix = Array.from({ length: 16 }, (_, i) => i / 16);
+    const blendshapes = [
+      { categoryName: 'eyeLookOutLeft', score: 0.4 },
+      { categoryName: 'eyeLookUpRight', score: 0.1 },
+    ];
+
+    const { signals } = extractGazeSignals({ faces: [faceLm], matrix, blendshapes });
+
+    // Exactly the five documented scalar fields — no `landmarks`, `faces`,
+    // `matrix`, or `blendshapes` key ever attached to the output.
+    expect(Object.keys(signals).sort()).toEqual(['eyeMax', 'fwdX', 'fwdY', 'horiz', 'vert'].sort());
+    for (const v of Object.values(signals)) {
+      expect(v === null || typeof v === 'number').toBe(true);
+    }
+    // Serialising the output can never reproduce the 478-point input — the
+    // strongest available proxy for "the landmark array did not pass through".
+    expect(JSON.stringify(signals).length).toBeLessThan(200);
+  });
+
+  it('a ranged event carries only {type, started_at, ended_at} — no signals, frames or metadata', () => {
+    const opened: CondState = { since: T0, openIso: new Date(T0).toISOString() };
+    const { emit } = advanceCondition('face_absent', opened, false, T0 + 4000, MIN);
+    expect(emit).not.toBeNull();
+    expect(Object.keys(emit!).sort()).toEqual(['ended_at', 'started_at', 'type']);
+
+    const states = freshCondStates();
+    states.gaze_away = { since: T0, openIso: new Date(T0).toISOString() };
+    const closed = closeOpenConditions(states, T0 + 2000);
+    expect(closed).toHaveLength(1);
+    expect(Object.keys(closed[0]).sort()).toEqual(['ended_at', 'started_at', 'type']);
   });
 });

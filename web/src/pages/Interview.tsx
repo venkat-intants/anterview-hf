@@ -17,7 +17,7 @@ import { useTranslation } from 'react-i18next';
 import InterviewIntro from '@/components/InterviewIntro';
 import LiveKitInterview from '@/features/interview/LiveKitInterview';
 import InterviewErrorBoundary from '@/features/interview/InterviewErrorBoundary';
-import { preloadProctorAssets } from '@/features/interview/useProctoring';
+import { preloadProctorAssets } from '@/features/proctoring/useProctoring';
 import { postConsent } from '@/api/consent';
 import type { Language } from '@/types/interview';
 import { StatusTag } from '@/design/components/primitives';
@@ -76,15 +76,11 @@ export default function Interview() {
         )}
       >
         {/* Aurora ambient glow — presentational only */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 overflow-hidden"
-        >
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
           <div
             className="av-aurora-blob absolute left-1/2 top-1/2 h-[60vh] w-[60vh] -translate-x-1/2 -translate-y-1/2 rounded-full"
             style={{
-              background:
-                'radial-gradient(circle,rgba(var(--accent-rgb),0.18),transparent 65%)',
+              background: 'radial-gradient(circle,rgba(var(--accent-rgb),0.18),transparent 65%)',
               filter: 'blur(80px)',
             }}
           />
@@ -99,10 +95,7 @@ export default function Interview() {
           )}
           role="alert"
         >
-          <XCircle
-            className="h-10 w-10 text-[var(--ui-danger)]"
-            aria-hidden="true"
-          />
+          <XCircle className="h-10 w-10 text-[var(--ui-danger)]" aria-hidden="true" />
           <StatusTag tone="ember" className="text-[13px]">
             {t('interviewPage.missingSession')}
           </StatusTag>
@@ -112,12 +105,7 @@ export default function Interview() {
   }
 
   if (!introDone) {
-    return (
-      <InterviewIntro
-        language={sessionLanguage}
-        onDone={handleIntroDone}
-      />
-    );
+    return <InterviewIntro language={sessionLanguage} onDone={handleIntroDone} />;
   }
 
   // Scoped boundary: a render crash inside the live panel must not take the whole

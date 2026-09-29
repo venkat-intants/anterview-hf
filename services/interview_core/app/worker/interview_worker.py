@@ -664,6 +664,32 @@ def _mint_service_jwt() -> str:
       - sub: "interview_core" (service identity — no role restriction on scorer)
       - roles: ["service"]
     Algorithm: HS256 (settings.jwt_algorithm), secret: settings.jwt_secret.
+
+    AR-2 NOTE (2026-09-28, deliberately NOT changed by the asymmetric-signing
+    work): this function is interview_core self-signing a token, which is
+    exactly the shared-secret exposure AR-2's rollout is meant to remove
+    everywhere else — this service is meant to hold a PUBLIC key only (see
+    shared.security.forbid_private_signing_key and app/config.py's
+    jwt_verify_algorithms/jwt_public_keys), yet it still needs `settings.
+    jwt_secret` here to sign, because it has no private key to sign an RS256
+    token with and none is planned for it. It is UNCHANGED, not fixed, and
+    remains exactly today's exposure for this one call path — read access to
+    interview_core still lets an attacker mint a "service" token accepted by
+    feedback_billing's /internal/score, for as long as HS256 stays in ANY
+    service's JWT_VERIFY_ALGORITHMS. Once HS256 is fully retired platform-wide
+    (AR-2 rollout step 4), this function stops working outright (feedback_
+    billing will reject the HS256 token it produces) unless it is redesigned
+    first — e.g. data_gateway growing an internal token-issuance endpoint this
+    worker calls instead of signing locally. That redesign is a new
+    cross-service RPC (new endpoint, new auth for it, new client, new tests)
+    and was out of scope for this change; data_gateway's own reconciler
+    already retries a /internal/score call that failed for any reason
+    (including this one), so the functional impact of leaving it broken post-
+    HS256-retirement is a slower scorecard via the reconciler, not a lost one
+    — but the security exposure described above is real until this is
+    redesigned or HS256 is retired, whichever is later, and this comment is
+    that finding recorded in the code (see also the handoff report for this
+    change).
     """
     # Delegates to the canonical minter rather than building the claims dict
     # here. A second implementation of token minting is the same drift risk that

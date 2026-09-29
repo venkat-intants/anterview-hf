@@ -62,6 +62,7 @@ from shared.auth.jwt import (
     generate_refresh_token,
     hash_refresh_token,
     issue_access_token,
+    resolve_signing_key,
 )
 from shared.auth.jwt import (
     USER_TOKEN_EPOCH_PREFIX as _USER_TOKEN_EPOCH_PREFIX,
@@ -179,14 +180,22 @@ class LocalAuthProvider(AuthProvider):
         Delegates refresh-token minting to the module-level ``mint_refresh_session``
         so the tracked ``<user_id>:<created_at_unix>`` format and session-index
         update are guaranteed for every token, regardless of code path.
+
+        Signing key/algorithm/kid come from ``resolve_signing_key`` (AR-2), not
+        straight from ``self._settings.jwt_secret``/``jwt_algorithm`` — the one
+        place that decides HS256 vs RS256 for every issuer call site, so this
+        provider moves together with the SSO routers and the service-to-service
+        minters the moment ``JWT_SIGNING_ALGORITHM`` flips.
         """
+        algorithm, key, kid = resolve_signing_key(self._settings)
         access = issue_access_token(
             user_id=user_id,
             roles=roles,
-            secret=self._settings.jwt_secret,
-            algorithm=self._settings.jwt_algorithm,
+            secret=key,
+            algorithm=algorithm,
             issuer=getattr(self._settings, "jwt_issuer", "intants-data-gateway"),
             audience=getattr(self._settings, "jwt_audience", "intants-services"),
+            kid=kid,
         )
         ttl_seconds = self._settings.jwt_refresh_expiry_days * 86400
         raw_refresh = await mint_refresh_session(self._redis, user_id, ttl_seconds)

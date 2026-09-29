@@ -4,6 +4,7 @@ from typing import Literal
 import structlog
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from shared.auth.jwt import decode_private_key, parse_public_keys, parse_verify_algorithms
 from shared.security import ENFORCED_ENVS, assert_strong_secrets, normalise_app_env
 from shared.security import validate_cors_origins as _validate_cors_origins
 from shared.security import validate_database_ssl as _validate_database_ssl
@@ -136,6 +137,38 @@ class Settings(BaseSettings):
     jwt_audience: str = "intants-services"
     jwt_refresh_expiry_days: int = 7
     password_hash_rounds: int = 12
+
+    # --- AR-2: asymmetric JWT signing ------------------------------------
+    # data_gateway is the ONLY issuer in the platform, and therefore the ONLY
+    # service whose Settings class declares jwt_private_key / jwt_active_kid /
+    # jwt_signing_algorithm at all — see shared/auth/jwt.py's module
+    # docstring for the full rollout sequence and
+    # shared.security.forbid_private_signing_key for the guard that keeps the
+    # other three services from ever holding a private key by accident.
+    #
+    # Which algorithm NEW tokens are signed with. "HS256" (default) preserves
+    # today's behaviour exactly — flipping to "RS256" is rollout step 2, done
+    # only after every verifier has JWT_PUBLIC_KEYS + "RS256" in
+    # JWT_VERIFY_ALGORITHMS (step 1).
+    jwt_signing_algorithm: str = "HS256"
+    # Base64-encoded PKCS8 RSA private key PEM. Required (and validated below)
+    # only when jwt_signing_algorithm == "RS256". Generate a keypair with
+    # scripts/generate_jwt_rsa_keypair.py. NEVER set this on any service other
+    # than data_gateway.
+    jwt_private_key: str = ""
+    # The `kid` stamped into every RS256 token's header, and the key this
+    # service selects out of jwt_public_keys to verify its own freshly-signed
+    # tokens with (self-consistency, checked below). Required when
+    # jwt_signing_algorithm == "RS256".
+    jwt_active_kid: str = ""
+    # Which token algorithm families this service's OWN verifiers (its
+    # protected API routes — data_gateway is also a verifier, not only an
+    # issuer) accept. Comma-separated; "HS256" alone reproduces today's
+    # behaviour exactly. Add "RS256" in rollout step 1; drop "HS256" in step 4.
+    jwt_verify_algorithms: str = "HS256"
+    # JSON object {kid: base64-pem} of RSA PUBLIC keys, used when "RS256" is in
+    # jwt_verify_algorithms. "{}" (empty) until a keypair is generated.
+    jwt_public_keys: str = "{}"
 
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
@@ -746,6 +779,53 @@ class Settings(BaseSettings):
                 "INTERVIEW_LINK_SECRET": self.interview_link_secret,
             },
         )
+        return self
+
+    @model_validator(mode="after")
+    def validate_jwt_asymmetric_config(self) -> "Settings":
+        """Fail fast at boot, not at first login, on any AR-2 misconfiguration.
+
+        Runs in every environment (unlike validate_secret_strength above) —
+        an RS256 misconfiguration here does not merely weaken a deployment,
+        it locks every candidate/HR/admin user out the moment it is hit, and
+        that failure mode is worth catching in dev too.
+
+        Four checks, in the order an operator would fix them:
+          1. JWT_VERIFY_ALGORITHMS names only known families and at least one.
+          2. JWT_PUBLIC_KEYS parses and every entry is a genuine RS256 PUBLIC
+             key (never a private key pasted into the wrong setting).
+          3. If JWT_SIGNING_ALGORITHM=RS256: JWT_PRIVATE_KEY is set and is a
+             genuine RS256 PRIVATE key, and JWT_ACTIVE_KID is set.
+          4. Self-consistency: JWT_ACTIVE_KID must name an entry already
+             present in JWT_PUBLIC_KEYS, or this service would mint tokens
+             its own verifiers (and everyone else's) cannot check.
+        """
+        parse_verify_algorithms(self.jwt_verify_algorithms)
+        public_keys = parse_public_keys(self.jwt_public_keys)
+
+        algorithm = self.jwt_signing_algorithm.strip().upper()
+        if algorithm not in ("HS256", "RS256"):
+            raise ValueError(
+                f"JWT_SIGNING_ALGORITHM={self.jwt_signing_algorithm!r} is not "
+                "supported. Use 'HS256' or 'RS256'."
+            )
+        if algorithm == "RS256":
+            if not self.jwt_private_key:
+                raise ValueError(
+                    "JWT_SIGNING_ALGORITHM=RS256 requires JWT_PRIVATE_KEY to be set."
+                )
+            decode_private_key(self.jwt_private_key)
+            if not self.jwt_active_kid:
+                raise ValueError(
+                    "JWT_SIGNING_ALGORITHM=RS256 requires JWT_ACTIVE_KID to be set."
+                )
+            if self.jwt_active_kid not in public_keys:
+                raise ValueError(
+                    f"JWT_ACTIVE_KID={self.jwt_active_kid!r} has no matching entry in "
+                    "JWT_PUBLIC_KEYS — this service would sign tokens nobody, "
+                    "including itself, can verify. Add the public half of the "
+                    "active keypair to JWT_PUBLIC_KEYS under the same kid."
+                )
         return self
 
     @model_validator(mode="after")

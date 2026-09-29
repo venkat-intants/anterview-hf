@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from shared.auth.base import AuthProvider, User
-from shared.auth.jwt import is_token_revoked, verify_access_token
+from shared.auth.jwt import build_verification_keys, is_token_revoked, verify_access_token
 from sqlalchemy import text as sa_text
 
 from app.config import settings
@@ -68,8 +68,8 @@ async def get_current_user(
     try:
         payload = verify_access_token(
             credentials.credentials,
-            secret=settings.jwt_secret,
-            algorithm=settings.jwt_algorithm,
+            build_verification_keys(settings),
+            algorithm="HS256",
             expected_issuer=settings.jwt_issuer,
             expected_audience=settings.jwt_audience,
         )

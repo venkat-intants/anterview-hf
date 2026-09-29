@@ -94,9 +94,9 @@ a commercial contract.
 | | |
 |---|---|
 | **Source finding** | SEC-2 (MEDIUM / CONSIDER), with SEC-1 (no `kid`, no rotation) as its sibling |
-| **Status** | **ACCEPTED for the demo tier — asymmetric signing is the Tier-2 answer** |
+| **Status** | **CAPABILITY SHIPPED 2026-09-28, NOT YET LIVE ANYWHERE — asymmetric signing exists in code; every current deployment still signs HS256, and one HS256 signer outside `data_gateway` remains by design (see addendum)** |
 | **Owner** | `security-auditor`, with `cto-architect` on the key-management design |
-| **Trigger to revisit** | Any of: (a) a fifth service or any third-party integration needing to *verify* our tokens — verification would hand them signing power; (b) the first real `JWT_SECRET` exposure or suspected exposure; (c) Tier-2 migration; (d) any customer contract with a key-management or key-rotation clause |
+| **Trigger to revisit** | Any of: (a) a fifth service or any third-party integration needing to *verify* our tokens — verification would hand them signing power; (b) the first real `JWT_SECRET` exposure or suspected exposure; (c) Tier-2 migration; (d) any customer contract with a key-management or key-rotation clause; (e) the RS256 rollout below actually being run against a deployment — this entry stays open until it is |
 
 **The decision.** All four services plus the LiveKit worker share one HS256
 `JWT_SECRET` (`shared/auth/jwt.py`). Under HS256 the verification key *is* the
@@ -129,6 +129,56 @@ into a procedure.
 private key and is the only signer; the other services and the worker verify
 with the public key only. That makes compromising `admin_ops` unable to mint
 anything, which is the actual goal.
+
+**2026-09-28 addendum — the capability now exists; nothing has adopted it yet.**
+`shared/auth/jwt.py` gained RS256 issue/verify (EdDSA was the first choice but
+`python-jose==3.5.0` as pinned has no `EdDSA` member in `jose.constants.
+ALGORITHMS` — verified against the installed package, not assumed — so RS256
+is what this dependency actually supports), a `kid` header, and
+`VerificationKey` so a verifier can hold several public keys and a caller can
+hold both an HS256 secret and RS256 keys at once. `data_gateway`'s `Settings` gained
+`jwt_signing_algorithm` / `jwt_private_key` / `jwt_active_kid`; the other three
+services' `Settings` classes gained `jwt_verify_algorithms` / `jwt_public_keys`
+and NOTHING ELSE — no `jwt_private_key` field exists on them at all, and
+`shared.security.forbid_private_signing_key` refuses to boot any of them if one
+reaches their environment anyway (no environment exemption — it is wrong in
+dev too). `scripts/generate_jwt_rsa_keypair.py` generates a keypair and prints
+every setting an operator needs, in rollout order.
+
+**What this addendum does NOT claim.**
+* **Nothing is deployed this way.** Every default is HS256-only
+  (`JWT_SIGNING_ALGORITHM=HS256`, `JWT_VERIFY_ALGORITHMS=HS256`), so a
+  deployment that sets none of the new variables is byte-for-byte today's
+  behaviour. Turning RS256 on is a 4-step operator rollout (public keys +
+  dual-verify everywhere, THEN cut the issuer over, THEN wait out the token
+  TTL, THEN drop HS256 — see `shared/auth/jwt.py`'s module docstring) that has
+  not been run against any real environment.
+* **The HF Space demo deployment cannot safely turn this on as it stands.**
+  `space/entrypoint.sh` `export`s one shared environment into all four
+  supervisord-managed processes in a single container — there is no
+  per-service `.env` split the way the Railway/VM deploy has. Setting
+  `JWT_PRIVATE_KEY` in `space.env` hands it to all four processes, and
+  `forbid_private_signing_key` will then refuse to boot the three that must
+  never hold it. That guard doing its job, not a bug, but it means the Space
+  needs an `entrypoint.sh` change (scope `JWT_PRIVATE_KEY` to the
+  `data_gateway` process only) before RS256 can be turned on there — devops
+  work, not done as part of this change.
+* **One HS256 signer outside `data_gateway` remains, unchanged, by design.**
+  `interview_core`'s worker (`_mint_service_jwt` in
+  `app/worker/interview_worker.py`) still self-signs a `sub="interview_core",
+  roles=["service"]` token with the shared `JWT_SECRET` to call
+  `feedback_billing`'s `/internal/score` directly — this is precisely the
+  AR-2 exposure, for that one call path, and it is not this change's doing to
+  leave it but it is this change's job to say so plainly: closing it needs
+  `interview_core` to obtain a signed token from `data_gateway` instead of
+  minting one itself (a new internal RPC — endpoint, auth for it, client,
+  tests), which is materially larger than a JWT-library change and was judged
+  out of scope here. The functional fallback already exists independently of
+  this decision: `data_gateway`'s own reconciler retries a `/internal/score`
+  call that failed for any reason, so once HS256 is fully retired platform-
+  wide this one path degrades to "scored via the reconciler, not immediately"
+  rather than breaking outright — but the security exposure this paragraph
+  describes is real until either HS256 retires or this path is redesigned.
 
 ---
 
@@ -561,7 +611,7 @@ these is built.
 | ID | Risk | Source | Owner | Fires when |
 |---|---|---|---|---|
 | **AR-1** | Demo tier is not India-resident | DPDP-3 | `platform_owner` | Residency-asserting bid, or Bedrock Mumbai approval |
-| **AR-2** | One shared HS256 secret across five processes | SEC-2 / SEC-1 | `security-auditor` | Fifth verifier, secret exposure, or Tier-2 |
+| **AR-2** | **PARTIAL 2026-09-28** — RS256 capability shipped, HS256-only in every live deployment, one HS256 signer outside data_gateway remains by design | SEC-2 / SEC-1 | `security-auditor` | Fifth verifier, secret exposure, Tier-2, or the rollout actually being run |
 | **AR-3** | Candidate code executes on JDoodle | AG-05 | `platform_owner` | Residency bid, confidential-IP customer, or free-tier exhaustion |
 | **AR-4** | No production avatar gate; `custom` unimplemented | AG-06 residue | `cto-architect` | Production `APP_ENV`, residency bid, or 2026-11-28 sunset review |
 | **AR-5** | **CLOSED 2026-09-26** — decision rationale, ledger reason and three related fields are now redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | — (fixed; kept for citations, see the entry) |

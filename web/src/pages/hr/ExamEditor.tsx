@@ -1136,6 +1136,20 @@ function RoundPanel({
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Update failed'),
   });
 
+  // Camera proctoring is per round and OFF by default, which is the right
+  // default — it is the setting that turns a written test into something that
+  // watches the candidate, so it should be a deliberate act. It had no control
+  // anywhere in the app, so it could not be turned on at all.
+  const cameraMut = useMutation({
+    mutationFn: (camera_proctoring_required: boolean) =>
+      updateRound(examId, round.id, { camera_proctoring_required }),
+    onSuccess: () => {
+      toast.success('Saved');
+      invalidateStructure();
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Update failed'),
+  });
+
   const addSectionMut = useMutation({
     mutationFn: () =>
       createSection(examId, round.id, {
@@ -1343,6 +1357,33 @@ function RoundPanel({
                 onChange={(e) => advancesMut.mutate(e.target.checked)}
               />
               Advances to interview on pass
+            </label>
+          </div>
+
+          {/* ── Camera proctoring. Its own row, not tucked in with the pass
+              threshold: this is the setting that decides whether a written
+              test watches the candidate, and it deserves to be read before it
+              is ticked rather than found by accident. Applies to every section
+              in the round — MCQ and coding alike, since proctoring attaches to
+              the attempt, not the section kind. ── */}
+          <div className="mt-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3">
+            <label className="flex items-start gap-2 text-[12.5px] text-[var(--ui-soft)]">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-3.5 w-3.5 accent-[var(--accent)]"
+                checked={round.camera_proctoring_required}
+                disabled={cameraMut.isPending}
+                onChange={(e) => cameraMut.mutate(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium text-foreground">Require camera proctoring</span>
+                <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
+                  Candidates are asked for camera access before the round starts and cannot
+                  begin without it. Detection runs entirely in their browser — no video or
+                  image is recorded or sent anywhere, only timestamped events. Leave off and
+                  the round still records fullscreen, tab-switch and clipboard activity.
+                </span>
+              </span>
             </label>
           </div>
 

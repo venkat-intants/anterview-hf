@@ -58,6 +58,11 @@ export interface Round {
   status: RoundStatus;
   position: number;
   sections: Section[];
+  /** Whether candidates must grant camera access before this round starts.
+   *  The server has accepted and returned this since the camera-proctoring
+   *  migration; it was missing from this type, so no HR screen could read or
+   *  set it and the feature was unreachable through the product. */
+  camera_proctoring_required: boolean;
 }
 
 export interface ExamStructure {
@@ -78,6 +83,7 @@ export type RoundUpdateInput = Partial<{
   time_limit_seconds: number | null;
   advances_to_interview: boolean;
   status: RoundStatus;
+  camera_proctoring_required: boolean;
 }>;
 
 export interface SectionCreateInput {

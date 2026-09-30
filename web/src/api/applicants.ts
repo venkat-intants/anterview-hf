@@ -213,6 +213,13 @@ export interface Application {
   status: string;
   /** What is recorded on the application — what a status change compares with. */
   stored_status: string;
+  /**
+   * When someone let this candidate apply again despite the waiting period,
+   * and why. Null when no exception is outstanding — including once it has
+   * been spent, which is what makes it safe to render as a live state.
+   */
+  reapply_override_at: string | null;
+  reapply_override_reason: string | null;
   ats_overall: number | null;
   ats_breakdown: Record<string, number> | null;
   ats_strengths: string[] | null;

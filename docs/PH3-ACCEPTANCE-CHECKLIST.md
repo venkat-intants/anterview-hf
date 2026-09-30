@@ -237,12 +237,29 @@ account and their reapplication would have waited for ever.
 The cooldown is re-evaluated at confirmation rather than trusted from submission, and
 the override is spent only when it is what allowed the reapplication.
 
-**What a candidate sees.** The reply to a refusal is now identical to the reply a live
-application gets: a 409 naming the date told anyone with the public link that a named
-person had applied, had been rejected, and roughly when. The date is emailed to the
-address instead. And a staged reapplication says "One more step — check your email"
-rather than "your application is in", which would have been the opposite of what the
-email then asks them to do.
+**What a candidate sees.** One screen and one sentence, for every submission. Not
+"identical for a refusal and a live application" — identical full stop, for all four
+states an address can be in: live application, rejected inside the waiting period,
+rejected past it, and never applied here at all.
+
+That is stronger than it was, and it had to be. The reply was made to *match* across
+those cases three times, and three times a difference survived somewhere adjacent: a
+409 naming the date, then `awaiting_confirmation` plus the real applicant and enrolment
+ids, then the draft row left readable. Each time the reply was still computed from
+stored state, so the branches stayed reachable — the fourth review found that a rejected
+address was answered "accepted" on *every* submission for ever while an address that had
+never applied was answered "accepted" once and "already applied" from the second time
+on. Two anonymous requests, and a stranger knew a named person had been turned down.
+
+So the reply is now a constant. `ApplicationOut` carries four fields, none of which
+depends on what is stored about the address, and every route returns the same object
+through one helper. Everything that genuinely differs — you already have an application
+with us, you were turned down, you may apply again on this date, confirm this really is
+you — is emailed to the address, which is the only place it is the reader's to know.
+
+Held down by `tests/integration/test_ph3_cooldown_indistinguishable.py`: all four states,
+both doors, up to three submissions each, comparing status and whole body, plus what
+`GET /apply/draft` reads back afterwards.
 
 ---
 

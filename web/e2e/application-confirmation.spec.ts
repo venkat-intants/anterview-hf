@@ -131,7 +131,7 @@ test.describe('the details read off a CV', () => {
     await expect(submit).toBeEnabled({ timeout: 30_000 });
     await submit.click();
     await expect(
-      page.getByText('Thanks — your application is in. We will be in touch by email.'),
+      page.getByText('Thanks — we have your application'),
     ).toBeVisible({ timeout: 60_000 });
 
     // ── And HR is looking at the name they gave us ──────────────────────────

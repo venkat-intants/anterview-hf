@@ -410,9 +410,23 @@ jobs:
           CONSENT_IP_SALT: ci-only-salt-0123456789abcdef
           RATE_LIMIT_LOGIN_PER_MINUTE: '10000'
           RATE_LIMIT_API_PER_MINUTE: '10000'
-          S3_ENDPOINT: http://localhost:9000
-          S3_ACCESS_KEY_ID: ci-access-key
-          S3_SECRET_ACCESS_KEY: ci-secret-key
+          # NO S3 CREDENTIALS ON THIS STEP, deliberately, and the disk fallback
+          # turned on in their place.
+          #
+          # This step used to set S3_ENDPOINT=http://localhost:9000 with
+          # S3_ACCESS_KEY_ID — and there is no MinIO in `services:` above, so
+          # the endpoint answered nothing. `local_storage.enabled()` returns
+          # False whenever s3_access_key_id is set, so the fallback could not
+          # take over either: every upload hit a dead socket and the route
+          # answered 503. No `-m integration` test in this service uploaded an
+          # object, so nothing noticed for as long as that was true.
+          #
+          # The moment one did — the PH3-B4b indistinguishability matrix, which
+          # has to post a real CV to reach the branch it tests — it failed in
+          # CI while passing locally. The two credentials were placeholders for
+          # a service container that was never added; naming a real directory
+          # instead is what makes the step honest.
+          STORAGE_LOCAL_DIR: ${{ runner.temp }}/ci-uploads
         run: python -m pytest tests/ -q -m integration
 
       - name: Coverage

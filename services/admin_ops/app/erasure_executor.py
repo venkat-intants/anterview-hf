@@ -2002,7 +2002,15 @@ async def _execute_one_erasure(
             "     OR (reapply_override_reason IS NOT NULL"
             "         AND reapply_override_reason <> '[redacted]')"
             "     OR reapply_answers IS NOT NULL"
-            "     OR reapply_requested_at IS NOT NULL)"
+            "     OR reapply_requested_at IS NOT NULL"
+            # All FOUR staging columns, not the two that happen to be written
+            # first. They are set and cleared together today, so a row holding
+            # only a key or a hash is not reachable — but the point of this
+            # clause is to stop a live state machine surviving an erasure, and
+            # a redeemable confirmation link left behind because the WHERE did
+            # not look for it is precisely that.
+            "     OR reapply_resume_s3_key IS NOT NULL"
+            "     OR reapply_token_hash IS NOT NULL)"
         ),
         {"uid": uid_str},
     )

@@ -8,29 +8,41 @@ can observe between "this address has a live application" and "this address was
 REJECTED" is employment-outcome data about a third party, handed to whoever
 typed the address.
 
-Three separate reviews have now found that difference, in three different
-places, each time after the previous one was "fixed":
+FOUR separate reviews have now found that difference, in four different places,
+each time after the previous one was "fixed":
 
   1. a 409 whose body named the date they could reapply;
   2. `awaiting_confirmation: true` plus the victim's own `applicant_id` and
      `enrolment_id` in the body;
   3. the draft row left in a different state, so a LATER call to the same
-     endpoint answered 404 for one and 201 for the other.
+     endpoint answered 404 for one and 201 for the other;
+  4. with every reply finally identical — what the SECOND submission read back.
+     A rejected address was answered "accepted" on every submission for ever,
+     while an address that had never applied was answered "accepted" once and
+     "already applied" from the second time on. Two anonymous requests.
 
 Each fix closed the channel it was pointed at and left the difference intact
-somewhere adjacent. The test that was supposed to prevent that —
-`assert "HTTP_409_CONFLICT" not in inspect.getsource(fn)` — passed on a branch
-where the reply was still distinguishable three ways, because reading the
-source for one spelling cannot see a difference that has moved.
+somewhere adjacent. And this file did not catch (4), which is the part worth
+dwelling on, because it was written to. The version of it that shipped:
 
-So this asserts the WHOLE observable output, through the real ASGI app against
-a real database: status code, every byte of the body, and the post-conditions a
-second request can read back. A difference cannot satisfy this test by
-relocating; it has to actually not exist.
+  * repeated the probe only on live-vs-in-cooldown, the pair that does NOT
+    differ, so the repetition it was proud of could not fail;
+  * probed the pair that DOES differ exactly once each;
+  * compared three field names rather than the body, and one of those names
+    (`awaiting_confirmation`) had already been deleted from the response model,
+    so that assertion compared None with None;
+  * never sent a single request to the draft door, although finding (3) is a
+    finding about the draft door.
 
-What is deliberately NOT asserted: response timing. The cooldown path does more
-work than the already-applied path and always will, so a timing difference is
-real and is recorded as an accepted risk rather than pretended away here.
+So it is now a matrix and not a handful of chosen pairs: all four states, both
+doors, repeated up to three times, comparing the status code and the entire
+body — plus, on the draft door, what `GET /apply/draft` reads back afterwards.
+A difference cannot satisfy this by relocating, and it cannot survive by living
+in a request number nobody sent.
+
+What is deliberately NOT asserted: response timing. The staging path does more
+work than the others and always will, so a timing difference is real and is
+recorded as an accepted risk rather than pretended away here.
 """
 
 from __future__ import annotations
@@ -173,7 +185,10 @@ async def _clear_rate_limit() -> None:
     # By pattern rather than by a guessed host: the ASGI transport has no
     # socket, and which string `extract_client_ip` settles on is an
     # implementation detail this test has no business encoding.
-    keys = [k async for k in redis.scan_iter(match="rl:public_apply_submit:*")]
+    # EVERY public-apply bucket, not just the submit one. The draft door goes
+    # through `public_apply_draft_start` as well, and a 429 from a bucket this
+    # helper forgot looks exactly like a failing assertion.
+    keys = [k async for k in redis.scan_iter(match="rl:public_apply*")]
     if keys:
         await redis.delete(*keys)
 
@@ -224,85 +239,192 @@ async def _set_status(email: str, status: str) -> None:
         await db.commit()
 
 
-@pytest.mark.asyncio
-async def test_a_rejected_applicant_is_indistinguishable_from_a_live_one(
-    client: AsyncClient,
-) -> None:
-    """The whole observable reply, byte for byte, on the one-shot door."""
-    _, req_id = await _seed_opening(cooldown_days=90)
-
-    live = f"live-{uuid.uuid4().hex[:10]}@example.com"
-    gone = f"gone-{uuid.uuid4().hex[:10]}@example.com"
-    assert (await _apply(client, req_id, live)).status_code == 201
-    assert (await _apply(client, req_id, gone)).status_code == 201
-
-    await _set_status(live, "shortlisted")
-    await _set_status(gone, "rejected")
-
-    second_live = await _apply(client, req_id, live)
-    second_gone = await _apply(client, req_id, gone)
-
-    assert second_live.status_code == second_gone.status_code, (
-        "the status code alone must not say which of them was rejected"
-    )
-    assert second_live.json() == second_gone.json(), (
-        "every field of the body: a flag, an id or a different sentence is the "
-        "same disclosure the 409's date was"
-    )
-    body = second_gone.json()
-    assert body["applicant_id"] == "", "never echo a stored id back to a stranger"
-    assert body["enrolment_id"] is None
 
 
-@pytest.mark.asyncio
-async def test_the_reply_is_the_same_on_a_second_and_third_attempt(
-    client: AsyncClient,
-) -> None:
-    """Post-conditions, not just the first reply.
+async def _apply_via_draft(
+    client: AsyncClient, req_id: uuid.UUID, email: str
+):  # noqa: ANN202
+    """The OTHER door: start a draft, attach a CV, submit it.
 
-    The draft door leaked this way: both branches returned the same body, but
-    one consumed the draft and the other did not, so the NEXT call answered 404
-    for a live application and 201 for a rejected one. A difference in what the
-    endpoint leaves behind is as readable as a difference in what it says.
+    This door was never exercised by this file, although the round-3 finding it
+    cites — "the draft row left in a different state" — is a finding about this
+    door. It carries the same `gate`, so every case below runs through both.
     """
-    _, req_id = await _seed_opening(cooldown_days=90)
+    await _clear_rate_limit()
+    started = await client.post(
+        f"/apply/{req_id}/draft",
+        json={"email": email, "consent_granted": True},
+    )
+    if started.status_code != 201:
+        raise AssertionError(f"draft start failed: {started.status_code} {started.text}")
+    token = started.json()["resume_token"]
+    hdr = {"X-Draft-Token": token}
 
-    live = f"live2-{uuid.uuid4().hex[:10]}@example.com"
-    gone = f"gone2-{uuid.uuid4().hex[:10]}@example.com"
-    await _apply(client, req_id, live)
-    await _apply(client, req_id, gone)
-    await _set_status(live, "shortlisted")
-    await _set_status(gone, "rejected")
+    await client.patch("/apply/draft", json={"full_name": "Probe Person"}, headers=hdr)
+    await client.post(
+        "/apply/draft/resume-upload",
+        files={"resume": ("cv.pdf", _PDF, "application/pdf")},
+        headers=hdr,
+    )
+    await client.post(
+        "/apply/draft/confirm", json={"full_name": "Probe Person"}, headers=hdr
+    )
+    await _clear_rate_limit()
+    submitted = await client.post("/apply/draft/submit", headers=hdr)
+    return submitted, token
 
-    for attempt in range(2):
-        again_live = await _apply(client, req_id, live)
-        again_gone = await _apply(client, req_id, gone)
-        assert again_live.status_code == again_gone.status_code, f"attempt {attempt + 2}"
-        assert again_live.json() == again_gone.json(), f"attempt {attempt + 2}"
+
+async def _draft_readback(client: AsyncClient, token: str):  # noqa: ANN202
+    """What ``GET /apply/draft`` says about a draft after it was submitted.
+
+    The round-3 channel exactly: one branch consumed the draft and another did
+    not, so a later read answered 404 for a live application and 200 for a
+    rejected one. A difference in what a request LEAVES BEHIND is as readable
+    as a difference in what it says.
+    """
+    r = await client.get("/apply/draft", headers={"X-Draft-Token": token})
+    return r.status_code, (r.json() if r.status_code == 200 else None)
+
+
+# The four states an address can be in when it reaches an anonymous door. The
+# whole point is that no sequence of requests can tell them apart, so they are
+# declared once and every test below exercises all four.
+_LIVE = "live"            # (a) has an application, still being considered
+_IN_COOLDOWN = "cooling"  # (b) rejected, inside the waiting period
+_PAST_COOLDOWN = "past"   # (c) rejected, waiting period elapsed
+_UNKNOWN = "unknown"      # (d) never applied here at all
+
+_ALL_CASES = (_LIVE, _IN_COOLDOWN, _PAST_COOLDOWN, _UNKNOWN)
+
+
+async def _address_in_state(client: AsyncClient, req_id: uuid.UUID, case: str) -> str:
+    """An address prepared into *case*, ready to be probed."""
+    email = f"{case}-{uuid.uuid4().hex[:10]}@example.com"
+    if case == _UNKNOWN:
+        return email
+    r = await _apply(client, req_id, email)
+    assert r.status_code == 201, f"seeding {case}: {r.status_code} {r.text}"
+    await _set_status(email, "shortlisted" if case == _LIVE else "rejected")
+    return email
+
+
+async def _four_addresses(
+    client: AsyncClient,
+) -> dict[str, tuple[uuid.UUID, str]]:
+    """One address per case, on openings that put each case in its state.
+
+    Two openings, because "inside the waiting period" and "past it" are the
+    same rejection under different settings. The cases are still compared with
+    each other — what is under test is the REPLY, and a reply that differs by
+    which opening was asked would be its own leak.
+    """
+    _, waiting = await _seed_opening(cooldown_days=90)
+    _, open_now = await _seed_opening(cooldown_days=0)
+    return {
+        _LIVE: (waiting, await _address_in_state(client, waiting, _LIVE)),
+        _IN_COOLDOWN: (waiting, await _address_in_state(client, waiting, _IN_COOLDOWN)),
+        _PAST_COOLDOWN: (
+            open_now,
+            await _address_in_state(client, open_now, _PAST_COOLDOWN),
+        ),
+        _UNKNOWN: (waiting, await _address_in_state(client, waiting, _UNKNOWN)),
+    }
+
+
+def _observable(response) -> tuple[int, object]:  # noqa: ANN001
+    """EVERYTHING a caller can read: the status and the entire body.
+
+    Not a list of field names. The previous version of this file compared
+    ``already_applied``, ``awaiting_confirmation`` and ``message`` by name — and
+    ``awaiting_confirmation`` had already been deleted from the response model,
+    so that assertion compared None with None and passed on a branch that
+    leaked. A named-field comparison can only check the fields somebody thought
+    of; this one cannot go stale.
+    """
+    return response.status_code, response.json()
+
+
+def _assert_one_answer(seen: dict[str, tuple[int, object]], what: str) -> None:
+    """All four cases produced the same thing, or say exactly how they differ."""
+    if len({repr(seen[c]) for c in _ALL_CASES}) == 1:
+        return
+    detail = "\n".join(f"    {c:9} -> {seen[c]}" for c in _ALL_CASES)
+    raise AssertionError(
+        f"{what} tells the four states apart, so two anonymous requests reveal\n"
+        f"that a named person applied here and was rejected:\n{detail}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_stranger_cannot_tell_a_rejection_from_never_having_applied(
+@pytest.mark.parametrize("probes", [1, 2, 3])
+async def test_every_state_answers_identically_on_the_one_shot_door(
+    client: AsyncClient, probes: int
+) -> None:
+    """All four cases, one reply, however many times you ask.
+
+    REPETITION IS THE POINT, and it is what every earlier version of this file
+    left out. Each of them probed the interesting pair exactly once, and the
+    branch passed while a rejected address was answered "accepted" on every
+    submission for ever, and an address that had never applied was answered
+    "accepted" once and "already applied" from the second time onward. Two
+    requests, and a stranger knew a named person had been turned down.
+
+    Asking N times and demanding a single answer makes that unreachable: a
+    difference cannot hide in the second request, or the third.
+    """
+    addresses = await _four_addresses(client)
+    for attempt in range(1, probes + 1):
+        seen = {
+            case: _observable(await _apply(client, target, email))
+            for case, (target, email) in addresses.items()
+        }
+        _assert_one_answer(seen, f"submission {attempt} of {probes}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("probes", [1, 2, 3])
+async def test_every_state_answers_identically_on_the_draft_door(
+    client: AsyncClient, probes: int
+) -> None:
+    """The same four cases through the save-and-finish-later door.
+
+    It carries the same gate and so the same risk, and it is where the round-3
+    finding actually lived — yet no version of this file had ever sent it a
+    single request.
+    """
+    addresses = await _four_addresses(client)
+    for attempt in range(1, probes + 1):
+        replies: dict[str, tuple[int, object]] = {}
+        readbacks: dict[str, tuple[int, object]] = {}
+        for case, (target, email) in addresses.items():
+            submitted, token = await _apply_via_draft(client, target, email)
+            replies[case] = _observable(submitted)
+            # AND what the draft looks like afterwards. Identical replies
+            # followed by a readable draft for one case and a 404 for another
+            # is the same disclosure, one step later.
+            readbacks[case] = await _draft_readback(client, token)
+        _assert_one_answer(replies, f"draft submission {attempt} of {probes}")
+        _assert_one_answer(readbacks, f"the draft left behind on submission {attempt}")
+
+
+@pytest.mark.asyncio
+async def test_the_reply_carries_nothing_that_was_stored(
     client: AsyncClient,
 ) -> None:
-    """The third state, and the one an enumeration attack actually uses.
+    """The body echoes this request, and nothing we hold about the address.
 
-    Distinguishing "rejected" from "never applied here" is enough to confirm
-    somebody applied to this company at all, which is the fact they would least
-    want a stranger to hold.
+    A previous round shipped the real ``applicant_id`` and ``enrolment_id`` in
+    here. They are blank now; this keeps them blank, and keeps the reply from
+    growing a new field with an opinion in it — which is how both of the last
+    two leaks arrived, each added in good faith by the fix for the one before.
     """
     _, req_id = await _seed_opening(cooldown_days=0)
+    email = await _address_in_state(client, req_id, _PAST_COOLDOWN)
 
-    gone = f"gone3-{uuid.uuid4().hex[:10]}@example.com"
-    await _apply(client, req_id, gone)
-    await _set_status(gone, "rejected")
-
-    unknown = f"nobody-{uuid.uuid4().hex[:10]}@example.com"
-    reapplied = await _apply(client, req_id, gone)
-    first_time = await _apply(client, req_id, unknown)
-
-    assert reapplied.status_code == first_time.status_code
-    for field in ("already_applied", "awaiting_confirmation", "message"):
-        assert reapplied.json().get(field) == first_time.json().get(field), (
-            f"{field} tells a stranger this address had applied before"
-        )
+    body = (await _apply(client, req_id, email)).json()
+    assert body["applicant_id"] == ""
+    assert body["enrolment_id"] is None
+    # `full_name` is what THIS request typed: the caller's own input coming
+    # back, not something disclosed to them.
+    assert body["full_name"] == "Probe Person"
+    assert set(body) == {"applicant_id", "enrolment_id", "full_name", "message"}

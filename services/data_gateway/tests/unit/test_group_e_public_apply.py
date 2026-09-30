@@ -28,25 +28,52 @@ def test_an_opening_without_a_published_workflow_takes_no_applications() -> None
     assert "visible_sql('r')" in inspect.getsource(_open_posting)
 
 
-def test_already_applied_is_answered_only_after_a_readable_cv() -> None:
-    """Checked first, it was a free oracle: type an email, learn whether that
-    person applied and what their name is."""
-    src = _submit()
-    assert src.index("_extract_pdf_text(raw)") < src.index("already_applied=True")
+def test_the_reply_model_carries_nothing_that_depends_on_stored_state() -> None:
+    """Four fields, and no room for a fifth with an opinion in it.
+
+    Both of the last two disclosures were a FIELD: `awaiting_confirmation`,
+    then `already_applied`. Each was added in good faith, each was true, and
+    each let anyone who typed an address into an anonymous form learn that a
+    named person had applied here and been turned down. The shape of the reply
+    is therefore the invariant, not the spelling of any one leak.
+    """
+    from app.routers.public_apply import ApplicationOut
+
+    assert set(ApplicationOut.model_fields) == {
+        "applicant_id",
+        "enrolment_id",
+        "full_name",
+        "message",
+    }
+
+
+def test_every_reply_from_both_doors_is_the_same_object() -> None:
+    """No call site builds its own.
+
+    The four-case indistinguishability property is held down properly by
+    `tests/integration/test_ph3_cooldown_indistinguishable.py`, which drives
+    the real app and compares whole bodies. This is the cheap structural
+    companion: a reply assembled inline is how a branch grows its own opinion
+    again, and it is the one thing a source read genuinely can see.
+    """
+    from app.routers import public_apply
+
+    src = inspect.getsource(public_apply)
+    # One construction, inside `_received` itself.
+    assert src.count("ApplicationOut(") == 2, (
+        "ApplicationOut is constructed somewhere other than `_received` — "
+        "every door must answer with the one reply"
+    )
+    for door in (public_apply.submit_application, public_apply.submit_draft):
+        body = inspect.getsource(door)
+        assert "ApplicationOut(" not in body, f"{door.__name__} builds its own reply"
+        assert "_received(name)" in body
 
 
 def test_nothing_stored_is_echoed_to_a_repeat_or_racing_submission() -> None:
     src = _submit()
     assert 'existing["full_name"]' not in src
     assert 'existing["enrolment_id"])' not in src
-    # Both "already applied" replies carry no ids.
-    # Four now, and that is the point: already-applied, the cooldown refusal,
-    # the racing-submission loser, AND the accepted reply itself. The last one
-    # joined them when a security review found that returning the real
-    # applicant and enrolment ids on a reapplication handed a stranger stable
-    # internal identifiers for somebody else — so every reply from this
-    # endpoint now echoes only what the request sent.
-    assert src.count('applicant_id="",') == 4
 
 
 def test_a_returning_applicants_record_is_not_rewritten_by_the_form() -> None:

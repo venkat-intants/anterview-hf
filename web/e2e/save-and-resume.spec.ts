@@ -127,7 +127,7 @@ test.describe('an application saved for later', () => {
     // The draft path has its own words, because it IS a different moment: they
     // finished something they had started, rather than sending a fresh form.
     await expect(
-      later.getByText('Thanks — your application is in. We will be in touch by email.'),
+      later.getByText('Thanks — we have your application'),
     ).toBeVisible({ timeout: 60_000 });
 
     await returning.close();

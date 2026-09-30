@@ -43,6 +43,13 @@ class CooldownVerdict:
     until: datetime | None = None
     #: Why it was allowed despite a window — 'override' or None.
     reason: str | None = None
+    #: WHICH enrolment carries the override that allowed this. `check` reads
+    #: the newest enrolment for the pair INCLUDING soft-deleted ones (deleting
+    #: an application must not delete the cooldown), so the row holding the
+    #: grant is not always the row `confirm` is acting on. Spending the grant
+    #: by the id it was actually found on is what stops a recorded exception
+    #: surviving as a permanent one.
+    override_enrolment_id: uuid.UUID | None = None
 
     def message(self) -> str:
         """For the EMAIL, not the anonymous reply. Says the date, because a
@@ -112,7 +119,11 @@ async def check(
             "reapply.override_honoured",
             requisition_id=str(requisition_id), applicant_id=str(applicant_id),
         )
-        return CooldownVerdict(allowed=True, reason="override")
+        return CooldownVerdict(
+            allowed=True,
+            reason="override",
+            override_enrolment_id=uuid.UUID(str(row["id"])),
+        )
 
     until = row["rejected_at"] + timedelta(days=int(cooldown_days))
     if until <= now:
@@ -261,6 +272,22 @@ class StageResult:
     superseded_key: str | None = None
 
 
+@dataclass(frozen=True)
+class ConfirmResult:
+    """What following a confirmation link did, and what it left behind.
+
+    `applied` was once the whole return value, and the CV of an attempt that
+    had been overtaken was simply dropped — see `confirm`.
+    """
+
+    #: True only when this call moved the enrolment. A link followed twice, or
+    #: after HR moved the person on, is a no-op.
+    applied: bool
+    #: An abandoned attempt's CV. Nothing names it once the columns are
+    #: cleared, so the caller deletes it after the commit.
+    orphaned_key: str | None = None
+
+
 async def stage(
     db: AsyncSession,
     *,
@@ -332,7 +359,14 @@ async def stage(
             {"i": enrolment_id, "c": company_id},
         )
     ).mappings().first()
-    pending = held["reapply_requested_at"] if held else None
+    if held is None:
+        # No such enrolment for this company. Without this the UPDATE below
+        # matches nothing and we still report `staged=True`, which has the
+        # caller mint and EMAIL a confirmation link whose hash was never
+        # stored — a link that can only ever fail, sent to a real address.
+        log.info("reapply.stage_no_enrolment", enrolment_id=str(enrolment_id))
+        return StageResult(staged=False)
+    pending = held["reapply_requested_at"]
     if pending is not None and pending >= cutoff:
         log.info("reapply.stage_refused_pending", enrolment_id=str(enrolment_id))
         return StageResult(staged=False)
@@ -356,7 +390,7 @@ async def stage(
             "th": token_hash,
         },
     )
-    superseded = held["reapply_resume_s3_key"] if held and pending else None
+    superseded = held["reapply_resume_s3_key"] if pending else None
     log.info(
         "reapply.staged", enrolment_id=str(enrolment_id), has_cv=bool(resume_s3_key),
         replaced_expired=bool(pending),
@@ -407,11 +441,12 @@ async def confirm(
     applicant_id: uuid.UUID,
     requisition_id: uuid.UUID | None = None,
     cooldown_days: int | None = None,
-) -> bool:
+) -> ConfirmResult:
     """Apply a staged reapplication now that the address has been proven.
 
-    Caller commits. Returns False when there was nothing staged, so a link
-    followed twice is a no-op rather than a second reopening.
+    Caller commits, and deletes `orphaned_key` if one comes back. `applied` is
+    False when there was nothing staged, so a link followed twice is a no-op
+    rather than a second reopening.
 
     Everything the anonymous request deliberately did not do happens here, in
     one transaction, on behalf of somebody who has demonstrated they receive
@@ -433,7 +468,7 @@ async def confirm(
         )
     ).mappings().first()
     if staged is None:
-        return False
+        return ConfirmResult(applied=False)
 
     # STILL REJECTED? The link is valid for up to a week, and the application
     # does not stand still in that time. HR may have used the override and
@@ -448,8 +483,30 @@ async def confirm(
             "reapply.confirm_superseded",
             enrolment_id=str(enrolment_id), status=str(staged["status"]),
         )
-        await clear_staged(db, enrolment_id=enrolment_id, company_id=company_id)
-        return False
+        # The returned key is NOT discarded. This path abandons the attempt, and
+        # `reapply_resume_s3_key` was the only thing naming the CV uploaded for
+        # it — for a draft-door reapplication the object sits under `drafts/`,
+        # outside the applicant-prefix sweep erasure does, and the draft row
+        # that used to name it is purged on its own retention clock. Dropped
+        # here, the file becomes one no erasure request can ever find.
+        orphan = await clear_staged(
+            db, enrolment_id=enrolment_id, company_id=company_id
+        )
+        # And the grant goes with it. An override HR spent on this person is
+        # for the reapplication that has now been overtaken; leaving it live
+        # would silently forgive their NEXT rejection on this opening, which is
+        # the permanent exemption `consume_override` exists to prevent.
+        #
+        # On THIS enrolment, not on whichever row `check` would have found. No
+        # verdict has been computed on this path — we return before the
+        # cooldown is re-evaluated — so the grant is cleared where it normally
+        # lives. If an older or soft-deleted enrolment for the pair carries it
+        # instead, it survives here; that is the same narrow gap the success
+        # path closes with `verdict.override_enrolment_id`, and closing it here
+        # too would mean an extra query on a path that exists to do as little
+        # as possible.
+        await consume_override(db, enrolment_id=enrolment_id)
+        return ConfirmResult(applied=False, orphaned_key=orphan)
 
     # RE-EVALUATED HERE, not trusted from submission. Time has passed — the
     # window may have moved, and an override granted then may have been spent
@@ -466,8 +523,10 @@ async def confirm(
             cooldown_days=cooldown_days,
         )
         if not verdict.allowed:
+            # Left staged on purpose: the window may simply not have opened
+            # yet, and the link is still good until it expires.
             log.info("reapply.confirm_refused", enrolment_id=str(enrolment_id))
-            return False
+            return ConfirmResult(applied=False)
 
     await record_transition(
         db,
@@ -501,9 +560,18 @@ async def confirm(
         )
     await clear_staged(db, enrolment_id=enrolment_id, company_id=company_id)
     if verdict.reason == "override":
-        await consume_override(db, enrolment_id=enrolment_id)
+        # On the row the grant was FOUND on, which `check` reports, rather
+        # than on the one being confirmed. They differ whenever an older or
+        # soft-deleted enrolment for this pair is the newest by created_at,
+        # and clearing the wrong row leaves the exception live for the next
+        # rejection.
+        await consume_override(
+            db, enrolment_id=verdict.override_enrolment_id or enrolment_id
+        )
     log.info("reapply.confirmed", enrolment_id=str(enrolment_id))
-    return True
+    # No orphan: the staged CV is the application's now, named by
+    # `applied_resume_s3_key`.
+    return ConfirmResult(applied=True)
 
 
 async def clear_staged(
@@ -542,7 +610,11 @@ async def clear_staged(
 
 
 async def purge_stale_staged(
-    db: AsyncSession, *, now: datetime | None = None, limit: int = 500
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    limit: int = 500,
+    max_batches: int = 40,
 ) -> list[str]:
     """Forget staged reapplications nobody ever confirmed. Returns CV keys.
 
@@ -569,36 +641,60 @@ async def purge_stale_staged(
     Deliberately NOT a rejection of the application. The candidate applied and
     was told the application was received; what expires is the second
     attempt's pending state, not any record that they applied.
+
+    IT DRAINS, for the reason ``application_drafts.purge_expired`` spells out:
+    a single capped pass cannot keep up with the rate an anonymous endpoint
+    creates rows, which turns a retention control into a slowly losing race.
+    Rows are created by a public route at 6/min/IP and cleared 500 at a time,
+    once per tick — so above that rate the oldest attempts, the ones furthest
+    past their purpose, are the ones never reached. ``max_batches`` caps the
+    work one tick may do so a backlog cannot hold the session for ever; the
+    next tick picks up where this left off.
     """
     now = now or datetime.now(tz=UTC)
     cutoff = now - timedelta(hours=settings.apply_activation_ttl_hours)
-    rows = (
+    keys: list[str] = []
+    purged = 0
+    for _ in range(max_batches):
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT id, reapply_resume_s3_key FROM enrolments"
+                    " WHERE reapply_requested_at IS NOT NULL"
+                    "   AND reapply_requested_at < :cutoff"
+                    " ORDER BY reapply_requested_at"
+                    " LIMIT :lim"
+                    " FOR UPDATE SKIP LOCKED"
+                ),
+                {"cutoff": cutoff, "lim": limit},
+            )
+        ).mappings().all()
+        if not rows:
+            break
+
+        ids = [r["id"] for r in rows]
         await db.execute(
             text(
-                "SELECT id, reapply_resume_s3_key FROM enrolments"
-                " WHERE reapply_requested_at IS NOT NULL"
-                "   AND reapply_requested_at < :cutoff"
-                " ORDER BY reapply_requested_at"
-                " LIMIT :lim"
-                " FOR UPDATE SKIP LOCKED"
+                "UPDATE enrolments"
+                "   SET reapply_requested_at = NULL, reapply_resume_s3_key = NULL,"
+                "       reapply_answers = NULL, reapply_token_hash = NULL,"
+                "       updated_at = now()"
+                " WHERE id = ANY(:ids)"
             ),
-            {"cutoff": cutoff, "lim": limit},
+            {"ids": ids},
         )
-    ).mappings().all()
-    if not rows:
-        return []
+        purged += len(ids)
+        keys.extend(
+            str(r["reapply_resume_s3_key"])
+            for r in rows
+            if r["reapply_resume_s3_key"]
+        )
+        # A short pass means the backlog is gone. `SKIP LOCKED` can also
+        # shorten one while rows are held elsewhere; those keep until the next
+        # tick, which is the right answer for a retention sweep.
+        if len(rows) < limit:
+            break
 
-    ids = [r["id"] for r in rows]
-    await db.execute(
-        text(
-            "UPDATE enrolments"
-            "   SET reapply_requested_at = NULL, reapply_resume_s3_key = NULL,"
-            "       reapply_answers = NULL, reapply_token_hash = NULL,"
-            "       updated_at = now()"
-            " WHERE id = ANY(:ids)"
-        ),
-        {"ids": ids},
-    )
-    keys = [str(r["reapply_resume_s3_key"]) for r in rows if r["reapply_resume_s3_key"]]
-    log.info("reapply.stale_purged", rows=len(ids), objects=len(keys))
+    if purged:
+        log.info("reapply.stale_purged", rows=purged, objects=len(keys))
     return keys

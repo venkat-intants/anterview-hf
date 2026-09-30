@@ -45,6 +45,7 @@ from app.jd_versions import (
 )
 from app.models import AuditLog
 from app.publishing import APPROVED
+from app.rate_limit import rate_limit_actor
 from app.reapplication import grant_override
 from app.requisition_approval import (
     ApprovalError,
@@ -356,6 +357,19 @@ class EnrolmentOut(BaseModel):
     # against a single day of data.
     source: str = "unknown"
     source_detail: str | None = None
+    # An exception a person granted, shown back to the people who work here
+    # (PH3-B4, criterion 9). `consume_override` used to say outright that
+    # nothing read these columns — not a router, not a query, not a screen — so
+    # HR granted a waiver, saw a chip rendered from local component state, and
+    # found no trace of it after a refresh. An override is a recorded decision
+    # about a named candidate; the team that made it should be able to see that
+    # it stands, and see it disappear once it has been spent.
+    #
+    # Internal view only, like `source` above. The candidate is told they may
+    # apply again; who authorised it, and on what grounds, is the company's own
+    # record.
+    reapply_override_at: str | None = None
+    reapply_override_reason: str | None = None
 
 
 class StatusIn(BaseModel):
@@ -1060,6 +1074,7 @@ async def list_enrolments(
                 "SELECT e.id, e.applicant_id, a.full_name, a.email, e.status,"
                 "       e.target_job_title, e.ats_overall, e.ats_recommendation, e.created_at,"
                 "       e.source, e.source_detail,"
+                "       e.reapply_override_at, e.reapply_override_reason,"
                 "       e.current_round_id, wr.title AS current_round_title,"
                 # Days since the last recorded move — the number that makes a
                 # stall visible. Derived from the ledger, not from updated_at.
@@ -1095,6 +1110,12 @@ async def list_enrolments(
             created_at=r["created_at"].isoformat(),
             source=r["source"],
             source_detail=r["source_detail"],
+            reapply_override_at=(
+                r["reapply_override_at"].isoformat()
+                if r["reapply_override_at"]
+                else None
+            ),
+            reapply_override_reason=r["reapply_override_reason"],
         )
         for r in rows
     ]
@@ -2388,7 +2409,16 @@ class ReapplyOverrideIn(BaseModel):
     reason: str | None = Field(default=None, max_length=1000)
 
 
-@router.post("/enrolments/{enrolment_id}/reapply-override", response_model=EnrolmentOut)
+@router.post(
+    "/enrolments/{enrolment_id}/reapply-override",
+    response_model=EnrolmentOut,
+    # Per ACCOUNT, not per IP: what is worth bounding here is a targeted misuse
+    # of one HR credential, not traffic. Granting an exception is a
+    # person-sized action — a handful a minute is already generous, and a
+    # script running through every rejected candidate on an opening is not
+    # something this endpoint should quietly serve.
+    dependencies=[rate_limit_actor("hr_reapply_override", 12)],
+)
 async def override_reapply_cooldown(
     enrolment_id: uuid.UUID,
     body: ReapplyOverrideIn,
@@ -2441,6 +2471,7 @@ async def override_reapply_cooldown(
                 "SELECT e.id, e.applicant_id, a.full_name, a.email, e.status,"
                 "       e.target_job_title, e.ats_overall, e.ats_recommendation,"
                 "       e.created_at, e.source, e.source_detail,"
+                "       e.reapply_override_at, e.reapply_override_reason,"
                 "       e.current_round_id, wr.title AS current_round_title"
                 "  FROM enrolments e"
                 "  JOIN applicants a ON a.id = e.applicant_id"
@@ -2466,4 +2497,10 @@ async def override_reapply_cooldown(
         created_at=row["created_at"].isoformat(),
         source=row["source"],
         source_detail=row["source_detail"],
+        reapply_override_at=(
+            row["reapply_override_at"].isoformat()
+            if row["reapply_override_at"]
+            else None
+        ),
+        reapply_override_reason=row["reapply_override_reason"],
     )

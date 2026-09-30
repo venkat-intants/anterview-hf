@@ -391,7 +391,8 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await client.post("/apply/draft/submit", headers=_tok(token))
         body = r.json() if r.status_code in (200, 201) else {}
         check("the application is created", r.status_code == 201 and
-              body.get("already_applied") is False, f"{r.status_code} {r.text[:200]}")
+              str(body.get("message", "")).startswith("Thanks"),
+              f"{r.status_code} {r.text[:200]}")
 
         async with factory() as db:
             row = (await db.execute(text(

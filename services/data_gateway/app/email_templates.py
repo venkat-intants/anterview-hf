@@ -1240,6 +1240,37 @@ def _t_results_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     return loc["subject"], inner, text, loc["pre"]
 
 
+def _activation_expiry(lang: str) -> str:
+    """How long an apply-activation / reapply-confirmation link lasts, in words.
+
+    Both templates mint their link with `apply_activation_ttl_hours` and both
+    used to state "7 days" in three hardcoded translations. That is deployable
+    configuration: change the setting and the copy silently starts lying, and a
+    candidate told "7 days" about a link that died in one loses their only way
+    back into their application. One helper so the two cannot drift apart
+    either.
+    """
+    hours = settings.apply_activation_ttl_hours
+    days = max(1, round(hours / 24))
+    if lang == "hi":
+        return (
+            f"यह लिंक एक बार उपयोग हो सकता है और {days} दिनों में समाप्त हो जाएगा।"
+            if hours >= 24
+            else f"यह लिंक एक बार उपयोग हो सकता है और {hours} घंटे में समाप्त हो जाएगा।"
+        )
+    if lang == "te":
+        return (
+            f"ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, {days} రోజుల్లో ముగుస్తుంది."
+            if hours >= 24
+            else f"ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, {hours} గంటల్లో ముగుస్తుంది."
+        )
+    return (
+        f"This link can be used once and expires in {days} day(s)."
+        if hours >= 24
+        else f"This link can be used once and expires in {hours} hour(s)."
+    )
+
+
 def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     """Application confirmation, with a link to activate the account.
 
@@ -1285,7 +1316,7 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "signed_in": "You can follow its progress from your applications page.",
             "cta_view": "View my applications",
             "outro": "We will email you when there is news.",
-            "expiry": "This link can be used once and expires in 7 days.",
+            "expiry": _activation_expiry("en"),
         },
         "hi": {
             "subject": f"{job} के लिए आपका आवेदन मिल गया",
@@ -1297,7 +1328,7 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "signed_in": "आप अपने आवेदन पृष्ठ से इसकी प्रगति देख सकते हैं।",
             "cta_view": "मेरे आवेदन देखें",
             "outro": "कोई अपडेट होने पर हम आपको ईमेल करेंगे।",
-            "expiry": "यह लिंक एक बार उपयोग हो सकता है और 7 दिनों में समाप्त हो जाएगा।",
+            "expiry": _activation_expiry("hi"),
         },
         "te": {
             "subject": f"{job} కోసం మీ దరఖాస్తు అందింది",
@@ -1309,7 +1340,7 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "signed_in": "మీ దరఖాస్తుల పేజీ నుండి పురోగతిని చూడవచ్చు.",
             "cta_view": "నా దరఖాస్తులు చూడండి",
             "outro": "సమాచారం ఉన్నప్పుడు మేము ఇమెయిల్ చేస్తాము.",
-            "expiry": "ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, 7 రోజుల్లో ముగుస్తుంది.",
+            "expiry": _activation_expiry("te"),
         },
     }
     lang_key = lang if lang in copy else "en"
@@ -1388,7 +1419,7 @@ def _t_reapplication_confirm(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                 "If you did not apply, you do not need to do anything — ignore "
                 "this email and nothing will be sent on."
             ),
-            "expiry": "This link can be used once and expires in 7 days.",
+            "expiry": _activation_expiry("en"),
         },
         "hi": {
             "subject": f"{job} के लिए अपने आवेदन की पुष्टि करें",
@@ -1401,7 +1432,7 @@ def _t_reapplication_confirm(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                 "अगर आपने आवेदन नहीं किया है तो आपको कुछ नहीं करना है — इस ईमेल को "
                 "अनदेखा करें, कुछ भी आगे नहीं भेजा जाएगा।"
             ),
-            "expiry": "यह लिंक एक बार उपयोग हो सकता है और 7 दिनों में समाप्त हो जाएगा।",
+            "expiry": _activation_expiry("hi"),
         },
         "te": {
             "subject": f"{job} కోసం మీ దరఖాస్తును నిర్ధారించండి",
@@ -1414,7 +1445,7 @@ def _t_reapplication_confirm(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                 "మీరు దరఖాస్తు చేయకపోతే ఏమీ చేయనవసరం లేదు — ఈ ఈమెయిల్‌ను "
                 "పట్టించుకోకండి, ఏదీ ముందుకు పంపబడదు."
             ),
-            "expiry": "ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, 7 రోజుల్లో ముగుస్తుంది.",
+            "expiry": _activation_expiry("te"),
         },
     }
     lang_key = lang if lang in copy else "en"
@@ -1963,7 +1994,7 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                "cta_set": "Set my password",
                "signed_in": "You can see your offer and onboarding from your applications page.",
                "cta_view": "View my applications",
-               "expiry": "This link can be used once and expires in 7 days.",
+               "expiry": _activation_expiry("en"),
                "fallback": "Or paste this link into your browser:"},
         "hi": {"subject": f"स्वागत है — {job} के लिए अपना खाता सेट करें",
                "lead": ((f"<strong>{orge}</strong> में " if company else "")
@@ -1972,7 +2003,7 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                "cta_set": "पासवर्ड सेट करें",
                "signed_in": "आप अपने आवेदन पृष्ठ से अपना ऑफ़र और ऑनबोर्डिंग देख सकते हैं।",
                "cta_view": "मेरे आवेदन देखें",
-               "expiry": "यह लिंक एक बार उपयोग हो सकता है और 7 दिनों में समाप्त हो जाएगा।",
+               "expiry": _activation_expiry("hi"),
                "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:"},
         "te": {"subject": f"స్వాగతం — {job} కోసం మీ ఖాతాను సెటప్ చేయండి",
                "lead": ((f"<strong>{orge}</strong>లో " if company else "")
@@ -1981,7 +2012,7 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                "cta_set": "పాస్‌వర్డ్ సెట్ చేయండి",
                "signed_in": "మీ దరఖాస్తుల పేజీ నుండి మీ ఆఫర్‌ను, ఆన్‌బోర్డింగ్‌ను చూడవచ్చు.",
                "cta_view": "నా దరఖాస్తులు చూడండి",
-               "expiry": "ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, 7 రోజుల్లో ముగుస్తుంది.",
+               "expiry": _activation_expiry("te"),
                "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:"},
     })
     plain = loc["lead"].replace("<strong>", "").replace("</strong>", "")

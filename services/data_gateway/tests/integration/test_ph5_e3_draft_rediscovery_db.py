@@ -166,7 +166,12 @@ async def test_a_draft_with_the_flag_then_submit_writes_a_ledger_row(
     await _confirm_ready_to_submit(db, token=started.resume_token, full_name="Asha K")
 
     out = await submit_draft(request=_FakeRequest(), db=db, token=started.resume_token)  # type: ignore[arg-type]
-    assert out.already_applied is False
+    # The reply is one constant now — `already_applied` is gone, as
+    # `awaiting_confirmation` went before it, because on an anonymous door a
+    # field that varies by what is stored about the address tells a stranger
+    # that a named person applied here. What this test needs from the reply
+    # is only that the submission was accepted.
+    assert out.message.startswith("Thanks")
 
     owner_user_id = await db.scalar(
         # By address, not from the reply: the endpoint deliberately echoes no
@@ -209,7 +214,12 @@ async def test_a_draft_without_the_flag_writes_no_rediscovery_row_at_all(
     await _confirm_ready_to_submit(db, token=started.resume_token, full_name="Bala R")
 
     out = await submit_draft(request=_FakeRequest(), db=db, token=started.resume_token)  # type: ignore[arg-type]
-    assert out.already_applied is False
+    # The reply is one constant now — `already_applied` is gone, as
+    # `awaiting_confirmation` went before it, because on an anonymous door a
+    # field that varies by what is stored about the address tells a stranger
+    # that a named person applied here. What this test needs from the reply
+    # is only that the submission was accepted.
+    assert out.message.startswith("Thanks")
 
     owner_user_id = await db.scalar(
         # By address, not from the reply: the endpoint deliberately echoes no
@@ -275,7 +285,12 @@ async def test_a_withdrawn_candidate_is_not_re_granted_through_the_draft_door(
     await _confirm_ready_to_submit(db, token=started.resume_token, full_name="Chandra M")
 
     out = await submit_draft(request=_FakeRequest(), db=db, token=started.resume_token)  # type: ignore[arg-type]
-    assert out.already_applied is False
+    # The reply is one constant now — `already_applied` is gone, as
+    # `awaiting_confirmation` went before it, because on an anonymous door a
+    # field that varies by what is stored about the address tells a stranger
+    # that a named person applied here. What this test needs from the reply
+    # is only that the submission was accepted.
+    assert out.message.startswith("Thanks")
     # The EXISTING applicant, not a fresh one — proves this exercised the
     # sticky-withdrawal branch for the real identity, not a brand new guest.
     # Read from the database rather than the reply, which no longer echoes a

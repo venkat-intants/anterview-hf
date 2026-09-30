@@ -110,14 +110,17 @@ function Submitted({ result, title }: { result: ApplicationResult; title: string
   return (
     <Shell>
       <Panel className="text-center">
-        {/* One screen for every accepted application. A reapplication does
-            have something extra to do, but saying so HERE would say it to
-            whoever typed the address — a third security review found that
-            flag, and the ids beside it, told a stranger a named person had
-            applied and been rejected. What differs travels by email. */}
+        {/* One screen, one heading, for every submission. A reapplication does
+            have something extra to do, and an address we already hold is a
+            fact we hold — but saying either HERE says it to whoever typed the
+            address, and this form takes any address. A third review found the
+            `awaiting_confirmation` flag and the ids beside it told a stranger a
+            named person had applied and been rejected; a fourth found that
+            `already_applied` did the same on the second submission. Both
+            fields are gone from the reply. What differs travels by email. */}
         <CheckCircle2 className="mx-auto h-9 w-9 text-[var(--ui-ok)]" aria-hidden="true" />
         <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-          {result.already_applied ? t('apply.alreadyApplied') : t('apply.received')}
+          {t('apply.received')}
         </h1>
         <p className="mx-auto mt-2 max-w-[50ch] text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
           {result.message}
@@ -786,19 +789,21 @@ export default function PublicApply(): JSX.Element {
         prev.map((r, j) => (j === i ? { ...r, status: 'sending' } : r)),
       );
       try {
-        const result = await submitApplication(requisitionId, {
+        await submitApplication(requisitionId, {
           fullName: nameFromFilename(row.file.name),
           email: seedEmailFor(row.file.name),
           resume: row.file,
           consentGranted: true,
           source: posting.data?.source,
         });
+        // 'done' for every accepted row. The reply no longer says whether this
+        // address had applied before, because on an anonymous endpoint that
+        // answer is about the person rather than about this upload — and a
+        // 'duplicate' chip here would put it back on a screen. A genuine
+        // duplicate is still one enrolment (D-06); nothing is lost but the
+        // label.
         setSeedRows((prev) =>
-          prev.map((r, j) =>
-            j === i
-              ? { ...r, status: result.already_applied ? 'duplicate' : 'done' }
-              : r,
-          ),
+          prev.map((r, j) => (j === i ? { ...r, status: 'done' } : r)),
         );
       } catch (err) {
         const message = errText(err, 'failed');

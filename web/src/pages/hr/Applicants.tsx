@@ -290,19 +290,33 @@ function ReapplyOverrideAction({
   enrolmentId,
   openingTitle,
   candidateName,
+  grantedAt,
 }: {
   enrolmentId: string;
   openingTitle: string;
   candidateName: string;
+  /** From the server, so the grant is still there after a refresh. */
+  grantedAt?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
-  const [done, setDone] = useState(false);
+  const [justDone, setJustDone] = useState(false);
+  // Local state only covers the moment between the click and the refetch. It
+  // used to be the ONLY record on any screen: nothing read
+  // `reapply_override_at`, so an exception HR granted disappeared on reload
+  // and there was no way to tell whether it had been made or spent.
+  //
+  // Truthiness, NOT `!== null`. An older cached response, or any caller that
+  // has not been given the field, sends `undefined` — and `undefined !== null`
+  // is true, which hid the "let them reapply" control behind a grant that was
+  // never made. A missing field means "we do not know of one", the same as a
+  // null.
+  const done = justDone || Boolean(grantedAt);
 
   const grant = useMutation({
     mutationFn: () => overrideReapplyCooldown(enrolmentId, reason),
     onSuccess: () => {
-      setDone(true);
+      setJustDone(true);
       setOpen(false);
       setReason('');
       toast.success(`${candidateName} can apply to ${openingTitle} again now.`);
@@ -659,6 +673,7 @@ function ApplicantDrawer({
                               enrolmentId={app.enrolment_id}
                               openingTitle={app.opening_title ?? 'this opening'}
                               candidateName={a.full_name}
+                              grantedAt={app.reapply_override_at}
                             />
                           ) : null}
                         </div>
@@ -753,6 +768,7 @@ function ApplicantDrawer({
                   enrolmentId={only.enrolment_id}
                   openingTitle={only.opening_title ?? 'this opening'}
                   candidateName={a.full_name}
+                  grantedAt={only.reapply_override_at}
                 />
               ) : null}
             </>

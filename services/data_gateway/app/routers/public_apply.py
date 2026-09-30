@@ -84,6 +84,7 @@ from app.models import Applicant
 from app.publishing import visible_sql
 from app.rate_limit import rate_limit
 from app.reapplication import CooldownVerdict, StageResult
+from app.reapplication import clear_staged as reapplication_clear_staged
 from app.reapplication import confirm as reapplication_confirm
 from app.reapplication import gate as reapplication_gate
 from app.reapplication import stage as reapplication_stage
@@ -187,14 +188,39 @@ class PostingOut(BaseModel):
 
 
 class ApplicationOut(BaseModel):
+    """The ONE reply every submission to an anonymous door receives.
+
+    There used to be an `already_applied: bool` here, and before that an
+    `awaiting_confirmation`. Both are gone, and nothing may take their place:
+    this model must not carry a field whose value depends on what is stored
+    about the address that was typed in.
+
+    WHY, because this keeps getting re-added in good faith.
+    These doors are anonymous and identify a person by an address typed into a
+    form. Anyone holding the public link can therefore submit any address they
+    like. If the reply differs by what we already know about that address, then
+    two requests confirm that a named person applied to a named opening and was
+    turned down — somebody's employment history, handed to a stranger.
+
+    Four rounds of review found that difference four times, each time somewhere
+    adjacent to where the last one was closed: a 409 with the date on it, then
+    this model's own fields, then the draft row left readable, then — with every
+    single reply identical — *what the second submission read back*, because the
+    reply still depended on stored state and the branches were simply reachable
+    at different repetition counts.
+
+    So the rule is stronger than "make the replies match": the reply is a pure
+    function of what the caller sent. Everything a real candidate needs to be
+    told that depends on what we know — you already applied, you were turned
+    down, you may apply again on this date — goes to the ADDRESS, which is the
+    only place it is theirs to read. `tests/integration/
+    test_ph3_cooldown_indistinguishable.py` holds this down across the full
+    four-case matrix, on both doors, over repeated submissions.
+    """
+
     applicant_id: str
     enrolment_id: str | None
     full_name: str
-    # True when this email had already applied to this opening. Reported rather
-    # than treated as an error: re-submitting is a normal thing an anxious
-    # candidate does, and a red failure would suggest their first attempt was
-    # lost.
-    already_applied: bool
     message: str
 
 
@@ -489,32 +515,69 @@ class DraftStartOut(BaseModel):
     draft: DraftOut
 
 
-# The SAME sentence a live application gets. These two states must not be
-# distinguishable from an anonymous request: the endpoint takes any address, so
-# a different answer for "rejected, come back on the 5th" told whoever typed it
-# that a named person had applied, been turned down, and roughly when. The date
-# is still sent — to the address, by email, where only its owner reads it.
-# ONE sentence for every accepted application, first or second.
+# THE reply. Not "the reply for this case" — there are no cases any more.
 #
-# A reapplication cannot take effect on submission, so the candidate does have
-# something extra to do — but saying so HERE would say it to whoever typed the
-# address. A third review found that `awaiting_confirmation: true` plus the
-# real applicant and enrolment ids told a stranger, for the price of one PDF,
-# that a named person had applied for this role and been rejected. That is the
-# same disclosure the 409's date was, in a new field.
+# Every submission that is not an outright input error (unreadable PDF, closed
+# opening, rate limit) is answered with this exact object. A live application, a
+# rejection inside its waiting period, a rejection past it, an address that has
+# never been seen here, a lost race: all the same status, all the same bytes.
 #
-# So what differs between the two cases travels by EMAIL, which only the owner
-# of the address reads: a first-time applicant gets "we have your application"
-# with an activation link, a reapplication gets "confirm it is you". The
-# sentence below is true of both, and the ids are blanked for the same reason
-# the already-applied branch blanks them — the reply echoes only what this
-# request sent.
-_ACCEPTED = (
+# Four review rounds shrank the difference between these cases and never
+# removed it, because each round made the replies MATCH rather than making the
+# reply not depend on stored state. Matching is not enough. When the reply is
+# still computed from what we know, the branches stay reachable — the last
+# round found that a rejected address is answered "accepted" on every
+# submission for ever, while an address that never applied is answered
+# "accepted" once and "already applied" from the second time on. Two anonymous
+# requests, and a stranger knows a named person was turned down for a named
+# job.
+#
+# Hence one constant, built from nothing. What genuinely differs between the
+# cases — you already have an application with us, you were turned down, you
+# may apply again on this date, confirm this really is you — travels by EMAIL,
+# to the address, which is the only place any of it is the reader's to know.
+# The ids are blank for the same reason: the reply echoes what this request
+# sent and not one thing more.
+#
+# Do not add a branch here. Do not add a field. See ApplicationOut.
+_RECEIVED = (
     "Thanks — we have your application. Please check your email; we have sent "
     "you a message about it."
 )
 
-_ALREADY_APPLIED = "You have already applied for this role. We have your application."
+
+def _received(name: str) -> ApplicationOut:
+    """The single reply, so no call site can drift into having an opinion."""
+    return ApplicationOut(
+        applicant_id="", enrolment_id=None, full_name=name, message=_RECEIVED
+    )
+
+
+def _email_name(existing: Any | None, submitted: str) -> str:
+    """The name to put in a mail — the STORED one whenever we have one.
+
+    `_mail_cooldown_reason` already reasons this out for the notice it sends,
+    and then the two mails staged beside it on the same route took the
+    submitted name anyway. The threat is the same for all three.
+
+    These doors are anonymous. `full_name` is up to 200 characters of whoever
+    typed the form, and for a RETURNING applicant it reaches an inbox belonging
+    to somebody we already know applied here — so an attacker who knows an
+    address can post a line of their own choosing and have it delivered above a
+    genuine call-to-action, from this company's authenticated sending domain,
+    wearing its sender reputation. The person's name is already on file;
+    nothing the sender typed needs to reach their inbox.
+
+    For an address with no record here there is nothing stored to prefer, and
+    the submitted name is what creates the record. `_clean` (applied where
+    `name` is bound) is what keeps that case to a single line.
+    """
+    if existing is not None:
+        stored = (existing["full_name"] or "").strip()
+        if stored:
+            return stored
+    return submitted
+
 
 async def _mail_cooldown_reason(
     db: DbSessionDep,
@@ -536,9 +599,20 @@ async def _mail_cooldown_reason(
     nobody else.
 
     Best-effort, and silent on failure: the reply has already been decided and
-    is about to be returned. Nothing is stored here — no applicant is created
-    and no enrolment is touched — so a failure costs the candidate an
-    explanation, not an application.
+    is about to be returned. A failure costs the candidate an explanation, not
+    an application.
+
+    "Not an application" is the whole reason for the SAVEPOINT below. This used
+    to `commit()` on success and `rollback()` on failure — the CALLER's
+    transaction, which on the draft route already holds the `mark_submitted`
+    that consumes the draft. A failure in here therefore threw that away, the
+    caller's following `commit()` committed nothing, and the CV object was
+    deleted regardless: the draft stayed readable at `GET /apply/draft` for a
+    rejected candidate while a live one's returns 404, pointing at an object
+    that no longer existed. That readable-draft difference is exactly the
+    channel a previous round closed, re-opened by the fix for the round before
+    it. A best-effort extra must never be able to undo the work of the request
+    that called it, so it gets a savepoint of its own and commits nothing.
 
     Only sent when we already hold this person: with no applicant row there is
     nothing to be inside a cooldown for, and mailing an address we do not know
@@ -566,33 +640,39 @@ async def _mail_cooldown_reason(
             text("SELECT full_name FROM applicants WHERE id = :a"),
             {"a": applicant_id},
         )
-        await enqueue_email(
-            db,
-            to=address,
-            template="generic",
-            lang=(lang or "en"),
-            ctx={
-                "name": stored_name or None,
-                "title": f"About your application for {job_title or 'this role'}",
-                "body": verdict.message(),
-                "brand": company_name,
-            },
-            to_user_id=uuid.UUID(str(user_id)),
-            company_id=company_id,
-            related_kind="reapply_cooldown_notice",
-            # ONE notice per window, not one per probe. The route allows 6/min
-            # per IP and fails open when Redis is down, so without this anyone
-            # who knows the address can drive mail at a real person's inbox
-            # indefinitely. It is also simply the right behaviour: the answer
-            # does not change until the date does.
-            dedupe_key=(
-                f"reapply-cooldown:{applicant_id}:{requisition_id}"
-                f":{verdict.until.date().isoformat()}"
-            ),
-        )
-        await db.commit()
+        # The savepoint. `enqueue_email` dedupes with a SELECT-then-skip while
+        # `email_events.dedupe_key` is UNIQUE, so two probes for the same
+        # address inside the same window both pass the check and the second
+        # raises on flush. That is a reachable, caller-influenced failure, and
+        # it must cost this notice and nothing else.
+        async with db.begin_nested():
+            await enqueue_email(
+                db,
+                to=address,
+                template="generic",
+                lang=(lang or "en"),
+                ctx={
+                    "name": stored_name or None,
+                    "title": f"About your application for {job_title or 'this role'}",
+                    "body": verdict.message(),
+                    "brand": company_name,
+                },
+                to_user_id=uuid.UUID(str(user_id)),
+                company_id=company_id,
+                related_kind="reapply_cooldown_notice",
+                # ONE notice per window, not one per probe. The route allows
+                # 6/min per IP and fails open when Redis is down, so without
+                # this anyone who knows the address can drive mail at a real
+                # person's inbox indefinitely. It is also simply the right
+                # behaviour: the answer does not change until the date does.
+                dedupe_key=(
+                    f"reapply-cooldown:{applicant_id}:{requisition_id}"
+                    f":{verdict.until.date().isoformat()}"
+                ),
+            )
     except Exception:  # noqa: BLE001 — the reply is already decided
-        await db.rollback()
+        # No rollback: the savepoint already undid whatever this attempted, and
+        # rolling back here would discard the CALLER's work.
         log.warning(
             "public_apply.cooldown_notice_failed",
             requisition_id=str(requisition_id),
@@ -1098,7 +1178,11 @@ async def submit_draft(
     existing = (
         await db.execute(
             text(
-                "SELECT a.id, e.id AS enrolment_id, e.status AS enrolment_status"
+                # full_name: for `_email_name`, so a mail to a returning
+                # applicant carries the name on file rather than the one this
+                # anonymous request typed.
+                "SELECT a.id, a.full_name, e.id AS enrolment_id,"
+                "       e.status AS enrolment_status"
                 "  FROM applicants a"
                 "  LEFT JOIN enrolments e ON e.applicant_id = a.id"
                 "   AND e.requisition_id = :r AND e.deleted_at IS NULL"
@@ -1145,10 +1229,7 @@ async def submit_draft(
                 log.warning(
                     "public_apply.draft_object_orphaned", draft_id=str(row["id"])
                 )
-        return ApplicationOut(
-            applicant_id="", enrolment_id=None, full_name=name, already_applied=True,
-            message=_ALREADY_APPLIED,
-        )
+        return _received(name)
 
     if not gate.verdict.allowed:
         log.info(
@@ -1180,10 +1261,7 @@ async def submit_draft(
                 log.warning(
                     "public_apply.draft_object_orphaned", draft_id=str(row["id"])
                 )
-        return ApplicationOut(
-            applicant_id="", enrolment_id=None, full_name=name,
-            already_applied=True, message=_ALREADY_APPLIED,
-        )
+        return _received(name)
 
     applicant_id = uuid.UUID(str(existing["id"])) if existing is not None else uuid.uuid4()
     is_new_person = existing is None
@@ -1322,10 +1400,7 @@ async def submit_draft(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        return ApplicationOut(
-            applicant_id="", enrolment_id=None, full_name=name, already_applied=True,
-            message=_ALREADY_APPLIED,
-        )
+        return _received(name)
     except Exception:
         await db.rollback()
         log.exception("public_apply.draft_submit_failed", requisition_id=str(requisition_id))
@@ -1360,7 +1435,7 @@ async def submit_draft(
                     db,
                     user_id=uuid.UUID(str(guest_user_id)),
                     applicant_email=address,
-                    applicant_name=name,
+                    applicant_name=_email_name(existing, name),
                     job_title=req["title"],
                     company_id=company_id,
                     company_name=req.get("company_name"),
@@ -1372,7 +1447,7 @@ async def submit_draft(
                     db,
                     user_id=uuid.UUID(str(guest_user_id)),
                     applicant_email=address,
-                    applicant_name=name,
+                    applicant_name=_email_name(existing, name),
                     job_title=req["title"],
                     company_id=company_id,
                     company_name=req.get("company_name"),
@@ -1401,13 +1476,7 @@ async def submit_draft(
         company_id=str(company_id), requisition_id=str(requisition_id),
         applicant_id=str(applicant_id), returning=not is_new_person,
     )
-    return ApplicationOut(
-        applicant_id="",
-        enrolment_id=None,
-        full_name=name,
-        already_applied=False,
-        message=_ACCEPTED,
-    )
+    return _received(name)
 
 
 
@@ -1460,6 +1529,7 @@ async def confirm_reapplication(
         db, token_hash=hash_token(body.token, REAPPLY_TOKEN_KIND)
     )
     applied = 0
+    orphaned: str | None = None
     try:
         if staged is not None:
             req_row = (
@@ -1468,10 +1538,41 @@ async def confirm_reapplication(
                         "SELECT r.id, r.reapply_cooldown_days FROM enrolments e"
                         "  JOIN job_requisitions r ON r.id = e.requisition_id"
                         " WHERE e.id = :e"
+                        # The opening has to still be taking applications. The
+                        # link is good for days, and a requisition closed or
+                        # unpublished in the meantime must not have somebody
+                        # walked back into it by a link minted while it was
+                        # open. The SAME predicate the apply routes use, rather
+                        # than a second opinion about what "open" means.
+                        f"   AND {visible_sql('r')}"
                     ),
-                    {"e": staged["id"]},
+                    {"e": staged["id"], "now": datetime.now(tz=UTC)},
                 )
             ).mappings().first()
+            if req_row is None:
+                # Nothing to reopen into. Clear the attempt so the data does
+                # not sit there until the retention sweep, and delete the CV it
+                # was the only name for.
+                orphaned = await reapplication_clear_staged(
+                    db,
+                    enrolment_id=uuid.UUID(str(staged["id"])),
+                    company_id=uuid.UUID(str(staged["company_id"])),
+                )
+                await db.commit()
+                if orphaned:
+                    try:
+                        await _delete_from_s3(orphaned)
+                    except Exception:  # noqa: BLE001
+                        log.warning("apply.reapply_confirm.object_orphaned")
+                log.info("apply.reapply_confirm.opening_closed")
+                # The same sentence a second click gets. This one is not the
+                # candidate's fault and not theirs to debug, and "that job has
+                # closed" is a fact about the opening we are happy to tell the
+                # holder of a link we minted for them — but it is told by the
+                # hiring team, not by a confirmation screen.
+                return ReapplyConfirmOut(
+                    applied=0, message="This application has already been confirmed."
+                )
             done = await reapplication_confirm(
                 db,
                 enrolment_id=uuid.UUID(str(staged["id"])),
@@ -1480,8 +1581,18 @@ async def confirm_reapplication(
                 requisition_id=uuid.UUID(str(req_row["id"])) if req_row else None,
                 cooldown_days=req_row["reapply_cooldown_days"] if req_row else None,
             )
-            applied = 1 if done else 0
+            applied = 1 if done.applied else 0
+            orphaned = done.orphaned_key
         await db.commit()
+        if orphaned:
+            # The CV of an attempt that was overtaken while the link sat in an
+            # inbox. Its columns are cleared, so from here nothing names it —
+            # deleted after the commit, as the submit routes do for a
+            # superseded upload.
+            try:
+                await _delete_from_s3(orphaned)
+            except Exception:  # noqa: BLE001 — the pointer is already cleared
+                log.warning("apply.reapply_confirm.object_orphaned")
     except Exception as exc:  # noqa: BLE001
         await db.rollback()
         log.exception("apply.reapply_confirm.failed", error_type=type(exc).__name__)
@@ -1630,7 +1741,12 @@ async def submit_application(
             ),
         )
 
-    name = full_name.strip()[:200]
+    # `_clean`, not `.strip()`. This lands in the plain-text part of an email,
+    # and `.strip()` only takes whitespace off the ENDS — newlines in the
+    # middle survive, which is enough to write a paragraph of somebody else's
+    # choosing into a mail sent from this company's domain. Every other
+    # free-text field on this route is already cleaned; this one was missed.
+    name = _clean(full_name, 200) or ""
     address = str(email).strip().lower()[:320]
 
     # ── Who this email already is ───────────────────────────────────────────
@@ -1720,13 +1836,7 @@ async def submit_application(
         enrolment_status=existing["enrolment_status"] if existing is not None else None,
     )
     if gate.already_applied:
-        return ApplicationOut(
-            applicant_id="",
-            enrolment_id=None,
-            full_name=name,
-            already_applied=True,
-            message=_ALREADY_APPLIED,
-        )
+        return _received(name)
 
     # ── Still inside a reapplication cooldown? (PH3-B4b) ────────────────────
     # AFTER the already-applied branch, deliberately: a live application is
@@ -1758,10 +1868,11 @@ async def submit_application(
             address=address, job_title=req["title"],
             company_name=req.get("company_name"), verdict=gate.verdict,
         )
-        return ApplicationOut(
-            applicant_id="", enrolment_id=None, full_name=name,
-            already_applied=True, message=_ALREADY_APPLIED,
-        )
+        # The notice no longer commits itself — it must not own a transaction
+        # it shares with a caller that has work in flight. Nothing else is
+        # pending on this path, so this commit only sends the mail.
+        await db.commit()
+        return _received(name)
 
     # ── Store ───────────────────────────────────────────────────────────────
     # An applicant already exists for this email (they applied to a DIFFERENT
@@ -1960,14 +2071,7 @@ async def submit_application(
         # row. (For a new person it never did: the applicant insert rolled back.)
         await _delete_from_s3(s3_key)
         log.info("public.apply.race_lost", requisition_id=str(requisition_id))
-        return ApplicationOut(
-            # Nothing stored is echoed, as in the check above.
-            applicant_id="",
-            enrolment_id=None,
-            full_name=name,
-            already_applied=True,
-            message=_ALREADY_APPLIED,
-        )
+        return _received(name)
     except rediscovery.RediscoveryError as exc:
         # Unreachable in practice — `source` above is the fixed literal
         # "public_apply_form", never caller input — but rendered with the
@@ -2007,7 +2111,7 @@ async def submit_application(
                 db,
                 user_id=guest_user_id,
                 applicant_email=address,
-                applicant_name=name,
+                applicant_name=_email_name(existing, name),
                 job_title=req["title"],
                 company_id=company_id,
                 company_name=req.get("company_name"),
@@ -2019,7 +2123,7 @@ async def submit_application(
                 db,
                 user_id=guest_user_id,
                 applicant_email=address,
-                applicant_name=name,
+                applicant_name=_email_name(existing, name),
                 job_title=req["title"],
                 company_id=company_id,
                 company_name=req.get("company_name"),
@@ -2055,13 +2159,7 @@ async def submit_application(
         returning=not is_new_person,
         # NEVER log the name, email or resume text.
     )
-    return ApplicationOut(
-        applicant_id="",
-        enrolment_id=None,
-        full_name=name,
-        already_applied=False,
-        message=_ACCEPTED,
-    )
+    return _received(name)
 
 
 # ---------------------------------------------------------------------------

@@ -116,7 +116,8 @@ def downgrade() -> None:
     # A pending reapplication cannot survive this: the columns holding it go.
     # Refuse rather than silently discard somebody's second attempt — the same
     # stance the D4 downgrade takes about task rounds.
-    stuck = op.get_bind().scalar(
+    bind = op.get_bind()
+    stuck = bind.scalar(
         sa.text(
             "SELECT count(*) FROM enrolments WHERE reapply_requested_at IS NOT NULL"
         )
@@ -126,6 +127,22 @@ def downgrade() -> None:
             f"{stuck} reapplication(s) are waiting to be confirmed. Downgrading would "
             "discard them. Confirm or clear them first."
         )
+
+    # CONSUMED tokens block the downgrade too, and the guard above cannot see
+    # them. Confirming a reapplication clears `reapply_requested_at` but leaves
+    # its `auth_tokens` row behind with kind='reapply_confirm' — nothing
+    # deletes it, and the erasure register deliberately leaves that table
+    # alone. Narrowing the CHECK below then fails on rows the guard just
+    # declared absent, aborting the downgrade half-applied.
+    #
+    # These are spent credentials for a flow that is being removed, so they are
+    # deleted rather than refused: keeping them would mean a downgrade is
+    # impossible for ever after the first confirmation.
+    spent = bind.execute(
+        sa.text("DELETE FROM auth_tokens WHERE kind = 'reapply_confirm'")
+    ).rowcount
+    if spent:
+        print(f"  removed {spent} spent reapply_confirm token(s)")  # noqa: T201
 
     op.drop_constraint("ck_auth_tokens_kind", "auth_tokens", type_="check")
     op.create_check_constraint(

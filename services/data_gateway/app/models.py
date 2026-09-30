@@ -1256,7 +1256,7 @@ class AuthToken(Base):
     emailed URL; we persist HMAC-SHA256(raw, purpose-secret). A DB read can never
     recover a working token. kind selects the purpose + which secret/TTL applies.
 
-    kind: 'password_reset' | 'email_verify'.
+    kind: 'password_reset' | 'email_verify' | 'reapply_confirm'.
     consumed_at: set on first successful use (single-use). A consumed or expired
     token is rejected by the verify path.
     """
@@ -1265,7 +1265,13 @@ class AuthToken(Base):
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_auth_tokens_token_hash"),
         CheckConstraint(
-            "kind IN ('password_reset','email_verify')", name="ck_auth_tokens_kind"
+            # Must match the running schema, which migration 2577ba99b7fe
+            # widened for the staged-reapplication link. Nothing builds the
+            # schema from these models today, so drift here is inert — and it
+            # is exactly the kind of inert wrong that becomes a real one the
+            # first time somebody reaches for create_all.
+            "kind IN ('password_reset','email_verify','reapply_confirm')",
+            name="ck_auth_tokens_kind",
         ),
     )
 

@@ -86,12 +86,20 @@ export interface Posting {
   source_detail: string | null;
 }
 
+/**
+ * The one reply every submission gets, whatever we already know.
+ *
+ * `already_applied` used to live here and is gone, as `awaiting_confirmation`
+ * went before it. Nothing may replace them. These endpoints are anonymous and
+ * take any address typed into the form, so a field whose value depends on what
+ * is stored about that address lets anyone with the public link confirm that a
+ * named person applied and was turned down. Whatever genuinely differs is sent
+ * to the address by email.
+ */
 export interface ApplicationResult {
   applicant_id: string;
   enrolment_id: string | null;
   full_name: string;
-  /** True when this email had already applied. Not an error — a reassurance. */
-  already_applied: boolean;
   message: string;
 }
 

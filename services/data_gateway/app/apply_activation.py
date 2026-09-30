@@ -541,7 +541,15 @@ async def redeem_reapply_token(db: AsyncSession, raw_token: str) -> uuid.UUID:
         raise ActivationError(
             "This link is invalid or has expired. Apply again to get a new one."
         )
-    await db.execute(
+    # The UPDATE is the real check, not the SELECT above it. Between the two,
+    # a concurrent request can consume the same token; `consumed_at IS NULL`
+    # means exactly one of them matches a row, and reading the rowcount is what
+    # turns that into an answer. Without it both callers are told they redeemed
+    # it — today the loser is contained downstream, because `confirm` clears
+    # `reapply_token_hash` inside the same transaction and the second
+    # `staged_for_token` finds nothing, but that is a property of a different
+    # function. A single-use credential should establish its own single use.
+    consumed = await db.execute(
         text(
             "UPDATE auth_tokens SET consumed_at = :now"
             " WHERE token_hash = :th AND kind = :kind AND consumed_at IS NULL"
@@ -549,4 +557,11 @@ async def redeem_reapply_token(db: AsyncSession, raw_token: str) -> uuid.UUID:
         {"now": now, "th": hash_token(raw_token, REAPPLY_TOKEN_KIND),
          "kind": REAPPLY_TOKEN_KIND},
     )
+    if (getattr(consumed, "rowcount", 0) or 0) != 1:
+        # Somebody else spent it in the last few milliseconds. The SAME message
+        # as expired-or-never-existed: which of those it was is not information
+        # the holder of a bad link needs.
+        raise ActivationError(
+            "This link is invalid or has expired. Apply again to get a new one."
+        )
     return uuid.UUID(str(row.user_id))

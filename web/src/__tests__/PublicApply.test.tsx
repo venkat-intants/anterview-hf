@@ -418,14 +418,21 @@ describe('PublicApply — afterwards', () => {
     expect(screen.getByText(/nothing is decided automatically/i)).toBeTruthy();
   });
 
-  it('treats a repeat application as reassurance, not an error', async () => {
+  it('shows the same screen whatever the server already knows about the address', async () => {
+    // This used to assert that a repeat application said "You have already
+    // applied", from an `already_applied` flag on the reply. That flag is gone.
+    // The form is anonymous and accepts any address typed into it, so a screen
+    // that reads differently for an address we hold lets anyone with the
+    // public link confirm that a named person applied here — and, one
+    // submission later, that they were turned down. Whatever differs is sent
+    // to the address by email.
     const user = userEvent.setup();
     submitApplication.mockResolvedValue({
-      applicant_id: 'ap-1',
-      enrolment_id: 'en-1',
+      applicant_id: '',
+      enrolment_id: null,
       full_name: 'Priya Sharma',
-      already_applied: true,
-      message: 'You have already applied for this role. We have your application.',
+      message:
+        'Thanks — we have your application. Please check your email; we have sent you a message about it.',
     });
     renderPage();
     await screen.findByText('Backend Engineer');
@@ -434,7 +441,9 @@ describe('PublicApply — afterwards', () => {
     await user.click(consentCheckbox());
     await user.click(submitButton());
 
-    expect(await screen.findByText('You have already applied')).toBeTruthy();
+    // The SAME heading a first-time applicant gets, two screens up.
+    expect(await screen.findByText('Application received')).toBeTruthy();
+    expect(screen.queryByText(/already applied/i)).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
   });
 

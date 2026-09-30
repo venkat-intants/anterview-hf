@@ -79,7 +79,7 @@ test.describe('applying again after a rejection', () => {
       expectReceived: false,
     });
     await expect(
-      candidatePage.getByText('You have already applied for this role'),
+      candidatePage.getByText('Thanks — we have your application'),
       'indistinguishable from a live application, on purpose',
     ).toBeVisible({ timeout: 60_000 });
     const onScreen = await candidatePage.locator('body').innerText();
@@ -129,13 +129,25 @@ test.describe('applying again after a rejection', () => {
     await applyThroughPublicForm(candidatePage, opening.id, candidate, {
       expectReceived: false,
     });
+    // The SAME screen a first-time applicant sees, deliberately. This step
+    // used to assert "One more step — check your email", which was real copy
+    // when it was written and was then deleted for being an oracle: it
+    // appeared only for a reapplication, so anyone who typed an address into
+    // this public form learned from it that the person had applied here
+    // before and been turned down. The assertion outlived the copy and the
+    // spec could no longer pass — which meant steps 6 and 7 below, the only
+    // end-to-end proof that criterion 9 works at all, had stopped running.
     await expect(
-      candidatePage.getByText('One more step — check your email'),
-      'the candidate is told it is waiting, not that it is in',
+      candidatePage.getByText('Thanks — we have your application'),
+      'a reapplication is answered exactly like any other submission',
     ).toBeVisible({ timeout: 60_000 });
-    await expect(
-      candidatePage.getByText(/Nothing is sent to the hiring team until you follow that link/),
-    ).toBeVisible();
+    const staged = await candidatePage.locator('body').innerText();
+    for (const leak of ['reject', 'turned down', 'one more step', 'confirm']) {
+      expect(
+        staged.toLowerCase(),
+        `the screen never says "${leak}" — the extra step goes to the inbox`,
+      ).not.toContain(leak.toLowerCase());
+    }
 
     // ── 6. The link proves the address, and THEN it reaches HR ──────────────
     const confirmMail = await waitForMail(

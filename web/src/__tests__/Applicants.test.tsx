@@ -755,6 +755,45 @@ describe('letting a rejected candidate reapply', () => {
     expect(await screen.findByText(/may reapply now/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /let bhavya nair reapply/i })).not.toBeInTheDocument();
   });
+
+  it('still says so after a reload, because the grant comes from the server', async () => {
+    // The chip used to be rendered from local component state alone — nothing
+    // read `reapply_override_at`, so an exception HR granted vanished on
+    // refresh and no screen could tell you whether it had been made. Here
+    // nobody clicks anything: the drawer is opened fresh on an application
+    // that already carries a grant.
+    listApplicants.mockResolvedValue([{ ...SCORED, status: 'rejected' }]);
+    listApplications.mockResolvedValue([
+      { ...REJECTED_APPLICATION, reapply_override_at: '2026-09-30T10:00:00Z' },
+    ]);
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+
+    expect(await screen.findByText(/may reapply now/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /let bhavya nair reapply/i }),
+      'and it is not offered twice',
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers the control when the server sends no grant at all', async () => {
+    // `undefined`, not `null` — an older cached response, or any caller that
+    // predates the field. `grantedAt !== null` was true for it, which hid the
+    // control behind a grant nobody had made.
+    listApplicants.mockResolvedValue([{ ...SCORED, status: 'rejected' }]);
+    const withoutTheField = { ...REJECTED_APPLICATION };
+    delete (withoutTheField as { reapply_override_at?: string | null })
+      .reapply_override_at;
+    listApplications.mockResolvedValue([withoutTheField]);
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+
+    expect(
+      await screen.findByRole('button', { name: /let bhavya nair reapply for backend engineer/i }),
+    ).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------

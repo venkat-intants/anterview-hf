@@ -13,9 +13,10 @@ import inspect
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 APP = Path(__file__).resolve().parents[2] / "app"
 MIGRATION = (
@@ -957,7 +958,10 @@ def test_the_already_applied_branch_deletes_the_object_it_released() -> None:
 
     src = inspect.getsource(submit_draft)
     branch = src[src.index("if gate.already_applied:"):]
-    branch = branch[: branch.index("return ApplicationOut")]
+    # `return _received(name)`, not `return ApplicationOut(...)`: every door
+    # answers through one helper now, because a reply assembled at the call
+    # site is a reply that can differ by what is stored about the address.
+    branch = branch[: branch.index("return _received(name)")]
     assert "release_resume=True" in branch
     assert "_delete_from_s3" in branch
     # Order matters: commit the cleared pointer BEFORE deleting the object, so a
@@ -1036,3 +1040,69 @@ def test_a_storage_failure_refuses_rather_than_lying() -> None:
     assert "503" in guard or "SERVICE_UNAVAILABLE" in guard
     # And it must not still be swallowing the error into a warning.
     assert "draft_object_orphaned" not in src
+
+
+# ===========================================================================
+# A best-effort extra must not be able to undo the request that called it
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_the_cooldown_notice_cannot_roll_back_its_caller() -> None:
+    """The notice owns a SAVEPOINT, not the caller's transaction.
+
+    It used to `commit()` on success and `rollback()` on failure — and on the
+    draft route the caller has already run `mark_submitted`, which consumes the
+    draft. A failure in here therefore threw that away, the caller's following
+    `commit()` committed nothing, and the CV object was deleted anyway. The
+    draft then stayed readable at `GET /apply/draft` for a rejected candidate
+    while a live one's answered 404, pointing at an object that no longer
+    existed: the exact channel round 3 closed, reopened by the fix for round 2.
+
+    `enqueue_email` is made to raise, which is reachable — `email_events
+    .dedupe_key` is UNIQUE while the dedupe is a SELECT-then-skip, so two
+    probes for one address in one window both pass the check and the second
+    raises on flush.
+    """
+    from app.reapplication import CooldownVerdict
+    from app.routers import public_apply
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(side_effect=[uuid.uuid4(), "en", "Stored Name"])
+
+    nested = AsyncMock()
+    nested.__aenter__ = AsyncMock(return_value=nested)
+    nested.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(return_value=nested)
+
+    with patch.object(
+        public_apply, "enqueue_email", AsyncMock(side_effect=IntegrityError("x", {}, Exception()))
+    ):
+        await public_apply._mail_cooldown_reason(
+            db,
+            requisition_id=uuid.uuid4(),
+            company_id=uuid.uuid4(),
+            applicant_id=uuid.uuid4(),
+            address="someone@example.com",
+            job_title="Backend Engineer",
+            company_name="Acme",
+            verdict=CooldownVerdict(
+                allowed=False, until=datetime.now(tz=UTC) + timedelta(days=7)
+            ),
+        )
+
+    # It took a savepoint...
+    db.begin_nested.assert_called_once()
+    # ...and it touched neither end of the caller's transaction. Both of these
+    # were present before, and either one is enough to lose the caller's work.
+    db.commit.assert_not_awaited()
+    db.rollback.assert_not_awaited()
+
+
+def test_the_cooldown_notice_owns_no_transaction_boundary() -> None:
+    """And it stays that way. A `commit` or `rollback` reintroduced here is not
+    a local change: it reaches into whatever the caller had in flight."""
+    src = inspect.getsource(
+        __import__("app.routers.public_apply", fromlist=["x"])._mail_cooldown_reason
+    )
+    assert "db.commit()" not in src
+    assert "db.rollback()" not in src
+    assert "db.begin_nested()" in src

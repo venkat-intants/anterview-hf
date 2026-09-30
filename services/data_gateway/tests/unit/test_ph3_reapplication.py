@@ -300,7 +300,14 @@ def test_a_cooldown_refusal_is_indistinguishable_from_a_live_application() -> No
         assert "_mail_cooldown_reason" in src, (
             f"{fn.__name__} refuses without telling the candidate why"
         )
-        assert "_ALREADY_APPLIED" in src
+        # Every exit through the one reply. This replaces an
+        # `assert "_ALREADY_APPLIED" in src`, which asked for the SECOND of two
+        # messages to still be there — a test that required the difference it
+        # was named after. There is one message now.
+        assert "_received(name)" in src
+        assert "ApplicationOut(" not in src, (
+            f"{fn.__name__} builds its own reply, so it can differ again"
+        )
 
 
 def test_the_apply_query_reads_the_cooldown_setting() -> None:
@@ -661,7 +668,7 @@ async def test_confirming_re_evaluates_the_cooldown_rather_than_trusting_it() ->
         )
 
     checked.assert_awaited()
-    assert applied is False, "a window that closed since staging still refuses"
+    assert applied.applied is False, "a window that closed since staging still refuses"
     moved.assert_not_awaited()
     spent.assert_not_awaited()
 
@@ -790,9 +797,13 @@ async def test_a_stale_link_cannot_drag_a_moved_on_application_back() -> None:
                 requisition_id=REQ,
                 cooldown_days=None,
             )
-        assert applied is False, moved_on
+        assert applied.applied is False, moved_on
         moved.assert_not_awaited()
-        spent.assert_not_awaited()
+        # The override IS spent on this path now. HR moved this person on
+        # themselves, so the exception granted for the reapplication that has
+        # been overtaken has done its job; leaving it live would silently
+        # forgive their NEXT rejection on this opening.
+        spent.assert_awaited()
         # And the staged attempt is cleared, so the dead link stops resolving.
         sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
         assert "reapply_token_hash = NULL" in sql, moved_on

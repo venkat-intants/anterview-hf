@@ -1,6 +1,7 @@
 // AttemptProctoringSummary — the HR-facing view of GET
 // /hr/exams/{examId}/attempts/{attemptId}/proctoring (camera-proctoring
-// contract §7). Rendered on ExamAttemptDetail's overview.
+// contract §7 — docs/CAMERA-PROCTORING-CONTRACT.md). Rendered on
+// ExamAttemptDetail's overview.
 //
 // THE LOAD-BEARING RULE ON THIS SCREEN: a score tells HR nothing about *why*
 // it dropped, and a reviewer under time pressure is exactly the person most

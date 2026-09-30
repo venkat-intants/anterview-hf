@@ -2,6 +2,13 @@
 "no frame ever" guarantee, and the ``video_capture`` consent gate for the
 applicant magic-link (unauthenticated) exam-take flow.
 
+THE CONTRACT THIS MODULE IMPLEMENTS: ``docs/CAMERA-PROCTORING-CONTRACT.md``.
+Comments here and across the exam-proctoring code cite it by section (§1 the
+vocabulary, §2 the weights, §3 consent, §4 the no-frame guarantee, §5
+accommodations, §7 the HR panel, §8 localisation). It was written on 2026-09-30,
+after the code — until then 53 citations pointed at a document that had never
+been committed.
+
 WHAT ALREADY EXISTS (do not rebuild)
 ``exam_integrity_events`` (``attempt_id``, ``company_id``, ``event_type``,
 ``started_at``, ``ended_at`` nullable, ``event_metadata`` JSONB — see the "NO

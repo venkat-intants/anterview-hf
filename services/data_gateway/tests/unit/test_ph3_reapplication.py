@@ -615,7 +615,7 @@ async def test_confirming_re_evaluates_the_cooldown_rather_than_trusting_it() ->
     destroyed a recorded HR exception on every single confirmation."""
     from app import reapplication
 
-    staged = {"reapply_resume_s3_key": None, "reapply_answers": None}
+    staged = {"status": "rejected", "reapply_resume_s3_key": None, "reapply_answers": None}
 
     async def _execute(*a: object, **k: object):
         res = MagicMock()
@@ -653,7 +653,7 @@ async def test_confirming_re_evaluates_the_cooldown_rather_than_trusting_it() ->
 async def test_confirming_spends_the_override_only_when_it_is_what_allowed_it() -> None:
     from app import reapplication
 
-    staged = {"reapply_resume_s3_key": None, "reapply_answers": None}
+    staged = {"status": "rejected", "reapply_resume_s3_key": None, "reapply_answers": None}
 
     async def _execute(*a: object, **k: object):
         res = MagicMock()
@@ -693,6 +693,7 @@ async def test_confirming_writes_answers_back_as_uuid_keys() -> None:
     from app import reapplication
 
     staged = {
+        "status": "rejected",
         "reapply_resume_s3_key": None,
         "reapply_answers": {str(QUESTION_ID): "yes"},
     }
@@ -728,3 +729,53 @@ async def test_confirming_writes_answers_back_as_uuid_keys() -> None:
     answers.assert_awaited()
     written = answers.await_args.kwargs["answers"]
     assert written == [(QUESTION_ID, "yes")], "restored as UUIDs, not strings"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_link_cannot_drag_a_moved_on_application_back() -> None:
+    """The link lives for a week and the application does not stand still.
+
+    HR may have used the override and reopened the person by hand, or moved
+    them on. A stale link must not then pull a shortlisted or interviewing
+    candidate back to `new` and replace the CV on their application with the
+    staged one. On a `hired` enrolment `record_transition` refuses outright,
+    which the endpoint's broad except turns into a permanent 503 rather than
+    an answer.
+    """
+    from app import reapplication
+
+    for moved_on in ("shortlisted", "interviewing", "hired"):
+        staged = {
+            "status": moved_on,
+            "reapply_resume_s3_key": "applicants/c/a-new.pdf",
+            "reapply_answers": None,
+        }
+
+        async def _execute(*a: object, _s: dict = staged, **k: object):
+            res = MagicMock()
+            mapped = MagicMock()
+            mapped.first = MagicMock(return_value=_s)
+            res.mappings = MagicMock(return_value=mapped)
+            return res
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=_execute)
+        db.scalar = AsyncMock(return_value=None)
+        with (
+            patch("app.requisitions.record_transition", AsyncMock()) as moved,
+            patch.object(reapplication, "consume_override", AsyncMock()) as spent,
+        ):
+            applied = await reapplication.confirm(
+                db,
+                enrolment_id=uuid.uuid4(),
+                company_id=uuid.uuid4(),
+                applicant_id=APPLICANT,
+                requisition_id=REQ,
+                cooldown_days=None,
+            )
+        assert applied is False, moved_on
+        moved.assert_not_awaited()
+        spent.assert_not_awaited()
+        # And the staged attempt is cleared, so the dead link stops resolving.
+        sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
+        assert "reapply_token_hash = NULL" in sql, moved_on

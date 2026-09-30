@@ -195,14 +195,6 @@ class ApplicationOut(BaseModel):
     # candidate does, and a red failure would suggest their first attempt was
     # lost.
     already_applied: bool
-    # True when the application was ACCEPTED but is waiting for the candidate to
-    # follow a link emailed to their address (PH3-B4b). A reapplication to a
-    # role someone was rejected for cannot take effect on submission: this
-    # endpoint is anonymous and takes any address, so acting on it would let a
-    # stranger move a real person's application. The distinction has to reach
-    # the screen, because "your application is in" is the opposite of what the
-    # email then asks them to do.
-    awaiting_confirmation: bool = False
     message: str
 
 
@@ -502,6 +494,26 @@ class DraftStartOut(BaseModel):
 # a different answer for "rejected, come back on the 5th" told whoever typed it
 # that a named person had applied, been turned down, and roughly when. The date
 # is still sent — to the address, by email, where only its owner reads it.
+# ONE sentence for every accepted application, first or second.
+#
+# A reapplication cannot take effect on submission, so the candidate does have
+# something extra to do — but saying so HERE would say it to whoever typed the
+# address. A third review found that `awaiting_confirmation: true` plus the
+# real applicant and enrolment ids told a stranger, for the price of one PDF,
+# that a named person had applied for this role and been rejected. That is the
+# same disclosure the 409's date was, in a new field.
+#
+# So what differs between the two cases travels by EMAIL, which only the owner
+# of the address reads: a first-time applicant gets "we have your application"
+# with an activation link, a reapplication gets "confirm it is you". The
+# sentence below is true of both, and the ids are blanked for the same reason
+# the already-applied branch blanks them — the reply echoes only what this
+# request sent.
+_ACCEPTED = (
+    "Thanks — we have your application. Please check your email; we have sent "
+    "you a message about it."
+)
+
 _ALREADY_APPLIED = "You have already applied for this role. We have your application."
 
 async def _mail_cooldown_reason(
@@ -1348,25 +1360,12 @@ async def submit_draft(
         company_id=str(company_id), requisition_id=str(requisition_id),
         applicant_id=str(applicant_id), returning=not is_new_person,
     )
-    if gate.reapplying:
-        return ApplicationOut(
-            applicant_id=str(applicant_id),
-            enrolment_id=outcome.enrolment_id,
-            full_name=name,
-            already_applied=False,
-            awaiting_confirmation=True,
-            message=(
-                "Thanks — we have your application. Because you have applied for "
-                "this role before, check your email and confirm it is you before "
-                "we send it to the hiring team."
-            ),
-        )
     return ApplicationOut(
-        applicant_id=str(applicant_id),
-        enrolment_id=outcome.enrolment_id,
+        applicant_id="",
+        enrolment_id=None,
         full_name=name,
         already_applied=False,
-        message="Thanks — your application is in. We will be in touch by email.",
+        message=_ACCEPTED,
     )
 
 
@@ -2004,25 +2003,12 @@ async def submit_application(
         returning=not is_new_person,
         # NEVER log the name, email or resume text.
     )
-    if gate.reapplying:
-        return ApplicationOut(
-            applicant_id=str(applicant_id),
-            enrolment_id=outcome.enrolment_id,
-            full_name=name,
-            already_applied=False,
-            awaiting_confirmation=True,
-            message=(
-                "Thanks — we have your application. Because you have applied for "
-                "this role before, check your email and confirm it is you before "
-                "we send it to the hiring team."
-            ),
-        )
     return ApplicationOut(
-        applicant_id=str(applicant_id),
-        enrolment_id=outcome.enrolment_id,
+        applicant_id="",
+        enrolment_id=None,
         full_name=name,
         already_applied=False,
-        message="Thanks — your application is in. We will be in touch by email.",
+        message=_ACCEPTED,
     )
 
 

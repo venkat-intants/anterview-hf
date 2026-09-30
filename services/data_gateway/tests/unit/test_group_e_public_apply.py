@@ -40,10 +40,13 @@ def test_nothing_stored_is_echoed_to_a_repeat_or_racing_submission() -> None:
     assert 'existing["full_name"]' not in src
     assert 'existing["enrolment_id"])' not in src
     # Both "already applied" replies carry no ids.
-    # Three early returns echo nothing now: already-applied, the cooldown
-    # refusal (which answers IDENTICALLY so the two cannot be told apart from
-    # outside), and the racing-submission loser.
-    assert src.count('applicant_id="",') == 3
+    # Four now, and that is the point: already-applied, the cooldown refusal,
+    # the racing-submission loser, AND the accepted reply itself. The last one
+    # joined them when a security review found that returning the real
+    # applicant and enrolment ids on a reapplication handed a stranger stable
+    # internal identifiers for somebody else — so every reply from this
+    # endpoint now echoes only what the request sent.
+    assert src.count('applicant_id="",') == 4
 
 
 def test_a_returning_applicants_record_is_not_rewritten_by_the_form() -> None:

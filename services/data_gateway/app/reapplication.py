@@ -385,7 +385,7 @@ async def confirm(
     staged = (
         await db.execute(
             text(
-                "SELECT reapply_resume_s3_key, reapply_answers FROM enrolments"
+                "SELECT status, reapply_resume_s3_key, reapply_answers FROM enrolments"
                 " WHERE id = :i AND company_id = :c AND reapply_requested_at IS NOT NULL"
                 " FOR UPDATE"
             ),
@@ -393,6 +393,22 @@ async def confirm(
         )
     ).mappings().first()
     if staged is None:
+        return False
+
+    # STILL REJECTED? The link is valid for up to a week, and the application
+    # does not stand still in that time. HR may have used the override and
+    # reopened the person by hand, or moved them on; a stale link must not then
+    # drag a shortlisted or interviewing candidate back to `new` and replace
+    # the CV on their application with the staged one. And on a `hired`
+    # enrolment `record_transition` refuses outright, which the endpoint's
+    # broad except turns into a permanent 503 on every retry rather than an
+    # answer. Treated as "already dealt with", which is what it is.
+    if staged["status"] != "rejected":
+        log.info(
+            "reapply.confirm_superseded",
+            enrolment_id=str(enrolment_id), status=str(staged["status"]),
+        )
+        await clear_staged(db, enrolment_id=enrolment_id, company_id=company_id)
         return False
 
     # RE-EVALUATED HERE, not trusted from submission. Time has passed — the

@@ -26,7 +26,6 @@ import {
   Briefcase,
   Check,
   CheckCircle2,
-  Mail,
   FileText,
   Loader2,
   Upload,
@@ -111,21 +110,14 @@ function Submitted({ result, title }: { result: ApplicationResult; title: string
   return (
     <Shell>
       <Panel className="text-center">
-        {/* A staged reapplication is NOT "received" in the sense the tick
-            implies: nothing reaches the hiring team until they follow the
-            emailed link. Saying otherwise is the opposite of what that email
-            then asks them to do, and they would never open it. */}
-        {result.awaiting_confirmation ? (
-          <Mail className="mx-auto h-9 w-9 text-[var(--ui-info)]" aria-hidden="true" />
-        ) : (
-          <CheckCircle2 className="mx-auto h-9 w-9 text-[var(--ui-ok)]" aria-hidden="true" />
-        )}
+        {/* One screen for every accepted application. A reapplication does
+            have something extra to do, but saying so HERE would say it to
+            whoever typed the address — a third security review found that
+            flag, and the ids beside it, told a stranger a named person had
+            applied and been rejected. What differs travels by email. */}
+        <CheckCircle2 className="mx-auto h-9 w-9 text-[var(--ui-ok)]" aria-hidden="true" />
         <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-          {result.awaiting_confirmation
-            ? t('apply.confirmNeeded')
-            : result.already_applied
-              ? t('apply.alreadyApplied')
-              : t('apply.received')}
+          {result.already_applied ? t('apply.alreadyApplied') : t('apply.received')}
         </h1>
         <p className="mx-auto mt-2 max-w-[50ch] text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
           {result.message}
@@ -133,9 +125,7 @@ function Submitted({ result, title }: { result: ApplicationResult; title: string
         <p className="mx-auto mt-4 max-w-[50ch] text-[12.5px] leading-relaxed text-muted-foreground">
           {/* Said plainly because the alternative — silence — is what makes
               candidates assume they were rejected. */}
-          {result.awaiting_confirmation
-            ? t('apply.confirmNote')
-            : t('apply.reviewNote', { title })}
+          {t('apply.reviewNote', { title })}
         </p>
       </Panel>
     </Shell>

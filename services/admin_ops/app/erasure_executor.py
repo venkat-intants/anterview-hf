@@ -370,9 +370,17 @@ EXCLUDED_TABLES: dict[str, str] = {
                     "roll. Reaching across the service boundary to delete them "
                     "here would race that cron's own transaction.",
     # --- User-linked but carrying no personal data -------------------------
-    "auth_tokens": "single-use HMAC hashes for reset / verify, TTL ≤ 24 h. The "
-                   "raw token never existed in the DB, and the soft-delete at "
-                   "request time already blocks redemption.",
+    "auth_tokens": "single-use HMAC hashes. The raw token never existed in the "
+                   "DB. CORRECTED: this entry used to say 'reset / verify, TTL "
+                   "≤ 24 h' and rest on 'the soft-delete at request time "
+                   "already blocks redemption'. Both became wrong when PH3-B4b "
+                   "added the 'reapply_confirm' kind with a 168 h TTL, whose "
+                   "redeem path (apply_activation.redeem_reapply_token) checks "
+                   "the token row alone and NOT users.deleted_at — unlike "
+                   "activate() and every route in routers/auth.py. The rows "
+                   "stay excluded, but what blocks redemption for that kind is "
+                   "step 5l clearing the enrolment's reapply_token_hash, "
+                   "because a token nothing points at can apply nothing.",
     "user_roles": "a role grant is a role id plus a timestamp. The anonymised "
                   "users row is retained, so its grants are retained with it; "
                   "login is impossible anyway (password_hash NULL, deleted_at set).",
@@ -1952,7 +1960,19 @@ async def _execute_one_erasure(
     #    timestamps/ids or the company's own assessment content, not prose a
     #    person wrote about the candidate.
     #
-    #    reapply_answers rides along, and it is CLEARED rather than marked.
+    #    THE WHOLE STAGED ATTEMPT GOES, not just its text. Clearing the
+    #    answers while leaving `reapply_requested_at` and
+    #    `reapply_token_hash` erased the DATA and left the STATE MACHINE: the
+    #    outstanding confirmation link (up to a week) still redeemed —
+    #    `redeem_reapply_token` checks the token row only, and
+    #    `staged_for_token` matches on `deleted_at IS NULL`, which erasure does
+    #    not set — so a completed erasure could be followed by the erased
+    #    person's own link putting them back into HR's live pipeline, with
+    #    `applied_resume_s3_key` pinned to an object step 8 had just deleted.
+    #    Nulling the key here strands nothing: step 1c-iii collected it before
+    #    this ran.
+    #
+    #    reapply_answers is CLEARED rather than marked.
     #    The two above are HR's prose about the candidate, which the register
     #    keeps as '[redacted]' so the fact that something was written survives.
     #    This one is the CANDIDATE'S OWN answers to the screening questions,
@@ -1966,12 +1986,14 @@ async def _execute_one_erasure(
             " held_reason = CASE WHEN held_reason IS NULL THEN NULL ELSE '[redacted]' END,"
             " reapply_override_reason = CASE WHEN reapply_override_reason IS NULL THEN NULL"
             "                                ELSE '[redacted]' END,"
-            " reapply_answers = NULL"
+            " reapply_answers = NULL, reapply_requested_at = NULL,"
+            " reapply_resume_s3_key = NULL, reapply_token_hash = NULL"
             " WHERE applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
             "   AND ((held_reason IS NOT NULL AND held_reason <> '[redacted]')"
             "     OR (reapply_override_reason IS NOT NULL"
             "         AND reapply_override_reason <> '[redacted]')"
-            "     OR reapply_answers IS NOT NULL)"
+            "     OR reapply_answers IS NOT NULL"
+            "     OR reapply_requested_at IS NOT NULL)"
         ),
         {"uid": uid_str},
     )

@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from unittest import mock
 
 import pytest
 import pytest_asyncio
@@ -478,3 +479,81 @@ async def test_the_reply_carries_nothing_that_was_stored(
     # back, not something disclosed to them.
     assert body["full_name"] == "Probe Person"
     assert set(body) == {"applicant_id", "enrolment_id", "full_name", "message"}
+
+
+@pytest.mark.asyncio
+async def test_every_state_does_the_same_work(client: AsyncClient) -> None:
+    """The fifth channel: identical replies, different WORK.
+
+    Every earlier round closed a difference in what the endpoint SAID. Round 5
+    found the states still did different amounts of it — a live application
+    and a cooldown returned BEFORE the CV upload that a first-time application
+    and a reapplication performed. Two requests with a large PDF and a short
+    client timeout separated them on latency, and the caller chose the file
+    size, so the caller chose the size of the gap.
+
+    The upload now happens before the gate on every submission, and the
+    branches that keep nothing delete it afterwards. THE UPLOAD COUNT is the
+    thing to assert, not what is left in the bucket: a refused submission
+    deletes its object and an accepted one keeps it, so the objects left
+    behind differ by design — and they are in our bucket, where no anonymous
+    caller can see them. What the caller can measure is whether the work
+    happened, which is exactly one upload per submission, in every state.
+
+    (The first version of this test compared objects remaining in the local
+    store. It was vacuous — the store it pointed at was empty, so every count
+    was zero — and it would have been wrong even had it worked.)
+    """
+    from app.routers import public_apply
+
+    addresses = await _seeded_addresses(client)
+    real_upload = public_apply._upload_to_s3
+
+    uploads: dict[str, int] = {}
+    for case, (target, email) in addresses.items():
+        count = 0
+
+        async def _counting(raw: bytes, key: str) -> None:
+            nonlocal count
+            count += 1
+            await real_upload(raw, key)
+
+        with mock.patch.object(public_apply, "_upload_to_s3", _counting):
+            await _apply(client, target, email)
+        uploads[case] = count
+
+    assert len(set(uploads.values())) == 1, (
+        "the states do different amounts of work, so an anonymous caller can "
+        "time two requests and learn which one an address is in:\n"
+        + "\n".join(f"    {c:9} -> {n} upload(s)" for c, n in uploads.items())
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_storage_outage_answers_the_same_way_for_every_state(
+    client: AsyncClient,
+) -> None:
+    """The non-statistical half of the same channel.
+
+    With the upload after the gate, a live application and a cooldown could
+    never reach the storage error — so an outage turned "has this address
+    applied?" into a 201-vs-503 read from two requests. Now the upload is the
+    first thing every submission does, so every state fails the same way.
+    """
+    from app.local_storage import LocalStorageError
+    from app.routers import public_apply
+
+    addresses = await _seeded_addresses(client)
+
+    async def _always_fails(_raw: bytes, _key: str) -> None:
+        raise LocalStorageError("storage is down")
+
+    seen: dict[str, int] = {}
+    with mock.patch.object(public_apply, "_upload_to_s3", _always_fails):
+        for case, (target, email) in addresses.items():
+            seen[case] = (await _apply(client, target, email)).status_code
+
+    assert set(seen.values()) == {503}, (
+        "a storage outage tells the states apart:\n"
+        + "\n".join(f"    {c:9} -> {n}" for c, n in seen.items())
+    )

@@ -82,7 +82,7 @@ from app.local_storage import LocalStorageError
 from app.mailer import enqueue_email
 from app.models import Applicant
 from app.publishing import visible_sql
-from app.rate_limit import rate_limit
+from app.rate_limit import rate_limit, rate_limit_window
 from app.reapplication import CooldownVerdict, StageResult
 from app.reapplication import clear_staged as reapplication_clear_staged
 from app.reapplication import confirm as reapplication_confirm
@@ -551,6 +551,25 @@ def _received(name: str) -> ApplicationOut:
     return ApplicationOut(
         applicant_id="", enrolment_id=None, full_name=name, message=_RECEIVED
     )
+
+
+async def _release_unadopted(s3_key: str) -> None:
+    """Remove a CV that was uploaded before the gate and then not kept.
+
+    The upload happens before we know whether this submission will be acted
+    on, so that the WORK the endpoint does cannot be read as an answer about
+    the address — see `submit_application`. The branches that keep nothing
+    call this.
+
+    Best-effort and silent: the reply is already decided, and a failed delete
+    must cost an orphan rather than change what a caller is told. The key is
+    under `applicants/{company}/{applicant}`, which the erasure sweep covers,
+    so an orphan here is reachable rather than permanent.
+    """
+    try:
+        await _delete_from_s3(s3_key)
+    except Exception:  # noqa: BLE001 — nothing points at it either way
+        log.warning("public_apply.unadopted_cv_orphaned")
 
 
 def _email_name(existing: Any | None, submitted: str) -> str:
@@ -1051,7 +1070,11 @@ async def delete_draft(db: DbSessionDep, token: DraftTokenDep) -> Response:
 @router.post(
     "/draft/resume-upload",
     response_model=DraftOut,
-    dependencies=[rate_limit("public_apply_draft_upload", 6)],
+    dependencies=[
+        rate_limit("public_apply_draft_upload", 6),
+        # The other anonymous door that writes an object. Same terms.
+        rate_limit_window("public_apply_draft_upload_hourly", 60, 3600),
+    ],
 )
 async def upload_draft_resume(
     db: DbSessionDep, resume: UploadFile, token: DraftTokenDep
@@ -1122,7 +1145,16 @@ async def upload_draft_resume(
     "/draft/submit",
     response_model=ApplicationOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[rate_limit("public_apply_submit", 6)],
+    dependencies=[
+        rate_limit("public_apply_submit", 6),
+        # A SECOND cap, over an hour. This route stores the CV before
+        # the gate is consulted (see the body for why), so a caller can
+        # make us write an object we immediately delete. Six a minute
+        # bounds a burst and is still 8,640 uploads a day from one
+        # address; 60 an hour is far above anyone filling in a form and
+        # far below anything worth calling storage abuse.
+        rate_limit_window("public_apply_submit_hourly", 60, 3600),
+    ],
 )
 async def submit_draft(
     request: Request, db: DbSessionDep, token: DraftTokenDep
@@ -1764,7 +1796,16 @@ async def get_posting(
     # Tighter than the read: this one writes a row and uploads a file. Six a
     # minute is generous for a person filling in a form and useless for a
     # script trying to fill a funnel with noise.
-    dependencies=[rate_limit("public_apply_submit", 6)],
+    dependencies=[
+        rate_limit("public_apply_submit", 6),
+        # A SECOND cap, over an hour. This route stores the CV before
+        # the gate is consulted (see the body for why), so a caller can
+        # make us write an object we immediately delete. Six a minute
+        # bounds a burst and is still 8,640 uploads a day from one
+        # address; 60 an hour is far above anyone filling in a form and
+        # far below anything worth calling storage abuse.
+        rate_limit_window("public_apply_submit_hourly", 60, 3600),
+    ],
 )
 async def submit_application(
     requisition_id: uuid.UUID,
@@ -1919,6 +1960,61 @@ async def submit_application(
     # Decided by reapplication.gate, which BOTH doors into an application share
     # — this one and the saved-draft route below. They used to hold two
     # hand-written copies of it and only one was fixed.
+    # ── The CV is stored BEFORE the gate is consulted ───────────────────────
+    # This ordering is the whole point, and it is the opposite of what reads
+    # naturally.
+    #
+    # The obvious order — decide, then store only if we are keeping it — makes
+    # the ENDPOINT's work depend on what we already know about the address,
+    # and that is observable even when every byte of the reply is identical.
+    # A live application and a cooldown returned here, before a 5 MB upload
+    # and ten writes; a first-time application and a reapplication did all of
+    # it. Two requests with a large PDF and a short client timeout separated
+    # the four states on latency alone, with the caller choosing the file size
+    # and so the size of the gap. Worse, it was not only timing: with object
+    # storage unavailable the states that upload answered 503 while the states
+    # that returned early answered 201 — a clean, non-statistical oracle from
+    # two requests.
+    #
+    # So every submission that gets this far does the same work in the same
+    # order, and the branches below delete what they do not keep. The cost is
+    # that an anonymous caller can make us write an object we immediately
+    # remove; `_MAX_RESUME_BYTES` bounds each one and the route carries both a
+    # burst and a sustained rate limit to bound the rest.
+    applicant_id = uuid.UUID(str(existing["id"])) if existing is not None else uuid.uuid4()
+    is_new_person = existing is None
+    # A returning candidate's CV gets a key of its own and belongs to THIS
+    # application (enrolments.applied_resume_s3_key). It does not replace the
+    # CV on their record — see the returning branch below.
+    s3_key = (
+        f"applicants/{company_id}/{applicant_id}.pdf" if is_new_person
+        else f"applicants/{company_id}/{applicant_id}-{uuid.uuid4().hex[:12]}.pdf"
+    )
+    try:
+        await _upload_to_s3(raw, s3_key)
+    except (BotoCoreError, ClientError, LocalStorageError) as exc:
+        # The candidate is told something they can act on ("try again"); the
+        # operator is told what to actually fix. On a laptop this is almost
+        # always "no bucket, no fallback", which is a config problem the
+        # candidate-facing message must not try to explain.
+        #
+        # Reached by EVERY state now, which is the point: this 503 used to be
+        # unreachable for a live application and a cooldown, and that made a
+        # storage outage a way to ask whether an address had applied.
+        log.warning(
+            "public.apply.storage_failed",
+            error_type=type(exc).__name__,
+            hint=(
+                "no object storage configured — set S3_* for a real bucket, or "
+                "STORAGE_LOCAL_DIR to write to disk in development"
+                if not settings.s3_access_key_id and not settings.storage_local_dir
+                else None
+            ),
+        )
+        raise HTTPException(
+            status_code=503, detail="We could not save your application. Please try again."
+        ) from exc
+
     gate = await reapplication_gate(
         db,
         requisition_id=requisition_id,
@@ -1928,6 +2024,10 @@ async def submit_application(
         enrolment_status=existing["enrolment_status"] if existing is not None else None,
     )
     if gate.already_applied:
+        # Nothing adopts the object on this branch, so it goes. Deleted after
+        # the reply is decided and never in a way that can change it: a failed
+        # delete costs an orphan, not an application.
+        await _release_unadopted(s3_key)
         return _received(name)
 
     # ── Still inside a reapplication cooldown? (PH3-B4b) ────────────────────
@@ -1964,42 +2064,16 @@ async def submit_application(
         # it shares with a caller that has work in flight. Nothing else is
         # pending on this path, so this commit only sends the mail.
         await db.commit()
+        # As above: uploaded so this branch costs what the others cost, and
+        # removed because nothing here adopts it.
+        await _release_unadopted(s3_key)
         return _received(name)
 
     # ── Store ───────────────────────────────────────────────────────────────
     # An applicant already exists for this email (they applied to a DIFFERENT
     # opening) — reuse the person and add an enrolment. D-06: one applicant per
-    # company, many enrolments.
-    applicant_id = uuid.UUID(str(existing["id"])) if existing is not None else uuid.uuid4()
-    is_new_person = existing is None
-
-    # A returning candidate's CV gets a key of its own and belongs to THIS
-    # application (enrolments.applied_resume_s3_key). It does not replace the CV
-    # on their record — see the returning branch below.
-    s3_key = (
-        f"applicants/{company_id}/{applicant_id}.pdf" if is_new_person
-        else f"applicants/{company_id}/{applicant_id}-{uuid.uuid4().hex[:12]}.pdf"
-    )
-    try:
-        await _upload_to_s3(raw, s3_key)
-    except (BotoCoreError, ClientError, LocalStorageError) as exc:
-        # The candidate is told something they can act on ("try again"); the
-        # operator is told what to actually fix. On a laptop this is almost
-        # always "no bucket, no fallback", which is a config problem the
-        # candidate-facing message must not try to explain.
-        log.warning(
-            "public.apply.storage_failed",
-            error_type=type(exc).__name__,
-            hint=(
-                "no object storage configured — set S3_* for a real bucket, or "
-                "STORAGE_LOCAL_DIR to write to disk in development"
-                if not settings.s3_access_key_id and not settings.storage_local_dir
-                else None
-            ),
-        )
-        raise HTTPException(
-            status_code=503, detail="We could not store your CV just now. Please try again."
-        ) from exc
+    # company, many enrolments. `applicant_id`, `is_new_person` and `s3_key`
+    # were all bound above the gate, with the upload.
 
     now = datetime.now(tz=UTC)
     # Attributed to whoever owns the opening so the reconciler's later scoring

@@ -245,13 +245,41 @@ def test_only_hr_can_override() -> None:
 # ("a live application is never told to wait" used to live here as a third
 # string assertion. It is now `test_a_live_application_is_answered_not_refused`
 # below, which calls the gate and reads the answer.)
-def test_the_cooldown_is_checked_before_the_cv_is_stored() -> None:
-    """A refusal should cost no stored object — the same ordering the consent
-    and answer checks already use."""
+def test_the_cv_is_stored_before_the_cooldown_is_checked() -> None:
+    """DELIBERATELY REVERSED, and the reversal is the security property.
+
+    This test used to require the opposite — gate first, so that a refusal
+    cost no stored object. That is the tidier ordering and it was wrong, for a
+    reason no unit test could see: it made the WORK the endpoint does depend
+    on what is already known about the address. A live application and a
+    cooldown returned before a 5 MB upload and ten writes; a first-time
+    application and a reapplication performed all of it. The reply was
+    identical by then, but two requests with a large PDF and a short client
+    timeout still separated the states on latency, with the caller choosing
+    the file size and so the size of the gap — and with storage unavailable
+    the states that upload answered 503 while the states that returned early
+    answered 201, which needs no timing at all.
+
+    So the upload happens first on every submission and the branches that keep
+    nothing delete it. The cost — an anonymous caller can make us write an
+    object we immediately remove — is bounded by `_MAX_RESUME_BYTES` and by
+    the burst and sustained rate limits on the route.
+
+    The behavioural proof is in
+    `tests/integration/test_ph3_cooldown_indistinguishable.py`
+    (`test_every_state_does_the_same_work`, and the storage-outage test beside
+    it), both of which fail if this ordering is put back.
+    """
     from app.routers.public_apply import submit_application
 
     src = inspect.getsource(submit_application)
-    assert src.index("reapplication_gate") < src.index("_upload_to_s3")
+    assert src.index("_upload_to_s3") < src.index("reapplication_gate"), (
+        "the gate runs before the upload again, so the work this endpoint does "
+        "is once more an answer about the address"
+    )
+    # And what is not adopted is released, or the fix trades a timing channel
+    # for a bucket full of other people's CVs.
+    assert "_release_unadopted" in src
 
 
 def test_the_cooldown_is_checked_after_the_cv_is_read() -> None:

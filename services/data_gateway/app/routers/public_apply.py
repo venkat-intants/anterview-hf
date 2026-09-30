@@ -1147,7 +1147,14 @@ async def submit_draft(
     req = await _open_posting(db, requisition_id)
     company_id = req["company_id"]
 
-    name = (row.get("full_name") or "").strip()[:200]
+    # `_clean`, not `.strip()`, for the reason the one-shot door gives: this
+    # lands in the plain-text part of a mail, and `.strip()` trims only the
+    # ENDS. `start_draft` accepts any address without verifying it, so an
+    # attacker can open a draft against a victim's inbox and PATCH a
+    # multi-line `full_name` — the collapse is what stops a paragraph of their
+    # choosing arriving above a genuine call-to-action. The draft store
+    # sanitises on write; this is the value that reaches the mail.
+    name = _clean(row.get("full_name"), 200) or ""
     address = str(row["email"]).strip().lower()[:320]
     if not name:
         raise HTTPException(
@@ -1344,6 +1351,9 @@ async def submit_draft(
             )
         # Staged, not applied. Same door, same reason.
         superseded_cv: str | None = None
+        # Clears the draft's own pointer in the same transaction, so the row
+        # never outlives the object it names. See where it is set below.
+        release_staged_draft_cv = False
         # Bound here too: `gate.reapplying` can be true while
         # enrol_applicant returned no enrolment id, and the email
         # check below reads it.
@@ -1359,6 +1369,23 @@ async def submit_draft(
                 token_hash=hash_token(reapply_raw, REAPPLY_TOKEN_KIND),
             )
             superseded_cv = staged.superseded_key
+            if not staged.staged:
+                # THE SAME RELEASE THE ONE-SHOT DOOR DOES, and it was missing
+                # here — which mattered more on this door, not less.
+                #
+                # An attempt was already pending, so this submission recorded
+                # nothing: no applicant row is created for a returning person,
+                # `enrol_applicant` no-ops, and `stage` stored no key. The
+                # draft's object is left named by the draft row alone — and
+                # `purge_expired` deletes a submitted draft's ROW after its
+                # retention window while deliberately keeping the object,
+                # because it assumes `applied_resume_s3_key` names it. Nothing
+                # does. The key is `drafts/{company}/{draft}.pdf`, outside the
+                # applicant-prefix sweep erasure runs, so after that window a
+                # CV sits in the bucket that no collector and no sweep can
+                # name — and an erasure request completes over it.
+                superseded_cv = row["resume_s3_key"]
+                release_staged_draft_cv = True
         # The draft's consent row hangs off the throwaway guest identity that
         # created it. Record it against the identity that owns the application
         # too, so an audit that looks this person up by their real user id
@@ -1396,10 +1423,35 @@ async def submit_draft(
                     ),
                     now=now,
                 )
-        await draft_store.mark_submitted(db, draft_id=row["id"], now=now)
+        await draft_store.mark_submitted(
+            db, draft_id=row["id"], now=now,
+            release_resume=release_staged_draft_cv,
+        )
         await db.commit()
     except IntegrityError:
+        # Two submissions racing for the same (requisition, applicant); the
+        # partial unique index is the arbiter and this one lost.
         await db.rollback()
+        # THE DRAFT IS STILL CONSUMED. This was the one exit of the eight that
+        # left it readable, and the difference is state-correlated rather than
+        # random: this error can only be raised while an enrolment is being
+        # CREATED, which never happens for an address that already has one
+        # (`enrol_applicant` no-ops). So a still-readable draft after a
+        # concurrent submit meant "this address had no live application and no
+        # cooldown" — the round-3 channel, surviving on the one exit the
+        # matrix test cannot reach because it never issues concurrent
+        # requests.
+        #
+        # In its own transaction, after the rollback: the work above is gone,
+        # and this has to land on its own.
+        try:
+            await draft_store.mark_submitted(
+                db, draft_id=row["id"], now=now, release_resume=True
+            )
+            await db.commit()
+        except Exception:  # noqa: BLE001 — the reply is already decided
+            await db.rollback()
+            log.warning("public_apply.draft_not_consumed_on_race", draft_id=str(row["id"]))
         return _received(name)
     except Exception:
         await db.rollback()
@@ -1430,7 +1482,19 @@ async def submit_draft(
             # waiting), and which mints no token at all for somebody who has
             # already claimed their account, leaving them nothing to confirm
             # with.
-            if gate.reapplying and staged.staged:
+            # NOTHING AT ALL when a reapplication was refused because one
+            # was already pending. "First link wins" means this submission
+            # recorded nothing, so there is no confirmation to send — and
+            # `stage_activation_email` carries no dedupe key, so falling
+            # through to it let anyone who knows a rejected candidate's
+            # address drive "your application has been received" at that
+            # inbox at 6/min for the whole 168-hour window, from the tenant's
+            # own authenticated sending domain, minting a fresh auth token
+            # each time. The mail would also be false: nothing is with the
+            # hiring team.
+            if gate.reapplying and not staged.staged:
+                log.info("apply.reapply_pending_no_mail")
+            elif gate.reapplying and staged.staged:
                 await stage_reapply_confirmation(
                     db,
                     user_id=uuid.UUID(str(guest_user_id)),
@@ -1454,15 +1518,6 @@ async def submit_draft(
                     now=now,
                 )
             await db.commit()
-            if superseded_cv:
-                # The staged attempt this one replaced held this object, and
-                # those columns were the only thing naming it. Released after
-                # the commit, so a failure here strands an object rather than
-                # losing the application.
-                try:
-                    await _delete_from_s3(superseded_cv)
-                except Exception:  # noqa: BLE001 — the pointer is already gone
-                    log.warning("public_apply.superseded_reapply_cv_orphaned")
         except Exception:  # noqa: BLE001 — see above
             await db.rollback()
             log.warning(
@@ -1470,6 +1525,18 @@ async def submit_draft(
                 requisition_id=str(requisition_id),
                 applicant_id=str(applicant_id),
             )
+
+    # OUTSIDE the email block, deliberately. The pointer to this object was
+    # cleared in a transaction that has already committed, so this delete is
+    # the only thing left that can reach it — and it used to sit inside the
+    # `try` above, after the commit, so a failure while staging the mail
+    # skipped it and stranded the file. `drafts/` is outside the applicant
+    # prefix erasure sweeps, which makes that strand permanent.
+    if superseded_cv:
+        try:
+            await _delete_from_s3(superseded_cv)
+        except Exception:  # noqa: BLE001 — the pointer is already gone
+            log.warning("public_apply.superseded_reapply_cv_orphaned")
 
     log.info(
         "public.apply.received_from_draft",
@@ -1535,7 +1602,13 @@ async def confirm_reapplication(
             req_row = (
                 await db.execute(
                     text(
-                        "SELECT r.id, r.reapply_cooldown_days FROM enrolments e"
+                        # SAFE, on the same terms as `_open_posting` above:
+                        # the only interpolation is visible_sql("r"), a
+                        # predicate assembled from module-level literals in
+                        # app/publishing.py, and every value is bound. bandit
+                        # reports the first fragment of the concatenation, so
+                        # the directive sits here rather than on the f-string.
+                        "SELECT r.id, r.reapply_cooldown_days FROM enrolments e"  # nosec B608
                         "  JOIN job_requisitions r ON r.id = e.requisition_id"
                         " WHERE e.id = :e"
                         # The opening has to still be taking applications. The
@@ -1581,6 +1654,25 @@ async def confirm_reapplication(
                 requisition_id=uuid.UUID(str(req_row["id"])) if req_row else None,
                 cooldown_days=req_row["reapply_cooldown_days"] if req_row else None,
             )
+            if done.retry_after is not None:
+                # NOT YET, and the attempt is still staged. Roll back so the
+                # token this router consumed a few lines up goes back to
+                # unconsumed — committing here would burn the candidate's only
+                # link over an attempt `confirm` deliberately preserved, and
+                # "first link wins" would refuse to mint another for the rest
+                # of the window. The date is safe to name: this link was
+                # emailed to the address and nowhere else, which is the same
+                # standard the cooldown notice already meets.
+                await db.rollback()
+                log.info("apply.reapply_confirm.not_yet")
+                return ReapplyConfirmOut(
+                    applied=0,
+                    message=(
+                        "Not yet — you can confirm this application from "
+                        f"{done.retry_after.date().isoformat()}. "
+                        "Keep this email; the link still works."
+                    ),
+                )
             applied = 1 if done.applied else 0
             orphaned = done.orphaned_key
         await db.commit()
@@ -2106,7 +2198,20 @@ async def submit_application(
     try:
         # A staged reapplication gets the link that confirms it — see the
         # draft route for why it is not the activation email.
-        if gate.reapplying and staged.staged:
+        #
+        # And NOTHING when staging was refused because an attempt was already
+        # pending. Same reasoning as the draft door: "first link wins" means
+        # this submission recorded nothing, so there is no confirmation to
+        # send, and `stage_activation_email` carries no dedupe key — falling
+        # through to it let anyone who knows a rejected candidate's address
+        # drive "we have your application" at that inbox at 6/min for the
+        # whole confirmation window (fail-open when Redis is down), minting a
+        # fresh auth token each time. Only this state amplifies that way: a
+        # live application sends nothing, the cooldown notice is deduped, and
+        # an unknown address becomes a live application after one request.
+        if gate.reapplying and not staged.staged:
+            log.info("apply.reapply_pending_no_mail")
+        elif gate.reapplying and staged.staged:
             await stage_reapply_confirmation(
                 db,
                 user_id=guest_user_id,
@@ -2130,12 +2235,6 @@ async def submit_application(
                 now=now,
             )
         await db.commit()
-        if superseded_cv:
-            # See the draft route: the object the replaced attempt held.
-            try:
-                await _delete_from_s3(superseded_cv)
-            except Exception:  # noqa: BLE001 — the pointer is already gone
-                log.warning("public_apply.superseded_reapply_cv_orphaned")
     except Exception:  # noqa: BLE001 — see above
         await db.rollback()
         log.warning(
@@ -2143,6 +2242,16 @@ async def submit_application(
             requisition_id=str(requisition_id),
             applicant_id=str(applicant_id),
         )
+
+    # OUTSIDE the email block. See the draft route: the pointer to this object
+    # is already committed as cleared, so this delete is the only thing that
+    # can still reach it, and it must not be skipped because staging a mail
+    # failed.
+    if superseded_cv:
+        try:
+            await _delete_from_s3(superseded_cv)
+        except Exception:  # noqa: BLE001 — the pointer is already gone
+            log.warning("public_apply.superseded_reapply_cv_orphaned")
 
     # Scoring happens in the reconciler. Wake it, as a bulk upload does, rather
     # than leaving this application for the next scheduled pass (up to ten

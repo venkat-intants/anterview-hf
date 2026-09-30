@@ -205,8 +205,13 @@ async def _apply(client: AsyncClient, req_id: uuid.UUID, email: str):  # noqa: A
     return r
 
 
-async def _set_status(email: str, status: str) -> None:
-    """Move this applicant's enrolment, the way HR's own decision would."""
+async def _set_status(email: str, status: str, *, days_ago: int = 0) -> None:
+    """Move this applicant's enrolment, the way HR's own decision would.
+
+    ``days_ago`` backdates the rejection on the ledger. Needed because the
+    cooldown is measured from the transition, so "rejected, and the window has
+    since elapsed" cannot be built any other way — see `_four_addresses`.
+    """
     factory = get_session_factory()
     async with factory() as db:
         await db.execute(
@@ -230,11 +235,12 @@ async def _set_status(email: str, status: str) -> None:
                     "  actor_user_id, automated, reason_code, reason_label,"
                     "  occurred_at)"
                     " SELECT e.company_id, e.id, 'new',"
-                    "        'rejected', NULL, true, 'other', 'Other', now()"
+                    "        'rejected', NULL, true, 'other', 'Other',"
+                    "        now() - make_interval(days => :ago)"
                     "   FROM enrolments e JOIN applicants a ON a.id = e.applicant_id"
                     "  WHERE lower(btrim(a.email)) = :em"
                 ),
-                {"em": email.lower()},
+                {"em": email.lower(), "ago": days_ago},
             )
         await db.commit()
 
@@ -291,10 +297,11 @@ async def _draft_readback(client: AsyncClient, token: str):  # noqa: ANN202
 # declared once and every test below exercises all four.
 _LIVE = "live"            # (a) has an application, still being considered
 _IN_COOLDOWN = "cooling"  # (b) rejected, inside the waiting period
-_PAST_COOLDOWN = "past"   # (c) rejected, waiting period elapsed
+_PAST_COOLDOWN = "past"   # (c) rejected, waiting period genuinely elapsed
 _UNKNOWN = "unknown"      # (d) never applied here at all
+_OVERRIDDEN = "override"  # (e) rejected, window still running, HR let them back
 
-_ALL_CASES = (_LIVE, _IN_COOLDOWN, _PAST_COOLDOWN, _UNKNOWN)
+_ALL_CASES = (_LIVE, _IN_COOLDOWN, _PAST_COOLDOWN, _OVERRIDDEN, _UNKNOWN)
 
 
 async def _address_in_state(client: AsyncClient, req_id: uuid.UUID, case: str) -> str:
@@ -304,28 +311,71 @@ async def _address_in_state(client: AsyncClient, req_id: uuid.UUID, case: str) -
         return email
     r = await _apply(client, req_id, email)
     assert r.status_code == 201, f"seeding {case}: {r.status_code} {r.text}"
-    await _set_status(email, "shortlisted" if case == _LIVE else "rejected")
+    if case == _LIVE:
+        await _set_status(email, "shortlisted")
+    elif case == _PAST_COOLDOWN:
+        # Backdated past a REAL one-day window, so `check` runs its date
+        # arithmetic and returns through `until <= now`.
+        await _set_status(email, "rejected", days_ago=3)
+    else:
+        await _set_status(email, "rejected")
+    if case == _OVERRIDDEN:
+        await _grant_override(email)
     return email
 
 
-async def _four_addresses(
+async def _grant_override(email: str) -> None:
+    """The exception HR grants, written the way the endpoint writes it."""
+    factory = get_session_factory()
+    async with factory() as db:
+        await db.execute(
+            text(
+                "UPDATE enrolments SET reapply_override_at = now(),"
+                "       reapply_override_reason = 'fixture', updated_at = now()"
+                " WHERE applicant_id IN (SELECT id FROM applicants"
+                "                         WHERE lower(btrim(email)) = :em)"
+            ),
+            {"em": email.lower()},
+        )
+        await db.commit()
+
+
+async def _seeded_addresses(
     client: AsyncClient,
 ) -> dict[str, tuple[uuid.UUID, str]]:
     """One address per case, on openings that put each case in its state.
 
-    Two openings, because "inside the waiting period" and "past it" are the
-    same rejection under different settings. The cases are still compared with
-    each other — what is under test is the REPLY, and a reply that differs by
+    Three openings, because these states are the same rejection under
+    different settings and different clocks. The cases are still compared with
+    each other — what is under test is the REPLY, and a reply that differed by
     which opening was asked would be its own leak.
+
+    `_PAST_COOLDOWN` is seeded on a opening with a ONE-DAY window and a
+    rejection backdated three days, NOT on an opening with `cooldown_days=0`.
+    That was the bug in the first version of this fixture: `check` returns at
+    `if not cooldown_days` before it reads the ledger at all, so the case
+    labelled "rejected, waiting period elapsed" was really "this opening has
+    no waiting period", and the elapsed-window branch — the one an actual
+    rejected candidate hits — was never executed by this file.
+
+    `_OVERRIDDEN` is the state that only exists because a person acted: a live
+    90-day window with an HR exception granted against it. It reaches the
+    staging path through a DIFFERENT branch of `check` from `_PAST_COOLDOWN`,
+    and nothing else here covers it.
     """
     _, waiting = await _seed_opening(cooldown_days=90)
-    _, open_now = await _seed_opening(cooldown_days=0)
+    _, elapsed = await _seed_opening(cooldown_days=1)
+    _, overridden = await _seed_opening(cooldown_days=90)
     return {
         _LIVE: (waiting, await _address_in_state(client, waiting, _LIVE)),
         _IN_COOLDOWN: (waiting, await _address_in_state(client, waiting, _IN_COOLDOWN)),
         _PAST_COOLDOWN: (
-            open_now,
-            await _address_in_state(client, open_now, _PAST_COOLDOWN),
+            elapsed,
+            await _address_in_state(client, elapsed, _PAST_COOLDOWN),
+        ),
+        _OVERRIDDEN: (
+            overridden,
+            await _address_in_state(client, overridden, _OVERRIDDEN),
         ),
         _UNKNOWN: (waiting, await _address_in_state(client, waiting, _UNKNOWN)),
     }
@@ -345,12 +395,12 @@ def _observable(response) -> tuple[int, object]:  # noqa: ANN001
 
 
 def _assert_one_answer(seen: dict[str, tuple[int, object]], what: str) -> None:
-    """All four cases produced the same thing, or say exactly how they differ."""
+    """All cases produced the same thing, or say exactly how they differ."""
     if len({repr(seen[c]) for c in _ALL_CASES}) == 1:
         return
     detail = "\n".join(f"    {c:9} -> {seen[c]}" for c in _ALL_CASES)
     raise AssertionError(
-        f"{what} tells the four states apart, so two anonymous requests reveal\n"
+        f"{what} tells the states apart, so two anonymous requests reveal\n"
         f"that a named person applied here and was rejected:\n{detail}"
     )
 
@@ -360,7 +410,7 @@ def _assert_one_answer(seen: dict[str, tuple[int, object]], what: str) -> None:
 async def test_every_state_answers_identically_on_the_one_shot_door(
     client: AsyncClient, probes: int
 ) -> None:
-    """All four cases, one reply, however many times you ask.
+    """Every case, one reply, however many times you ask.
 
     REPETITION IS THE POINT, and it is what every earlier version of this file
     left out. Each of them probed the interesting pair exactly once, and the
@@ -372,7 +422,7 @@ async def test_every_state_answers_identically_on_the_one_shot_door(
     Asking N times and demanding a single answer makes that unreachable: a
     difference cannot hide in the second request, or the third.
     """
-    addresses = await _four_addresses(client)
+    addresses = await _seeded_addresses(client)
     for attempt in range(1, probes + 1):
         seen = {
             case: _observable(await _apply(client, target, email))
@@ -386,13 +436,13 @@ async def test_every_state_answers_identically_on_the_one_shot_door(
 async def test_every_state_answers_identically_on_the_draft_door(
     client: AsyncClient, probes: int
 ) -> None:
-    """The same four cases through the save-and-finish-later door.
+    """The same cases through the save-and-finish-later door.
 
     It carries the same gate and so the same risk, and it is where the round-3
     finding actually lived — yet no version of this file had ever sent it a
     single request.
     """
-    addresses = await _four_addresses(client)
+    addresses = await _seeded_addresses(client)
     for attempt in range(1, probes + 1):
         replies: dict[str, tuple[int, object]] = {}
         readbacks: dict[str, tuple[int, object]] = {}

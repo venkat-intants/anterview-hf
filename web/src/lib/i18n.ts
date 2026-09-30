@@ -911,7 +911,6 @@ const en = {
       unavailableTitle: 'This opening is not accepting applications',
       unavailableDesc:
         'The role may have been filled or closed. If you were sent this link recently, check with whoever shared it — they will have the current one.',
-      alreadyApplied: 'You have already applied',
       received: 'Application received',
       reviewNote:
         'Your CV is with the hiring team for {{title}}. If they move you forward you will get an email with the next step; nothing is decided automatically.',
@@ -2120,7 +2119,6 @@ const hi = {
       unavailableTitle: 'यह भर्ती अभी आवेदन स्वीकार नहीं कर रही',
       unavailableDesc:
         'यह पद भर चुका होगा या बंद कर दिया गया होगा। अगर आपको यह लिंक हाल ही में भेजा गया था, तो जिसने भेजा है उनसे जाँचें — उनके पास मौजूदा लिंक होगा।',
-      alreadyApplied: 'आप पहले ही आवेदन कर चुके हैं',
       received: 'आवेदन मिल गया',
       reviewNote:
         'आपका CV {{title}} की नियुक्ति टीम के पास है। यदि वे आपको आगे बढ़ाते हैं तो आपको अगले चरण की जानकारी ईमेल से मिलेगी; कोई भी निर्णय स्वतः नहीं लिया जाता।',
@@ -3287,7 +3285,6 @@ const te = {
       unavailableTitle: 'ఈ ఉద్యోగానికి ప్రస్తుతం దరఖాస్తులు స్వీకరించడం లేదు',
       unavailableDesc:
         'ఈ పోస్టు భర్తీ అయి ఉండవచ్చు లేదా మూసివేయబడి ఉండవచ్చు. ఈ లింక్ మీకు ఇటీవల పంపినట్లయితే, పంపినవారితో సరిచూడండి — ప్రస్తుత లింక్ వారి వద్ద ఉంటుంది.',
-      alreadyApplied: 'మీరు ఇప్పటికే దరఖాస్తు చేశారు',
       received: 'దరఖాస్తు అందింది',
       reviewNote:
         'మీ CV {{title}} నియామక బృందం వద్ద ఉంది. వారు మిమ్మల్ని ముందుకు తీసుకెళ్తే తదుపరి దశ గురించి ఈమెయిల్ వస్తుంది; ఏ నిర్ణయమూ స్వయంచాలకంగా తీసుకోబడదు.',

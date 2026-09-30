@@ -33,6 +33,11 @@ from app.config import settings
 
 log = structlog.get_logger(__name__)
 
+#: Passes one retention tick may make. Bounds the work; the commit
+#: inside the loop is what bounds each transaction. Mirrors
+#: ``application_drafts._MAX_PURGE_PASSES``.
+_MAX_PURGE_PASSES = 40
+
 
 @dataclass(frozen=True)
 class CooldownVerdict:
@@ -286,6 +291,12 @@ class ConfirmResult:
     #: An abandoned attempt's CV. Nothing names it once the columns are
     #: cleared, so the caller deletes it after the commit.
     orphaned_key: str | None = None
+    #: Set when the attempt is still STAGED and the link should still work —
+    #: the window simply has not opened yet. The caller must then roll back,
+    #: because the token was consumed before this function was reached and
+    #: committing would destroy the only link to an attempt we just kept.
+    #: Carries the date the holder may try again, for the reply.
+    retry_after: datetime | None = None
 
 
 async def stage(
@@ -523,10 +534,19 @@ async def confirm(
             cooldown_days=cooldown_days,
         )
         if not verdict.allowed:
-            # Left staged on purpose: the window may simply not have opened
-            # yet, and the link is still good until it expires.
+            # LEFT STAGED, and the link left usable. The window may simply not
+            # have opened yet — HR can widen a waiting period after a link is
+            # sent — so this is "not yet", not "no".
+            #
+            # `retry_after` is what makes that true. The token is spent by the
+            # router BEFORE this function runs, so returning a plain False had
+            # the caller commit a consumed token over an attempt it had
+            # deliberately preserved: the candidate's one link was burned, no
+            # new one could be minted (first-link-wins refuses for the whole
+            # TTL), and their CV sat staged until the retention sweep removed
+            # it. The comment said the link was still good; it was not.
             log.info("reapply.confirm_refused", enrolment_id=str(enrolment_id))
-            return ConfirmResult(applied=False)
+            return ConfirmResult(applied=False, retry_after=verdict.until)
 
     await record_transition(
         db,
@@ -614,7 +634,7 @@ async def purge_stale_staged(
     *,
     now: datetime | None = None,
     limit: int = 500,
-    max_batches: int = 40,
+    max_batches: int = _MAX_PURGE_PASSES,
 ) -> list[str]:
     """Forget staged reapplications nobody ever confirmed. Returns CV keys.
 
@@ -689,6 +709,19 @@ async def purge_stale_staged(
             for r in rows
             if r["reapply_resume_s3_key"]
         )
+        # COMMITTED PER PASS, for the reason `application_drafts.purge_expired`
+        # gives and one more of its own. `max_batches` bounds the WORK; without
+        # this it does not bound the TRANSACTION, and a failure in the last
+        # pass rolls back the other thirty-nine.
+        #
+        # The extra reason: each pass takes `FOR UPDATE SKIP LOCKED` on up to
+        # `limit` enrolments and holds those locks until the transaction ends.
+        # Draining a large backlog in one transaction would therefore hold
+        # write locks on thousands of enrolments at once, and `stage` — which
+        # takes `SELECT ... FOR UPDATE` on the row a candidate is applying
+        # against — would block behind the sweep and then time out. A retention
+        # control must not be able to stop people applying.
+        await db.commit()
         # A short pass means the backlog is gone. `SKIP LOCKED` can also
         # shorten one while rows are held elsewhere; those keep until the next
         # tick, which is the right answer for a retention sweep.

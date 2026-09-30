@@ -1365,6 +1365,14 @@ async def list_applications(
             is_latest=i == len(rows) - 1,
             source=r["source"],
             source_detail=r["source_detail"],
+            # Passed, not just SELECTed. These were added to the model and to
+            # the query and then left out of this constructor, so they
+            # serialised as null on every response while the drawer read them
+            # and the web test supplied them from a mock — a fix that was
+            # entirely dead, passing its own tests, which is the failure mode
+            # this whole branch has been chasing.
+            reapply_override_at=r["reapply_override_at"],
+            reapply_override_reason=r["reapply_override_reason"],
         )
         for i, r in enumerate(rows)
     ]

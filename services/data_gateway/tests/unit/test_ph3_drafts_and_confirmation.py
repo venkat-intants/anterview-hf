@@ -1068,14 +1068,19 @@ async def test_the_cooldown_notice_cannot_roll_back_its_caller() -> None:
     db = AsyncMock()
     db.scalar = AsyncMock(side_effect=[uuid.uuid4(), "en", "Stored Name"])
 
+    # THE FAILURE HAPPENS AT SAVEPOINT EXIT, not inside `enqueue_email`.
+    # `enqueue_email` only does `db.add(...)`; the UNIQUE `dedupe_key`
+    # violation surfaces when the nested transaction flushes, which is
+    # `__aexit__`. An earlier version of this test patched `enqueue_email` to
+    # raise directly — which an implementation with NO savepoint at all would
+    # also have survived, so it proved nothing about the thing it is named
+    # for. Raising from `__aexit__` is the real shape.
     nested = AsyncMock()
     nested.__aenter__ = AsyncMock(return_value=nested)
-    nested.__aexit__ = AsyncMock(return_value=False)
+    nested.__aexit__ = AsyncMock(side_effect=IntegrityError("x", {}, Exception()))
     db.begin_nested = MagicMock(return_value=nested)
 
-    with patch.object(
-        public_apply, "enqueue_email", AsyncMock(side_effect=IntegrityError("x", {}, Exception()))
-    ):
+    with patch.object(public_apply, "enqueue_email", AsyncMock()):
         await public_apply._mail_cooldown_reason(
             db,
             requisition_id=uuid.uuid4(),

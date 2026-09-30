@@ -474,7 +474,7 @@ async def load_rounds(db: AsyncSession, workflow_id: uuid.UUID) -> list[dict[str
                 "SELECT id, position, title, kind, pass_threshold, time_limit_seconds,"
                 "       deadline_days, on_pass_next_round_id, exam_round_id,"
                 "       on_fail_next_round_id, fast_track_min_percent,"
-                "       on_fast_track_next_round_id"
+                "       on_fast_track_next_round_id, auto_advance"
                 "  FROM workflow_rounds"
                 " WHERE workflow_id = :w AND deleted_at IS NULL"
                 " ORDER BY position"
@@ -750,7 +750,7 @@ async def update_round(
     """
     await _assert_draft(db, workflow_id)
     allowed = {"title", "kind", "pass_threshold", "time_limit_seconds",
-               "deadline_days", "exam_round_id", *BRANCH_FIELDS}
+               "deadline_days", "exam_round_id", "auto_advance", *BRANCH_FIELDS}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return []

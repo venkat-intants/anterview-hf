@@ -97,6 +97,13 @@ export interface Round {
   pass_threshold: number | null;
   time_limit_seconds: number | null;
   deadline_days: number;
+  /** Who moves a PASSING candidate on from this round.
+   *  `null` = follow the workflow's own auto-advance setting,
+   *  `true` = always advance, `false` = always hold for HR to review.
+   *  Three states on purpose: "no opinion" is a different answer from
+   *  "automatic". Holding never rejects anyone — a held candidate waits
+   *  for a person to release them onward. */
+  auto_advance: boolean | null;
   on_pass_next_round_id: string | null;
   /**
    * PH4-O3 branches. Below the threshold: route here, or null = hold for a
@@ -282,6 +289,7 @@ export interface RoundInput {
   pass_threshold?: number | null;
   time_limit_seconds?: number | null;
   deadline_days?: number;
+  auto_advance?: boolean | null;
   exam_round_id?: string | null;
   criteria?: CriterionInput[];
 }

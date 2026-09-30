@@ -67,7 +67,13 @@ def test_every_reply_from_both_doors_is_the_same_object() -> None:
     for door in (public_apply.submit_application, public_apply.submit_draft):
         body = inspect.getsource(door)
         assert "ApplicationOut(" not in body, f"{door.__name__} builds its own reply"
-        assert "_received(name)" in body
+        # Through `_reply`, which is `_received` held to the common deadline.
+        # A door returning `_received` directly would answer with the right
+        # bytes at the wrong time, which is the channel round 6 found.
+        assert "_reply(name, floor_from=floor_from)" in body, (
+            f"{door.__name__} answers without holding the reply floor"
+        )
+        assert "_received(name)" not in body
 
 
 def test_nothing_stored_is_echoed_to_a_repeat_or_racing_submission() -> None:

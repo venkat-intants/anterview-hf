@@ -471,6 +471,28 @@ class Settings(BaseSettings):
     # whereas an applicant reads their email whenever they next look, and an
     # expiry here costs them their only route into their own application.
     apply_activation_ttl_hours: int = 168
+    # How long every reply from the two ANONYMOUS apply doors is held before it
+    # is sent, measured from the moment their shared work finishes.
+    #
+    # This is a privacy control, not a throttle. Those doors accept any address
+    # typed into a form, and what they DO still depends on what is stored about
+    # it: an address with a live application is answered after a couple of
+    # SELECTs, while one that is free to apply costs a dozen writes and two
+    # commits. The bytes are identical; the latency is not, and six review
+    # rounds have each found the difference one step further along. Holding
+    # every reply to a common deadline makes the branch that was taken
+    # unobservable from outside.
+    #
+    # Measured from AFTER the CV upload, deliberately. The upload is the one
+    # term the caller controls — they choose the file size — and it is common
+    # to every state, so it is noise rather than signal and does not need
+    # masking. What needs masking is the fixed-size tail below it, which is
+    # tens of milliseconds. Hence a small default: large enough to cover that
+    # tail comfortably, small enough that a candidate does not notice.
+    #
+    # Raise it if the p99 of the accepting branch ever approaches it. Setting
+    # it to 0 disables the control and reopens the channel.
+    apply_reply_floor_ms: int = 400
     # When True, email verification is MANDATORY: self-registered accounts are not
     # auto-logged-in and cannot sign in until they confirm their email. Existing
     # accounts and admin-provisioned accounts (still on their bootstrap password)

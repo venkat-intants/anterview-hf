@@ -67,6 +67,7 @@ concurrent submissions.
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import AsyncIterator
 from unittest import mock
@@ -76,6 +77,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from app.config import settings
 from app.database import get_session_factory
 from app.main import app
 from tests.integration.seed_helpers import approve_for_publish
@@ -657,3 +659,67 @@ async def test_a_refused_submission_deletes_the_cv_it_was_made_to_upload(
         assert deletes[kept] == 0, (
             f"{kept} deleted the CV it was supposed to keep: {deletes}"
         )
+
+
+@pytest.mark.asyncio
+async def test_the_states_cannot_be_separated_by_how_long_the_reply_takes(
+    client: AsyncClient,
+) -> None:
+    """The channel round 6 found, and the reason the reply is held.
+
+    Every state answers with the same bytes. They do not cost the same: a
+    live application is two SELECTs and a return, an address free to apply is
+    a dozen writes, two commits and an email staged. Identical replies at
+    measurably different times still say which branch ran, and the branch is
+    the answer to "did this named person apply here and get turned down".
+
+    The previous attempt at this made the CV upload common to every state and
+    declared the work uniform. It was not: only the upload moved, and making
+    it common handed the caller the NOISE FLOOR rather than removing the
+    signal — a tiny PDF shrinks the shared term and leaves the write
+    differential as the whole variance.
+
+    So every reply is now held to a deadline measured from after the shared
+    work. What this asserts is the part that is stable under load: no state
+    answers before the floor, which is what a missing, disabled, or bypassed
+    floor looks like. See the note at the end for what it deliberately does
+    NOT assert, and why measuring the spread turned out to be measuring noise.
+    """
+    floor_s = settings.apply_reply_floor_ms / 1000
+    assert floor_s > 0, "the floor is disabled, so the timing channel is open"
+
+    addresses = await _seeded_addresses(client)
+    elapsed: dict[str, float] = {}
+    for case, (target, email) in addresses.items():
+        start = time.monotonic()
+        await _apply(client, target, email)
+        elapsed[case] = time.monotonic() - start
+
+    # Nothing may come back before the floor. A branch returning early is a
+    # branch whose reply was not held.
+    too_fast = {c: round(t, 3) for c, t in elapsed.items() if t < floor_s}
+    assert not too_fast, (
+        "these states answered faster than the reply floor, so the branch they "
+        f"took is visible from outside: {too_fast} (floor {floor_s}s)"
+    )
+
+    # NO SPREAD ASSERTION, and why matters more than the test.
+    #
+    # The first version compared max-minus-min against the floor. It passed
+    # alone and failed under full-suite load — because end-to-end time
+    # includes the CV upload, the one term the floor deliberately does NOT
+    # cover, since the caller sizes it and it is common to every state. The
+    # spread it measured was therefore dominated by exactly what the design
+    # treats as noise, and tuning the constant would only have moved the flake
+    # around. This docstring predicted that and the assertion was written
+    # anyway.
+    #
+    # What remains is the one-directional property above, which is stable: no
+    # state answers before the floor. That is what a door bypassing `_reply`
+    # looks like, and a refactor of these two near-identical handlers is
+    # exactly how that would happen.
+    #
+    # Uniformity itself is pinned structurally, where it is not a measurement:
+    # `test_every_reply_from_both_doors_is_the_same_object` requires every exit
+    # on both doors to return through `_reply(name, floor_from=floor_from)`,
+    # and `test_every_state_does_the_same_work` pins the shared work above it.

@@ -954,19 +954,26 @@ async def test_every_other_submission_keeps_the_pointer() -> None:
 def test_the_already_applied_branch_deletes_the_object_it_released() -> None:
     """Clearing the pointer without deleting the object just makes the orphan
     unfindable, which is worse than leaving it addressable."""
-    from app.routers.public_apply import submit_draft
+    # Asserted against `_refuse`, which is where this now lives for BOTH
+    # doors and both refusal branches. It used to be four hand-written copies
+    # of these four steps, and one of them shipped clearing the pointer
+    # without deleting the object — so checking one shared function is a
+    # stronger guard than checking the copy this test happened to point at.
+    from app.routers.public_apply import _refuse, submit_draft
 
     src = inspect.getsource(submit_draft)
-    branch = src[src.index("if gate.already_applied:"):]
-    # `return _received(name)`, not `return ApplicationOut(...)`: every door
-    # answers through one helper now, because a reply assembled at the call
-    # site is a reply that can differ by what is stored about the address.
-    branch = branch[: branch.index("return _received(name)")]
-    assert "release_resume=True" in branch
-    assert "_delete_from_s3" in branch
-    # Order matters: commit the cleared pointer BEFORE deleting the object, so a
-    # failed delete leaves an orphan rather than a dangling reference.
-    assert branch.index("db.commit") < branch.index("_delete_from_s3")
+    assert "_refuse(" in src, "the draft door no longer refuses through the shared path"
+
+    body = inspect.getsource(_refuse)
+    assert "release_resume=True" in body
+    assert "_release_unadopted" in body
+    # Order matters: commit the cleared pointer BEFORE releasing the object, so
+    # a failed delete leaves a findable orphan rather than a row pointing at a
+    # file that is gone.
+    assert body.index("db.commit") < body.index("_release_unadopted")
+    # And the draft is consumed before the mail, because the notice owns a
+    # savepoint inside this transaction and the commit below covers both.
+    assert body.index("mark_submitted") < body.index("_mail_cooldown_reason")
 
 
 # ===========================================================================

@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
@@ -551,6 +553,203 @@ def _received(name: str) -> ApplicationOut:
     return ApplicationOut(
         applicant_id="", enrolment_id=None, full_name=name, message=_RECEIVED
     )
+
+
+async def _reply(name: str, *, floor_from: float) -> ApplicationOut:
+    """The one reply, held until a common deadline.
+
+    THE REPLY IS A CONSTANT; THE WORK IS NOT. Every state answers with the
+    same bytes, but they do not cost the same: a live application is two
+    SELECTs and a return, an address free to apply is a dozen writes, two
+    commits and an email staged. Identical replies at measurably different
+    times still say which branch was taken, and the branch is the answer to
+    "has this named person applied here and been turned down".
+
+    Five rounds closed differences in what these doors SAID. The sixth found
+    the difference had simply moved into how long they took — and that making
+    the CV upload common to every state, which was the previous attempt, had
+    handed the caller control of the NOISE FLOOR rather than removing the
+    signal: a 600-byte PDF shrinks the shared term to nothing and leaves the
+    write differential as the whole variance. That attempt made the channel
+    cleaner to exploit, not harder.
+
+    So the reply waits. `floor_from` is taken after the shared work — for the
+    one-shot door, after the upload the caller sized — so the deadline covers
+    only the state-dependent tail. A branch that finishes early sleeps; a
+    branch that overruns the floor is reported, because a floor quietly being
+    exceeded is the control silently switching itself off.
+
+    This does NOT make every failure mode uniform. A partial outage that lets
+    reads through and refuses writes still answers 201 for the states that
+    write nothing and 503 for the states that do. That is a narrower channel
+    than this one and it is recorded rather than claimed closed — see the
+    module docstring of the indistinguishability test.
+    """
+    floor = settings.apply_reply_floor_ms / 1000
+    if floor > 0:
+        remaining = floor - (time.monotonic() - floor_from)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        else:
+            # Not fatal, and not something to hide: past the floor the timing
+            # of this branch is visible again.
+            log.warning(
+                "public_apply.reply_floor_exceeded",
+                over_ms=round(-remaining * 1000),
+            )
+    return _received(name)
+
+
+async def _stage_accepted_mail(
+    db: DbSessionDep,
+    *,
+    user_id: uuid.UUID,
+    address: str,
+    applicant_name: str,
+    job_title: str | None,
+    company_id: uuid.UUID,
+    company_name: str | None,
+    now: datetime,
+    reapplying: bool,
+    staged: bool,
+    reapply_raw: str | None,
+) -> None:
+    """Which mail an accepted submission earns, on EITHER door. Caller commits.
+
+    Three outcomes, and the first of them is the one that had to be learned
+    twice. This was two hand-written copies, one per door, and round 5 found
+    the "send nothing" case fixed on one of them only — the same
+    one-door-of-two drift that `_refuse` exists to stop.
+
+    * REAPPLYING, and staging was REFUSED because an attempt is already
+      pending: nothing at all. "First link wins" means this submission
+      recorded nothing, so there is no confirmation to send — and
+      `stage_activation_email` carries no dedupe key, so falling through to
+      it let anyone who knows a rejected candidate's address drive "we have
+      your application" at that inbox at 6/min for the whole confirmation
+      window, from the tenant's own authenticated sending domain, minting a
+      fresh auth token each time. The mail would also be false: nothing is
+      with the hiring team.
+    * REAPPLYING and staged: the link that CONFIRMS it, not "your application
+      is in" — which would be untrue while it waits, and which mints no token
+      for somebody who has already claimed their account, leaving them nothing
+      to confirm with.
+    * Otherwise: the activation mail. It goes to the address ON FILE, so the
+      real owner hears about an application they did not make.
+
+    `applicant_name` is the caller's business: both doors pass
+    `_email_name(existing, name)`, which prefers the STORED name so an
+    anonymous request cannot write a line of its own choosing into a third
+    party's inbox.
+    """
+    if reapplying and not staged:
+        log.info("apply.reapply_pending_no_mail")
+        return
+    if reapplying:
+        await stage_reapply_confirmation(
+            db,
+            user_id=user_id,
+            applicant_email=address,
+            applicant_name=applicant_name,
+            job_title=job_title,
+            company_id=company_id,
+            company_name=company_name,
+            now=now,
+            raw=reapply_raw or "",
+        )
+        return
+    await stage_activation_email(
+        db,
+        user_id=user_id,
+        applicant_email=address,
+        applicant_name=applicant_name,
+        job_title=job_title,
+        company_id=company_id,
+        company_name=company_name,
+        now=now,
+    )
+
+
+@dataclass(frozen=True)
+class _CooldownNotice:
+    """What the cooldown branch needs to mail, as a checked shape.
+
+    A dict would do the job and `**kwargs` would be shorter, but both erase
+    the types — and a field that was declared and then silently never bound is
+    one of the defects this feature has already shipped. mypy checks this.
+    """
+
+    requisition_id: uuid.UUID
+    company_id: uuid.UUID
+    applicant_id: uuid.UUID | None
+    address: str
+    job_title: str | None
+    company_name: str | None
+    verdict: CooldownVerdict
+
+
+async def _refuse(
+    db: DbSessionDep,
+    *,
+    name: str,
+    floor_from: float,
+    cv_key: str | None,
+    draft_id: uuid.UUID | None,
+    cooldown: _CooldownNotice | None,
+) -> ApplicationOut:
+    """Answer a submission the gate will not act on, on EITHER door.
+
+    WHY THIS IS ONE FUNCTION. `submit_application` and `submit_draft` are
+    near-duplicates, and every one of the six review rounds on this feature
+    found its defect in the gap between them — a fix applied to one door and
+    not the other, five separate times. The refusal branches were the worst of
+    it: four copies (two doors x already-applied/cooldown) of the same four
+    steps, which is how one of them ended up clearing a draft's CV pointer
+    without deleting the object, stranding a file no erasure could reach.
+
+    The steps, in this order on both doors:
+
+    1. consume the draft, if this door has one. A draft left readable is the
+       round-3 channel: `GET /apply/draft` answered 404 for a live application
+       and 200 for a rejected one, which is the same disclosure one step later.
+       `release_resume=True` clears the pointer inside the transaction.
+    2. mail the reason, if this is the cooldown branch. To the ADDRESS, which
+       is the only place the date is the reader's to know; the reply itself
+       says nothing. Owns a savepoint, never this transaction.
+    3. commit.
+    4. delete the object nothing names any more. AFTER the commit, so a failed
+       delete leaves a findable orphan rather than a row pointing at a file
+       that is gone.
+    5. return the one reply, held to the common deadline.
+
+    The doors differ only in what they pass: the one-shot door has no draft
+    and its `cv_key` is the object it uploaded above the gate; the draft door
+    passes its draft and that draft's key. Those are data, not code.
+    """
+    if draft_id is not None:
+        await draft_store.mark_submitted(db, draft_id=draft_id, release_resume=True)
+    if cooldown is not None:
+        log.info(
+            "public_apply.cooldown_blocked",
+            requisition_id=str(cooldown.requisition_id),
+            until=(
+                cooldown.verdict.until.isoformat() if cooldown.verdict.until else None
+            ),
+        )
+        await _mail_cooldown_reason(
+            db,
+            requisition_id=cooldown.requisition_id,
+            company_id=cooldown.company_id,
+            applicant_id=cooldown.applicant_id,
+            address=cooldown.address,
+            job_title=cooldown.job_title,
+            company_name=cooldown.company_name,
+            verdict=cooldown.verdict,
+        )
+    await db.commit()
+    if cv_key:
+        await _release_unadopted(str(cv_key))
+    return await _reply(name, floor_from=floor_from)
 
 
 async def _release_unadopted(s3_key: str) -> None:
@@ -1214,6 +1413,11 @@ async def submit_draft(
     except AnswerError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # THE FLOOR STARTS HERE. This door does no upload of its own — the CV
+    # arrived at /apply/draft/resume-upload — so the shared work is behind
+    # us and everything below this line is state-dependent.
+    floor_from = time.monotonic()
+
     existing = (
         await db.execute(
             text(
@@ -1248,59 +1452,46 @@ async def submit_draft(
         enrolment_status=existing["enrolment_status"] if existing is not None else None,
     )
 
-    if gate.already_applied:
-        # Nothing adopts the uploaded CV on this branch: no Applicant is created
-        # and no enrolment is made, so neither applicants.resume_s3_key nor
-        # enrolments.applied_resume_s3_key ever comes to reference it. Every
-        # other path deliberately KEEPS the object because those columns are
-        # this very key — but here it is referenced by nobody, and the purge
-        # (rightly) refuses to delete a submitted draft's object, so without
-        # this it would have no deletion path at all and sit in the bucket for
-        # ever, past its purpose. Released the same way delete_draft does it:
-        # pointer cleared inside the transaction, object deleted after commit.
-        orphaned_cv = row.get("resume_s3_key")
-        await draft_store.mark_submitted(db, draft_id=row["id"], release_resume=True)
-        await db.commit()
-        if orphaned_cv:
-            try:
-                await _delete_from_s3(str(orphaned_cv))
-            except Exception:  # noqa: BLE001 — the pointer is already cleared
-                log.warning(
-                    "public_apply.draft_object_orphaned", draft_id=str(row["id"])
+    # BOTH refusal branches go through `_refuse`, which is the same function
+    # the one-shot door uses. These were four hand-written copies of four
+    # steps, and the drift between them is where five of six review rounds
+    # found their defect. What differs between the doors is now only what is
+    # passed in.
+    #
+    # `cv_key` is the draft's own object. Nothing adopts it on either branch:
+    # no applicant is created and no enrolment is made, so neither
+    # `applicants.resume_s3_key` nor `enrolments.applied_resume_s3_key` ever
+    # references it — and `purge_expired` rightly refuses to delete a
+    # submitted draft's object, so without this it would have no deletion path
+    # at all and sit in the bucket past its purpose.
+    #
+    # `draft_id` is what consumes the draft. The cooldown branch used to
+    # return without touching it, so `load` (which filters `status='draft'`)
+    # answered 404 afterwards for a live application and 200 for a rejected
+    # one — the same disclosure one step later.
+    if gate.already_applied or not gate.verdict.allowed:
+        return await _refuse(
+            db,
+            name=name,
+            floor_from=floor_from,
+            cv_key=row.get("resume_s3_key"),
+            draft_id=row["id"],
+            cooldown=(
+                None
+                if gate.already_applied
+                else _CooldownNotice(
+                    requisition_id=requisition_id,
+                    company_id=company_id,
+                    applicant_id=(
+                        uuid.UUID(str(existing["id"])) if existing is not None else None
+                    ),
+                    address=address,
+                    job_title=req["title"],
+                    company_name=req.get("company_name"),
+                    verdict=gate.verdict,
                 )
-        return _received(name)
-
-    if not gate.verdict.allowed:
-        log.info(
-            "public_apply.cooldown_blocked",
-            requisition_id=str(requisition_id),
-            until=gate.verdict.until.isoformat() if gate.verdict.until else None,
+            ),
         )
-        # Same uniform reply as the one-shot route — see there for why.
-        #
-        # AND THE SAME TRACE. The branch above consumes the draft; this one
-        # used to return without touching it, so `load` (which filters
-        # status = 'draft') answered 404 afterwards for a live application and
-        # 201 for a rejected one. Two replies that read alike, followed by two
-        # that do not, is the same disclosure one step later — a difference in
-        # what an endpoint LEAVES BEHIND is as readable as one in what it says.
-        cooldown_cv = row.get("resume_s3_key")
-        await draft_store.mark_submitted(db, draft_id=row["id"], release_resume=True)
-        await _mail_cooldown_reason(
-            db, requisition_id=requisition_id, company_id=company_id,
-            applicant_id=uuid.UUID(str(existing["id"])) if existing is not None else None,
-            address=address, job_title=req["title"],
-            company_name=req.get("company_name"), verdict=gate.verdict,
-        )
-        await db.commit()
-        if cooldown_cv:
-            try:
-                await _delete_from_s3(str(cooldown_cv))
-            except Exception:  # noqa: BLE001 — the pointer is already cleared
-                log.warning(
-                    "public_apply.draft_object_orphaned", draft_id=str(row["id"])
-                )
-        return _received(name)
 
     applicant_id = uuid.UUID(str(existing["id"])) if existing is not None else uuid.uuid4()
     is_new_person = existing is None
@@ -1507,7 +1698,7 @@ async def submit_draft(
                     log.warning(
                         "public_apply.draft_object_orphaned", draft_id=str(row["id"])
                     )
-        return _received(name)
+        return await _reply(name, floor_from=floor_from)
     except Exception:
         await db.rollback()
         log.exception("public_apply.draft_submit_failed", requisition_id=str(requisition_id))
@@ -1547,31 +1738,19 @@ async def submit_draft(
             # own authenticated sending domain, minting a fresh auth token
             # each time. The mail would also be false: nothing is with the
             # hiring team.
-            if gate.reapplying and not staged.staged:
-                log.info("apply.reapply_pending_no_mail")
-            elif gate.reapplying and staged.staged:
-                await stage_reapply_confirmation(
-                    db,
-                    user_id=uuid.UUID(str(guest_user_id)),
-                    applicant_email=address,
-                    applicant_name=_email_name(existing, name),
-                    job_title=req["title"],
-                    company_id=company_id,
-                    company_name=req.get("company_name"),
-                    now=now,
-                    raw=reapply_raw,
-                )
-            else:
-                await stage_activation_email(
-                    db,
-                    user_id=uuid.UUID(str(guest_user_id)),
-                    applicant_email=address,
-                    applicant_name=_email_name(existing, name),
-                    job_title=req["title"],
-                    company_id=company_id,
-                    company_name=req.get("company_name"),
-                    now=now,
-                )
+            await _stage_accepted_mail(
+                db,
+                user_id=uuid.UUID(str(guest_user_id)),
+                address=address,
+                applicant_name=_email_name(existing, name),
+                job_title=req["title"],
+                company_id=company_id,
+                company_name=req.get("company_name"),
+                now=now,
+                reapplying=gate.reapplying,
+                staged=staged.staged,
+                reapply_raw=reapply_raw if gate.reapplying else None,
+            )
             await db.commit()
         except Exception:  # noqa: BLE001 — see above
             await db.rollback()
@@ -1598,7 +1777,7 @@ async def submit_draft(
         company_id=str(company_id), requisition_id=str(requisition_id),
         applicant_id=str(applicant_id), returning=not is_new_person,
     )
-    return _received(name)
+    return await _reply(name, floor_from=floor_from)
 
 
 
@@ -2038,6 +2217,12 @@ async def submit_application(
             status_code=503, detail="We could not save your application. Please try again."
         ) from exc
 
+    # THE FLOOR STARTS HERE, after the upload and before the gate. The
+    # upload is the term the caller sizes and it is common to every state,
+    # so it is noise; everything from here down is what differs, and that
+    # is what the deadline has to cover.
+    floor_from = time.monotonic()
+
     gate = await reapplication_gate(
         db,
         requisition_id=requisition_id,
@@ -2046,51 +2231,45 @@ async def submit_application(
         enrolment_id=existing["enrolment_id"] if existing is not None else None,
         enrolment_status=existing["enrolment_status"] if existing is not None else None,
     )
-    if gate.already_applied:
-        # Nothing adopts the object on this branch, so it goes. Deleted after
-        # the reply is decided and never in a way that can change it: a failed
-        # delete costs an orphan, not an application.
-        await _release_unadopted(s3_key)
-        return _received(name)
-
-    # ── Still inside a reapplication cooldown? (PH3-B4b) ────────────────────
-    # AFTER the already-applied branch, deliberately: a live application is
-    # answered with "we have it", which is not a refusal, and a person whose
-    # application is still open must never be told to wait.
+    # BOTH refusal branches go through `_refuse`, the same function the draft
+    # door uses. `cv_key` is the object uploaded above the gate — uploaded so
+    # this branch costs what the others cost, and released because nothing
+    # here adopts it. `draft_id` is None: this door has no draft to consume.
     #
-    # Also after the CV has been read, for the same reason the check above is:
-    # answering it earlier would let anyone holding the link discover, by
-    # typing addresses, who had been turned down for this role and when.
+    # The cooldown branch is AFTER the already-applied one, deliberately: a
+    # live application is answered with "we have it", which is not a refusal,
+    # and a person whose application is still open must never be told to wait.
+    # Both are after the CV has been read, because answering earlier would let
+    # anyone holding the link discover, by typing addresses, who had been
+    # turned down for this role.
     #
-    # And BEFORE the upload below, so a refusal costs no stored object. That
-    # ordering is the same one the consent and answer checks use, and for the
-    # same stated reason: refusing after the upload would mean deleting a file
-    # we had just written.
-    if not gate.verdict.allowed:
-        log.info(
-            "public_apply.cooldown_blocked",
-            requisition_id=str(requisition_id),
-            until=gate.verdict.until.isoformat() if gate.verdict.until else None,
+    # Neither says anything about the refusal. A 409 carrying the date was an
+    # oracle: anyone with the public link could type an address and learn that
+    # person had been rejected, and when. The date reaches the candidate by
+    # email to the address, which is the only place it is theirs to read.
+    if gate.already_applied or not gate.verdict.allowed:
+        return await _refuse(
+            db,
+            name=name,
+            floor_from=floor_from,
+            cv_key=s3_key,
+            draft_id=None,
+            cooldown=(
+                None
+                if gate.already_applied
+                else _CooldownNotice(
+                    requisition_id=requisition_id,
+                    company_id=company_id,
+                    applicant_id=(
+                        uuid.UUID(str(existing["id"])) if existing is not None else None
+                    ),
+                    address=address,
+                    job_title=req["title"],
+                    company_name=req.get("company_name"),
+                    verdict=gate.verdict,
+                )
+            ),
         )
-        # Answered, not refused — and answered IDENTICALLY to a live
-        # application. A 409 carrying the date was an oracle: anyone with the
-        # public link could type an address and learn that person had been
-        # rejected, and when. The date still reaches the candidate, by email to
-        # the address, which is the only place it is theirs to read.
-        await _mail_cooldown_reason(
-            db, requisition_id=requisition_id, company_id=company_id,
-            applicant_id=uuid.UUID(str(existing["id"])) if existing is not None else None,
-            address=address, job_title=req["title"],
-            company_name=req.get("company_name"), verdict=gate.verdict,
-        )
-        # The notice no longer commits itself — it must not own a transaction
-        # it shares with a caller that has work in flight. Nothing else is
-        # pending on this path, so this commit only sends the mail.
-        await db.commit()
-        # As above: uploaded so this branch costs what the others cost, and
-        # removed because nothing here adopts it.
-        await _release_unadopted(s3_key)
-        return _received(name)
 
     # ── Store ───────────────────────────────────────────────────────────────
     # An applicant already exists for this email (they applied to a DIFFERENT
@@ -2260,7 +2439,7 @@ async def submit_application(
         # row. (For a new person it never did: the applicant insert rolled back.)
         await _delete_from_s3(s3_key)
         log.info("public.apply.race_lost", requisition_id=str(requisition_id))
-        return _received(name)
+        return await _reply(name, floor_from=floor_from)
     except rediscovery.RediscoveryError as exc:
         # Unreachable in practice — `source` above is the fixed literal
         # "public_apply_form", never caller input — but rendered with the
@@ -2306,31 +2485,19 @@ async def submit_application(
         # fresh auth token each time. Only this state amplifies that way: a
         # live application sends nothing, the cooldown notice is deduped, and
         # an unknown address becomes a live application after one request.
-        if gate.reapplying and not staged.staged:
-            log.info("apply.reapply_pending_no_mail")
-        elif gate.reapplying and staged.staged:
-            await stage_reapply_confirmation(
-                db,
-                user_id=guest_user_id,
-                applicant_email=address,
-                applicant_name=_email_name(existing, name),
-                job_title=req["title"],
-                company_id=company_id,
-                company_name=req.get("company_name"),
-                now=now,
-                raw=reapply_raw,
-            )
-        else:
-            await stage_activation_email(
-                db,
-                user_id=guest_user_id,
-                applicant_email=address,
-                applicant_name=_email_name(existing, name),
-                job_title=req["title"],
-                company_id=company_id,
-                company_name=req.get("company_name"),
-                now=now,
-            )
+        await _stage_accepted_mail(
+            db,
+            user_id=uuid.UUID(str(guest_user_id)),
+            address=address,
+            applicant_name=_email_name(existing, name),
+            job_title=req["title"],
+            company_id=company_id,
+            company_name=req.get("company_name"),
+            now=now,
+            reapplying=gate.reapplying,
+            staged=staged.staged,
+            reapply_raw=reapply_raw if gate.reapplying else None,
+        )
         await db.commit()
     except Exception:  # noqa: BLE001 — see above
         await db.rollback()
@@ -2365,7 +2532,7 @@ async def submit_application(
         returning=not is_new_person,
         # NEVER log the name, email or resume text.
     )
-    return _received(name)
+    return await _reply(name, floor_from=floor_from)
 
 
 # ---------------------------------------------------------------------------

@@ -277,9 +277,16 @@ def test_the_cv_is_stored_before_the_cooldown_is_checked() -> None:
         "the gate runs before the upload again, so the work this endpoint does "
         "is once more an answer about the address"
     )
-    # And what is not adopted is released, or the fix trades a timing channel
-    # for a bucket full of other people's CVs.
-    assert "_release_unadopted" in src
+    # And what is not adopted is released. That now lives in `_refuse`, the
+    # one function both doors refuse through, so it is asserted there — a
+    # single place rather than the four copies this used to be spread over.
+    from app.routers.public_apply import _refuse
+
+    assert "_refuse(" in src, "the door no longer refuses through the shared path"
+    assert "_release_unadopted" in inspect.getsource(_refuse), (
+        "a refused submission no longer releases the CV it was made to upload, "
+        "so the timing fix now costs a bucket full of other people's CVs"
+    )
 
 
 def test_the_cooldown_is_checked_after_the_cv_is_read() -> None:
@@ -325,17 +332,32 @@ def test_a_cooldown_refusal_is_indistinguishable_from_a_live_application() -> No
         assert "verdict.message()" not in src, (
             f"{fn.__name__} still puts the rejection date in the anonymous reply"
         )
-        assert "_mail_cooldown_reason" in src, (
-            f"{fn.__name__} refuses without telling the candidate why"
+        assert "_refuse(" in src, (
+            f"{fn.__name__} does not refuse through the shared path, which is "
+            "where five of six review rounds' defects came from"
         )
-        # Every exit through the one reply. This replaces an
-        # `assert "_ALREADY_APPLIED" in src`, which asked for the SECOND of two
-        # messages to still be there — a test that required the difference it
-        # was named after. There is one message now.
-        assert "_received(name)" in src
+        # Every exit through the one reply, and held to the common deadline.
+        # This replaces an `assert "_ALREADY_APPLIED" in src`, which asked for
+        # the SECOND of two messages to still be there — a test that required
+        # the difference it was named after. There is one message now, and it
+        # leaves at one time.
+        assert "_reply(name, floor_from=floor_from)" in src
         assert "ApplicationOut(" not in src, (
             f"{fn.__name__} builds its own reply, so it can differ again"
         )
+
+
+def test_the_shared_refusal_path_always_mails_the_reason() -> None:
+    """The reply says nothing; the ADDRESS is told. Asserted on `_refuse`,
+    which both doors and both refusal branches go through, rather than on each
+    door's own copy of it."""
+    from app.routers.public_apply import _refuse
+
+    body = inspect.getsource(_refuse)
+    assert "_mail_cooldown_reason" in body, (
+        "a cooldown refusal no longer tells the candidate why, and the reply "
+        "deliberately cannot"
+    )
 
 
 def test_the_apply_query_reads_the_cooldown_setting() -> None:
@@ -889,3 +911,102 @@ async def test_an_expired_attempt_may_be_replaced_and_reports_its_object() -> No
     )
     assert result.staged is True
     assert result.superseded_key == "applicants/c/a-stale.pdf"
+
+
+# ===========================================================================
+# Which mail an accepted submission earns — one path, three outcomes
+# ===========================================================================
+# `_stage_accepted_mail` was two hand-written copies, one per door, and the
+# "send nothing" case was fixed on one of them only. It is now one function,
+# and these are the tests it shipped without.
+def _mail_args(**over: object) -> dict:
+    base = {
+        "user_id": uuid.uuid4(),
+        "address": "someone@example.com",
+        "applicant_name": "Stored Name",
+        "job_title": "Backend Engineer",
+        "company_id": uuid.uuid4(),
+        "company_name": "Acme",
+        "now": datetime.now(tz=UTC),
+        "reapplying": False,
+        "staged": False,
+        "reapply_raw": None,
+    }
+    base.update(over)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_a_refused_reapplication_is_sent_nothing_at_all() -> None:
+    """The case the previous copies got wrong on one door.
+
+    "First link wins" means this submission recorded nothing, so there is no
+    confirmation to send — and `stage_activation_email` has no dedupe key, so
+    falling through to it let anyone who knows a rejected candidate's address
+    drive "we have your application" at that inbox at the route's rate limit
+    for the whole confirmation window, minting an auth token each time. The
+    mail was also untrue: nothing was with the hiring team.
+    """
+    from app.routers import public_apply
+
+    with (
+        patch.object(public_apply, "stage_reapply_confirmation", AsyncMock()) as confirm,
+        patch.object(public_apply, "stage_activation_email", AsyncMock()) as activate,
+    ):
+        await public_apply._stage_accepted_mail(
+            AsyncMock(), **_mail_args(reapplying=True, staged=False)
+        )
+
+    confirm.assert_not_awaited()
+    activate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_staged_reapplication_gets_the_confirmation_link() -> None:
+    """Not "your application is in" — that would be untrue while it waits, and
+    it mints no token for somebody who has already claimed their account,
+    leaving them nothing to confirm with."""
+    from app.routers import public_apply
+
+    with (
+        patch.object(public_apply, "stage_reapply_confirmation", AsyncMock()) as confirm,
+        patch.object(public_apply, "stage_activation_email", AsyncMock()) as activate,
+    ):
+        await public_apply._stage_accepted_mail(
+            AsyncMock(),
+            **_mail_args(reapplying=True, staged=True, reapply_raw="tok_abc"),
+        )
+
+    confirm.assert_awaited_once()
+    assert confirm.await_args.kwargs["raw"] == "tok_abc"
+    activate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_first_application_gets_the_activation_mail() -> None:
+    from app.routers import public_apply
+
+    with (
+        patch.object(public_apply, "stage_reapply_confirmation", AsyncMock()) as confirm,
+        patch.object(public_apply, "stage_activation_email", AsyncMock()) as activate,
+    ):
+        await public_apply._stage_accepted_mail(AsyncMock(), **_mail_args())
+
+    activate.assert_awaited_once()
+    confirm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_mail_carries_the_name_the_caller_chose_to_pass() -> None:
+    """Both doors pass `_email_name(existing, name)`, which prefers the STORED
+    name. This pins that the helper does not reach for the request's own
+    `full_name` behind the caller's back — an anonymous door must not be able
+    to write a line of its own choosing into a third party's inbox."""
+    from app.routers import public_apply
+
+    with patch.object(public_apply, "stage_activation_email", AsyncMock()) as activate:
+        await public_apply._stage_accepted_mail(
+            AsyncMock(), **_mail_args(applicant_name="Stored Name")
+        )
+
+    assert activate.await_args.kwargs["applicant_name"] == "Stored Name"

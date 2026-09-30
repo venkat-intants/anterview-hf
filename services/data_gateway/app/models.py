@@ -1071,7 +1071,10 @@ class AuditLog(Base):
 
     Used by DPDP erasure and any other privileged admin operations.
 
-    actor_type allowed values: 'admin' | 'system' | 'user'
+    actor_type allowed values: 'admin' | 'candidate' | 'system' | 'user'
+    (corrected 2026-09-30: this list said 'admin' | 'system' | 'user' while
+    'candidate' had been in use for some time — job_tasks.py and now
+    exam_camera.py both record a candidate acting on their own consent.)
     ip_address: PostgreSQL INET type — stored as Python str at ORM layer.
     """
 

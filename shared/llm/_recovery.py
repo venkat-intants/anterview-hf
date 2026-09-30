@@ -118,6 +118,12 @@ def redact_known_secrets(text: str, *, headers: Mapping[str, str], url: str) -> 
         return text
     secrets: list[str] = []
     for name, value in headers.items():
+        # This runs on the ERROR path. A TypeError here (a bytes header value,
+        # which httpx accepts) or a ValueError from urlsplit on a malformed URL
+        # would replace a useful provider message with a crash — so every input
+        # is treated as untrusted and the whole body is guarded below.
+        if not isinstance(value, str) or not isinstance(name, str):
+            continue
         if name.strip().lower() not in _CREDENTIAL_HEADERS or not value:
             continue
         secrets.append(value)
@@ -126,16 +132,44 @@ def redact_known_secrets(text: str, *, headers: Mapping[str, str], url: str) -> 
         scheme, _, rest = value.partition(" ")
         if rest and scheme.lower() in {"bearer", "token", "basic"}:
             secrets.append(rest)
-    for param, values in parse_qs(urlsplit(url).query).items():
+    try:
+        query = parse_qs(urlsplit(url).query)
+    except ValueError:  # a malformed URL must not crash the error path
+        query = {}
+    for param, values in query.items():
         if param.strip().lower() in _CREDENTIAL_QUERY_PARAMS:
             secrets.extend(values)
+
+    # Every spelling a secret can take in an error string. A value is not
+    # always echoed verbatim: httpx renders an offending header as a BYTES
+    # REPR, so a key containing a newline appears as a literal backslash-n —
+    # two characters — while the value we hold contains a real newline, and an
+    # exact match never fires. That is not hypothetical: it is precisely the
+    # incident this function was written for, and the first version missed it
+    # because its tests only ever used a clean key.
+    #
+    # So each secret is expanded into its escaped form and its whitespace-free
+    # form as well, and the empty/short ones are dropped.
+    spellings: set[str] = set()
+    for raw in secrets:
+        for variant in (
+            raw,
+            raw.strip(),
+            # The b'...' repr spelling, where a newline becomes two
+            # characters: a backslash followed by an n.
+            raw.encode("unicode_escape").decode("ascii", "ignore"),
+            # What the key becomes once the settings layer strips it.
+            "".join(raw.split()),
+        ):
+            if len(variant) >= _MIN_SECRET_CHARS:
+                spellings.add(variant)
 
     out = text
     # Longest first: a bare token is a substring of its own "Bearer <token>",
     # and replacing the short one first would leave the scheme stranded beside a
     # marker instead of removing the span whole.
-    for secret in sorted({s.strip() for s in secrets}, key=len, reverse=True):
-        if len(secret) >= _MIN_SECRET_CHARS and secret in out:
+    for secret in sorted(spellings, key=len, reverse=True):
+        if secret in out:
             out = out.replace(secret, REDACTED)
     return out
 
@@ -172,14 +206,26 @@ async def post_with_retry(
             else:
                 if response.status_code == 200:
                     return response
-                # A provider's error body can echo our key back at us; truncate
-                # first (the cap is about log flooding) then redact, so a key
-                # straddling the cut cannot survive as a usable fragment.
+                # REDACT FIRST, THEN TRUNCATE. The previous order — and the
+                # comment that defended it — were exactly backwards, and the
+                # security review measured the result: redaction matches a
+                # secret by VALUE, so truncating first means a key straddling
+                # the 200-char cut is no longer present as a whole value, the
+                # match fails, and the surviving fragment is emitted with no
+                # marker at all. With the key starting at offset 145 of a
+                # provider body, 55 of 56 characters reached both the log line
+                # and the browser-rendered 502 detail.
+                #
+                # The cap still exists (an unbounded provider body in a log is
+                # a flood risk, and prompts here carry transcript and resume
+                # text) — it just has to come second. The small headroom over
+                # ERROR_BODY_CHARS leaves room for the marker itself, so a
+                # redaction near the end is not cut back into a fragment.
                 last_error = redact_known_secrets(
-                    f"HTTP {response.status_code}: {response.text[:ERROR_BODY_CHARS]}",
+                    f"HTTP {response.status_code}: {response.text}",
                     headers=headers,
                     url=url,
-                )
+                )[: ERROR_BODY_CHARS + len(REDACTED)]
                 if response.status_code not in RETRY_STATUSES:
                     break  # non-transient (e.g. 400/403) — do not retry
             if attempt < MAX_ATTEMPTS - 1:

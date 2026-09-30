@@ -49,6 +49,7 @@ from shared.agents import (
     ToolSpec,
     tool_wire_content,
 )
+from shared.llm._recovery import redact_known_secrets
 
 from app.config import settings
 
@@ -77,11 +78,21 @@ class _GroqClient:
                 try:
                     response = await client.post(self._url, json=body, headers=self._headers)
                 except httpx.RequestError as exc:
-                    last_error = f"{type(exc).__name__}: {exc}"
+                    # Redacted at assignment so the log line and the raised
+                    # error are both clean, and BEFORE truncating: matching is
+                    # by value, so a key straddling the cut would survive
+                    # unmarked (security review H-1).
+                    last_error = redact_known_secrets(
+                        f"{type(exc).__name__}: {exc}",
+                        headers=self._headers, url=self._url,
+                    )
                 else:
                     if response.status_code == 200:
                         return dict(response.json())
-                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                    last_error = redact_known_secrets(
+                        f"HTTP {response.status_code}: {response.text}",
+                        headers=self._headers, url=self._url,
+                    )[:220]
                     # 400/401/404 mean a bad key, a bad payload, or a model this
                     # account cannot reach. Retrying burns latency the user is
                     # sitting through for a failure that will not change.

@@ -36,6 +36,7 @@ from shared.agents import (
     ToolSpec,
     tool_wire_content,
 )
+from shared.llm._recovery import redact_known_secrets
 
 from app.config import settings
 
@@ -57,24 +58,44 @@ class _GeminiClient:
     """Thin ``generateContent`` wrapper with retry on transient statuses."""
 
     def __init__(self) -> None:
+        # The key travels in a HEADER, never in the query string. It used to be
+        # `?key=...`, and httpx renders the full URL into its own exception
+        # message — which this class then interpolated into a RuntimeError that
+        # reaches a log line and an HTTP 502 detail the browser shows. That is
+        # the same disclosure path that already forced one live key to be
+        # rotated, and shared/llm/gemini.py had ALREADY moved the key out of
+        # the query for exactly this reason. This file was the copy that never
+        # got the fix (security review, architectural review).
         self._url = (
             f"{settings.gemini_api_base_url.rstrip('/')}"
             f"/models/{settings.gemini_model}:generateContent"
-            f"?key={settings.gemini_api_key}"
         )
+        self._headers = {"x-goog-api-key": settings.gemini_api_key}
 
     async def post(self, body: dict[str, Any]) -> dict[str, Any]:
         last_error = "no attempt made"
         async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
             for attempt in range(_MAX_ATTEMPTS):
                 try:
-                    response = await client.post(self._url, json=body)
+                    response = await client.post(
+                        self._url, json=body, headers=self._headers
+                    )
                 except httpx.RequestError as exc:
-                    last_error = f"{type(exc).__name__}: {exc}"
+                    # Redacted at assignment, so the log line below and the
+                    # RuntimeError raised at the end are both clean.
+                    last_error = redact_known_secrets(
+                        f"{type(exc).__name__}: {exc}",
+                        headers=self._headers, url=self._url,
+                    )
                 else:
                     if response.status_code == 200:
                         return dict(response.json())
-                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                    # Redact BEFORE truncating: matching is by value, so a key
+                    # straddling the cut would otherwise survive unmarked.
+                    last_error = redact_known_secrets(
+                        f"HTTP {response.status_code}: {response.text}",
+                        headers=self._headers, url=self._url,
+                    )[:220]
                     # 400/403 mean a bad key or a malformed payload — retrying
                     # just burns latency the user is sitting through.
                     if response.status_code not in _RETRY_STATUSES:

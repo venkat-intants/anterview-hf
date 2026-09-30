@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 import structlog
 from shared.llm import call_llm_json
+from shared.llm._recovery import redact_known_secrets
 
 from app.config import Settings
 
@@ -62,11 +63,20 @@ async def _post_with_retry(
                 response = await client.post(url, json=body, headers=headers)
             except httpx.RequestError as exc:
                 response = None
-                last_error = f"request error: {exc}"
+                # This client sends the key in an x-goog-api-key header, and an
+                # httpx error renders that header value. Unredacted, it reached
+                # two log stores (security review M-1).
+                last_error = redact_known_secrets(
+                    f"request error: {exc}", headers=headers or {}, url=url
+                )
             else:
                 if response.status_code == 200:
                     return response
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                # Redact before truncating — see security review H-1.
+                last_error = redact_known_secrets(
+                    f"HTTP {response.status_code}: {response.text}",
+                    headers=headers or {}, url=url,
+                )[:220]
                 if response.status_code not in _RETRY_STATUSES:
                     break
             if attempt < _MAX_ATTEMPTS - 1:

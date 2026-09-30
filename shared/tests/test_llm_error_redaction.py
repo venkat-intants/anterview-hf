@@ -132,3 +132,105 @@ async def test_the_raised_exception_cannot_contain_the_key(monkeypatch) -> None:
         )
     assert KEY not in str(exc.value)
     assert REDACTED in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# The two gaps the security review measured. Both were live in shipped code,
+# and both passed the tests above — which is the point: every test here used a
+# clean key in an untruncated body, so neither failure could ever surface.
+# ---------------------------------------------------------------------------
+async def _raise_or_return(monkeypatch, *, status: int, body: str, headers: dict):
+    """Drive the REAL post_with_retry against a stubbed transport and return the
+    message that would reach a log line and an HTTP 502 detail."""
+    import httpx
+
+    from shared.llm import _recovery
+
+    class _Resp:
+        status_code = status
+        text = body
+
+        def json(self) -> dict:
+            return {}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return _Resp()
+
+    monkeypatch.setattr(_recovery.httpx, "AsyncClient", lambda **k: _Client())
+    monkeypatch.setattr(_recovery, "MAX_ATTEMPTS", 1)
+    with pytest.raises(RuntimeError) as exc:
+        await _recovery.post_with_retry(
+            URL, body={}, headers=headers, timeout=1.0, model="m",
+            provider="Groq", error_cls=RuntimeError,
+        )
+    assert isinstance(httpx.Response, type)  # keep the import meaningful
+    return str(exc.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offset", [144, 145, 170, 199, 210])
+async def test_a_key_straddling_the_truncation_point_is_not_emitted(
+    offset: int, monkeypatch
+) -> None:
+    """H-1, driven through post_with_retry so the ORDER is what is under test.
+
+    Redaction matches by VALUE. Truncating first meant a key cut by the 200-char
+    cap was no longer present as a whole value: the match failed and the
+    fragment went out with NO marker. Measured at offset 145, 55 of 56
+    characters reached both a log line and a browser-rendered 502.
+
+    The first version of this test truncated inside the test itself, so it
+    passed with the production order reversed — it could not see the bug.
+    """
+    message = await _raise_or_return(
+        monkeypatch, status=401, body="A" * offset + KEY, headers=BEARER
+    )
+    longest = max(
+        (len(KEY[:n]) for n in range(len(KEY), 0, -1) if KEY[:n] in message), default=0
+    )
+    assert longest == 0, f"{longest} characters of the key survived at offset {offset}"
+
+
+@pytest.mark.asyncio
+async def test_a_key_containing_whitespace_is_redacted_in_its_escaped_spelling(
+    monkeypatch,
+) -> None:
+    """The ORIGINAL incident, also driven end to end.
+
+    httpx renders an offending header as a BYTES REPR, so a key pasted with a
+    line break inside it appears as a literal backslash-n — two characters —
+    while the value we hold contains a real newline. Exact matching never
+    fired, and the whole key was printed into a browser.
+    """
+    split_key = "gsk_testonly0000000000\nnotarealkey"          # a real newline
+    escaped = "gsk_testonly0000000000\\nnotarealkey"          # what httpx prints
+    message = await _raise_or_return(
+        monkeypatch,
+        status=400,
+        body=f"Illegal header value b'Bearer {escaped}'",
+        headers={"Authorization": f"Bearer {split_key}"},
+    )
+    assert "gsk_testonly0000000000" not in message
+    assert REDACTED in message
+
+
+def test_redaction_never_throws_on_the_error_path() -> None:
+    """It runs where something has already gone wrong. An exception here would
+    replace a useful provider message with a crash, so hostile inputs must be
+    survivable rather than merely unlikely."""
+    for headers, url in (
+        ({"Authorization": b"Bearer " + KEY.encode()}, URL),  # bytes value
+        ({b"Authorization": "Bearer x"}, URL),                # bytes name
+        (BEARER, "http://[unbalanced"),                       # malformed URL
+        (BEARER, ""),                                          # no URL at all
+    ):
+        assert isinstance(
+            redact_known_secrets("HTTP 500: boom", headers=headers, url=url), str
+        )

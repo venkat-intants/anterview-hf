@@ -42,8 +42,19 @@ REQUIRED=(DATABASE_URL REDIS_URL JWT_SECRET CONSENT_IP_SALT EXAM_LINK_SECRET INT
 # any Python does — the alembic migration and the checks below.
 while IFS= read -r v; do
   [ -n "${!v:-}" ] || continue
-  cleaned="$(printf '%s' "${!v}" | sed -e ':a' -e 'N' -e '$!ba' \
-      -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  # Bash parameter expansion, NOT sed. The sed slurp (:a;N;$!ba) that was
+  # here silently did NOTHING for single-line values: with no next line, N
+  # prints the pattern space and exits before either s/// can run. So a
+  # value carrying a leading or trailing SPACE was never trimmed, and the
+  # only reason the original DATABASE_URL newline was fixed at all is that
+  # $(...) strips trailing newlines by itself -- by accident, not by this
+  # loop. Reproduced against GNU sed 4.9 (security review M-2).
+  #
+  # These two expansions trim the ends and leave internal newlines alone,
+  # so a multi-line PEM in JWT_PRIVATE_KEY still survives.
+  cleaned="${!v}"
+  cleaned="${cleaned#"${cleaned%%[![:space:]]*}"}"
+  cleaned="${cleaned%"${cleaned##*[![:space:]]}"}"
   if [ "$cleaned" != "${!v}" ]; then
     # Name only, never the value — most of these are secrets.
     echo "NOTE: trimmed surrounding whitespace from $v (the pasted value carried it)."

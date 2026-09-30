@@ -269,6 +269,11 @@ def test_camera_proctoring_path_never_special_cases_coding_sections() -> None:
         et.start_attempt,
     )
     src = "\n".join(inspect.getsource(f) for f in funcs)
-    assert "kind ==" not in src.replace(" ", "")
+    # Both sides stripped. This compared "kind ==" — with a space — against a
+    # string every space had just been removed from, so it could not fail
+    # whatever the source said, and reported a guarantee it never checked.
+    flat = src.replace(" ", "")
+    assert "kind==" not in flat
+    assert "kind!=" not in flat
     assert "'coding'" not in src
     assert '"coding"' not in src

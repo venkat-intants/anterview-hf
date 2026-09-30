@@ -179,32 +179,6 @@ def strip_pasted_settings(values: object) -> object:
     return cleaned
 
 
-def strip_connection_value(value: object) -> object:
-    """Remove surrounding whitespace, CR and LF from a connection string or key.
-
-    Use as a ``@field_validator(..., mode="before")`` in every service's
-    Settings, alongside :func:`normalise_app_env`. Non-strings pass through
-    untouched so pydantic still reports a proper type error.
-
-    A trailing newline on ``DATABASE_URL`` — pasted into a Hugging Face Space
-    secret, where the field keeps whatever the clipboard carried — took the
-    whole platform down with ``InvalidCatalogNameError: database "neondb<LF>"
-    does not exist``: every route 503, the cause invisible in the settings UI
-    and legible only as a line break inside the quotes, forty lines into a
-    traceback. The Space entrypoint now strips these at boot; this is the same
-    guarantee for every other way the app starts — a local ``.env``, Docker, a
-    future VM deploy.
-
-    Safe by construction: no URL, DSN or API key we accept has meaningful
-    leading or trailing whitespace, so this cannot change a value that already
-    worked. It deliberately does not touch inner characters — a password with a
-    space in the middle is still that password.
-    """
-    if isinstance(value, str):
-        return value.strip()
-    return value
-
-
 def normalise_app_env(value: object) -> str:
     """Canonicalise ``APP_ENV``: strip, lowercase, then expand known shorthands.
 

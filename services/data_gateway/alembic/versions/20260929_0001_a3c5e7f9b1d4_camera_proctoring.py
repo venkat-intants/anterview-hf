@@ -26,11 +26,15 @@ WHAT CHANGES
    round's CURRENT value at ``/exam/start`` (the same freeze-at-start
    discipline PH4-D2 already established for accommodations).
 3. ``exam_attempts.camera_in_use`` (boolean, default false) records whether
-   THIS attempt actually had the camera on — frozen at ``/exam/start`` from
-   the round's setting (and, going forward, an active ``video_capture``
-   consent), so HR reading a later attempt never has to guess from the
-   presence or absence of camera events whether the candidate had no camera
-   events because nothing happened, or because there was no camera at all.
+   THIS attempt's ROUND REQUIRED the camera — frozen at ``/exam/start`` from
+   the round's setting, so turning the requirement on or off later cannot
+   change how a past attempt reads. Corrected 2026-09-30: this paragraph said
+   the column records whether the attempt "actually had the camera on", and
+   nothing sets it from a browser signal or from a consent check, so it cannot.
+   An attempt on a round that never asked for the camera is distinguishable
+   from one that did; whether a required camera actually STARTED is not
+   recorded anywhere, and the HR timeline says so in words instead of implying
+   a clean record.
    Added to ``exam_attempts_allowance_fixed()`` (PH4-D2, migration
    ``e3b5d7f9a1c5``) alongside ``extra_time_seconds`` /
    ``auto_submit_relaxed`` / ``accommodation_id`` — the same "this attempt

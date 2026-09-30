@@ -1548,11 +1548,16 @@ async def ingest_integrity_event(
         )
     ).all()
     counts: dict[str, int] = {et: int(n) for et, n in counts_rows}
-    violations = sum(n for et, n in counts.items() if et in _VIOLATION_EVENTS)
     score = exam_camera.score_from_counts(counts)
-    attempt.proctoring_summary = {
-        "counts": counts, "violations": violations, "camera_in_use": attempt.camera_in_use,
-    }
+    # Through the shared builder, which carries events_dropped forward. Rebuilt
+    # here, the assignment erased the flag _note_events_dropped had just set, so
+    # the next accepted event made an incomplete timeline look complete again
+    # (code review).
+    summary = exam_camera.rolling_summary(
+        attempt.proctoring_summary, counts=counts, camera_in_use=attempt.camera_in_use,
+    )
+    violations = int(summary["violations"])
+    attempt.proctoring_summary = summary
     attempt.integrity_score = score
     attempt.updated_at = now
     await db.commit()

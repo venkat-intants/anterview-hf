@@ -54,6 +54,7 @@ from app.workflows import (
     MAX_ROUNDS,
     ROUND_KINDS,
     TASK_KINDS,
+    auto_advance_for,
     branch_errors,
     build_coverage,
     exam_round_problem,
@@ -168,7 +169,13 @@ def _walk(
             "simulated_percent": percent,
             "branch": route.branch,
         }
-        if not auto_advance:
+        # Per ROUND, not one workflow-wide bool. workflow_rounds.auto_advance
+        # overrides workflows.auto_advance_rounds, and this simulator ignored
+        # it — so a workflow set to advance with a final round set to "Hold for
+        # my review" told HR "passes every round -> decision" while the runner
+        # held, and vice versa. The one screen whose job is to say what will
+        # happen was saying the opposite (review, 2026-09-30).
+        if not auto_advance_for(round_, {"auto_advance_rounds": auto_advance}):
             # workflow_runner: below the threshold the candidate is held (a fail
             # branch is not followed); a pass leaves them on the round for a
             # person to move. Either way the walk ends here.
@@ -323,10 +330,15 @@ def _round_checks(
             and r.get("on_fast_track_next_round_id") == r.get("on_pass_next_round_id")
         ):
             checks.warn("The fast-track goes where the pass branch already goes.", rid)
-        if (r.get("on_fail_next_round_id") or r.get("on_fast_track_next_round_id")) and not auto_advance:
+        # Resolved for THIS round: the warning is attached to a round id, so
+        # deciding it from the workflow bool fired it on rounds where it was
+        # wrong and stayed silent on rounds where it was right.
+        if (
+            r.get("on_fail_next_round_id") or r.get("on_fast_track_next_round_id")
+        ) and not auto_advance_for(r, {"auto_advance_rounds": auto_advance}):
             checks.warn(
-                "Branches are only followed when rounds advance automatically, and this "
-                "workflow has that switched off.", rid,
+                "Branches are only followed when a round advances automatically, and this "
+                "round is set to hold for review.", rid,
             )
         stage = stage_settings.get(rid) or {}
         if stage.get("sla_hours") and not stage.get("owner_user_id"):
@@ -444,11 +456,20 @@ def evaluate(ctx: dict[str, Any], profile_competencies: list[dict[str, Any]] | N
             checks.warn(message)
 
     auto_advance = bool(ctx["workflow"]["auto_advance_rounds"])
-    if not auto_advance and rounds:
+    held_rounds = [r for r in rounds if not auto_advance_for(r, ctx["workflow"])]
+    if held_rounds and len(held_rounds) == len(rounds):
         checks.warn(
-            "Rounds do not advance automatically, so nobody moves on by themselves: every "
+            "No round advances automatically, so nobody moves on by themselves: every "
             "candidate stops after each round until a person moves them. The simulated "
             "candidates below stop where real ones would."
+        )
+    elif held_rounds:
+        # The blanket sentence was flatly false for any overriding round.
+        held_titles = ", ".join(str(r.get("title") or "untitled") for r in held_rounds)
+        checks.warn(
+            f"{len(held_rounds)} of {len(rounds)} rounds hold for review rather than "
+            f"advancing automatically ({held_titles}). Candidates stop there until a person "
+            "moves them; the simulated candidates below stop where real ones would."
         )
     scenarios = build_scenarios(rounds, auto_advance)
     for sc in scenarios:

@@ -669,13 +669,18 @@ class ExamAttempt(Base):
     accommodation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     extra_time_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     auto_submit_relaxed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # Camera-proctoring contract: whether THIS attempt actually had the camera
-    # on, frozen at /exam/start (exam_attempts_allowance_fixed, migration
-    # a3c5e7f9b1d4) from the round's camera_proctoring_required setting plus an
-    # active video_capture consent. Exists so HR reading a later attempt never
-    # has to guess, from the absence of camera events, whether nothing
-    # happened or there was no camera at all — "no events" and "not watched"
-    # must never look the same.
+    # Camera-proctoring contract: whether THIS attempt's ROUND REQUIRED the
+    # camera, frozen at /exam/start (exam_attempts_allowance_fixed, migration
+    # a3c5e7f9b1d4) from the round's camera_proctoring_required setting alone.
+    #
+    # Corrected 2026-09-30. This said "whether THIS attempt actually had the
+    # camera on ... plus an active video_capture consent", and neither half was
+    # true: /exam/start assigns camera_in_use=camera_required with no consent
+    # lookup, and nothing anywhere sets this column from a browser signal. So it
+    # distinguishes "this round asked for a camera" from "it did not" and cannot
+    # evidence that one started. `true` with no camera events covers a candidate
+    # present throughout AND a camera that never started; the HR timeline states
+    # that ambiguity rather than rendering a clean-looking record.
     camera_in_use: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # PH4-D3: set once, together with redacting `answers`/`graded_snapshot`'s
     # coding source and program output (retention or DPDP erasure) — the ONE

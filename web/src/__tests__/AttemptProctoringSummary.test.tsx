@@ -200,3 +200,74 @@ describe('AttemptProctoringSummary — no verdict language', () => {
     expect(screen.queryByText(/^fail$/i)).not.toBeInTheDocument();
   });
 });
+
+describe('AttemptProctoringSummary — camera required but silent', () => {
+  // `camera_in_use` records only that the ROUND REQUIRED a camera: it is frozen
+  // from the round's setting at /exam/start and immutable by trigger, so it
+  // cannot know whether the candidate granted permission or whether the
+  // detector ever loaded. "Required, and not one camera signal" therefore covers
+  // two opposite situations — a candidate who sat still, and a camera that never
+  // started — and the panel renders identically for both. Saying so is the only
+  // honest option; a silent clean-looking record is the failure this whole panel
+  // exists to prevent.
+  const REQUIRED_BUT_SILENT: AttemptProctoring = {
+    camera_in_use: true,
+    integrity_score: 95,
+    counts: { tab_blur: 1 },
+    events: [
+      { event_type: 'tab_blur', started_at: '2026-09-01T10:00:00.000Z', ended_at: null, duration_seconds: null },
+    ],
+  };
+
+  it('states the ambiguity instead of implying the candidate was present', async () => {
+    api.getAttemptProctoring.mockResolvedValue(REQUIRED_BUT_SILENT);
+    renderSummary();
+
+    const notice = await screen.findByTestId('proctoring-no-camera-signal');
+    expect(notice).toHaveTextContent(/no camera signal was recorded/i);
+    // Both readings have to be named. Offering only one is the bug.
+    expect(notice).toHaveTextContent(/present throughout/i);
+    expect(notice).toHaveTextContent(/never started|permission declined|detector/i);
+    expect(notice).toHaveTextContent(/cannot tell those apart/i);
+  });
+
+  it('does not show the notice when the camera produced any signal', async () => {
+    renderSummary(); // WITH_EVENTS has multiple_faces and gaze_away
+    await screen.findByTestId('proctoring-event-groups');
+    expect(screen.queryByTestId('proctoring-no-camera-signal')).not.toBeInTheDocument();
+  });
+
+  it('counts a gaze occurrence alone as a camera signal', async () => {
+    // gaze_away is informational and never a violation, but it is still proof
+    // the detector ran — treating it as no signal would print the ambiguity
+    // notice on an attempt we can actually account for.
+    api.getAttemptProctoring.mockResolvedValue({
+      ...REQUIRED_BUT_SILENT,
+      counts: { gaze_away: 1 },
+      events: [
+        { event_type: 'gaze_away', started_at: '2026-09-01T10:00:00.000Z', ended_at: '2026-09-01T10:00:04.000Z', duration_seconds: 4 },
+      ],
+    });
+    renderSummary();
+    await screen.findByTestId('proctoring-gaze-line');
+    expect(screen.queryByTestId('proctoring-no-camera-signal')).not.toBeInTheDocument();
+  });
+
+  it('does not show the notice when no camera was required at all', async () => {
+    // That case has its own, different sentence — the camera was not enabled.
+    // Printing both would tell HR the round required something it did not.
+    api.getAttemptProctoring.mockResolvedValue(NO_CAMERA_NO_EVENTS);
+    renderSummary();
+    await screen.findByText(/camera proctoring was not enabled/i);
+    expect(screen.queryByTestId('proctoring-no-camera-signal')).not.toBeInTheDocument();
+  });
+
+  it('keeps the ambiguity notice free of verdict language', async () => {
+    api.getAttemptProctoring.mockResolvedValue(REQUIRED_BUT_SILENT);
+    renderSummary();
+    const notice = await screen.findByTestId('proctoring-no-camera-signal');
+    expect(notice.textContent ?? '').not.toMatch(
+      /suspicious|cheat|absent from|left the exam|did not comply/i,
+    );
+  });
+});

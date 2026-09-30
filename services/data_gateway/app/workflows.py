@@ -49,6 +49,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -146,6 +147,33 @@ def route_after_result(round_: dict[str, Any], *, passed: bool, percent: float |
         return Route("advance", "pass", str(nxt)) if nxt else Route("complete", "pass")
     fail_to = round_.get("on_fail_next_round_id")
     return Route("advance", "fail", str(fail_to)) if fail_to else Route("hold", "fail")
+
+
+def auto_advance_for(round_: Mapping[str, Any], workflow: Mapping[str, Any]) -> bool:
+    """Does a PASSING result on this round move the candidate on by itself?
+
+    Resolves the per-round override against the workflow default. The override
+    is three-state, and the middle state is the point:
+
+        None   this round has no opinion — follow ``workflows.auto_advance_rounds``
+        True   this round always advances a passing candidate
+        False  this round always holds them for a person
+
+    ``auto_advance_rounds`` alone was one switch for an entire workflow, so a
+    process could not be automatic through screening and deliberate at the final
+    round — which is the shape most hiring actually has. HR now sets it per
+    round.
+
+    "Manual" here decides only WHO MOVES PEOPLE ON, never who is rejected. A
+    held candidate waits for a person, who releases them onward; ending a
+    candidacy still goes through ``app.final_decision``, which requires a reason
+    and a reason code neither the runner nor the simulator collects. Nothing in
+    ``app.workflow_runner`` can end a candidacy — see its module docstring.
+    """
+    override = round_.get("auto_advance")
+    if override is None:
+        return bool(workflow["auto_advance_rounds"])
+    return bool(override)
 
 
 def round_edges(r: dict[str, Any]) -> list[tuple[str, str]]:

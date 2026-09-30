@@ -526,7 +526,22 @@ export function recordFinalDecision(
 }
 
 /**
- * Let a held candidate continue.
+ * The runner's own report. `to_round` is set when the candidate moved onto a
+ * named round, absent when `action` is `completed` (they finished the last round
+ * and are now queued for the final human decision), and absent with an
+ * explanatory `reason` when the release lifted the hold but could not move them.
+ */
+export type ReleaseOutcome = {
+  action: string;
+  enrolment_id: string;
+  from_round?: string | null;
+  to_round?: string | null;
+  reason?: string | null;
+};
+
+/**
+ * Let a held candidate continue — onto the next round, exactly as an automatic
+ * pass would, minting whatever that round needs and emailing them.
  *
  * There is no automated caller for this anywhere in the codebase, and there
  * must not be: deciding that a below-threshold candidate should proceed is
@@ -535,8 +550,8 @@ export function recordFinalDecision(
 export function releaseHold(
   enrolmentId: string,
   opts: { to_status?: string; reason?: string } = {},
-): Promise<{ action: string; enrolment_id: string; reason?: string }> {
-  return apiPost<{ action: string; enrolment_id: string; reason?: string }>(
+): Promise<ReleaseOutcome> {
+  return apiPost<ReleaseOutcome>(
     `/hr/enrolments/${enrolmentId}/release-hold`,
     { to_status: opts.to_status ?? 'shortlisted', reason: opts.reason?.trim() || null },
   );

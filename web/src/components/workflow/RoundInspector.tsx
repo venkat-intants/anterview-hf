@@ -750,9 +750,14 @@ export default function RoundInspector({
             <option value="auto">Move them on automatically</option>
             <option value="manual">Hold for my review</option>
           </select>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
-            On <span className="font-medium">hold</span> you are notified, and the candidate
-            waits until you release them onward. Nobody is rejected by this setting — ending a
+          <p
+            className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--ui-faint)]"
+            data-testid="hold-behaviour-copy"
+          >
+            On <span className="font-medium">hold</span> the candidate stops here, you are
+            notified, and they wait in your review queue with the reason recorded. Releasing them
+            moves them on to {round.on_pass_next_round_id ? 'the next round' : 'the final decision'}
+            {' '}exactly as an automatic pass would. Nobody is rejected by this setting — ending a
             candidacy still goes through the decision that asks you for a reason.
           </p>
         </div>

@@ -248,7 +248,16 @@ async def test_releasing_a_hold_records_the_reviewers_reason(
     moves: list[dict] = []
 
     async def _held(*_: object) -> dict:
-        return {"id": uuid.uuid4(), "company_id": uuid.uuid4(), "status": "held"}
+        # Every column _load_enrolment selects. It used to carry only three, so
+        # release_hold could read nothing else without this test breaking —
+        # which it did, the moment the release started moving candidates on.
+        return {
+            "id": uuid.uuid4(), "company_id": uuid.uuid4(), "status": "held",
+            "applicant_id": uuid.uuid4(), "requisition_id": uuid.uuid4(),
+            "workflow_id": uuid.uuid4(), "current_round_id": None,
+            "target_job_title": "Fitter", "full_name": "A Candidate",
+            "email": "candidate@example.test",
+        }
 
     async def _transition(_db: object, **kw: object) -> str:
         moves.append(kw)
@@ -260,6 +269,8 @@ async def test_releasing_a_hold_records_the_reviewers_reason(
                           reason="references came back fine")
     assert "references came back fine" in moves[0]["reason"]
     assert moves[0]["automated"] is False
+    # current_round_id is None here: the candidate was held after their last
+    # round, so there is nowhere to advance to and the release only lifts it.
 
 
 def test_the_hold_release_endpoint_passes_the_reason_on() -> None:

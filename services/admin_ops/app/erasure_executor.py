@@ -342,6 +342,15 @@ EXCLUDED_TABLES: dict[str, str] = {
     # --- Records that exist to prove the erasure / prior consent -----------
     "erasure_requests": "the §12 record of this very erasure. Deleting it would "
                         "destroy the evidence that the request was honoured.",
+    # 2026-09-30: exam.camera_notice.accepted rows (app/exam_camera.py) join
+    # this exclusion. Ids, a notice version, the grant and a timestamp —
+    # no free text, and no request metadata AT ALL. A salted IP hash was
+    # considered and deliberately left out: one global salt over a 2^32
+    # address space is enumerable and linkable, so it would be pseudonymous
+    # personal data, not anonymous — a third category the reasoning below
+    # does not cover, kept forever in a table nothing here can delete.
+    # Written once per round (partial unique index
+    # ix_audit_log_camera_notice_round), precisely because it is permanent.
     "audit_log": "immutable compliance trail: actor and resource UUIDs, action "
                  "names and structured details — never email or phone. NOTE, "
                  "because this used to claim 'action names only': details are "

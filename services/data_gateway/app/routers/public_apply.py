@@ -1476,6 +1476,21 @@ async def submit_draft(
         #
         # In its own transaction, after the rollback: the work above is gone,
         # and this has to land on its own.
+        #
+        # AND THE OBJECT GOES WITH THE POINTER. `release_resume=True` nulls
+        # `application_drafts.resume_s3_key`, and on this door that column is
+        # the only thing naming the file: the transaction rolled back, so no
+        # applicant or enrolment adopted it; the winner adopted its OWN
+        # draft's key; `purge_expired` only queues objects for rows still in
+        # `status='draft'`, and this row is now 'submitted' with a NULL
+        # pointer; and `drafts/{company}/{draft}.pdf` sits outside the
+        # `applicants/{company}/{applicant}` prefix the erasure sweep walks.
+        # Clearing the pointer without deleting the object therefore makes a
+        # CV that a completed DPDP erasure reports success over — which is the
+        # exact failure the commit that added this handler said it was fixing,
+        # two branches away. The two sibling exits on this door already do it
+        # this way; this one was the odd one out.
+        orphaned_race_cv = row.get("resume_s3_key")
         try:
             await draft_store.mark_submitted(
                 db, draft_id=row["id"], now=now, release_resume=True
@@ -1484,6 +1499,14 @@ async def submit_draft(
         except Exception:  # noqa: BLE001 — the reply is already decided
             await db.rollback()
             log.warning("public_apply.draft_not_consumed_on_race", draft_id=str(row["id"]))
+        else:
+            if orphaned_race_cv:
+                try:
+                    await _delete_from_s3(str(orphaned_race_cv))
+                except Exception:  # noqa: BLE001 — the pointer is already cleared
+                    log.warning(
+                        "public_apply.draft_object_orphaned", draft_id=str(row["id"])
+                    )
         return _received(name)
     except Exception:
         await db.rollback()

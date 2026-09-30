@@ -8,7 +8,7 @@ can observe between "this address has a live application" and "this address was
 REJECTED" is employment-outcome data about a third party, handed to whoever
 typed the address.
 
-FOUR separate reviews have now found that difference, in four different places,
+SIX separate reviews have now found that difference, each in a new place,
 each time after the previous one was "fixed":
 
   1. a 409 whose body named the date they could reapply;
@@ -40,9 +40,29 @@ body — plus, on the draft door, what `GET /apply/draft` reads back afterwards.
 A difference cannot satisfy this by relocating, and it cannot survive by living
 in a request number nobody sent.
 
-What is deliberately NOT asserted: response timing. The staging path does more
-work than the others and always will, so a timing difference is real and is
-recorded as an accepted risk rather than pretended away here.
+WHAT IS NOT ASSERTED HERE, stated plainly because an earlier version of this
+paragraph claimed an acceptance that did not exist.
+
+Response TIMING is not asserted, and the states do not take the same time. The
+CV upload was moved above the gate so that the one caller-scaled term — the
+PDF is as big as the sender chooses — is common to every state, and
+`test_every_state_does_the_same_work` holds that down. What remains is the
+fixed-size difference below it: the accepting states perform roughly a dozen
+writes and two commits that the refusing states do not, and the refusing
+states make a delete round-trip the accepting ones do not. That difference is
+REAL, it is measurable, and nothing in this file detects it.
+
+It is also not something this file may declare accepted. A previous version of
+this docstring said the timing difference "is recorded as an accepted risk" —
+no register entry existed, and no owner had accepted it. Neither a test
+docstring nor a commit message can grant that acceptance. Until it is closed
+in the code or accepted by a named owner in the risk register, the honest
+statement is the one above: the replies are indistinguishable, the work is
+not.
+
+Response HEADERS are not compared either (`_observable` reads status and body),
+and neither are emails staged, auth-token rows minted, or behaviour under
+concurrent submissions.
 """
 
 from __future__ import annotations
@@ -267,17 +287,42 @@ async def _apply_via_draft(
     token = started.json()["resume_token"]
     hdr = {"X-Draft-Token": token}
 
-    await client.patch("/apply/draft", json={"full_name": "Probe Person"}, headers=hdr)
-    await client.post(
-        "/apply/draft/resume-upload",
-        files={"resume": ("cv.pdf", _PDF, "application/pdf")},
-        headers=hdr,
-    )
-    await client.post(
-        "/apply/draft/confirm", json={"full_name": "Probe Person"}, headers=hdr
-    )
+    # EVERY step's status is checked, not just the first. This helper used to
+    # assert only that the draft was created, and that made the whole
+    # draft-door test satisfiable without reaching the code under test: if the
+    # CV upload failed for all five cases, `submit_draft` returns a uniform
+    # 422 ("Please upload your CV before submitting") BEFORE the applicant
+    # lookup and before the gate — five identical replies, five identical
+    # readbacks, and a green test over a door whose gate never ran.
+    #
+    # A uniformity assertion cannot detect a uniform regression. That is why
+    # these are equality checks against the status each step must return,
+    # rather than a check that the five agree.
+    for label, resp in (
+        ("patch", await client.patch(
+            "/apply/draft", json={"full_name": "Probe Person"}, headers=hdr
+        )),
+        ("resume-upload", await client.post(
+            "/apply/draft/resume-upload",
+            files={"resume": ("cv.pdf", _PDF, "application/pdf")},
+            headers=hdr,
+        )),
+        ("confirm", await client.post(
+            "/apply/draft/confirm", json={"full_name": "Probe Person"}, headers=hdr
+        )),
+    ):
+        if resp.status_code != 200:
+            raise AssertionError(
+                f"draft {label} failed: {resp.status_code} {resp.text[:200]}"
+            )
+
     await _clear_rate_limit()
     submitted = await client.post("/apply/draft/submit", headers=hdr)
+    if submitted.status_code != 201:
+        raise AssertionError(
+            f"draft submit did not reach the gate: {submitted.status_code} "
+            f"{submitted.text[:200]}"
+        )
     return submitted, token
 
 
@@ -290,6 +335,10 @@ async def _draft_readback(client: AsyncClient, token: str):  # noqa: ANN202
     as a difference in what it says.
     """
     r = await client.get("/apply/draft", headers={"X-Draft-Token": token})
+    # 404 is the right answer for every state: `load` filters `status='draft'`
+    # and every exit consumes the draft. Asserted as a VALUE by the caller, not
+    # merely as "the five agree" — five identical 200s would be a uniform
+    # regression that a uniformity check cannot see.
     return r.status_code, (r.json() if r.status_code == 200 else None)
 
 
@@ -522,7 +571,7 @@ async def test_every_state_does_the_same_work(client: AsyncClient) -> None:
             await _apply(client, target, email)
         uploads[case] = count
 
-    assert len(set(uploads.values())) == 1, (
+    assert set(uploads.values()) == {1}, (
         "the states do different amounts of work, so an anonymous caller can "
         "time two requests and learn which one an address is in:\n"
         + "\n".join(f"    {c:9} -> {n} upload(s)" for c, n in uploads.items())
@@ -557,3 +606,54 @@ async def test_a_storage_outage_answers_the_same_way_for_every_state(
         "a storage outage tells the states apart:\n"
         + "\n".join(f"    {c:9} -> {n}" for c, n in seen.items())
     )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_submission_deletes_the_cv_it_was_made_to_upload(
+    client: AsyncClient,
+) -> None:
+    """The other half of storing the CV before the gate.
+
+    Uploading on every path is what makes the work uniform; deleting it again
+    on the paths that keep nothing is what stops that being a bucket full of
+    strangers' CVs under a named victim's erasure prefix. The whole trade-off
+    rests on the second half, and the only thing guarding it was
+    `assert "_release_unadopted" in src` — a substring check against the
+    function's source, which passes if the identifier appears in a comment.
+    Remove both call sites and leave the helper defined, and every test stayed
+    green.
+
+    Asserted as counts per state rather than as uniformity, because these
+    legitimately differ: a refused submission deletes what it uploaded, an
+    accepted one keeps it. That difference is in our bucket, where no
+    anonymous caller can read it.
+    """
+    from app.routers import public_apply
+
+    addresses = await _seeded_addresses(client)
+    deletes: dict[str, int] = {}
+    real_delete = public_apply._delete_from_s3
+
+    def _counter(into: list[str]):  # noqa: ANN202
+        async def _counting(key: str) -> None:
+            into.append(key)
+            await real_delete(key)
+
+        return _counting
+
+    for case, (target, email) in addresses.items():
+        seen: list[str] = []
+        with mock.patch.object(public_apply, "_delete_from_s3", _counter(seen)):
+            await _apply(client, target, email)
+        deletes[case] = len(seen)
+
+    for refused in (_LIVE, _IN_COOLDOWN):
+        assert deletes[refused] == 1, (
+            f"{refused} uploaded a CV before the gate and did not delete it, so "
+            "every probe leaves a stranger's PDF in the bucket: "
+            f"{deletes}"
+        )
+    for kept in (_PAST_COOLDOWN, _OVERRIDDEN, _UNKNOWN):
+        assert deletes[kept] == 0, (
+            f"{kept} deleted the CV it was supposed to keep: {deletes}"
+        )

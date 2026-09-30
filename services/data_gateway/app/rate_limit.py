@@ -121,9 +121,22 @@ def rate_limit_window(
             ip = extract_client_ip(request)
             redis = get_redis()
             key = f"rl:{bucket}:{ip}"
+            # ONE round trip, and the TTL is set before the counter can be
+            # read. `incr` then `expire` on the first hit is two commands, and
+            # anything that interrupts between them — a dropped connection, a
+            # client disconnect propagating CancelledError through the
+            # dependency — leaves the key with NO expiry. Every later request
+            # then increments a key that never resets, and once it passes the
+            # cap that address is refused for ever with no recovery but manual
+            # Redis surgery. The per-minute limiter has the same shape and a
+            # 60-second blast radius; at an hour the window is long-lived by
+            # design, so the stranded key is both likelier and far worse.
+            #
+            # `SET key 0 EX w NX` creates-and-expires atomically and is a
+            # no-op once the key exists, so the TTL is always attached to a
+            # counter that starts at zero.
+            await redis.set(key, 0, ex=window_seconds, nx=True)
             count: int = await redis.incr(key)
-            if count == 1:
-                await redis.expire(key, window_seconds)
         except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
             _rate_limit_skipped.labels(
                 bucket=bucket, error_type=type(exc).__name__

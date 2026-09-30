@@ -5,6 +5,7 @@ isolation are covered by live end-to-end verification.
 
 from __future__ import annotations
 
+import re
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -596,7 +597,16 @@ def test_every_application_field_is_actually_passed_to_the_model() -> None:
 
     src = _inspect.getsource(list_applications)
     body = src[src.index("ApplicationOut(") :]
-    missing = [f for f in ApplicationOut.model_fields if f"{f}=" not in body]
+    # WORD-ANCHORED. A plain `f"{field}=" in body` is a substring test, and
+    # `status=` is a substring of `stored_status=` — so dropping `status=`
+    # from the constructor left this guard reporting nothing missing. It was
+    # mutation-checked against the two fields it was written around and then
+    # described as catching the whole class, which it did not.
+    missing = [
+        f
+        for f in ApplicationOut.model_fields
+        if not re.search(rf"(?<![\w]){re.escape(f)}\s*=", body)
+    ]
     assert not missing, (
         "declared on ApplicationOut but never passed to it, so it serialises as "
         f"null on every row: {missing}"
@@ -609,8 +619,12 @@ def test_the_application_query_selects_every_field_the_model_declares() -> None:
     from app.routers.hr_applicants import _APPLICATIONS_SQL, ApplicationOut
 
     sql = str(_APPLICATIONS_SQL)
-    # `is_latest` is computed from the row's position, not selected.
+    # Word-anchored for the same reason as above: `source` matches inside
+    # `source_detail`, and `status` inside `stored_status`, so the substring
+    # form passed while the column it was asked about was absent.
     for field in ApplicationOut.model_fields:
-        if field == "is_latest":
+        if field == "is_latest":  # computed from the row's position
             continue
-        assert field in sql, f"{field} is bound from a column the query never selects"
+        assert re.search(rf"(?<![\w]){re.escape(field)}(?![\w])", sql), (
+            f"{field} is bound from a column the query never selects"
+        )

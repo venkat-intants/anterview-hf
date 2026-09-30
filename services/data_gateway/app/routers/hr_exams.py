@@ -329,9 +329,19 @@ class ProctoringEventOut(BaseModel):
 class AttemptProctoringOut(BaseModel):
     """The attempt's proctoring summary (camera-proctoring contract §7).
 
-    ``camera_in_use`` is the one field that tells HR whether "no camera
-    events" means clean or means never watched — say so rather than showing
-    the three camera counts as zero.
+    ``camera_in_use`` says whether the ROUND REQUIRED a camera — it is frozen
+    from the round's setting at /exam/start and cannot be updated afterwards
+    (the exam_attempts_allowance_fixed trigger). It does NOT mean a camera
+    actually ran.
+
+    That distinction was previously stated the other way round here, claiming
+    this field tells HR whether "no camera events" means clean or means never
+    watched. It cannot: a candidate who denied the browser permission, or whose
+    detector never loaded, produces camera_in_use=true with zero camera events
+    — indistinguishable from a candidate who sat perfectly still. Answering
+    that question needs a positive "detection started" signal the client does
+    not send today, so the panel now says plainly that the two cases cannot be
+    told apart rather than implying the clean one (review, 2026-09-30).
     """
 
     camera_in_use: bool

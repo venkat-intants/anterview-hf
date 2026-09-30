@@ -99,12 +99,13 @@ vi.mock('../components/CandidateDrawer', () => ({
 
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
+const toastWarning = vi.fn();
 vi.mock('../lib/toast', () => ({
   toast: {
     error: (...a: unknown[]) => toastError(...a) as unknown,
     success: (...a: unknown[]) => toastSuccess(...a) as unknown,
     info: vi.fn(),
-    warning: vi.fn(),
+    warning: (...a: unknown[]) => toastWarning(...a) as unknown,
   },
 }));
 
@@ -454,5 +455,58 @@ describe('DecisionQueue — resolved or not', () => {
     expect((await screen.findByTestId('resolution-note')).textContent).toMatch(
       /4 candidates are still in progress/,
     );
+  });
+});
+describe('DecisionQueue — releasing a hold reports where they went', () => {
+  // Releasing a hold used to clear a flag. It now takes the round's pass branch
+  // through the runner, which mints the next round's exam link or interview
+  // invite and emails the candidate — so "continues" on its own no longer tells
+  // HR what their click did, and in one case actively misleads them.
+  it('names the round the candidate moved to', async () => {
+    const user = userEvent.setup();
+    releaseHold.mockResolvedValue({
+      action: 'advanced', enrolment_id: 'en-held', from_round: 'Trade test',
+      to_round: 'Panel interview',
+    });
+    renderQueue();
+    await screen.findByText('Asha Rao');
+
+    await user.click(within(cardFor('Asha Rao')).getByText('Let them continue'));
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(String(toastSuccess.mock.calls[0][0])).toMatch(/moved to Panel interview/);
+  });
+
+  it('says they are awaiting the final decision when that was the last round', async () => {
+    const user = userEvent.setup();
+    releaseHold.mockResolvedValue({
+      action: 'completed', enrolment_id: 'en-held', from_round: 'Trade test', to_round: null,
+    });
+    renderQueue();
+    await screen.findByText('Asha Rao');
+
+    await user.click(within(cardFor('Asha Rao')).getByText('Let them continue'));
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(String(toastSuccess.mock.calls[0][0])).toMatch(/final decision/i);
+  });
+
+  it('warns rather than congratulating when nobody actually moved', async () => {
+    // The round was deleted under the candidate. The hold is lifted either way —
+    // stranding them in held would be worse — but reporting this as a successful
+    // advance would stop HR looking for someone who still needs moving.
+    const user = userEvent.setup();
+    releaseHold.mockResolvedValue({
+      action: 'advanced', enrolment_id: 'en-held', to_round: null,
+      reason: 'hold released — the round no longer exists, so the candidate did not move',
+    });
+    renderQueue();
+    await screen.findByText('Asha Rao');
+
+    await user.click(within(cardFor('Asha Rao')).getByText('Let them continue'));
+
+    await waitFor(() => expect(toastWarning).toHaveBeenCalled());
+    expect(String(toastWarning.mock.calls[0][0])).toMatch(/did not move/);
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 });

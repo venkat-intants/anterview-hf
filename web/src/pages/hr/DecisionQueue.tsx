@@ -137,8 +137,21 @@ function QueueCard({
 
   const releaseMut = useMutation({
     mutationFn: () => releaseHold(row.enrolment_id, { reason: rationale }),
-    onSuccess: () => {
-      toast.success(`${row.full_name} continues`);
+    onSuccess: (out) => {
+      // Releasing a hold is no longer a flag change: it advances the candidate,
+      // which mints the next round's exam link or interview invite and emails
+      // them. A bare "continues" left HR unable to tell that from the case where
+      // the round had been deleted under the candidate and nobody moved — and
+      // the second one needs them to look.
+      if (out.to_round) {
+        toast.success(`${row.full_name} continues — moved to ${out.to_round}`);
+      } else if (out.action === 'completed') {
+        toast.success(`${row.full_name} continues — now awaiting your final decision`);
+      } else if (out.reason?.includes('did not move')) {
+        toast.warning(`Hold lifted, but ${row.full_name} did not move: ${out.reason}`);
+      } else {
+        toast.success(`${row.full_name} continues`);
+      }
       invalidate();
     },
     onError: (e) => toast.error(errText(e, 'Could not release this hold')),

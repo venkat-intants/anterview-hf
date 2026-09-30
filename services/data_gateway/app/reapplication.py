@@ -249,6 +249,18 @@ async def gate(
     return Gate(already_applied=False, reapplying=reapplying, verdict=verdict)
 
 
+@dataclass(frozen=True)
+class StageResult:
+    """What staging a second attempt did, and what it left for the caller."""
+
+    #: False when an unexpired attempt was already pending and this one was
+    #: refused. First link wins; see `stage` for why.
+    staged: bool
+    #: An EXPIRED attempt's CV that this one replaced. Nothing else names it,
+    #: so the caller deletes it after the commit.
+    superseded_key: str | None = None
+
+
 async def stage(
     db: AsyncSession,
     *,
@@ -257,8 +269,14 @@ async def stage(
     resume_s3_key: str | None,
     answers: dict[str, Any] | None,
     token_hash: str,
-) -> str | None:
+) -> StageResult:
     """Record a second attempt WITHOUT acting on it. Caller commits.
+
+    ``staged`` is False when an attempt is already pending on this enrolment
+    and nothing was recorded — the caller must then send NO email and answer
+    exactly as it would any other accepted application. ``superseded_key``
+    names an EXPIRED attempt's CV that this one replaced, for the caller to
+    delete after commit: nothing else named it.
 
     The application is accepted — nobody is turned away, and the cooldown has
     already decided whether it may be accepted at all. What does not happen
@@ -289,16 +307,35 @@ async def stage(
     which upserts per (enrolment, question) and would otherwise let a stranger
     overwrite what the real candidate had already answered.
     """
-    # What the attempt this one replaces was holding. Returned so the caller
-    # can delete it: these columns were the only thing naming that object, and
-    # an object nothing names is one erasure cannot find.
-    superseded = await db.scalar(
-        text(
-            "SELECT reapply_resume_s3_key FROM enrolments"
-            " WHERE id = :i AND company_id = :c FOR UPDATE"
-        ),
-        {"i": enrolment_id, "c": company_id},
+    # FIRST LINK WINS, and a second submission cannot take its place.
+    #
+    # Overwriting a pending attempt was a substitution attack: an attacker who
+    # knew a rejected candidate's address could submit their own CV and
+    # answers, replacing whatever the real candidate had staged, and the victim
+    # — receiving a second, indistinguishable "confirm your application" email
+    # — would click it and authenticate the ATTACKER'S submission. It was also
+    # a denial of reapplication, since each overwrite retired the candidate's
+    # live link and deleted the object behind it.
+    #
+    # So an unexpired pending attempt is left alone. The loser is told nothing
+    # it could not already guess: the caller answers with the same sentence
+    # every accepted application gets.
+    cutoff = datetime.now(tz=UTC) - timedelta(
+        hours=settings.apply_activation_ttl_hours
     )
+    held = (
+        await db.execute(
+            text(
+                "SELECT reapply_requested_at, reapply_resume_s3_key FROM enrolments"
+                " WHERE id = :i AND company_id = :c FOR UPDATE"
+            ),
+            {"i": enrolment_id, "c": company_id},
+        )
+    ).mappings().first()
+    pending = held["reapply_requested_at"] if held else None
+    if pending is not None and pending >= cutoff:
+        log.info("reapply.stage_refused_pending", enrolment_id=str(enrolment_id))
+        return StageResult(staged=False)
     await db.execute(
         text(
             "UPDATE enrolments"
@@ -319,11 +356,14 @@ async def stage(
             "th": token_hash,
         },
     )
+    superseded = held["reapply_resume_s3_key"] if held and pending else None
     log.info(
         "reapply.staged", enrolment_id=str(enrolment_id), has_cv=bool(resume_s3_key),
-        superseded=bool(superseded),
+        replaced_expired=bool(pending),
     )
-    return str(superseded) if superseded else None
+    return StageResult(
+        staged=True, superseded_key=str(superseded) if superseded else None
+    )
 
 
 async def staged_for_token(

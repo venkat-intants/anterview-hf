@@ -83,7 +83,7 @@ from app.mailer import enqueue_email
 from app.models import Applicant
 from app.publishing import visible_sql
 from app.rate_limit import rate_limit
-from app.reapplication import CooldownVerdict
+from app.reapplication import CooldownVerdict, StageResult
 from app.reapplication import confirm as reapplication_confirm
 from app.reapplication import gate as reapplication_gate
 from app.reapplication import stage as reapplication_stage
@@ -523,7 +523,6 @@ async def _mail_cooldown_reason(
     company_id: uuid.UUID,
     applicant_id: uuid.UUID | None,
     address: str,
-    name: str,
     job_title: str | None,
     company_name: str | None,
     verdict: CooldownVerdict,
@@ -556,13 +555,24 @@ async def _mail_cooldown_reason(
         lang = await db.scalar(
             text("SELECT preferred_language FROM users WHERE id = :u"), {"u": user_id}
         )
+        # The STORED name, never the one on this request. The caller is
+        # anonymous and `full_name` is 200 characters of their choosing, which
+        # would otherwise land verbatim in the plain-text part of a mail sent
+        # from the company's own domain to somebody they know applied there —
+        # a phishing line with a live URL, wearing the company's sender
+        # reputation. The person's own name is already on file; nothing the
+        # sender typed needs to reach their inbox.
+        stored_name = await db.scalar(
+            text("SELECT full_name FROM applicants WHERE id = :a"),
+            {"a": applicant_id},
+        )
         await enqueue_email(
             db,
             to=address,
             template="generic",
             lang=(lang or "en"),
             ctx={
-                "name": name,
+                "name": stored_name or None,
                 "title": f"About your application for {job_title or 'this role'}",
                 "body": verdict.message(),
                 "brand": company_name,
@@ -570,6 +580,15 @@ async def _mail_cooldown_reason(
             to_user_id=uuid.UUID(str(user_id)),
             company_id=company_id,
             related_kind="reapply_cooldown_notice",
+            # ONE notice per window, not one per probe. The route allows 6/min
+            # per IP and fails open when Redis is down, so without this anyone
+            # who knows the address can drive mail at a real person's inbox
+            # indefinitely. It is also simply the right behaviour: the answer
+            # does not change until the date does.
+            dedupe_key=(
+                f"reapply-cooldown:{applicant_id}:{requisition_id}"
+                f":{verdict.until.date().isoformat()}"
+            ),
         )
         await db.commit()
     except Exception:  # noqa: BLE001 — the reply is already decided
@@ -1138,12 +1157,29 @@ async def submit_draft(
             until=gate.verdict.until.isoformat() if gate.verdict.until else None,
         )
         # Same uniform reply as the one-shot route — see there for why.
+        #
+        # AND THE SAME TRACE. The branch above consumes the draft; this one
+        # used to return without touching it, so `load` (which filters
+        # status = 'draft') answered 404 afterwards for a live application and
+        # 201 for a rejected one. Two replies that read alike, followed by two
+        # that do not, is the same disclosure one step later — a difference in
+        # what an endpoint LEAVES BEHIND is as readable as one in what it says.
+        cooldown_cv = row.get("resume_s3_key")
+        await draft_store.mark_submitted(db, draft_id=row["id"], release_resume=True)
         await _mail_cooldown_reason(
             db, requisition_id=requisition_id, company_id=company_id,
             applicant_id=uuid.UUID(str(existing["id"])) if existing is not None else None,
-            address=address, name=name, job_title=req["title"],
+            address=address, job_title=req["title"],
             company_name=req.get("company_name"), verdict=gate.verdict,
         )
+        await db.commit()
+        if cooldown_cv:
+            try:
+                await _delete_from_s3(str(cooldown_cv))
+            except Exception:  # noqa: BLE001 — the pointer is already cleared
+                log.warning(
+                    "public_apply.draft_object_orphaned", draft_id=str(row["id"])
+                )
         return ApplicationOut(
             applicant_id="", enrolment_id=None, full_name=name,
             already_applied=True, message=_ALREADY_APPLIED,
@@ -1230,9 +1266,13 @@ async def submit_draft(
             )
         # Staged, not applied. Same door, same reason.
         superseded_cv: str | None = None
+        # Bound here too: `gate.reapplying` can be true while
+        # enrol_applicant returned no enrolment id, and the email
+        # check below reads it.
+        staged = StageResult(staged=False)
         if gate.reapplying and outcome.enrolment_id:
             reapply_raw = mint_token()
-            superseded_cv = await reapplication_stage(
+            staged = await reapplication_stage(
                 db,
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 company_id=company_id,
@@ -1240,6 +1280,7 @@ async def submit_draft(
                 answers=dict(checked_answers) if checked_answers else None,
                 token_hash=hash_token(reapply_raw, REAPPLY_TOKEN_KIND),
             )
+            superseded_cv = staged.superseded_key
         # The draft's consent row hangs off the throwaway guest identity that
         # created it. Record it against the identity that owns the application
         # too, so an audit that looks this person up by their real user id
@@ -1314,7 +1355,7 @@ async def submit_draft(
             # waiting), and which mints no token at all for somebody who has
             # already claimed their account, leaving them nothing to confirm
             # with.
-            if gate.reapplying:
+            if gate.reapplying and staged.staged:
                 await stage_reapply_confirmation(
                     db,
                     user_id=uuid.UUID(str(guest_user_id)),
@@ -1714,7 +1755,7 @@ async def submit_application(
         await _mail_cooldown_reason(
             db, requisition_id=requisition_id, company_id=company_id,
             applicant_id=uuid.UUID(str(existing["id"])) if existing is not None else None,
-            address=address, name=name, job_title=req["title"],
+            address=address, job_title=req["title"],
             company_name=req.get("company_name"), verdict=gate.verdict,
         )
         return ApplicationOut(
@@ -1884,12 +1925,16 @@ async def submit_application(
         # waits on the enrolment until a link emailed to the address is
         # followed — see reapplication.stage.
         superseded_cv: str | None = None
+        # Bound here too: `gate.reapplying` can be true while
+        # enrol_applicant returned no enrolment id, and the email
+        # check below reads it.
+        staged = StageResult(staged=False)
         if gate.reapplying and outcome.enrolment_id:
             # Minted HERE so its hash can be bound to this one attempt before
             # the link goes out. A token that merely proves the address, and
             # not which submission it belongs to, applies whatever is staged.
             reapply_raw = mint_token()
-            superseded_cv = await reapplication_stage(
+            staged = await reapplication_stage(
                 db,
                 enrolment_id=uuid.UUID(outcome.enrolment_id),
                 company_id=company_id,
@@ -1897,6 +1942,13 @@ async def submit_application(
                 answers=dict(checked_answers) if checked_answers else None,
                 token_hash=hash_token(reapply_raw, REAPPLY_TOKEN_KIND),
             )
+            superseded_cv = staged.superseded_key
+            if not staged.staged:
+                # An attempt is already pending, so this submission recorded
+                # nothing — and the object uploaded for it a moment ago is
+                # therefore named by no column at all. Released here rather
+                # than left for a sweep that has nothing to find it by.
+                superseded_cv = s3_key
 
         await db.commit()
     except IntegrityError:
@@ -1950,7 +2002,7 @@ async def submit_application(
     try:
         # A staged reapplication gets the link that confirms it — see the
         # draft route for why it is not the activation email.
-        if gate.reapplying:
+        if gate.reapplying and staged.staged:
             await stage_reapply_confirmation(
                 db,
                 user_id=guest_user_id,

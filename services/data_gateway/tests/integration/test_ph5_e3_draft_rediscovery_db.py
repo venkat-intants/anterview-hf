@@ -155,8 +155,9 @@ async def test_a_draft_with_the_flag_then_submit_writes_a_ledger_row(
     await _seed_company(db, company_id)
     req_id = await _seed_open_requisition(db, company_id=company_id, title="Fitter, opt-in")
 
+    address = f"asha-{uuid.uuid4().hex[:10]}@e3draft.example"
     body = DraftStartIn(
-        email=f"asha-{uuid.uuid4().hex[:10]}@e3draft.example",
+        email=address,
         consent_granted=True, rediscovery_opt_in=True,
     )
     started = await start_draft(
@@ -168,7 +169,10 @@ async def test_a_draft_with_the_flag_then_submit_writes_a_ledger_row(
     assert out.already_applied is False
 
     owner_user_id = await db.scalar(
-        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": uuid.UUID(out.applicant_id)},
+        # By address, not from the reply: the endpoint deliberately echoes no
+        # stored id back to an anonymous caller (see _ACCEPTED).
+        text("SELECT user_id FROM applicants WHERE lower(btrim(email)) = :em"),
+        {"em": address.lower()},
     )
     assert owner_user_id is not None
     row = (
@@ -194,8 +198,9 @@ async def test_a_draft_without_the_flag_writes_no_rediscovery_row_at_all(
     await _seed_company(db, company_id)
     req_id = await _seed_open_requisition(db, company_id=company_id, title="Fitter, no opt-in")
 
+    address = f"bala-{uuid.uuid4().hex[:10]}@e3draft.example"
     body = DraftStartIn(
-        email=f"bala-{uuid.uuid4().hex[:10]}@e3draft.example", consent_granted=True,
+        email=address, consent_granted=True,
     )
     assert body.rediscovery_opt_in is False  # the default this test relies on
     started = await start_draft(
@@ -207,7 +212,10 @@ async def test_a_draft_without_the_flag_writes_no_rediscovery_row_at_all(
     assert out.already_applied is False
 
     owner_user_id = await db.scalar(
-        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": uuid.UUID(out.applicant_id)},
+        # By address, not from the reply: the endpoint deliberately echoes no
+        # stored id back to an anonymous caller (see _ACCEPTED).
+        text("SELECT user_id FROM applicants WHERE lower(btrim(email)) = :em"),
+        {"em": address.lower()},
     )
     assert owner_user_id is not None
     count = await db.scalar(
@@ -270,6 +278,11 @@ async def test_a_withdrawn_candidate_is_not_re_granted_through_the_draft_door(
     assert out.already_applied is False
     # The EXISTING applicant, not a fresh one — proves this exercised the
     # sticky-withdrawal branch for the real identity, not a brand new guest.
-    assert out.applicant_id == str(applicant_id)
+    # Read from the database rather than the reply, which no longer echoes a
+    # stored id to an anonymous caller.
+    assert await db.scalar(
+        text("SELECT count(*) FROM applicants WHERE lower(btrim(email)) = :em"),
+        {"em": address.lower()},
+    ) == 1
 
     assert await _active_rediscovery_count(db, user_id=real_user) == 0

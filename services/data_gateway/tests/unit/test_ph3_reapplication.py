@@ -532,6 +532,23 @@ def test_an_unknown_kind_is_still_refused() -> None:
         hash_token("x", "not_a_real_kind")
 
 
+def _stage_db(*, pending: datetime | None, key: str | None = None) -> AsyncMock:
+    """A db whose "is an attempt already pending?" lookup answers `pending`."""
+    db = AsyncMock()
+
+    async def _execute(*_a: object, **_k: object) -> MagicMock:
+        res = MagicMock()
+        mapped = MagicMock()
+        mapped.first = MagicMock(
+            return_value={"reapply_requested_at": pending, "reapply_resume_s3_key": key}
+        )
+        res.mappings = MagicMock(return_value=mapped)
+        return res
+
+    db.execute = AsyncMock(side_effect=_execute)
+    return db
+
+
 @pytest.mark.asyncio
 async def test_staging_binds_the_token_to_this_attempt_alone() -> None:
     """Keyed on the person instead, one link applied everything they had
@@ -541,8 +558,7 @@ async def test_staging_binds_the_token_to_this_attempt_alone() -> None:
     from app import reapplication
     from app.auth_tokens import hash_token, mint_token
 
-    db = AsyncMock()
-    db.scalar = AsyncMock(return_value=None)
+    db = _stage_db(pending=None)
     raw = mint_token()
     await reapplication.stage(
         db,
@@ -568,8 +584,8 @@ async def test_restaging_supersedes_the_previous_attempts_cv() -> None:
     from app import reapplication
     from app.auth_tokens import hash_token, mint_token
 
-    db = AsyncMock()
-    db.scalar = AsyncMock(return_value="applicants/c/a-previous.pdf")
+    db = _stage_db(pending=NOW - timedelta(days=99),
+                   key="applicants/c/a-previous.pdf")
     released = await reapplication.stage(
         db,
         enrolment_id=uuid.uuid4(),
@@ -578,8 +594,9 @@ async def test_restaging_supersedes_the_previous_attempts_cv() -> None:
         answers=None,
         token_hash=hash_token(mint_token(), "reapply_confirm"),
     )
-    assert released == "applicants/c/a-previous.pdf", (
-        "the caller has to be told what to delete"
+    assert released.staged is True
+    assert released.superseded_key == "applicants/c/a-previous.pdf", (
+        "an EXPIRED attempt's object is nobody's once replaced"
     )
 
 
@@ -779,3 +796,57 @@ async def test_a_stale_link_cannot_drag_a_moved_on_application_back() -> None:
         # And the staged attempt is cleared, so the dead link stops resolving.
         sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
         assert "reapply_token_hash = NULL" in sql, moved_on
+
+
+@pytest.mark.asyncio
+async def test_a_pending_attempt_cannot_be_replaced_by_a_later_submission() -> None:
+    """The substitution attack, and the first-link-wins rule that closes it.
+
+    Overwriting a pending attempt let an attacker who knew a rejected
+    candidate's address stage their own CV and answers over the candidate's.
+    The victim then received a second, indistinguishable "confirm your
+    application" email and, by clicking it, authenticated the ATTACKER'S
+    submission. Each overwrite also retired the candidate's live link and
+    deleted the object behind it, which is a denial of reapplication on its
+    own.
+    """
+    from app import reapplication
+
+    # A real current timestamp, not the module's fixed NOW: the cutoff is
+    # measured from the wall clock, so a frozen NOW reads as long expired and
+    # the test would pass for the wrong reason.
+    db = _stage_db(
+        pending=datetime.now(tz=UTC), key="applicants/c/a-theirs.pdf"
+    )
+    result = await reapplication.stage(
+        db,
+        enrolment_id=uuid.uuid4(),
+        company_id=uuid.uuid4(),
+        resume_s3_key="applicants/c/a-attacker.pdf",
+        answers={QUESTION_ID: "attacker's answer"},
+        token_hash="attacker-hash",
+    )
+    assert result.staged is False, "the first link wins"
+    assert result.superseded_key is None, "and nothing of theirs is deleted"
+    sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
+    assert "UPDATE enrolments" not in sql, "nothing was written over"
+
+
+@pytest.mark.asyncio
+async def test_an_expired_attempt_may_be_replaced_and_reports_its_object() -> None:
+    """Refusing for ever would lock a candidate out of their own second
+    attempt. Past the token's life the old link cannot be redeemed, so there is
+    nothing left to protect — and the object it held is now nobody's."""
+    from app import reapplication
+
+    db = _stage_db(pending=NOW - timedelta(days=99), key="applicants/c/a-stale.pdf")
+    result = await reapplication.stage(
+        db,
+        enrolment_id=uuid.uuid4(),
+        company_id=uuid.uuid4(),
+        resume_s3_key="applicants/c/a-fresh.pdf",
+        answers=None,
+        token_hash="fresh-hash",
+    )
+    assert result.staged is True
+    assert result.superseded_key == "applicants/c/a-stale.pdf"

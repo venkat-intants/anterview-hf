@@ -14,7 +14,8 @@ import type { Round } from '../api/workflows';
 function round(over: Partial<Round> = {}): Round {
   return {
     id: 'r-a', position: 0, title: 'Aptitude', kind: 'mcq', pass_threshold: 60,
-    time_limit_seconds: null, deadline_days: 7, on_pass_next_round_id: 'r-b',
+    time_limit_seconds: null, deadline_days: 7, auto_advance: null,
+    on_pass_next_round_id: 'r-b',
     on_fail_next_round_id: null, fast_track_min_percent: null,
     on_fast_track_next_round_id: null, exam_round_id: 'e1', needs_questions: false,
     criteria: [],

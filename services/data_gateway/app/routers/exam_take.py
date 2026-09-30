@@ -698,6 +698,9 @@ async def record_camera_consent(
     result = await exam_camera.record_camera_consent(
         db,
         applicant=ctx.applicant,
+        # Scopes the acceptance evidence to the round it was given for, which
+        # is also what bounds it: one audit row per round, not one per POST.
+        exam_round_id=ctx.exam_round.id,
         meta=exam_camera.CameraConsentMeta(
             ip_address=extract_client_ip(request), user_agent=extract_user_agent(request),
         ),

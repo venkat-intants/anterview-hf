@@ -1071,7 +1071,10 @@ class AuditLog(Base):
 
     Used by DPDP erasure and any other privileged admin operations.
 
-    actor_type allowed values: 'admin' | 'system' | 'user'
+    actor_type allowed values: 'admin' | 'candidate' | 'system' | 'user'
+    (corrected 2026-09-30: this list said 'admin' | 'system' | 'user' while
+    'candidate' had been in use for some time — job_tasks.py and now
+    exam_camera.py both record a candidate acting on their own consent.)
     ip_address: PostgreSQL INET type — stored as Python str at ORM layer.
     """
 
@@ -1716,6 +1719,11 @@ class WorkflowRound(Base):
     deadline_days: Mapped[int] = mapped_column(SmallInteger, default=7, nullable=False)
     on_pass_next_round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     exam_round_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    #: Per-round override of workflows.auto_advance_rounds (migration
+    #: c5e7a9b1d3f5). NULL = inherit the workflow; True = always advance a
+    #: passing candidate; False = always hold them for a person. Three
+    #: states on purpose: "no opinion" is not the same answer as "automatic".
+    auto_advance: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

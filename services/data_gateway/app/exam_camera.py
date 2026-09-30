@@ -212,6 +212,31 @@ CONSENT_PURPOSE = "interview"
 #: (the job_tasks.py::CONSENT_NOTICE_VERSION precedent).
 CONSENT_NOTICE_VERSION = "1"
 
+#: Records that a candidate accepted the exam's camera notice, at most once per
+#: (candidate, round, notice version, grant).
+#:
+#: ON CONFLICT DO NOTHING against the partial unique index
+#: ix_audit_log_camera_notice_round (migration d9f1b3c5e7a2) — NOT a SELECT
+#: probe, which the first version used and which security review rejected twice
+#: over: audit_log's only index is on event_ts, so the probe sequentially
+#: scanned a three-year, permanently-growing table on every FIRST acceptance
+#: from an unauthenticated route; and SELECT-then-INSERT is TOCTOU, so parallel
+#: POSTs on one link all saw "absent" and all inserted.
+#:
+#: DO NOTHING, never DO UPDATE: audit_log_no_mutation fires BEFORE UPDATE OR
+#: DELETE and would raise. And the conflict is resolved HERE, at insert time,
+#: rather than by deferring to the caller's commit — a conflict surfacing at
+#: commit would roll the consent ledger row back with it and turn a
+#: double-click on "Start exam" into a failed start.
+_INSERT_NOTICE_AUDIT_SQL = text(
+    "INSERT INTO audit_log"
+    " (event_id, actor_id, actor_type, action, resource_type, resource_id,"
+    "  details, event_ts)"
+    " VALUES (:eid, :uid, 'candidate', :act, 'dpdp_consent_ledger', :cid,"
+    "         CAST(:det AS jsonb), :ts)"
+    " ON CONFLICT DO NOTHING"
+)
+
 #: The candidate's currently-active camera grant, if any. Used twice by
 #: ``record_camera_consent`` — as the idempotency fast path, and again to
 #: resolve the S4-009 double-grant race — so the two can never drift into
@@ -260,11 +285,96 @@ async def has_active_camera_consent(db: AsyncSession, user_id: uuid.UUID | None)
     return found is not None
 
 
+#: The audit action for "this candidate was shown the exam's camera notice and
+#: accepted it". One action for all three paths — whether a ledger row was
+#: minted, already existed, or was won by a concurrent request is a detail of
+#: the STATE, not of the interaction being recorded.
+CONSENT_NOTICE_AUDIT_ACTION: str = "exam.camera_notice.accepted"
+
+
+async def _audit_notice_accepted(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    applicant: Applicant,
+    exam_round_id: uuid.UUID,
+    now: datetime,
+    consent_id: uuid.UUID,
+    already_granted: bool,
+) -> None:
+    """Record that this candidate accepted the exam's camera notice for this round.
+
+    THE GAP THIS CLOSES. ``dpdp_consent_ledger`` holds ONE ACTIVE row per
+    (user, consent_type, purpose) — ``ix_dpdp_consent_active_unique`` enforces
+    it — so a candidate who already consented during the AI interview, or on an
+    earlier round, produces no new ledger row when the exam asks again. The
+    consent STATE was recorded; the INTERACTION existed only as a ``log.info``
+    line, which is not the immutable trail. ``docs/DATA-FLOW.md`` tells bid
+    readers "granting it once covers both doors", so it is a claim we can be
+    asked to evidence (security review LOW-1).
+
+    Written on all three paths — fresh grant, already-granted, and the race —
+    because the interaction happens every time while the ledger row is created
+    once. At most ONE row survives per (candidate, round, notice version,
+    grant); the partial unique index decides that, not this code.
+
+    WHAT IT EVIDENCES, precisely: that an acceptance POST bearing this
+    candidate's exam link reached the server at this time, and which notice
+    version the server was serving then. It is not a client attestation that
+    the modal was rendered, and the link is a bearer credential.
+
+    ``exam_round_id`` is REQUIRED. It is half the uniqueness key, and a default
+    would let a future caller silently opt out of the bound.
+
+    Facts only: ids, the notice version and a timestamp. Deliberately NO request
+    metadata — an ``ip_hash`` here would be pseudonymous personal data (one
+    global salt over a 2^32 address space is enumerable and linkable), retained
+    forever in a table that erasure cannot reach, for no purpose this row
+    serves. The ledger's own evidence already carries it once per user. DPDP
+    §6(1): limited to what is necessary for the stated purpose.
+
+    Shares the caller's transaction on purpose: if this write fails the consent
+    request fails, so a grant can never be recorded without evidence of it.
+    """
+    await db.execute(
+        _INSERT_NOTICE_AUDIT_SQL,
+        {
+            "eid": uuid.uuid4(),
+            "uid": user_id,
+            "act": CONSENT_NOTICE_AUDIT_ACTION,
+            "cid": consent_id,
+            "ts": now,
+            "det": json.dumps(
+                {
+                    "applicant_id": str(applicant.id),
+                    "company_id": str(applicant.company_id),
+                    "exam_round_id": str(exam_round_id),
+                    "consent_id": str(consent_id),
+                    "consent_type": CONSENT_TYPE,
+                    "purpose": CONSENT_PURPOSE,
+                    # Which wording they accepted. Bump CONSENT_NOTICE_VERSION
+                    # when the notice changes materially, or this answers the
+                    # wrong question later.
+                    "notice_version": CONSENT_NOTICE_VERSION,
+                    # Mirrors the response body: False only on the path that
+                    # minted the ledger row. On the raced path a concurrent
+                    # FIRST acceptance minted it microseconds earlier, so read
+                    # this as "a grant already existed when we looked", not as
+                    # "the candidate had consented before".
+                    "already_granted": already_granted,
+                    "accepted_at_iso": now.isoformat(),
+                }
+            ),
+        },
+    )
+
+
 async def record_camera_consent(
     db: AsyncSession,
     *,
     applicant: Applicant,
     meta: CameraConsentMeta,
+    exam_round_id: uuid.UUID,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Record this applicant's own, standalone consent to the camera for the
@@ -298,6 +408,11 @@ async def record_camera_consent(
     row = existing.mappings().first()
     if row is not None:
         log.info("exam.camera_consent.idempotent", applicant_id=str(applicant.id))
+        await _audit_notice_accepted(
+            db, user_id=user_id, applicant=applicant, now=now,
+            exam_round_id=exam_round_id,
+            consent_id=row["id"], already_granted=True,
+        )
         return {
             "consented": True,
             "already_granted": True,
@@ -346,6 +461,11 @@ async def record_camera_consent(
         if won is None:  # pragma: no cover - the index tripped for some other reason
             raise
         log.info("exam.camera_consent.raced", applicant_id=str(applicant.id))
+        await _audit_notice_accepted(
+            db, user_id=user_id, applicant=applicant, now=now,
+            exam_round_id=exam_round_id,
+            consent_id=won["id"], already_granted=True,
+        )
         return {
             "consented": True,
             "already_granted": True,
@@ -354,5 +474,10 @@ async def record_camera_consent(
     log.info(
         "exam.camera_consent.recorded", applicant_id=str(applicant.id),
         company_id=str(applicant.company_id),
+    )
+    await _audit_notice_accepted(
+        db, user_id=user_id, applicant=applicant, now=now,
+        exam_round_id=exam_round_id,
+        consent_id=consent_id, already_granted=False,
     )
     return {"consented": True, "already_granted": False, "granted_at": now.isoformat()}

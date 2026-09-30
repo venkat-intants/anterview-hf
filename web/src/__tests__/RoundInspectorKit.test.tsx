@@ -44,6 +44,7 @@ const ROUND: Round = {
   pass_threshold: null,
   time_limit_seconds: null,
   deadline_days: 7,
+  auto_advance: null,
   on_pass_next_round_id: null,
   on_fail_next_round_id: null,
   fast_track_min_percent: null,

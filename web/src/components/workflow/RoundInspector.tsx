@@ -720,6 +720,42 @@ export default function RoundInspector({
             />
           </div>
         </div>
+
+        {/* Who moves a PASSING candidate on from this round.
+            Its own block rather than a third cell in the grid above: the other
+            two settings are numbers, this one decides whether a person is in
+            the loop at all. Three states, because "follow the workflow" is a
+            real answer — collapsing it into "automatic" would freeze this round
+            at whatever the workflow happened to say today. */}
+        <div>
+          <label
+            htmlFor="autoadvance"
+            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+          >
+            After a candidate passes
+          </label>
+          <select
+            id="autoadvance"
+            disabled={!editable}
+            value={
+              round.auto_advance === null ? 'inherit' : round.auto_advance ? 'auto' : 'manual'
+            }
+            onChange={(e) => {
+              const v = e.target.value;
+              onPatch({ auto_advance: v === 'inherit' ? null : v === 'auto' });
+            }}
+            className={field}
+          >
+            <option value="inherit">Follow the workflow default</option>
+            <option value="auto">Move them on automatically</option>
+            <option value="manual">Hold for my review</option>
+          </select>
+          <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
+            On <span className="font-medium">hold</span> you are notified, and the candidate
+            waits until you release them onward. Nobody is rejected by this setting — ending a
+            candidacy still goes through the decision that asks you for a reason.
+          </p>
+        </div>
       </section>
 
       {/* 2. What it asks */}

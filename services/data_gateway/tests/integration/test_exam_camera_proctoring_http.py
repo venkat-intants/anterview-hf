@@ -547,3 +547,107 @@ async def test_hr_proctoring_read_is_refused_across_companies(
         f"/hr/exams/{other_exam['exam_id']}/attempts/{r.json()['attempt_id']}/proctoring"
     )
     assert r.status_code == 200, r.text
+
+
+# ---------------------------------------------------------------------------
+# 6. Accepting the notice a SECOND time still leaves evidence
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_a_repeat_acceptance_is_evidenced_even_though_the_ledger_is_unchanged(
+    client: AsyncClient, committed_db: AsyncSession,
+) -> None:
+    """Security review LOW-1, proven against a real database.
+
+    dpdp_consent_ledger holds ONE ACTIVE row per (user, consent_type, purpose),
+    so asking a candidate again — a second round, or someone who consented
+    during the AI interview — writes no new ledger row. Before this change the
+    only trace of the exam having asked at all was a log.info line.
+
+    docs/DATA-FLOW.md tells bid readers "granting it once covers both doors", so
+    this is a claim we can be asked to substantiate.
+
+    The pair that matters: the ledger stays at ONE row (the partial unique index
+    permits one active grant), and the audit trail also stays at ONE — because
+    the acceptance is evidenced per ROUND, enforced by
+    ix_audit_log_camera_notice_round and an ON CONFLICT DO NOTHING insert.
+    audit_log is append-only and erasure-exempt, and this route is
+    unauthenticated, so a row per POST would be permanent and unbounded.
+    """
+    tag = uuid.uuid4().hex[:10]
+    company_id, hr_id = await _company(committed_db, tag)
+    _hr(client, hr_id, company_id)
+    exam = await _mixed_round_exam(client, camera_required=True)
+    applicant_id = await _applicant(committed_db, company_id, "Hema")
+    token = await _assign(client, exam["exam_id"], exam["round_id"], applicant_id)
+    headers = {"X-Exam-Token": token}
+
+    first = await client.post("/exam/camera-consent", headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["already_granted"] is False
+
+    second = await client.post("/exam/camera-consent", headers=headers)
+    assert second.status_code == 200, second.text
+    assert second.json()["already_granted"] is True, "the grant should already exist"
+
+    user_id = await committed_db.scalar(
+        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
+    )
+    assert user_id is not None
+
+    ledger_rows = await committed_db.scalar(
+        text(
+            "SELECT count(*) FROM dpdp_consent_ledger"
+            " WHERE user_id = :u AND consent_type = 'video_capture'"
+            "   AND granted AND revoked_at IS NULL"
+        ),
+        {"u": user_id},
+    )
+    assert ledger_rows == 1, "the partial unique index permits exactly one active grant"
+
+    rows = (
+        await committed_db.execute(
+            text(
+                "SELECT details, ip_address, user_agent FROM audit_log"
+                " WHERE action = 'exam.camera_notice.accepted' AND actor_id = :u"
+                " ORDER BY event_ts"
+            ),
+            {"u": user_id},
+        )
+    ).mappings().all()
+    # ONE row, not two: the acceptance is evidenced per ROUND, not per POST.
+    # audit_log is append-only (a trigger blocks DELETE) and excluded from
+    # erasure, and this route is unauthenticated at 10/token/minute, so a row
+    # per request would be permanent and unbounded (code review SHOULD FIX 1).
+    assert len(rows) == 1, (
+        "a repeat acceptance for the same round must not add a second permanent row"
+    )
+    d = rows[0]["details"]
+    # The evidence the ledger cannot give: what wording, for which round, when.
+    assert d["notice_version"]
+    assert d["accepted_at_iso"]
+    assert d["applicant_id"] == str(applicant_id)
+    assert d["exam_round_id"] == str(exam["round_id"])
+    assert d["already_granted"] is False, "the first acceptance minted the grant"
+    assert d["consent_id"], "the grant is part of the uniqueness key"
+    # NO request metadata at all: an ip_hash here would be pseudonymous personal
+    # data kept forever in a table erasure cannot reach, for no purpose this row
+    # serves (security review L1, DPDP s6(1)).
+    assert rows[0]["ip_address"] is None
+    assert rows[0]["user_agent"] is None
+    for banned in ("ip_hash", "ua_hash"):
+        assert banned not in d
+
+    # The bound is the DATABASE's, not the application's. A third acceptance
+    # conflicts on ix_audit_log_camera_notice_round and is silently dropped —
+    # this is what a SELECT-then-INSERT probe could not guarantee under
+    # concurrency (security review M1/M2).
+    third = await client.post("/exam/camera-consent", headers=headers)
+    assert third.status_code == 200, third.text
+    still_one = await committed_db.scalar(
+        text(
+            "SELECT count(*) FROM audit_log"
+            " WHERE action = 'exam.camera_notice.accepted' AND actor_id = :u"
+        ),
+        {"u": user_id},
+    )
+    assert still_one == 1, "the unique index must hold the trail at one row per round"

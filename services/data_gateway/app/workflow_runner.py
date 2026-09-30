@@ -40,6 +40,7 @@ double-clicked submit all collapse to one advancement.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -87,6 +88,33 @@ INTERVIEW_SCORE_MAX = 10.0
 #: release means; a final decision goes through app.final_decision, which
 #: needs a reason and a reason code this path never collects.
 RELEASE_TO_STATUSES: frozenset[str] = frozenset({"shortlisted", "interviewed"})
+
+
+def auto_advance_for(round_: Mapping[str, Any], workflow: Mapping[str, Any]) -> bool:
+    """Does a PASSING result on this round move the candidate on by itself?
+
+    Resolves the per-round override against the workflow default. The override
+    is three-state, and the middle state is the point:
+
+        None   this round has no opinion — follow ``workflows.auto_advance_rounds``
+        True   this round always advances a passing candidate
+        False  this round always holds them for a person
+
+    ``auto_advance_rounds`` alone was one switch for an entire workflow, so a
+    process could not be automatic through screening and deliberate at the final
+    round — which is the shape most hiring actually has. HR now sets it per
+    round.
+
+    "Manual" here decides only WHO MOVES PEOPLE ON, never who is rejected. A
+    held candidate waits for a person, who releases them onward; ending a
+    candidacy still goes through ``app.final_decision``, which requires a reason
+    and a reason code this path never collects. Nothing in this module can end
+    one — see the module docstring.
+    """
+    override = round_.get("auto_advance")
+    if override is None:
+        return bool(workflow["auto_advance_rounds"])
+    return bool(override)
 
 
 @dataclass
@@ -314,7 +342,7 @@ async def _load_round(db: AsyncSession, round_id: uuid.UUID) -> dict[str, Any] |
                 "SELECT id, workflow_id, position, title, kind, pass_threshold,"
                 "       deadline_days, on_pass_next_round_id, exam_round_id,"
                 "       on_fail_next_round_id, fast_track_min_percent,"
-                "       on_fast_track_next_round_id"
+                "       on_fast_track_next_round_id, auto_advance"
                 "  FROM workflow_rounds WHERE id = :i AND deleted_at IS NULL"
             ),
             {"i": round_id},
@@ -330,7 +358,7 @@ async def _first_round(db: AsyncSession, workflow_id: uuid.UUID) -> dict[str, An
                 "SELECT id, workflow_id, position, title, kind, pass_threshold,"
                 "       deadline_days, on_pass_next_round_id, exam_round_id,"
                 "       on_fail_next_round_id, fast_track_min_percent,"
-                "       on_fast_track_next_round_id"
+                "       on_fast_track_next_round_id, auto_advance"
                 "  FROM workflow_rounds WHERE workflow_id = :w AND deleted_at IS NULL"
                 " ORDER BY position LIMIT 1"
             ),
@@ -723,17 +751,23 @@ async def record_result(
             reason += f" — within {band} points"
         # A fail branch routes rather than holds — to another round, never to an
         # outcome. With auto-advance off, a person moves people, so it holds.
-        if route.kind == "advance" and workflow["auto_advance_rounds"]:
+        if route.kind == "advance" and auto_advance_for(round_, workflow):
             return await _advance(
                 db, enrolment=enrolment, round_=round_, workflow=workflow, route=route,
                 why=reason,
             )
         return await _hold(db, enrolment, reason)
 
-    if not workflow["auto_advance_rounds"]:
-        return RunnerOutcome(action="noop", enrolment_id=str(enrolment_id),
-                             from_round=round_["title"],
-                             reason="auto-advance disabled for this workflow")
+    if not auto_advance_for(round_, workflow):
+        # Held for a person BY DESIGN, not stalled. The reason names which
+        # setting decided it, because "why has this candidate not moved?" is
+        # the question this surface exists to answer.
+        why = (
+            "this round is set to hold for HR review"
+            if round_.get("auto_advance") is False
+            else "auto-advance disabled for this workflow"
+        )
+        return await _hold(db, enrolment, f"{round_['title']}: passed — {why}")
 
     return await _advance(db, enrolment=enrolment, round_=round_, workflow=workflow, route=route)
 

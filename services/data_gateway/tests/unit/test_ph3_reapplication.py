@@ -278,11 +278,29 @@ def test_both_doors_into_an_application_use_the_same_gate() -> None:
         assert "cooldown_check" not in src, f"{fn.__name__} still has its own copy"
 
 
-def test_a_blocked_application_is_a_conflict_not_a_forbidden() -> None:
-    from app.routers.public_apply import submit_application
+def test_a_cooldown_refusal_is_indistinguishable_from_a_live_application() -> None:
+    """This test used to require a 409 carrying the date, which was the oracle.
 
-    src = inspect.getsource(submit_application)
-    assert "HTTP_409_CONFLICT" in src
+    The endpoint is anonymous and accepts any address, so a distinct answer for
+    "rejected, come back on the 5th" told whoever typed it that a named person
+    had applied, been turned down, and roughly when — employment-outcome data
+    about a third party, handed to anyone with a public link. Both states now
+    return the same body, and the date goes to the address by email.
+    """
+    from app.routers.public_apply import submit_application, submit_draft
+
+    for fn in (submit_application, submit_draft):
+        src = inspect.getsource(fn)
+        assert "HTTP_409_CONFLICT" not in src, (
+            f"{fn.__name__} still answers a cooldown differently from a live application"
+        )
+        assert "verdict.message()" not in src, (
+            f"{fn.__name__} still puts the rejection date in the anonymous reply"
+        )
+        assert "_mail_cooldown_reason" in src, (
+            f"{fn.__name__} refuses without telling the candidate why"
+        )
+        assert "_ALREADY_APPLIED" in src
 
 
 def test_the_apply_query_reads_the_cooldown_setting() -> None:

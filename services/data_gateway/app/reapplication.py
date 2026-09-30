@@ -29,6 +29,8 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
+
 log = structlog.get_logger(__name__)
 
 
@@ -43,10 +45,17 @@ class CooldownVerdict:
     reason: str | None = None
 
     def message(self) -> str:
-        """Candidate-facing, and deliberately not apologetic or vague.
+        """For the EMAIL, not the anonymous reply. Says the date, because a
+        person refused with no date has no way to act on the refusal.
 
-        It says the date rather than "please try later": a person refused with
-        no date has no way to act on the refusal, and will simply retry.
+        It is deliberately not what the apply endpoint returns. Those routes
+        are anonymous and take any address, so answering "you were turned down
+        for this role, come back on the 5th of December" told whoever typed it
+        that a named person had applied, that they had been REJECTED, and
+        roughly when — employment-outcome data about a third party, handed to
+        a stranger who only needed a public link and an address. The endpoint
+        now gives the same reply it gives a live application, and this
+        sentence goes to the address instead.
         """
         if self.allowed or self.until is None:
             return ""
@@ -474,3 +483,66 @@ async def clear_staged(
         {"i": enrolment_id, "c": company_id},
     )
     return str(held) if held else None
+
+
+async def purge_stale_staged(
+    db: AsyncSession, *, now: datetime | None = None, limit: int = 500
+) -> list[str]:
+    """Forget staged reapplications nobody ever confirmed. Returns CV keys.
+
+    Called from the DPDP retention cron, not a bespoke sweep, for the same
+    reason ``application_drafts.purge_expired`` is: a staged attempt past its
+    confirmation window is personal data past its purpose, which is exactly
+    what that cron exists for.
+
+    WHY IT HAS TO EXIST. A staged attempt holds the candidate's screening
+    answers and a CV, and it is applied only when a link emailed to the
+    address is followed. Most will be; some never are — a changed address, a
+    spam folder, second thoughts. Without this those rows keep that data for
+    ever, and the CV object is named by ``reapply_resume_s3_key`` alone, so it
+    is invisible to everything except an erasure request that may never come.
+    The migration that added these columns said "the retention sweep will want
+    to find the stale ones" and then did not build one; this is it.
+
+    THE WINDOW IS THE TOKEN'S OWN LIFETIME. Past ``apply_activation_ttl_hours``
+    the link cannot be redeemed, so the attempt is unreachable rather than
+    merely old — keeping it any longer holds data nothing can act on. The
+    token row is left to the auth-token sweep; clearing the hash here is what
+    makes the link dead even if that sweep is behind.
+
+    Deliberately NOT a rejection of the application. The candidate applied and
+    was told the application was received; what expires is the second
+    attempt's pending state, not any record that they applied.
+    """
+    now = now or datetime.now(tz=UTC)
+    cutoff = now - timedelta(hours=settings.apply_activation_ttl_hours)
+    rows = (
+        await db.execute(
+            text(
+                "SELECT id, reapply_resume_s3_key FROM enrolments"
+                " WHERE reapply_requested_at IS NOT NULL"
+                "   AND reapply_requested_at < :cutoff"
+                " ORDER BY reapply_requested_at"
+                " LIMIT :lim"
+                " FOR UPDATE SKIP LOCKED"
+            ),
+            {"cutoff": cutoff, "lim": limit},
+        )
+    ).mappings().all()
+    if not rows:
+        return []
+
+    ids = [r["id"] for r in rows]
+    await db.execute(
+        text(
+            "UPDATE enrolments"
+            "   SET reapply_requested_at = NULL, reapply_resume_s3_key = NULL,"
+            "       reapply_answers = NULL, reapply_token_hash = NULL,"
+            "       updated_at = now()"
+            " WHERE id = ANY(:ids)"
+        ),
+        {"ids": ids},
+    )
+    keys = [str(r["reapply_resume_s3_key"]) for r in rows if r["reapply_resume_s3_key"]]
+    log.info("reapply.stale_purged", rows=len(ids), objects=len(keys))
+    return keys

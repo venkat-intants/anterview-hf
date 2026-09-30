@@ -79,9 +79,11 @@ from app.auth_tokens import hash_token, mint_token
 from app.config import settings
 from app.database import DbSessionDep
 from app.local_storage import LocalStorageError
+from app.mailer import enqueue_email
 from app.models import Applicant
 from app.publishing import visible_sql
 from app.rate_limit import rate_limit
+from app.reapplication import CooldownVerdict
 from app.reapplication import confirm as reapplication_confirm
 from app.reapplication import gate as reapplication_gate
 from app.reapplication import stage as reapplication_stage
@@ -485,6 +487,77 @@ class DraftStartOut(BaseModel):
 
     resume_token: str
     draft: DraftOut
+
+
+# The SAME sentence a live application gets. These two states must not be
+# distinguishable from an anonymous request: the endpoint takes any address, so
+# a different answer for "rejected, come back on the 5th" told whoever typed it
+# that a named person had applied, been turned down, and roughly when. The date
+# is still sent — to the address, by email, where only its owner reads it.
+_ALREADY_APPLIED = "You have already applied for this role. We have your application."
+
+async def _mail_cooldown_reason(
+    db: DbSessionDep,
+    *,
+    requisition_id: uuid.UUID,
+    company_id: uuid.UUID,
+    applicant_id: uuid.UUID | None,
+    address: str,
+    name: str,
+    job_title: str | None,
+    company_name: str | None,
+    verdict: CooldownVerdict,
+) -> None:
+    """Tell the ADDRESS why the application was not taken, and when to return.
+
+    The endpoint's own reply cannot say this. It is anonymous and accepts any
+    address, so a refusal naming a date told whoever typed it that a real
+    person had applied for this role, been rejected, and roughly when. Email is
+    the only channel where that sentence reaches the person it is about and
+    nobody else.
+
+    Best-effort, and silent on failure: the reply has already been decided and
+    is about to be returned. Nothing is stored here — no applicant is created
+    and no enrolment is touched — so a failure costs the candidate an
+    explanation, not an application.
+
+    Only sent when we already hold this person: with no applicant row there is
+    nothing to be inside a cooldown for, and mailing an address we do not know
+    would turn this into a way to send mail to strangers.
+    """
+    if applicant_id is None or verdict.until is None:
+        return
+    try:
+        user_id = await db.scalar(
+            text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
+        )
+        if user_id is None:
+            return
+        lang = await db.scalar(
+            text("SELECT preferred_language FROM users WHERE id = :u"), {"u": user_id}
+        )
+        await enqueue_email(
+            db,
+            to=address,
+            template="generic",
+            lang=(lang or "en"),
+            ctx={
+                "name": name,
+                "title": f"About your application for {job_title or 'this role'}",
+                "body": verdict.message(),
+                "brand": company_name,
+            },
+            to_user_id=uuid.UUID(str(user_id)),
+            company_id=company_id,
+            related_kind="reapply_cooldown_notice",
+        )
+        await db.commit()
+    except Exception:  # noqa: BLE001 — the reply is already decided
+        await db.rollback()
+        log.warning(
+            "public_apply.cooldown_notice_failed",
+            requisition_id=str(requisition_id),
+        )
 
 
 def _draft_out(row: dict[str, Any]) -> DraftOut:
@@ -1035,7 +1108,7 @@ async def submit_draft(
                 )
         return ApplicationOut(
             applicant_id="", enrolment_id=None, full_name=name, already_applied=True,
-            message="You have already applied for this role. We have your application.",
+            message=_ALREADY_APPLIED,
         )
 
     if not gate.verdict.allowed:
@@ -1044,8 +1117,16 @@ async def submit_draft(
             requisition_id=str(requisition_id),
             until=gate.verdict.until.isoformat() if gate.verdict.until else None,
         )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=gate.verdict.message()
+        # Same uniform reply as the one-shot route — see there for why.
+        await _mail_cooldown_reason(
+            db, requisition_id=requisition_id, company_id=company_id,
+            applicant_id=uuid.UUID(str(existing["id"])) if existing is not None else None,
+            address=address, name=name, job_title=req["title"],
+            company_name=req.get("company_name"), verdict=gate.verdict,
+        )
+        return ApplicationOut(
+            applicant_id="", enrolment_id=None, full_name=name,
+            already_applied=True, message=_ALREADY_APPLIED,
         )
 
     applicant_id = uuid.UUID(str(existing["id"])) if existing is not None else uuid.uuid4()
@@ -1182,7 +1263,7 @@ async def submit_draft(
         await db.rollback()
         return ApplicationOut(
             applicant_id="", enrolment_id=None, full_name=name, already_applied=True,
-            message="You have already applied for this role. We have your application.",
+            message=_ALREADY_APPLIED,
         )
     except Exception:
         await db.rollback()
@@ -1583,7 +1664,7 @@ async def submit_application(
             enrolment_id=None,
             full_name=name,
             already_applied=True,
-            message="You have already applied for this role. We have your application.",
+            message=_ALREADY_APPLIED,
         )
 
     # ── Still inside a reapplication cooldown? (PH3-B4b) ────────────────────
@@ -1605,11 +1686,21 @@ async def submit_application(
             requisition_id=str(requisition_id),
             until=gate.verdict.until.isoformat() if gate.verdict.until else None,
         )
-        # 409, not 403: nothing is wrong with their authority and nothing is
-        # wrong with the form. The state of the world says not yet, and the
-        # message carries the date so the refusal can be acted on.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail=gate.verdict.message())
+        # Answered, not refused — and answered IDENTICALLY to a live
+        # application. A 409 carrying the date was an oracle: anyone with the
+        # public link could type an address and learn that person had been
+        # rejected, and when. The date still reaches the candidate, by email to
+        # the address, which is the only place it is theirs to read.
+        await _mail_cooldown_reason(
+            db, requisition_id=requisition_id, company_id=company_id,
+            applicant_id=uuid.UUID(str(existing["id"])) if existing is not None else None,
+            address=address, name=name, job_title=req["title"],
+            company_name=req.get("company_name"), verdict=gate.verdict,
+        )
+        return ApplicationOut(
+            applicant_id="", enrolment_id=None, full_name=name,
+            already_applied=True, message=_ALREADY_APPLIED,
+        )
 
     # ── Store ───────────────────────────────────────────────────────────────
     # An applicant already exists for this email (they applied to a DIFFERENT
@@ -1803,7 +1894,7 @@ async def submit_application(
             enrolment_id=None,
             full_name=name,
             already_applied=True,
-            message="You have already applied for this role. We have your application.",
+            message=_ALREADY_APPLIED,
         )
     except rediscovery.RediscoveryError as exc:
         # Unreachable in practice — `source` above is the fixed literal

@@ -86,7 +86,13 @@ async def keys_under(bucket: str, prefix: str, *, settings: Settings) -> list[st
                   has_access_key=bool(settings.s3_access_key_id))
         raise StorageNotConfiguredError(
             "S3 is not configured (S3_ENDPOINT_URL and S3_ACCESS_KEY_ID must both be "
-            "set); cannot list an offer's stored documents for erasure."
+            "set); cannot list stored objects for erasure, so an erasure cannot be "
+            "reported complete. NOTE this is now reached by EVERY erasure, not only "
+            "one involving offers or task submissions: PH3-B4b's applicant-prefix "
+            "sweep runs for every applicant row. A deployment that uploads via the "
+            "STORAGE_LOCAL_DIR fallback therefore cannot complete an erasure — which "
+            "is the honest answer rather than a silent partial one, and is why "
+            "local storage refuses outright in production and staging."
         )
     from shared.s3 import s3_client  # noqa: PLC0415 — same client every service uses
 

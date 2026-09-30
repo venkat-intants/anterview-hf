@@ -40,7 +40,10 @@ def test_nothing_stored_is_echoed_to_a_repeat_or_racing_submission() -> None:
     assert 'existing["full_name"]' not in src
     assert 'existing["enrolment_id"])' not in src
     # Both "already applied" replies carry no ids.
-    assert src.count('applicant_id="",') == 2
+    # Three early returns echo nothing now: already-applied, the cooldown
+    # refusal (which answers IDENTICALLY so the two cannot be told apart from
+    # outside), and the racing-submission loser.
+    assert src.count('applicant_id="",') == 3
 
 
 def test_a_returning_applicants_record_is_not_rewritten_by_the_form() -> None:

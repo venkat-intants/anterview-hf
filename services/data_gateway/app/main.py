@@ -50,6 +50,7 @@ from app.hire_checkins import purge as purge_hire_checkins
 from app.interview_kits import purge_expired_notes
 from app.job_tasks import purge as purge_task_submissions
 from app.mailer import purge_old_email_events, start_email_worker, stop_email_worker
+from app.reapplication import purge_stale_staged
 from app.redis_client import close_redis, get_redis, init_redis
 from app.retention import purge_expired_sessions
 from app.routers.accommodations import hr_router as accommodations_hr_router
@@ -321,6 +322,30 @@ async def _run_retention_job() -> None:
     except Exception as exc:  # broad — never let this cleanup kill the scheduler
         log.error(
             "hire_checkin.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
+        )
+
+    # Same tick again: reapplications staged and never confirmed (PH3-B4b). A
+    # staged attempt holds the candidate's screening answers and a CV, and past
+    # the token's own lifetime the link that would apply it cannot be redeemed
+    # — so the data is not merely old, it is unreachable. Same cron, same
+    # reason as the drafts below.
+    try:
+        async with factory() as session:
+            stale_keys = await purge_stale_staged(session)
+            await session.commit()
+        for key in stale_keys:
+            try:
+                await _delete_from_s3(key)
+            except Exception as exc:  # noqa: BLE001, PERF203 — as below
+                log.warning(
+                    "reapply.retention.object_orphaned",
+                    exc_type=type(exc).__name__,
+                )
+        if stale_keys:
+            log.info("reapply.retention.purged", objects=len(stale_keys))
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "reapply.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc)
         )
 
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft

@@ -469,7 +469,15 @@ EXCLUDED_TABLES: dict[str, str] = {
                   "during the AR-5 audit and not previously redacted. Step 5l "
                   "redacts both to '[redacted]' (NULL stays NULL); "
                   "`held_at`/`reapply_override_at`/`reapply_override_by_user_id` "
-                  "and every ats_*/target_* column are untouched.",
+                  "and every ats_*/target_* column are untouched. PH3-B4b adds "
+                  "three more: `reapply_answers` is the CANDIDATE'S own staged "
+                  "screening answers and step 5l CLEARS it (not a marker — the "
+                  "live equivalent, application_answers, is hard-deleted in 5c); "
+                  "`reapply_resume_s3_key` names a real CV object and step "
+                  "1c-iii collects it for deletion in step 8, which is what "
+                  "reaches a draft-door attempt nobody confirmed; "
+                  "`reapply_requested_at`/`reapply_token_hash` are a timestamp "
+                  "and a hash, and go with the row.",
     "round_results": "per-round scores for an enrolment — score, percent, "
                      "criterion_scores, axes. Numbers and competency ids "
                      "against an anonymised applicant; same reasoning as "
@@ -991,17 +999,28 @@ async def _execute_one_erasure(
     # CV each application was sent with, and it can be an older object than both
     # the applicant's current CV and any scored one (an application still
     # waiting to be scored when the person re-applied). Same orphaning, same fix.
+    #
+    # reapply_resume_s3_key is the third: PH3-B4b stages a reapplication's CV
+    # there and applies it only once the candidate proves the address, so
+    # between those two moments that column is the ONLY thing naming the
+    # object. The draft door stages `drafts/{company}/{draft}.pdf`, which the
+    # applicant-prefix sweep below does not cover and which
+    # application_drafts.purge_expired stops naming once it deletes the
+    # submitted row — so without this an attempt nobody ever confirmed
+    # survived a completed erasure.
     scored_keys_result = await db.execute(
         text(
-            "SELECT e.scored_resume_s3_key, e.applied_resume_s3_key FROM enrolments e "
+            "SELECT e.scored_resume_s3_key, e.applied_resume_s3_key,"
+            "       e.reapply_resume_s3_key FROM enrolments e "
             "JOIN applicants a ON a.id = e.applicant_id "
             "WHERE a.user_id = :uid AND (e.scored_resume_s3_key IS NOT NULL "
-            "OR e.applied_resume_s3_key IS NOT NULL)"
+            "OR e.applied_resume_s3_key IS NOT NULL "
+            "OR e.reapply_resume_s3_key IS NOT NULL)"
         ),
         {"uid": uid_str},
     )
     for row in scored_keys_result.fetchall():
-        applicant_resume_keys += [str(k) for k in tuple(row)[:2] if k]
+        applicant_resume_keys += [str(k) for k in tuple(row)[:3] if k]
 
     # 1c-iv — the CV attached to an abandoned DRAFT (PH3-B4c). A draft that was
     # never submitted has no applicant row and no enrolment, so none of the
@@ -1932,16 +1951,27 @@ async def _execute_one_erasure(
     #    and every ats_*/target_* column are untouched: they are either
     #    timestamps/ids or the company's own assessment content, not prose a
     #    person wrote about the candidate.
+    #
+    #    reapply_answers rides along, and it is CLEARED rather than marked.
+    #    The two above are HR's prose about the candidate, which the register
+    #    keeps as '[redacted]' so the fact that something was written survives.
+    #    This one is the CANDIDATE'S OWN answers to the screening questions,
+    #    staged by PH3-B4b until they confirm the address — and the live
+    #    equivalent, application_answers, is hard-DELETED in step 5c. Keeping a
+    #    marker here would preserve less than nothing: no prose, and a false
+    #    suggestion that the company had recorded something about them.
     enrolments_reasons_result = await db.execute(
         text(
             "UPDATE enrolments SET"
             " held_reason = CASE WHEN held_reason IS NULL THEN NULL ELSE '[redacted]' END,"
             " reapply_override_reason = CASE WHEN reapply_override_reason IS NULL THEN NULL"
-            "                                ELSE '[redacted]' END"
+            "                                ELSE '[redacted]' END,"
+            " reapply_answers = NULL"
             " WHERE applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
             "   AND ((held_reason IS NOT NULL AND held_reason <> '[redacted]')"
             "     OR (reapply_override_reason IS NOT NULL"
-            "         AND reapply_override_reason <> '[redacted]'))"
+            "         AND reapply_override_reason <> '[redacted]')"
+            "     OR reapply_answers IS NOT NULL)"
         ),
         {"uid": uid_str},
     )

@@ -910,6 +910,9 @@ const en = {
         'The role may have been filled or closed. If you were sent this link recently, check with whoever shared it — they will have the current one.',
       alreadyApplied: 'You have already applied',
       received: 'Application received',
+      confirmNeeded: 'One more step — check your email',
+      confirmNote:
+        'Nothing is sent to the hiring team until you follow that link. If you did not apply, you can ignore the email and nothing will happen.',
       reviewNote:
         'Your CV is with the hiring team for {{title}}. If they move you forward you will get an email with the next step; nothing is decided automatically.',
       loading: 'Loading…',
@@ -956,6 +959,7 @@ const en = {
       resumeLinkAria: 'Your resume link',
       savedAgainst:
         'We have also stored your progress against {{email}}. This link is the only way back in, so keep it somewhere safe.',
+      stillSaving: 'Still saving your CV — give it a moment before you close this.',
       savedNoCv:
         'Your CV did not upload, so you will need to add it again when you come back. Everything else was saved.',
       saving: 'Saving…',
@@ -2115,6 +2119,9 @@ const hi = {
         'यह पद भर चुका होगा या बंद कर दिया गया होगा। अगर आपको यह लिंक हाल ही में भेजा गया था, तो जिसने भेजा है उनसे जाँचें — उनके पास मौजूदा लिंक होगा।',
       alreadyApplied: 'आप पहले ही आवेदन कर चुके हैं',
       received: 'आवेदन मिल गया',
+      confirmNeeded: 'एक कदम और — अपना ईमेल देखें',
+      confirmNote:
+        'जब तक आप वह लिंक नहीं खोलते, भर्ती टीम को कुछ नहीं भेजा जाता। अगर आपने आवेदन नहीं किया है तो ईमेल को अनदेखा कर दें, कुछ नहीं होगा।',
       reviewNote:
         'आपका CV {{title}} की नियुक्ति टीम के पास है। यदि वे आपको आगे बढ़ाते हैं तो आपको अगले चरण की जानकारी ईमेल से मिलेगी; कोई भी निर्णय स्वतः नहीं लिया जाता।',
       loading: 'लोड हो रहा है…',
@@ -2161,6 +2168,7 @@ const hi = {
       resumeLinkAria: 'आपका पुनः शुरू करने का लिंक',
       savedAgainst:
         'हमने आपकी प्रगति {{email}} के विरुद्ध भी सहेज ली है। वापस आने का यही एकमात्र रास्ता है, इसलिए इसे सुरक्षित रखें।',
+      stillSaving: 'आपका CV अभी सहेजा जा रहा है — बंद करने से पहले एक क्षण दें।',
       savedNoCv:
         'आपका CV अपलोड नहीं हो सका, इसलिए वापस आने पर आपको इसे दोबारा जोड़ना होगा। बाकी सब सहेज लिया गया है।',
       saving: 'सहेजा जा रहा है…',
@@ -3278,6 +3286,9 @@ const te = {
         'ఈ పోస్టు భర్తీ అయి ఉండవచ్చు లేదా మూసివేయబడి ఉండవచ్చు. ఈ లింక్ మీకు ఇటీవల పంపినట్లయితే, పంపినవారితో సరిచూడండి — ప్రస్తుత లింక్ వారి వద్ద ఉంటుంది.',
       alreadyApplied: 'మీరు ఇప్పటికే దరఖాస్తు చేశారు',
       received: 'దరఖాస్తు అందింది',
+      confirmNeeded: 'ఇంకొక అడుగు — మీ ఈమెయిల్ చూడండి',
+      confirmNote:
+        'ఆ లింక్‌ను మీరు తెరిచే వరకు నియామక బృందానికి ఏదీ పంపబడదు. మీరు దరఖాస్తు చేయకపోతే ఈమెయిల్‌ను పట్టించుకోకండి, ఏమీ జరగదు.',
       reviewNote:
         'మీ CV {{title}} నియామక బృందం వద్ద ఉంది. వారు మిమ్మల్ని ముందుకు తీసుకెళ్తే తదుపరి దశ గురించి ఈమెయిల్ వస్తుంది; ఏ నిర్ణయమూ స్వయంచాలకంగా తీసుకోబడదు.',
       loading: 'లోడ్ అవుతోంది…',
@@ -3324,6 +3335,7 @@ const te = {
       resumeLinkAria: 'మీ తిరిగి ప్రారంభించే లింక్',
       savedAgainst:
         'మీ పురోగతిని {{email}} కింద కూడా భద్రపరిచాం. తిరిగి రావడానికి ఇదే ఏకైక మార్గం, కాబట్టి దీన్ని సురక్షితంగా ఉంచుకోండి.',
+      stillSaving: 'మీ CV ఇంకా భద్రపరుస్తున్నాం — మూసివేయడానికి ముందు కొంత సమయం ఇవ్వండి.',
       savedNoCv:
         'మీ CV అప్‌లోడ్ కాలేదు, కాబట్టి తిరిగి వచ్చినప్పుడు దాన్ని మళ్లీ జోడించాలి. మిగతావన్నీ భద్రపరచబడ్డాయి.',
       saving: 'భద్రపరుస్తున్నాం…',

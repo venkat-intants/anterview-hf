@@ -21,6 +21,7 @@ import {
   test,
 } from './support/fixtures';
 import { aCandidate, applyThroughPublicForm } from './support/journeys';
+import { linkIn, waitForMail } from './support/mail';
 
 test.describe('applying again after a rejection', () => {
   test('is refused until the waiting period passes, or a person allows it', async ({
@@ -68,17 +69,34 @@ test.describe('applying again after a rejection', () => {
     await drawer.getByLabel(/^why/i).fill('Not enough production experience for this role.');
     await drawer.getByRole('button', { name: /confirm reject/i }).click();
 
-    // ── 3. They apply again, and are told the date, not just "no" ───────────
-    // A refusal with no date cannot be acted on, so the candidate simply
-    // retries. The message carries the day they may apply from.
+    // ── 3. They apply again, and the screen gives NOTHING away ──────────────
+    // A refusal naming the date used to appear right here — and that was an
+    // oracle. This endpoint is anonymous and accepts any address, so anyone
+    // holding the public link could type an address and learn that a named
+    // person had applied, had been REJECTED, and roughly when. The reply is
+    // now the same one a live application gets.
     await applyThroughPublicForm(candidatePage, opening.id, candidate, {
       expectReceived: false,
     });
     await expect(
-      candidatePage.getByText(/not able to consider a new application until \d{4}-\d{2}-\d{2}/),
-      'refused, with the date they may apply from',
-    ).toBeVisible();
-    await expect(candidatePage.getByText('Application received')).toHaveCount(0);
+      candidatePage.getByText('You have already applied for this role'),
+      'indistinguishable from a live application, on purpose',
+    ).toBeVisible({ timeout: 60_000 });
+    const onScreen = await candidatePage.locator('body').innerText();
+    for (const leak of ['reject', 'turned down', 'not able to consider', 'until 20']) {
+      expect(
+        onScreen.toLowerCase(),
+        `an anonymous caller is never told "${leak}"`,
+      ).not.toContain(leak.toLowerCase());
+    }
+
+    // The date is not lost — it goes to the ADDRESS, which is the only place
+    // it is the candidate's to read.
+    const notice = await waitForMail(candidate.email, /About your application/i, 60_000);
+    expect(
+      notice.text,
+      'the person who owns the address is told when they may apply',
+    ).toMatch(/not able to consider a new application until \d{4}-\d{2}-\d{2}/);
 
     // ── 4. HR lets this one person through ──────────────────────────────────
     await page.goto('/hr/applicants');
@@ -101,8 +119,58 @@ test.describe('applying again after a rejection', () => {
       .click();
     await expect(again.getByText(/may reapply now/i)).toBeVisible();
 
-    // ── 5. Now the same person can apply, and it goes in ────────────────────
-    await applyThroughPublicForm(candidatePage, opening.id, candidate);
+    // ── 5. They apply again — and it does NOT go straight in ────────────────
+    // This step used to assert "Application received" and pass while the
+    // enrolment stayed rejected, HR saw nothing and the override went unspent:
+    // it proved the form accepted a submission, not that criterion 9 works.
+    // A reapplication is staged, because this endpoint is anonymous and takes
+    // any address, so acting on it would let a stranger move a real person's
+    // application.
+    await applyThroughPublicForm(candidatePage, opening.id, candidate, {
+      expectReceived: false,
+    });
+    await expect(
+      candidatePage.getByText('One more step — check your email'),
+      'the candidate is told it is waiting, not that it is in',
+    ).toBeVisible({ timeout: 60_000 });
+    await expect(
+      candidatePage.getByText(/Nothing is sent to the hiring team until you follow that link/),
+    ).toBeVisible();
+
+    // ── 6. The link proves the address, and THEN it reaches HR ──────────────
+    const confirmMail = await waitForMail(
+      candidate.email, /Confirm your application/i, 60_000,
+    );
+    expect(
+      confirmMail.text,
+      'the email must not tell whoever reads that inbox that this person was rejected',
+    ).not.toMatch(/reject|turned down/i);
+    const confirmUrl = linkIn(confirmMail, /(https?:\/\/\S*\/reapply#\S+)/);
+
+    await candidatePage.goto(new URL(confirmUrl).pathname + new URL(confirmUrl).hash);
+    await candidatePage.getByRole('button', { name: /Confirm my application/i }).click();
+    await expect(
+      candidatePage.getByText(/your application is with the hiring team again/i),
+    ).toBeVisible({ timeout: 60_000 });
+
+    // ── 7. And HR's own view says they are back in ──────────────────────────
+    // This is the whole of criterion 9: "authorized users can override
+    // cooldown restrictions" is only true if the person actually re-enters the
+    // pipeline. Read through HR's authenticated API for the opening rather
+    // than by scanning the applicants list — that list is semantic-search
+    // only, with no name filter, so a match there would depend on how many
+    // other candidates happen to exist.
+    await runBackgroundPasses(request);
+    const enrolments = await api.get<{ full_name: string; status: string }[]>(
+      `/hr/requisitions/${opening.id}/enrolments`,
+    );
+    const theirs = enrolments.filter((e) => e.full_name === candidate.name);
+    expect(theirs, 'HR sees exactly one application for this person (D-06)').toHaveLength(1);
+    expect(
+      theirs[0].status,
+      'the rejection was forgiven and they are live again, not still rejected',
+    ).toBe('new');
+
     await candidateContext.close();
   });
 });

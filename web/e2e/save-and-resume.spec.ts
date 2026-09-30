@@ -57,6 +57,18 @@ test.describe('an application saved for later', () => {
     // ── Saved, with the link that brings them back ──────────────────────────
     await save.click();
     await expect(page.getByText('Saved. Keep this link to carry on later.')).toBeVisible();
+    // The link appears as soon as the draft exists — before the answers and
+    // the CV have finished travelling to it, deliberately, so a tab closed
+    // mid-upload still leaves the person their way back in. So wait for the
+    // carry-over to finish before following it, exactly as the page asks a
+    // real person to.
+    await expect(
+      page.getByText('Still saving your CV'),
+      'the page says it is still working rather than looking finished',
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('Still saving your CV')).toHaveCount(0, {
+      timeout: 60_000,
+    });
     const resumeLink = await page.getByLabel('Your resume link').inputValue();
     expect(resumeLink, 'the link carries the draft in its fragment').toMatch(
       /\/apply\/draft#[A-Za-z0-9_-]{16,}/,

@@ -26,6 +26,7 @@ import {
   Briefcase,
   Check,
   CheckCircle2,
+  Mail,
   FileText,
   Loader2,
   Upload,
@@ -110,9 +111,21 @@ function Submitted({ result, title }: { result: ApplicationResult; title: string
   return (
     <Shell>
       <Panel className="text-center">
-        <CheckCircle2 className="mx-auto h-9 w-9 text-[var(--ui-ok)]" aria-hidden="true" />
+        {/* A staged reapplication is NOT "received" in the sense the tick
+            implies: nothing reaches the hiring team until they follow the
+            emailed link. Saying otherwise is the opposite of what that email
+            then asks them to do, and they would never open it. */}
+        {result.awaiting_confirmation ? (
+          <Mail className="mx-auto h-9 w-9 text-[var(--ui-info)]" aria-hidden="true" />
+        ) : (
+          <CheckCircle2 className="mx-auto h-9 w-9 text-[var(--ui-ok)]" aria-hidden="true" />
+        )}
         <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-          {result.already_applied ? t('apply.alreadyApplied') : t('apply.received')}
+          {result.awaiting_confirmation
+            ? t('apply.confirmNeeded')
+            : result.already_applied
+              ? t('apply.alreadyApplied')
+              : t('apply.received')}
         </h1>
         <p className="mx-auto mt-2 max-w-[50ch] text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
           {result.message}
@@ -120,7 +133,9 @@ function Submitted({ result, title }: { result: ApplicationResult; title: string
         <p className="mx-auto mt-4 max-w-[50ch] text-[12.5px] leading-relaxed text-muted-foreground">
           {/* Said plainly because the alternative — silence — is what makes
               candidates assume they were rejected. */}
-          {t('apply.reviewNote', { title })}
+          {result.awaiting_confirmation
+            ? t('apply.confirmNote')
+            : t('apply.reviewNote', { title })}
         </p>
       </Panel>
     </Shell>
@@ -599,6 +614,12 @@ export default function PublicApply(): JSX.Element {
   // after it finishes. See the mutation below.
   const [savedDraft, setSavedDraft] = useState<DraftStarted | null>(null);
   const [cvCarried, setCvCarried] = useState(true);
+  // True while the answers and the CV are still travelling to the draft. The
+  // link is shown before this finishes on purpose — the draft exists and its
+  // token is the only way back — but somebody who opens it immediately would
+  // find a draft without the CV they just chose. So the page says it is still
+  // working rather than looking finished.
+  const [carryingOver, setCarryingOver] = useState(false);
   // The language of the emails this application sends — EN, HI or TE.
   const [language, setLanguage] = useState<'en' | 'hi' | 'te'>('en');
   // Step two. All optional — see STEPS below for why the step exists at all.
@@ -678,6 +699,7 @@ export default function PublicApply(): JSX.Element {
       // resolve meant that tab closed with a draft on the server holding their
       // email, their consent and their CV — and a token they had never seen.
       setSavedDraft(draft);
+      setCarryingOver(true);
 
       // Carry over what they have already given us. Starting a draft records
       // only who they are and that they agreed; without this the person comes
@@ -715,6 +737,7 @@ export default function PublicApply(): JSX.Element {
         // page cannot keep — they would come back expecting it to be there.
       }
       setCvCarried(cvCarried);
+      setCarryingOver(false);
       return draft;
     },
   });
@@ -1261,10 +1284,16 @@ export default function PublicApply(): JSX.Element {
                 <p className="mt-1.5 text-[11.5px] text-[var(--ui-soft)]">
                   {t('apply.savedAgainst', { email: email.trim() })}
                 </p>
+                {carryingOver ? (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-soft)]">
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                    {t('apply.stillSaving')}
+                  </p>
+                ) : null}
                 {/* Said out loud. "Saved" while the CV did not travel is a
                     promise this page cannot keep — they would come back
                     expecting to find it there. */}
-                {!cvCarried ? (
+                {!carryingOver && !cvCarried ? (
                   <p className="mt-1.5 text-[11.5px] text-[var(--ui-warn)]">
                     {t('apply.savedNoCv')}
                   </p>

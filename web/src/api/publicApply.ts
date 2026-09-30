@@ -92,6 +92,11 @@ export interface ApplicationResult {
   full_name: string;
   /** True when this email had already applied. Not an error — a reassurance. */
   already_applied: boolean;
+  /** Accepted, but waiting for the candidate to follow a link emailed to their
+   *  address (PH3-B4b). A reapplication cannot take effect on submission: this
+   *  endpoint is anonymous and takes any address, so acting on it would let a
+   *  stranger move a real person's application. */
+  awaiting_confirmation?: boolean;
   message: string;
 }
 

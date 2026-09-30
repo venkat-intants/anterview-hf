@@ -1,7 +1,7 @@
 """PH3-B4b: a reapplication is staged until the address is proven.
 
 Revision ID: 2577ba99b7fe
-Revises: b4d6f8a0c2e4
+Revises: d9f1b3c5e7a2
 Create Date: 2026-09-29
 
 THE GAP THIS CLOSES
@@ -57,7 +57,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
 
 revision = "2577ba99b7fe"
-down_revision = "b4d6f8a0c2e4"
+down_revision = "d9f1b3c5e7a2"
 branch_labels = None
 depends_on = None
 

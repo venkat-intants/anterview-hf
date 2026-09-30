@@ -1,5 +1,12 @@
 """Unit tests (DB-free) for the round-based exam take path: request-schema caps,
 the rolling integrity score, and the no-secret-leak guarantee for section payloads.
+
+The flat ``100 - 15 × violations`` integrity score (and its test,
+``test_integrity_score_decreases_and_floors``) was replaced by the
+per-event-type weighted score in ``app/exam_camera.py`` — see
+``tests/unit/test_exam_camera_proctoring.py`` for its coverage, including the
+"gaze_away must stay the lowest weight" pin from the camera-proctoring
+contract.
 """
 
 from __future__ import annotations
@@ -17,20 +24,7 @@ from app.routers.exam_take import (
     RunCodeCustomIn,
     SubmitIn,
     _public_coding_question,
-    _score_from_violations,
 )
-
-
-def test_integrity_score_decreases_and_floors() -> None:
-    assert _score_from_violations(0) == 100
-    assert _score_from_violations(1) == 85
-    assert _score_from_violations(2) == 70
-    # Floored at 0 — a runaway client can never push the score negative.
-    assert _score_from_violations(7) == 0
-    assert _score_from_violations(1000) == 0
-    # Monotonic non-increasing.
-    scores = [_score_from_violations(i) for i in range(10)]
-    assert scores == sorted(scores, reverse=True)
 
 
 def test_run_code_custom_caps_stdin() -> None:

@@ -688,8 +688,16 @@ def test_every_llm_module_stays_importable_from_every_service_image(module: str)
     source = pathlib.Path(__file__).parent.parent / "llm" / module
     module_level, _ = _import_roots(source)
 
+    # Stdlib names are listed individually rather than waved through, so adding
+    # one is a deliberate edit a reviewer sees. `collections` and `urllib` were
+    # added for the credential redaction in _recovery.py (Mapping, and
+    # parse_qs/urlsplit to find a key carried in a URL query). Both ship with
+    # CPython, so they cannot fail in an image the way a third-party import can
+    # — which is the failure this rule exists to prevent. Anything NOT in the
+    # standard library still belongs in the guarded, lazy-import branch.
     allowed = {
-        "__future__", "asyncio", "json", "re", "typing", "httpx", "structlog", "shared",
+        "__future__", "asyncio", "collections", "json", "re", "typing", "urllib",
+        "httpx", "structlog", "shared",
     }
     assert module_level <= allowed, f"disallowed top-level imports: {sorted(module_level - allowed)}"
 

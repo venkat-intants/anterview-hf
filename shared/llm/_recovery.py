@@ -37,7 +37,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Mapping
 from typing import Any, Final
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import structlog
@@ -73,6 +75,70 @@ _TRAILING_COMMA_RE: Final[re.Pattern[str]] = re.compile(r",(\s*[}\]])")
 # risk, and prompts on this platform carry transcript and resume text.
 ERROR_BODY_CHARS: Final[int] = 200
 
+#: Header names whose value is a credential. Matched case-insensitively.
+_CREDENTIAL_HEADERS: Final[frozenset[str]] = frozenset(
+    {"authorization", "x-api-key", "api-key", "x-goog-api-key"}
+)
+#: Query parameters that carry a key in the URL — Gemini puts it there, and
+#: httpx renders the full URL into its own exception text.
+_CREDENTIAL_QUERY_PARAMS: Final[tuple[str, ...]] = ("key", "api_key", "apikey")
+#: Below this a value is not a credential, and blind replacement would mangle
+#: ordinary prose (an ``api-key: none`` placeholder, say).
+_MIN_SECRET_CHARS: Final[int] = 12
+
+REDACTED: Final[str] = "***redacted***"
+
+
+def redact_known_secrets(text: str, *, headers: Mapping[str, str], url: str) -> str:
+    """Remove the credentials WE SENT from a provider error string.
+
+    Exact-value redaction rather than pattern guessing, because at this point we
+    know precisely which secrets went out: every credential-bearing header value
+    and any key in the URL's query string. A pattern list only ever covers the
+    vendors someone thought of; this covers whatever was actually sent.
+
+    WHY THIS EXISTS. ``last_error`` is interpolated into the exception raised
+    below, that exception's text becomes an HTTP 502 ``detail``, and the
+    frontend renders that detail in a toast. An error containing a key therefore
+    shows it to whoever is on the screen — an HR user, or a candidate mid-exam.
+    Not hypothetical: a key pasted with a line break in it produced
+
+        Illegal header value b'Bearer gsk_<the whole live key>'
+
+    which httpx puts in its exception message, and the platform printed it into
+    a browser. That key had to be treated as public and rotated.
+
+    Both sources are covered. httpx's own exception renders the header value or
+    the full URL; a provider's error body can echo the key back at us. Redaction
+    runs before ``last_error`` is used at all, so the log line and the raised
+    message are both clean — a secret in a log store is a slower version of the
+    same disclosure.
+    """
+    if not text:
+        return text
+    secrets: list[str] = []
+    for name, value in headers.items():
+        if name.strip().lower() not in _CREDENTIAL_HEADERS or not value:
+            continue
+        secrets.append(value)
+        # "Bearer <token>": providers and httpx echo either the whole header
+        # value or the bare token, so both spellings are redacted.
+        scheme, _, rest = value.partition(" ")
+        if rest and scheme.lower() in {"bearer", "token", "basic"}:
+            secrets.append(rest)
+    for param, values in parse_qs(urlsplit(url).query).items():
+        if param.strip().lower() in _CREDENTIAL_QUERY_PARAMS:
+            secrets.extend(values)
+
+    out = text
+    # Longest first: a bare token is a substring of its own "Bearer <token>",
+    # and replacing the short one first would leave the scheme stranded beside a
+    # marker instead of removing the span whole.
+    for secret in sorted({s.strip() for s in secrets}, key=len, reverse=True):
+        if len(secret) >= _MIN_SECRET_CHARS and secret in out:
+            out = out.replace(secret, REDACTED)
+    return out
+
 
 async def post_with_retry(
     url: str,
@@ -96,11 +162,24 @@ async def post_with_retry(
             try:
                 response = await client.post(url, json=body, headers=headers)
             except httpx.RequestError as exc:
-                last_error = f"request error: {exc}"
+                # Redacted HERE, at the assignment, so every later use is safe:
+                # the log line below, and the exception raised at the end whose
+                # text reaches the browser as a 502 detail. httpx renders the
+                # offending header value or the full URL into its own message.
+                last_error = redact_known_secrets(
+                    f"request error: {exc}", headers=headers, url=url
+                )
             else:
                 if response.status_code == 200:
                     return response
-                last_error = f"HTTP {response.status_code}: {response.text[:ERROR_BODY_CHARS]}"
+                # A provider's error body can echo our key back at us; truncate
+                # first (the cap is about log flooding) then redact, so a key
+                # straddling the cut cannot survive as a usable fragment.
+                last_error = redact_known_secrets(
+                    f"HTTP {response.status_code}: {response.text[:ERROR_BODY_CHARS]}",
+                    headers=headers,
+                    url=url,
+                )
                 if response.status_code not in RETRY_STATUSES:
                     break  # non-transient (e.g. 400/403) — do not retry
             if attempt < MAX_ATTEMPTS - 1:

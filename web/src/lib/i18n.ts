@@ -16,12 +16,16 @@
 // read as something softer. The blanket caveat above is a whole-bundle,
 // pre-launch ask - too slow and too coarse for these. `resumeApply.delete*`,
 // `resumeApply.keepIt`, `resumeApply.deletedDesc`, the ConsentModal keys,
-// `apply.rediscoveryConsent` and every `rediscovery.*` key (PH5-E3 — the
+// `apply.rediscoveryConsent`, every `rediscovery.*` key (PH5-E3 — the
 // rediscovery opt-in is a DPDP §6(1) consent in its own right, separate from
-// the application consent above it) want a targeted native-speaker pass, and
-// want it BEFORE they are candidate-facing rather than before launch. HI/TE
-// for these ship UNREVIEWED with this change — that is stated, not designed
-// away.
+// the application consent above it), and every `publicExam.camera*` key
+// (camera-proctoring contract §3/§8 — the exam's dedicated, never-bundled
+// camera-proctoring consent step: a mistranslation here could read as video
+// being recorded when it structurally never is, or as declining being
+// impossible when the round doesn't require the camera at all) want a
+// targeted native-speaker pass, and want it BEFORE they are candidate-facing
+// rather than before launch. HI/TE for these ship UNREVIEWED with this
+// change — that is stated, not designed away.
 //
 // Acted on once already: te.resumeApply.deleteDesc rendered "cannot be undone"
 // with a verb reading primarily as "cannot be CANCELLED" - a weaker claim than
@@ -695,6 +699,42 @@ const en = {
       // threshold will end the round, so promising one would be false.
       violationNoted: 'Violation {{count}} recorded.',
       violationBadgeLabel: '{{count}} integrity violations',
+      // Camera proctoring (camera-proctoring contract) — the consent keys
+      // below are on the i18n.ts "higher bar" list (see the file header):
+      // a mistranslation here could make a candidate think their video is
+      // being recorded when it is not, or think declining is impossible when
+      // it is a real choice for a round that doesn't require it.
+      cameraConsentTitle: 'Camera monitoring for this exam',
+      cameraConsentIntro:
+        "This round requires your camera to stay on for the whole exam, so we can check you're the one taking it.",
+      cameraConsentDetects:
+        'It checks whether you are visible and whether you are looking at the screen — nothing about the room or what is behind you.',
+      cameraConsentMultiple: 'It also checks whether more than one person is visible.',
+      cameraConsentNoVideo:
+        'No video or image is ever recorded or sent anywhere — only these checks are stored, as timestamped events.',
+      cameraConsentDeclineNote:
+        'You can decline, but this round requires camera monitoring to start.',
+      cameraConsentAgree: 'Turn on camera monitoring',
+      cameraConsentDecline: 'Decline',
+      // Shown instead of the generic "Could not start" when /exam/start 422s
+      // because this round requires camera consent and none is on record yet
+      // (e.g. a stale tab, or the grant call never reached the server).
+      cameraConsentNeededBeforeStart:
+        'This round needs camera monitoring turned on before it can start. Please turn it on below and try again.',
+      cameraRequiredTitle: 'This exam needs your camera',
+      cameraRequiredDesc:
+        "This round requires camera monitoring, and it wasn't turned on, so the exam can't start. You can reconsider below, or contact your recruiter about another arrangement.",
+      cameraReconsider: 'Reconsider camera monitoring',
+      cameraConsentGrantedNotice: 'Camera monitoring is on for this round.',
+      cameraConsentPendingNotice:
+        "This round requires camera monitoring — you'll be asked to turn it on before you can start.",
+      cameraIndicator_unavailable: 'Camera unavailable — continuing with standard monitoring',
+      cameraIndicator_starting: 'Starting camera monitoring…',
+      cameraIndicator_calibrating: 'Calibrating — please look at the screen and hold still',
+      cameraIndicator_ok: 'Camera on — you are visible',
+      cameraWarn_gaze_away: 'Please look at the screen',
+      cameraWarn_face_absent: "We can't see you — please move back in front of the camera",
+      cameraWarn_multiple_faces: 'More than one person is visible',
       // Coding section additions
       codingProblems_one: '{{count}} coding problem',
       codingProblems_other: '{{count}} coding problems',
@@ -1885,6 +1925,33 @@ const hi = {
       violationWarning: 'उल्लंघन {{count}} दर्ज किया गया। auto-submit से पहले {{remaining}} बचे।',
       violationNoted: 'उल्लंघन {{count}} दर्ज किया गया।',
       violationBadgeLabel: '{{count}} integrity उल्लंघन',
+      cameraConsentTitle: 'इस परीक्षा के लिए कैमरा निगरानी',
+      cameraConsentIntro:
+        'इस राउंड के लिए पूरी परीक्षा के दौरान आपका कैमरा चालू रहना ज़रूरी है, ताकि यह जांचा जा सके कि परीक्षा आप ही दे रहे हैं।',
+      cameraConsentDetects:
+        'यह जांचता है कि आप दिख रहे हैं या नहीं और आप स्क्रीन की ओर देख रहे हैं या नहीं — कमरे या पीछे की किसी चीज़ के बारे में कुछ नहीं।',
+      cameraConsentMultiple: 'यह यह भी जांचता है कि कहीं एक से अधिक व्यक्ति तो दिखाई नहीं दे रहे।',
+      cameraConsentNoVideo:
+        'कोई भी वीडियो या इमेज कभी रिकॉर्ड या कहीं भेजी नहीं जाती — केवल ये जांचें टाइमस्टैम्प की गई घटनाओं के रूप में सहेजी जाती हैं।',
+      cameraConsentDeclineNote:
+        'आप मना कर सकते हैं, लेकिन इस राउंड को शुरू करने के लिए कैमरा निगरानी आवश्यक है।',
+      cameraConsentAgree: 'कैमरा निगरानी चालू करें',
+      cameraConsentDecline: 'मना करें',
+      cameraRequiredTitle: 'इस परीक्षा के लिए आपका कैमरा चाहिए',
+      cameraRequiredDesc:
+        'इस राउंड के लिए कैमरा निगरानी आवश्यक है, और इसे चालू नहीं किया गया, इसलिए परीक्षा शुरू नहीं हो सकती। आप नीचे पुनर्विचार कर सकते हैं, या किसी अन्य व्यवस्था के लिए अपने भर्तीकर्ता से संपर्क करें।',
+      cameraReconsider: 'कैमरा निगरानी पर पुनर्विचार करें',
+      cameraConsentGrantedNotice: 'इस राउंड के लिए कैमरा निगरानी चालू है।',
+      cameraConsentPendingNotice:
+        'इस राउंड के लिए कैमरा निगरानी आवश्यक है — शुरू करने से पहले आपसे इसे चालू करने के लिए कहा जाएगा।',
+      cameraIndicator_unavailable: 'कैमरा उपलब्ध नहीं — सामान्य निगरानी जारी है',
+      cameraIndicator_starting: 'कैमरा निगरानी शुरू हो रही है…',
+      cameraIndicator_calibrating:
+        'कैलिब्रेट हो रहा है — कृपया स्क्रीन की ओर देखें और थोड़ी देर स्थिर रहें',
+      cameraIndicator_ok: 'कैमरा चालू है — आप दिखाई दे रहे हैं',
+      cameraWarn_gaze_away: 'कृपया स्क्रीन की ओर देखें',
+      cameraWarn_face_absent: 'आप दिखाई नहीं दे रहे — कृपया कैमरे के सामने वापस आएं',
+      cameraWarn_multiple_faces: 'एक से अधिक व्यक्ति दिखाई दे रहे हैं',
       codingProblems: '{{count}} coding समस्याएं',
       codingInputLabel: 'Input',
       codingExpectedLabel: 'अपेक्षित output',
@@ -2175,7 +2242,8 @@ const hi = {
         '{{company}} अब भविष्य की नौकरियों की खोज में आपकी प्रोफ़ाइल नहीं पा सकेगा। आपके आवेदन से पहले से मौजूद जानकारी जैसी है वैसी ही रहेगी।',
       turnOffConfirmYes: 'हां, बंद करें',
       cancel: 'रद्द करें',
-      turnedOn: 'चालू कर दिया गया — {{company}} अब भविष्य की नौकरियों के लिए आपकी प्रोफ़ाइल पा सकता है।',
+      turnedOn:
+        'चालू कर दिया गया — {{company}} अब भविष्य की नौकरियों के लिए आपकी प्रोफ़ाइल पा सकता है।',
       turnedOff: 'बंद कर दिया गया। {{company}} अब खोज में आपकी प्रोफ़ाइल नहीं पा सकता।',
       loading: 'आपकी रीडिस्कवरी सेटिंग्स जांची जा रही हैं…',
       loadError: 'आपकी रीडिस्कवरी सेटिंग्स लोड नहीं हो सकीं।',
@@ -3017,6 +3085,34 @@ const te = {
       violationWarning: 'ఉల్లంఘన {{count}} నమోదైంది. auto-submit కు ముందు {{remaining}} మిగిలాయి.',
       violationNoted: 'ఉల్లంఘన {{count}} నమోదైంది.',
       violationBadgeLabel: '{{count}} integrity ఉల్లంఘనలు',
+      cameraConsentTitle: 'ఈ పరీక్ష కోసం కెమెరా పర్యవేక్షణ',
+      cameraConsentIntro:
+        'ఈ రౌండ్‌కు పరీక్ష మొత్తం మీ కెమెరా ఆన్‌లో ఉండాలి, తద్వారా పరీక్ష రాస్తున్నది మీరేనని నిర్ధారించవచ్చు.',
+      cameraConsentDetects:
+        'ఇది మీరు కనిపిస్తున్నారా మరియు స్క్రీన్‌ వైపు చూస్తున్నారా అని మాత్రమే పరిశీలిస్తుంది — గది గురించి లేదా వెనుక ఉన్నదాని గురించి కాదు.',
+      cameraConsentMultiple:
+        'ఒకటి కంటే ఎక్కువ మంది వ్యక్తులు కనిపిస్తున్నారా అని కూడా ఇది పరిశీలిస్తుంది.',
+      cameraConsentNoVideo:
+        'ఏ వీడియో లేదా చిత్రం ఎప్పుడూ రికార్డ్ చేయబడదు లేదా ఎక్కడికీ పంపబడదు — ఈ పరిశీలనలు మాత్రమే టైమ్‌స్టాంప్ చేసిన ఈవెంట్లుగా నిల్వ చేయబడతాయి.',
+      cameraConsentDeclineNote:
+        'మీరు నిరాకరించవచ్చు, కానీ ఈ రౌండ్ ప్రారంభించడానికి కెమెరా పర్యవేక్షణ అవసరం.',
+      cameraConsentAgree: 'కెమెరా పర్యవేక్షణను ఆన్ చేయండి',
+      cameraConsentDecline: 'నిరాకరించండి',
+      cameraRequiredTitle: 'ఈ పరీక్షకు మీ కెమెరా అవసరం',
+      cameraRequiredDesc:
+        'ఈ రౌండ్‌కు కెమెరా పర్యవేక్షణ అవసరం, అది ఆన్ చేయలేదు కాబట్టి పరీక్ష ప్రారంభం కాదు. మీరు క్రింద మళ్లీ ఆలోచించవచ్చు, లేదా వేరే ఏర్పాటు కోసం మీ రిక్రూటర్‌ను సంప్రదించండి.',
+      cameraReconsider: 'కెమెరా పర్యవేక్షణపై మళ్లీ ఆలోచించండి',
+      cameraConsentGrantedNotice: 'ఈ రౌండ్‌కు కెమెరా పర్యవేక్షణ ఆన్‌లో ఉంది.',
+      cameraConsentPendingNotice:
+        'ఈ రౌండ్‌కు కెమెరా పర్యవేక్షణ అవసరం — ప్రారంభించే ముందు దాన్ని ఆన్ చేయమని మిమ్మల్ని అడుగుతారు.',
+      cameraIndicator_unavailable: 'కెమెరా అందుబాటులో లేదు — ప్రామాణిక పర్యవేక్షణ కొనసాగుతోంది',
+      cameraIndicator_starting: 'కెమెరా పర్యవేక్షణ ప్రారంభమవుతోంది…',
+      cameraIndicator_calibrating:
+        'కాలిబ్రేట్ అవుతోంది — దయచేసి స్క్రీన్‌ను చూస్తూ కొద్దిసేపు స్థిరంగా ఉండండి',
+      cameraIndicator_ok: 'కెమెరా ఆన్‌లో ఉంది — మీరు కనిపిస్తున్నారు',
+      cameraWarn_gaze_away: 'దయచేసి స్క్రీన్‌ను చూడండి',
+      cameraWarn_face_absent: 'మీరు కనిపించడం లేదు — దయచేసి కెమెరా ముందుకు తిరిగి రండి',
+      cameraWarn_multiple_faces: 'ఒకటి కంటే ఎక్కువ మంది వ్యక్తులు కనిపిస్తున్నారు',
       codingProblems: '{{count}} coding సమస్యలు',
       codingInputLabel: 'Input',
       codingExpectedLabel: 'అంచనా output',
@@ -3309,7 +3405,8 @@ const te = {
         '{{company}} ఇకపై భవిష్యత్తు ఉద్యోగాల శోధనలో మీ ప్రొఫైల్‌ను కనుగొనలేరు. మీ దరఖాస్తు నుండి వారు ఇప్పటికే కలిగి ఉన్నది అలాగే ఉంటుంది.',
       turnOffConfirmYes: 'అవును, ఆఫ్ చేయండి',
       cancel: 'రద్దు చేయండి',
-      turnedOn: 'ఆన్ చేయబడింది — {{company}} ఇప్పుడు భవిష్యత్తు ఉద్యోగాల కోసం మీ ప్రొఫైల్‌ను కనుగొనగలదు.',
+      turnedOn:
+        'ఆన్ చేయబడింది — {{company}} ఇప్పుడు భవిష్యత్తు ఉద్యోగాల కోసం మీ ప్రొఫైల్‌ను కనుగొనగలదు.',
       turnedOff: 'ఆఫ్ చేయబడింది. {{company}} ఇకపై శోధనలో మీ ప్రొఫైల్‌ను కనుగొనలేరు.',
       loading: 'మీ రీడిస్కవరీ సెట్టింగ్‌లను తనిఖీ చేస్తున్నాం…',
       loadError: 'మీ రీడిస్కవరీ సెట్టింగ్‌లను లోడ్ చేయలేకపోయాం.',

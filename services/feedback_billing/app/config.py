@@ -9,6 +9,7 @@ from shared.security import (
     assert_strong_secrets,
     forbid_private_signing_key,
     normalise_app_env,
+    strip_pasted_settings,
     validate_cors_origins,
     validate_database_ssl,
 )
@@ -69,6 +70,18 @@ class Settings(BaseSettings):
     database_ssl: str = ""
 
     redis_url: str  # required — no default; service fails fast if unset
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_pasted_settings(cls, values: object) -> object:
+        """Repair whitespace a paste added — to EVERY setting, not a chosen few.
+
+        This started as a list of variable names and missed GROQ_MODEL, so the
+        same outage returned a third time. See shared/security.py for the rule
+        (ends stripped everywhere; all inner whitespace removed from *_api_key,
+        which go into an Authorization header) and for the incidents.
+        """
+        return strip_pasted_settings(values)
 
     jwt_secret: str  # required — no default; service fails fast if unset (must match data_gateway)
     jwt_algorithm: str = "HS256"

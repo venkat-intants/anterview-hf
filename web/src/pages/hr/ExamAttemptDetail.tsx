@@ -21,6 +21,7 @@ import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { GlassCard, StatCard, StatusTag, Avatar } from '@/design/components/primitives';
 import { ArrowLeft, CheckCircle2, XCircle, Clock, Code2, Loader2 } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
+import AttemptProctoringSummary from '@/components/hr/AttemptProctoringSummary';
 
 // Code-split: the evidence tab pulls in the read-only CodeEditor (Prism +
 // language grammars), which most HR sessions on this page never open.
@@ -169,6 +170,14 @@ export default function ExamAttemptDetail() {
           </div>
         </Reveal>
       ) : null}
+
+      {/* ── Camera-proctoring contract §7 — the attempt's proctoring
+          timeline. Independent of the grading breakdown below (an attempt
+          can be watched whether or not it has graded yet), and shown
+          whichever tab is active. ── */}
+      <Reveal delay={0.05}>
+        <AttemptProctoringSummary examId={examId} attemptId={attemptId} />
+      </Reveal>
 
       {/* ── Loading / error ── */}
       {isLoading && (

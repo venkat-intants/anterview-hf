@@ -187,10 +187,10 @@ export const DEFAULT_NEUTRAL: NeutralPose = { fwdX: 0, fwdY: 0 };
  */
 export function averageNeutral(samples: NeutralPose[]): NeutralPose {
   if (samples.length === 0) return { ...DEFAULT_NEUTRAL };
-  const sum = samples.reduce(
-    (acc, s) => ({ fwdX: acc.fwdX + s.fwdX, fwdY: acc.fwdY + s.fwdY }),
-    { fwdX: 0, fwdY: 0 },
-  );
+  const sum = samples.reduce((acc, s) => ({ fwdX: acc.fwdX + s.fwdX, fwdY: acc.fwdY + s.fwdY }), {
+    fwdX: 0,
+    fwdY: 0,
+  });
   return { fwdX: sum.fwdX / samples.length, fwdY: sum.fwdY / samples.length };
 }
 
@@ -210,10 +210,10 @@ export function isLookingAway(
   let away = false;
   if (s.fwdX !== null && s.fwdY !== null) {
     away =
-      Math.abs(s.fwdX - neutral.fwdX) > t.poseYaw ||
-      Math.abs(s.fwdY - neutral.fwdY) > t.posePitch;
+      Math.abs(s.fwdX - neutral.fwdX) > t.poseYaw || Math.abs(s.fwdY - neutral.fwdY) > t.posePitch;
   } else if (s.horiz !== null && s.vert !== null) {
-    away = s.horiz < t.horizLow || s.horiz > t.horizHigh || s.vert < t.vertLow || s.vert > t.vertHigh;
+    away =
+      s.horiz < t.horizLow || s.horiz > t.horizHigh || s.vert < t.vertLow || s.vert > t.vertHigh;
   }
   if (s.eyeMax !== null) away = away || s.eyeMax > t.eyeGaze;
   return away;

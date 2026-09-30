@@ -1,4 +1,9 @@
-// useProctoring — client-side proctoring / malpractice detection (Phase B).
+// useProctoring — client-side proctoring / malpractice detection.
+//
+// Shared by the interview (features/interview/LiveKitInterview.tsx) and the
+// exam (pages/exam/useExamProctor.ts). Transport-agnostic: the caller injects
+// `submitEvents`, so this module never imports an API client or knows which
+// backend is on the other end — see features/proctoring/types.ts.
 //
 // Runs entirely in the browser. Two independent signal sources:
 //   1. MediaPipe FaceLandmarker on the candidate's own camera frames (~2 fps):
@@ -7,26 +12,28 @@
 //        - gaze_away       (head turned away from the screen, debounced)
 //      Ranged conditions are debounced (must persist MIN_MS) to cut noise, and
 //      emitted as {started_at, ended_at} so the backend can score by duration.
-//   2. Browser events (cheap + ~99.9% reliable, no ML):
+//   2. Browser events (cheap + ~99.9% reliable, no ML), only when the caller
+//      opts in via `browserEvents` (default true, the interview's original
+//      behaviour):
 //        - tab_blur        (candidate switched tab/window)
 //        - copy / paste    (clipboard use)
 //        - fullscreen_exit (left fullscreen, if it was active)
+//      The exam already has its OWN browser-event proctoring (useExamProctor,
+//      with its own violation counting and accommodation handling) so it
+//      passes `browserEvents: false` here — otherwise the same browser event
+//      would be emitted down two independent pipelines.
 //
-// Events are batched and POSTed to interview_core. The raw camera frames NEVER
-// leave the device — only derived events. Detection is best-effort: any failure
-// (model load, camera) is swallowed so it can NEVER break the interview.
+// Events are batched and handed to `submitEvents` every FLUSH_INTERVAL_MS. The
+// raw camera frames NEVER leave the device — only derived events, and no
+// image/frame/landmark array is ever placed in an event's payload. Detection
+// is best-effort: any failure (model load, camera) is swallowed so it can
+// NEVER break the interview or the exam.
 //
-// NOTE: detection runs on the main thread throttled to ~2 fps for simplicity.
-// A Web Worker (OffscreenCanvas) is the next optimisation if CPU becomes a
-// concern at scale; the event contract would not change.
+// NOTE: detection runs on a Web Worker when available (see proctorWorker.ts),
+// falling back to the main thread throttled to ~2 fps.
 
 import { useEffect, useRef, useState } from 'react';
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
-import {
-  postIntegrityEvents,
-  type IntegrityEventOut,
-  type IntegrityEventType,
-} from '@/api/integrity';
 import {
   advanceCondition,
   averageNeutral,
@@ -40,11 +47,12 @@ import {
   type GazeThresholds,
   type NeutralPose,
   type ProctorCondition,
-} from '@/features/interview/proctorLogic';
+} from './proctorLogic';
+import type { ProctorEvent, ProctorEventSubmitter } from './types';
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 const DETECT_INTERVAL_MS = 500; // ~2 fps
-const FLUSH_INTERVAL_MS = 5000; // POST batched events every 5s
+const FLUSH_INTERVAL_MS = 5000; // submit batched events every 5s
 const MIN_RANGED_MS = 1200; // a ranged condition must persist this long to count
 
 // Primary "facing away" detection: the head's forward unit vector, taken from
@@ -92,7 +100,7 @@ const WORKER_INIT_TIMEOUT_MS = 20_000;
 
 // If the self-view <video> has no usable frames for this long while proctoring
 // is enabled (camera permission denied, track never attached, camera toggled
-// off mid-interview), we treat it as ZERO faces so `face_absent` is flagged.
+// off mid-session), we treat it as ZERO faces so `face_absent` is flagged.
 // Without this, "no camera" meant "no detection" — a candidate whose camera
 // never came on (or who turned it off) was never flagged as not present.
 const NO_FRAME_GRACE_MS = 4000;
@@ -108,9 +116,10 @@ const EMPTY_SIGNALS: GazeSignals = {
 
 /**
  * Warm the browser HTTP cache with the MediaPipe wasm + model while the
- * candidate is still on the intro screen, so detection starts near-instantly
- * once the room connects. Best-effort: failures are ignored (the detection
- * path re-fetches on demand exactly as before).
+ * candidate is still on an intro/consent screen, so detection starts
+ * near-instantly once camera proctoring actually starts. Best-effort:
+ * failures are ignored (the detection path re-fetches on demand exactly as
+ * before).
  */
 export function preloadProctorAssets(): void {
   const assets = [
@@ -129,15 +138,33 @@ export function preloadProctorAssets(): void {
 export type ProctorWarningType = ProctorCondition;
 
 interface UseProctoringArgs {
-  sessionId: string;
   videoRef: React.RefObject<HTMLVideoElement>;
   enabled: boolean;
+  /**
+   * How detected events are submitted — injected so this module stays
+   * transport-agnostic (the interview posts batches to interview_core; the
+   * exam posts to its own per-attempt endpoint). Called with the full
+   * flushed batch, which MAY be empty (see the heartbeat below) — a
+   * per-event transport can simply no-op on an empty batch. Read via a ref
+   * internally, so an inline arrow function is fine here even though it gets
+   * a new identity every render — it will never restart the detection loop.
+   */
+  submitEvents: ProctorEventSubmitter;
+  /**
+   * Also listen for the cheap browser signals (tab_blur, copy, paste,
+   * fullscreen_exit) independent of the camera. Defaults to true — the
+   * original interview behaviour. The exam passes `false`: it already runs
+   * its own browser-event proctoring with its own violation/accommodation
+   * handling, and listening here too would emit the same browser event down
+   * two independent pipelines.
+   */
+  browserEvents?: boolean;
 }
 
 export interface UseProctoringReturn {
   /** True once the face model has loaded and detection is live. */
   ready: boolean;
-  /** Latest integrity score (0-100) returned by the backend, or null. */
+  /** Latest integrity score (0-100) reported by the submitter, or null. */
   score: number | null;
   /**
    * The current sustained issue the candidate should be nudged about (active
@@ -153,14 +180,22 @@ function nowIso(): string {
 }
 
 export function useProctoring({
-  sessionId,
   videoRef,
   enabled,
+  submitEvents,
+  browserEvents = true,
 }: UseProctoringArgs): UseProctoringReturn {
   const [ready, setReady] = useState(false);
   const [score, setScore] = useState<number | null>(null);
   const [activeWarning, setActiveWarning] = useState<ProctorWarningType | null>(null);
   const [calibrating, setCalibrating] = useState(false);
+
+  // Mirror the latest submitter in a ref so a new inline function passed by
+  // the caller every render never restarts the flush/detection effects below
+  // (which key only on `enabled`) — the same trick the original hook used to
+  // decouple its effects from any non-`enabled` prop.
+  const submitRef = useRef(submitEvents);
+  submitRef.current = submitEvents;
 
   // Calibration state: neutral baseline + the samples gathered during the
   // startup window. calibStartRef is the epoch ms the window began (on first
@@ -172,14 +207,14 @@ export function useProctoring({
   const loopStartRef = useRef<number | null>(null);
 
   // Mutable state kept in refs so the detection loop / listeners are stable.
-  const queueRef = useRef<IntegrityEventOut[]>([]);
+  const queueRef = useRef<ProctorEvent[]>([]);
   const condRef = useRef(freshCondStates());
   // Current warning type, mirrored in a ref so the 2 fps loop only calls
   // setActiveWarning when it actually CHANGES (avoids a re-render every tick).
   const warnRef = useRef<ProctorWarningType | null>(null);
 
   // Push an instantaneous event.
-  const pushInstant = (type: IntegrityEventType) => {
+  const pushInstant = (type: ProctorEvent['type']) => {
     queueRef.current.push({ type, started_at: nowIso() });
   };
 
@@ -201,9 +236,9 @@ export function useProctoring({
   const flush = async () => {
     if (queueRef.current.length === 0) return;
     const batch = queueRef.current.splice(0, queueRef.current.length);
-    const res = await postIntegrityEvents(sessionId, batch);
-    if (res && typeof res.integrity_score === 'number') {
-      setScore(res.integrity_score);
+    const res = await submitRef.current(batch);
+    if (res && typeof res.integrityScore === 'number') {
+      setScore(res.integrityScore);
     }
   };
 
@@ -224,7 +259,7 @@ export function useProctoring({
 
   // ── Browser-event listeners (independent of the camera) ─────────────────────
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !browserEvents) return;
 
     const onVisibility = () => {
       if (document.hidden) pushInstant('tab_blur');
@@ -247,18 +282,20 @@ export function useProctoring({
       document.removeEventListener('fullscreenchange', onFullscreen);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+  }, [enabled, browserEvents]);
 
   // ── Heartbeat + periodic flush ──────────────────────────────────────────────
   useEffect(() => {
     if (!enabled) return;
 
-    // Immediate "proctoring is active" heartbeat (empty batch). This marks the
-    // session as proctored (score 100, no flags) the moment monitoring starts —
-    // so a clean interview shows a real score instead of "not enabled", and the
-    // session is marked even if the camera/model never initialises.
-    void postIntegrityEvents(sessionId, []).then((res) => {
-      if (res && typeof res.integrity_score === 'number') setScore(res.integrity_score);
+    // Immediate "proctoring is active" heartbeat (empty batch). For the
+    // interview this marks the session as proctored (score 100, no flags) the
+    // moment monitoring starts — so a clean interview shows a real score
+    // instead of "not enabled", and the session is marked even if the
+    // camera/model never initialises. A per-event transport (the exam) can
+    // simply no-op on an empty batch; this call is then a no-op too.
+    void submitRef.current([]).then((res) => {
+      if (res && typeof res.integrityScore === 'number') setScore(res.integrityScore);
     });
 
     const id = setInterval(() => void flush(), FLUSH_INTERVAL_MS);
@@ -269,7 +306,7 @@ export function useProctoring({
       void flush();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, sessionId]);
+  }, [enabled]);
 
   // ── MediaPipe detection — Web Worker (inference off the main thread) with a
   //    main-thread fallback if Workers/createImageBitmap are unavailable or the
@@ -515,7 +552,7 @@ export function useProctoring({
       setCalibrating(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, sessionId]);
+  }, [enabled]);
 
   return { ready, score, activeWarning, calibrating };
 }

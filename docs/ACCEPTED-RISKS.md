@@ -606,6 +606,74 @@ these is built.
 
 ---
 
+## AR-9 — Gaze detection flags candidates for looking away, and looking away is not evidence
+
+| | |
+|---|---|
+| **Source finding** | Camera proctoring for exams (code review + security review), 2026-09-29 |
+| **Status** | **ACCEPTED — shipped, weighted lowest, never decisive, and separated in the HR UI** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `product-manager` re-decides when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a candidate complaint, accessibility request or disability disclosure naming gaze or eye tracking; (b) a customer or bid asking us to raise its weight, rank candidates by it, or make it decisive; (c) evidence of a systematic false-positive pattern (a device class, a seating setup, a demographic); (d) any regulatory guidance on biometric inference under DPDP |
+
+**The decision.** Camera proctoring emits three signals. Two of them —
+`face_absent` and `multiple_faces` — describe facts about the room that a human
+would read the same way. The third, `gaze_away`, infers *where a candidate is
+looking* from face landmarks, and that inference does not carry the same weight:
+people look away because they are thinking, because of a motor or visual
+difference, because they use assistive technology, because a screen reader is
+speaking, or because the room has a window. We shipped it anyway, because a
+reviewer watching a recorded timeline genuinely wants to know the candidate
+spent four minutes looking off-screen — but every structural choice around it
+assumes it will sometimes be wrong about an innocent person:
+
+- **Weighted 5, the lowest of the seven event types** (`exam_integrity_weight_gaze_away`),
+  tied with `copy` and a fifth of `multiple_faces`.
+- **Never a violation.** It is absent from `VIOLATION_EVENT_TYPES`, so it can
+  never contribute to the auto-submit threshold — a candidate cannot have an
+  exam ended by looking away, at any frequency.
+- **Never decisive — and this claim is about `gaze_away` specifically, not
+  about proctoring as a whole.** Because gaze is absent from
+  `VIOLATION_EVENT_TYPES` it cannot reach the auto-submit threshold, and that
+  mechanism is the reason it cannot reach any outcome. Be precise about the
+  rest: the four signals that ARE violations can end an exam early, and
+  `_grade_and_finalize` then writes `exam_attempts.passed` and `.status` and
+  may advance the applicant's stage. Proctoring as a whole is therefore not
+  consequence-free; gaze is. An earlier version of this entry claimed
+  "nothing in the proctoring path writes a stage, a status or a decision",
+  which was false and was corrected by the security review. `PanelVerdict`
+  still has no field that can express a hiring outcome (CLAUDE.md hard
+  constraint 9) — a separate control, unaffected by any of this.
+- **Separated in the HR UI, structurally.** `AttemptProctoringSummary.tsx`
+  filters `gaze_away` out of the counted-signals list by an explicit predicate,
+  not by styling, and renders it in its own block headed "informational only",
+  with its unreliability stated in the copy the reviewer actually reads. A test
+  goes red if it is ever folded back in.
+- **Detected on-device.** No frame, image or landmark array leaves the browser
+  or is stored; only the event rows. So this creates no biometric dataset, and
+  the erasure/retention/residency obligations that would follow from one do not
+  arise.
+
+**What is NOT true.** It is not true that low weighting makes the signal fair.
+A reviewer who sees "looked away 11 times" can still draw an adverse conclusion
+from it, whatever the score says and however carefully the panel is labelled —
+the mitigation reduces how much the SYSTEM acts on the signal, and shapes how
+it is presented, but it cannot control what a human infers. It is also not true
+that we have validated accuracy across device classes, lighting, skin tones,
+eyewear or assistive-technology use: we have not measured it at all, and the
+threshold (`proctorLogic`'s debounce) was chosen to avoid flapping, not for
+demographic parity.
+
+**Path to closure.** Two honest routes, and the cheaper one is real: (a) turn
+gaze off — set `exam_integrity_weight_gaze_away` to 0 and stop emitting the
+event client-side; the rest of the module (presence, multiple faces, fullscreen,
+tab, clipboard) works unchanged and loses nothing a customer bought. Or (b) keep
+it and earn the confidence: measure false-positive rates across device and
+accessibility conditions before it is ever weighted higher or shown more
+prominently. Until (b) exists, (a) is the correct response to the first
+substantiated complaint — that is the decision recorded here, not a preference.
+
+---
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -618,3 +686,4 @@ these is built.
 | **AR-6** | Preboarding documents, task artifacts, materials and the corpus are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4, PH5-E2 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
+| **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |

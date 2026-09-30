@@ -5,7 +5,12 @@ import structlog
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.auth.jwt import decode_private_key, parse_public_keys, parse_verify_algorithms
-from shared.security import ENFORCED_ENVS, assert_strong_secrets, normalise_app_env
+from shared.security import (
+    ENFORCED_ENVS,
+    assert_strong_secrets,
+    normalise_app_env,
+    strip_pasted_settings,
+)
 from shared.security import validate_cors_origins as _validate_cors_origins
 from shared.security import validate_database_ssl as _validate_database_ssl
 
@@ -62,6 +67,18 @@ class Settings(BaseSettings):
     database_ssl: str = ""
 
     redis_url: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_pasted_settings(cls, values: object) -> object:
+        """Repair whitespace a paste added — to EVERY setting, not a chosen few.
+
+        This started as a list of variable names and missed GROQ_MODEL, so the
+        same outage returned a third time. See shared/security.py for the rule
+        (ends stripped everywhere; all inner whitespace removed from *_api_key,
+        which go into an Authorization header) and for the incidents.
+        """
+        return strip_pasted_settings(values)
 
     auth_provider: str = "local"
 
@@ -484,10 +501,135 @@ class Settings(BaseSettings):
     # exam_assignments.scheduled_at. Unscheduled rounds may start any time before the
     # link expires. Mirrors interview_join_window_minutes (exams run longer → wider).
     exam_join_window_minutes: int = 30
-    # Number of proctoring violations (fullscreen-exit / tab-switch) after which the
-    # exam auto-submits. Surfaced to the candidate UI; enforced client-side, logged
-    # server-side via /exam/integrity-event.
+    # Number of proctoring violations (fullscreen-exit / tab-switch / camera
+    # face-absent / camera multiple-faces — NOT gaze_away, see below) after
+    # which the exam auto-submits. Surfaced to the candidate UI; enforced
+    # client-side, logged server-side via /exam/integrity-event.
     exam_integrity_max_violations: int = 3
+    # Per-event-type severity weights for the exam integrity score
+    # (max(0, 100 - sum of weights)), replacing the old flat 15-per-violation
+    # penalty (camera proctoring contract). Configurable so a retune never
+    # needs a code change.
+    exam_integrity_weight_multiple_faces: int = 25
+    exam_integrity_weight_face_absent: int = 20
+    exam_integrity_weight_fullscreen_exit: int = 15
+    exam_integrity_weight_tab_blur: int = 15
+    # copy/paste (code review FIX 1, 2026-09-29): these two predate camera
+    # proctoring — the exam client has always fired them — and are scored for
+    # the first time here. A paste (brings outside content IN) outweighs a copy
+    # (takes content OUT), but both stay below the browser-integrity signals,
+    # because pasting is not evidence of leaving the exam environment the way
+    # tabbing away or exiting fullscreen is; neither counts as a violation.
+    exam_integrity_weight_paste: int = 10
+    exam_integrity_weight_copy: int = 5
+    # Deliberately the LOWEST weight, and it must STAY low: gaze_away is the
+    # least reliable signal and the most likely to penalise someone for
+    # thinking, for a motor or visual difference, or for using assistive
+    # technology. It is context for a human reading the timeline, not
+    # evidence — do not raise this to "improve" the score, and it never
+    # counts toward exam_integrity_max_violations either (see
+    # app/routers/exam_take.py::_VIOLATION_EVENTS).
+    exam_integrity_weight_gaze_away: int = 5
+    # Rate limit on POST /exam/integrity-event, per EXAM LINK (code review
+    # FIX 2, 2026-09-29; rekeyed from per-IP to per-token by the follow-up
+    # review the same day) — this write endpoint had none: 150 consecutive
+    # posts from one token all returned 200 against a live instance.
+    #
+    # PER TOKEN, NOT PER IP, and that distinction is the whole point. A
+    # college computer lab is CLAUDE.md's #1 target market, and a lab NATs
+    # every seat behind one address: an IP-keyed cap of 120 would be spent by
+    # three ordinary candidates sitting the same exam, and the 4th onwards
+    # would have real camera events silently dropped (the client swallows the
+    # 429 and returns null, exactly like a lost packet) for doing nothing
+    # wrong. Keyed on the candidate's own link, each seat gets its own budget.
+    #
+    # This is the OUTER, volumetric guard, and it sits ABOVE any rate a real
+    # client can produce. Security review HIGH-2 caught the previous value
+    # (120) contradicting its own justification: ranged camera events are
+    # debounced at 1.2s per condition (proctorLogic's MIN_RANGED_MS) across 3
+    # conditions, so a flapping camera tops out near 150/min — i.e. the cap sat
+    # BELOW the pathological case the comment itself computed. A candidate with
+    # a cheap camera or bad lighting would have had real evidence dropped, and
+    # the HR panel would have shown them a short, clean-looking timeline. A
+    # genuinely working session sits far lower (well under 40/min).
+    #
+    # 300 clears that worst case with room to spare. The per-type fairness work
+    # is done by exam_integrity_nonviolation_per_minute below, not here.
+    exam_integrity_event_per_minute: int = 300
+    # The EDGE ceiling, on the route-level dependency, per token. Sits above
+    # the in-handler 300 on purpose: the handler's cap fires first and flags
+    # the attempt, so anything that reaches this one has already been recorded
+    # as dropped, and no unflaggable token refusal is reintroduced. Its job is
+    # only to restore the pre-DB cut-off — without it, every request past 300
+    # costs 5 SELECTs before being refused (security re-audit round 3).
+    exam_integrity_event_edge_per_minute: int = 400
+    # --- The other public exam routes, rekeyed from IP to link -------------
+    # Security review MEDIUM-5. These were IP-keyed, which is the same NAT
+    # failure the integrity endpoint had and worse in practice: a whole lab
+    # shared 20 run-code requests per minute on a button candidates press
+    # repeatedly during a TIMED coding round, so a 429 there is a user-visible
+    # mid-exam failure against a clock. Per candidate, 30/min is generous for
+    # someone testing their code by hand. The per-IP ceilings are sized for a
+    # 60-seat hall and stay volumetric backstops, never the normal-use limit.
+    exam_run_code_per_minute: int = 30
+    exam_run_code_per_ip_per_minute: int = 1800
+    # Submits are rare per candidate (one per section, plus retries on a flaky
+    # connection) but a whole hall submits at once when a clock expires, which
+    # is precisely when a throttle would do the most damage.
+    exam_submit_per_minute: int = 20
+    exam_submit_per_ip_per_minute: int = 1200
+    # The INNER budget, charged only to event types that are NOT violations
+    # (copy / paste / gaze_away), on their own Redis key.
+    #
+    # This exists because of the attack the outer cap alone cannot stop
+    # (security review HIGH-2). The client swallows a 429 and returns null, and
+    # for camera events that means the event row, the server's violation count
+    # and the auto-submit trigger are ALL lost with no trace. So with a single
+    # shared budget, a candidate could spend it on cheap `copy` events in the
+    # first seconds of each minute and have their own `multiple_faces` posts
+    # rejected for the rest of it — suppressing exactly the evidence this
+    # feature exists to collect, using the rate limit as the off switch.
+    #
+    # Keying the chatty types separately means a violation can never be
+    # starved by non-violations: they no longer share a counter.
+    #
+    # An earlier version of this comment added "and a candidate cannot flood
+    # with violations instead, because the third one auto-submits their exam".
+    # That named a control that does not exist and the security re-audit
+    # corrected it: exam_integrity_max_violations is only RETURNED to the
+    # client, auto-submit happens in the browser, and a malicious client
+    # ignores it. Flooding with violations is still not a useful attack, but
+    # for a different reason — it records 300 violations and a score of 0
+    # against the flooder, trading one concealed multiple_faces for the most
+    # damning timeline they could have produced. That is a property of the
+    # data, not a control, and the distinction matters to whoever reads this
+    # next looking for an enforcement point.
+    exam_integrity_nonviolation_per_minute: int = 120
+    # The LOOSER per-IP backstop: volumetric protection only, never the
+    # normal-use limit, and a LAB ALLOWANCE rather than an abuse control.
+    #
+    # Derived on the SAME basis as the per-token ceilings above — the
+    # pathological rate, not the realistic one. Security re-audit round 3
+    # caught the two being derived inconsistently: per_token was sized on the
+    # pathological 150/min while per_ip was sized on the realistic 40/min
+    # (60 seats x 40 = 2400, hence the old 3000). Mixed bases meant a hall of
+    # 50 ordinary candidates plus 7 with flapping cameras came to 3050 and lost
+    # events for EVERYONE in the room. On one basis: 60 seats x 150/min
+    # pathological = 9000.
+    #
+    # That is deliberately generous, because the failure it prevents is the one
+    # this whole feature is about — a room where many candidates have cheap
+    # cameras is a low-budget college, i.e. exactly CLAUDE.md's #1 market, and
+    # throttling it silently discards their evidence. Per-candidate DB cost is
+    # bounded by the edge per-token ceiling, not by this number, so raising it
+    # does not hand one link more database work.
+    #
+    # A real volumetric bound still belongs at the edge proxy, where it can be
+    # enforced without touching the database at all; this is the in-process
+    # backstop, and a refusal here is an OPERATIONAL signal (no attempt is
+    # resolved yet, so it cannot be flagged for HR) — alert on
+    # rate_limit_exceeded_total{bucket="exam_integrity_edge"}.
+    exam_integrity_event_per_ip_per_minute: int = 9000
 
     # --- Coding round — code execution (HR workflow Phase 2) ---
     # Swappable provider:

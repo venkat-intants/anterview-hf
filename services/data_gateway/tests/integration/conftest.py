@@ -24,6 +24,14 @@ THE ESCAPE HATCH
 variable rather than a pytest flag: it has to be awkward enough that nobody
 reaches for it to make a red suite go green, and explicit enough that it shows
 up in shell history when someone asks how the data got there.
+
+WHAT THE HATCH REACHES IS NOW MORE THAN WHEN IT WAS WRITTEN. The risk used to
+be "test fixtures written into production rows". Since 2026-09-29 it is larger:
+``test_migration_chain_with_legacy_rows.py`` performs database-level DDL —
+``CREATE DATABASE`` and ``DROP DATABASE`` — to replay the migration chain in
+isolation. That file therefore asserts loopback for ITSELF, unconditionally, so
+this hatch cannot reach it however it is set. Any future test that creates or
+drops databases must do the same rather than relying on this gate alone.
 """
 
 from __future__ import annotations

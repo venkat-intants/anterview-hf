@@ -12,6 +12,45 @@ echo "=== Intants HF Space boot ==="
 #    Fail fast with a readable message instead of five crash-looping services.
 # ---------------------------------------------------------------------------
 REQUIRED=(DATABASE_URL REDIS_URL JWT_SECRET CONSENT_IP_SALT EXAM_LINK_SECRET INTERVIEW_LINK_SECRET)
+
+# Trim surrounding whitespace from EVERY environment variable, before anything
+# reads them. The Space Settings field stores exactly what the clipboard
+# carried, and a wrapped paste or a stray Enter leaves a line break that is
+# completely invisible in the UI.
+#
+# This is not hypothetical tidiness. The same invisible character caused three
+# different-looking outages in one afternoon:
+#
+#   DATABASE_URL + "\n"  -> InvalidCatalogNameError: database "neondb
+#                           " does not exist          (every route 503)
+#   GROQ_API_KEY split   -> Illegal header value b'Bearer gsk_...'
+#                           (which also printed the key into a user-facing error)
+#   GROQ_MODEL   + "\n"  -> The model `openai/gpt-oss-120b
+#                           ` does not exist
+#
+# EVERY variable, not a list of the ones someone remembered. The first version
+# of this loop WAS such a list — it covered GROQ_API_KEY and missed GROQ_MODEL,
+# and the failure came back a third time. Any variable can be pasted, so an
+# allowlist is just a slower way to have the same outage.
+#
+# Ends only, via the sed slurp (:a;N;$!ba), so INTERNAL newlines survive: a
+# multi-line PEM in JWT_PRIVATE_KEY must not be flattened. Leading/trailing
+# whitespace is never meaningful in anything we accept, so this cannot change a
+# value that was already correct. The services strip again at config load
+# (shared/security.py::strip_pasted_settings), which additionally repairs an
+# *_API_KEY split across lines; this pass exists for the steps that run before
+# any Python does — the alembic migration and the checks below.
+while IFS= read -r v; do
+  [ -n "${!v:-}" ] || continue
+  cleaned="$(printf '%s' "${!v}" | sed -e ':a' -e 'N' -e '$!ba' \
+      -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  if [ "$cleaned" != "${!v}" ]; then
+    # Name only, never the value — most of these are secrets.
+    echo "NOTE: trimmed surrounding whitespace from $v (the pasted value carried it)."
+    export "$v=$cleaned"
+  fi
+done < <(compgen -e)
+
 MISSING=()
 for v in "${REQUIRED[@]}"; do
   [ -n "${!v:-}" ] || MISSING+=("$v")

@@ -125,6 +125,12 @@ class RoundPatch(BaseModel):
     # At or above this score, skip to that round. Both or neither.
     fast_track_min_percent: float | None = Field(default=None, gt=0, le=100)
     on_fast_track_next_round_id: uuid.UUID | None = None
+    # Who moves a PASSING candidate on from this round. Three-state, and
+    # the body is applied with exclude_unset=True so all three are
+    # expressible: omit = leave as is, null = follow the workflow default,
+    # true = always advance, false = always hold for HR to review.
+    # Holding never rejects anyone — see workflow_runner.auto_advance_for.
+    auto_advance: bool | None = None
 
     @field_validator("kind")
     @classmethod
@@ -540,6 +546,9 @@ async def get_workflow(
                 if r["on_fail_next_round_id"] else None,
                 "fast_track_min_percent": float(r["fast_track_min_percent"])
                 if r["fast_track_min_percent"] is not None else None,
+                # null here is meaningful: "follow the workflow default",
+                # which is a different answer from true or false.
+                "auto_advance": r["auto_advance"],
                 "on_fast_track_next_round_id": str(r["on_fast_track_next_round_id"])
                 if r["on_fast_track_next_round_id"] else None,
                 "exam_round_id": str(r["exam_round_id"]) if r["exam_round_id"] else None,

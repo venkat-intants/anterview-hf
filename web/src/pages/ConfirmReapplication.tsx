@@ -34,8 +34,9 @@ import AuthLayout from '@/components/layout/AuthLayout';
 import { Pill } from '@/design/components/primitives';
 import { AlertCircle, CheckCircle2, Loader2 } from '@/design/components/icons';
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+/** Whether the server refused the LINK rather than failing to do the work. */
+function isExpiredLink(e: unknown): boolean {
+  return e instanceof Error && /invalid or has expired/i.test(e.message);
 }
 
 export default function ConfirmReapplication(): JSX.Element {
@@ -80,16 +81,31 @@ export default function ConfirmReapplication(): JSX.Element {
           <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
             {t('reapply.title')}
           </h1>
-          <p className="mt-3 text-[14px] text-foreground">{confirm.data.message}</p>
+          {/* `applied` distinguishes "this link just did something" from "it
+              had already been followed". The server sends both with 200 and
+              its own English sentence; a candidate who chose हिंदी should not
+              meet English here, and somebody who clicked twice should not be
+              told twice that their application has only now gone through. */}
+          <p className="mt-3 text-[14px] text-foreground">
+            {confirm.data.applied > 0
+              ? t('reapply.confirmed')
+              : t('reapply.alreadyConfirmed')}
+          </p>
           <p className="mt-2 text-[13px] text-[var(--ui-soft)]">
             {t('reapply.whatNext')}
           </p>
-          <Link
-            to="/applications"
-            className="mt-5 inline-block text-[13px] text-[var(--accent)] underline underline-offset-2"
-          >
-            {t('reapply.viewApplications')}
-          </Link>
+          {/* Only offered to somebody who can actually use it. /applications is
+              behind auth, and a candidate arriving from an email has no
+              session — sending them to a login page is a dead end dressed as a
+              next step. */}
+          {confirm.data.applied > 0 ? (
+            <Link
+              to="/applications"
+              className="mt-5 inline-block text-[13px] text-[var(--accent)] underline underline-offset-2"
+            >
+              {t('reapply.viewApplications')}
+            </Link>
+          ) : null}
         </div>
       </AuthLayout>
     );
@@ -106,7 +122,13 @@ export default function ConfirmReapplication(): JSX.Element {
       {confirm.isError ? (
         <p className="mt-3 flex items-start gap-2 text-[13px] text-[var(--ui-danger)]">
           <AlertCircle size={15} aria-hidden="true" className="mt-0.5 shrink-0" />
-          {errText(confirm.error, t('reapply.errConfirm'))}
+          {/* The server's own words only when they say something this page
+              cannot: an expired or already-used link. Anything else is an
+              internal failure whose English detail helps nobody reading in
+              Hindi or Telugu. */}
+          {isExpiredLink(confirm.error)
+            ? t('reapply.errExpired')
+            : t('reapply.errConfirm')}
         </p>
       ) : null}
       <Pill

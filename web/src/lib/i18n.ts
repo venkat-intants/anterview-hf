@@ -902,6 +902,9 @@ const en = {
       ignore:
         'If you did not apply, you do not need to do anything. Close this page and nothing will be sent on.',
       noToken: 'This page needs the link from your email. Open it from there.',
+      confirmed: 'Thanks — your application is with the hiring team again.',
+      alreadyConfirmed: 'This application has already been confirmed. There is nothing more to do.',
+      errExpired: 'This link is no longer valid. Apply again to get a new one.',
       errConfirm: 'We could not confirm that just now. Please try the link again.',
     },
     apply: {
@@ -2111,6 +2114,9 @@ const hi = {
       ignore:
         'अगर आपने आवेदन नहीं किया है तो आपको कुछ नहीं करना है। यह पृष्ठ बंद कर दें, कुछ भी आगे नहीं भेजा जाएगा।',
       noToken: 'इस पृष्ठ के लिए आपके ईमेल वाला लिंक चाहिए। उसे वहीं से खोलें।',
+      confirmed: 'धन्यवाद — आपका आवेदन फिर से भर्ती टीम के पास है।',
+      alreadyConfirmed: 'इस आवेदन की पुष्टि पहले ही हो चुकी है। अब कुछ और करने की ज़रूरत नहीं।',
+      errExpired: 'यह लिंक अब मान्य नहीं है। नया पाने के लिए दोबारा आवेदन करें।',
       errConfirm: 'हम अभी पुष्टि नहीं कर सके। कृपया लिंक दोबारा आज़माएँ।',
     },
     apply: {
@@ -3278,6 +3284,9 @@ const te = {
       ignore:
         'మీరు దరఖాస్తు చేయకపోతే ఏమీ చేయనవసరం లేదు. ఈ పేజీని మూసివేయండి, ఏదీ ముందుకు పంపబడదు.',
       noToken: 'ఈ పేజీకి మీ ఈమెయిల్‌లోని లింక్ అవసరం. దాన్ని అక్కడి నుండే తెరవండి.',
+      confirmed: 'ధన్యవాదాలు — మీ దరఖాస్తు మళ్లీ నియామక బృందం వద్ద ఉంది.',
+      alreadyConfirmed: 'ఈ దరఖాస్తు ఇప్పటికే నిర్ధారించబడింది. ఇంకేమీ చేయనవసరం లేదు.',
+      errExpired: 'ఈ లింక్ ఇక చెల్లదు. కొత్తది పొందడానికి మళ్లీ దరఖాస్తు చేయండి.',
       errConfirm: 'ఇప్పుడే నిర్ధారించలేకపోయాం. దయచేసి లింక్‌ను మళ్లీ ప్రయత్నించండి.',
     },
     apply: {

@@ -10,7 +10,9 @@ document, in the document's own order and wording.
 `tests/integration/smoke_ph3_apply.py`, which runs the real endpoints against a real
 Postgres 16 and passes 57/57; `db` = asserted directly against the migrated schema;
 `e2e` = a Playwright journey in `web/e2e/`, driving the real browser against the real
-stack.
+stack. **Run on demand, NOT in CI** — `.github/workflows/ci.yml` has no Playwright step,
+so nothing gates these on a pull request. Six criteria below cite `e2e` as evidence;
+read that as "this was demonstrated", not "this is enforced", until the job exists.
 
 **Added 2026-09-27: `e2e`.** Phase 3 shipped with none. Seven journeys now cover it,
 and writing them found three things no unit test could have: the reapplication rule
@@ -210,8 +212,37 @@ refused by the waiting period, and nobody was let back in by an override either 
 whole feature was unreachable from the only door candidates use. The `smoke` test that
 passed had soft-deleted the enrolment first, which skips that branch.
 
-The endpoint now distinguishes reapplying-after-rejection from applying twice, reopens
-the enrolment through the stage ledger, and spends the override when it is used.
+Both doors — the one-shot form and a saved draft being finished — now share one
+predicate (`reapplication.gate`), because they had two hand-written copies of this
+decision and only one of them was fixed.
+
+**And a reapplication no longer takes effect on submission.** A security audit found
+that it could not: these endpoints are anonymous and identify a person by an address
+typed into a public form, and the requisition id is documented as not a secret. So one
+unauthenticated request could move a real person's status, overwrite the screening
+answers they had already given, attach a stranger's CV to their application, spend an
+override HR had granted them, and create a talent-pool consent they never gave.
+`final_decision.py` refuses an *authorised* HR manager from hiring over a rejection on
+the grounds that reopening someone is "a separate decision this does not make on
+anyone's behalf"; letting an anonymous caller make it was the same decision with less
+authority behind it.
+
+The application is still accepted anonymously and the cooldown still decides whether it
+is accepted at all. What changed is that it is STAGED on the rejected enrolment
+(`reapplication.stage`) and applied by `reapplication.confirm` only when a link emailed
+to the address is followed — a dedicated `reapply_confirm` token, because
+`stage_activation_email` mints nothing for someone who has already claimed their
+account and their reapplication would have waited for ever.
+
+The cooldown is re-evaluated at confirmation rather than trusted from submission, and
+the override is spent only when it is what allowed the reapplication.
+
+**What a candidate sees.** The reply to a refusal is now identical to the reply a live
+application gets: a 409 naming the date told anyone with the public link that a named
+person had applied, had been rejected, and roughly when. The date is emailed to the
+address instead. And a staged reapplication says "One more step — check your email"
+rather than "your application is in", which would have been the opposite of what the
+email then asks them to do.
 
 ---
 
@@ -680,7 +711,10 @@ which is the only number worth quoting before a deploy.
 ## Browser coverage (added 2026-09-27)
 
 Phase 3 shipped with none. Seven Playwright journeys now drive the real browser against
-the real stack; the whole set runs in about five minutes.
+the real stack. Each passes; the full set is memory-hungry and has been flaky as a batch
+on a 8 GB machine (two specs wait on real clock time — a scheduled publish and an
+emailed confirmation), so the honest figure is "about five minutes with headroom", not a
+guarantee. They are not run by CI.
 
 | Spec | Stories | What only a browser can say |
 |---|---|---|
@@ -689,7 +723,7 @@ the real stack; the whole set runs in about five minutes.
 | `scheduled-publishing.spec.ts` | B4a, B0 | an opening publishes itself with nothing in the test telling it to, and what the careers board lists opens when clicked |
 | `application-confirmation.spec.ts` | B5 | the CV says one name, the candidate says another, and HR sees the candidate's |
 | `save-and-resume.spec.ts` | B4, B4c | saving is offered and inert before consent, and a genuinely new browsing context comes back to the answers already given |
-| `reapply-cooldown.spec.ts` | B4 | a rejected candidate is refused by the waiting period and let through by an override, both through the form real candidates use |
+| `reapply-cooldown.spec.ts` | B4 | a rejected candidate is refused by the waiting period with nothing leaked on screen, let through by an override, and — after confirming by email — is back in **HR's own view** as `new`. The confirmation leg was added after a review found the spec passed while the enrolment stayed rejected and the override went unspent: it proved the form accepted a submission, not that criterion 9 works |
 | `apply-source.spec.ts` | B1 | a campaign tag never costs an applicant, and is never shown to the person being counted |
 
 **Three defects were found by writing them**, each in a criterion already marked ✅:

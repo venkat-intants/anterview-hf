@@ -137,6 +137,12 @@ answers but never looks anything up is a `GROQ_MODEL` problem.
   security question about the platform — several things the design docs describe
   as controls are not implemented, and this file is the list. Nothing in it is
   fixed.
+- `docs/CAMERA-PROCTORING-CONTRACT.md` — The exam camera-proctoring spec: event
+  vocabulary, severity weighting, the consent gate, the "no frame ever leaves the
+  browser" guarantee, accommodations, the HR review panel and localisation. 42
+  code comments cite it by section (`contract §7 item 1`), and a test fails if a
+  cited section is missing or a defined one is uncited. **§6 is deliberately
+  empty** — nothing cites it, so its subject is unknown and is not guessed.
 - `docs/DATA-FLOW.md` — Authoritative sub-processor + data-residency record;
   linked from the in-app consent modal, so treat every claim in it as a
   statement we can be asked to substantiate.

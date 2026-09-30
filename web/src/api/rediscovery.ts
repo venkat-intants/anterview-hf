@@ -289,7 +289,8 @@ export function listMyRediscovery(): Promise<MyRediscoveryResponse> {
  * (`record_opt_in(source="my_applications")`); `{on: false}` withdraws
  * (`revoke_opt_ins(company_id=…)`). Always succeeds either way for the
  * signed-in owner — the "not re-granted after withdrawal" refusal is a
- * public-apply-form-only rule (contract §3) and never reaches this call.
+ * public-apply-form-only rule (the PH5-E3 REDISCOVERY contract §3, not the
+ * camera-proctoring one) and never reaches this call.
  */
 export function setMyRediscovery(companyId: string, on: boolean): Promise<MyRediscoveryCompany> {
   return apiPut<MyRediscoveryCompany>(`/users/me/rediscovery/${pathId(companyId)}`, { on });

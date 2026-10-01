@@ -752,6 +752,70 @@ async def _refuse(
     return await _reply(name, floor_from=floor_from)
 
 
+async def _require_write_capability(db: DbSessionDep) -> None:
+    """Refuse every submission equally when the database cannot be written to.
+
+    THE LAST STATUS-CODE ORACLE, and the one a reply floor cannot close.
+
+    Under a partial outage that serves reads and refuses writes — failover to
+    a read-only standby, `default_transaction_read_only`, a maintenance
+    window — the states diverge on the status line, which no amount of
+    latency-shaping hides:
+
+      * a live application performs only SELECTs and commits nothing -> 201
+      * a cooldown's only write is the notice, which is swallowed inside its
+        own savepoint, so its commit commits nothing -> 201
+      * every state that is free to apply raises on the insert -> 503
+
+    Two anonymous requests during any read-only window therefore separate
+    "this address already has an application here" from "this address is free
+    to apply", which is the disclosure this whole feature exists to prevent.
+
+    The alternative fix was to give every state the same write set. That means
+    storing a row naming an address for somebody who never applied — PII about
+    a non-applicant, with no consent-ledger entry to justify it and no
+    erasure anchor to reach it. Hiding a status code is not a lawful basis.
+
+    So instead this asks the question directly, before anything branches: can
+    this transaction write? A zero-row UPDATE answers it. Postgres rejects DML
+    in a read-only transaction at executor start, BEFORE evaluating the
+    predicate — verified, not assumed: the statement below raises
+    `cannot execute UPDATE in a read-only transaction` while reporting
+    `UPDATE 0` on a healthy connection. So it costs an indexed probe that
+    touches nothing, and it fails for every state alike.
+
+    The 503 is the honest answer in that window: the service genuinely cannot
+    accept an application from anybody. The alternative — answering 201
+    everywhere — would tell a real candidate their application had landed when
+    it had not, which is a worse thing to do than leak the distinction.
+
+    SAVEPOINT, because an error aborts the surrounding transaction in
+    Postgres unless one is held, and the caller has work in flight.
+
+    WHAT THIS DOES NOT CLOSE: a disk-full primary, where reads and a zero-row
+    DML both succeed and only real writes fail. That residue is narrower than
+    what this closes and it is recorded rather than pretended away.
+    """
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    "UPDATE enrolments SET updated_at = updated_at"
+                    " WHERE id = '00000000-0000-0000-0000-000000000000'"
+                )
+            )
+    except Exception as exc:  # noqa: BLE001 — any write refusal is the answer
+        log.warning(
+            "public_apply.write_unavailable", error_type=type(exc).__name__
+        )
+        raise HTTPException(
+            # The SAME sentence a storage failure gives, so the two degraded
+            # modes are not distinguishable from each other either.
+            status_code=503,
+            detail="We could not save your application. Please try again.",
+        ) from exc
+
+
 async def _release_unadopted(s3_key: str) -> None:
     """Remove a CV that was uploaded before the gate and then not kept.
 
@@ -1412,6 +1476,12 @@ async def submit_draft(
         checked_answers = validate_answers(questions, dict(row.get("answers") or {}))
     except AnswerError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # The same question this door's twin asks, for the same reason. Nothing
+    # was uploaded in this handler — the CV arrived at
+    # /apply/draft/resume-upload and the draft row still names it — so there
+    # is nothing to release if the answer is no.
+    await _require_write_capability(db)
 
     # THE FLOOR STARTS HERE. This door does no upload of its own — the CV
     # arrived at /apply/draft/resume-upload — so the shared work is behind
@@ -2216,6 +2286,16 @@ async def submit_application(
         raise HTTPException(
             status_code=503, detail="We could not save your application. Please try again."
         ) from exc
+
+    # Can we write at all? Asked before anything branches, so a read-only
+    # database refuses every state with the same 503 instead of answering 201
+    # for the states that write nothing. The object just uploaded is released
+    # first, or a degraded window would fill the bucket with orphans.
+    try:
+        await _require_write_capability(db)
+    except HTTPException:
+        await _release_unadopted(s3_key)
+        raise
 
     # THE FLOOR STARTS HERE, after the upload and before the gate. The
     # upload is the term the caller sizes and it is common to every state,

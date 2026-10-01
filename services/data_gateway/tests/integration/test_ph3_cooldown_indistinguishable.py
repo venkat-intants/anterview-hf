@@ -74,6 +74,7 @@ from unittest import mock
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
@@ -723,3 +724,55 @@ async def test_the_states_cannot_be_separated_by_how_long_the_reply_takes(
     # `test_every_reply_from_both_doors_is_the_same_object` requires every exit
     # on both doors to return through `_reply(name, floor_from=floor_from)`,
     # and `test_every_state_does_the_same_work` pins the shared work above it.
+
+
+@pytest.mark.asyncio
+async def test_a_read_only_database_answers_the_same_way_for_every_state(
+    client: AsyncClient,
+) -> None:
+    """The last status-code oracle, and the one the reply floor cannot close.
+
+    Under a partial outage that serves reads and refuses writes — failover to
+    a read-only standby, `default_transaction_read_only`, a maintenance
+    window — the states used to diverge on the status line:
+
+      * a live application performs only SELECTs and commits nothing -> 201
+      * a cooldown's only write is the notice, swallowed in its own
+        savepoint, so its commit commits nothing -> 201
+      * every state free to apply raises on the insert -> 503
+
+    Two anonymous requests in that window separated "this address already has
+    an application here" from "this address is free to apply". Shaping latency
+    cannot hide a status code, so this is closed by asking the question before
+    anything branches: `_require_write_capability` performs a zero-row DML,
+    which Postgres rejects in a read-only transaction at executor start.
+
+    Simulated by making that probe raise rather than by putting the real
+    database into recovery, which a test cannot do without taking the whole
+    suite's connection with it. What is under test is the ROUTE's behaviour
+    when the answer is no — that it refuses every state alike — and the
+    probe's own semantics are the thing that was verified against real
+    Postgres before this was written.
+    """
+    from app.routers import public_apply
+
+    addresses = await _seeded_addresses(client)
+
+    async def _write_refused(_db: object) -> None:
+        raise HTTPException(
+            status_code=503,
+            detail="We could not save your application. Please try again.",
+        )
+
+    seen: dict[str, tuple[int, object]] = {}
+    with mock.patch.object(
+        public_apply, "_require_write_capability", _write_refused
+    ):
+        for case, (target, email) in addresses.items():
+            seen[case] = _observable(await _apply(client, target, email))
+
+    _assert_one_answer(seen, "a read-only database")
+    # And the answer is the refusal, not a cheerful 201 — telling a real
+    # candidate their application landed when it did not would be a worse
+    # thing to do than leaking the distinction.
+    assert {s for s, _ in seen.values()} == {503}, seen

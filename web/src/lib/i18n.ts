@@ -1895,7 +1895,8 @@ const hi = {
       passed: 'आप उत्तीर्ण हुए',
       notThisTime: 'इस बार नहीं',
       resultThanks: 'परीक्षा पूरी करने के लिए धन्यवाद। अब आप यह विंडो बंद कर सकते हैं।',
-      questionsCount: '{{count}} प्रश्न',
+      questionsCount_one: '{{count}} प्रश्न',
+      questionsCount_other: '{{count}} प्रश्न',
       minutes: '{{count}} मिनट',
       timerNote:
         'जब आप शुरू करते हैं तब टाइमर चालू हो जाता है और समय समाप्त होने पर परीक्षा स्वतः सबमिट हो जाती है।',
@@ -1940,6 +1941,8 @@ const hi = {
         'आप मना कर सकते हैं, लेकिन इस राउंड को शुरू करने के लिए कैमरा निगरानी आवश्यक है।',
       cameraConsentAgree: 'कैमरा निगरानी चालू करें',
       cameraConsentDecline: 'मना करें',
+      cameraConsentNeededBeforeStart:
+        'इस राउंड को शुरू करने से पहले कैमरा निगरानी चालू करनी होगी। कृपया नीचे इसे चालू करें और फिर प्रयास करें।',
       cameraRequiredTitle: 'इस परीक्षा के लिए आपका कैमरा चाहिए',
       cameraRequiredDesc:
         'इस राउंड के लिए कैमरा निगरानी आवश्यक है, और इसे चालू नहीं किया गया, इसलिए परीक्षा शुरू नहीं हो सकती। आप नीचे पुनर्विचार कर सकते हैं, या किसी अन्य व्यवस्था के लिए अपने भर्तीकर्ता से संपर्क करें।',
@@ -1955,7 +1958,8 @@ const hi = {
       cameraWarn_gaze_away: 'कृपया स्क्रीन की ओर देखें',
       cameraWarn_face_absent: 'आप दिखाई नहीं दे रहे — कृपया कैमरे के सामने वापस आएं',
       cameraWarn_multiple_faces: 'एक से अधिक व्यक्ति दिखाई दे रहे हैं',
-      codingProblems: '{{count}} coding समस्याएं',
+      codingProblems_one: '{{count}} coding समस्या',
+      codingProblems_other: '{{count}} coding समस्याएं',
       codingInputLabel: 'Input',
       codingExpectedLabel: 'अपेक्षित output',
       codingLanguageLabel: 'भाषा',
@@ -3058,7 +3062,8 @@ const te = {
       passed: 'మీరు ఉత్తీర్ణులయ్యారు',
       notThisTime: 'ఈసారి కాదు',
       resultThanks: 'పరీక్ష పూర్తి చేసినందుకు ధన్యవాదాలు. మీరు ఇప్పుడు ఈ విండోను మూసివేయవచ్చు.',
-      questionsCount: '{{count}} ప్రశ్నలు',
+      questionsCount_one: '{{count}} ప్రశ్న',
+      questionsCount_other: '{{count}} ప్రశ్నలు',
       minutes: '{{count}} నిమి',
       timerNote:
         'మీరు ప్రారంభించినప్పుడు టైమర్ మొదలవుతుంది మరియు సమయం ముగిసినప్పుడు పరీక్ష స్వయంచాలకంగా సబ్మిట్ అవుతుంది.',
@@ -3104,6 +3109,8 @@ const te = {
         'మీరు నిరాకరించవచ్చు, కానీ ఈ రౌండ్ ప్రారంభించడానికి కెమెరా పర్యవేక్షణ అవసరం.',
       cameraConsentAgree: 'కెమెరా పర్యవేక్షణను ఆన్ చేయండి',
       cameraConsentDecline: 'నిరాకరించండి',
+      cameraConsentNeededBeforeStart:
+        'ఈ రౌండ్ ప్రారంభించడానికి ముందు కెమెరా పర్యవేక్షణ ఆన్ చేయాలి. దయచేసి క్రింద దాన్ని ఆన్ చేసి మళ్లీ ప్రయత్నించండి.',
       cameraRequiredTitle: 'ఈ పరీక్షకు మీ కెమెరా అవసరం',
       cameraRequiredDesc:
         'ఈ రౌండ్‌కు కెమెరా పర్యవేక్షణ అవసరం, అది ఆన్ చేయలేదు కాబట్టి పరీక్ష ప్రారంభం కాదు. మీరు క్రింద మళ్లీ ఆలోచించవచ్చు, లేదా వేరే ఏర్పాటు కోసం మీ రిక్రూటర్‌ను సంప్రదించండి.',
@@ -3119,7 +3126,8 @@ const te = {
       cameraWarn_gaze_away: 'దయచేసి స్క్రీన్‌ను చూడండి',
       cameraWarn_face_absent: 'మీరు కనిపించడం లేదు — దయచేసి కెమెరా ముందుకు తిరిగి రండి',
       cameraWarn_multiple_faces: 'ఒకటి కంటే ఎక్కువ మంది వ్యక్తులు కనిపిస్తున్నారు',
-      codingProblems: '{{count}} coding సమస్యలు',
+      codingProblems_one: '{{count}} coding సమస్య',
+      codingProblems_other: '{{count}} coding సమస్యలు',
       codingInputLabel: 'Input',
       codingExpectedLabel: 'అంచనా output',
       codingLanguageLabel: 'భాష',

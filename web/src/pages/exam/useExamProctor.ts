@@ -1,5 +1,8 @@
 // useExamProctor — client-side proctoring for the candidate exam-taking flow.
 //
+// Contract: docs/CAMERA-PROCTORING-CONTRACT.md (§1 vocabulary and submission,
+// §4 the no-frame guarantee, §5 accommodations).
+//
 // Mirrors the interview useProctoring pattern but scoped to exams:
 //   - Requests fullscreen when `enabled` flips true (must be called from a
 //     user-gesture context, i.e. after the "Start exam" button click).

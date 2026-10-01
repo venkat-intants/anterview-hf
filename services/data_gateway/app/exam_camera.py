@@ -2,6 +2,13 @@
 "no frame ever" guarantee, and the ``video_capture`` consent gate for the
 applicant magic-link (unauthenticated) exam-take flow.
 
+THE CONTRACT THIS MODULE IMPLEMENTS: ``docs/CAMERA-PROCTORING-CONTRACT.md``.
+Comments here and across the exam-proctoring code cite it by section (§1 the
+vocabulary, §2 the weights, §3 consent, §4 the no-frame guarantee, §5
+accommodations, §7 the HR panel, §8 localisation). It was written on 2026-09-30,
+after the code — until then 53 citations pointed at a document that had never
+been committed.
+
 WHAT ALREADY EXISTS (do not rebuild)
 ``exam_integrity_events`` (``attempt_id``, ``company_id``, ``event_type``,
 ``started_at``, ``ended_at`` nullable, ``event_metadata`` JSONB — see the "NO
@@ -129,6 +136,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -198,6 +206,48 @@ def score_from_counts(counts: dict[str, int]) -> int:
     weights = severity_weights()
     penalty = sum(weights.get(event_type, 0) * n for event_type, n in counts.items())
     return max(0, 100 - penalty)
+
+
+#: Keys on ``exam_attempts.proctoring_summary`` that describe OUR COLLECTION
+#: rather than the counted events, and so must survive a recount.
+STICKY_SUMMARY_KEYS: tuple[str, ...] = ("events_dropped",)
+
+
+def rolling_summary(
+    previous: Mapping[str, Any] | None,
+    *,
+    counts: Mapping[str, int],
+    camera_in_use: bool,
+) -> dict[str, Any]:
+    """The whole ``proctoring_summary`` value, recomputed from persisted counts.
+
+    ``previous`` is the stored value. Everything in the result is derived from
+    ``counts`` EXCEPT the keys in :data:`STICKY_SUMMARY_KEYS`, which record
+    something about our own recording rather than about the events, and are
+    therefore carried forward.
+
+    That distinction is the bug this function exists to prevent. The ingest
+    endpoint used to assign a fresh dict on every accepted event, so the very
+    next event after a throttled one erased ``events_dropped`` and the HR
+    timeline went back to looking complete — defeating the flag in precisely
+    its own scenario, a chatty or flapping client that drops events and then
+    sends one that succeeds. A recount must never be able to un-say "this
+    record is incomplete".
+
+    Returns a NEW dict, never a mutation of ``previous``: SQLAlchemy does not
+    track changes made inside a JSONB value without ``MutableDict``, so an
+    in-place edit would silently persist nothing.
+    """
+    prior = previous if isinstance(previous, Mapping) else {}
+    summary: dict[str, Any] = {
+        "counts": dict(counts),
+        "violations": sum(n for et, n in counts.items() if et in VIOLATION_EVENT_TYPES),
+        "camera_in_use": camera_in_use,
+    }
+    for key in STICKY_SUMMARY_KEYS:
+        if prior.get(key) is not None:
+            summary[key] = prior[key]
+    return summary
 
 
 # ---------------------------------------------------------------------------

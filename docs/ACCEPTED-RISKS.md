@@ -627,7 +627,10 @@ spent four minutes looking off-screen — but every structural choice around it
 assumes it will sometimes be wrong about an innocent person:
 
 - **Weighted 5, the lowest of the seven event types** (`exam_integrity_weight_gaze_away`),
-  tied with `copy` and a fifth of `multiple_faces`.
+  tied with `copy` and a fifth of `multiple_faces`. Written down as a standing
+  requirement, not just a current value, in
+  `docs/CAMERA-PROCTORING-CONTRACT.md` §2: *"the lowest, and it must stay the
+  lowest"*. Raising it is a change to THIS accepted risk, not a tuning decision.
 - **Never a violation.** It is absent from `VIOLATION_EVENT_TYPES`, so it can
   never contribute to the auto-submit threshold — a candidate cannot have an
   exam ended by looking away, at any frequency.

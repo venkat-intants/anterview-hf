@@ -1,6 +1,7 @@
 // AttemptProctoringSummary — the HR-facing view of GET
 // /hr/exams/{examId}/attempts/{attemptId}/proctoring (camera-proctoring
-// contract §7). Rendered on ExamAttemptDetail's overview.
+// contract §7 — docs/CAMERA-PROCTORING-CONTRACT.md). Rendered on
+// ExamAttemptDetail's overview.
 //
 // THE LOAD-BEARING RULE ON THIS SCREEN: a score tells HR nothing about *why*
 // it dropped, and a reviewer under time pressure is exactly the person most
@@ -129,6 +130,17 @@ export default function AttemptProctoringSummary({
   const gazeEvents = eventsOfType(data.events, 'gaze_away');
   const gazeCount = data.counts.gaze_away ?? 0;
 
+  // Did the camera produce ANY signal at all? `camera_in_use` only says the
+  // ROUND REQUIRED a camera — it is frozen from the round's setting at start
+  // and cannot know whether the candidate granted permission or whether the
+  // detector ever loaded. So "required, and not one camera signal" is
+  // genuinely ambiguous, and the panel has to say so instead of showing what
+  // reads as a clean record (review, 2026-09-30).
+  const cameraSignals =
+    (data.counts.face_absent ?? 0) +
+    (data.counts.multiple_faces ?? 0) +
+    gazeCount;
+
   const otherCounts = Object.entries(data.counts)
     .filter(([type]) => type !== 'gaze_away')
     .sort(([a], [b]) => orderIndex(a) - orderIndex(b));
@@ -172,9 +184,30 @@ export default function AttemptProctoringSummary({
         </p>
       )}
 
+      {/* Required, but the camera produced nothing. Two very different
+          situations look identical here — a candidate who sat still, and one
+          whose camera was never granted or whose detector never loaded — and
+          this record cannot tell them apart. Saying so is the only honest
+          option; implying the first would be the failure this panel exists to
+          avoid. */}
+      {data.camera_in_use && cameraSignals === 0 && (
+        <p
+          className="mt-2.5 flex items-start gap-1.5 text-[12.5px] leading-relaxed text-muted-foreground"
+          data-testid="proctoring-no-camera-signal"
+        >
+          <Info size={13} className="mt-0.5 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+          <span>
+            This round required the camera, and no camera signal was recorded. That can mean the
+            candidate was simply present throughout, or that the camera never started — permission
+            declined, or the detector failing to load. This record cannot tell those apart, so
+            please do not read it as either.
+          </span>
+        </p>
+      )}
+
       {data.camera_in_use && otherEventsTotal === 0 && (
         <p className="mt-2.5 text-[12.5px] text-muted-foreground">
-          No fullscreen, tab, face or copy/paste events were recorded for this attempt.
+          No fullscreen, tab or copy/paste events were recorded for this attempt.
         </p>
       )}
 

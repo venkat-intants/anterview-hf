@@ -40,7 +40,6 @@ double-clicked submit all collapse to one advancement.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -67,6 +66,7 @@ from app.workflows import (
     HUMAN_EVALUATED_KINDS,
     TASK_KINDS,
     Route,
+    auto_advance_for,
     exam_round_problem,
     exam_round_readiness,
     load_criteria,
@@ -88,33 +88,6 @@ INTERVIEW_SCORE_MAX = 10.0
 #: release means; a final decision goes through app.final_decision, which
 #: needs a reason and a reason code this path never collects.
 RELEASE_TO_STATUSES: frozenset[str] = frozenset({"shortlisted", "interviewed"})
-
-
-def auto_advance_for(round_: Mapping[str, Any], workflow: Mapping[str, Any]) -> bool:
-    """Does a PASSING result on this round move the candidate on by itself?
-
-    Resolves the per-round override against the workflow default. The override
-    is three-state, and the middle state is the point:
-
-        None   this round has no opinion — follow ``workflows.auto_advance_rounds``
-        True   this round always advances a passing candidate
-        False  this round always holds them for a person
-
-    ``auto_advance_rounds`` alone was one switch for an entire workflow, so a
-    process could not be automatic through screening and deliberate at the final
-    round — which is the shape most hiring actually has. HR now sets it per
-    round.
-
-    "Manual" here decides only WHO MOVES PEOPLE ON, never who is rejected. A
-    held candidate waits for a person, who releases them onward; ending a
-    candidacy still goes through ``app.final_decision``, which requires a reason
-    and a reason code this path never collects. Nothing in this module can end
-    one — see the module docstring.
-    """
-    override = round_.get("auto_advance")
-    if override is None:
-        return bool(workflow["auto_advance_rounds"])
-    return bool(override)
 
 
 @dataclass
@@ -340,6 +313,7 @@ async def _load_round(db: AsyncSession, round_id: uuid.UUID) -> dict[str, Any] |
         await db.execute(
             text(
                 "SELECT id, workflow_id, position, title, kind, pass_threshold,"
+                "       time_limit_seconds,"
                 "       deadline_days, on_pass_next_round_id, exam_round_id,"
                 "       on_fail_next_round_id, fast_track_min_percent,"
                 "       on_fast_track_next_round_id, auto_advance"
@@ -356,6 +330,7 @@ async def _first_round(db: AsyncSession, workflow_id: uuid.UUID) -> dict[str, An
         await db.execute(
             text(
                 "SELECT id, workflow_id, position, title, kind, pass_threshold,"
+                "       time_limit_seconds,"
                 "       deadline_days, on_pass_next_round_id, exam_round_id,"
                 "       on_fail_next_round_id, fast_track_min_percent,"
                 "       on_fast_track_next_round_id, auto_advance"
@@ -369,7 +344,13 @@ async def _first_round(db: AsyncSession, workflow_id: uuid.UUID) -> dict[str, An
 
 
 async def _hold(
-    db: AsyncSession, enrolment: dict[str, Any], reason: str, actor: uuid.UUID | None = None
+    db: AsyncSession,
+    enrolment: dict[str, Any],
+    reason: str,
+    actor: uuid.UUID | None = None,
+    *,
+    round_: dict[str, Any] | None = None,
+    workflow: dict[str, Any] | None = None,
 ) -> RunnerOutcome:
     """Stop a candidate's progression without ending their candidacy.
 
@@ -377,6 +358,15 @@ async def _hold(
     consuming further rounds, and appears in the final decision queue beside
     those who advanced. Only a person may move them out of it, in either
     direction (D-05).
+
+    ``round_`` and ``workflow`` are what let this function TELL SOMEONE. A hold
+    is the one runner outcome whose whole purpose is to summon a person, and it
+    used to summon nobody: the candidate appeared in ``decision_queue`` and
+    waited there until an HR manager happened to open the screen. The per-round
+    "Hold for my review" toggle made that the normal path rather than an edge
+    case, so the notification is part of the feature, not a nicety. Omit them
+    and the hold still happens silently — no caller should, but a hold must
+    never fail for want of a notification.
     """
     now = datetime.now(tz=UTC)
     await record_transition(
@@ -395,6 +385,25 @@ async def _hold(
         ),
         {"n": now, "r": reason, "i": enrolment["id"]},
     )
+    if workflow is not None and round_ is not None:
+        # Same kind as a human_review assignment: to the reviewer this IS the
+        # same event — someone is waiting for your decision — and reusing it
+        # means the feed tone and the live-refresh keys (which already point at
+        # the decision queue) need no new wiring.
+        #
+        # Deduped per (enrolment, round): a re-grade of the same round re-holds
+        # the same candidate at the same place, and announcing that twice would
+        # train HR to ignore the feed. A hold at a DIFFERENT round is a new
+        # event and does announce.
+        await create_notification(
+            db,
+            user_id=workflow.get("created_by_user_id"),
+            kind="review_due",
+            title=f"{enrolment['full_name']} is waiting for your decision",
+            body=f"{enrolment['target_job_title']} · {reason}",
+            link="/hr/requisitions",
+            dedupe_key=f"hold:{enrolment['id']}:{round_['id']}",
+        )
     log.info("runner.held", enrolment_id=str(enrolment["id"]), reason=reason)
     return RunnerOutcome(action="held", enrolment_id=str(enrolment["id"]), reason=reason)
 
@@ -756,7 +765,7 @@ async def record_result(
                 db, enrolment=enrolment, round_=round_, workflow=workflow, route=route,
                 why=reason,
             )
-        return await _hold(db, enrolment, reason)
+        return await _hold(db, enrolment, reason, round_=round_, workflow=workflow)
 
     if not auto_advance_for(round_, workflow):
         # Held for a person BY DESIGN, not stalled. The reason names which
@@ -767,7 +776,10 @@ async def record_result(
             if round_.get("auto_advance") is False
             else "auto-advance disabled for this workflow"
         )
-        return await _hold(db, enrolment, f"{round_['title']}: passed — {why}")
+        return await _hold(
+            db, enrolment, f"{round_['title']}: passed — {why}",
+            round_=round_, workflow=workflow,
+        )
 
     return await _advance(db, enrolment=enrolment, round_=round_, workflow=workflow, route=route)
 
@@ -926,7 +938,10 @@ async def _advance(
 
     nxt_id = route.next_round_id if route.kind == "advance" else None
     if route.kind == "hold":
-        return await _hold(db, enrolment, why or f"{round_['title']}: needs a human decision")
+        return await _hold(
+            db, enrolment, why or f"{round_['title']}: needs a human decision",
+            round_=round_, workflow=workflow,
+        )
     if nxt_id is None:
         # End of the workflow. NOT an outcome — the candidate is queued for the
         # final human decision, which is the only thing that ends a candidacy.
@@ -955,7 +970,10 @@ async def _advance(
 
     nxt = await _load_round(db, nxt_id)
     if nxt is None:
-        return await _hold(db, enrolment, f"{round_['title']}: the next round no longer exists")
+        return await _hold(
+            db, enrolment, f"{round_['title']}: the next round no longer exists",
+            round_=round_, workflow=workflow,
+        )
 
     await _move_to_round(db, enrolment=enrolment, round_=nxt, workflow=workflow)
     moved = {
@@ -997,6 +1015,23 @@ async def release_hold(
     caller and no setting that releases a hold, because deciding that a
     below-threshold candidate should proceed is exactly the judgement D-05
     reserves for a person.
+
+    "Continue" means ONTO THE NEXT ROUND. This used to clear ``held_at`` and
+    record a transition without touching ``current_round_id``, so a released
+    candidate came back to the pipeline still sitting on the round they had
+    already finished — no exam link, no interview invite, nothing assigned, and
+    no second event coming to move them. HR's only remaining option was to drag
+    them by hand. The release now takes the round's PASS branch through
+    ``_advance``, which is the same code an automatic advance runs: it mints
+    whatever the next round needs and emails the candidate. A release on the
+    last round ends at the final human decision, exactly as finishing it
+    automatically would.
+
+    Taking the pass branch on a candidate who FAILED is the point, not an
+    oversight: releasing a below-threshold candidate is a reviewer overriding
+    the threshold, and the fail branch is where the runner already sent the ones
+    it could route by itself. Nothing here can reject anyone — see
+    ``app.final_decision``.
     """
     if to_status not in RELEASE_TO_STATUSES:
         return RunnerOutcome(
@@ -1030,8 +1065,37 @@ async def release_hold(
     )
     log.info("runner.hold_released", enrolment_id=str(enrolment_id),
              actor=str(actor_user_id))
-    return RunnerOutcome(action="advanced", enrolment_id=str(enrolment_id),
-                         reason="hold released")
+
+    # Now actually move them. The status the caller chose is written into the
+    # dict we hand _advance, because _advance carries the current status forward
+    # onto the next round and would otherwise re-record "held" on a candidate
+    # who has just been released.
+    released = {**enrolment, "status": to_status}
+    round_id = enrolment["current_round_id"]
+    if round_id is None:
+        # Held with no current round: the candidate had already reached the end
+        # of the workflow, so there is nowhere to advance to and the release
+        # simply returns them to the final decision queue.
+        return RunnerOutcome(action="advanced", enrolment_id=str(enrolment_id),
+                             reason="hold released — awaiting the final decision")
+    round_ = await _load_round(db, round_id)
+    workflow = (
+        await _load_workflow(db, enrolment["workflow_id"]) if enrolment["workflow_id"] else None
+    )
+    if round_ is None or workflow is None:
+        # The round or the workflow was deleted under them. The hold is still
+        # lifted — refusing that would strand the candidate in held forever —
+        # but there is no route to follow, so say so rather than implying a move.
+        log.warning("runner.hold_released.no_route", enrolment_id=str(enrolment_id),
+                    round_id=str(round_id))
+        return RunnerOutcome(action="advanced", enrolment_id=str(enrolment_id),
+                             reason="hold released — the round no longer exists, "
+                                    "so the candidate did not move")
+    route = route_after_result(round_, passed=True, percent=None)
+    return await _advance(
+        db, enrolment=released, round_=round_, workflow=workflow, route=route,
+        why=f"hold released by a reviewer: {reason}" if reason else "hold released by a reviewer",
+    )
 
 
 async def decision_queue(

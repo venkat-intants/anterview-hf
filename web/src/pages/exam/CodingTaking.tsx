@@ -468,7 +468,7 @@ export default function CodingTaking(props: Props) {
         <div className="min-w-0">
           <p className="truncate text-body-sm font-semibold text-foreground">{exam.title}</p>
           <p className="text-caption text-muted-foreground">
-            {questions.length} {t('publicExam.codingProblems', { count: questions.length })}
+            {t('publicExam.codingProblems', { count: questions.length })}
           </p>
         </div>
         {remaining !== null && (

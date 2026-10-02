@@ -309,7 +309,17 @@ def test_both_doors_into_an_application_use_the_same_gate() -> None:
     for fn in (submit_application, submit_draft):
         src = inspect.getsource(fn)
         assert "reapplication_gate" in src, f"{fn.__name__} does not use the shared gate"
-        assert "reapplication_stage" in src, f"{fn.__name__} never stages"
+        # Through `_stage_reapplication`, not each door's own copy of it.
+        # That block was hand-written twice and is where round 5's
+        # "fixed on one door only" defect lived: the one-shot door released
+        # the CV when staging was refused and the draft door did not, leaving
+        # an object under `drafts/` no erasure could reach.
+        assert "_stage_reapplication(" in src, (
+            f"{fn.__name__} stages without the shared path"
+        )
+        assert "reapplication_stage(" not in src, (
+            f"{fn.__name__} has its own copy of the staging block again"
+        )
         assert "cooldown_check" not in src, f"{fn.__name__} still has its own copy"
 
 
@@ -1010,3 +1020,97 @@ async def test_the_mail_carries_the_name_the_caller_chose_to_pass() -> None:
         )
 
     assert activate.await_args.kwargs["applicant_name"] == "Stored Name"
+
+
+# ===========================================================================
+# Staging a reapplication — one path, and the release that was missing on one
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_nothing_is_staged_when_this_is_not_a_reapplication() -> None:
+    from app.routers import public_apply
+
+    with patch.object(public_apply, "reapplication_stage", AsyncMock()) as stage:
+        out = await public_apply._stage_reapplication(
+            AsyncMock(),
+            reapplying=False,
+            enrolment_id=str(uuid.uuid4()),
+            company_id=uuid.uuid4(),
+            cv_key="applicants/c/a.pdf",
+            answers=None,
+        )
+
+    stage.assert_not_awaited()
+    assert out.staged is False
+    assert out.superseded_cv is None
+    # Always bound. Both doors used to read a bare `reapply_raw` whenever
+    # `gate.reapplying` was true while binding it only inside a narrower
+    # condition — an UnboundLocalError waiting on a path a comment claimed was
+    # reachable, swallowed by a best-effort except and logged as a failed mail.
+    assert out.reapply_raw is None
+
+
+@pytest.mark.asyncio
+async def test_a_staged_attempt_reports_the_expired_cv_it_replaced() -> None:
+    from app.reapplication import StageResult
+    from app.routers import public_apply
+
+    with patch.object(
+        public_apply,
+        "reapplication_stage",
+        AsyncMock(return_value=StageResult(staged=True, superseded_key="old.pdf")),
+    ):
+        out = await public_apply._stage_reapplication(
+            AsyncMock(),
+            reapplying=True,
+            enrolment_id=str(uuid.uuid4()),
+            company_id=uuid.uuid4(),
+            cv_key="applicants/c/new.pdf",
+            answers=None,
+        )
+
+    assert out.staged is True
+    assert out.superseded_cv == "old.pdf"
+    assert out.reapply_raw, "a staged attempt needs a token to confirm it with"
+    assert out.release_draft_pointer is False, (
+        "this attempt WAS recorded, so the draft's pointer must stand"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_attempt_releases_the_cv_it_was_submitted_with() -> None:
+    """ROUND 5's DEFECT, now impossible to have on one door and not the other.
+
+    First-link-wins refuses a second attempt while one is pending, so this
+    submission recorded nothing: no applicant is created for a returning
+    person, `enrol_applicant` no-ops, and `stage` stored no key. The object
+    uploaded for it is named by no column at all. The one-shot door released
+    it; the draft door did not, and on that door the key is `drafts/...` —
+    outside the applicant prefix the erasure sweep walks, with `purge_expired`
+    keeping objects only for rows still `status='draft'`. A permanent orphan a
+    DPDP erasure reports success over.
+    """
+    from app.reapplication import StageResult
+    from app.routers import public_apply
+
+    with patch.object(
+        public_apply,
+        "reapplication_stage",
+        AsyncMock(return_value=StageResult(staged=False)),
+    ):
+        out = await public_apply._stage_reapplication(
+            AsyncMock(),
+            reapplying=True,
+            enrolment_id=str(uuid.uuid4()),
+            company_id=uuid.uuid4(),
+            cv_key="drafts/c/d.pdf",
+            answers=None,
+        )
+
+    assert out.staged is False
+    assert out.superseded_cv == "drafts/c/d.pdf", (
+        "the CV this refused submission uploaded is not released, so it is an "
+        "orphan no erasure can reach"
+    )
+    assert out.release_draft_pointer is True, (
+        "the draft row would outlive the object it names"
+    )

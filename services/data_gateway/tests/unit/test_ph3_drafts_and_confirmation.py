@@ -843,10 +843,15 @@ def test_submit_reuses_the_drafts_key_rather_than_copying_it() -> None:
     from app.routers.public_apply import submit_draft
 
     src = inspect.getsource(submit_draft)
-    # Three now: the Applicant, enrol_applicant, and the reopen that adopts
-    # it onto a reapplication's enrolment. All the SAME key — the point of this
-    # test is that nothing copies the object.
-    assert src.count('resume_s3_key=row["resume_s3_key"]') == 3
+    # The Applicant and enrol_applicant take it directly; the reapplication
+    # path now takes it through `_stage_reapplication(cv_key=...)`, which both
+    # doors share. All the SAME key either way — the point of this test is
+    # that nothing copies the object.
+    assert src.count('resume_s3_key=row["resume_s3_key"]') == 2
+    assert 'cv_key=row["resume_s3_key"]' in src, (
+        "the reapplication no longer stages the draft's own object, so "
+        "something is copying or re-uploading it"
+    )
 
 
 # ===========================================================================

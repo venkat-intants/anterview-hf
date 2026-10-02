@@ -96,7 +96,7 @@ from app.mailer import enqueue_email
 from app.models import Applicant
 from app.publishing import visible_sql
 from app.rate_limit import rate_limit, rate_limit_window
-from app.reapplication import CooldownVerdict, StageResult
+from app.reapplication import CooldownVerdict
 from app.reapplication import clear_staged as reapplication_clear_staged
 from app.reapplication import confirm as reapplication_confirm
 from app.reapplication import gate as reapplication_gate
@@ -678,6 +678,166 @@ async def _stage_accepted_mail(
         company_id=company_id,
         company_name=company_name,
         now=now,
+    )
+
+
+@dataclass(frozen=True)
+class _Staged:
+    """What staging a reapplication decided, for either door.
+
+    WHY THIS IS ONE FUNCTION. This block was hand-written twice, and it is
+    where round 5's "fixed on one door and not the other" defect lived: the
+    one-shot door released the CV when staging was refused and the draft door
+    did not, leaving an object under `drafts/` that no erasure could reach.
+    Two reviewers in round 7 named this specific block as the remaining
+    duplication with the worst history of the four.
+
+    `reapply_raw` being a FIELD rather than a local is the other half. Both
+    doors used to read a bare `reapply_raw` when `gate.reapplying` was true,
+    while binding it only inside `if gate.reapplying and outcome.enrolment_id`
+    — and the comment above that binding says outright that `reapplying` can
+    be true with no enrolment id. Today `enrol_applicant` always returns one,
+    so the comment is wrong rather than the code; but one of the two was, and
+    the failure would have been an `UnboundLocalError` swallowed by a
+    best-effort `except` and logged as a failed email. Here it is always
+    bound, to None when nothing was staged.
+    """
+
+    #: False when nothing was staged — not a reapplication, or an attempt was
+    #: already pending and first-link-wins refused this one.
+    staged: bool = False
+    #: A CV that nothing will name after this: the expired attempt's object
+    #: that this one replaced, or — when staging was REFUSED — the object this
+    #: submission uploaded for an attempt that recorded nothing.
+    superseded_cv: str | None = None
+    #: The raw token, minted here so its hash can be bound to this one attempt
+    #: before the link goes out. None when nothing was staged.
+    reapply_raw: str | None = None
+    #: Draft door only: clear the draft's own pointer in the same transaction,
+    #: because the object it names is the one being released above.
+    release_draft_pointer: bool = False
+
+
+async def _identify(
+    db: DbSessionDep,
+    *,
+    company_id: uuid.UUID,
+    requisition_id: uuid.UUID,
+    address: str,
+) -> Any | None:
+    """Who this address already is at this company, and where they stand.
+
+    ONE COPY, because two copies of "who is this address" is two answers
+    waiting to disagree. Both doors had this SELECT written out by hand,
+    identical but for one column, and every decision below it — already
+    applied, inside a cooldown, which name goes in the mail, whether an
+    enrolment is created or reused — is made from the row it returns. If the
+    two ever drifted on `lower(btrim(...))`, on the `deleted_at` filters, or on
+    the `ORDER BY ... LIMIT 1` that picks WHICH applicant when there are
+    several, the doors would gate differently for the same person and nothing
+    would say so.
+
+    NOT answered to the caller until the CV has been read. Resolving identity
+    is cheap and answering it early was itself the first disclosure this
+    feature shipped: anyone holding the link could type an address and be told
+    whether that person had applied, and what they are called.
+
+    `resume_s3_key` is selected for both doors although only the one-shot door
+    reads it. One query, one shape — a column neither door is obliged to use
+    costs nothing, and a second variant would be the thing that drifts.
+    """
+    return (
+        await db.execute(
+            text(
+                # full_name: for `_email_name`, so a mail to a returning
+                # applicant carries the name on file rather than the one this
+                # anonymous request typed.
+                "SELECT a.id, a.full_name, a.resume_s3_key, e.id AS enrolment_id,"
+                "       e.status AS enrolment_status"
+                "  FROM applicants a"
+                "  LEFT JOIN enrolments e ON e.applicant_id = a.id"
+                "   AND e.requisition_id = :r AND e.deleted_at IS NULL"
+                " WHERE a.company_id = :c AND a.deleted_at IS NULL"
+                "   AND lower(btrim(a.email)) = :em"
+                " ORDER BY a.created_at LIMIT 1"
+            ),
+            {"c": company_id, "r": requisition_id, "em": address},
+        )
+    ).mappings().first()
+
+
+def _cooldown_notice(
+    existing: Any | None,
+    *,
+    requisition_id: uuid.UUID,
+    company_id: uuid.UUID,
+    address: str,
+    req: dict[str, Any],
+    verdict: CooldownVerdict,
+) -> _CooldownNotice:
+    """The notice a cooldown refusal mails, built once for both doors.
+
+    Thirteen lines duplicated at the two `_refuse` call sites, including the
+    `uuid.UUID(str(existing["id"])) if existing is not None else None` dance.
+    `_refuse` extracted the CONSUMPTION of this and left its CONSTRUCTION in
+    two places.
+    """
+    return _CooldownNotice(
+        requisition_id=requisition_id,
+        company_id=company_id,
+        applicant_id=(
+            uuid.UUID(str(existing["id"])) if existing is not None else None
+        ),
+        address=address,
+        job_title=req["title"],
+        company_name=req.get("company_name"),
+        verdict=verdict,
+    )
+
+
+async def _stage_reapplication(
+    db: DbSessionDep,
+    *,
+    reapplying: bool,
+    enrolment_id: str | None,
+    company_id: uuid.UUID,
+    cv_key: str | None,
+    answers: dict[uuid.UUID, Any] | None,
+) -> _Staged:
+    """Stage a second attempt, or decide that nothing is staged. Caller commits.
+
+    A reapplication is STAGED, not applied. Both doors are anonymous and
+    identify a person by an address typed into a form, so acting on this
+    request would let a stranger move a real person's status, replace the CV
+    on their application and spend an override granted to them. It waits on
+    the enrolment until a link emailed to the address is followed.
+    """
+    if not (reapplying and enrolment_id):
+        return _Staged()
+
+    raw = mint_token()
+    result = await reapplication_stage(
+        db,
+        enrolment_id=uuid.UUID(enrolment_id),
+        company_id=company_id,
+        resume_s3_key=cv_key,
+        answers=answers,
+        token_hash=hash_token(raw, REAPPLY_TOKEN_KIND),
+    )
+    if not result.staged:
+        # An attempt was already pending, so this submission recorded nothing
+        # — and the object uploaded for it is therefore named by no column at
+        # all. Released here rather than left for a sweep with nothing to find
+        # it by. On the draft door the pointer goes too, or the row outlives
+        # the object it names.
+        return _Staged(
+            staged=False,
+            superseded_cv=cv_key,
+            reapply_raw=raw,
+            release_draft_pointer=True,
+        )
+    return _Staged(
+        staged=True, superseded_cv=result.superseded_key, reapply_raw=raw
     )
 
 
@@ -1542,24 +1702,9 @@ async def submit_draft(
     # us and everything below this line is state-dependent.
     floor_from = time.monotonic()
 
-    existing = (
-        await db.execute(
-            text(
-                # full_name: for `_email_name`, so a mail to a returning
-                # applicant carries the name on file rather than the one this
-                # anonymous request typed.
-                "SELECT a.id, a.full_name, e.id AS enrolment_id,"
-                "       e.status AS enrolment_status"
-                "  FROM applicants a"
-                "  LEFT JOIN enrolments e ON e.applicant_id = a.id"
-                "   AND e.requisition_id = :r AND e.deleted_at IS NULL"
-                " WHERE a.company_id = :c AND a.deleted_at IS NULL"
-                "   AND lower(btrim(a.email)) = :em"
-                " ORDER BY a.created_at LIMIT 1"
-            ),
-            {"c": company_id, "r": requisition_id, "em": address},
-        )
-    ).mappings().first()
+    existing = await _identify(
+        db, company_id=company_id, requisition_id=requisition_id, address=address
+    )
 
     # The SAME gate the one-shot form uses. This route had its own copy of the
     # decision and only the other copy was fixed, so a rejected candidate who
@@ -1603,15 +1748,12 @@ async def submit_draft(
             cooldown=(
                 None
                 if gate.already_applied
-                else _CooldownNotice(
+                else _cooldown_notice(
+                    existing,
                     requisition_id=requisition_id,
                     company_id=company_id,
-                    applicant_id=(
-                        uuid.UUID(str(existing["id"])) if existing is not None else None
-                    ),
                     address=address,
-                    job_title=req["title"],
-                    company_name=req.get("company_name"),
+                    req=req,
                     verdict=gate.verdict,
                 )
             ),
@@ -1697,42 +1839,17 @@ async def submit_draft(
                 answers=checked_answers,
             )
         # Staged, not applied. Same door, same reason.
-        superseded_cv: str | None = None
-        # Clears the draft's own pointer in the same transaction, so the row
-        # never outlives the object it names. See where it is set below.
-        release_staged_draft_cv = False
-        # Bound here too: `gate.reapplying` can be true while
-        # enrol_applicant returned no enrolment id, and the email
-        # check below reads it.
-        staged = StageResult(staged=False)
-        if gate.reapplying and outcome.enrolment_id:
-            reapply_raw = mint_token()
-            staged = await reapplication_stage(
-                db,
-                enrolment_id=uuid.UUID(outcome.enrolment_id),
-                company_id=company_id,
-                resume_s3_key=row["resume_s3_key"],
-                answers=dict(checked_answers) if checked_answers else None,
-                token_hash=hash_token(reapply_raw, REAPPLY_TOKEN_KIND),
-            )
-            superseded_cv = staged.superseded_key
-            if not staged.staged:
-                # THE SAME RELEASE THE ONE-SHOT DOOR DOES, and it was missing
-                # here — which mattered more on this door, not less.
-                #
-                # An attempt was already pending, so this submission recorded
-                # nothing: no applicant row is created for a returning person,
-                # `enrol_applicant` no-ops, and `stage` stored no key. The
-                # draft's object is left named by the draft row alone — and
-                # `purge_expired` deletes a submitted draft's ROW after its
-                # retention window while deliberately keeping the object,
-                # because it assumes `applied_resume_s3_key` names it. Nothing
-                # does. The key is `drafts/{company}/{draft}.pdf`, outside the
-                # applicant-prefix sweep erasure runs, so after that window a
-                # CV sits in the bucket that no collector and no sweep can
-                # name — and an erasure request completes over it.
-                superseded_cv = row["resume_s3_key"]
-                release_staged_draft_cv = True
+        staged = await _stage_reapplication(
+            db,
+            reapplying=gate.reapplying,
+            enrolment_id=outcome.enrolment_id,
+            company_id=company_id,
+            cv_key=row["resume_s3_key"],
+            answers=dict(checked_answers) if checked_answers else None,
+        )
+        superseded_cv = staged.superseded_cv
+        release_staged_draft_cv = staged.release_draft_pointer
+
         # The draft's consent row hangs off the throwaway guest identity that
         # created it. Record it against the identity that owns the application
         # too, so an audit that looks this person up by their real user id
@@ -1873,7 +1990,7 @@ async def submit_draft(
                 now=now,
                 reapplying=gate.reapplying,
                 staged=staged.staged,
-                reapply_raw=reapply_raw if gate.reapplying else None,
+                reapply_raw=staged.reapply_raw,
             )
             await db.commit()
         except Exception:  # noqa: BLE001 — see above
@@ -2229,21 +2346,9 @@ async def submit_application(
 
     # ── Who this email already is ───────────────────────────────────────────
     # Looked up here, but NOT answered until the CV has been read (below).
-    existing = (
-        await db.execute(
-            text(
-                "SELECT a.id, a.full_name, a.resume_s3_key, e.id AS enrolment_id,"
-                "       e.status AS enrolment_status"
-                "  FROM applicants a"
-                "  LEFT JOIN enrolments e ON e.applicant_id = a.id"
-                "   AND e.requisition_id = :r AND e.deleted_at IS NULL"
-                " WHERE a.company_id = :c AND a.deleted_at IS NULL"
-                "   AND lower(btrim(a.email)) = :em"
-                " ORDER BY a.created_at LIMIT 1"
-            ),
-            {"c": company_id, "r": requisition_id, "em": address},
-        )
-    ).mappings().first()
+    existing = await _identify(
+        db, company_id=company_id, requisition_id=requisition_id, address=address
+    )
 
     # ── The opening's own questions ─────────────────────────────────────────
     # Validated here, before the CV is read or anything is stored. A required
@@ -2404,15 +2509,12 @@ async def submit_application(
             cooldown=(
                 None
                 if gate.already_applied
-                else _CooldownNotice(
+                else _cooldown_notice(
+                    existing,
                     requisition_id=requisition_id,
                     company_id=company_id,
-                    applicant_id=(
-                        uuid.UUID(str(existing["id"])) if existing is not None else None
-                    ),
                     address=address,
-                    job_title=req["title"],
-                    company_name=req.get("company_name"),
+                    req=req,
                     verdict=gate.verdict,
                 )
             ),
@@ -2550,31 +2652,15 @@ async def submit_application(
         # status, replace their CV and spend an override granted to them. It
         # waits on the enrolment until a link emailed to the address is
         # followed — see reapplication.stage.
-        superseded_cv: str | None = None
-        # Bound here too: `gate.reapplying` can be true while
-        # enrol_applicant returned no enrolment id, and the email
-        # check below reads it.
-        staged = StageResult(staged=False)
-        if gate.reapplying and outcome.enrolment_id:
-            # Minted HERE so its hash can be bound to this one attempt before
-            # the link goes out. A token that merely proves the address, and
-            # not which submission it belongs to, applies whatever is staged.
-            reapply_raw = mint_token()
-            staged = await reapplication_stage(
-                db,
-                enrolment_id=uuid.UUID(outcome.enrolment_id),
-                company_id=company_id,
-                resume_s3_key=s3_key,
-                answers=dict(checked_answers) if checked_answers else None,
-                token_hash=hash_token(reapply_raw, REAPPLY_TOKEN_KIND),
-            )
-            superseded_cv = staged.superseded_key
-            if not staged.staged:
-                # An attempt is already pending, so this submission recorded
-                # nothing — and the object uploaded for it a moment ago is
-                # therefore named by no column at all. Released here rather
-                # than left for a sweep that has nothing to find it by.
-                superseded_cv = s3_key
+        staged = await _stage_reapplication(
+            db,
+            reapplying=gate.reapplying,
+            enrolment_id=outcome.enrolment_id,
+            company_id=company_id,
+            cv_key=s3_key,
+            answers=dict(checked_answers) if checked_answers else None,
+        )
+        superseded_cv = staged.superseded_cv
 
         await db.commit()
     except IntegrityError:
@@ -2643,7 +2729,7 @@ async def submit_application(
             now=now,
             reapplying=gate.reapplying,
             staged=staged.staged,
-            reapply_raw=reapply_raw if gate.reapplying else None,
+            reapply_raw=staged.reapply_raw,
         )
         await db.commit()
     except Exception:  # noqa: BLE001 — see above

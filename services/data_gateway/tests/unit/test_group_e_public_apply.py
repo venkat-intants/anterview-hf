@@ -7,6 +7,7 @@ The endpoint is exercised end to end against Postgres in
 from __future__ import annotations
 
 import inspect
+import re
 
 
 def _submit() -> str:
@@ -59,21 +60,50 @@ def test_every_reply_from_both_doors_is_the_same_object() -> None:
     from app.routers import public_apply
 
     src = inspect.getsource(public_apply)
-    # One construction, inside `_received` itself.
+    # Two: the `class ApplicationOut(BaseModel)` statement and the single
+    # construction inside `_received`. Spelled out because a bare `== 2` with
+    # a comment claiming "one construction" reads as off-by-one.
     assert src.count("ApplicationOut(") == 2, (
         "ApplicationOut is constructed somewhere other than `_received` — "
         "every door must answer with the one reply"
     )
+
     for door in (public_apply.submit_application, public_apply.submit_draft):
         body = inspect.getsource(door)
         assert "ApplicationOut(" not in body, f"{door.__name__} builds its own reply"
-        # Through `_reply`, which is `_received` held to the common deadline.
-        # A door returning `_received` directly would answer with the right
-        # bytes at the wrong time, which is the channel round 6 found.
-        assert "_reply(name, floor_from=floor_from)" in body, (
+        assert "_received(name)" not in body, (
             f"{door.__name__} answers without holding the reply floor"
         )
-        assert "_received(name)" not in body
+
+        # EVERY reply-bearing exit, counted — not "at least one of them".
+        #
+        # This was `assert "_reply(name, floor_from=floor_from)" in body`, a
+        # single-substring test satisfied by one matching return out of ten.
+        # It could not see a new exit that bypassed the floor, three already
+        # did, and the integration file cited it as the backstop that
+        # "requires every exit on both doors to return through `_reply`". It
+        # did not. That is the same defect class as the binding guard whose
+        # `f"{field}=" in body` missed `status=` inside `stored_status=` —
+        # written in the round that found it.
+        #
+        # A reply-bearing exit is one that returns a value. `raise
+        # HTTPException` exits are input errors and genuine failures, which
+        # are allowed to answer immediately.
+        returns = re.findall(r"^\s*return (?:await )?(\S+)", body, re.M)
+        floored = [r for r in returns if r.startswith(("_reply(", "_refuse("))]
+        assert returns and len(floored) == len(returns), (
+            f"{door.__name__} has {len(returns) - len(floored)} reply-bearing "
+            f"exit(s) that do not go through the floor: "
+            f"{[r for r in returns if r not in floored]}"
+        )
+
+        # And the write probe, on BOTH doors. Deleting it from one of them
+        # left 2883 tests passing, which is how six rounds of one-door drift
+        # kept happening.
+        assert "_require_write_capability(db)" in body, (
+            f"{door.__name__} answers without checking the database can be "
+            "written to, so a read-only window splits the states 201/503"
+        )
 
 
 def test_nothing_stored_is_echoed_to_a_repeat_or_racing_submission() -> None:

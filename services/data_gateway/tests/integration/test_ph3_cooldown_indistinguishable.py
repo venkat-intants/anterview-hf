@@ -43,22 +43,33 @@ in a request number nobody sent.
 WHAT IS NOT ASSERTED HERE, stated plainly because an earlier version of this
 paragraph claimed an acceptance that did not exist.
 
-Response TIMING is not asserted, and the states do not take the same time. The
-CV upload was moved above the gate so that the one caller-scaled term — the
-PDF is as big as the sender chooses — is common to every state, and
-`test_every_state_does_the_same_work` holds that down. What remains is the
-fixed-size difference below it: the accepting states perform roughly a dozen
-writes and two commits that the refusing states do not, and the refusing
-states make a delete round-trip the accepting ones do not. That difference is
-REAL, it is measurable, and nothing in this file detects it.
+Response TIMING IS now asserted, and this paragraph has been wrong in both
+directions — first claiming an acceptance nobody had granted, then saying
+nothing in this file detects the difference after a test that detects it was
+added to this file. Where it actually stands:
 
-It is also not something this file may declare accepted. A previous version of
-this docstring said the timing difference "is recorded as an accepted risk" —
-no register entry existed, and no owner had accepted it. Neither a test
-docstring nor a commit message can grant that acceptance. Until it is closed
-in the code or accepted by a named owner in the risk register, the honest
-statement is the one above: the replies are indistinguishable, the work is
-not.
+Every reply on both doors is held to a common deadline measured from before
+that door's state-dependent work (`_reply`, `apply_reply_floor_ms`, default
+400 ms), so a branch that finishes early waits.
+`test_the_states_cannot_be_separated_by_how_long_the_reply_takes` runs on both
+doors and fails if a reply arrives before the floor — which is what a removed,
+disabled or bypassed floor looks like. `test_every_reply_from_both_doors_is_the
+_same_object` counts the reply-bearing exits and requires every one of them to
+go through `_reply` or `_refuse`.
+
+What is NOT asserted is the spread between states. An earlier version compared
+max-minus-min against the floor; it passed alone and failed under load,
+because end-to-end time includes the CV upload — the caller-sized term the
+floor deliberately excludes. It was measuring the design's declared noise, so
+it was deleted rather than retuned: a constant tuned until a test goes green
+proves only that the constant was tuned.
+
+And the floor FAILS OPEN. A branch that overruns it logs
+`public_apply.reply_floor_exceeded` and answers immediately, so under enough
+load the control switches itself off. There is no counter and no alert on that
+log line. That residue, and the write-path 201/503 split the write probe does
+not reach, are in docs/ACCEPTED-RISKS.md with an owner — not here, because
+neither a test docstring nor a commit message can grant an acceptance.
 
 Response HEADERS are not compared either (`_observable` reads status and body),
 and neither are emails staged, auth-token rows minted, or behaviour under
@@ -272,7 +283,7 @@ async def _set_status(email: str, status: str, *, days_ago: int = 0) -> None:
 
 
 async def _apply_via_draft(
-    client: AsyncClient, req_id: uuid.UUID, email: str
+    client: AsyncClient, req_id: uuid.UUID, email: str, *, expect_submit: int | None = 201
 ):  # noqa: ANN202
     """The OTHER door: start a draft, attach a CV, submit it.
 
@@ -321,7 +332,12 @@ async def _apply_via_draft(
 
     await _clear_rate_limit()
     submitted = await client.post("/apply/draft/submit", headers=hdr)
-    if submitted.status_code != 201:
+    # `expect_submit=None` for a test that deliberately breaks the submit — the
+    # read-only one, where 503 IS the property under test. Everywhere else the
+    # default pins 201, because a uniform failure before the gate is exactly
+    # how this helper used to let the draft-door matrix pass without the gate
+    # ever running.
+    if expect_submit is not None and submitted.status_code != expect_submit:
         raise AssertionError(
             f"draft submit did not reach the gate: {submitted.status_code} "
             f"{submitted.text[:200]}"
@@ -458,6 +474,42 @@ def _assert_one_answer(seen: dict[str, tuple[int, object]], what: str) -> None:
     )
 
 
+
+_BOTH_DOORS = ("one-shot", "draft")
+
+
+async def _submit_through(
+    door: str,
+    client: AsyncClient,
+    req_id: uuid.UUID,
+    email: str,
+    *,
+    expect_submit: int | None = 201,
+):  # noqa: ANN202
+    """One submission through whichever door, so a property can be asserted of both.
+
+    Five of the eight tests in this file used to drive the one-shot door only,
+    and the cost was measured rather than guessed: deleting
+    `_require_write_capability` from `submit_draft` left 2883 tests passing.
+    Every structural property this branch relies on for the draft door was
+    pinned by a substring check or by nothing.
+
+    Not every test here can be parametrised honestly. `..._does_the_same_work`
+    counts `_upload_to_s3` calls and `..._storage_outage...` makes that call
+    fail — but the draft door performs no upload in its handler at all (the CV
+    arrived at `/apply/draft/resume-upload`), so both would assert zero of
+    something on that door and prove nothing. Those two stay one-shot by
+    nature, and say so. The read-only and latency properties are identical on
+    both doors, so they run on both.
+    """
+    if door == "one-shot":
+        return await _apply(client, req_id, email)
+    submitted, _token = await _apply_via_draft(
+        client, req_id, email, expect_submit=expect_submit
+    )
+    return submitted
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("probes", [1, 2, 3])
 async def test_every_state_answers_identically_on_the_one_shot_door(
@@ -555,6 +607,12 @@ async def test_every_state_does_the_same_work(client: AsyncClient) -> None:
     (The first version of this test compared objects remaining in the local
     store. It was vacuous — the store it pointed at was empty, so every count
     was zero — and it would have been wrong even had it worked.)
+
+    ONE-SHOT DOOR ONLY, and honestly so: `submit_draft` performs no upload in
+    its handler — the CV arrived at `/apply/draft/resume-upload` — so counting
+    uploads there would assert zero of something and prove nothing. The draft
+    door's equivalent shared work is pinned by the read-only and latency
+    tests, which do run on both.
     """
     from app.routers import public_apply
 
@@ -591,6 +649,11 @@ async def test_a_storage_outage_answers_the_same_way_for_every_state(
     never reach the storage error — so an outage turned "has this address
     applied?" into a 201-vs-503 read from two requests. Now the upload is the
     first thing every submission does, so every state fails the same way.
+
+    ONE-SHOT DOOR ONLY, for the same reason as the upload-count test above:
+    `submit_draft` never calls `_upload_to_s3`, so making that call fail
+    cannot change its answer. The draft door's status uniformity under a
+    failing dependency is covered by the read-only test, which runs on both.
     """
     from app.local_storage import LocalStorageError
     from app.routers import public_apply
@@ -663,8 +726,9 @@ async def test_a_refused_submission_deletes_the_cv_it_was_made_to_upload(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("door", _BOTH_DOORS)
 async def test_the_states_cannot_be_separated_by_how_long_the_reply_takes(
-    client: AsyncClient,
+    client: AsyncClient, door: str
 ) -> None:
     """The channel round 6 found, and the reason the reply is held.
 
@@ -693,7 +757,7 @@ async def test_the_states_cannot_be_separated_by_how_long_the_reply_takes(
     elapsed: dict[str, float] = {}
     for case, (target, email) in addresses.items():
         start = time.monotonic()
-        await _apply(client, target, email)
+        await _submit_through(door, client, target, email)
         elapsed[case] = time.monotonic() - start
 
     # Nothing may come back before the floor. A branch returning early is a
@@ -727,8 +791,9 @@ async def test_the_states_cannot_be_separated_by_how_long_the_reply_takes(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("door", _BOTH_DOORS)
 async def test_a_read_only_database_answers_the_same_way_for_every_state(
-    client: AsyncClient,
+    client: AsyncClient, door: str
 ) -> None:
     """The last status-code oracle, and the one the reply floor cannot close.
 
@@ -769,9 +834,15 @@ async def test_a_read_only_database_answers_the_same_way_for_every_state(
         public_apply, "_require_write_capability", _write_refused
     ):
         for case, (target, email) in addresses.items():
-            seen[case] = _observable(await _apply(client, target, email))
+            seen[case] = _observable(
+                # The status is what this test measures, so it must not be
+                # pinned by the helper.
+                await _submit_through(
+                    door, client, target, email, expect_submit=None
+                )
+            )
 
-    _assert_one_answer(seen, "a read-only database")
+    _assert_one_answer(seen, f"a read-only database ({door} door)")
     # And the answer is the refusal, not a cheerful 201 — telling a real
     # candidate their application landed when it did not would be a worse
     # thing to do than leaking the distinction.

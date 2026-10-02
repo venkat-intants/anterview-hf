@@ -677,6 +677,90 @@ substantiated complaint — that is the decision recorded here, not a preference
 
 ---
 
+## AR-10 — The anonymous apply doors still leak which state an address is in, under a write failure and under enough load
+
+**What is accepted.** `POST /apply/{requisition_id}` and `POST /apply/draft/submit`
+are anonymous — no login, the caller supplies the email as a form field, and the
+requisition id is explicitly not a secret. They must answer identically whether
+that address has a live application, was rejected and is inside the waiting
+period, was rejected and the period elapsed, was rejected with an HR override,
+or has never applied here. Seven review rounds each found a way to tell those
+states apart. The reply body, the status code on a healthy system, the state
+left behind, what a second submission reads back, and the dominant timing term
+are all closed. Three residues are not, and are accepted here rather than in a
+commit message or a test docstring:
+
+1. **Any write-path failure after the probe still splits the states 201/503.**
+   `_require_write_capability` asks whether the transaction can write at all
+   before anything branches, so a read-only standby, `default_transaction_read_only`
+   or a maintenance window now refuses every state alike. It does not cover a
+   failure *during* the write: a full disk, a serialization failure or deadlock,
+   a statement timeout, a connection dropped mid-transaction, or a fault inside
+   `enrol_applicant` / `_ensure_guest_user` / `_record_apply_consent`. Those
+   reach the generic handler, which only the states that write can reach, so
+   they answer 503 while a live application and a cooldown answer 201. Two
+   anonymous requests during such a window separate "this address already has
+   an application here" from "this address is free to apply". The earlier
+   characterisation of this residue as "a disk-full primary" understated it:
+   several of these are ordinary production events rather than outages.
+
+2. **The reply floor fails open, silently.** Every reply is held to
+   `apply_reply_floor_ms` (default 400) measured from before that door's
+   state-dependent work. A branch that OVERRUNS the floor logs
+   `public_apply.reply_floor_exceeded` and answers immediately — so under
+   enough load, which is load an attacker can generate, the control switches
+   itself off and the timing difference is readable again. There is no counter
+   and no alert on that log line.
+
+3. **Both rate limits fail open when Redis is unavailable.** The burst (6/min)
+   and sustained (60/hour) caps are the stated bound on the anonymous object
+   writes that storing the CV before the gate makes possible. During a Redis
+   outage there is no bound at all. This is the module's documented and
+   deliberate posture — a limiter that refuses everyone during an outage is
+   worse — but it means the bound is conditional, and the same outage disables
+   the JWT revocation epoch.
+
+**One invariant is also traded.** CLAUDE.md requires no PII without a consent
+ledger entry. The CV is now uploaded *before* the gate is consulted, because
+uploading only on the accepting branches made the work the endpoint does an
+answer about the address. On a refused submission no ledger row is ever
+written, so for the length of the gate, the notice and the commit there is an
+object in storage with no consent record — and permanently if the delete that
+follows fails. For the one-shot door with an address we already hold, the
+erasure sweep reaches it. For an address with no record, and for the draft
+door, it does not: those keys are logged so they are recoverable by hand.
+
+**Why not close them.** The remaining fix for (1) is to give every state the
+same write set, which means storing a row naming an address for somebody who
+never applied — PII about a non-applicant, no consent basis, no erasure
+anchor. Masking a status code is not a lawful basis for keeping someone's
+address. (2) and (3) are both "fail closed instead", which converts a privacy
+residue into an availability one: candidates refused during an incident, and
+during a Redis outage refused entirely.
+
+**What is NOT accepted, and must not be read into this entry.** That the
+property is established on a healthy system is load-bearing and tested — the
+five-state matrix across both doors, the upload-count and delete-count tests,
+the storage-outage and read-only tests, the floor test, and the structural
+guards that count every reply-bearing exit. This entry accepts three failure
+modes, not the design.
+
+**Path to closure.** (1) needs a write-set design that stores nothing about a
+non-applicant — a scratch write to a table holding no address, which is
+plausible and not yet designed. (2) is cheap and should be done regardless: a
+Prometheus counter on the overrun plus an alert, as `rate_limit` already has
+for its own skipped checks; the contrast is not defensible for long — the
+compensating control is instrumented and the privacy control it compensates
+for is not. (3) is a product decision about which way to fail.
+
+**Owner:** `platform_owner` (+ `security-auditor`).
+**Fires when:** a timing or enumeration report against the apply doors; a
+`public_apply.reply_floor_exceeded` rate above noise; a Redis outage coinciding
+with apply traffic; a residency or privacy bid that asks about enumeration
+resistance; or the write-set design in (1) becoming cheap enough to build.
+
+---
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -690,3 +774,4 @@ substantiated complaint — that is the decision recorded here, not a preference
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
+| **AR-10** | The anonymous apply doors still separate the states under a write failure, and under load the reply floor fails open | PH3-B4b rounds 1-7 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, a `reply_floor_exceeded` rate above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |

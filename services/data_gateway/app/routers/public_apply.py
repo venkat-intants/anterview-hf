@@ -19,7 +19,18 @@ CONSENT IS NOT OPTIONAL. This endpoint stores a person's name, email and
 resume, which is precisely what CLAUDE.md forbids without a
 ``dpdp_consent_ledger`` entry. The applicant ticks a box; the request is
 refused without it; and the ledger entry is written in the SAME transaction as
-the applicant row, so there is no window in which the PII exists un-consented.
+the applicant row.
+
+ONE WINDOW IS NOT COVERED BY THAT, deliberately. The CV is uploaded before the
+reapplication gate is consulted, so that the work this endpoint does cannot be
+timed to learn whether an address has applied here before (see
+``submit_application``). On a REFUSED submission no ledger row is ever written
+— so for the length of the gate, the notice and the commit, an object sits in
+storage with no consent record, and permanently if the delete that follows it
+fails. One invariant traded against a disclosure channel. This paragraph used
+to claim there was no such window; the trade is recorded in
+docs/ACCEPTED-RISKS.md instead of being left here for a reader to find.
+
 The ledger needs a user row (its FK is NOT NULL), so a ``guest_candidate`` user
 is minted for the applicant here — the same lazy provisioning
 ``interview_take`` already does when a candidate redeems an invite.
@@ -746,7 +757,30 @@ async def _refuse(
             company_name=cooldown.company_name,
             verdict=cooldown.verdict,
         )
-    await db.commit()
+    # GUARDED. This commit had no handler at any level, while the accepting
+    # path's commit sits inside a try that turns any failure into a 503. So a
+    # commit-time failure — serialization failure, statement timeout, a
+    # connection reset, pgbouncer eviction — gave an unhandled 500 on the
+    # REFUSING states and a 503 on the accepting ones: the states told apart
+    # on the status line again, with no statistics needed.
+    #
+    # Worse on the draft door, where `mark_submitted` has already run: the
+    # 500 unwinds the session, the draft stays `status='draft'`, and
+    # `GET /apply/draft` then answers 200 for a refused state and 404 for an
+    # accepted one — the round-3 channel, live on an error path.
+    try:
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 — same answer the accept path gives
+        await db.rollback()
+        log.warning(
+            "public_apply.refusal_commit_failed", error_type=type(exc).__name__
+        )
+        if cv_key:
+            await _release_unadopted(str(cv_key))
+        raise HTTPException(
+            status_code=503,
+            detail="We could not save your application. Please try again.",
+        ) from exc
     if cv_key:
         await _release_unadopted(str(cv_key))
     return await _reply(name, floor_from=floor_from)
@@ -825,14 +859,34 @@ async def _release_unadopted(s3_key: str) -> None:
     call this.
 
     Best-effort and silent: the reply is already decided, and a failed delete
-    must cost an orphan rather than change what a caller is told. The key is
-    under `applicants/{company}/{applicant}`, which the erasure sweep covers,
-    so an orphan here is reachable rather than permanent.
+    must cost an orphan rather than change what a caller is told.
+
+    HOW RECOVERABLE AN ORPHAN IS DEPENDS ON THE CALLER, and this docstring
+    used to claim otherwise — "the key is under `applicants/{company}/
+    {applicant}`, which the erasure sweep covers". That holds for one caller
+    of three:
+
+    * one-shot door, an address we already hold: `applicants/{company}/{id}-…`
+      and the erasure sweep derives its prefixes from the subject's applicant
+      rows, so this one IS reachable;
+    * one-shot door, an address with no record: the key embeds a uuid4 that no
+      applicant row ever used, because nothing was created. The sweep has no
+      row to derive that prefix from. PERMANENT;
+    * draft door: `drafts/{company}/{draft}.pdf`, outside the applicant prefix
+      entirely, and `_refuse` has already NULLed the draft's pointer while
+      `purge_expired` keeps objects only for rows still `status='draft'`.
+      PERMANENT.
+
+    So the key is LOGGED. The two permanent cases are the ones nothing else
+    can name, and an object nobody can name is one a DPDP erasure reports
+    success over; a key in the log is at least recoverable by hand. A bucket
+    path with an opaque id is not personal data on its own, and the
+    alternative is a file that cannot be found at all.
     """
     try:
         await _delete_from_s3(s3_key)
     except Exception:  # noqa: BLE001 — nothing points at it either way
-        log.warning("public_apply.unadopted_cv_orphaned")
+        log.warning("public_apply.unadopted_cv_orphaned", s3_key=s3_key)
 
 
 def _email_name(existing: Any | None, submitted: str) -> str:
@@ -2154,6 +2208,25 @@ async def submit_application(
     name = _clean(full_name, 200) or ""
     address = str(email).strip().lower()[:320]
 
+    # THE FLOOR STARTS HERE, before the identity lookup below.
+    #
+    # It used to start after the upload, on the argument that the upload is
+    # caller-sized and common to every state and so is noise rather than
+    # signal. That is true of the upload and it left the IDENTITY LOOKUP
+    # outside the window — a LEFT JOIN that returns one row for four states
+    # and none for the fifth, additive and measurable, and the caller shrinks
+    # the upload burying it to nothing with a 600-byte PDF. The lookup cannot
+    # move below the floor instead: `applicant_id` comes out of it and the
+    # object key embeds `applicant_id`, so the upload depends on it.
+    #
+    # Starting the clock here is strictly better than starting it later. With
+    # a small PDF — the attacker's own preference, because it is the quiet
+    # regime — the floor dominates and the reply is a constant. With a large
+    # one the floor may be exceeded, but then the term burying the difference
+    # is the one the caller chose to make large. There is no PDF size that
+    # both exposes the lookup and keeps the floor from covering it.
+    floor_from = time.monotonic()
+
     # ── Who this email already is ───────────────────────────────────────────
     # Looked up here, but NOT answered until the CV has been read (below).
     existing = (
@@ -2296,12 +2369,6 @@ async def submit_application(
     except HTTPException:
         await _release_unadopted(s3_key)
         raise
-
-    # THE FLOOR STARTS HERE, after the upload and before the gate. The
-    # upload is the term the caller sizes and it is common to every state,
-    # so it is noise; everything from here down is what differs, and that
-    # is what the deadline has to cover.
-    floor_from = time.monotonic()
 
     gate = await reapplication_gate(
         db,
@@ -2517,7 +2584,7 @@ async def submit_application(
         await db.rollback()
         # The winning submission stored its own CV; this one's object has no
         # row. (For a new person it never did: the applicant insert rolled back.)
-        await _delete_from_s3(s3_key)
+        await _release_unadopted(s3_key)
         log.info("public.apply.race_lost", requisition_id=str(requisition_id))
         return await _reply(name, floor_from=floor_from)
     except rediscovery.RediscoveryError as exc:
@@ -2527,7 +2594,7 @@ async def submit_application(
         # rather than falling through to the generic 503 below, in case that
         # ever stops being true.
         await db.rollback()
-        await _delete_from_s3(s3_key)
+        await _release_unadopted(s3_key)
         raise HTTPException(
             status_code=exc.status_code,
             detail={"failure_code": exc.code, "message": exc.message},
@@ -2538,7 +2605,7 @@ async def submit_application(
         # with no consent record and no erasure path. A returning candidate's
         # upload has its own key now, so it is removed too; their previous CV
         # is untouched.
-        await _delete_from_s3(s3_key)
+        await _release_unadopted(s3_key)
         log.exception("public.apply.failed", error_type=type(exc).__name__)
         raise HTTPException(
             status_code=503, detail="We could not save your application. Please try again."

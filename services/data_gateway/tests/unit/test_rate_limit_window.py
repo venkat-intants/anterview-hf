@@ -36,10 +36,14 @@ class _FakeRedis:
         self.counts: dict[str, int] = {}
         self.expiries: dict[str, int] = {}
         self.fail = fail
+        #: The command sequence, which is the only thing that tells the atomic
+        #: form apart from the one it replaced. See the ordering test.
+        self.calls: list[str] = []
 
     async def set(self, key: str, value: int, *, ex: int, nx: bool) -> bool:
         if self.fail:
             raise ConnectionError("redis is down")
+        self.calls.append("set")
         if nx and key in self.counts:
             return False
         self.counts[key] = value
@@ -49,12 +53,14 @@ class _FakeRedis:
     async def incr(self, key: str) -> int:
         if self.fail:
             raise ConnectionError("redis is down")
+        self.calls.append("incr")
         self.counts[key] = self.counts.get(key, 0) + 1
         return self.counts[key]
 
     async def expire(self, key: str, seconds: int) -> None:
         if self.fail:
             raise ConnectionError("redis is down")
+        self.calls.append("expire")
         self.expiries[key] = seconds
 
 
@@ -175,3 +181,40 @@ async def test_the_refusal_is_indistinguishable_from_the_burst_limiter(
 
     assert first.value.status_code == second.value.status_code
     assert first.value.detail == second.value.detail
+
+
+@pytest.mark.asyncio
+async def test_the_ttl_is_attached_by_the_command_that_creates_the_key(
+    redis: _FakeRedis,
+) -> None:
+    """THE atomicity property, and the test that was missing.
+
+    The form this replaced was `incr`, then `expire(key, window_seconds)` on
+    the first hit. Two commands, and anything interrupting between them — a
+    dropped connection, a client disconnect cancelling the dependency — leaves
+    the key with NO expiry; the counter then never resets and that address is
+    refused for ever with no recovery but manual Redis surgery.
+
+    None of the other tests in this file can tell the two forms apart. They
+    read `counts` and `expiries`, and both forms leave those identical:
+    `{key: 1}` and `{key: 3600}`. I checked by restoring the old form and
+    running them — all six passed. The commit that introduced this limiter
+    claimed "regressing to the old form fails them", and that was false; the
+    mutation actually run had changed the window to a hard-coded 60, which
+    tests a different bug.
+
+    The difference is observable only in the ORDER of commands: the TTL must
+    be attached by the same command that creates the key, so there is no
+    window in which the key exists without one. Hence `SET key 0 EX w NX`
+    first, then `INCR` — and `EXPIRE` never used at all.
+    """
+    dep = _dep("atomic", 5, 3600)
+    await dep(_Req())  # type: ignore[arg-type]
+
+    assert redis.calls == ["set", "incr"], (
+        "the TTL is not attached by the command that creates the key, so an "
+        f"interruption can strand it without one: {redis.calls}"
+    )
+    assert "expire" not in redis.calls, (
+        "EXPIRE is back, which means the create-then-expire window is back"
+    )

@@ -682,7 +682,7 @@ substantiated complaint — that is the decision recorded here, not a preference
 | | |
 |---|---|
 | **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-9, 2026-09-28 to 2026-10-03 |
-| **Status** | **ACCEPTED — four residues, all open; the property itself holds on a healthy system and is tested** |
+| **Status** | **ACCEPTED — five residues, all open; the property itself holds on a healthy system and is tested** |
 | **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
 | **Trigger to revisit** | Any of: (a) a timing or enumeration report against the apply doors; (b) a `public_apply.floor_exceeded` rate above noise; (c) a Redis outage coinciding with apply traffic; (d) a residency or privacy bid asking about enumeration resistance; (e) the write-set design in "Path to closure" becoming cheap enough to build |
 
@@ -694,8 +694,8 @@ period, was rejected and the period elapsed, was rejected with an HR override,
 or has never applied here. Nine review rounds each found a way to tell those
 states apart. The reply body, the status code on a healthy system, the state
 left behind, what a second submission reads back, and the dominant timing term
-are all closed. FOUR residues are not, and are accepted here rather than in a commit
-message or a test docstring — three failure modes and one traded invariant:
+are all closed. FIVE residues are not, and are accepted here rather than in a commit
+message or a test docstring — four failure modes and one traded invariant:
 
 1. **Any write-path failure after the probe still splits the states 201/503.**
    `_require_write_capability` asks whether the transaction can write at all
@@ -737,6 +737,24 @@ database-latency condition rather than something a caller chooses.
    worse — but it means the bound is conditional, and the same outage disables
    the JWT revocation epoch.
 
+4. **The concurrency exit is state-correlated, and no test reaches it.**
+   Two submissions racing for the same `(requisition_id, applicant_id)` are
+   arbitrated by the partial unique index, and the loser takes its own code
+   path on both doors. `IntegrityError` can only be raised while an enrolment
+   is being CREATED, which never happens for an address that already has one
+   (`enrol_applicant` no-ops) — so reaching that path at all is itself the
+   answer "this address had no live application and no cooldown". The reply is
+   the same `_received` object on both doors, and the draft door consumes its
+   draft and deletes the object on this exit specifically so that no readable
+   state is left behind. What is NOT established is the timing: the rollback,
+   the orphan release and the draft door's second transaction run only on this
+   branch, and only for the states that create an enrolment. They sit inside
+   the reply pad, so they are absorbed unless they overrun it — which makes
+   this residue conditional on (2). The five-state matrix cannot see any of
+   it, because it never issues concurrent requests. Before this entry the
+   reasoning existed only in the two handlers' comments, which this register's
+   own standard says cannot grant an acceptance.
+
 **One invariant is also traded.** CLAUDE.md requires no PII without a consent
 ledger entry. The CV is now uploaded *before* the gate is consulted, because
 uploading only on the accepting branches made the work the endpoint does an
@@ -769,6 +787,9 @@ compensating controls exists. None does:
   not.
 * That a transiently un-consented CV object is always reachable by erasure.
   For an address with no applicant row, and for the draft door, it is not.
+* That the five-state matrix covers every exit. It does not reach the
+  concurrency exit on either door: the suite never issues concurrent requests,
+  so that path is reasoned about in comments and asserted nowhere.
 * That the handlers' size is accepted anywhere. It is not — `submit_application`
   is 10x and `submit_draft` 8x the 50-line guideline, acknowledged only in a
   commit message, which this register's own standard says cannot grant an
@@ -787,7 +808,10 @@ plausible and not yet designed. (2) is cheap and should be done regardless: a
 Prometheus counter on the overrun plus an alert, as `rate_limit` already has
 for its own skipped checks; the contrast is not defensible for long — the
 compensating control is instrumented and the privacy control it compensates
-for is not. (3) is a product decision about which way to fail.
+for is not. (3) is a product decision about which way to fail. (4) needs a test
+that actually races two submissions against the same address — which is what
+would turn the comments' reasoning into an assertion, and is the cheapest of
+the four to write.
 
 ---
 
@@ -804,4 +828,4 @@ for is not. (3) is a product decision about which way to fail.
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
-| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun with no alert; rate limits fail open when Redis is down; a refused submission's CV exists un-consented; and the two handlers' size is an open debt | PH3-B4b rounds 1-9 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, a `floor_exceeded` rate above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
+| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun with no alert; rate limits fail open when Redis is down; a refused submission's CV exists un-consented; the concurrency exit is state-correlated and untested; and the two handlers' size is an open debt | PH3-B4b rounds 1-9 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, a `floor_exceeded` rate above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |

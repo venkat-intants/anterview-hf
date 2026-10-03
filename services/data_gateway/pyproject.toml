@@ -45,8 +45,9 @@ httpx = "^0.27"
 structlog = "^24.4"
 shared = {path = "../../shared", develop = true}
 # Match the requirements.txt runtime pin — CVE-2025-62707 is fixed in >=6.1.1
-# (see app/routers/jd.py); CI must test the same major prod ships.
-pypdf = "6.14.2"
+# (see app/routers/jd.py); CI must test the same major prod ships. 6.19.0 also
+# clears the seven PYSEC advisories published against 6.17.0 and earlier.
+pypdf = "6.19.0"
 aioboto3 = ">=13.0"
 # >=0.0.31 clears CVE-2024-53981 / CVE-2026-24486 / CVE-2026-42561 / CVE-2026-53539
 python-multipart = ">=0.0.31,<0.1"

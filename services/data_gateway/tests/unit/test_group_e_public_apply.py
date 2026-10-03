@@ -6,7 +6,9 @@ The endpoint is exercised end to end against Postgres in
 
 from __future__ import annotations
 
+import ast
 import inspect
+import pathlib
 import re
 
 
@@ -147,3 +149,253 @@ def test_the_applicant_chooses_the_language_of_their_emails() -> None:
         pass
     else:  # pragma: no cover — the assertion is the point
         raise AssertionError("an unsupported language was accepted")
+
+
+# ===========================================================================
+# ORDER, which no substring guard in this repo can see
+# ===========================================================================
+def _door_bodies() -> dict[str, ast.AST]:
+    """Both handlers as parsed trees, not as text."""
+    import app.routers.public_apply as mod
+
+    tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
+    out: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name in (
+            "submit_application",
+            "submit_draft",
+        ):
+            out[node.name] = node
+    assert set(out) == {"submit_application", "submit_draft"}, out.keys()
+    return out
+
+
+def _first_line(node: ast.AST, pred) -> int | None:  # noqa: ANN001
+    """The line of the first statement matching *pred*, or None."""
+    hits = [n.lineno for n in ast.walk(node) if pred(n)]
+    return min(hits) if hits else None
+
+
+def test_the_reply_floor_starts_before_anything_state_dependent() -> None:
+    """THE property seven rounds bought, and the only one with no guard.
+
+    Round 7's fix was the POSITION of `floor_from = time.monotonic()` — above
+    the identity lookup, so the LEFT JOIN that returns a row for four states
+    and nothing for the fifth is inside the deadline. Round 8's reviewers both
+    found the same hole: that position is pinned by nothing. Move the
+    assignment back below `_identify` and every reply stays byte-identical,
+    every reply still takes at least the floor, the counting guard still sees
+    the same floored exits, and 2900 tests stay green while the channel is
+    open.
+
+    No substring or regex guard can see this; it is a statement ORDER
+    property, so it is asserted against the parsed tree.
+    """
+    for name, node in _door_bodies().items():
+        floor = _first_line(
+            node,
+            lambda n: isinstance(n, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "floor_from" for t in n.targets
+            ),
+        )
+        identify = _first_line(
+            node,
+            lambda n: isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "_identify",
+        )
+        gate = _first_line(
+            node,
+            lambda n: isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "reapplication_gate",
+        )
+        assert floor is not None, f"{name} never starts the reply floor"
+        assert identify is not None and gate is not None, name
+        assert floor < identify, (
+            f"{name}: the reply floor starts at line {floor}, AFTER the identity "
+            f"lookup at {identify}. The lookup returns a row for four states and "
+            "nothing for the fifth, so it is outside the deadline and additively "
+            "measurable with a small PDF."
+        )
+        assert floor < gate, (
+            f"{name}: the reply floor starts after the gate, so the branch it "
+            "exists to mask is outside it"
+        )
+
+
+def test_the_one_shot_door_takes_a_second_deadline_after_the_caller_sized_work() -> None:
+    """The other half, and the regression round 8 measured.
+
+    One deadline cannot cover both a caller-sized term and the tail below it.
+    Round 7 moved the single clock to the top of the handler to cover the
+    lookup — which put the PDF parse inside the window. Measured on this
+    repo's own extractor: a dense 60-page CV parses in ~555 ms against a
+    400 ms floor, so the floor was spent before the branch began and an
+    attacker could guarantee it never engaged.
+
+    So the one-shot door takes a SECOND clock after the parse and upload. This
+    pins that it exists and that it sits after the upload and before the gate.
+    The draft door needs none — its CV arrived at a different endpoint, so
+    there is no caller-sized term in its handler at all.
+    """
+    doors = _door_bodies()
+
+    one = doors["submit_application"]
+    tail = _first_line(
+        one,
+        lambda n: isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "tail_from" for t in n.targets),
+    )
+    upload = _first_line(
+        one,
+        lambda n: isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "_upload_to_s3",
+    )
+    gate = _first_line(
+        one,
+        lambda n: isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "reapplication_gate",
+    )
+    assert tail is not None, (
+        "submit_application has no second deadline, so the caller-sized PDF "
+        "parse is inside the only window and a large CV switches the floor off"
+    )
+    assert upload is not None and gate is not None
+    assert upload < tail < gate, (
+        f"the second deadline must sit after the upload ({upload}) and before "
+        f"the gate ({gate}); it is at {tail}"
+    )
+
+    assert (
+        _first_line(
+            doors["submit_draft"],
+            lambda n: isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "_upload_to_s3",
+        )
+        is None
+    ), (
+        "submit_draft now uploads in its handler, so it needs a second "
+        "deadline too — see submit_application"
+    )
+
+
+def test_every_degraded_reply_uses_the_one_sentence() -> None:
+    """Two sentences meant the states were told apart by wording.
+
+    The draft door's accept path said "We could not submit your application
+    just now" while its refusal path and every one-shot exit said "We could
+    not save your application. Please try again." In a write-failure window
+    that is the refusing and accepting states answering with different bodies
+    — on the one channel this feature exists to close, by a difference nobody
+    had compared and no test induces.
+    """
+    import app.routers.public_apply as mod
+
+    src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    # SCOPED TO THE SUBMIT PATH. The module raises 503 from other endpoints
+    # too — saving a draft, deleting a CV, setting up an account, following a
+    # confirmation link — and those sentences differ for good reason: they are
+    # different operations, and none of them branches on what is stored about
+    # an address. What must be identical is every 503 a SUBMISSION can get,
+    # because that is where the five states are.
+    submit_path = {
+        "submit_application",
+        "submit_draft",
+        "_refuse",
+        "_refuse_work",
+        "_require_write_capability",
+    }
+    scoped = [
+        n
+        for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef)
+        and n.name in submit_path
+    ]
+    assert {n.name for n in scoped} == submit_path, {n.name for n in scoped}
+
+    # The `detail=` of every 503 raised in this module, read off the parsed
+    # call rather than by scanning for words — a text scan picks up docstrings
+    # that happen to contain the same phrases.
+    literals: set[str] = set()
+    for node in (n for fn in scoped for n in ast.walk(fn)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "HTTPException"
+        ):
+            continue
+        kw = {k.arg: k.value for k in node.keywords}
+        status = kw.get("status_code")
+        is_503 = (
+            isinstance(status, ast.Constant) and status.value == 503
+        ) or (
+            isinstance(status, ast.Attribute)
+            and status.attr == "HTTP_503_SERVICE_UNAVAILABLE"
+        )
+        if not is_503:
+            continue
+        detail = kw.get("detail")
+        if isinstance(detail, ast.Constant) and isinstance(detail.value, str):
+            literals.add(detail.value)
+        elif isinstance(detail, ast.Name):
+            literals.add(getattr(mod, detail.id))
+    assert literals == {mod._UNAVAILABLE}, (
+        "more than one degraded-reply sentence exists, so a write failure can "
+        f"tell the states apart by wording: {sorted(literals)}"
+    )
+
+
+def test_the_draft_door_wires_the_release_decision_into_mark_submitted() -> None:
+    """The DECISION is tested; this is the WIRING, which was not.
+
+    `_stage_reapplication` returning `release_draft_pointer=True` has three
+    behavioural tests. What had nothing was the handler's use of it:
+    `release_staged_draft_cv = staged.release_draft_pointer` feeding
+    `mark_submitted(..., release_resume=release_staged_draft_cv)`. Change that
+    argument to a literal `False` and the draft keeps a pointer to the object
+    the tail delete has just removed — and every test stays green, because the
+    readback is 404 either way and the decision test never reaches the handler.
+
+    That is round 5's defect moved from a function body to a call site, which
+    is what extracting a body without extracting its call buys you. Asserted
+    on the parsed tree because what matters is that the ARGUMENT is the value
+    the helper returned, not a constant.
+    """
+    import app.routers.public_apply as mod
+
+    tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
+    door = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "submit_draft"
+    )
+
+    calls = [
+        n
+        for n in ast.walk(door)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "mark_submitted"
+    ]
+    assert calls, "submit_draft no longer consumes its draft"
+
+    wired = []
+    for call in calls:
+        arg = next(
+            (k.value for k in call.keywords if k.arg == "release_resume"), None
+        )
+        # A Name, not a Constant: the decision must come from
+        # `_stage_reapplication`, never be hard-coded at the call site.
+        wired.append(isinstance(arg, ast.Name))
+
+    assert any(wired), (
+        "every `mark_submitted` in submit_draft passes a constant or nothing "
+        "for `release_resume`, so the release decision "
+        "`_stage_reapplication` makes is thrown away — the draft keeps a "
+        "pointer to an object the tail delete removes"
+    )

@@ -677,7 +677,14 @@ substantiated complaint — that is the decision recorded here, not a preference
 
 ---
 
-## AR-10 — The anonymous apply doors still leak which state an address is in, under a write failure and under enough load
+## AR-10 — The anonymous apply doors still leak which state an address is in, under a write failure and on demand
+
+| | |
+|---|---|
+| **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-8, 2026-09-28 to 2026-10-02 |
+| **Status** | **ACCEPTED — four residues, all open; the property itself holds on a healthy system and is tested** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a timing or enumeration report against the apply doors; (b) a `public_apply.reply_floor_exceeded` rate above noise; (c) a Redis outage coinciding with apply traffic; (d) a residency or privacy bid asking about enumeration resistance; (e) the write-set design in "Path to closure" becoming cheap enough to build |
 
 **What is accepted.** `POST /apply/{requisition_id}` and `POST /apply/draft/submit`
 are anonymous — no login, the caller supplies the email as a form field, and the
@@ -687,8 +694,8 @@ period, was rejected and the period elapsed, was rejected with an HR override,
 or has never applied here. Seven review rounds each found a way to tell those
 states apart. The reply body, the status code on a healthy system, the state
 left behind, what a second submission reads back, and the dominant timing term
-are all closed. Three residues are not, and are accepted here rather than in a
-commit message or a test docstring:
+are all closed. FOUR residues are not, and are accepted here rather than in a commit
+message or a test docstring — three failure modes and one traded invariant:
 
 1. **Any write-path failure after the probe still splits the states 201/503.**
    `_require_write_capability` asks whether the transaction can write at all
@@ -738,6 +745,25 @@ address. (2) and (3) are both "fail closed instead", which converts a privacy
 residue into an availability one: candidates refused during an incident, and
 during a Redis outage refused entirely.
 
+**What is NOT true.** A reader could reasonably assume any of these
+compensating controls exists. None does:
+
+* That the rate limits bound the exposure. They fail open; during a Redis
+  outage there is no cap at all, and the same outage disables the JWT
+  revocation epoch.
+* That the reply floor degrades gracefully. It fails OPEN — a branch that
+  overruns it answers immediately — and nothing alerts on that.
+* That an alert or a metric would reveal exploitation. There is no counter on
+  the floor overrun and no alert on any of this; the compensating control
+  (`rate_limit`) is instrumented and the privacy control it compensates for is
+  not.
+* That a transiently un-consented CV object is always reachable by erasure.
+  For an address with no applicant row, and for the draft door, it is not.
+* That the handlers' size is accepted anywhere. It is not — `submit_application`
+  is 10x and `submit_draft` 8x the 50-line guideline, acknowledged only in a
+  commit message, which this register's own standard says cannot grant an
+  acceptance. That is an open debt, not an accepted risk.
+
 **What is NOT accepted, and must not be read into this entry.** That the
 property is established on a healthy system is load-bearing and tested — the
 five-state matrix across both doors, the upload-count and delete-count tests,
@@ -774,4 +800,4 @@ resistance; or the write-set design in (1) becoming cheap enough to build.
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
-| **AR-10** | The anonymous apply doors still separate the states under a write failure, and under load the reply floor fails open | PH3-B4b rounds 1-7 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, a `reply_floor_exceeded` rate above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
+| **AR-10** | The anonymous apply doors separate the states under any write failure; the reply floor fails open on demand (a dense CV); rate limits fail open; and a refused submission's CV exists un-consented | PH3-B4b rounds 1-7 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, a `reply_floor_exceeded` rate above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |

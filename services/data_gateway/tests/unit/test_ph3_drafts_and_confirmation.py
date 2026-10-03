@@ -969,7 +969,13 @@ def test_the_already_applied_branch_deletes_the_object_it_released() -> None:
     src = inspect.getsource(submit_draft)
     assert "_refuse(" in src, "the draft door no longer refuses through the shared path"
 
-    body = inspect.getsource(_refuse)
+    # `_refuse` is now the guarded shell; `_refuse_work` holds the two writes
+    # it guards. Both are asserted, because the split is the fix: a failure in
+    # either write must give the same 503 the accept path gives, not an
+    # unhandled 500 on the refusing states only.
+    from app.routers.public_apply import _refuse_work
+
+    body = inspect.getsource(_refuse) + inspect.getsource(_refuse_work)
     assert "release_resume=True" in body
     assert "_release_unadopted" in body
     # Order matters: commit the cleared pointer BEFORE releasing the object, so

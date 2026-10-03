@@ -346,12 +346,22 @@ def test_a_cooldown_refusal_is_indistinguishable_from_a_live_application() -> No
             f"{fn.__name__} does not refuse through the shared path, which is "
             "where five of six review rounds' defects came from"
         )
+        assert "_mail_cooldown_reason" not in src, (
+            f"{fn.__name__} mails the reason itself again instead of through "
+            "the shared refusal path"
+        )
         # Every exit through the one reply, and held to the common deadline.
         # This replaces an `assert "_ALREADY_APPLIED" in src`, which asked for
         # the SECOND of two messages to still be there — a test that required
         # the difference it was named after. There is one message now, and it
         # leaves at one time.
-        assert "_reply(name, floor_from=floor_from)" in src
+        # The CALLEE, not the exact argument spelling. Pinning
+        # `_reply(name, floor_from=floor_from)` broke the moment a second
+        # deadline was added — and an over-specific spelling assertion is how
+        # a correct change gets reported as a regression. What the arguments
+        # must be, and where the clocks must start, is pinned properly by the
+        # AST guards in `test_group_e_public_apply.py`.
+        assert "_reply(name, floor_from=floor_from" in src
         assert "ApplicationOut(" not in src, (
             f"{fn.__name__} builds its own reply, so it can differ again"
         )
@@ -361,9 +371,9 @@ def test_the_shared_refusal_path_always_mails_the_reason() -> None:
     """The reply says nothing; the ADDRESS is told. Asserted on `_refuse`,
     which both doors and both refusal branches go through, rather than on each
     door's own copy of it."""
-    from app.routers.public_apply import _refuse
+    from app.routers.public_apply import _refuse, _refuse_work
 
-    body = inspect.getsource(_refuse)
+    body = inspect.getsource(_refuse) + inspect.getsource(_refuse_work)
     assert "_mail_cooldown_reason" in body, (
         "a cooldown refusal no longer tells the candidate why, and the reply "
         "deliberately cannot"

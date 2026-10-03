@@ -553,6 +553,23 @@ class DraftStartOut(BaseModel):
 # sent and not one thing more.
 #
 # Do not add a branch here. Do not add a field. See ApplicationOut.
+# THE one sentence every degraded reply gives, on both doors.
+#
+# There were two. The draft door's accept path said "We could not submit your
+# application just now" while its refusal path and every one-shot exit said
+# "We could not save your application. Please try again." So in a write-failure
+# window the refusing and accepting states answered with DIFFERENT BODIES — the
+# states told apart on the one channel this whole feature exists to close, by a
+# wording difference nobody had compared. `_assert_one_answer` compares whole
+# bodies and would have caught it; no test induces a write failure.
+#
+# One constant, so no door can invent a sentence. A storage failure, a
+# read-only database, a failed refusal and a failed submission are all the
+# same thing to the person reading it: we could not take your application, try
+# again.
+_UNAVAILABLE = "We could not save your application. Please try again."
+
+
 _RECEIVED = (
     "Thanks — we have your application. Please check your email; we have sent "
     "you a message about it."
@@ -566,7 +583,9 @@ def _received(name: str) -> ApplicationOut:
     )
 
 
-async def _reply(name: str, *, floor_from: float) -> ApplicationOut:
+async def _reply(
+    name: str, *, floor_from: float, tail_from: float | None = None
+) -> ApplicationOut:
     """The one reply, held until a common deadline.
 
     THE REPLY IS A CONSTANT; THE WORK IS NOT. Every state answers with the
@@ -598,7 +617,29 @@ async def _reply(name: str, *, floor_from: float) -> ApplicationOut:
     """
     floor = settings.apply_reply_floor_ms / 1000
     if floor > 0:
-        remaining = floor - (time.monotonic() - floor_from)
+        # THE LATER OF TWO DEADLINES, and the reason is a regression this
+        # function already shipped once.
+        #
+        # Round 6 found the work differing below the gate, so the clock was
+        # started after the upload. Round 7 found the IDENTITY LOOKUP sitting
+        # above that clock, so round 7's fix moved the clock to the top of the
+        # handler. Round 8 measured what that cost: the PDF parse is now
+        # INSIDE the deadline, it is CPU-bound, and the caller sizes it. A
+        # dense 60-page CV parses in ~555 ms against a 400 ms floor — measured
+        # on this repo's own extractor, not argued — so the floor was
+        # routinely inactive in production and an attacker could guarantee it
+        # never engaged. One clock cannot cover both a caller-sized term and
+        # the tail below it: cover the term and the tail escapes, cover the
+        # tail and the term is exposed.
+        #
+        # So two. `floor_from` is the top of the handler and covers the
+        # identity lookup; `tail_from` is taken after that door's shared work
+        # and covers the branch. Sleeping to the later of both means neither a
+        # 600-byte PDF nor a 6 MB one exposes either.
+        remaining = max(
+            floor - (time.monotonic() - floor_from),
+            floor - (time.monotonic() - tail_from) if tail_from else 0.0,
+        )
         if remaining > 0:
             await asyncio.sleep(remaining)
         else:
@@ -867,6 +908,7 @@ async def _refuse(
     cv_key: str | None,
     draft_id: uuid.UUID | None,
     cooldown: _CooldownNotice | None,
+    tail_from: float | None = None,
 ) -> ApplicationOut:
     """Answer a submission the gate will not act on, on EITHER door.
 
@@ -897,6 +939,48 @@ async def _refuse(
     and its `cv_key` is the object it uploaded above the gate; the draft door
     passes its draft and that draft's key. Those are data, not code.
     """
+    try:
+        await _refuse_work(db, draft_id=draft_id, cooldown=cooldown)
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 — same answer the accept path gives
+        # EVERY step is inside this, not just the commit. The previous version
+        # guarded `db.commit()` and left `mark_submitted` one line above it
+        # unguarded — so a statement timeout, lock timeout, deadlock or dropped
+        # connection on THAT update escaped as an unhandled 500 on the
+        # refusing states while the accepting states answered 503, and the
+        # draft stayed readable. The round-3 channel, on an error path, in the
+        # commit whose message said it closed exactly that.
+        await db.rollback()
+        log.warning(
+            "public_apply.refusal_failed", error_type=type(exc).__name__
+        )
+        # AND THE OBJECT IS NOT RELEASED HERE. The rollback restored the
+        # draft's `status='draft'` AND its `resume_s3_key`, so a surviving row
+        # still names this object: deleting it would leave the draft
+        # resumable and submittable with a pointer to nothing, and a later
+        # accepted submission would write an applicant and an enrolment
+        # pointing at a file that is gone — a silently CV-less application.
+        # `purge_expired` reaches a still-`draft` row. On the one-shot door
+        # nothing names it either way, and one leaked object on an
+        # infrastructure failure is the better trade than a dangling pointer.
+        if cv_key and draft_id is None:
+            await _release_unadopted(str(cv_key))
+        raise HTTPException(
+            status_code=503,
+            detail=_UNAVAILABLE,
+        ) from exc
+    if cv_key:
+        await _release_unadopted(str(cv_key))
+    return await _reply(name, floor_from=floor_from, tail_from=tail_from)
+
+
+async def _refuse_work(
+    db: DbSessionDep,
+    *,
+    draft_id: uuid.UUID | None,
+    cooldown: _CooldownNotice | None,
+) -> None:
+    """The two writes a refusal makes, so both sit inside one guarded region."""
     if draft_id is not None:
         await draft_store.mark_submitted(db, draft_id=draft_id, release_resume=True)
     if cooldown is not None:
@@ -917,33 +1001,6 @@ async def _refuse(
             company_name=cooldown.company_name,
             verdict=cooldown.verdict,
         )
-    # GUARDED. This commit had no handler at any level, while the accepting
-    # path's commit sits inside a try that turns any failure into a 503. So a
-    # commit-time failure — serialization failure, statement timeout, a
-    # connection reset, pgbouncer eviction — gave an unhandled 500 on the
-    # REFUSING states and a 503 on the accepting ones: the states told apart
-    # on the status line again, with no statistics needed.
-    #
-    # Worse on the draft door, where `mark_submitted` has already run: the
-    # 500 unwinds the session, the draft stays `status='draft'`, and
-    # `GET /apply/draft` then answers 200 for a refused state and 404 for an
-    # accepted one — the round-3 channel, live on an error path.
-    try:
-        await db.commit()
-    except Exception as exc:  # noqa: BLE001 — same answer the accept path gives
-        await db.rollback()
-        log.warning(
-            "public_apply.refusal_commit_failed", error_type=type(exc).__name__
-        )
-        if cv_key:
-            await _release_unadopted(str(cv_key))
-        raise HTTPException(
-            status_code=503,
-            detail="We could not save your application. Please try again.",
-        ) from exc
-    if cv_key:
-        await _release_unadopted(str(cv_key))
-    return await _reply(name, floor_from=floor_from)
 
 
 async def _require_write_capability(db: DbSessionDep) -> None:
@@ -1006,7 +1063,7 @@ async def _require_write_capability(db: DbSessionDep) -> None:
             # The SAME sentence a storage failure gives, so the two degraded
             # modes are not distinguishable from each other either.
             status_code=503,
-            detail="We could not save your application. Please try again.",
+            detail=_UNAVAILABLE,
         ) from exc
 
 
@@ -1712,6 +1769,11 @@ async def submit_draft(
     # application": the cooldown never ran on this route, an override let
     # nobody through, and the branch below was dead code for exactly the people
     # it was written for. Two copies of one predicate is how it drifted.
+    # This door has no second deadline: its CV arrived at
+    # /apply/draft/resume-upload, so there is no caller-sized term between the
+    # top of the handler and the branch, and `floor_from` alone covers both
+    # the identity lookup and the tail. `_refuse` and `_reply` default
+    # `tail_from` to None for exactly this case.
     gate = await reapplication_gate(
         db,
         requisition_id=requisition_id,
@@ -1944,7 +2006,7 @@ async def submit_draft(
         await db.rollback()
         log.exception("public_apply.draft_submit_failed", requisition_id=str(requisition_id))
         raise HTTPException(
-            status_code=503, detail="We could not submit your application just now."
+            status_code=503, detail=_UNAVAILABLE
         ) from None
 
     # Confirmation email, with a link to activate the account this application
@@ -2011,7 +2073,19 @@ async def submit_draft(
         try:
             await _delete_from_s3(superseded_cv)
         except Exception:  # noqa: BLE001 — the pointer is already gone
-            log.warning("public_apply.superseded_reapply_cv_orphaned")
+            log.warning(
+                "public_apply.superseded_reapply_cv_orphaned", s3_key=superseded_cv
+            )
+
+    # Scoring happens in the reconciler. Woken here for the same reason the
+    # one-shot door wakes it: otherwise this application waits for the next
+    # scheduled pass, up to ten minutes. That asymmetry was undocumented —
+    # a save-and-resume applicant was scored up to ten minutes later than an
+    # identical one-shot applicant, for no stated reason. `wake()` is an
+    # `Event.set()`, so it costs nothing and adds no state-dependent work.
+    from app.reconciliation import wake as wake_reconciler  # noqa: PLC0415
+
+    wake_reconciler()
 
     log.info(
         "public.apply.received_from_draft",
@@ -2325,7 +2399,10 @@ async def submit_application(
     name = _clean(full_name, 200) or ""
     address = str(email).strip().lower()[:320]
 
-    # THE FLOOR STARTS HERE, before the identity lookup below.
+    # The FIRST of two deadlines — see `_reply`. This one starts before the
+    # identity lookup; the second starts after the upload, because the parse
+    # and upload are caller-sized and must not be inside the window that
+    # covers the branch.
     #
     # It used to start after the upload, on the argument that the upload is
     # caller-sized and common to every state and so is noise rather than
@@ -2462,7 +2539,7 @@ async def submit_application(
             ),
         )
         raise HTTPException(
-            status_code=503, detail="We could not save your application. Please try again."
+            status_code=503, detail=_UNAVAILABLE
         ) from exc
 
     # Can we write at all? Asked before anything branches, so a read-only
@@ -2474,6 +2551,15 @@ async def submit_application(
     except HTTPException:
         await _release_unadopted(s3_key)
         raise
+
+    # THE SECOND DEADLINE — see `_reply`. Taken after the PDF parse and the
+    # upload, which are caller-sized, and before anything branches. The first
+    # deadline (`floor_from`, top of the handler) covers the identity lookup;
+    # this one covers the branch. One clock cannot do both: round 7 moved it
+    # up to cover the lookup and round 8 measured the cost — a dense 60-page
+    # CV parses in ~555 ms against a 400 ms floor, so the single deadline was
+    # routinely spent before the branch began.
+    tail_from = time.monotonic()
 
     gate = await reapplication_gate(
         db,
@@ -2506,6 +2592,7 @@ async def submit_application(
             floor_from=floor_from,
             cv_key=s3_key,
             draft_id=None,
+            tail_from=tail_from,
             cooldown=(
                 None
                 if gate.already_applied
@@ -2672,7 +2759,7 @@ async def submit_application(
         # row. (For a new person it never did: the applicant insert rolled back.)
         await _release_unadopted(s3_key)
         log.info("public.apply.race_lost", requisition_id=str(requisition_id))
-        return await _reply(name, floor_from=floor_from)
+        return await _reply(name, floor_from=floor_from, tail_from=tail_from)
     except rediscovery.RediscoveryError as exc:
         # Unreachable in practice — `source` above is the fixed literal
         # "public_apply_form", never caller input — but rendered with the
@@ -2694,7 +2781,7 @@ async def submit_application(
         await _release_unadopted(s3_key)
         log.exception("public.apply.failed", error_type=type(exc).__name__)
         raise HTTPException(
-            status_code=503, detail="We could not save your application. Please try again."
+            status_code=503, detail=_UNAVAILABLE
         ) from exc
 
     # Confirmation email, with a link to activate the account this application
@@ -2748,7 +2835,9 @@ async def submit_application(
         try:
             await _delete_from_s3(superseded_cv)
         except Exception:  # noqa: BLE001 — the pointer is already gone
-            log.warning("public_apply.superseded_reapply_cv_orphaned")
+            log.warning(
+                "public_apply.superseded_reapply_cv_orphaned", s3_key=superseded_cv
+            )
 
     # Scoring happens in the reconciler. Wake it, as a bulk upload does, rather
     # than leaving this application for the next scheduled pass (up to ten
@@ -2765,7 +2854,7 @@ async def submit_application(
         returning=not is_new_person,
         # NEVER log the name, email or resume text.
     )
-    return await _reply(name, floor_from=floor_from)
+    return await _reply(name, floor_from=floor_from, tail_from=tail_from)
 
 
 # ---------------------------------------------------------------------------
@@ -2836,8 +2925,17 @@ async def _record_apply_consent(
     """Write the DPDP ledger entry for storing this person's CV. Idempotent.
 
     In the same transaction as the applicant row, so the PII and its lawful
-    basis are committed together or not at all — there is no moment at which
-    the CV exists without the record of permission to hold it.
+    basis are committed together or not at all.
+
+    THAT IS NOT THE WHOLE PICTURE, and this docstring used to say it was —
+    "there is no moment at which the CV exists without the record of
+    permission to hold it". The module docstring's copy of the same claim was
+    corrected and this one, on the function that actually writes the ledger,
+    was not grepped. Both doors now upload the CV BEFORE the reapplication
+    gate is consulted, so that the work the endpoint does cannot be timed to
+    learn whether an address has applied here. On a REFUSED submission this
+    function is never reached at all. See the module docstring and
+    docs/ACCEPTED-RISKS.md AR-10.
 
     ``evidence`` carries hashed request metadata and ids only. Never raw PII:
     the ledger is read during audits by people who have no business seeing the

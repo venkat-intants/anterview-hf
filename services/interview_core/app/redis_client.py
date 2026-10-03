@@ -20,14 +20,22 @@ interview_core uses Redis for:
 
 from __future__ import annotations
 
-from typing import Any
-
 from redis.asyncio import Redis
 from shared.redis_factory import build_redis_client
 
 from app.config import settings
 
-_redis: Redis[Any] | None = None  # type: ignore[type-arg]
+# ``Redis`` is NOT subscripted here, deliberately. The annotation used to carry
+# a type argument plus a ``# type: ignore[type-arg]`` — the subscript for a
+# reader, the ignore because redis-py's class is not generic to mypy either.
+# That worked only while nothing evaluated it: ``from __future__ import
+# annotations`` keeps annotations as strings, and fastapi <=0.115 never resolved
+# this one. fastapi 0.133 resolves a dependency's annotations with
+# ``get_type_hints()``, which evaluates the string for real and raised "Redis is
+# not a generic class" at import time on all four services. Bare ``Redis``
+# satisfies mypy (which expects no type arguments) and the runtime (which must
+# not subscript it).
+_redis: Redis | None = None
 
 
 def init_redis() -> None:
@@ -44,7 +52,7 @@ async def close_redis() -> None:
         _redis = None
 
 
-def get_redis() -> Redis[Any]:  # type: ignore[type-arg]
+def get_redis() -> Redis:
     """Return the Redis client singleton. Raises if not initialised."""
     if _redis is None:
         raise RuntimeError("Redis not initialised. Call init_redis() first.")

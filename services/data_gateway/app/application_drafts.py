@@ -303,6 +303,7 @@ async def attach_resume(
     s3_key: str,
     filename: str | None,
     parsed: dict[str, Any],
+    resume_text: str,
     now: datetime | None = None,
 ) -> None:
     """Record the uploaded CV and what the parser read out of it. Caller commits.
@@ -311,17 +312,28 @@ async def attach_resume(
     clears ``confirmed_at``: a confirmation is about one particular CV, and
     carrying it across a replacement would mean the candidate had confirmed
     something they never saw.
+
+    ``resume_text`` is the extracted text itself, kept because
+    ``submit_draft`` has to put it on the ``applicants`` row or the application
+    is never scored at all: ``reconciliation._UNSCORED_WORK_SQL`` requires
+    ``a.resume_text`` to be non-empty, so a draft-door applicant without it
+    matches nothing the reconciler looks for. It was extracted and discarded
+    here for the whole life of this door. The caller bounds it — see
+    ``public_apply._MAX_RESUME_TEXT_CHARS``, which exists because an unbounded
+    value is a timing channel on the sibling door, and these two doors drifting
+    apart is what five rounds of review kept finding.
     """
     now = now or datetime.now(tz=UTC)
     await db.execute(
         text(
             "UPDATE application_drafts"
             "   SET resume_s3_key = :k, resume_filename = :f,"
-            "       parsed = CAST(:p AS jsonb), confirmed_at = NULL, updated_at = :n"
+            "       parsed = CAST(:p AS jsonb), resume_text = :rt,"
+            "       confirmed_at = NULL, updated_at = :n"
             " WHERE id = :i AND status = 'draft'"
         ),
         {"k": s3_key, "f": _clean(filename, 255), "p": json.dumps(parsed),
-         "n": now, "i": draft_id},
+         "rt": resume_text, "n": now, "i": draft_id},
     )
 
 

@@ -66,6 +66,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from prometheus_client import Counter
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -113,6 +114,45 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/apply", tags=["public-apply"])
 
 _MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB — same ceiling as the HR upload path.
+
+# A TIMING CONTROL, not a storage nicety. Round 10 found the one channel the
+# two reply pads could not absorb: `resume_text` is written twice inside the
+# reply pad (`applicants.resume_text` and `users.resume_text`), both writes
+# live only on the branch that CREATES an applicant, and the text was
+# unbounded. So the only state that writes it is "this address has never
+# applied here" — and a caller choosing how much it writes chooses how far
+# that state overruns a 400 ms budget justified as covering tens of
+# milliseconds of fixed work. `_MAX_RESUME_BYTES` does not bound it: pypdf
+# extraction AMPLIFIES, and a 0.81 MB PDF of repetitive text measured 14.19 MB
+# of extracted characters, ~17x.
+#
+# 100k characters is roughly fifty pages of dense text. No real CV reaches it,
+# so nothing a candidate submits is lost and the scorer sees what it saw
+# before; what it removes is the three-orders-of-magnitude range the attacker
+# controlled. Keep it well under the point where two TOASTed writes approach
+# the pad, and do not raise it without re-measuring that.
+_MAX_RESUME_TEXT_CHARS = 100_000
+
+# THE PAD'S FAIL-OPEN BRANCH, instrumented. AR-10 accepts that each pad fails
+# open on overrun and names "a `public_apply.floor_exceeded` rate above noise"
+# as a trigger to revisit that acceptance — but nothing counted the rate, so
+# the trigger could not fire and the acceptance was unarmed. A WARNING line in
+# a log stream nobody watches is instrumentation, not observability; this is
+# the same argument `rate_limit_check_skipped_total` already won for the
+# compensating control, and leaving the privacy control it compensates for
+# uninstrumented was not defensible.
+#
+# Labelled by `floor` ("lookup" / "reply") because the two mean different
+# things: the lookup pad overrunning says the identity read is slow, the reply
+# pad overrunning says the accepting branch is — and the accepting branch is
+# the state that most needs masking, so that label is the one to page on.
+_floor_exceeded = Counter(
+    "public_apply_floor_exceeded_total",
+    "Anonymous-apply timing pads that overran their deadline and released "
+    "immediately (fail-open). Sustained non-zero means the five application "
+    "states are separable by reply latency.",
+    ["floor"],
+)
 
 # How long the CV detail parser may take before we give up and show the
 # candidate empty fields instead. Generous: the parser is linear and capped,
@@ -600,6 +640,7 @@ async def _hold_until(deadline: float, *, what: str) -> None:
     if remaining > 0:
         await asyncio.sleep(remaining)
         return
+    _floor_exceeded.labels(floor=what).inc()
     log.warning(
         "public_apply.floor_exceeded", floor=what, over_ms=round(-remaining * 1000)
     )
@@ -1685,6 +1726,12 @@ async def upload_draft_resume(
     await draft_store.attach_resume(
         db, draft_id=row["id"], s3_key=s3_key,
         filename=resume.filename, parsed=parsed,
+        # BOUNDED, by the same constant and for the same reason as the one-shot
+        # door — see `_MAX_RESUME_TEXT_CHARS`. The bound is applied on both
+        # doors even though only the other one pads a region containing the
+        # write, because a bound that holds on one door only is the shape of
+        # defect this branch has now found five times.
+        resume_text=resume_text[:_MAX_RESUME_TEXT_CHARS],
     )
     await db.commit()
     return _draft_out(await _draft_or_404(db, token))
@@ -1870,6 +1917,22 @@ async def submit_draft(
                     target_level=req["level"],
                     target_jd_text=req["jd_text"],
                     resume_s3_key=row["resume_s3_key"],
+                    # WITHOUT THIS THE APPLICATION IS NEVER SCORED.
+                    # `reconciliation._UNSCORED_WORK_SQL` requires
+                    # `a.resume_text` to be non-empty, so for the whole life of
+                    # this door its applicants matched nothing the reconciler
+                    # looks for — not scored late, never scored, while
+                    # `pending_enrichment=True` below named an intent that
+                    # nothing could act on. `upload_draft_resume` had the text
+                    # and discarded it; it now keeps it (bounded), so this door
+                    # finally stores what the scorer needs.
+                    #
+                    # NULL for a draft whose CV was uploaded before the column
+                    # existed. That row then behaves exactly as every
+                    # draft-door application behaved until now, which is the
+                    # honest default — re-parsing stored objects to backfill is
+                    # work nobody asked for.
+                    resume_text=row.get("resume_text"),
                     # The candidate CONFIRMED this name (PH3-B5), so it is
                     # authored rather than parsed — the reconciler must not
                     # overwrite it with whatever the CV says.
@@ -1945,38 +2008,64 @@ async def submit_draft(
         # too, so an audit that looks this person up by their real user id
         # finds their consent rather than missing it. Idempotent per user, so
         # a returning applicant is not double-recorded.
-        owner_user_id = await db.scalar(
-            text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
+        #
+        # PROVISIONED, NOT MERELY READ — round 10, and the fifth instance of
+        # this branch's recurring defect: a decision applied to one door and
+        # not the other.
+        #
+        # This used to `SELECT user_id FROM applicants` and skip everything
+        # below when it came back NULL. `applicants.user_id` is nullable and HR
+        # leaves it null: both `Applicant(...)` constructions in
+        # `hr_applicants` set `created_by_user_id` and no `user_id`. So for an
+        # address HR had already uploaded a CV for, this door wrote the
+        # application and the enrolment, and then skipped
+        #
+        #   * the `dpdp_consent_ledger` entry — a PERMANENT breach of
+        #     CLAUDE.md's "no PII without a consent ledger entry", not the
+        #     transient one AR-10 trades away; the row `start_draft` wrote
+        #     hangs off the throwaway guest identity, which is exactly what
+        #     this block exists to correct, and
+        #   * the confirmation email, which both handlers cite as the control
+        #     that means "the real owner of that address hears about an
+        #     application they did not make".
+        #
+        # The one-shot door never had the bug: it calls `_ensure_guest_user`,
+        # which CREATES the row and links it when absent. Same call here, so
+        # the two doors provision identically and `_record_apply_consent` can
+        # no longer be skipped.
+        owner_user_id = await _ensure_guest_user(
+            db, applicant_id=applicant_id, company_id=company_id, name=name,
+            email=address, resume_text=row.get("resume_text") or "",
+            now=now, language=str(row.get("language") or "en"),
         )
-        if owner_user_id is not None:
-            await _record_apply_consent(
-                db, request=request, user_id=uuid.UUID(str(owner_user_id)),
-                applicant_id=applicant_id, company_id=company_id,
-                requisition_id=requisition_id, now=now,
+        await _record_apply_consent(
+            db, request=request, user_id=owner_user_id,
+            applicant_id=applicant_id, company_id=company_id,
+            requisition_id=requisition_id, now=now,
+        )
+        # PH5-E3, code review FIX 2. A FALSE value writes nothing at all —
+        # `record_opt_in` is only ever called when the draft actually
+        # stored a true flag. Same terms as the single-shot path
+        # (submit_application): `source="public_apply_form"`, so a
+        # withdrawn candidate is not silently re-granted through this
+        # door either — this one is no more authenticated than that one.
+        # NOT on a reapplication. A talent-pool opt-in is its own DPDP
+        # §6 consent, and on this path nobody has proved they own the
+        # address — so an unverified request could create a first-ever
+        # rediscovery consent for a candidate who never gave one, with the
+        # sender's own IP stored as the evidence for it. It waits for the
+        # same confirmation the reopen does.
+        if row.get("rediscovery_opt_in") and not gate.reapplying:
+            await rediscovery.record_opt_in(
+                db, user_id=owner_user_id, company_id=company_id,
+                applicant_id=applicant_id, requisition_id=requisition_id,
+                source="public_apply_form",
+                meta=rediscovery.OptInMeta(
+                    ip_address=extract_client_ip(request),
+                    user_agent=extract_user_agent(request),
+                ),
+                now=now,
             )
-            # PH5-E3, code review FIX 2. A FALSE value writes nothing at all —
-            # `record_opt_in` is only ever called when the draft actually
-            # stored a true flag. Same terms as the single-shot path
-            # (submit_application): `source="public_apply_form"`, so a
-            # withdrawn candidate is not silently re-granted through this
-            # door either — this one is no more authenticated than that one.
-            # NOT on a reapplication. A talent-pool opt-in is its own DPDP
-            # §6 consent, and on this path nobody has proved they own the
-            # address — so an unverified request could create a first-ever
-            # rediscovery consent for a candidate who never gave one, with the
-            # sender's own IP stored as the evidence for it. It waits for the
-            # same confirmation the reopen does.
-            if row.get("rediscovery_opt_in") and not gate.reapplying:
-                await rediscovery.record_opt_in(
-                    db, user_id=uuid.UUID(str(owner_user_id)), company_id=company_id,
-                    applicant_id=applicant_id, requisition_id=requisition_id,
-                    source="public_apply_form",
-                    meta=rediscovery.OptInMeta(
-                        ip_address=extract_client_ip(request),
-                        user_agent=extract_user_agent(request),
-                    ),
-                    now=now,
-                )
         await draft_store.mark_submitted(
             db, draft_id=row["id"], now=now,
             release_resume=release_staged_draft_cv,
@@ -2056,47 +2145,51 @@ async def submit_draft(
     # on the one-shot path: a SQL failure while staging the email would abort
     # the transaction and take the application down with it. The application is
     # already safe; only the email is at risk.
-    guest_user_id = await db.scalar(
-        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
-    )
-    if guest_user_id is not None:
-        try:
-            # A staged reapplication gets the link that CONFIRMS it, not the
-            # "your application is in" email — which would be untrue (it is
-            # waiting), and which mints no token at all for somebody who has
-            # already claimed their account, leaving them nothing to confirm
-            # with.
-            # NOTHING AT ALL when a reapplication was refused because one
-            # was already pending. "First link wins" means this submission
-            # recorded nothing, so there is no confirmation to send — and
-            # `stage_activation_email` carries no dedupe key, so falling
-            # through to it let anyone who knows a rejected candidate's
-            # address drive "your application has been received" at that
-            # inbox at 6/min for the whole 168-hour window, from the tenant's
-            # own authenticated sending domain, minting a fresh auth token
-            # each time. The mail would also be false: nothing is with the
-            # hiring team.
-            await _stage_accepted_mail(
-                db,
-                user_id=uuid.UUID(str(guest_user_id)),
-                address=address,
-                applicant_name=_email_name(existing, name),
-                job_title=req["title"],
-                company_id=company_id,
-                company_name=req.get("company_name"),
-                now=now,
-                reapplying=gate.reapplying,
-                staged=staged.staged,
-                reapply_raw=staged.reapply_raw,
-            )
-            await db.commit()
-        except Exception:  # noqa: BLE001 — see above
-            await db.rollback()
-            log.warning(
-                "public.apply.draft_activation_email_failed",
-                requisition_id=str(requisition_id),
-                applicant_id=str(applicant_id),
-            )
+    # NO SECOND LOOKUP, AND NO GUARD. This re-read `applicants.user_id` and
+    # skipped the email when it came back NULL — the other half of the round-10
+    # finding above. `_ensure_guest_user` has now linked the row inside the
+    # committed transaction, and the only exits between there and here either
+    # return (the lost race) or raise (the generic failure), so the identity is
+    # bound on every path that reaches this line. A `is not None` guard here
+    # would be dead code over a value that cannot be None, and a dead guard
+    # over a control this important is how the original bug stayed invisible.
+    try:
+        # A staged reapplication gets the link that CONFIRMS it, not the
+        # "your application is in" email — which would be untrue (it is
+        # waiting), and which mints no token at all for somebody who has
+        # already claimed their account, leaving them nothing to confirm
+        # with.
+        # NOTHING AT ALL when a reapplication was refused because one
+        # was already pending. "First link wins" means this submission
+        # recorded nothing, so there is no confirmation to send — and
+        # `stage_activation_email` carries no dedupe key, so falling
+        # through to it let anyone who knows a rejected candidate's
+        # address drive "your application has been received" at that
+        # inbox at 6/min for the whole 168-hour window, from the tenant's
+        # own authenticated sending domain, minting a fresh auth token
+        # each time. The mail would also be false: nothing is with the
+        # hiring team.
+        await _stage_accepted_mail(
+            db,
+            user_id=owner_user_id,
+            address=address,
+            applicant_name=_email_name(existing, name),
+            job_title=req["title"],
+            company_id=company_id,
+            company_name=req.get("company_name"),
+            now=now,
+            reapplying=gate.reapplying,
+            staged=staged.staged,
+            reapply_raw=staged.reapply_raw,
+        )
+        await db.commit()
+    except Exception:  # noqa: BLE001 — see above
+        await db.rollback()
+        log.warning(
+            "public.apply.draft_activation_email_failed",
+            requisition_id=str(requisition_id),
+            applicant_id=str(applicant_id),
+        )
 
     # OUTSIDE the email block, deliberately. The pointer to this object was
     # cleared in a transaction that has already committed, so this delete is
@@ -2500,7 +2593,13 @@ async def submit_application(
     if len(raw) > _MAX_RESUME_BYTES:
         raise HTTPException(status_code=413, detail="Your CV must be under 5 MB.")
     try:
-        resume_text = await _extract_pdf_text(raw)
+        # TRUNCATED HERE, at the one place it is produced, rather than at the
+        # two places it is written. Both writes then inherit the bound by
+        # construction, and a third write site added later cannot reintroduce
+        # the channel. This sits in the caller-sized region between the two
+        # pads — the same region as the parse above — so the truncation itself
+        # costs nothing a pad has to absorb.
+        resume_text = (await _extract_pdf_text(raw))[:_MAX_RESUME_TEXT_CHARS]
     except Exception as exc:  # noqa: BLE001 — encrypted or image-only PDF
         raise HTTPException(
             status_code=422,
@@ -2802,18 +2901,25 @@ async def submit_application(
         await _release_unadopted(s3_key)
         log.info("public.apply.race_lost", requisition_id=str(requisition_id))
         return await _reply(name, tail_from=tail_from)
-    except rediscovery.RediscoveryError as exc:
-        # Unreachable in practice — `source` above is the fixed literal
-        # "public_apply_form", never caller input — but rendered with the
-        # same `failure_code` shape as every other refusal in this service
-        # rather than falling through to the generic 503 below, in case that
-        # ever stops being true.
-        await db.rollback()
-        await _release_unadopted(s3_key)
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail={"failure_code": exc.code, "message": exc.message},
-        ) from exc
+    # DELETED, NOT COPIED TO THE OTHER DOOR — round 10, the last of the
+    # one-door-only findings. This handler caught `rediscovery.RediscoveryError`
+    # and rendered `{"failure_code", "message"}` at the exception's own status
+    # code. The draft door calls `rediscovery.record_opt_in` too and had no
+    # such handler, so the same error there fell through to the uniform 503.
+    #
+    # Both reviewers confirmed it is genuinely unreachable: `RediscoveryError`
+    # is raised only for an unknown opt-in source, and both call sites pass the
+    # module-level literal "public_apply_form". The question was therefore which
+    # way to make the doors agree, and "add it to the draft door too" is the
+    # wrong direction. A distinct error shape at a distinct status code is
+    # exactly what this branch spent ten rounds removing: if this ever DID
+    # become reachable, it would be reachable only on the branch that records a
+    # talent-pool opt-in, and that branch is state-dependent. The uniform 503
+    # below is the answer we want in that case, not a bespoke body that tells a
+    # caller which door they used and which branch they took.
+    #
+    # The `failure_code` shape is right for the authenticated rediscovery
+    # routes, which is where it stays.
     except Exception as exc:  # noqa: BLE001 — the upload must not outlive the row
         await db.rollback()
         # Orphaned object otherwise: a CV in storage belonging to nobody is PII

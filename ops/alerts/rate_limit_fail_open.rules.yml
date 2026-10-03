@@ -199,3 +199,75 @@ groups:
             TRUSTED_PROXY_COUNT to exactly that. A steady low rate usually means
             direct-to-service health checks bypassing the proxy, not a
             misconfiguration.
+
+  # ---------------------------------------------------------------------
+  # The anonymous-apply timing pads (data_gateway/app/routers/public_apply.py)
+  # ---------------------------------------------------------------------
+  - name: intants.public_apply.floor_fail_open
+    interval: 30s
+    rules:
+      # Why this group exists (PH3-B4b round 10): docs/ACCEPTED-RISKS.md AR-10
+      # accepts that each timing pad fails OPEN on overrun, and names "a
+      # `public_apply.floor_exceeded` rate above noise" as a trigger to
+      # revisit that acceptance. Nothing counted the rate. So the register
+      # recorded a reviewable residue whose review trigger could not fire —
+      # the same defect DG-6 found one layer up, and the reason that finding
+      # created this directory.
+      #
+      # What the pads do: `POST /apply/{requisition_id}` and
+      # `POST /apply/draft/submit` are ANONYMOUS and take an email address as
+      # a form field. They must answer identically whether that address has a
+      # live application, is in a rejection cooldown, was rejected and the
+      # window elapsed, was rejected with an HR override, or has never applied
+      # — otherwise an unauthenticated stranger can read a third party's job
+      # search. Two pads hold that property: `apply_lookup_floor_ms` absorbs
+      # the identity lookup, `apply_reply_floor_ms` absorbs the branch below
+      # the gate. Past its deadline a pad releases immediately and the term it
+      # was absorbing is measurable again.
+      - record: job_floor:public_apply_floor_exceeded:rate5m
+        expr: |
+          sum by (job, instance, service, floor) (
+            rate(public_apply_floor_exceeded_total[5m])
+          )
+
+      - alert: PublicApplyTimingPadFailingOpen
+        expr: job_floor:public_apply_floor_exceeded:rate5m > 0
+        # 5m, not 2m: unlike a Redis reset, a single overrun is an ordinary
+        # database-latency blip and separating two states takes a sustained
+        # difference over many requests. Paging on one is how this alert gets
+        # muted, which returns the control to unobserved.
+        for: 5m
+        labels:
+          severity: warning
+          component: data_gateway
+          control: public_apply_timing_pad
+        annotations:
+          summary: >-
+            Anonymous-apply timing pad {{ $labels.floor }} is failing open on
+            {{ $labels.service }}
+          description: >-
+            A reply pad overran its deadline and released immediately, so the
+            work it absorbs is measurable from outside again. While this fires,
+            the five application states are separable by reply latency on the
+            affected door, which discloses whether a named third party has
+            applied to this company and been turned down.
+          impact: >-
+            The `reply` label is the one to act on first. The accepting branch
+            ("this address has never applied here") does roughly fifteen round
+            trips and two commits where a live application does two queries, so
+            the reply pad overruns for the accepting state FIRST — which
+            inverts the control into a cleaner oracle than the one it masks.
+            The `lookup` label is the identity read and is the milder of the
+            two. Rate limiting is NOT a compensating control here: both caps
+            fail open on the same Redis outage, and they are per-IP.
+          runbook: >-
+            1. Check database latency and p99 on the apply path; the pads are
+            sized at 50 ms (lookup) and 400 ms (reply) against an indexed point
+            read and a dozen writes respectively. 2. If the cause is sustained
+            latency rather than a blip, raise `APPLY_REPLY_FLOOR_MS` to exceed
+            the new p99 of the accepting branch — a larger pad costs every
+            applicant latency and costs nothing else. 3. Never set either pad
+            to 0 to quiet this: that disables the control rather than the
+            alert, and `test_the_lookup_pad_is_not_configured_off` exists
+            because somebody will try. 4. Re-read AR-10; a sustained rate here
+            is one of its stated triggers to revisit the acceptance.

@@ -681,17 +681,17 @@ substantiated complaint — that is the decision recorded here, not a preference
 
 | | |
 |---|---|
-| **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-9, 2026-09-28 to 2026-10-03 |
+| **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-10, 2026-09-28 to 2026-10-03 |
 | **Status** | **ACCEPTED — five residues, all open; the property itself holds on a healthy system and is tested** |
 | **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
-| **Trigger to revisit** | Any of: (a) a timing or enumeration report against the apply doors; (b) a `public_apply.floor_exceeded` rate above noise; (c) a Redis outage coinciding with apply traffic; (d) a residency or privacy bid asking about enumeration resistance; (e) the write-set design in "Path to closure" becoming cheap enough to build |
+| **Trigger to revisit** | Any of: (a) a timing or enumeration report against the apply doors; (b) `public_apply_floor_exceeded_total` above noise — `PublicApplyTimingPadFailingOpen` in `ops/alerts/` is the consumer, added in round 10 because this trigger previously had no mechanism to fire; (c) a Redis outage coinciding with apply traffic; (d) a residency or privacy bid asking about enumeration resistance; (e) the write-set design in "Path to closure" becoming cheap enough to build |
 
 **What is accepted.** `POST /apply/{requisition_id}` and `POST /apply/draft/submit`
 are anonymous — no login, the caller supplies the email as a form field, and the
 requisition id is explicitly not a secret. They must answer identically whether
 that address has a live application, was rejected and is inside the waiting
 period, was rejected and the period elapsed, was rejected with an HR override,
-or has never applied here. Nine review rounds each found a way to tell those
+or has never applied here. Ten review rounds each found a way to tell those
 states apart. The reply body, the status code on a healthy system, the state
 left behind, what a second submission reads back, and the dominant timing term
 are all closed. FIVE residues are not, and are accepted here rather than in a commit
@@ -716,18 +716,53 @@ by its own pad — the identity lookup by `apply_lookup_floor_ms`, everything
 below the gate by `apply_reply_floor_ms` — and each deadline is taken BEFORE
 the term it covers, which is what makes the absorption real. A branch that
 OVERRUNS its pad logs `public_apply.floor_exceeded` and answers immediately, so
-that term becomes readable again. **There is no counter and no alert on that
-log line**, and the compensating control (`rate_limit`) is instrumented while
-this one is not.
+that term becomes readable again. Round 10 landed the counter
+and the alert this previously lacked — `public_apply_floor_exceeded_total`,
+labelled by `floor`, consumed by `PublicApplyTimingPadFailingOpen`. The
+contrast with `rate_limit`, which was instrumented while the privacy control
+it compensates for was not, is closed. **The pad still fails open**; what
+changed is that it now says so somewhere a person is paged.
 
-NOT the dense-CV mechanism any more. An earlier version of this entry said the
-floor failed open "under enough load", and the Index row said "on demand (a
-dense CV)" — the second was accurate when written and both are now obsolete.
-A single deadline was spent by the CV parse, so a large PDF switched the
-control off; the parse and upload now sit BETWEEN the two pads, outside either
-budget, because they are the caller's own bytes and identical in every state.
-What remains is genuine overrun of a pad by the work it covers, which is a
-database-latency condition rather than something a caller chooses.
+NOT the dense-CV mechanism any more, and this paragraph has now been wrong
+twice in the same way — read the correction before trusting the sentence that
+follows it. A single deadline was once spent by the CV parse, so a large PDF
+switched the control off; the parse and upload now sit BETWEEN the two pads,
+outside either budget, because they are the caller's own bytes and identical in
+every state.
+
+**Round 10 found a SECOND caller-sized term, inside the second pad, and this
+entry had already declared the class closed.** `resume_text` was written twice
+below `tail_from` — `applicants.resume_text` and `users.resume_text` — and both
+writes live only on the branch that creates an applicant. A refusal never
+reaches them; a returning applicant has a linked user and `_ensure_guest_user`
+returns early. So the only state that wrote the column was "this address has
+never applied here", the text was unbounded, and `_MAX_RESUME_BYTES` is not a
+bound on it because PDF extraction amplifies: a 0.81 MB PDF of repetitive text
+measured 14.19 MB of extracted characters. One request, one crafted PDF, and
+the accepting state overran a 400 ms budget justified as covering tens of
+milliseconds of fixed work. That is the round-8 dense-CV finding relocated one
+step BELOW the pad instead of above it.
+
+It is fixed, not accepted: `_MAX_RESUME_TEXT_CHARS` (100k characters) bounds the
+text where it is produced, so every write site inherits the bound, and
+`test_the_stored_resume_text_is_bounded_on_both_doors` fails if any door drops
+it. What this entry now accepts is overrun by work whose size the caller does
+NOT choose — and that sentence is load-bearing only for as long as nobody adds
+another caller-sized write below `tail_from`, which is twice now.
+
+Two mechanisms belong here that earlier versions did not name. **Storage
+latency, not only database latency**: `_refuse` performs a real `DeleteObject`
+round trip after its commit and before `_reply`, so states (a) and (b) carry a
+network term inside the pad that state (d) does not. Under degraded-but-up
+object storage the refusing states overrun and the accepting one does not —
+the same channel with the sign reversed, and `_require_write_capability` does
+not cover it because storage is up. **And the overrun is asymmetric toward the
+state that most needs masking**: after `tail_from` the accepting branch runs
+roughly fifteen round trips and two commits where a live application runs two
+queries and a no-op commit, so on managed Postgres at 15-20 ms RTT the pad is
+at or over budget for the accepting state first. A pad that fails open for one
+state before the others is a cleaner oracle than the one it masks, which is why
+(b) is a trigger rather than a footnote.
 
 3. **Both rate limits fail open when Redis is unavailable.** The burst (6/min)
    and sustained (60/hour) caps are the stated bound on the anonymous object
@@ -737,23 +772,66 @@ database-latency condition rather than something a caller chooses.
    worse — but it means the bound is conditional, and the same outage disables
    the JWT revocation epoch.
 
+   Two things the caps do NOT do, found in round 10. **They do not bound the
+   upload at all.** FastAPI resolves route-level `dependencies=[...]` AFTER
+   `await request.form()`, and Starlette applies no size limit to a part that
+   carries a filename — it streams it into a `SpooledTemporaryFile` that rolls
+   to disk past 1 MB, with no total cap anywhere in this repo and none on the
+   uvicorn command line. So `_MAX_RESUME_BYTES` caps what the handler READS,
+   not what the service RECEIVES: a 1 GB part is written to the container's
+   filesystem before either limiter runs, and the request is then refused 413.
+   For that attack the bound is not merely fail-open, it is structurally
+   inapplicable. **And they are keyed per IP address**, so an attacker holding
+   an IPv6 /64 has 2^64 independent 60/hour budgets, which makes "60 an hour"
+   a bound on a well-behaved client rather than on bulk enumeration.
+
 4. **The concurrency exit is state-correlated, and no test reaches it.**
-   Two submissions racing for the same `(requisition_id, applicant_id)` are
-   arbitrated by the partial unique index, and the loser takes its own code
-   path on both doors. `IntegrityError` can only be raised while an enrolment
-   is being CREATED, which never happens for an address that already has one
-   (`enrol_applicant` no-ops) — so reaching that path at all is itself the
-   answer "this address had no live application and no cooldown". The reply is
-   the same `_received` object on both doors, and the draft door consumes its
-   draft and deletes the object on this exit specifically so that no readable
-   state is left behind. What is NOT established is the timing: the rollback,
-   the orphan release and the draft door's second transaction run only on this
-   branch, and only for the states that create an enrolment. They sit inside
-   the reply pad, so they are absorbed unless they overrun it — which makes
-   this residue conditional on (2). The five-state matrix cannot see any of
-   it, because it never issues concurrent requests. Before this entry the
-   reasoning existed only in the two handlers' comments, which this register's
-   own standard says cannot grant an acceptance.
+   Two concurrent submissions for the same address are arbitrated by a unique
+   index and the loser takes its own code path on both doors. `IntegrityError`
+   can only be raised while an enrolment or an applicant is being CREATED,
+   which never happens for an address that already has one (`enrol_applicant`
+   no-ops on any live enrolment, whatever its status) — so reaching that path
+   at all is the answer **"this address has never applied here"**, state (d)
+   specifically, distinguished from "rejected and elapsed" and "rejected with
+   an override" rather than merely from the group of them.
+
+   **Which index arbitrates is not what the first version of this entry said**,
+   and the difference matters. It said `(requisition_id, applicant_id)`. For
+   state (d) that index cannot collide: two concurrent one-shot submissions for
+   an unknown address each mint their own `applicant_id`, so their enrolments
+   differ. The real arbiter is `uq_applicants_company_email`, which fires at
+   the `Applicant` flush before `enrol_applicant` is reached — and **that index
+   is created conditionally.** Its migration skips creation when a tenant
+   already holds duplicate applicants, deferring to a human merge. On such a
+   deployment this exit is UNREACHABLE and the race instead succeeds twice,
+   producing two applicants, two guest users, two consent entries and two
+   enrolments for one address. That is worse than the residue being accepted
+   here: `_identify`'s `ORDER BY created_at LIMIT 1` permanently hides one of
+   them from the gate, which is a cooldown BYPASS rather than a timing leak,
+   and erasure enumerates by `applicants WHERE user_id = :uid`, so the
+   duplicate hangs off a different guest user and its CV survives a completed
+   erasure. Neither consequence is a privacy residue of the kind this entry
+   accepts; both are defects that follow from a condition the entry must name.
+
+   The reply is the same `_received` object on both doors. **The draft door's
+   cleanup is conditional, which this entry previously stated as unconditional**:
+   it consumes its draft and deletes the object on this exit, but the second
+   transaction that does so has a failure branch which rolls back and logs
+   `public_apply.draft_not_consumed_on_race`. On that branch the row stays
+   `status='draft'` with its `resume_s3_key` intact, so `draft_store.load`
+   matches it and `GET /apply/draft` answers 200 where every other post-submit
+   read answers 404 — the round-3 channel, reopening on the one exit no test
+   reaches, under residue 1's own trigger list (a lock timeout, a deadlock, a
+   statement timeout, a dropped connection).
+
+   What is also NOT established is the timing: the rollback, the orphan release
+   and the draft door's second transaction run only on this branch. They sit
+   inside the reply pad, so they are absorbed unless they overrun it — which
+   makes this residue conditional on (2). The one-shot door's race exit
+   additionally stages no mail and does not wake the reconciler, so the
+   sub-state differs in work done and not only in time, and its log line
+   differs (`public.apply.race_lost`). The five-state matrix cannot see any of
+   it, because it never issues concurrent requests.
 
 **One invariant is also traded.** CLAUDE.md requires no PII without a consent
 ledger entry. The CV is now uploaded *before* the gate is consulted, because
@@ -765,13 +843,19 @@ follows fails. For the one-shot door with an address we already hold, the
 erasure sweep reaches it. For an address with no record, and for the draft
 door, it does not: those keys are logged so they are recoverable by hand.
 
-**Why not close them.** The remaining fix for (1) is to give every state the
-same write set, which means storing a row naming an address for somebody who
-never applied — PII about a non-applicant, no consent basis, no erasure
-anchor. Masking a status code is not a lawful basis for keeping someone's
-address. (2) and (3) are both "fail closed instead", which converts a privacy
-residue into an availability one: candidates refused during an incident, and
-during a Redis outage refused entirely.
+**Why not close them.** (1) needs every state to share one write set. The
+version of that idea this entry used to reject — store a row naming the
+address in every state — would mean PII about a non-applicant with no consent
+act and no erasure anchor, and masking a status code is not a lawful basis for
+keeping someone's address. That objection is sound against THAT design and was
+wrongly stated here as a reason the residue cannot be closed at all; see "Path
+to closure", which now names a design the objection does not reach. (2) and (3)
+are both "fail closed instead", which converts a privacy residue into an
+availability one: candidates refused during an incident, and during a Redis
+outage refused entirely. (4) is open for a different reason from the other
+three — it is not a trade but an untested path, and the test that would close
+it is cheap; it is listed here because the behaviour is accepted until that test
+exists, not because anyone prefers it this way.
 
 **What is NOT true.** A reader could reasonably assume any of these
 compensating controls exists. None does:
@@ -780,16 +864,26 @@ compensating controls exists. None does:
   outage there is no cap at all, and the same outage disables the JWT
   revocation epoch.
 * That the reply floor degrades gracefully. It fails OPEN — a branch that
-  overruns it answers immediately — and nothing alerts on that.
-* That an alert or a metric would reveal exploitation. There is no counter on
-  the floor overrun and no alert on any of this; the compensating control
-  (`rate_limit`) is instrumented and the privacy control it compensates for is
-  not.
+  overruns it answers immediately. Round 10 added the counter and the alert, so
+  this is now visible; it is still an overrun, and the alert fires after the
+  caller has already had their answer.
+* That the caps bound the upload. They do not reach it: the whole multipart
+  part is buffered to disk before any route dependency runs, so the 5 MB limit
+  caps what the handler reads and not what the service receives. They are also
+  per-IP, which an IPv6 /64 defeats.
 * That a transiently un-consented CV object is always reachable by erasure.
   For an address with no applicant row, and for the draft door, it is not.
 * That the five-state matrix covers every exit. It does not reach the
   concurrency exit on either door: the suite never issues concurrent requests,
   so that path is reasoned about in comments and asserted nowhere.
+* That every control named in this entry is held by a test. Until round 10 the
+  lookup pad was not: `apply_lookup_floor_ms` appeared only in the config
+  default, two call sites and one line of this entry, and three separate ways
+  to remove it left the whole unit suite green. It is now held by
+  `test_the_lookup_pad_exists_and_bounds_the_identity_lookup` and
+  `test_the_lookup_pad_is_not_configured_off`. Read that as a warning about
+  this entry's other claims rather than as reassurance: a control described
+  here is not thereby guarded.
 * That the handlers' size is accepted anywhere. It is not — `submit_application`
   is 10x and `submit_draft` 8x the 50-line guideline, acknowledged only in a
   commit message, which this register's own standard says cannot grant an
@@ -799,19 +893,47 @@ compensating controls exists. None does:
 property is established on a healthy system is load-bearing and tested — the
 five-state matrix across both doors, the upload-count and delete-count tests,
 the storage-outage and read-only tests, the floor test, and the structural
-guards that count every reply-bearing exit. This entry accepts three failure
-modes, not the design.
+guards — which now hold both pads' existence and position, and the bound on
+the stored CV text, not only the count of reply-bearing exits. This entry
+accepts four failure modes and one traded invariant, not the design.
 
-**Path to closure.** (1) needs a write-set design that stores nothing about a
-non-applicant — a scratch write to a table holding no address, which is
-plausible and not yet designed. (2) is cheap and should be done regardless: a
-Prometheus counter on the overrun plus an alert, as `rate_limit` already has
-for its own skipped checks; the contrast is not defensible for long — the
-compensating control is instrumented and the privacy control it compensates
-for is not. (3) is a product decision about which way to fail. (4) needs a test
-that actually races two submissions against the same address — which is what
-would turn the comments' reasoning into an assertion, and is the cheapest of
-the four to write.
+**Path to closure.**
+
+(1) An `apply_attempts` row keyed on `(requisition_id, hmac(address))` with no
+plaintext address and a short TTL, written identically in all five states
+before anything branches. Every state then shares one write set, so the
+201/503 split closes and any write failure refuses every state alike — and the
+lawful-basis objection above does not reach it, because no row names anybody.
+This is the design that replaces "a scratch write to a table holding no
+address, plausible and not yet designed".
+
+Round 10 also assessed the larger alternative — accept unconditionally, return
+201, and let a background worker decide and mail — and both reviewers rejected
+it for this purpose, which is recorded here so it is not re-proposed as the
+remedy. It would mail on every anonymous submission to an unverified
+caller-supplied address, removing all three of the dedupe, silence and
+suppression guards that currently keep the mail path self-limiting, from the
+tenant's own authenticated sending domain and against a fail-open limiter. And
+it does not close (1): the request path must still write something the worker
+can pick up, so either that write is identical in every state — which is this
+same design — or the oracle moves from latency to a storage side effect, which
+is easier to read, not harder.
+
+(2) The counter and alert are landed (round 10). What remains is the pad
+itself failing open, which is a sizing and latency question, plus the standing
+hazard that a caller-sized term gets added below `tail_from` again — twice so
+far, now guarded by the CV-text bound test.
+
+(3) A product decision about which way to fail, plus two separate items the
+caps do not cover: a body-size limit at the edge or on uvicorn, and a bucket
+key coarser than a single IPv6 address.
+
+(4) A test that actually races two submissions against the same address, and
+that asserts WHICH constraint fired — because the answer differs by deployment,
+and on a tenant without `uq_applicants_company_email` the exit is unreachable
+and the duplicate-identity path above is what happens instead. Cheapest of the
+four, and it also settles whether the draft door's conditional cleanup leaves a
+readable row.
 
 ---
 
@@ -828,4 +950,4 @@ the four to write.
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
-| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun with no alert; rate limits fail open when Redis is down; a refused submission's CV exists un-consented; the concurrency exit is state-correlated and untested; and the two handlers' size is an open debt | PH3-B4b rounds 1-9 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, a `floor_exceeded` rate above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
+| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun (now counted and alerted, still open); rate limits fail open when Redis is down and never reach the upload at all; a refused submission's CV exists un-consented; the concurrency exit is state-correlated, untested, and arbitrated by a conditionally-created index; and the two handlers' size is an open debt | PH3-B4b rounds 1-10 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, `public_apply_floor_exceeded_total` above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |

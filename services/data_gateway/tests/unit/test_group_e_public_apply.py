@@ -180,6 +180,16 @@ def _first_line(node: ast.AST, pred) -> int | None:  # noqa: ANN001
     return min(hits) if hits else None
 
 
+def _call_line(node: ast.AST, fn: str) -> int | None:
+    """The line of the first call to *fn* inside *node*."""
+    return _first_line(
+        node,
+        lambda n: isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == fn,
+    )
+
+
 def test_the_reply_floor_starts_before_anything_state_dependent() -> None:
     """THE property seven rounds bought, and the only one with no guard.
 
@@ -518,4 +528,184 @@ def test_the_reply_pad_is_not_a_max_of_two_clocks() -> None:
     assert "floor_from" not in names, (
         "`_reply` reads floor_from again; the lookup is absorbed by its own pad "
         "in the handler, and a second reference here is the broken shape"
+    )
+
+
+def _hold_calls(node: ast.AST, what: str) -> list[ast.Call]:
+    """Every `_hold_until(..., what=<what>)` call inside *node*."""
+    out = []
+    for n in ast.walk(node):
+        if (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "_hold_until"
+        ):
+            for kw in n.keywords:
+                if (
+                    kw.arg == "what"
+                    and isinstance(kw.value, ast.Constant)
+                    and kw.value.value == what
+                ):
+                    out.append(n)
+    return out
+
+
+def test_the_lookup_pad_exists_and_bounds_the_identity_lookup() -> None:
+    """ROUND 10. The lookup pad was held up by NOTHING.
+
+    `apply_lookup_floor_ms` is one of the two load-bearing pads — it is the
+    whole of round 7's fix, the reason round 9 existed, and the control that
+    keeps the identity lookup's cost (a LEFT JOIN that returns a row for four
+    states and nothing for the fifth) from being additively measurable. Before
+    this guard it appeared in exactly four places in the repository: the config
+    default, the two call sites, and one line of the risk register. No test
+    asserted that it existed, that it was non-zero, or that it bounded
+    anything.
+
+    Round 10 demonstrated three ways to remove it with all fourteen other
+    guards still passing: delete both blocks (caught only incidentally, by
+    ruff's F841 on the now-unused `floor_from`); relocate them below the upload
+    as a plausible "consolidate the two pads" refactor, which is ruff-clean and
+    makes the 50 ms budget cover the PDF parse so it absorbs nothing; or set
+    the config value to 0 and change no code at all.
+
+    This is the same lesson round 9 taught about the reply pad — the guards
+    checked where the clocks were ASSIGNED and nothing checked that a clock
+    bounded anything — applied to the pad that did not get it at the time.
+
+    Three properties, both doors: the pad is there, its deadline is measured
+    from `floor_from` (not from a clock taken after the lookup, which would
+    absorb nothing), and it sits between the lookup and the gate.
+    """
+    for name, node in _door_bodies().items():
+        holds = _hold_calls(node, "lookup")
+        assert len(holds) == 1, (
+            f"{name}: expected exactly one lookup pad, found {len(holds)}. "
+            "Removing it reopens round 7's channel — the identity lookup "
+            "becomes additively measurable with a small PDF."
+        )
+        call = holds[0]
+
+        names = {n.id for n in ast.walk(call) if isinstance(n, ast.Name)}
+        assert "floor_from" in names, (
+            f"{name}: the lookup pad's deadline does not mention `floor_from`, "
+            "so it is not measured from before the lookup. A deadline taken "
+            "after the work it covers absorbs nothing — see "
+            "test_a_deadline_taken_after_the_work_absorbs_nothing."
+        )
+
+        identify = _call_line(node, "_identify")
+        assert identify is not None, name
+        assert identify < call.lineno, (
+            f"{name}: the lookup pad is at line {call.lineno}, ABOVE the "
+            f"identity lookup at {identify}, so it absorbs nothing."
+        )
+
+        # The pad must close before the SECOND clock is taken, and before
+        # every caller-sized term in the handler. `identify < pad < gate`
+        # would NOT be enough: round 10's Variant B moved the block to sit
+        # immediately above the gate, which satisfies that and is ruff-clean,
+        # and there the 50 ms budget also has to cover the PDF parse and the
+        # S3 upload — so it overruns on every real submission and absorbs
+        # nothing. The deadline's own budget is what makes position matter.
+        ceilings = {
+            "the second deadline (`tail_from`)": _first_line(
+                node,
+                lambda n: isinstance(n, ast.Assign)
+                and any(
+                    isinstance(t, ast.Name) and t.id == "tail_from" for t in n.targets
+                ),
+            ),
+            "the PDF parse (caller-sized)": _call_line(node, "_extract_pdf_text"),
+            "the CV upload (caller-sized)": _call_line(node, "_upload_to_s3"),
+        }
+        present = {k: v for k, v in ceilings.items() if v is not None}
+        assert "the second deadline (`tail_from`)" in present, (
+            f"{name}: no `tail_from`, so the two-pad structure is gone"
+        )
+        for what, line in present.items():
+            assert call.lineno < line, (
+                f"{name}: the lookup pad is at line {call.lineno}, BELOW {what} "
+                f"at line {line}. Its 50 ms budget then has to cover that term "
+                "as well as the lookup, so it overruns on every real submission "
+                "and absorbs nothing — while staying ruff-clean and leaving "
+                "every other guard green."
+            )
+
+
+def test_the_lookup_pad_is_not_configured_off() -> None:
+    """The cheapest defeat of all: no code change, one environment variable.
+
+    `config.py`'s own comment says "Setting it to 0 disables the pad and
+    reopens the channel", and before this nothing enforced it — so
+    `APPLY_LOOKUP_FLOOR_MS=0` in a deployment's environment silently switched
+    off half the control with 2882 unit tests still green. The reply floor has
+    had this assertion since round 8 (in the integration matrix); the lookup
+    floor never got one, which is exactly the one-of-two pattern this branch
+    keeps finding.
+    """
+    from app.config import settings
+
+    assert settings.apply_lookup_floor_ms > 0, (
+        "the lookup pad is disabled, so the identity lookup's cost is "
+        "measurable again: ~1.3 ms on this repo, additive, outside every "
+        "deadline, and it separates 'never applied here' from the other four "
+        "states in roughly 200 requests"
+    )
+
+
+def test_the_stored_resume_text_is_bounded_on_both_doors() -> None:
+    """ROUND 10's HIGH, and the one channel the two pads could not absorb.
+
+    `resume_text` is written twice inside the reply pad — `applicants` and
+    `users` — and both writes live only on the branch that CREATES an
+    applicant. States (a) and (b) take `_refuse`; (c) and (e) have
+    `is_new_person=False` and an already-linked user, so `_ensure_guest_user`
+    returns early. Only "this address has never applied here" writes it.
+
+    While the text was unbounded, the caller chose how far that one state
+    overran a 400 ms budget whose own comment justifies itself as covering
+    "tens of milliseconds" of fixed work. `_MAX_RESUME_BYTES` is not a bound on
+    it: pypdf extraction AMPLIFIES, and a 0.81 MB PDF of repetitive text
+    measured 14.19 MB of extracted characters.
+
+    The bound is applied where the text is PRODUCED, not where it is written,
+    so a third write site cannot reintroduce the channel. This asserts that is
+    still true on both doors — the draft door included, even though only the
+    one-shot door pads a region containing the write, because a bound that
+    holds on one door only is the shape of defect this branch has found five
+    times.
+    """
+    import app.routers.public_apply as mod
+
+    tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
+    funcs = {
+        n.name: n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef)
+        and n.name in ("submit_application", "upload_draft_resume")
+    }
+    assert set(funcs) == {"submit_application", "upload_draft_resume"}, funcs.keys()
+
+    for name, node in funcs.items():
+        bounded = [
+            n
+            for n in ast.walk(node)
+            if isinstance(n, ast.Subscript)
+            and any(
+                isinstance(x, ast.Name) and x.id == "_MAX_RESUME_TEXT_CHARS"
+                for x in ast.walk(n.slice)
+            )
+        ]
+        assert bounded, (
+            f"{name}: nothing truncates the extracted CV text by "
+            "_MAX_RESUME_TEXT_CHARS. Unbounded, it is a caller-sized term "
+            "inside the reply pad on the one door and an unbounded column on "
+            "the other."
+        )
+
+    assert 0 < mod._MAX_RESUME_TEXT_CHARS <= 200_000, (
+        f"_MAX_RESUME_TEXT_CHARS is {mod._MAX_RESUME_TEXT_CHARS}. The point of "
+        "the bound is that two writes of it stay far below the reply pad; "
+        "raising it past ~200k chars needs the pad re-measured first."
     )

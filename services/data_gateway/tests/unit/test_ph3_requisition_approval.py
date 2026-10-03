@@ -339,10 +339,58 @@ def test_budget_never_appears_on_a_candidate_facing_schema() -> None:
             assert "budget" not in field, f"{model.__name__}.{field}"
 
 
+def _string_literals(path: Path) -> list[str]:
+    """Every string literal in *path* that is not a docstring.
+
+    The SQL, the column lists and the response-field names all live here; prose
+    does not. Round 10 of PH3-B4b is why this is a parsed walk and not a
+    substring scan over the file: the scan this replaces read the whole source
+    as text, so it failed the moment a COMMENT used the word "budget" — it
+    tripped on a comment about a 400 ms timing budget in `public_apply`, which
+    is not a hiring budget and is not selected by anything.
+
+    A guard that fires on prose is not stricter, it is differently wrong: the
+    same scan passes happily if someone selects the column and spells it
+    `"budget" "_amount"`, and it trains people to reword comments to get the
+    suite green. The property this file cares about — no candidate-facing query
+    or schema carries the hiring budget — is a property of the strings the
+    module actually sends and returns.
+    """
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docstrings = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if isinstance(
+            node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+        ) and body:
+            first = body[0]
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                docstrings.add(id(first.value))
+    return [
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, str)
+        and id(n) not in docstrings
+    ]
+
+
 def test_the_public_queries_do_not_even_select_budget() -> None:
     for module in ("routers/careers.py", "routers/public_apply.py",
                    "routers/candidate_applications.py"):
-        assert "budget" not in (APP / module).read_text(encoding="utf-8"), module
+        offenders = [
+            lit for lit in _string_literals(APP / module) if "budget" in lit.lower()
+        ]
+        assert not offenders, (
+            f"{module} names the hiring budget in a string literal — a query, a "
+            f"column list or a response field: {offenders[:3]}"
+        )
 
 
 def test_budget_is_reported_on_the_hr_view() -> None:

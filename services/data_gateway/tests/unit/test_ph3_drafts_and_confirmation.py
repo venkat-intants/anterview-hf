@@ -597,9 +597,47 @@ async def test_replacing_the_cv_clears_the_confirmation() -> None:
 
     db = _db()
     await attach_resume(
-        db, draft_id=uuid.uuid4(), s3_key="k", filename="cv.pdf", parsed={}, now=NOW
+        db, draft_id=uuid.uuid4(), s3_key="k", filename="cv.pdf", parsed={},
+        resume_text="the text read out of the PDF", now=NOW,
     )
-    assert "confirmed_at = NULL" in db.execute.await_args_list[0].args[0].text
+    call = db.execute.await_args_list[0]
+    assert "confirmed_at = NULL" in call.args[0].text
+
+
+@pytest.mark.asyncio
+async def test_the_draft_keeps_the_text_read_out_of_the_cv() -> None:
+    """Round 10. Without it, a draft-door application is NEVER SCORED.
+
+    `reconciliation._UNSCORED_WORK_SQL` selects on `a.resume_text IS NOT NULL
+    AND length(trim(a.resume_text)) > 0`, so an applicant row created by this
+    door with no text matched nothing the reconciler looks for — not "scored
+    late", never scored, for the whole life of the door, while
+    `pending_enrichment=True` named an intent nothing could act on.
+    `upload_draft_resume` extracted the text to derive the confirmable fields
+    and then discarded it.
+
+    This asserts the column is both written here and carried onto the applicant
+    at submission, because either half alone leaves the door unscored.
+    """
+    from app.application_drafts import attach_resume
+    from app.routers.public_apply import submit_draft
+
+    db = _db()
+    await attach_resume(
+        db, draft_id=uuid.uuid4(), s3_key="k", filename="cv.pdf", parsed={},
+        resume_text="PRIYA SHARMA — senior engineer", now=NOW,
+    )
+    call = db.execute.await_args_list[0]
+    assert "resume_text = :rt" in call.args[0].text, (
+        "attach_resume no longer stores the extracted text, so the draft door "
+        "is back to never being scored"
+    )
+    assert call.args[1]["rt"] == "PRIYA SHARMA — senior engineer"
+
+    assert "resume_text=row.get(\"resume_text\")" in inspect.getsource(submit_draft), (
+        "the draft door no longer carries the stored text onto the applicant, "
+        "so the reconciler will never pick the application up"
+    )
 
 
 def test_the_confirmation_survives_the_draft() -> None:

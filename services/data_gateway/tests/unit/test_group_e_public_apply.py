@@ -796,13 +796,23 @@ def test_the_stored_resume_text_is_bounded_on_both_doors() -> None:
         # reintroduce the channel" was true on one door only. Requiring the
         # subscript to wrap `await _extract_pdf_text(...)` is what makes that
         # sentence checkable rather than aspirational.
+        # The truncation must be applied to an expression DERIVED FROM THE
+        # PARSE, not to a local assigned earlier. Walking the subscripted
+        # expression rather than matching its exact shape is deliberate: round
+        # 13 wrapped the await in `strip_unstorable(...)` to sanitise the
+        # parser's output, which is correct and which an exact-shape match
+        # rejected. What matters is that nothing can sit between the parse and
+        # the bound, not which sanitisers are composed on the way.
         at_producer = [
             n
             for n in bounded
-            if isinstance(n.value, ast.Await)
-            and isinstance(n.value.value, ast.Call)
-            and isinstance(n.value.value.func, ast.Name)
-            and n.value.value.func.id == "_extract_pdf_text"
+            if any(
+                isinstance(inner, ast.Await)
+                and isinstance(inner.value, ast.Call)
+                and isinstance(inner.value.func, ast.Name)
+                and inner.value.func.id == "_extract_pdf_text"
+                for inner in ast.walk(n.value)
+            )
         ]
         assert at_producer, (
             f"{name}: the CV text is truncated somewhere, but not where it is "

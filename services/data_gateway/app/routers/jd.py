@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from pypdf import PdfReader
 from shared.auth.base import User
+from shared.text import strip_unstorable
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -394,7 +395,26 @@ def _extract_pdf_text_sync(raw: bytes) -> str:
         extracted = page.extract_text()
         if extracted:
             pages.append(extracted)
-    return "\n".join(pages)
+    # SANITISED HERE, so all six call sites inherit it — round 13.
+    #
+    # pypdf returns whatever the PDF's encoding maps its codes to, NUL and lone
+    # surrogates included, and a PDF carrying one is pure ASCII to look at (an
+    # octal escape in the content stream, or a ToUnicode CMap entry). The text
+    # is then written to `text` columns that cannot hold it.
+    #
+    # On the anonymous apply doors that was a state oracle: `resume_text` is
+    # written only on the branch that creates an applicant, so a crafted CV
+    # answered 503 for "this address has never applied here" and 201 for the
+    # other four states — with no form field involved and nothing a request
+    # model could refuse. On the authenticated paths that share this function
+    # (HR's single and bulk CV upload, the JD reader) the same PDF was an
+    # unhandled 500.
+    #
+    # Stripped rather than refused because nobody typed it; see
+    # `shared.text.strip_unstorable`. Done at the extractor rather than at the
+    # call sites because this branch has now spent two rounds learning that a
+    # list of guarded call sites is the thing that goes stale.
+    return strip_unstorable("\n".join(pages))
 
 
 async def _extract_pdf_text(raw: bytes) -> str:

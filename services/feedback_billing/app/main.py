@@ -14,6 +14,7 @@ from shared.http_observability import install_http_observability
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
+from shared.s3 import aclose_s3_clients
 
 from app.config import settings
 from app.database import dispose_engine, init_engine
@@ -67,6 +68,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     yield
     await dispose_engine()
     await close_redis()
+    # The cached S3 clients own an aiohttp connector each. `shared.s3` caches
+    # per (event loop, settings) since round 13 of PH3-B4b, so every service
+    # that touches object storage has one to close — this service does, via
+    # `shared.s3.s3_client`. Round 13's audit found data_gateway was the only
+    # one of the four wired up.
+    await aclose_s3_clients()
     log.info("service.stop", service=settings.service_name)
 
 

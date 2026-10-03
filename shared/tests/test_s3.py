@@ -227,9 +227,18 @@ def test_factory_stays_dependency_light() -> None:
     ``services.*`` here would break all four at container start. aioboto3 and
     botocore are on the allowlist only because all four services already pin
     them identically; widening it further should be a decision someone makes on
-    purpose, not a diff nobody notices."""
+    purpose, not a diff nobody notices.
+
+    ``asyncio`` was added on purpose, in round 13 of PH3-B4b: the client cache
+    needs a per-loop lock and the running loop as part of its key. It is
+    stdlib, every service already runs an event loop, and ``aioboto3`` could
+    not work without one — so it widens the allowlist by nothing in practice.
+    The reason this is written down rather than just added: this test was RED
+    on the branch that introduced the import, and the gate set being reported
+    at the time did not include ``shared/tests`` at all."""
     allowed = {
         "__future__",
+        "asyncio",
         "collections",
         "contextlib",
         "typing",

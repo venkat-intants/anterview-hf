@@ -69,6 +69,7 @@ from fastapi import (
 )
 from prometheus_client import Counter
 from pydantic import BaseModel, EmailStr, Field, field_validator
+from shared.text import strip_unstorable
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -296,7 +297,23 @@ def _clean(value: str | None, limit: int) -> str | None:
     """
     if value is None:
         return None
-    cleaned = " ".join(value.split())[:limit]
+    # STRIPPED HERE TOO, as defence in depth. Round 13 found the crafted-value
+    # oracle still open in five Form fields next to the one round 12 guarded,
+    # because `str.split()` does NOT treat U+0000 as whitespace — so
+    # `" ".join(value.split())` passes a NUL through intact, and every one of
+    # those fields reaches the `applicants` INSERT that only the
+    # applicant-creating branch performs.
+    #
+    # Those fields are refused at the top of the handler now, above
+    # `floor_from`, which is where a human-typed value belongs. This strip is
+    # the backstop for the field somebody adds next quarter and does not add to
+    # that list — thirteen rounds of "closed here, open one field over" says
+    # the list is the thing that will go stale, not the normaliser.
+    #
+    # It STRIPS rather than raising because `_clean` is called BELOW
+    # `tail_from`: raising here would make the refusal itself state-dependent,
+    # which is the defect rather than the fix.
+    cleaned = strip_unstorable(" ".join(value.split()))[:limit]
     return cleaned or None
 
 
@@ -1821,7 +1838,20 @@ async def upload_draft_resume(
         # local also feeds `extract_contact_details`, which happens to
         # truncate internally, so nothing was broken — but the structural
         # property the comment claimed was not there.
-        resume_text = (await _extract_pdf_text(raw))[:_MAX_RESUME_TEXT_CHARS]
+        # STRIPPED, NOT REFUSED - see `_strip_unstorable`. pypdf passes U+0000
+        # through verbatim, and a PDF carrying one is pure ASCII to look at: an
+        # octal escape in the content stream is enough. That text is written
+        # into the `applicants` INSERT and into `_ensure_guest_user`'s `users`
+        # INSERT, both of which only the applicant-creating branch performs -
+        # so round 13 separated "never applied here" from the other four states
+        # with a crafted CV and no form field at all. It is the worse half of
+        # that finding because no request model can reach it.
+        #
+        # Both doors, one edit: the draft door's upload route runs the same
+        # parser and writes the same column.
+        resume_text = strip_unstorable(await _extract_pdf_text(raw))[
+            :_MAX_RESUME_TEXT_CHARS
+        ]
     except Exception as exc:  # noqa: BLE001 — encrypted or image-only PDF
         raise HTTPException(
             status_code=422,
@@ -2689,14 +2719,29 @@ async def submit_application(
     # is the one the caller chose to make large. There is no PDF size that
     # both exposes the lookup and keeps the floor from covering it.
     # REFUSED BEFORE THE CLOCK STARTS, so the refusal says nothing about the
-    # address. `full_name` is a Form field rather than a model field on this
-    # door, so it misses `_RejectsUnstorableText` — and it is the field round
-    # 12 actually exploited, because a NUL in it reaches the `applicants`
-    # INSERT that only the applicant-creating branch performs. Above
-    # `floor_from` deliberately: a 422 here is identical in all five states,
-    # while the same value reaching the INSERT was a 503 in exactly one.
-    if _unstorable(full_name):
-        raise HTTPException(status_code=422, detail=_UNSTORABLE_TEXT)
+    # address. These are Form fields rather than model fields on this door, so
+    # they miss `_RejectsUnstorableText`, and every one of them reaches the
+    # `applicants` INSERT that only the applicant-creating branch performs — so
+    # an unstorable character in any of them was a 503 in exactly one state and
+    # a 201 in the other four.
+    #
+    # EVERY TEXT FIELD, not the one that was exploited. Round 12 guarded
+    # `full_name` alone; round 13 reproduced the identical split through
+    # `phone`, `current_company`, `current_title`, `linkedin_url` and
+    # `github_url`, which is this branch's recurring shape — the fix closed
+    # the channel it was pointed at and left it open one field over. Iterating
+    # a dict is not much better than a list of five, so `_clean` strips as
+    # well (see there); this is the half that gives a human a message they can
+    # act on.
+    #
+    # Above `floor_from` deliberately: a 422 here is identical in all five
+    # states, while the same value reaching the INSERT was not.
+    for _submitted in (
+        full_name, phone, current_company, current_title,
+        linkedin_url, github_url, src,
+    ):
+        if _submitted is not None and _unstorable(_submitted):
+            raise HTTPException(status_code=422, detail=_UNSTORABLE_TEXT)
 
     floor_from = time.monotonic()
 
@@ -2750,7 +2795,20 @@ async def submit_application(
         # the channel. This sits in the caller-sized region between the two
         # pads — the same region as the parse above — so the truncation itself
         # costs nothing a pad has to absorb.
-        resume_text = (await _extract_pdf_text(raw))[:_MAX_RESUME_TEXT_CHARS]
+        # STRIPPED, NOT REFUSED - see `_strip_unstorable`. pypdf passes U+0000
+        # through verbatim, and a PDF carrying one is pure ASCII to look at: an
+        # octal escape in the content stream is enough. That text is written
+        # into the `applicants` INSERT and into `_ensure_guest_user`'s `users`
+        # INSERT, both of which only the applicant-creating branch performs -
+        # so round 13 separated "never applied here" from the other four states
+        # with a crafted CV and no form field at all. It is the worse half of
+        # that finding because no request model can reach it.
+        #
+        # Both doors, one edit: the draft door's upload route runs the same
+        # parser and writes the same column.
+        resume_text = strip_unstorable(await _extract_pdf_text(raw))[
+            :_MAX_RESUME_TEXT_CHARS
+        ]
     except Exception as exc:  # noqa: BLE001 — encrypted or image-only PDF
         raise HTTPException(
             status_code=422,

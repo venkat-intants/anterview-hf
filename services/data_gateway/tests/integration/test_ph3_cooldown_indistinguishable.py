@@ -1160,45 +1160,145 @@ async def test_a_crafted_answer_cannot_separate_the_states_on_the_one_shot_door(
         )
 
 
+# EVERY writable text field on the one-shot door, not just the one that was
+# exploited. Round 12 guarded `full_name`; round 13 reproduced the identical
+# 201/503 split through five siblings, because each of them reaches the same
+# `applicants` INSERT and `_clean`'s `" ".join(value.split())` does not treat
+# U+0000 as whitespace. Parameterising over PROBES and not over FIELDS is
+# exactly why the round-12 cases passed while the oracle stayed open, so this
+# list is the thing that has to be exhaustive — add a field to the handler,
+# add it here.
+_ONE_SHOT_TEXT_FIELDS = (
+    "full_name",
+    "phone",
+    "current_company",
+    "current_title",
+    "linkedin_url",
+    "github_url",
+    "src",
+)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("door", _BOTH_DOORS)
-async def test_an_unstorable_name_cannot_separate_the_states(
-    client: AsyncClient, door: str
+@pytest.mark.parametrize("field", _ONE_SHOT_TEXT_FIELDS)
+async def test_no_text_field_can_separate_the_states(
+    client: AsyncClient, field: str
 ) -> None:
-    """The same oracle with NO precondition at all — round 12's HIGH-2.
+    """ROUND 13's HIGH-1, parameterised over the fields rather than the probes.
 
-    A NUL in `full_name` reaches the `applicants` INSERT, which only the branch
-    that CREATES an applicant performs. `apply_extracted_identity` fills but
-    never replaces, so a returning applicant's name is not rewritten and the
-    split was clean: 201 for the four states with a row, 503 for "this address
-    has never applied here". No questions configured, no tenant settings, one
-    request.
+    A NUL in any of these reaches the `applicants` INSERT, which only the
+    branch that CREATES an applicant performs. `apply_extracted_identity` fills
+    but never replaces, so a returning applicant's record is not rewritten and
+    the split was clean: 201 for the four states with a row, 503 for "this
+    address has never applied here". No questions configured, no tenant
+    settings, one anonymous request.
 
-    Refused at the request model now (`_RejectsUnstorableText`) and, for the
-    one-shot door's Form field, above `floor_from` — so the refusal runs before
-    the identity lookup and cannot depend on the state.
+    Refused above `floor_from` now, for every field at once, and `_clean`
+    strips as a backstop for the field somebody adds later and forgets to list
+    here. What this test pins is not the 422 — it is that the status does not
+    depend on the state.
     """
     addresses = await _seeded_addresses(client)
 
     seen: dict[str, int] = {}
     for case, (target, email) in addresses.items():
-        if door == "one-shot":
-            r = await _apply_with(
-                client, target, email, full_name="Probe" + _NUL + "Person"
-            )
-        else:
-            await _clear_rate_limit()
-            r = await client.post(
-                f"/apply/{target}/draft",
-                json={
-                    "email": email,
-                    "consent_granted": True,
-                    "full_name": "Probe" + _NUL + "Person",
-                },
-            )
+        r = await _apply_with(client, target, email, **{field: "bad" + _NUL + "value"})
         seen[case] = r.status_code
 
     assert len(set(seen.values())) == 1, (
-        "an unstorable name separates the states by status code, so one "
-        f"anonymous request discloses whether a named person applied: {seen}"
+        f"an unstorable value in {field!r} separates the states by status code, "
+        f"so one anonymous request discloses whether a named person applied: "
+        f"{seen}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unstorable_name_cannot_separate_the_states_on_the_draft_door(
+    client: AsyncClient,
+) -> None:
+    """The draft door's body fields, which go through `_RejectsUnstorableText`."""
+    addresses = await _seeded_addresses(client)
+
+    seen: dict[str, int] = {}
+    for case, (target, email) in addresses.items():
+        await _clear_rate_limit()
+        r = await client.post(
+            f"/apply/{target}/draft",
+            json={
+                "email": email,
+                "consent_granted": True,
+                "full_name": "Probe" + _NUL + "Person",
+            },
+        )
+        seen[case] = r.status_code
+
+    assert len(set(seen.values())) == 1, (
+        f"an unstorable name separates the states on the draft door: {seen}"
+    )
+
+
+def _pdf_with_nul() -> bytes:
+    """A PDF whose extracted text carries U+0000, built from pure ASCII.
+
+    `(A\\000B) Tj` is an octal escape in the content stream, so the file has no
+    unusual bytes at all and pypdf yields `"A\x00B"`. This is round 13's HIGH-2
+    and the worse half of it: the value is produced by the PARSER, so no
+    request model can refuse it, and `resume_text` is written into the
+    `applicants` INSERT and `_ensure_guest_user`'s `users` INSERT — both on the
+    applicant-creating branch only.
+    """
+    body = "BT /F1 11 Tf 72 780 Td 16 TL (A\\000B) Tj ET\n"
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+        "/Encoding /WinAnsiEncoding >>",
+        f"<< /Length {len(body.encode('latin-1'))} >>\nstream\n{body}endstream",
+    ]
+    out = "%PDF-1.4\n"
+    offsets: list[int] = []
+    for i, obj in enumerate(objects):
+        offsets.append(len(out.encode("latin-1")))
+        out += f"{i + 1} 0 obj\n{obj}\nendobj\n"
+    xref_at = len(out.encode("latin-1"))
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n"
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n"
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_at}\n%%EOF\n"
+    )
+    return out.encode("latin-1")
+
+
+@pytest.mark.asyncio
+async def test_a_crafted_cv_cannot_separate_the_states(client: AsyncClient) -> None:
+    """ROUND 13's HIGH-2: the same oracle with no form field involved at all.
+
+    Stripped rather than refused, because nobody typed it — refusing the
+    application for what pypdf read out of the candidate's own CV would turn a
+    storage limitation into a rejection. See `_strip_unstorable`.
+    """
+    addresses = await _seeded_addresses(client)
+    crafted = _pdf_with_nul()
+
+    seen: dict[str, int] = {}
+    for case, (target, email) in addresses.items():
+        await _clear_rate_limit()
+        r = await client.post(
+            f"/apply/{target}",
+            data={
+                "full_name": "Probe Person",
+                "email": email,
+                "consent_granted": "true",
+            },
+            files={"resume": ("cv.pdf", crafted, "application/pdf")},
+        )
+        seen[case] = r.status_code
+
+    assert len(set(seen.values())) == 1, (
+        "a crafted CV separates the states by status code, so one anonymous "
+        f"upload discloses whether a named person applied: {seen}"
     )

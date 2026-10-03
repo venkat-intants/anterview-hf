@@ -275,9 +275,13 @@ groups:
             path` guards only the releases known in round 11. 3. If it really
             is database latency, raise `APPLY_REPLY_FLOOR_MS` above the new
             p99 — a larger pad costs every applicant some latency and costs
-            nothing else. 4. You CANNOT set either pad to 0 to quiet this:
-            both carry `Field(gt=0)`, so the service refuses to start rather
-            than run with the control off. That is deliberate — an apply
-            endpoint that fails to boot is visible, one that is silently
-            answerable is not. 5. Re-read AR-10; a sustained rate here is one
+            nothing else. 4. Do not try to quiet this by
+            resizing the pad downwards. Both pads carry a floor AND a ceiling
+            (reply 100-5000 ms, lookup 10-1000 ms), so the service refuses to
+            start outside those ranges — `=0` and `=1` are both rejected, and
+            so is a value large enough to be an outage in its own right. An
+            earlier version of this step said only that 0 was refused, which
+            was true and misleading: the next thing tried is 1. That is
+            deliberate — an apply endpoint that fails to boot is visible, one
+            that is silently answerable is not. 5. Re-read AR-10; a sustained rate here is one
             of its stated triggers to revisit the acceptance.

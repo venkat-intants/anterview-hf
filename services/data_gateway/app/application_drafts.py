@@ -281,7 +281,12 @@ async def save(
                               "exp": now + timedelta(days=DRAFT_TTL_DAYS)}
     if answers is not None:
         assignments.append("answers = CAST(:answers AS jsonb)")
-        params["answers"] = json.dumps(answers)
+        # `allow_nan=False`: the same backstop as `application_questions._json`.
+        # A draft's answers are PATCHed before they are validated, so a
+        # non-finite float can reach this dict without passing
+        # `coerce_answer` at all — and this write is the draft row, not the
+        # application, so it is not covered by that function's check.
+        params["answers"] = json.dumps(answers, allow_nan=False)
     assignments.extend(["updated_at = :n", "expires_at = :exp"])
     await db.execute(
         text(

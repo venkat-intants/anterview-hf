@@ -37,6 +37,7 @@ from shared.http_observability import install_http_observability
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
+from shared.s3 import aclose_s3_clients, s3_client
 
 from app import reconciliation, reminders, scheduled_publishing
 from app.accommodations import purge as purge_accommodations
@@ -565,6 +566,33 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         next_run_iso=next_run_iso,
     )
 
+    # WARM THE S3 CLIENT BEFORE SERVING, so no request pays for building it.
+    #
+    # `shared.s3` caches the client now (round 12 of PH3-B4b) because
+    # construction is 180-450 ms of SYNCHRONOUS botocore work that blocks the
+    # event loop — and on the anonymous apply doors that stall was
+    # state-correlated, since only the refusing branches delete the CV they
+    # were made to upload. Caching takes it to 4-12 ms after the first call;
+    # warming here means the first call is not a candidate's either.
+    #
+    # Best effort on purpose. A service that cannot reach object storage at
+    # boot must still start: every CV route already handles storage being
+    # down, and refusing to serve `/auth` and `/hr` because MinIO is cold
+    # would turn a degraded upload path into a total outage.
+    if settings.s3_access_key_id:
+        try:
+            async with s3_client(
+                endpoint=settings.s3_endpoint,
+                region=settings.s3_region,
+                access_key=settings.s3_access_key_id,
+                secret_key=settings.s3_secret_access_key,
+                use_ssl=settings.s3_use_ssl,
+            ):
+                pass
+            log.info("s3.client.warmed")
+        except Exception as exc:  # noqa: BLE001 — storage cold must not stop boot
+            log.warning("s3.client.warm_failed", error_type=type(exc).__name__)
+
     yield  # application runs here
 
     # --- shutdown ---
@@ -576,6 +604,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     await stop_email_worker()
     await dispose_engine()
     await close_redis()
+    # The cached S3 clients own an aiohttp connector each; close them with the
+    # rest. Safe when nothing was ever cached, and safe to call twice.
+    await aclose_s3_clients()
     log.info("service.stop", service=settings.service_name)
 
 

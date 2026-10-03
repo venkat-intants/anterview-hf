@@ -27,6 +27,7 @@ VALIDATION IS SERVER-SIDE AND SHAPED BY THE KIND
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from typing import Any
 
@@ -50,6 +51,16 @@ EDITABLE_AFTER_ANSWERS: frozenset[str] = frozenset(
 
 MAX_QUESTIONS_PER_OPENING = 20
 MAX_OPTIONS = 12
+# A BYTE BOUND, not a nicety — round 12. Deduping a multi_choice answer caps
+# the stored list at MAX_OPTIONS ENTRIES, which is only a size bound if an
+# entry is small. Nothing capped an option's length, so a tenant with long
+# options still let an anonymous caller drive a multi-megabyte jsonb write
+# below `tail_from`, on accepting branches only — the same channel the dedupe
+# was added to close, in the one dimension the dedupe does not reach.
+#
+# 200 characters is a generous option label (the UI renders these as
+# checkboxes) and makes the worst stored choice answer 12 x 200 = 2.4 kB.
+MAX_OPTION_CHARS = 200
 MAX_ANSWER_CHARS = 4000
 
 
@@ -135,7 +146,7 @@ def validate_shape(*, kind: str, options: list[str] | None) -> list[str]:
     """Check a question is answerable, and return its cleaned options."""
     if kind not in QUESTION_KINDS:
         raise QuestionError(f"kind must be one of {sorted(QUESTION_KINDS)}")
-    cleaned = [" ".join(str(o).split()) for o in (options or [])]
+    cleaned = [" ".join(str(o).split())[:MAX_OPTION_CHARS] for o in (options or [])]
     cleaned = [o for o in cleaned if o][:MAX_OPTIONS]
     if kind in CHOICE_KINDS:
         if len(cleaned) < 2:
@@ -327,11 +338,37 @@ def coerce_answer(question: dict[str, Any], raw: Any) -> Any:
 
     if kind == "number":
         try:
-            return float(str(raw).strip())
+            parsed = float(str(raw).strip())
         except (TypeError, ValueError) as exc:
             raise AnswerError(
                 f"'{prompt}' needs a number.", question_id=str(question["id"])
             ) from exc
+        # FINITE, OR IT IS NOT A NUMBER WE CAN STORE — round 12, and this was a
+        # working state oracle on both anonymous apply doors.
+        #
+        # `float("nan")`, `float("inf")` and `float("1e999")` all parse. The
+        # answers are then written with `json.dumps`, whose default
+        # `allow_nan=True` emits the bare tokens `NaN` and `Infinity` — which
+        # are not JSON, and which Postgres rejects with "Token \"NaN\" is
+        # invalid" when the text is cast to jsonb.
+        #
+        # That write happens BELOW `tail_from` and ONLY on the branches that
+        # accept an application: a refusal returns from `_refuse` before
+        # `store_answers` is reached. So one anonymous request with a `number`
+        # question answered "nan" produced 201 for an address that already has
+        # an application and 503 for an address that is free to apply —
+        # byte-identical replies within each group, no timing measurement, no
+        # concurrency, no infrastructure fault. AR-10 residue 1 accepts a
+        # 201/503 split caused by OPERATIONAL faults; it never contemplated one
+        # the caller triggers with a field value.
+        #
+        # Eleven rounds of review missed it because the five-state matrix
+        # submitted no answers at all. It now does.
+        if not math.isfinite(parsed):
+            raise AnswerError(
+                f"'{prompt}' needs a number.", question_id=str(question["id"])
+            )
+        return parsed
 
     if kind in CHOICE_KINDS:
         options = list(question["options"] or [])
@@ -381,7 +418,7 @@ def coerce_answer(question: dict[str, Any], raw: Any) -> Any:
         # not, and the form cannot render the same box ticked twice.
         return list(dict.fromkeys(chosen))
 
-    text_value = str(raw).strip()[:MAX_ANSWER_CHARS]
+    text_value = _storable(str(raw), prompt, question_id=str(question["id"]))
     return text_value or None
 
 
@@ -446,5 +483,45 @@ async def store_answers(
         )
 
 
+def _storable(raw: str, prompt: str, *, question_id: str) -> str:
+    """A text answer Postgres can actually hold, trimmed to the cap.
+
+    THE SECOND HALF OF ROUND 12's ORACLE. A NUL (U+0000) anywhere in a text
+    answer survives ``str()`` and ``strip()``, and ``json.dumps`` faithfully
+    encodes it as an escape — which Postgres refuses on the cast to jsonb
+    ("cannot be converted to text"), because no ``text`` column can hold a NUL.
+    The write is below ``tail_from`` and only on the accepting branches, so the
+    refusing states still answered 201 while an address free to apply got a
+    503. One anonymous request, no timing, no concurrency.
+
+    REFUSED, NOT STRIPPED. Silently dropping characters from an answer HR will
+    read, and that a candidate may be assessed on, is worse than asking them to
+    retype: the stored answer would differ from what they submitted with nobody
+    told. The message names no code point — "cannot store" is all a legitimate
+    candidate needs, and a crafted request earns no diagnostics.
+
+    Lone surrogates (U+D800 to U+DFFF) go the same way. They encode fine in
+    JSON and fail at the UTF-8 boundary instead, which is the same defect one
+    layer down. Note this docstring deliberately spells both ranges as U+ text
+    rather than as escapes: written as escapes in a docstring, Python builds the
+    characters themselves, and the module then cannot be encoded at all — which
+    is how the first draft of this fix broke its own import.
+    """
+    if any(ch == "\x00" or 0xD800 <= ord(ch) <= 0xDFFF for ch in raw):
+        raise AnswerError(
+            f"'{prompt}' contains a character we cannot store. Please retype it.",
+            question_id=question_id,
+        )
+    return raw.strip()[:MAX_ANSWER_CHARS]
+
+
 def _json(value: Any) -> str:
-    return json.dumps(value)
+    """Serialise one answer for the jsonb column.
+
+    `allow_nan=False` as a BACKSTOP, not as the fix: `coerce_answer` already
+    refuses non-finite numbers, and this is here so a kind added later cannot
+    reintroduce round 12's oracle by returning a float nobody checked. It
+    raises `ValueError` rather than emitting `NaN`, which fails loudly in a
+    test instead of quietly at the database.
+    """
+    return json.dumps(value, allow_nan=False)

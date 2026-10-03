@@ -68,7 +68,7 @@ from fastapi import (
     status,
 )
 from prometheus_client import Counter
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -133,6 +133,11 @@ _MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5 MB — same ceiling as the HR upload pa
 # controlled. Keep it well under the point where two TOASTed writes approach
 # the pad, and do not raise it without re-measuring that.
 _MAX_RESUME_TEXT_CHARS = 100_000
+
+# The one-shot door's `answers` form field is `Form(max_length=20_000)`; the
+# draft door's body field had no bound at all until round 12. Same number, so
+# the two doors agree and neither is the soft one.
+_MAX_ANSWERS_CHARS = 20_000
 
 # THE PAD'S FAIL-OPEN BRANCH, instrumented. AR-10 accepts that each pad fails
 # open on overrun and names "a `public_apply.floor_exceeded` rate above noise"
@@ -476,7 +481,53 @@ async def activate_account(body: ActivateIn, db: DbSessionDep) -> ActivateOut:
 # rate-limited for the same reason interview links are — an unthrottled endpoint
 # that reports valid-or-invalid is a free oracle even against 256 random bits.
 # ---------------------------------------------------------------------------
-class DraftStartIn(BaseModel):
+def _unstorable(value: str) -> bool:
+    """True when Postgres cannot hold this string in a ``text`` column.
+
+    ROUND 12, HIGH-2, and it needed no tenant configuration at all. A NUL
+    (U+0000) in ``full_name`` reaches the ``applicants`` INSERT, which only the
+    branch that CREATES an applicant performs — so the four states with a row
+    already answered 201 and "this address has never applied here" answered
+    503. One anonymous request, no questions configured, no timing, no
+    concurrency. `apply_extracted_identity` fills-never-replaces, which is why
+    a returning applicant's name is not rewritten and the split is clean.
+
+    Two classes, and only two, because only these actually fail: a NUL, which
+    no ``text`` column accepts; and a lone surrogate (U+D800 to U+DFFF), which
+    encodes in JSON and then fails at the UTF-8 boundary. Other control
+    characters store fine and are left alone — a bound that refuses more than
+    it must is a bound somebody later widens for a legitimate name.
+
+    Spelled with ``chr()`` and range comparisons rather than escapes on
+    purpose: an escape written into a docstring or a pattern produces the
+    character itself, which makes the module unencodable. The first draft of
+    this fix broke its own import that way.
+    """
+    return any(ch == chr(0) or 0xD800 <= ord(ch) <= 0xDFFF for ch in value)
+
+
+_UNSTORABLE_TEXT = "That field contains a character we cannot store. Please retype it."
+
+
+class _RejectsUnstorableText(BaseModel):
+    """Base for the anonymous apply bodies: refuse text the database cannot hold.
+
+    Validated at the REQUEST MODEL, which is what makes the refusal
+    state-independent: pydantic runs before the handler body, so before
+    `floor_from`, before `_identify`, and before anything branches. A crafted
+    value is therefore answered identically whatever state the address is in —
+    which is the property, not merely a nicer error.
+    """
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _storable_only(cls, v: object) -> object:
+        if isinstance(v, str) and _unstorable(v):
+            raise ValueError(_UNSTORABLE_TEXT)
+        return v
+
+
+class DraftStartIn(_RejectsUnstorableText):
     """Opening a draft. The email identifies the person; consent permits us to
     remember it."""
 
@@ -497,7 +548,7 @@ class DraftStartIn(BaseModel):
     src: str | None = Field(default=None, max_length=200)
 
 
-class DraftFieldsIn(BaseModel):
+class DraftFieldsIn(_RejectsUnstorableText):
     """Progress. Every field optional — a draft is allowed to be incomplete."""
 
     full_name: str | None = Field(default=None, max_length=200)
@@ -508,7 +559,30 @@ class DraftFieldsIn(BaseModel):
     linkedin_url: str | None = Field(default=None, max_length=500)
     github_url: str | None = Field(default=None, max_length=500)
     language: Literal["en", "hi", "te"] | None = None
+    # BOUNDED, like the one-shot door's `Form(max_length=20_000)`. This had no
+    # bound at all: `update_draft` writes it to a jsonb column verbatim, so an
+    # anonymous caller holding a draft token could store an arbitrarily large
+    # document — and unlike the submit path, nothing downstream re-validates a
+    # draft's answers before they are stored. Round 12 called it correctly:
+    # not a timing channel (the write is state-independent on this route), an
+    # unauthenticated storage-amplification write, bounded until now only by
+    # the Caddy body cap, which does not exist for a deployment that reaches
+    # the service directly.
+    #
+    # Measured on the SERIALISED form, because that is what lands in the
+    # column, and with the same 20k budget the sibling door has had all along.
     answers: dict[str, Any] | None = None
+
+    @field_validator("answers", mode="after")
+    @classmethod
+    def _answers_fit_the_column(
+        cls, v: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if v is not None and len(json.dumps(v, default=str)) > _MAX_ANSWERS_CHARS:
+            raise ValueError(
+                "That is more than we can save. Please shorten your answers."
+            )
+        return v
 
 
 class ParsedDetails(BaseModel):
@@ -988,10 +1062,18 @@ async def _refuse(
        is the only place the date is the reader's to know; the reply itself
        says nothing. Owns a savepoint, never this transaction.
     3. commit.
-    4. delete the object nothing names any more. AFTER the commit, so a failed
-       delete leaves a findable orphan rather than a row pointing at a file
-       that is gone.
-    5. return the one reply, held to the common deadline.
+    4. return the one reply, held to the common deadline.
+    5. delete the object nothing names any more — SCHEDULED, so it runs after
+       the response is sent, not before it. Round 11 had these two the other
+       way round and this list was not updated with the code; round 12 caught
+       the stale numbering. The delete is after the commit either way, so a
+       failed delete leaves a findable orphan rather than a row pointing at a
+       file that is gone. It is after the REPLY because an S3 delete is
+       350-650 ms of mostly synchronous client work, and only the branches that
+       reach this function perform it — so awaiting it here timed the refusing
+       states against the accepting one. The client is cached now, which makes
+       the term small wherever it runs; the scheduling keeps it out of the pad
+       regardless.
 
     The doors differ only in what they pass: the one-shot door has no draft
     and its `cv_key` is the object it uploaded above the gate; the draft door
@@ -2606,6 +2688,16 @@ async def submit_application(
     # one the floor may be exceeded, but then the term burying the difference
     # is the one the caller chose to make large. There is no PDF size that
     # both exposes the lookup and keeps the floor from covering it.
+    # REFUSED BEFORE THE CLOCK STARTS, so the refusal says nothing about the
+    # address. `full_name` is a Form field rather than a model field on this
+    # door, so it misses `_RejectsUnstorableText` — and it is the field round
+    # 12 actually exploited, because a NUL in it reaches the `applicants`
+    # INSERT that only the applicant-creating branch performs. Above
+    # `floor_from` deliberately: a 422 here is identical in all five states,
+    # while the same value reaching the INSERT was a 503 in exactly one.
+    if _unstorable(full_name):
+        raise HTTPException(status_code=422, detail=_UNSTORABLE_TEXT)
+
     floor_from = time.monotonic()
 
     # ── Who this email already is ───────────────────────────────────────────
@@ -3103,30 +3195,29 @@ async def _ensure_guest_user(
         text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
     )
     if linked is not None:
-        # FILL THE CV TEXT IF IT IS MISSING, then return. Round 11: the draft
-        # door builds its `Applicant` with `user_id` already set (the draft's
-        # own guest identity), so this early exit is the path it always takes —
-        # and `users.resume_text` was therefore never written on that door,
-        # while the one-shot door writes it in the INSERT below. The column is
-        # what the B-033 enrichment path and interview_core's avatar context
-        # read, so "provision both doors alike" was not true of it.
+        # NOTHING IS WRITTEN HERE, AND THAT IS A REVERSAL. Round 11 added a
+        # fill of `users.resume_text` on this path, to make the draft door
+        # match the one-shot door's INSERT below — `provision both doors
+        # alike`, and the column is what the B-033 enrichment path reads. The
+        # justification offered was that it "fills, never replaces, the same
+        # rule `apply_extracted_identity` follows".
         #
-        # FILLS, NEVER REPLACES, which is the same rule
-        # `apply_extracted_identity` follows for the name and the email: a
-        # value already on the row came from somewhere with more authority
-        # than this unauthenticated request. Idempotent, so a returning
-        # applicant is not rewritten, and bounded by
-        # `_MAX_RESUME_TEXT_CHARS` at the parse — a single-digit-millisecond
-        # statement against the reply pad.
-        await db.execute(
-            text(
-                "UPDATE users SET resume_text = :rt, updated_at = :n"
-                " WHERE id = :uid"
-                "   AND (resume_text IS NULL OR btrim(resume_text) = '')"
-                "   AND :rt <> ''"
-            ),
-            {"rt": resume_text, "uid": linked, "n": now},
-        )
+        # Round 12 showed that precedent does not transfer, and it is the
+        # reason this is reverted rather than defended.
+        # `apply_extracted_identity` writes the APPLICANTS row. This wrote
+        # `users`, and `apply_activation` repoints `applicants.user_id` from
+        # the throwaway guest identity onto the candidate's REAL account once
+        # they claim it. So once anyone has activated, an unauthenticated POST
+        # that knows their address and clears the gate would write its own
+        # parsed CV text into that account's row whenever the column happened
+        # to be empty. "Fills, never replaces" bounds how often, not whose row.
+        #
+        # What it bought was cosmetic parity on a column nothing on the draft
+        # door reads today. What it cost was an anonymous cross-account write.
+        # The asymmetry is real and stays recorded in AR-10 rather than being
+        # closed at that price; closing it properly means filling the column
+        # from the reconciler, which already has the applicant's text and runs
+        # as nobody in particular.
         return uuid.UUID(str(linked))
 
     guest_user_id = uuid.uuid4()

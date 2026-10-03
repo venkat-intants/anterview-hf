@@ -85,14 +85,105 @@ the allowlist and the empty ``__init__``.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
 import aioboto3
 from botocore.config import Config as BotoConfig
 
-__all__ = ["s3_client"]
+__all__ = ["aclose_s3_clients", "s3_client"]
+
+# ---------------------------------------------------------------------------
+# THE CLIENT IS CACHED, AND THAT IS A PRIVACY FIX, NOT A PERFORMANCE ONE.
+#
+# `aioboto3.Session(...).client("s3", ...)` is expensive and SYNCHRONOUS:
+# botocore loads its service-model JSON off disk and builds the API object
+# without yielding. Measured on loopback MinIO, 180-450 ms per construction,
+# and an `asyncio.sleep(5ms)` monitor showed event-loop stalls of 349-533 ms
+# that match construct+call almost exactly — i.e. essentially none of it
+# yields.
+#
+# Why that mattered. `POST /apply/{requisition_id}` and `POST /apply/draft/
+# submit` are anonymous, and must answer identically whether the submitted
+# address has a live application, is in a rejection cooldown, was rejected and
+# the window elapsed, was rejected with an override, or has never applied here
+# (docs/ACCEPTED-RISKS.md AR-10). `_refuse` deletes the CV it was made to
+# upload, so the DELETE ran on two of those five states and not the other
+# three. With a client built per call, that was ~390 ms of state-correlated
+# loop blocking:
+#
+#   * round 11 found it INSIDE the reply pad, where it overran a 400 ms budget
+#     on the refusing states on healthy storage, every request;
+#   * round 11's fix scheduled the delete after the response, which took it out
+#     of the pad and left it on the same single-threaded worker — where round
+#     12 read it off a CONCURRENT request, 24/25 correct on one probe, with no
+#     pad and no alert covering it.
+#
+# Caching removes the term rather than relocating it: after the first call the
+# same measurement is 3-8 ms with 10-15 ms of lag. It also removes it from the
+# CV UPLOAD, which pays the identical cost on every state and is the jitter
+# AR-10 credits with being the only reason those oracles did not converge
+# sooner. Scheduling and caching were never alternatives; this is the half that
+# makes the property true.
+#
+# Keyed by the RUNNING EVENT LOOP OBJECT as well as the connection settings.
+# An aioboto3 client binds to the loop that created it, and the test suite
+# builds a fresh loop per test — a cache keyed only on settings would hand out
+# a client belonging to a closed loop.
+#
+# The loop OBJECT, not `id(loop)`. `id()` is a memory address and CPython
+# reuses addresses once an object is collected, so a fresh loop can be handed
+# a dead loop's id — and since the stale entry would then be a cache HIT, the
+# prune below (which only runs on a miss) would never see it. Keying on the
+# object cannot collide: a new loop is a different key, so it misses, prunes
+# and builds. The cost is a strong reference to each loop until the next miss
+# clears it, which is bounded and only reachable from tests.
+_clients: dict[tuple[Any, ...], Any] = {}
+_stacks: dict[tuple[Any, ...], AsyncExitStack] = {}
+_locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+
+
+def _prune_closed_loops() -> None:
+    """Drop cached clients whose event loop has been closed.
+
+    Only reachable from tests — a service has one loop for its lifetime — and
+    that is exactly why it exists: without it a long pytest run accumulates one
+    client per loop per settings tuple, each holding an aiohttp connector open.
+
+    Tested on `is_closed()` rather than on identity, so an entry is dropped
+    because its loop is actually finished and not merely because some other
+    loop is running now. Closing the stack would need that dead loop, so the
+    entry is dropped WITHOUT closing it: the connector dies with its loop, and
+    awaiting an aclose on a closed loop would raise here instead.
+    """
+    for key in [k for k in _clients if isinstance(k[0], asyncio.AbstractEventLoop) and k[0].is_closed()]:
+        _clients.pop(key, None)
+        _stacks.pop(key, None)
+    for loop in [lp for lp in _locks if lp.is_closed()]:
+        _locks.pop(loop, None)
+
+
+async def aclose_s3_clients() -> None:
+    """Close every cached client. Call from a service's lifespan shutdown.
+
+    Safe to call when nothing is cached, and safe to call twice. A process that
+    exits without calling it leaks nothing that matters — the sockets go with
+    the process — but a reloading dev server or a test that wants a clean slate
+    should.
+    """
+    for key in list(_stacks):
+        stack = _stacks.pop(key)
+        _clients.pop(key, None)
+        # Shutdown must not fail on a socket that is already gone.
+        with contextlib.suppress(Exception):
+            await stack.aclose()
+    # The locks go too, or a long test run keeps one per loop it ever used.
+    # Harmless in a service (one loop, called once at shutdown); this is for
+    # the suite, which is the only caller that makes loops in bulk.
+    _locks.clear()
 
 
 def _resolve_endpoint(endpoint: str | None) -> str | None:
@@ -165,16 +256,37 @@ async def s3_client(
         stubs; the call sites already treat it that way.
     """
     endpoint_url = _resolve_endpoint(endpoint)
+    loop = asyncio.get_running_loop()
+    key = (loop, endpoint_url, region, access_key, secret_key, use_ssl)
 
-    session = aioboto3.Session(
-        aws_access_key_id=access_key or None,
-        aws_secret_access_key=secret_key or None,
-        region_name=region,
-    )
-    async with session.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        use_ssl=use_ssl,
-        config=_client_config(endpoint_url),
-    ) as client:
-        yield client
+    client = _clients.get(key)
+    if client is None:
+        # One lock per loop, so two concurrent first-callers build one client
+        # rather than two. Re-checked inside the lock because the loser of the
+        # race must use the winner's.
+        lock = _locks.setdefault(loop, asyncio.Lock())
+        async with lock:
+            client = _clients.get(key)
+            if client is None:
+                _prune_closed_loops()
+                session = aioboto3.Session(
+                    aws_access_key_id=access_key or None,
+                    aws_secret_access_key=secret_key or None,
+                    region_name=region,
+                )
+                stack = AsyncExitStack()
+                client = await stack.enter_async_context(
+                    session.client(
+                        "s3",
+                        endpoint_url=endpoint_url,
+                        use_ssl=use_ssl,
+                        config=_client_config(endpoint_url),
+                    )
+                )
+                _clients[key] = client
+                _stacks[key] = stack
+
+    # NOT closed on the way out — that is the whole point. The contract stays
+    # an async context manager so no call site changes, but the client outlives
+    # the `async with`; `aclose_s3_clients` owns its lifetime.
+    yield client

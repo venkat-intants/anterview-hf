@@ -84,6 +84,7 @@ concurrent submissions.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -1033,3 +1034,171 @@ async def test_no_state_overruns_the_pad_that_is_meant_to_absorb_it(
         assert kinds == {"lookup", "reply"}, (
             f"{case} reached {sorted(kinds)}, not both pads"
         )
+
+
+_NUL = chr(0)
+_LONE_SURROGATE = chr(0xD800)
+
+
+async def _attach_question(
+    req_id: uuid.UUID, kind: str, prompt: str, position: int
+) -> str:
+    """One live question on an opening, inserted the way HR's own editor would.
+
+    Needed because the five-state matrix had never submitted an ANSWER to
+    anything — which is why round 12's oracle survived eleven rounds of review
+    with every other channel closed.
+    """
+    factory = get_session_factory()
+    async with factory() as db:
+        company_id = await db.scalar(
+            text("SELECT company_id FROM job_requisitions WHERE id = :r"),
+            {"r": req_id},
+        )
+        qid = uuid.uuid4()
+        await db.execute(
+            text(
+                "INSERT INTO application_questions (id, company_id, requisition_id,"
+                " position, prompt, kind, help_text, required, options,"
+                " created_at, updated_at)"
+                " VALUES (:i,:c,:r,:p,:pr,:k,NULL,false,CAST(:o AS jsonb),"
+                "         now(), now())"
+            ),
+            {"i": qid, "c": company_id, "r": req_id, "p": position, "pr": prompt,
+             "k": kind, "o": "null"},
+        )
+        await db.commit()
+    return str(qid)
+
+
+async def _apply_with(
+    client: AsyncClient, req_id: uuid.UUID, email: str, **extra: str
+):  # noqa: ANN202
+    """`_apply`, but letting a probe choose the field values. No 422 guard."""
+    await _clear_rate_limit()
+    data = {
+        "full_name": "Probe Person",
+        "email": email,
+        "consent_granted": "true",
+        **extra,
+    }
+    return await client.post(
+        f"/apply/{req_id}",
+        data=data,
+        files={"resume": ("cv.pdf", _PDF, "application/pdf")},
+    )
+
+
+# ROUND 12's ORACLE, and the first one on this branch that actually worked.
+#
+# The two tests below are the matrix case that never existed.
+_ROUND_12_NOTE = """ROUND 12's ORACLE.
+
+    Three attacker-chosen values made `json.dumps` emit text Postgres refuses
+    on the cast to jsonb:
+
+    * a `number` question answered "nan" / "inf" / "1e999" — `float()` parses
+      all of them, and `json.dumps`'s default `allow_nan=True` writes the bare
+      tokens `NaN` / `Infinity`, which are not JSON;
+    * any text question containing a NUL — faithfully encoded, and refused
+      because no `text` column can hold one.
+
+    `store_answers` and `_stage_reapplication(answers=...)` both run BELOW
+    `tail_from` and only on the branches that ACCEPT; a refusal returns from
+    `_refuse` before either. So one anonymous request answered 201 for an
+    address that already has an application here and 503 for an address free to
+    apply — byte-identical within each group, no timing, no concurrency, no
+    infrastructure fault. AR-10 residue 1 accepts a 201/503 split from
+    OPERATIONAL faults and never contemplated one the caller triggers with a
+    field value.
+
+    It is fixed at the producer (`coerce_answer` refuses non-finite numbers and
+    unstorable text, `_json` carries `allow_nan=False` as a backstop), so the
+    refusal now happens before anything state-dependent runs and every state
+    answers the same 422.
+
+WHAT THESE TESTS PIN is not the 422 — it is that the status does not depend
+on the state. Eleven rounds of this file compared replies without ever sending
+an answer to a question, and that gap is the whole finding.
+"""
+
+
+@pytest.mark.asyncio
+async def test_a_crafted_answer_cannot_separate_the_states_on_the_one_shot_door(
+    client: AsyncClient,
+) -> None:
+    """See the module docstring above this pair. One request, five states."""
+    addresses = await _seeded_addresses(client)
+
+    qids: dict[uuid.UUID, tuple[str, str]] = {}
+    for req_id in {target for target, _ in addresses.values()}:
+        qids[req_id] = (
+            await _attach_question(req_id, "number", "Years of experience", 0),
+            await _attach_question(req_id, "long_text", "Anything else", 1),
+        )
+
+    probes = {
+        "non-finite number": lambda num, txt: {num: "nan"},
+        "infinity": lambda num, txt: {num: "1e999"},
+        "NUL in text": lambda num, txt: {txt: "ok" + _NUL + "ay"},
+        "lone surrogate in text": lambda num, txt: {txt: "ok" + _LONE_SURROGATE + "ay"},
+    }
+
+    for label, build in probes.items():
+        seen: dict[str, int] = {}
+        for case, (target, email) in addresses.items():
+            num, txt = qids[target]
+            body = build(num, txt)
+            r = await _apply_with(
+                client, target, email, answers=json.dumps(body, ensure_ascii=True)
+            )
+            seen[case] = r.status_code
+        assert len(set(seen.values())) == 1, (
+            f"the {label!r} probe separates the states by status code, so one "
+            f"anonymous request tells a stranger which state an address is in: "
+            f"{seen}"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", _BOTH_DOORS)
+async def test_an_unstorable_name_cannot_separate_the_states(
+    client: AsyncClient, door: str
+) -> None:
+    """The same oracle with NO precondition at all — round 12's HIGH-2.
+
+    A NUL in `full_name` reaches the `applicants` INSERT, which only the branch
+    that CREATES an applicant performs. `apply_extracted_identity` fills but
+    never replaces, so a returning applicant's name is not rewritten and the
+    split was clean: 201 for the four states with a row, 503 for "this address
+    has never applied here". No questions configured, no tenant settings, one
+    request.
+
+    Refused at the request model now (`_RejectsUnstorableText`) and, for the
+    one-shot door's Form field, above `floor_from` — so the refusal runs before
+    the identity lookup and cannot depend on the state.
+    """
+    addresses = await _seeded_addresses(client)
+
+    seen: dict[str, int] = {}
+    for case, (target, email) in addresses.items():
+        if door == "one-shot":
+            r = await _apply_with(
+                client, target, email, full_name="Probe" + _NUL + "Person"
+            )
+        else:
+            await _clear_rate_limit()
+            r = await client.post(
+                f"/apply/{target}/draft",
+                json={
+                    "email": email,
+                    "consent_granted": True,
+                    "full_name": "Probe" + _NUL + "Person",
+                },
+            )
+        seen[case] = r.status_code
+
+    assert len(set(seen.values())) == 1, (
+        "an unstorable name separates the states by status code, so one "
+        f"anonymous request discloses whether a named person applied: {seen}"
+    )

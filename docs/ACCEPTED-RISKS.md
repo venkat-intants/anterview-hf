@@ -770,32 +770,63 @@ measured both claims and both were false:
   was sound and irrelevant — one un-cached S3 client dwarfed fifteen database
   round trips.
 
-**Fixed, not accepted.** All five object releases that sit on a path returning
-a reply — `_refuse`, both doors' superseded-reapplication CV, both doors'
-lost-race exit — now run as `BackgroundTasks` after the response is sent, so
-the pad covers database work only. Re-measured: every state leaves 379-399 ms
-of the 400 ms pad unspent, a tail of 1-21 ms. Two guards hold it:
-`test_no_object_release_is_awaited_on_a_reply_path` (structural, deterministic,
-holds on any storage backend) and
-`test_no_state_overruns_the_pad_that_is_meant_to_absorb_it` (the first upper
-bound this control has ever had — fifteen guards and sixteen matrix tests were
-green while a 600 ms term lived in a 400 ms pad, because every one of them
-asserted a LOWER bound).
+**Fixed in two halves, and the first half alone was not enough — which is
+round 12's correction to round 11's fix and the reason this paragraph is on its
+fifth version.**
 
-Not fixed, and worth knowing before anyone trusts a number above: **the
-un-cached S3 client is still there**, so every CV upload still pays that
-180-450 ms. It is now outside both pads, where caller-sized work belongs, and
-caching it is a lifecycle change to a module all four services share — its own
-change, on its own review. One consequence to hold onto: that cost is also the
-noise floor which, at n=25, stopped round 11 converting the open pad into a
-working oracle. Caching it removes the jitter as well as the term, so the two
-should land together or the sizing should be re-measured after.
+Round 11 moved all five object releases that sit on a reply path to
+`BackgroundTasks` after the response, and measured every state leaving
+379-399 ms of the 400 ms pad unspent. That measurement is real and it was the
+wrong quantity. `shared.s3.s3_client` built a fresh client per call, and the
+construction is SYNCHRONOUS botocore work: an `asyncio.sleep(5ms)` monitor
+showed event-loop stalls of 349-533 ms matching construct+call almost exactly.
+So scheduling did not remove the term, it relocated it — out of the padded
+window and onto the same single-threaded worker, where round 12 read it off a
+CONCURRENT request, 24 of 25 correct from a single probe, with neither pad nor
+alert covering it. "Caching makes the term smaller, scheduling makes it
+absent" was the claim; scheduling made it invisible to the two guards that had
+just been written for it.
+
+The second half is the cache. `shared/s3.py` now keeps one client per
+(event loop, connection settings), and `app/main.py` warms it at startup and
+closes it in lifespan shutdown. Measured after: 487 ms on the constructing
+call, then 4.9-12.2 ms with 12-15 ms of loop lag — roughly fifty times less,
+and it comes off the CV UPLOAD too, which paid the same cost on every state
+and was the jitter this entry previously credited with being the only reason
+those oracles did not converge sooner. Scheduling and caching were never
+alternatives: scheduling keeps the term out of the pad, caching makes the term
+small enough not to matter wherever it runs.
+
+Three guards hold it now:
+`test_no_object_release_is_awaited_on_a_reply_path` (structural, deterministic,
+holds on any storage backend — and hardened in round 12, which defeated the
+round-11 version in one edit because it excused `except` handlers that
+actually reply), `test_no_state_overruns_the_pad_that_is_meant_to_absorb_it`
+(the first upper bound this control ever had: fifteen guards and sixteen matrix
+tests were green while a 600 ms term lived in a 400 ms pad, because every one
+of them asserted only a LOWER bound), and the config bounds below.
 
 What this residue now accepts is overrun of a pad by database work whose size
 the caller does not choose. The sentence is load-bearing only for as long as
 nobody puts another caller-sized or network term below `tail_from`, which has
-now happened three times: the CV parse (round 8), the extracted CV text
-(round 10), and the S3 delete plus the answers jsonb (round 11).
+now happened FIVE times, listed so the next one is expected rather than
+surprising: the CV parse (round 8); the extracted CV text (round 10); the
+answers jsonb and the S3 delete (round 11); and a `users.resume_text` fill
+added by round 11's own consent fix, which round 12 counted as the fifth.
+
+That fifth one is now REVERTED rather than bounded, for a reason unrelated to
+timing: it wrote the `users` row, and `apply_activation` repoints
+`applicants.user_id` onto a candidate's real account once they claim it, so an
+anonymous submission could have written its own parsed CV text into a real
+account's row whenever that column was empty. It bought cosmetic parity on a
+column nothing on the draft door reads; it cost an anonymous cross-account
+write. The asymmetry it was closing stays open and recorded here instead: the
+draft door does not populate `users.resume_text`, and the place to fix that is
+the reconciler, which already holds the applicant's text and runs as nobody in
+particular.
+
+Every one of those five was found by a reviewer, none by the suite, and four
+of the five were introduced by the fix for the previous one.
 
 3. **Both rate limits fail open when Redis is unavailable.** The burst (6/min)
    and sustained (60/hour) caps are the stated bound on the anonymous object
@@ -817,7 +848,11 @@ now happened three times: the CV parse (round 8), the extracted CV text
    merely fail-open, they are structurally inapplicable.
 
    The bound is now at the EDGE, where it belongs: `request_body { max_size
-   8MB }` on `handle /apply*` in both `Caddyfile` and `space/Caddyfile`. An
+   8MB }` on `handle /apply*` in both `Caddyfile` and `space/Caddyfile`. Being
+   an edge control is itself a caveat worth stating: a deployment that reaches
+   `data_gateway:8002` directly — a sidecar, a mesh, a port-forward, a future
+   topology that drops Caddy — has no cap at all, and nothing in the service
+   would report that. An
    earlier version of this entry said there was "no total cap anywhere in this
    repo", which was false and is corrected as a matter of record — four sibling
    upload prefixes already had one (`/interviewer/*` at 1 MB,
@@ -887,11 +922,25 @@ now happened three times: the CV parse (round 8), the extracted CV text
 ledger entry. The CV is now uploaded *before* the gate is consulted, because
 uploading only on the accepting branches made the work the endpoint does an
 answer about the address. On a refused submission no ledger row is ever
-written, so for the length of the gate, the notice and the commit there is an
-object in storage with no consent record — and permanently if the delete that
-follows fails. For the one-shot door with an address we already hold, the
-erasure sweep reaches it. For an address with no record, and for the draft
-door, it does not: those keys are logged so they are recoverable by hand.
+written, so there is an object in storage with no consent record — and
+permanently if the delete that follows fails. For the one-shot door with an
+address we already hold, the erasure sweep reaches it. For an address with no
+record, and for the draft door, it does not.
+
+**The window is longer than earlier versions of this entry said**, and the
+recoverability claim was too strong. It used to read "for the length of the
+gate, the notice and the commit", and that the keys "are logged so they are
+recoverable by hand". Since round 11 scheduled the release to run after the
+response, the window is the gate, the notice, the commit, the WHOLE REPLY PAD
+(400 ms) and the response flush. And two paths lose the log line as well as the
+object: a raise anywhere between `background.add_task` and the return — FastAPI
+builds an error response without the endpoint's background tasks — and a worker
+killed in the graceful-shutdown window, because `CancelledError` is a
+`BaseException` and `_best_effort_delete`'s `except Exception` does not catch
+it. Neither is a demonstrated leak today (round 12 found no reachable raise
+inside `_reply`), and client disconnect is safe on this uvicorn, which still
+runs the task. But "recoverable by hand" is true only when the warning line is
+written, and on those two paths it is not.
 
 **Why not close them.** (1) needs every state to share one write set. The
 version of that idea this entry used to reject — store a row naming the
@@ -1024,9 +1073,23 @@ the highest-privilege account is provisioned without its own review.
   keeps it out of *structured* sinks. A PaaS, CI runner or container runtime
   collects the stream itself, so the value is captured in exactly the
   deployments where it matters most.
-* That "rotate immediately" is a control. Nothing enforces, checks or reminds;
-  the account works indefinitely with the printed password, and no alert fires
-  if it is used.
+* That the printed password grants API access. It does NOT, and an earlier
+  version of this entry said it did ("the account works indefinitely with the
+  printed password"). That was wrong: the migration seeds
+  `must_change_password = true`, and `dependencies.require_password_changed`
+  enforces it SERVER-SIDE on the privileged routers, including the platform
+  owner's own (`PlatformOwnerDep`), logging `auth.bootstrap_password_gate`
+  when it bites.
+* That the gate therefore makes this minor. It does not, and the real risk is
+  worse than the claim it replaces. `/auth/*` is deliberately ungated, because
+  the holder has to reach `/auth/change-password` to clear the flag — so
+  whoever reads the banner can log in and set a new password. That is ACCOUNT
+  TAKEOVER of the highest-privilege account in the product, and it locks the
+  legitimate owner out of their own bootstrap.
+* That the gate holds under stress. `require_password_changed` fails OPEN on a
+  database error, by design and for good reasons stated in its docstring —
+  but it means the one server-side control over this credential is absent
+  during exactly the kind of incident in which someone is reading deploy logs.
 * That it only affects development. It affects any deployment that has not set
   `PLATFORM_OWNER_PASSWORD`, and nothing refuses to start without it.
 * That the migration being old means it has been reviewed in this light. It
@@ -1036,18 +1099,20 @@ the highest-privilege account is provisioned without its own review.
 **What IS true, and bounds this.** The banner prints only when
 `PLATFORM_OWNER_PASSWORD` is unset, so a deployment that sets it is entirely
 unaffected, and the plaintext is used only to compute the bcrypt hash — it is
-never stored in the database.
+never stored in the database. One nuance worth knowing when setting it: the
+value is `.strip()`ped, so a whitespace-only variable counts as unset and the
+banner prints anyway.
 
-**Path to closure.** Three options, roughly in order of preference, all of them
-a product decision rather than a patch: (1) require
-`PLATFORM_OWNER_PASSWORD` and FAIL CLOSED when it is absent, which suits a
-deployed product and makes the credential the operator's to handle; (2) write
-the generated value to a `0600` file on the migration host instead of stdout,
-which keeps the convenience for a local `alembic upgrade head`; (3) print a
-one-time password-reset link rather than a password, so what leaks into a log
-expires. Whichever is chosen, set `PLATFORM_OWNER_PASSWORD` on every existing
-deployment first and rotate the account on any deployment where the banner has
-already been printed.
+**Path to closure.** Three options, in order of preference, all of them a
+product decision rather than a patch: (1) require `PLATFORM_OWNER_PASSWORD`
+and FAIL CLOSED when it is absent — best for a deployed product, and it makes
+the credential the operator's to handle; (2) print a one-time password-reset
+link rather than a password, so what lands in a log expires; (3) write the
+generated value to a `0600` file on the migration host, which keeps the
+convenience of a local `alembic upgrade head` but still leaves a long-lived
+credential on that host. Whichever is chosen, set `PLATFORM_OWNER_PASSWORD` on
+every existing deployment first, and rotate the account anywhere the banner has
+already printed.
 
 ---
 

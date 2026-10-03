@@ -501,7 +501,17 @@ class Settings(BaseSettings):
     # refuses to start the service rather than serving with the control off,
     # which is the right way round for a privacy control: an apply endpoint
     # that is down is visible, one that is silently answerable is not.
-    apply_reply_floor_ms: int = Field(default=400, gt=0)
+    # ge/le, NOT gt=0 — round 12. `gt=0` is one character wide: the first
+    # thing a paged engineer tries after "it refuses to start at 0" is 1, and
+    # `APPLY_REPLY_FLOOR_MS=1` boots happily with the control effectively off,
+    # no test red and no alert, because a 1 ms pad is never overrun by
+    # anything. The other end matters too: 999999999 boots and makes every
+    # reply take 11.6 days, which is a total outage of the apply path
+    # configured in one env var and likewise unalerted.
+    #
+    # 100 ms floor: below the measured accepting-branch tail there is nothing
+    # to absorb. 5000 ms ceiling: above that the pad is the outage.
+    apply_reply_floor_ms: int = Field(default=400, ge=100, le=5_000)
     # How long the IDENTITY LOOKUP is padded to, on both anonymous doors.
     #
     # A second, separate pad, and it has to be separate. The lookup is a LEFT
@@ -523,7 +533,11 @@ class Settings(BaseSettings):
     # gt=0 ENFORCED — same reasoning as `apply_reply_floor_ms` above, and this
     # is the setting round 11 actually demonstrated: `APPLY_LOOKUP_FLOOR_MS=0`
     # needed no code change at all and left 2,888 unit tests green.
-    apply_lookup_floor_ms: int = Field(default=50, gt=0)
+    # ge/le for the same reason as the reply floor above. 10 ms floor: the
+    # lookup is an indexed point read, and a pad below its own p99 absorbs
+    # nothing. 1000 ms ceiling: this pad is paid by every applicant on every
+    # submission and has no business being a second long.
+    apply_lookup_floor_ms: int = Field(default=50, ge=10, le=1_000)
     # When True, email verification is MANDATORY: self-registered accounts are not
     # auto-logged-in and cannot sign in until they confirm their email. Existing
     # accounts and admin-provisioned accounts (still on their bootstrap password)

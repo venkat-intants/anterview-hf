@@ -550,14 +550,28 @@ def _hold_calls(node: ast.AST, what: str) -> list[ast.Call]:
     return out
 
 
-def _enclosing_if(node: ast.AST, target: ast.Call) -> ast.If | None:
-    """The `if` whose body directly contains the statement wrapping *target*."""
+def _enclosing_ifs(node: ast.AST, target: ast.Call) -> list[ast.If]:
+    """EVERY `if` whose body contains *target*, outermost first.
+
+    Round 12 defeated the single-`If` version: `ast.walk` is breadth-first, so
+    it returned the OUTERMOST condition, and nesting a second test under the
+    unchanged `apply_lookup_floor_ms > 0` switched the pad off in production
+    with the guard green:
+
+        if settings.apply_lookup_floor_ms > 0:
+            if not settings.app_env.startswith("prod"):
+                await _hold_until(...)
+
+    Returning the whole chain lets the caller require that the budget test is
+    present AND that nothing else gates the pad.
+    """
+    out = []
     for n in ast.walk(node):
-        if isinstance(n, ast.If):
-            for stmt in n.body:
-                if any(c is target for c in ast.walk(stmt)):
-                    return n
-    return None
+        if isinstance(n, ast.If) and any(
+            c is target for stmt in n.body for c in ast.walk(stmt)
+        ):
+            out.append(n)
+    return out
 
 
 def test_the_lookup_pad_exists_and_bounds_the_identity_lookup() -> None:
@@ -619,10 +633,15 @@ def test_the_lookup_pad_exists_and_bounds_the_identity_lookup() -> None:
             "absorbs nothing, which is round 9's bug moved into the handler."
         )
 
-        # (2) the switch that turns it off.
-        guard = _enclosing_if(node, call)
-        assert guard is not None, f"{name}: the lookup pad is not guarded by an `if`"
-        test_src = ast.dump(guard.test)
+        # (2) the switch that turns it off — and NOTHING ELSE gating it.
+        guards = _enclosing_ifs(node, call)
+        assert len(guards) == 1, (
+            f"{name}: the lookup pad sits under {len(guards)} conditions, not 1. "
+            "A second test nested under the budget check — on `app_env`, on a "
+            "feature flag — turns the pad off wherever that test is false, "
+            "while the budget check it is nested in keeps this guard green."
+        )
+        test_src = ast.dump(guards[0].test)
         assert (
             "apply_lookup_floor_ms" in test_src
             and "Gt()" in test_src
@@ -651,11 +670,12 @@ def test_the_lookup_pad_exists_and_bounds_the_identity_lookup() -> None:
             for n in ast.walk(node)
             if isinstance(n, ast.Await) and floor < n.lineno < call.lineno
         ]
-        callees = {
-            n.value.func.id
-            for n in inside
-            if isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
-        }
+        # ATTRIBUTE CALLS COUNT. Round 12's fourth defeat was
+        # `raw = await resume.read(_MAX_RESUME_BYTES + 1)` moved above
+        # `_identify` — a 5 MB read inside the 50 ms pad, invisible because the
+        # callee is an Attribute and not a Name. `await db.scalar(text(...))`
+        # for a new flag is the realistic instance.
+        callees = {c for c in (_callee_name(n.value) for n in inside) if c}
         assert callees == {"_identify"}, (
             f"{name}: the work between `floor_from` and the lookup pad is "
             f"{sorted(callees) or 'nothing'}, not just the identity lookup. A "
@@ -703,14 +723,20 @@ def test_the_lookup_pad_is_not_configured_off() -> None:
     # AND A DEPLOYMENT CANNOT TURN IT OFF EITHER. The assertion above pins the
     # DEFAULT, which is all a unit test can see — round 11 pointed out that the
     # docstring and the alert runbook both claimed this test stopped
-    # `APPLY_LOOKUP_FLOOR_MS=0` in a real environment, and it could not. Both
-    # pads now carry `Field(gt=0)`, so pydantic refuses to construct Settings
-    # at all rather than starting the service with the control off. An apply
-    # endpoint that fails to boot is visible; one that is silently answerable
-    # is not.
-    for field in ("apply_lookup_floor_ms", "apply_reply_floor_ms"):
-        with pytest.raises(pydantic.ValidationError):
-            Settings(**{field: 0})
+    # `APPLY_LOOKUP_FLOOR_MS=0` in a real environment, and it could not.
+    #
+    # ROUND 12 then pointed out that `Field(gt=0)` is one character wide: `=1`
+    # booted with the control effectively off, and `=999999999` booted with an
+    # 11.6-day reply, neither red nor alerted. Both pads now carry a floor AND
+    # a ceiling, so the useless settings are unreachable from a deployment's
+    # environment rather than merely discouraged in a comment.
+    for field, too_small, too_big in (
+        ("apply_lookup_floor_ms", 9, 1_001),
+        ("apply_reply_floor_ms", 99, 5_001),
+    ):
+        for bad in (0, -1, too_small, too_big):
+            with pytest.raises(pydantic.ValidationError):
+                Settings(**{field: bad})
 
 
 def test_the_stored_resume_text_is_bounded_on_both_doors() -> None:
@@ -795,43 +821,78 @@ def test_the_stored_resume_text_is_bounded_on_both_doors() -> None:
 _DELETERS = frozenset({"_delete_from_s3", "_release_unadopted", "_best_effort_delete"})
 
 
+def _callee_name(node: ast.AST) -> str | None:
+    """The called name, whether it is `f(...)` or `mod.f(...)`.
+
+    BOTH FORMS, because round 12 defeated the first version of this guard and
+    of the lookup-pad guard the same way: they collected callees only from
+    `ast.Call` whose `func` is an `ast.Name`, so `await resume_mod._delete_from_s3(k)`
+    or `await db.scalar(...)` was invisible. "A list of three callee names is a
+    guard against those three names" was round 11's criticism of round 10's
+    guard; matching only bare names reintroduced it one layer down.
+    """
+    if not isinstance(node, ast.Call):
+        return None
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _handlers_that_reply(tree: ast.AST) -> list[ast.ExceptHandler]:
+    """Every `except` handler that RETURNS rather than raising.
+
+    The point of the distinction: an awaited S3 delete is fine on a path that
+    raises a 503, because the response is already decided and no pad is
+    covering it. It is NOT fine on a path that returns `_reply`, because that
+    path is padded like any other.
+    """
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler) and any(
+            isinstance(inner, ast.Return)
+            for stmt in node.body
+            for inner in ast.walk(stmt)
+        ):
+            out.append(node)
+    return out
+
+
 def test_no_object_release_is_awaited_on_a_reply_path() -> None:
-    """ROUND 11. The deterministic half of the pad's upper bound.
+    """ROUND 11 wrote this guard. ROUND 12 walked through it in one edit.
 
     `_refuse` used to commit, then AWAIT an S3 `DeleteObject`, then call
-    `_reply`. The delete is therefore inside the reply pad, and it runs only on
-    the branches that release an unadopted CV — a live application and a
-    cooldown — while a never-applied address releases nothing. So it was a
-    state-dependent term inside the budget meant to hide state-dependent
-    terms.
-
-    The size of it is what made this urgent rather than theoretical:
-    `shared.s3.s3_client` builds a fresh `aioboto3` client per call with no
-    caching, and that construction alone measured 180-450 ms of local Python
-    before a byte leaves the process. One delete is 350-650 ms against a
-    400 ms pad, so the pad failed open on the refusing states on HEALTHY
-    storage, every request.
-
-    Why this guard and not only the timing one: the integration test that
-    measures unspent pad budget catches a clear regression but a marginal one
-    only probabilistically (a 350 ms delete fits, a 650 ms one does not), and
-    it cannot see this at all when the suite runs against local disk storage,
-    where a delete is a cheap unlink. This property is structural, so it holds
-    in every environment and on every future storage backend.
+    `_reply` — a state-dependent term inside the reply pad, since only the
+    branches that release an unadopted CV reach it. Measured at 347-651 ms
+    against a 400 ms pad, dominated by 180-450 ms of SYNCHRONOUS botocore
+    client construction.
 
     THE RULE: an object release on a path that returns a reply must be
-    SCHEDULED, not awaited. Awaiting is still correct inside an exception
-    handler — those paths raise a 503 rather than returning `_reply`, the
-    response is already decided, and no pad is covering them.
+    SCHEDULED, not awaited. Awaiting is correct inside a handler that RAISES —
+    there the response is already decided and no pad covers it.
+
+    Round 11's version excused every line inside any `except` block, on the
+    stated premise that "those paths raise a 503 rather than returning
+    `_reply`". Two of the five sites it counted are inside handlers that
+    `return await _reply(...)`: `submit_draft`'s `except Exception` race
+    cleanup and `submit_application`'s `except IntegrityError`. So adding
+    `await _release_unadopted(s3_key)` next to the existing `add_task` on
+    either of them put the delete back inside the pad with all eighteen
+    structural tests green — demonstrated, not theorised.
+
+    This version excuses a handler only when it does not return, and matches
+    attribute calls as well as bare names.
     """
     import app.routers.public_apply as mod
 
     tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
 
-    # Every line that sits inside some `except` block; awaiting there is fine.
+    # Lines inside a handler that RAISES rather than returning. Those may await.
+    replying = {id(h) for h in _handlers_that_reply(tree)}
     excused: set[int] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ExceptHandler):
+        if isinstance(node, ast.ExceptHandler) and id(node) not in replying:
             for stmt in node.body:
                 for inner in ast.walk(stmt):
                     if hasattr(inner, "lineno"):
@@ -850,36 +911,39 @@ def test_no_object_release_is_awaited_on_a_reply_path() -> None:
         for inner in ast.walk(node):
             if not isinstance(inner, ast.Await):
                 continue
-            call = inner.value
-            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)):
-                continue
-            if call.func.id in _DELETERS and inner.lineno not in excused:
-                offenders.append(f"{name}:{inner.lineno} awaits {call.func.id}")
+            callee = _callee_name(inner.value)
+            if callee in _DELETERS and inner.lineno not in excused:
+                offenders.append(f"{name}:{inner.lineno} awaits {callee}")
 
     assert not offenders, (
         "an object release is awaited on a path that returns a reply, which "
-        "puts a state-dependent S3 round trip (350-650 ms, against a 400 ms "
-        "pad) inside the pad. Schedule it with `background.add_task` instead; "
-        "awaiting is only correct inside an `except` block, where the path "
-        "raises rather than replying. Offenders: " + "; ".join(offenders)
+        "puts a state-dependent S3 round trip inside the pad. Schedule it with "
+        "`background.add_task` instead; awaiting is only correct inside an "
+        "`except` handler that RAISES. Offenders: " + "; ".join(offenders)
     )
 
-    # And the scheduling route must actually be in use, or the rule above is
-    # satisfied vacuously by a handler that simply stopped cleaning up.
+    # And the scheduling route must be in use, or the rule is satisfied
+    # vacuously by a handler that stopped cleaning up. Counted on the RELEASE
+    # callee, not on `add_task`: round 11's version counted any `add_task` in
+    # the module, so wrapping an unrelated call (`background.add_task(
+    # wake_reconciler)`) restored the count while a release went back to being
+    # awaited.
     scheduled = [
         n
         for n in ast.walk(tree)
         if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Attribute)
-        and n.func.attr == "add_task"
+        and _callee_name(n) == "add_task"
+        and n.args
+        and isinstance(n.args[0], ast.Name)
+        and n.args[0].id in _DELETERS
     ]
     assert len(scheduled) == 5, (
         f"{len(scheduled)} release(s) are scheduled after the reply, expected 5. "
         "The five sites that release an object on a 201 path are `_refuse`, "
         "both doors' superseded-reapplication CV, and both doors' lost-race "
-        "exit. A LOWER count is the vacuous escape from the rule above: a "
-        "handler that simply stops cleaning up awaits nothing and leaks the "
-        "object instead, which is an un-consented CV left in storage with no "
-        "erasure anchor. A HIGHER count means a new release site exists that "
-        "this guard has not been reasoned about — add it here deliberately."
+        "exit. A LOWER count is the vacuous escape: a handler that stops "
+        "cleaning up awaits nothing and leaks the object instead, which is an "
+        "un-consented CV left in storage with no erasure anchor. A HIGHER count "
+        "means a release site exists that this guard has not been reasoned "
+        "about — add it here deliberately."
     )

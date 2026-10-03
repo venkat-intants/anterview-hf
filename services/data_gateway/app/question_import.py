@@ -43,6 +43,8 @@ import io
 from dataclasses import dataclass
 from typing import Any
 
+from shared.text import strip_unstorable
+
 #: The exam template's columns, and the first seven of a bank's.
 TEMPLATE_HEADER: tuple[str, ...] = (
     "Question", "Option A", "Option B", "Option C", "Option D", "Correct", "Points",
@@ -114,7 +116,18 @@ def read_spreadsheet(filename: str, content: bytes) -> list[list[str]]:
     """
     name = (filename or "").lower()
     if name.endswith(".csv"):
-        text = content.decode("utf-8-sig", errors="replace")
+        # SANITISED LIKE EVERY OTHER PRODUCER OF MACHINE-READ TEXT.
+        # `errors="replace"` handles invalid UTF-8 (it yields U+FFFD),
+        # but a well-formed 0x00 byte decodes to a NUL and passes
+        # straight through to `bank_questions.prompt` (text) and
+        # `options` (jsonb), which Postgres refuses — an unhandled 500
+        # on the import route from a crafted spreadsheet.
+        #
+        # Round 14 found this one commit after the branch established
+        # that normalising at the producer is the only thing that holds:
+        # the merge brought in a NEW producer that bypassed the new
+        # normaliser. Which is the mechanism, not an instance of it.
+        text = strip_unstorable(content.decode("utf-8-sig", errors="replace"))
         return [[(c or "") for c in row] for row in csv.reader(io.StringIO(text))]
     try:
         import openpyxl  # noqa: PLC0415 — lazy: only the Excel path needs it

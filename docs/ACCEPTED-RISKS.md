@@ -681,7 +681,7 @@ substantiated complaint — that is the decision recorded here, not a preference
 
 | | |
 |---|---|
-| **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-10, 2026-09-28 to 2026-10-03 |
+| **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-14, 2026-09-28 to 2026-10-04 |
 | **Status** | **ACCEPTED — five residues, all open; the property itself holds on a healthy system and is tested** |
 | **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
 | **Trigger to revisit** | Any of: (a) a timing or enumeration report against the apply doors; (b) `public_apply_floor_exceeded_total` above noise — `PublicApplyTimingPadFailingOpen` in `ops/alerts/` is the consumer, added in round 10 because this trigger previously had no mechanism to fire; (c) a Redis outage coinciding with apply traffic; (d) a residency or privacy bid asking about enumeration resistance; (e) the write-set design in "Path to closure" becoming cheap enough to build |
@@ -691,8 +691,9 @@ are anonymous — no login, the caller supplies the email as a form field, and t
 requisition id is explicitly not a secret. They must answer identically whether
 that address has a live application, was rejected and is inside the waiting
 period, was rejected and the period elapsed, was rejected with an HR override,
-or has never applied here. Ten review rounds each found a way to tell those
-states apart. The reply body, the status code on a healthy system, the state
+or has never applied here. Fourteen review rounds each found a way to tell those states apart — except
+the fourteenth, which could not, and said so. That is the first round where
+the answer to "is there a disclosure" was no. The reply body, the status code on a healthy system, the state
 left behind, what a second submission reads back, and the dominant timing term
 are all closed. FIVE residues are not, and are accepted here rather than in a commit
 message or a test docstring — four failure modes and one traded invariant:
@@ -797,6 +798,21 @@ those oracles did not converge sooner. Scheduling and caching were never
 alternatives: scheduling keeps the term out of the pad, caching makes the term
 small enough not to matter wherever it runs.
 
+**The bounds are adequate, and round 14 is the first round with evidence of
+that rather than an argument for it.** Every previous measurement of the pads
+used the MINIMUM caller-chosen input — a ~650-byte PDF and no answers — while
+this residue's load-bearing sentence is about work whose size the caller does
+not choose. Round 14 measured the maximum the bounds allow instead (a CV
+saturating `_MAX_RESUME_TEXT_CHARS`, four `long_text` answers at
+`MAX_ANSWER_CHARS`). Unspent reply-pad budget against the 400 ms pad:
+
+    live 399.3ms | cooling 391.3ms | past 383.2ms | override 384.4ms | unknown 348.6ms
+
+Worst-case spread ~51 ms, all of it absorbed, better than 85% margin. Note what
+that implies about the test: `test_no_state_overruns_the_pad_that_is_meant_to_absorb_it`
+measures at the attacker's LEAST favourable input, so the upper bound it
+asserts is the easy one. Parameterising it over the worst case is open work.
+
 What holds it, stated accurately this time — the previous version said
 "three guards hold it now" and round 13 checked each one against a hypothetical
 revert of the cache and found all three stayed GREEN, which made that sentence
@@ -817,7 +833,15 @@ this paragraph's fifth inaccuracy:
 * `shared/tests/test_s3.py`'s cache suite (round 13) — the CACHING half, which
   nothing held when the register first claimed it was held. Five of its tests
   go red if the cache is removed while the context-manager API is kept, which
-  is the shape a plausible revert would take.
+  is the shape a plausible revert would take. Two caveats worth carrying:
+  **two of those five go red by `AttributeError` on `shared.s3._clients`**, so
+  they pin an internal name and would also fail on a harmless rename; and the
+  other four assert object IDENTITY, which any eviction policy satisfies — a
+  five-minute TTL was demonstrated to keep all of them green while reinstating
+  the full construction cost every window. `test_the_client_is_constructed_exactly_once`
+  (round 14) is the behavioural form and is the one that actually holds the
+  property: it counts constructions, which is the only quantity the cache
+  exists to reduce.
 
 The lesson is the one this entry states in its own voice and then broke four
 times: a control described here is not thereby guarded.
@@ -1117,11 +1141,34 @@ the highest-privilege account is provisioned without its own review.
   Treat it as a live cross-tenant read credential and a destructive one, not as
   a password waiting to be rotated.
 * That `data_gateway`'s gate is therefore the control. It is real — genuinely
-  server-side, genuinely composed into `PlatformOwnerDep` — but it covers one
-  service of four, and it fails OPEN on a database error, which is exactly the
-  kind of incident during which someone is reading deploy logs. Even within
-  `data_gateway`, `/auth/*` is ungated so the flag can be cleared, so the
-  holder can simply `POST /auth/change-password` and own the account outright.
+  server-side, genuinely composed into `PlatformOwnerDep` — and it fails OPEN
+  on a database error, which is exactly the kind of incident during which
+  someone is reading deploy logs. Even within `data_gateway`, `/auth/*` is
+  ungated so the flag can be cleared, so the holder can simply
+  `POST /auth/change-password` and own the account outright.
+* That the gate covers all of `data_gateway`. An earlier version of this
+  entry said it "covers one service of four", which reads as though the one it
+  covers is whole, and round 14 walked the live dependency tree of every route
+  to check. It found exactly one route with a role gate and no password gate:
+  **`GET /users/{user_id}/profile`**, which used bare `require_role(...)` while
+  its own `_GLOBAL_VIEW_ROLES` gives `admin` and `platform_owner` UNSCOPED,
+  cross-tenant reads of any user's email, phone, LinkedIn, GitHub, location,
+  employment status and desired roles.
+
+  That one is FIXED rather than documented — it is now on
+  `require_role_password_ok`, which is the chokepoint that exists so a
+  privileged route cannot miss the gate. A route that is actually gated needs
+  no paragraph. It is recorded here anyway because the shape matters: the
+  chokepoint existed and one route simply did not use it, which is the same
+  failure mode as every other finding on this branch.
+* That `feedback_billing` and `interview_core` are covered by anything. They
+  are not. `feedback_billing`'s `GET /scorecards/{scorecard_id}` explicitly
+  grants `platform_owner` "unrestricted cross-company access" in its own
+  comment — any scorecard's scores, rationale, strengths, improvements and
+  summary, plus a 15-minute pre-signed PDF URL — and that service has no
+  password gate at all. `interview_core` authenticates any valid JWT and its
+  own comment says admin roles "fall through unchanged". Neither is fixed
+  here; both are named so the next person does not have to re-derive them.
 * That it only affects development. It affects any deployment that has not set
   `PLATFORM_OWNER_PASSWORD`, and nothing refuses to start without it.
 * That the migration being old means it has been reviewed in this light. It
@@ -1169,5 +1216,5 @@ already printed.
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
-| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun (now counted and alerted, still open); rate limits fail open when Redis is down and never reach the upload at all; a refused submission's CV exists un-consented; the concurrency exit is state-correlated, untested, and arbitrated by a conditionally-created index; and the two handlers' size is an open debt | PH3-B4b rounds 1-11 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, `public_apply_floor_exceeded_total` above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
+| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun (now counted and alerted, still open); rate limits fail open when Redis is down and never reach the upload at all; a refused submission's CV exists un-consented; the concurrency exit is state-correlated, untested, and arbitrated by a conditionally-created index; and the two handlers' size is an open debt | PH3-B4b rounds 1-14 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, `public_apply_floor_exceeded_total` above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
 | **AR-11** | The platform-owner bootstrap password is printed to stdout in plaintext when `PLATFORM_OWNER_PASSWORD` is unset. The account carries the `admin` role too, and `must_change_password` is enforced only in `data_gateway` — so until it is rotated the banner is a working cross-tenant credential for `admin_ops`' candidate data, transcripts, bulk CSV export and operator-initiated erasure of any user | PH3-B4b round-11 audit (incidental) | `platform_owner` (+ `security-auditor`) | A deployment whose migration step runs where stdout is collected, a log-retention or SOC2 review, or the first deployment that does not set the variable |

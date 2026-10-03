@@ -40,6 +40,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
+from shared.text import strip_unstorable
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,9 +107,32 @@ def hash_token(raw: str) -> str:
 
 
 def _clean(value: Any, limit: int) -> str | None:
+    """Trim, collapse whitespace, drop what Postgres cannot store, treat "" as unset.
+
+    THE SECOND `_clean`, and round 13 hardened only the other one. That commit
+    wrote the comment explaining why `" ".join(value.split())` does not remove
+    a NUL — `str.split()` does not treat U+0000 as whitespace — and then left
+    the identical line here, which is what "fix it at the producer" fails to
+    mean when there are two producers.
+
+    It mattered: the only caller with an input no request model sees is
+    `attach_resume`'s `_clean(filename, 255)`, fed from `resume.filename` on
+    the anonymous `POST /apply/draft/resume-upload`. Starlette hands a
+    multipart filename through verbatim, so a filename carrying a NUL (U+0000) reached a `text`
+    column and raised. Worse than a 500: the CV is uploaded to object storage
+    BEFORE that UPDATE, so the transaction rolled back with the object already
+    written and no row pointing at it — an un-consented CV with no erasure
+    anchor, repeatable at the route's rate limit.
+
+    This docstring writes "a NUL (U+0000)" instead of the escape, for the
+    reason `shared.text` spells out: an escape written into source becomes
+    the character itself, and a NUL in a .py file is a SyntaxError on
+    import. Not hypothetical — the first version of this docstring did
+    exactly that and broke the module.
+    """
     if value is None:
         return None
-    cleaned = " ".join(str(value).split())[:limit]
+    cleaned = strip_unstorable(" ".join(str(value).split()))[:limit]
     return cleaned or None
 
 

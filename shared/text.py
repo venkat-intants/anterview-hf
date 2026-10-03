@@ -58,17 +58,36 @@ def strip_unstorable(value: str) -> str:
     """Return *value* without the code points Postgres cannot hold.
 
     Returns the input unchanged when there is nothing to remove, which is the
-    overwhelmingly common case — a scan of the string with no allocation beyond
-    the generator when it is clean.
+    overwhelmingly common case — one scan of the string and no allocation.
+
+    VALID SURROGATE PAIRS ARE PRESERVED, and the first version of this function
+    destroyed them. pypdf does not return an astral-plane character as one code
+    point: a CMap mapping to U+1F600 comes back as the two surrogates U+D83D and
+    U+DE00, and a naive "drop every code point in D800-DFFF" removed both. The
+    effect was silent — every emoji, every mathematical alphanumeric, every
+    historic-script character in a candidate's CV vanished from the text the
+    scorer reads, with nobody told. Indian BMP scripts were unaffected, which is
+    exactly why it could have sat here for a long time.
+
+    So pairs are recombined first, through a UTF-16 round trip with
+    ``surrogatepass`` on the way out and ``ignore`` on the way back: a
+    well-formed pair survives as the character it encodes, and a LONE surrogate
+    — which is the thing Postgres actually refuses — is dropped by the decode.
+    The NUL still has to go separately; the round trip passes it through
+    happily.
     """
-    if not any(
+    if not _has_unstorable(value):
+        return value
+    # Recombine pairs, drop lone surrogates. `surrogatepass` is required on the
+    # encode because a lone surrogate is not encodable otherwise; `ignore` on
+    # the decode is what removes it.
+    repaired = value.encode("utf-16", "surrogatepass").decode("utf-16", "ignore")
+    return repaired.replace(chr(_NUL), "")
+
+
+def _has_unstorable(value: str) -> bool:
+    """Whether *value* holds a NUL or a surrogate at all. Cheap and exact."""
+    return any(
         ord(ch) == _NUL or _SURROGATE_FIRST <= ord(ch) <= _SURROGATE_LAST
         for ch in value
-    ):
-        return value
-    return "".join(
-        ch
-        for ch in value
-        if ord(ch) != _NUL
-        and not (_SURROGATE_FIRST <= ord(ch) <= _SURROGATE_LAST)
     )

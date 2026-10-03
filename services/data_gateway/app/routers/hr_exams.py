@@ -914,7 +914,13 @@ async def import_questions(
     await _get_owned_exam(db, company_id, exam_id)
     await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
 
-    content = await file.read()
+    # BOUNDED READ, like the apply door's `read(_MAX_RESUME_BYTES + 1)`.
+    # This read the whole body into memory and checked MAX_IMPORT_BYTES
+    # afterwards, so an authenticated session could make the service
+    # buffer an arbitrary body before being told no — and `handle /hr/*`
+    # carries no edge `request_body max_size`, unlike `/apply*`.
+    # One byte past the limit is all it takes to know it is over.
+    content = await file.read(_MAX_IMPORT_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
     if len(content) > _MAX_IMPORT_BYTES:

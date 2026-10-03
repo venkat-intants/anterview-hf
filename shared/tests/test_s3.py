@@ -478,3 +478,63 @@ def test_a_closed_loop_is_pruned_rather_than_reused() -> None:
         loop_b.run_until_complete(aclose_s3_clients())
     finally:
         loop_b.close()
+
+
+async def test_the_client_is_constructed_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """COUNTS CONSTRUCTIONS, which identity never can.
+
+    Round 14's requested defeat of the five tests above, and it worked: every
+    one of them compares object identity, so ANY eviction policy satisfies all
+    of them. The reviewer added a plausible "rotated credentials" TTL — a
+    `_built_at` map and a five-minute expiry that pops the entry and rebuilds —
+    and all 27 tests stayed green, in a service that would then reinstate the
+    full 180-450 ms synchronous construction every five minutes, on the
+    `_refuse`-only CV delete. That is precisely the state-correlated stall the
+    cache exists to remove.
+
+    Identity cannot see it because an evicted-and-rebuilt client is a different
+    object only on the call that rebuilds; every pair of calls inside one TTL
+    window still compares equal. The number of constructions is the only
+    quantity that is actually the point, so this test spies on it.
+
+    Both halves matter: exactly one construction across many acquisitions, and
+    still exactly one after a later acquisition — so a cap, a TTL, an LRU or a
+    per-call rebuild all show up here.
+    """
+    import aioboto3
+
+    from shared import s3 as s3mod
+
+    await aclose_s3_clients()
+
+    real_session = aioboto3.Session
+    built = 0
+
+    class _CountingSession(real_session):  # type: ignore[misc, valid-type]
+        def client(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            nonlocal built
+            built += 1
+            return super().client(*args, **kwargs)
+
+    monkeypatch.setattr(s3mod.aioboto3, "Session", _CountingSession)
+    try:
+        for _ in range(6):
+            await _acquire()
+        assert built == 1, (
+            f"the client was constructed {built} times across six acquisitions. "
+            "Each construction is 180-450 ms of SYNCHRONOUS botocore work that "
+            "blocks the event loop, and on the anonymous apply doors that stall "
+            "is state-correlated because only the refusing branches delete the "
+            "CV they were made to upload (AR-10 residue 2). Identity-based "
+            "tests cannot see this: an eviction policy rebuilds and still "
+            "returns one object per window."
+        )
+
+        # A later acquisition must not rebuild either — this is the half that
+        # catches a TTL whose window happens to be longer than the loop above.
+        await _acquire()
+        assert built == 1, f"a later acquisition rebuilt the client ({built} total)"
+    finally:
+        await aclose_s3_clients()

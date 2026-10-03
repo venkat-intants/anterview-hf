@@ -1880,9 +1880,9 @@ async def upload_draft_resume(
         #
         # Both doors, one edit: the draft door's upload route runs the same
         # parser and writes the same column.
-        resume_text = strip_unstorable(await _extract_pdf_text(raw))[
-            :_MAX_RESUME_TEXT_CHARS
-        ]
+        resume_text = strip_unstorable(
+            (await _extract_pdf_text(raw))[:_MAX_RESUME_TEXT_CHARS]
+        )
     except Exception as exc:  # noqa: BLE001 — encrypted or image-only PDF
         raise HTTPException(
             status_code=422,
@@ -2837,9 +2837,9 @@ async def submit_application(
         #
         # Both doors, one edit: the draft door's upload route runs the same
         # parser and writes the same column.
-        resume_text = strip_unstorable(await _extract_pdf_text(raw))[
-            :_MAX_RESUME_TEXT_CHARS
-        ]
+        resume_text = strip_unstorable(
+            (await _extract_pdf_text(raw))[:_MAX_RESUME_TEXT_CHARS]
+        )
     except Exception as exc:  # noqa: BLE001 — encrypted or image-only PDF
         raise HTTPException(
             status_code=422,

@@ -957,3 +957,115 @@ def test_no_object_release_is_awaited_on_a_reply_path() -> None:
         "means a release site exists that this guard has not been reasoned "
         "about — add it here deliberately."
     )
+
+
+# Form fields that may be absent from the refusal tuple, each with the reason.
+# An entry here is a DECISION, which is the point: adding a text field to the
+# handler forces either a refusal or a line in this dict.
+_REFUSAL_EXEMPT = {
+    "answers": (
+        "a JSON document, not a stored string. Its values go through "
+        "`validate_answers` -> `coerce_answer` -> `_storable`, which refuses "
+        "the same code points, and that runs above `tail_from` so the refusal "
+        "is state-independent."
+    ),
+}
+
+
+def test_every_text_form_field_is_refused_or_exempt_on_purpose() -> None:
+    """RETIRES THE STALE-LIST CATEGORY, which is where rounds 12 and 13 both went.
+
+    Round 12 guarded `full_name`. Round 13 reproduced the identical 201/503
+    split through five sibling fields, because the fix went to one call site
+    instead of to every text input. Round 13 then fixed it by listing seven
+    fields in the handler and seven in the integration matrix — two
+    hand-maintained tuples with no cross-check, which round 14 correctly
+    called the thing that will go stale next.
+
+    So this derives the obligation from the HANDLER'S SIGNATURE rather than
+    from a list somebody remembered to update. Every parameter annotated
+    `str` or `str | None` with a `Form(...)` must either appear in the
+    refusal tuple, or carry a `pattern=` constraint (which cannot admit a NUL
+    or a lone surrogate), or be named in `_REFUSAL_EXEMPT` with a reason.
+
+    Adding an eighth text field to `submit_application` now fails this test
+    until somebody decides which of those three it is. That is worth more than
+    the eighth field, because the ninth gets it for free.
+    """
+    import app.routers.public_apply as mod
+
+    tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
+    handler = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "submit_application"
+    )
+
+    args = handler.args
+    params = args.posonlyargs + args.args + args.kwonlyargs
+
+    text_fields: dict[str, bool] = {}  # name -> has a pattern= constraint
+    for arg in params:
+        ann = arg.annotation
+        if not isinstance(ann, ast.Subscript):
+            continue
+        if not (isinstance(ann.value, ast.Name) and ann.value.id == "Annotated"):
+            continue
+        parts = ann.slice.elts if isinstance(ann.slice, ast.Tuple) else [ann.slice]
+        if not parts:
+            continue
+        # The declared type: `str`, or `str | None`.
+        declared = ast.unparse(parts[0]).replace(" ", "")
+        if declared not in {"str", "str|None", "None|str"}:
+            continue
+        # The metadata: must be a Form(...) for this to be a form field.
+        rest = [ast.unparse(p) for p in parts[1:]]
+        if not any(r.startswith("Form(") for r in rest):
+            continue
+        text_fields[arg.arg] = any("pattern=" in r for r in rest)
+
+    assert text_fields, (
+        "found no Annotated[str, Form(...)] parameters on submit_application — "
+        "this guard has stopped matching, which looks identical to a pass"
+    )
+
+    # The handler's own refusal tuple, read from the source rather than named.
+    refused: set[str] = set()
+    for node in ast.walk(handler):
+        if (
+            isinstance(node, ast.For)
+            and isinstance(node.iter, ast.Tuple)
+            and isinstance(node.target, ast.Name)
+            and node.target.id.startswith("_submitted")
+        ):
+            refused = {
+                e.id for e in node.iter.elts if isinstance(e, ast.Name)
+            }
+            break
+    assert refused, (
+        "could not find the loop that refuses unstorable text in "
+        "submit_application — if it was restructured, update this guard "
+        "deliberately rather than deleting it"
+    )
+
+    unprotected = {
+        name: "no pattern= and not refused"
+        for name, has_pattern in text_fields.items()
+        if name not in refused and not has_pattern and name not in _REFUSAL_EXEMPT
+    }
+    assert not unprotected, (
+        "these text Form fields on the anonymous one-shot door are neither "
+        "refused for unstorable characters, nor pattern-constrained, nor "
+        f"exempted with a reason: {sorted(unprotected)}. Every one of them "
+        "reaches the `applicants` INSERT that only the applicant-creating "
+        "branch performs, so a value the database rejects is a 503 in exactly "
+        "one of the five states and a 201 in the other four. Add it to the "
+        "refusal tuple, give it a pattern, or add it to _REFUSAL_EXEMPT with "
+        "the reason it is safe."
+    )
+
+    # And the exemptions must still be real fields, or they are rot.
+    stale = set(_REFUSAL_EXEMPT) - set(text_fields)
+    assert not stale, (
+        f"_REFUSAL_EXEMPT names fields that no longer exist: {sorted(stale)}"
+    )

@@ -57,13 +57,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
 
 revision = "2577ba99b7fe"
-# REBASED onto main's question-bank migration when main was merged in on
-# 2026-10-04. Both this migration and `e1c3f5a7b9d2` were written against
-# `d9f1b3c5e7a2`, so merging the two branches produced two alembic heads and
-# `alembic upgrade head` refused to run. Only this branch's migrations were
-# repointed — rewriting somebody else's migration to resolve your own branch's
-# collision is the wrong way round, and the chain reads the same either way.
-down_revision = "e1c3f5a7b9d2"
+down_revision = "d9f1b3c5e7a2"
 branch_labels = None
 depends_on = None
 

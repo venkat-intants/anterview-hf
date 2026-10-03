@@ -96,6 +96,7 @@ from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from app.application_drafts import hash_token
 from app.config import settings
 from app.database import get_session_factory
 from app.main import app
@@ -1273,16 +1274,86 @@ def _pdf_with_nul() -> bytes:
     return out.encode("latin-1")
 
 
+def _pdf_with_cmap_nul() -> bytes:
+    """A PDF whose ToUnicode CMap maps a glyph to U+0000.
+
+    THE SECOND ROUTE TO THE SAME PLACE, and the one the round-14 audit
+    flagged as the construction it was least sure the fix covered. It does:
+    the sanitiser is in `_extract_pdf_text_sync`, so it catches whatever pypdf
+    returns however the PDF said it. But round 13's test pinned only the octal
+    escape, so the BREADTH was unpinned — and "the fix is at the extractor so
+    it covers both" is a claim, not a test.
+
+    A Type0 font with Identity-H encoding and a ToUnicode CMap: pypdf maps the
+    glyph code through the CMap and returns the destination code point
+    verbatim, so `<0041> <0041> <0000>` yields a NUL from a file containing no
+    unusual bytes at all. The same construction with `<D800>` yields a lone
+    surrogate, which is the other class Postgres refuses.
+    """
+    to_unicode = (
+        "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n"
+        "/CMapName /Probe def /CMapType 2 def\n"
+        "1 begincodespacerange <0000> <FFFF> endcodespacerange\n"
+        "1 beginbfchar <0041> <0000> endbfchar\n"
+        "endcmap CMapName currentdict /CMap defineresource pop end end\n"
+    )
+    content = "BT /F1 11 Tf 72 780 Td <0041> Tj ET\n"
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        "<< /Type /Font /Subtype /Type0 /BaseFont /Probe /Encoding /Identity-H "
+        "/DescendantFonts [6 0 R] /ToUnicode 7 0 R >>",
+        f"<< /Length {len(content.encode('latin-1'))} >>\n"
+        f"stream\n{content}endstream",
+        "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Probe "
+        "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+        "/FontDescriptor 8 0 R /DW 1000 >>",
+        f"<< /Length {len(to_unicode.encode('latin-1'))} >>\n"
+        f"stream\n{to_unicode}endstream",
+        "<< /Type /FontDescriptor /FontName /Probe /Flags 4 /ItalicAngle 0 "
+        "/Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 "
+        "/FontBBox [0 -200 1000 800] >>",
+    ]
+    out = "%PDF-1.4\n"
+    offsets: list[int] = []
+    for i, obj in enumerate(objects):
+        offsets.append(len(out.encode("latin-1")))
+        out += f"{i + 1} 0 obj\n{obj}\nendobj\n"
+    xref_at = len(out.encode("latin-1"))
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n"
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n"
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_at}\n%%EOF\n"
+    )
+    return out.encode("latin-1")
+
+
 @pytest.mark.asyncio
-async def test_a_crafted_cv_cannot_separate_the_states(client: AsyncClient) -> None:
+@pytest.mark.parametrize(
+    ("shape", "build"),
+    [("octal escape", _pdf_with_nul), ("ToUnicode CMap", _pdf_with_cmap_nul)],
+)
+async def test_a_crafted_cv_cannot_separate_the_states(
+    client: AsyncClient, shape: str, build: object
+) -> None:
     """ROUND 13's HIGH-2: the same oracle with no form field involved at all.
 
     Stripped rather than refused, because nobody typed it — refusing the
     application for what pypdf read out of the candidate's own CV would turn a
-    storage limitation into a rejection. See `_strip_unstorable`.
+    storage limitation into a rejection. See `shared.text.strip_unstorable`.
+
+    TWO SHAPES, because round 13 pinned one and round 14 pointed out the other
+    reaches the same place: an octal escape in the content stream, and a Type0
+    font whose ToUnicode CMap maps a glyph to U+0000. The fix is at the
+    extractor so it covers both — this is what makes that a test rather than a
+    claim.
     """
     addresses = await _seeded_addresses(client)
-    crafted = _pdf_with_nul()
+    crafted = build()  # type: ignore[operator]
 
     seen: dict[str, int] = {}
     for case, (target, email) in addresses.items():
@@ -1299,6 +1370,98 @@ async def test_a_crafted_cv_cannot_separate_the_states(client: AsyncClient) -> N
         seen[case] = r.status_code
 
     assert len(set(seen.values())) == 1, (
-        "a crafted CV separates the states by status code, so one anonymous "
-        f"upload discloses whether a named person applied: {seen}"
+        f"a crafted CV ({shape}) separates the states by status code, so one "
+        f"anonymous upload discloses whether a named person applied: {seen}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unstorable_filename_leaves_no_cv_behind(client: AsyncClient) -> None:
+    """ROUND 14's HIGH: the SECOND `_clean`, and the object it stranded.
+
+    There are two `_clean` functions. Round 13 hardened `public_apply._clean`,
+    wrote the comment explaining why `" ".join(value.split())` does not remove
+    a NUL, and left the identical line in `application_drafts._clean`. Its one
+    caller whose input no request model sees is `attach_resume`'s
+    `_clean(filename, 255)`, fed from `resume.filename` on this anonymous
+    route — Starlette hands a multipart filename through verbatim.
+
+    The consequence was worse than the 500. `_upload_to_s3` runs BEFORE that
+    UPDATE, so the rollback left the object written with NOTHING naming it:
+    `purge_expired` queues from `resume_s3_key`, which was NULL; the erasure
+    sweep walks `applicants/` prefixes, not `drafts/`; and the raise happens
+    above any `background.add_task`, so no release was even scheduled. A
+    permanently un-erasable CV, on demand, from an anonymous caller.
+
+    So this asserts the two things that matter and not merely the status: the
+    upload is accepted, and the draft row NAMES the object afterwards. A test
+    that only checked for a non-500 would pass against a handler that swallowed
+    the error and still orphaned the file.
+    """
+    _, req_id = await _seed_opening(cooldown_days=90)
+    await _clear_rate_limit()
+    started = await client.post(
+        f"/apply/{req_id}/draft",
+        json={"email": f"filename-{uuid.uuid4().hex[:8]}@example.com",
+              "consent_granted": True},
+    )
+    assert started.status_code == 201, started.text
+    token = started.json()["resume_token"]
+
+    # HAND-BUILT MULTIPART, because the test client cannot express this.
+    #
+    # The first version of this test used `files={"resume": ("cv\x00x.pdf", ...)}`
+    # and PASSED with the fix reverted — it was vacuous. httpx percent-encodes
+    # a NUL in a filename to `%00` when it builds the body, so the server never
+    # saw one. An attacker is not using httpx; curl or a raw socket sends the
+    # byte. So the body is assembled here and posted as `content=`.
+    #
+    # Worth keeping in mind for any future test of a hostile filename: the
+    # client library is part of the test, and this one sanitises.
+    boundary = "----probe" + uuid.uuid4().hex
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="resume"; filename="cv'
+    ).encode() + _NUL.encode() + (
+        b'x.pdf"\r\n'
+        b"Content-Type: application/pdf\r\n"
+        b"\r\n"
+    ) + _PDF + f"\r\n--{boundary}--\r\n".encode()
+
+    await _clear_rate_limit()
+    uploaded = await client.post(
+        "/apply/draft/resume-upload",
+        headers={
+            "X-Draft-Token": token,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        content=body,
+    )
+    assert uploaded.status_code == 200, (
+        "an unstorable multipart filename was not handled: "
+        f"{uploaded.status_code} {uploaded.text[:200]}"
+    )
+
+    # AND THE OBJECT IS REFERENCED. This is the half that distinguishes a real
+    # fix from a swallowed exception.
+    factory = get_session_factory()
+    async with factory() as db:
+        row = (
+            await db.execute(
+                text(
+                    "SELECT resume_s3_key, resume_filename FROM application_drafts"
+                    " WHERE token_hash = :h"
+                ),
+                {"h": hash_token(token)},
+            )
+        ).mappings().first()
+    assert row is not None, "the draft row vanished"
+    assert row["resume_s3_key"], (
+        "the CV was uploaded but the draft does not name it, so nothing can "
+        "ever reach that object: not `purge_expired` (it queues from "
+        "`resume_s3_key`), not the erasure sweep (it walks `applicants/`), and "
+        "no scheduled release (the raise was above `add_task`)"
+    )
+    assert _NUL not in (row["resume_filename"] or ""), (
+        "the NUL reached the stored filename"
     )

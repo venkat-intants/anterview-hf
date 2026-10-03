@@ -24,7 +24,12 @@ from typing import Any
 import pytest
 from botocore.config import Config as BotoConfig
 
-from shared.s3 import _addressing_config, _resolve_endpoint, s3_client
+from shared.s3 import (
+    _addressing_config,
+    _resolve_endpoint,
+    aclose_s3_clients,
+    s3_client,
+)
 
 # Neither endpoint is ever contacted; they only exercise the two addressing modes.
 _MINIO_ENDPOINT = "http://localhost:9000"
@@ -287,3 +292,189 @@ async def test_presigned_links_are_signature_v4_on_every_endpoint(endpoint: str,
 async def test_custom_endpoints_keep_path_style_with_sigv4() -> None:
     endpoint_url, config_s3, _ = await _client_meta(endpoint=_R2_ENDPOINT)
     assert config_s3 == {"addressing_style": "path"}
+
+
+# ==========================================================================
+# THE CLIENT CACHE — round 13's MEDIUM-2.
+#
+# The cache landed in round 12 as the fix for a state-correlated event-loop
+# stall on two ANONYMOUS endpoints: building an aioboto3 client is 180-450 ms
+# of synchronous botocore work, and only the refusing branches of
+# `POST /apply/...` delete the CV they were made to upload, so that stall was
+# readable from a concurrent request and told a caller which of five states an
+# address was in.
+#
+# It shipped with no tests. Round 13's audit then checked each of the three
+# guards `docs/ACCEPTED-RISKS.md` AR-10 claims "hold it" against a hypothetical
+# revert of the cache, and every one stayed green: two are structural checks on
+# `public_apply` and the third is unrelated config bounds. So the half of the
+# fix the register calls "the half that makes the property true" was the only
+# half nothing held.
+#
+# These are that half. Every one of them goes red if the cache is removed —
+# which is the property, not the API.
+#
+# No socket is opened here, for the reason in the module docstring: a client is
+# built from on-disk service model JSON, and credentials are passed explicitly
+# so botocore never engages its instance-metadata chain.
+# ==========================================================================
+
+
+async def _acquire() -> Any:
+    """One trip through the factory, returning the client it yields."""
+    async with s3_client(
+        endpoint=_MINIO_ENDPOINT,
+        region="us-east-1",
+        access_key=_KEY,
+        secret_key=_SECRET,
+        use_ssl=False,
+    ) as client:
+        return client
+
+
+async def test_the_same_loop_and_settings_reuse_one_client() -> None:
+    """THE TEST THAT GOES RED IF THE CACHE IS REMOVED.
+
+    Without the cache each call builds its own client, so these two are
+    different objects and the 180-450 ms synchronous construction is paid on
+    every upload and every delete. That cost is the channel; this identity is
+    the fix.
+    """
+    await aclose_s3_clients()
+    try:
+        first = await _acquire()
+        second = await _acquire()
+        assert first is second, (
+            "the factory built a second client for identical settings on one "
+            "event loop, so the cache is not in effect — every S3 call pays "
+            "180-450 ms of synchronous construction again, and on the anonymous "
+            "apply doors that cost is state-correlated (see AR-10 residue 2)"
+        )
+    finally:
+        await aclose_s3_clients()
+
+
+async def test_the_client_is_not_closed_when_the_caller_exits() -> None:
+    """The contract is still a context manager; the client outlives it.
+
+    This is the part that would break call sites if it regressed the other way:
+    `s3_client` keeps its `async with` shape so none of the thirty-odd call
+    sites changed, but closing on exit would make the cache useless and a
+    second caller would get a dead client.
+    """
+    await aclose_s3_clients()
+    try:
+        client = await _acquire()
+        # Usable after the context manager exited: a closed aiobotocore client
+        # raises on attribute access through its generated API.
+        assert client.meta.endpoint_url == _MINIO_ENDPOINT
+        assert await _acquire() is client
+    finally:
+        await aclose_s3_clients()
+
+
+async def test_different_settings_do_not_share_a_client() -> None:
+    """Two services in one process, or a credential rotation, must not collide.
+
+    The key carries the endpoint, region, both credentials and `use_ssl`, so a
+    different S3 configuration gets its own client rather than silently reusing
+    one signed for somewhere else.
+    """
+    await aclose_s3_clients()
+    try:
+        minio = await _acquire()
+        async with s3_client(
+            endpoint=_R2_ENDPOINT,
+            region="auto",
+            access_key=_KEY,
+            secret_key=_SECRET,
+        ) as r2:
+            assert r2 is not minio
+        async with s3_client(
+            endpoint=_MINIO_ENDPOINT,
+            region="us-east-1",
+            access_key="a-different-key",
+            secret_key=_SECRET,
+            use_ssl=False,
+        ) as rotated:
+            assert rotated is not minio
+    finally:
+        await aclose_s3_clients()
+
+
+async def test_closing_empties_the_cache_and_is_safe_to_repeat() -> None:
+    """`aclose_s3_clients` is called from four lifespans and must not be fussy.
+
+    Safe when nothing is cached, safe twice, and a later caller rebuilds rather
+    than receiving the client that was just closed.
+    """
+    from shared import s3 as s3mod
+
+    await aclose_s3_clients()
+    assert not s3mod._clients
+    await aclose_s3_clients()  # twice, from an empty state
+
+    first = await _acquire()
+    assert s3mod._clients
+    await aclose_s3_clients()
+    assert not s3mod._clients, "the cache still holds entries after closing"
+    assert not s3mod._stacks, "a stack was left behind, so a connector leaked"
+
+    second = await _acquire()
+    assert second is not first, "a closed client was handed back out"
+    await aclose_s3_clients()
+
+
+async def test_concurrent_first_callers_share_one_client() -> None:
+    """The per-loop lock. Without it the first N concurrent callers each build.
+
+    That matters beyond waste: two clients means two aiohttp connectors, and
+    the one that loses the race is never closed by `aclose_s3_clients` because
+    it was never the cached entry.
+    """
+    import asyncio
+
+    await aclose_s3_clients()
+    try:
+        clients = await asyncio.gather(*[_acquire() for _ in range(5)])
+        assert len({id(c) for c in clients}) == 1, (
+            "concurrent first callers built more than one client, so the "
+            "double-checked lock is not holding"
+        )
+    finally:
+        await aclose_s3_clients()
+
+
+def test_a_closed_loop_is_pruned_rather_than_reused() -> None:
+    """A client belongs to the loop that built it; the suite makes many loops.
+
+    Deliberately NOT an async test: it needs to own the loops. Keyed on the
+    loop OBJECT rather than `id(loop)` because CPython reuses addresses once an
+    object is collected — a reused id would be a cache HIT, and the prune only
+    runs on a miss, so the stale entry would never be seen.
+    """
+    import asyncio
+
+    from shared import s3 as s3mod
+
+    loop_a = asyncio.new_event_loop()
+    try:
+        first = loop_a.run_until_complete(_acquire())
+        assert len(s3mod._clients) == 1
+    finally:
+        loop_a.close()
+
+    # The entry survives its loop's close — nothing can await its aclose now.
+    assert len(s3mod._clients) == 1
+
+    loop_b = asyncio.new_event_loop()
+    try:
+        second = loop_b.run_until_complete(_acquire())
+        assert second is not first, "a client from a closed loop was handed out"
+        assert len(s3mod._clients) == 1, (
+            "the closed loop's entry was not pruned, so a long test run "
+            f"accumulates one client per loop: {len(s3mod._clients)} entries"
+        )
+        loop_b.run_until_complete(aclose_s3_clients())
+    finally:
+        loop_b.close()

@@ -526,6 +526,25 @@ def _unstorable(value: str) -> bool:
 _UNSTORABLE_TEXT = "That field contains a character we cannot store. Please retype it."
 
 
+def _unstorable_anywhere(value: object) -> bool:
+    """`_unstorable`, through dicts, lists and tuples.
+
+    Depth is bounded by the request body's own nesting, which pydantic has
+    already parsed — there is no cycle to guard against in a value that came
+    from JSON.
+    """
+    if isinstance(value, str):
+        return _unstorable(value)
+    if isinstance(value, dict):
+        return any(
+            _unstorable_anywhere(k) or _unstorable_anywhere(v)
+            for k, v in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(_unstorable_anywhere(item) for item in value)
+    return False
+
+
 class _RejectsUnstorableText(BaseModel):
     """Base for the anonymous apply bodies: refuse text the database cannot hold.
 
@@ -539,7 +558,19 @@ class _RejectsUnstorableText(BaseModel):
     @field_validator("*", mode="after")
     @classmethod
     def _storable_only(cls, v: object) -> object:
-        if isinstance(v, str) and _unstorable(v):
+        # WALKS NESTED CONTAINERS. The first version tested
+        # `isinstance(v, str)` at the top level only, so `answers: dict[str,
+        # Any]` — the one field on this model that is not a string, and the one
+        # most likely to carry crafted text — passed a NUL straight through to
+        # `application_drafts.save`'s `CAST(:answers AS jsonb)`. Round 13 made
+        # `PATCH /apply/draft` a 500 with it.
+        #
+        # Not a five-state oracle: that route is keyed on a draft token and is
+        # state-independent, and `submit_draft` re-validates through
+        # `coerce_answer`, so nothing unstorable could reach the applications
+        # table through it. It is a hole in the base class added for exactly
+        # this purpose, which is reason enough.
+        if _unstorable_anywhere(v):
             raise ValueError(_UNSTORABLE_TEXT)
         return v
 

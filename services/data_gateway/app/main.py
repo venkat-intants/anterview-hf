@@ -575,10 +575,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # were made to upload. Caching takes it to 4-12 ms after the first call;
     # warming here means the first call is not a candidate's either.
     #
-    # Best effort on purpose. A service that cannot reach object storage at
-    # boot must still start: every CV route already handles storage being
-    # down, and refusing to serve `/auth` and `/hr` because MinIO is cold
-    # would turn a degraded upload path into a total outage.
+    # IT WARMS THE CACHE; IT DOES NOT CHECK REACHABILITY, and the log line
+    # below says so because round 13 noted the previous one read as though it
+    # did. `s3_client` opens no socket on entry when credentials are supplied —
+    # that is why this is safe to do at boot at all. A misconfigured endpoint,
+    # bucket or key is therefore NOT surfaced here; the first upload still
+    # fails exactly as it would have.
+    #
+    # Guarded on explicit credentials for a reason that is not obvious: with
+    # them empty, botocore engages its default credential chain, whose EC2
+    # instance-metadata leg blocks for minutes on a non-AWS host. Warming
+    # unconditionally would hang boot on every developer machine. The cost of
+    # the guard is that an instance-profile or IRSA deployment never warms, so
+    # on those the first request — possibly a candidate's anonymous apply —
+    # pays the construction plus a credential-chain round trip.
     if settings.s3_access_key_id:
         try:
             async with s3_client(
@@ -589,7 +599,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 use_ssl=settings.s3_use_ssl,
             ):
                 pass
-            log.info("s3.client.warmed")
+            log.info("s3.client.cache_primed")
         except Exception as exc:  # noqa: BLE001 — storage cold must not stop boot
             log.warning("s3.client.warm_failed", error_type=type(exc).__name__)
 

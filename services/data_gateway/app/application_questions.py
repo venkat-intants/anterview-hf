@@ -146,8 +146,25 @@ def validate_shape(*, kind: str, options: list[str] | None) -> list[str]:
     """Check a question is answerable, and return its cleaned options."""
     if kind not in QUESTION_KINDS:
         raise QuestionError(f"kind must be one of {sorted(QUESTION_KINDS)}")
-    cleaned = [" ".join(str(o).split())[:MAX_OPTION_CHARS] for o in (options or [])]
+    cleaned = [" ".join(str(o).split()) for o in (options or [])]
     cleaned = [o for o in cleaned if o][:MAX_OPTIONS]
+    # REFUSED, NOT TRUNCATED — round 13 corrected round 12 here.
+    #
+    # Truncating looked harmless and was not. Two options sharing a 200-char
+    # prefix collapsed to the same string, which then tripped the
+    # "Options must be distinct" check below — so an HR edit of a question that
+    # was legal yesterday started failing. And an option that differed BEFORE
+    # 200 chars was silently shortened on any round-trip edit, after which
+    # answers already stored against it were no longer members of `options`
+    # and the candidate's next submission was refused with "does not offer".
+    #
+    # Refusing puts the error where somebody can act on it, at the moment they
+    # author the question, and leaves stored data alone.
+    too_long = [o for o in cleaned if len(o) > MAX_OPTION_CHARS]
+    if too_long:
+        raise QuestionError(
+            f"An option may be at most {MAX_OPTION_CHARS} characters."
+        )
     if kind in CHOICE_KINDS:
         if len(cleaned) < 2:
             raise QuestionError("A choice question needs at least two options.")
@@ -416,7 +433,25 @@ def coerce_answer(question: dict[str, Any], raw: Any) -> Any:
         #
         # Duplicates carried no meaning to lose: an option is chosen or it is
         # not, and the form cannot render the same box ticked twice.
-        return list(dict.fromkeys(chosen))
+        picked = list(dict.fromkeys(chosen))
+        # AND A BOUND THAT HOLDS FOR OPENINGS AUTHORED BEFORE MAX_OPTION_CHARS
+        # EXISTED. Deduping bounds the stored list to MAX_OPTIONS ENTRIES, and
+        # `validate_shape` now bounds each entry — but only for questions
+        # written or edited since. Round 13 pointed out there is no backfill,
+        # so for an opening whose options predate that check the entry bound
+        # does not hold and round 11's caller-sized jsonb write stays open on
+        # exactly the configuration the comment claimed to have closed.
+        #
+        # Bounding the ANSWER rather than migrating the questions: the stored
+        # value is what the channel is made of, nothing already recorded has to
+        # change, and this runs above the branch so refusing is
+        # state-independent.
+        if sum(len(p) for p in picked) > MAX_OPTIONS * MAX_OPTION_CHARS:
+            raise AnswerError(
+                f"'{prompt}' is more than we can save.",
+                question_id=str(question["id"]),
+            )
+        return picked
 
     text_value = _storable(str(raw), prompt, question_id=str(question["id"]))
     return text_value or None

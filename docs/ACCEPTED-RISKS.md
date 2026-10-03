@@ -797,14 +797,30 @@ those oracles did not converge sooner. Scheduling and caching were never
 alternatives: scheduling keeps the term out of the pad, caching makes the term
 small enough not to matter wherever it runs.
 
-Three guards hold it now:
-`test_no_object_release_is_awaited_on_a_reply_path` (structural, deterministic,
-holds on any storage backend — and hardened in round 12, which defeated the
-round-11 version in one edit because it excused `except` handlers that
-actually reply), `test_no_state_overruns_the_pad_that_is_meant_to_absorb_it`
-(the first upper bound this control ever had: fifteen guards and sixteen matrix
-tests were green while a 600 ms term lived in a 400 ms pad, because every one
-of them asserted only a LOWER bound), and the config bounds below.
+What holds it, stated accurately this time — the previous version said
+"three guards hold it now" and round 13 checked each one against a hypothetical
+revert of the cache and found all three stayed GREEN, which made that sentence
+this paragraph's fifth inaccuracy:
+
+* `test_no_object_release_is_awaited_on_a_reply_path` — structural,
+  deterministic, holds on any storage backend. Hardened in round 12, which
+  defeated the round-11 version in one edit because it excused `except`
+  handlers that actually reply. Holds the SCHEDULING half.
+* `test_no_state_overruns_the_pad_that_is_meant_to_absorb_it` — the first
+  upper bound this control ever had: fifteen guards and sixteen matrix tests
+  were green while a 600 ms term lived in a 400 ms pad, because every one of
+  them asserted only a LOWER bound. Holds the pad, not the cache: the
+  construction now happens in a background task after the response, where this
+  test cannot see it.
+* The config bounds — unrelated to either half, and listed here previously as
+  though they were.
+* `shared/tests/test_s3.py`'s cache suite (round 13) — the CACHING half, which
+  nothing held when the register first claimed it was held. Five of its tests
+  go red if the cache is removed while the context-manager API is kept, which
+  is the shape a plausible revert would take.
+
+The lesson is the one this entry states in its own voice and then broke four
+times: a control described here is not thereby guarded.
 
 What this residue now accepts is overrun of a pad by database work whose size
 the caller does not choose. The sentence is load-bearing only for as long as
@@ -1041,7 +1057,7 @@ readable row.
 | | |
 |---|---|
 | **Source finding** | PH3-B4b round-11 security audit, 2026-10-03 — found while applying the migration chain to a throwaway database, not by looking for it |
-| **Status** | **ACCEPTED — open; only reached when `PLATFORM_OWNER_PASSWORD` is unset** |
+| **Status** | **ACCEPTED — open; only reached when `PLATFORM_OWNER_PASSWORD` is unset, and then it is a live cross-tenant read-and-erase credential, not merely an unrotated password** |
 | **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
 | **Trigger to revisit** | Any of: (a) a deployment whose migration step runs where stdout is captured — CI, a container entrypoint, a PaaS build log, a log aggregator; (b) a log-retention or SOC2/ISO control review; (c) the first real deployment that does not set `PLATFORM_OWNER_PASSWORD`; (d) any report that the bootstrap account was used by someone who should not have it |
 
@@ -1073,23 +1089,39 @@ the highest-privilege account is provisioned without its own review.
   keeps it out of *structured* sinks. A PaaS, CI runner or container runtime
   collects the stream itself, so the value is captured in exactly the
   deployments where it matters most.
-* That the printed password grants API access. It does NOT, and an earlier
-  version of this entry said it did ("the account works indefinitely with the
-  printed password"). That was wrong: the migration seeds
-  `must_change_password = true`, and `dependencies.require_password_changed`
-  enforces it SERVER-SIDE on the privileged routers, including the platform
-  owner's own (`PlatformOwnerDep`), logging `auth.bootstrap_password_gate`
-  when it bites.
-* That the gate therefore makes this minor. It does not, and the real risk is
-  worse than the claim it replaces. `/auth/*` is deliberately ungated, because
-  the holder has to reach `/auth/change-password` to clear the flag — so
-  whoever reads the banner can log in and set a new password. That is ACCOUNT
-  TAKEOVER of the highest-privilege account in the product, and it locks the
-  legitimate owner out of their own bootstrap.
-* That the gate holds under stress. `require_password_changed` fails OPEN on a
-  database error, by design and for good reasons stated in its docstring —
-  but it means the one server-side control over this credential is absent
-  during exactly the kind of incident in which someone is reading deploy logs.
+* **That the printed password does not grant API access. IT DOES, across
+  three of the four services, before any password change.** This bullet is on
+  its third version and the first two were both wrong in the understating
+  direction, so take the specifics rather than the summary:
+
+  - The migration grants the account BOTH roles —
+    `WHERE u.email = :email AND r.name IN ('platform_owner', 'admin')`,
+    commented there as making it "a 'complete' super-super-admin".
+  - `require_password_changed` exists **only in `data_gateway`**. No reader of
+    `must_change_password` exists anywhere in `admin_ops`, `interview_core` or
+    `feedback_billing`.
+  - `admin_ops` gates `/admin/*` on `"admin" in roles` alone (`AdminDep` →
+    `verify_admin_role`), against the same issuer, audience and single shared
+    HS256 secret (see AR-2).
+  - `/auth/login` is ungated by design and consults the flag nowhere.
+
+  So with the flag never cleared — and therefore no `auth.bootstrap_password_gate`
+  line ever logged — the banner's password reaches platform-wide candidate and
+  interview data across every tenant (`/admin/overview`, the `/admin/analytics/*`
+  family, `/admin/interviews`, a single interview's transcript) plus
+  `GET /admin/interviews/export.csv`, a streaming bulk export. It also reaches
+  `POST /users/{user_id}/dpdp/delete`, operator-initiated erasure of ANY user:
+  soft-delete, consent withdrawal, immediate proctoring purge and a scheduled
+  30-day data purge.
+
+  Treat it as a live cross-tenant read credential and a destructive one, not as
+  a password waiting to be rotated.
+* That `data_gateway`'s gate is therefore the control. It is real — genuinely
+  server-side, genuinely composed into `PlatformOwnerDep` — but it covers one
+  service of four, and it fails OPEN on a database error, which is exactly the
+  kind of incident during which someone is reading deploy logs. Even within
+  `data_gateway`, `/auth/*` is ungated so the flag can be cleared, so the
+  holder can simply `POST /auth/change-password` and own the account outright.
 * That it only affects development. It affects any deployment that has not set
   `PLATFORM_OWNER_PASSWORD`, and nothing refuses to start without it.
 * That the migration being old means it has been reviewed in this light. It
@@ -1103,7 +1135,14 @@ never stored in the database. One nuance worth knowing when setting it: the
 value is `.strip()`ped, so a whitespace-only variable counts as unset and the
 banner prints anyway.
 
-**Path to closure.** Three options, in order of preference, all of them a
+**Path to closure.** Note first that two things are wrong here, not one:
+the banner, and the fact that the bootstrap flag is enforced in one service of
+four. Closing the banner alone leaves an `admin`-role credential whose only
+gate lives in `data_gateway`, so `admin_ops` should gate `AdminDep` on
+`must_change_password` regardless of what happens to the printing — or the
+entry should say plainly that it does not.
+
+For the banner itself, three options in order of preference, all of them a
 product decision rather than a patch: (1) require `PLATFORM_OWNER_PASSWORD`
 and FAIL CLOSED when it is absent — best for a deployed product, and it makes
 the credential the operator's to handle; (2) print a one-time password-reset
@@ -1131,4 +1170,4 @@ already printed.
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
 | **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun (now counted and alerted, still open); rate limits fail open when Redis is down and never reach the upload at all; a refused submission's CV exists un-consented; the concurrency exit is state-correlated, untested, and arbitrated by a conditionally-created index; and the two handlers' size is an open debt | PH3-B4b rounds 1-11 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, `public_apply_floor_exceeded_total` above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
-| **AR-11** | The platform-owner bootstrap password is printed to stdout in plaintext when `PLATFORM_OWNER_PASSWORD` is unset, so any deployment whose migration output is captured retains a live credential for the highest-privilege account | PH3-B4b round-11 audit (incidental) | `platform_owner` (+ `security-auditor`) | A deployment whose migration step runs where stdout is collected, a log-retention or SOC2 review, or the first deployment that does not set the variable |
+| **AR-11** | The platform-owner bootstrap password is printed to stdout in plaintext when `PLATFORM_OWNER_PASSWORD` is unset. The account carries the `admin` role too, and `must_change_password` is enforced only in `data_gateway` — so until it is rotated the banner is a working cross-tenant credential for `admin_ops`' candidate data, transcripts, bulk CSV export and operator-initiated erasure of any user | PH3-B4b round-11 audit (incidental) | `platform_owner` (+ `security-auditor`) | A deployment whose migration step runs where stdout is collected, a log-retention or SOC2 review, or the first deployment that does not set the variable |

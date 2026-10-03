@@ -403,6 +403,31 @@ async def create_drafts_bulk(
     ]
 
 
+async def create_imported_bulk(
+    db: AsyncSession, *, company_id: uuid.UUID, bank_id: uuid.UUID, actor: uuid.UUID | None,
+    items: list[dict[str, Any]],
+) -> list[BankQuestion]:
+    """Rows from a spreadsheet, saved as ``origin='imported'`` drafts.
+
+    The mirror of :func:`create_drafts_bulk`, and deliberately a separate
+    function rather than an ``origin`` argument on it: these two are the only
+    two callers allowed to write an origin other than ``authored``, and naming
+    them separately is what keeps that list readable. From the moment a row
+    lands it is an ordinary draft, reviewed exactly like anything typed by
+    hand — importing a question is not a way to skip the review.
+
+    ``row`` is dropped: it is the parser's line number, useful for telling the
+    importer which row failed, and meaningless once the row is a question.
+    """
+    return [
+        await create_question(
+            db, company_id=company_id, bank_id=bank_id, actor=actor, origin="imported",
+            **{k: v for k, v in item.items() if k != "row"},
+        )
+        for item in items
+    ]
+
+
 async def update_question(
     db: AsyncSession, *, company_id: uuid.UUID, qid: uuid.UUID, actor: uuid.UUID | None,
     **fields: Any,
@@ -545,6 +570,88 @@ async def review(
     _audit(db, actor=actor, action=f"bank_question.{action}", resource_id=q.id,
           details={"company_id": str(company_id), "role": role})
     return q
+
+
+async def submit_all(
+    db: AsyncSession, *, company_id: uuid.UUID, bank_id: uuid.UUID, actor: uuid.UUID,
+) -> dict[str, Any]:
+    """Submit every draft in this bank that ``actor`` may submit.
+
+    LOOPS :func:`submit` rather than issuing one UPDATE. The single-item path
+    owns the rules (a draft only, the event log, the audit row), and a bulk
+    statement would be a second implementation of them that drifts — the whole
+    reason this function exists is a 500-row import, i.e. exactly the case
+    where nobody would notice a missing event row.
+
+    Skips rather than fails. A bank being worked on by two people contains
+    drafts in states this actor cannot act on, and refusing the whole batch for
+    one of them would make the button useless precisely when it is needed.
+    """
+    await _get_bank(db, company_id, bank_id)
+    rows = (
+        await db.execute(
+            select(BankQuestion.id).where(
+                BankQuestion.company_id == company_id,
+                BankQuestion.bank_id == bank_id,
+                BankQuestion.status == "draft",
+            ).order_by(BankQuestion.created_at.asc())
+        )
+    ).scalars().all()
+    submitted = 0
+    skipped: list[dict[str, str]] = []
+    for qid in rows:
+        try:
+            await submit(db, company_id=company_id, qid=qid, actor=actor)
+            submitted += 1
+        except QuestionBankError as exc:
+            skipped.append({"question_id": str(qid), "reason": exc.detail})
+    log.info("bank.submit_all", bank_id=str(bank_id), submitted=submitted,
+             skipped=len(skipped))
+    return {"submitted": submitted, "skipped": skipped}
+
+
+async def approve_all(
+    db: AsyncSession, *, company_id: uuid.UUID, bank_id: uuid.UUID, actor: uuid.UUID,
+    role: str,
+) -> dict[str, Any]:
+    """Approve every submitted question in this bank that ``actor`` may approve.
+
+    THE TWO-PERSON RULE IS NOT RELAXED HERE, and that is the point of the
+    function's shape. It loops :func:`review`, which refuses an approval from
+    the author, from the submitter, and from anyone the event log shows changed
+    the question's content. A bulk UPDATE would be one statement and would
+    bypass all three — including the third, which a security review added after
+    finding that a reviewer could edit someone else's draft, have it
+    resubmitted, and approve their own wording.
+
+    So a one-person bank approves NOTHING through this path: every question
+    comes back skipped, each with the reason review() gave, and the caller shows
+    that instead of a success. That is the correct outcome, not a limitation to
+    work around — it is the same answer the per-question button gives, delivered
+    in one request instead of five hundred.
+    """
+    await _get_bank(db, company_id, bank_id)
+    rows = (
+        await db.execute(
+            select(BankQuestion.id).where(
+                BankQuestion.company_id == company_id,
+                BankQuestion.bank_id == bank_id,
+                BankQuestion.status == "in_review",
+            ).order_by(BankQuestion.submitted_at.asc())
+        )
+    ).scalars().all()
+    approved = 0
+    skipped: list[dict[str, str]] = []
+    for qid in rows:
+        try:
+            await review(db, company_id=company_id, qid=qid, actor=actor, role=role,
+                         action="approve")
+            approved += 1
+        except QuestionBankError as exc:
+            skipped.append({"question_id": str(qid), "reason": exc.detail})
+    log.info("bank.approve_all", bank_id=str(bank_id), approved=approved,
+             skipped=len(skipped), actor=str(actor))
+    return {"approved": approved, "skipped": skipped}
 
 
 async def new_version(

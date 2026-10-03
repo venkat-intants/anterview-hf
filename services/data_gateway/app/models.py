@@ -1869,8 +1869,12 @@ class BankQuestion(Base):
         CheckConstraint(
             "status IN ('draft','in_review','approved','retired')", name="ck_bank_questions_status"
         ),
+        # Kept character-identical to migration e1c3f5a7b9d2's CHECK; a unit
+        # test pins the two together, because a model that disagrees with the
+        # database is invisible until an insert fails in production.
         CheckConstraint(
-            "origin IN ('authored','ai_draft','from_exam')", name="ck_bank_questions_origin"
+            "origin IN ('authored','ai_draft','from_exam','imported')",
+            name="ck_bank_questions_origin",
         ),
         CheckConstraint(
             "difficulty IN ('easy','medium','hard')", name="ck_bank_questions_difficulty"

@@ -290,3 +290,60 @@ def test_bank_question_events_and_audit_never_carry_question_text() -> None:
         assert "prompt" not in body_src
         assert "options" not in body_src
         assert "test_cases" not in body_src
+
+
+# ===========================================================================
+# origin — provenance, and the model/migration pair that declares it
+# ===========================================================================
+def test_the_model_and_the_migration_allow_exactly_the_same_origins() -> None:
+    """Pins ``bank_questions.origin``'s CHECK in models.py to the migration's.
+
+    Caught for real on 2026-10-03: the migration that added ``imported`` went in
+    while models.py still listed three values. Nothing failed — no unit test
+    inserts into Postgres, and CI migrates an EMPTY database, so the disagreement
+    would have surfaced as a 500 on the first spreadsheet import in production.
+
+    Compared as SETS, so reordering the list is not a failure and dropping a
+    value is.
+    """
+    import re
+
+    model_src = (APP / "models.py").read_text(encoding="utf-8")
+    migration_src = (
+        APP.parent / "alembic" / "versions"
+        / "20261003_0001_e1c3f5a7b9d2_bank_question_imported_origin.py"
+    ).read_text(encoding="utf-8")
+
+    def origins(text: str, *, last: bool) -> set[str]:
+        found = re.findall(r"origin IN \(([^)]*)\)", text)
+        assert found, "no origin CHECK found"
+        chosen = found[-1] if last else found[0]
+        return {v.strip().strip("'\"") for v in chosen.split(",")}
+
+    # The migration names the OLD set first and the NEW set second.
+    assert origins(model_src, last=False) == origins(migration_src, last=True)
+
+
+def test_imported_is_one_of_the_allowed_origins() -> None:
+    """The spreadsheet importer's provenance value. Worth its own assertion
+    because the only other thing that would catch its absence is an insert
+    against a real database, which no unit test does."""
+    model_src = (APP / "models.py").read_text(encoding="utf-8")
+    assert "'imported'" in model_src
+
+
+def test_every_origin_the_service_can_write_is_allowed_by_the_model() -> None:
+    """The seam that matters: a service function writing an origin the CHECK
+    refuses is an insert that fails at runtime and nowhere else."""
+    import re
+
+    model_src = (APP / "models.py").read_text(encoding="utf-8")
+    allowed = {
+        v.strip().strip("'\"")
+        for v in re.findall(r"origin IN \(([^)]*)\)", model_src)[0].split(",")
+    }
+    service_src = (APP / "question_banks.py").read_text(encoding="utf-8")
+    written = set(re.findall(r'origin="([a-z_]+)"', service_src))
+    written |= set(re.findall(r'origin: str = "([a-z_]+)"', service_src))
+    assert written, "no origin writes found — has the keyword changed?"
+    assert written <= allowed, f"service writes origins the model refuses: {written - allowed}"

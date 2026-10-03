@@ -19,7 +19,6 @@ SECURITY:
 
 from __future__ import annotations
 
-import csv
 import io
 import uuid
 from collections import Counter
@@ -32,7 +31,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import accommodations, exam_locks
+from app import accommodations, exam_locks, question_import
 from app.code_evidence import coding_results_for_screen
 from app.config import settings
 from app.database import DbSessionDep
@@ -560,109 +559,48 @@ async def _bulk_insert_questions(
 
 
 # --- Spreadsheet (Excel / CSV) bulk-import helpers --------------------------
-# Template layout (one row per question, header in row 1):
-#   Question | Option A | Option B | Option C | Option D | Correct | Points
-# "Correct" names the right option by letter (A-D), number (1-4), or its text.
-_TEMPLATE_HEADER: list[str] = [
-    "Question", "Option A", "Option B", "Option C", "Option D", "Correct", "Points"
-]
-_MAX_IMPORT_BYTES: int = 2_000_000  # 2 MB upload cap (DoS guard)
-
-
-def _correct_to_index(raw: str, options: list[str]) -> int:
-    """Resolve the 'Correct' cell to a 0-based option index. Raises ValueError."""
-    s = (raw or "").strip()
-    if not s:
-        raise ValueError("missing correct answer")
-    if len(s) == 1 and s.isalpha():  # 'A'..'D'
-        idx = ord(s.upper()) - ord("A")
-        if 0 <= idx < len(options):
-            return idx
-        raise ValueError(f"correct '{s}' is out of range for {len(options)} options")
-    if s.isdigit():  # '1'..'4'
-        idx = int(s) - 1
-        if 0 <= idx < len(options):
-            return idx
-        raise ValueError(f"correct '{s}' is out of range for {len(options)} options")
-    for i, o in enumerate(options):  # literal option text
-        if o.strip().casefold() == s.casefold():
-            return i
-    raise ValueError(f"correct answer '{s}' matches no option")
+# The reading, the "Correct" resolution and the per-row errors now live in
+# app.question_import, shared with the question-bank importer. They were private
+# to this file until 2026-10-03; a second copy in the bank router would have
+# drifted, and silently — a sheet that imports here but is refused there, or
+# accepted with a different correct answer, with nothing to say which was right.
+#
+# What stays here is only the adaptation to this router's own models.
+_TEMPLATE_HEADER: list[str] = list(question_import.TEMPLATE_HEADER)
+_MAX_IMPORT_BYTES: int = question_import.MAX_IMPORT_BYTES
 
 
 def _read_spreadsheet(filename: str, content: bytes) -> list[list[str]]:
     """Read an uploaded .xlsx or .csv into a list of string rows."""
-    name = (filename or "").lower()
-    if name.endswith(".csv"):
-        text = content.decode("utf-8-sig", errors="replace")
-        return [[(c or "") for c in row] for row in csv.reader(io.StringIO(text))]
     try:
-        import openpyxl  # lazy: only needed for the Excel path
-    except ImportError as exc:  # pragma: no cover - dep is in requirements
-        raise HTTPException(
-            status_code=500, detail="Excel support is not installed on the server."
-        ) from exc
-    try:
-        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    except Exception as exc:  # noqa: BLE001 - openpyxl raises many types on bad files
-        raise HTTPException(
-            status_code=400, detail="Could not read that file — is it a valid .xlsx or .csv?"
-        ) from exc
-    ws = wb.active
-    rows: list[list[str]] = []
-    if ws is not None:
-        for row in ws.iter_rows(values_only=True):
-            rows.append(["" if c is None else str(c) for c in row])
-    wb.close()
-    return rows
+        return question_import.read_spreadsheet(filename, content)
+    except question_import.SpreadsheetError as exc:
+        # 500 for a missing dependency, 400 for a file we cannot parse — the
+        # same split this function made when it owned the openpyxl import.
+        code = 500 if "not installed" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
 def _parse_question_rows(
     rows: list[list[str]],
 ) -> tuple[list[QuestionIn], list[ImportRowError]]:
     """Parse spreadsheet rows into QuestionIn objects + a per-row error list."""
-    items: list[QuestionIn] = []
-    errors: list[ImportRowError] = []
-    start = 0
-    if rows and rows[0] and "question" in (rows[0][0] or "").strip().casefold():
-        start = 1  # skip the header row
-    for i in range(start, len(rows)):
-        rownum = i + 1  # 1-based for human-facing messages
-        cells = [(c or "").strip() for c in rows[i]]
-        if not any(cells):
-            continue  # blank line — skip silently
-        prompt = cells[0] if cells else ""
-        options = [cells[j] for j in range(1, 5) if j < len(cells) and cells[j]]
-        correct_raw = cells[5] if len(cells) > 5 else ""
-        points_raw = cells[6] if len(cells) > 6 else ""
-        if not prompt:
-            errors.append(ImportRowError(row=rownum, message="missing question text"))
-            continue
-        if len(options) < 2:
-            errors.append(ImportRowError(row=rownum, message="need at least 2 options"))
-            continue
+    items, errors = question_import.parse_mcq_rows(rows)
+    out: list[QuestionIn] = []
+    row_errors = [ImportRowError(row=e.row, message=e.message) for e in errors]
+    for item in items:
+        # `row` is the parser's bookkeeping, not a model field — drop it before
+        # QuestionIn sees it, and keep it so a validation failure still names
+        # the line the HR manager has to go and fix.
+        fields = {k: v for k, v in item.items() if k != "row"}
         try:
-            correct_index = _correct_to_index(correct_raw, options)
-        except ValueError as exc:
-            errors.append(ImportRowError(row=rownum, message=str(exc)))
-            continue
-        points = 1
-        if points_raw:
-            try:
-                points = max(1, min(100, int(float(points_raw))))
-            except ValueError:
-                points = 1
-        try:
-            items.append(
-                QuestionIn(
-                    prompt=prompt, options=options, correct_index=correct_index, points=points
-                )
-            )
+            out.append(QuestionIn(**fields))
         except ValidationError as exc:
             errs = exc.errors()
             msg = str(errs[0].get("msg", "invalid question")) if errs else "invalid question"
-            errors.append(ImportRowError(row=rownum, message=msg))
-    return items, errors
+            row_errors.append(ImportRowError(row=int(item["row"]), message=msg))
+    row_errors.sort(key=lambda e: e.row)
+    return out, row_errors
 
 
 # ---------------------------------------------------------------------------

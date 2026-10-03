@@ -21,18 +21,10 @@ import { execFileSync } from 'node:child_process';
 
 /** @type {Record<string, {reason: string, unblock: string}>} */
 const ALLOWLIST = {
-  'GHSA-qwww-vcr4-c8h2': {
-    reason:
-      'react-router "RSC Mode CSRF Bypass". Requires React Router RSC mode. ' +
-      'This app is a pure client-side SPA — src/main.tsx mounts with ' +
-      'createRoot(); there is no RSC, no SSR, no hydrateRoot, no ' +
-      'StaticRouter/createStaticHandler anywhere in src/. The vulnerable code ' +
-      'path is unreachable. No fixed version exists: the advisory range is ' +
-      '>=7.12.0 <8.3.0 and no 8.x is published (latest is 7.18.2), while ' +
-      'downgrading to 7.11.0 would REINTRODUCE the open-redirect advisories ' +
-      '(GHSA-2j2x-hqr9-3h42, GHSA-wrjc-x8rr-h8h6) that 7.18.x fixes.',
-    unblock: 'react-router-dom >= 8.3.0 once published',
-  },
+  // Empty on purpose. GHSA-qwww-vcr4-c8h2 (react-router RSC CSRF) lived here
+  // and was pruned on 2026-10-03 because npm no longer reports it — this
+  // script flags a stale entry, since an allowlist nobody prunes is how a real
+  // advisory ends up excused by a line written for a different one.
 };
 
 function audit() {

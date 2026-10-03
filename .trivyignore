@@ -7,20 +7,17 @@
 # differently, but that is not why the lists differ in size: this step runs
 # with `--severity HIGH,CRITICAL --ignore-unfixed`, so anything MODERATE or
 # LOW, and anything with no patched release, never reaches this file at all.
-# That is why only 3 of the 7 starlette ids appear here — exactly the 3 HIGH
-# ones — and why ecdsa, which has no fix, is absent entirely. Check a
+# (Until 2026-10-03 that was why only 3 of the 7 starlette ids appeared here —
+# exactly the 3 HIGH ones. All 7 are now fixed and gone from both files.) It is
+# still why ecdsa, which has no fix at all, is absent entirely. Check a
 # candidate id against those flags before assuming a list is out of sync, and
 # when unblocking a pin, prune BOTH lists.
 #
-# starlette 0.46.2 — all fixes land in starlette >=0.49.1/1.x. The block was
-# fastapi 0.115, which pins starlette <0.47 — but that condition has now
-# FIRED: fastapi >=0.139 declares `starlette>=0.46.0` with no upper bound
-# (PyPI metadata, checked 2026-09-20). Scheduled work, not a wait; it needs
-# its own PR across all 4 services. See pip-audit-ignore.txt for which of
-# these are actually reachable (two are, pre-auth, on the public apply form).
-CVE-2025-62727
-CVE-2026-48818
-CVE-2026-54283
+# starlette — FIXED 2026-10-03, entries removed. The three HIGH ids that lived
+# here (CVE-2025-62727 FileResponse Range DoS, CVE-2026-48818 StaticFiles UNC
+# SSRF, CVE-2026-54283 form limits) are all patched in starlette 1.3.1, which
+# all four services now pin alongside fastapi 0.133.0. Nothing about them is
+# accepted any more, which is why there is no entry rather than a reworded one.
 #
 # langchain-core — CVE-2026-34070 (legacy load_prompt path traversal) is only
 # fixed in langchain-core 1.2.22; the 0.3.x line has no fix. The app does not

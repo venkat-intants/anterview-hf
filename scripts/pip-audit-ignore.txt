@@ -17,9 +17,17 @@
 # Every entry needs: why it is not exploitable HERE, and what unblocks it.
 # An entry with no fix available is still an entry — say so.
 #
-# Reviewed 2026-09-20 (security-auditor sweep; every claim below re-checked
-# against PyPI metadata and the code, and several were wrong — see the
-# per-entry notes). Re-review each sprint.
+# Reviewed 2026-09-20 (security-auditor sweep; every claim re-checked against
+# PyPI metadata and the code, and several were wrong — see the per-entry
+# notes). Re-review each sprint.
+#
+# Swept 2026-10-03: starlette (7 ids), pytest (1) and pypdf (7, which never
+# reached this file — they were disclosed and fixed the same day) are FIXED and
+# their entries are gone. What remains is ecdsa, which has no fix upstream at
+# all, and interview_core's langchain/langgraph/langsmith/json-repair cluster,
+# which is blocked on a real-time-stack migration that needs a live call to
+# verify — not a resolve. Three of the four services are now down to ecdsa
+# alone.
 # =============================================================================
 
 # --- ecdsa 0.19.2 — NO FIX EXISTS ------------------------------------------
@@ -32,42 +40,44 @@
 # Unblock: an ecdsa release with a fix, or migrating fully to PyJWT.
 PYSEC-2026-1325
 
-# --- pytest 8.4.2 — DEV ONLY ------------------------------------------------
-# Test-runner only; never installed in a request path and not in the runtime
-# image's service venvs beyond the pinned freeze. The pin below 9 is
-# deliberate (see .trivyignore).
-# Unblock: pytest 9 migration.
-PYSEC-2026-1845
-
-# --- starlette 0.46.2 — SCHEDULED, NO LONGER BLOCKED ------------------------
-# Fixes land in starlette >=0.47.2 / >=0.49.1 / 1.x. The block was fastapi
-# 0.115.14, which declares `starlette<0.47.0,>=0.40.0`.
+# --- pytest — FIXED 2026-10-03 ----------------------------------------------
+# PYSEC-2026-1845 is gone: all four services now pin pytest 9.0.3 with
+# pytest-asyncio 1.4.0 (0.24.0 declared `pytest<9`, so the runner bump needed
+# the plugin bump with it). Every suite passes on 9.0.3 — see the PR.
 #
-# THE UNBLOCK CONDITION HAS FIRED. Checked against PyPI metadata 2026-09-20:
-# fastapi 0.139.0 and 0.141.1 both declare `starlette>=0.46.0` with NO upper
-# bound. This is now scheduled work, not a wait — it needs its own PR and its
-# own test pass (starlette 1.x is a major, and 0.115 → 0.141 spans a lot of
-# fastapi), across ALL FOUR services, which pin independently on purpose.
+# --- starlette — FIXED 2026-10-03 -------------------------------------------
+# All seven ids are gone: PYSEC-2026-161, -248, -249, -1941, -1942, -2280 and
+# -2281 are patched in starlette 1.3.1, which all four services now pin
+# alongside fastapi 0.133.0 (0.115.14 capped starlette below 0.47).
 #
-# What is actually reachable meanwhile, so the next reader can weigh it:
-#  - CVE-2025-62727 (FileResponse Range DoS) and CVE-2026-48818 (StaticFiles
-#    UNC SSRF): NOT reachable — neither FileResponse nor StaticFiles appears
-#    anywhere in services/ or shared/.
-#  - CVE-2026-54283 and CVE-2025-54121 (form/multipart limits): reachable
-#    PRE-AUTH on POST /apply/{requisition_id} (public_apply.py, Form fields
-#    and an UploadFile), mitigated by rate_limit("public_apply_submit", 6).
-#  - CVE-2026-48710 (Host header poisons request.url.path, bypassing
-#    path-based checks): the one to look at hardest when this is picked up,
-#    because the consoles are separated by path behind Caddy. Whether any
-#    authz decision reads request.url.path is UNVERIFIED — check it.
-PYSEC-2026-161
-PYSEC-2026-248
-PYSEC-2026-249
-PYSEC-2026-1941
-PYSEC-2026-1942
-PYSEC-2026-2280
-PYSEC-2026-2281
-
+# ONE OF THE SEVEN WAS GENUINELY REACHABLE, and it is worth recording which,
+# because the next person to weigh a starlette advisory should know the shape
+# that mattered: PYSEC-2026-249 — request.form() silently ignores max_fields
+# and max_part_size for application/x-www-form-urlencoded. That is an
+# UNAUTHENTICATED event-loop DoS (~1,000,000 fields in a sub-10MB body blocks
+# the worker for seconds; one 50MB field forces matching memory), and
+# POST /apply/{requisition_id} takes Form fields pre-auth. The
+# rate_limit("public_apply_submit", 6) in front of it bounded the rate, not the
+# cost of a single request.
+#
+# The other six were not reachable, each for its own reason, all re-checked
+# against the code on 2026-10-03 rather than inherited:
+#   - PYSEC-2026-161 / -248 (Host header and leading-slash-less path poison
+#     request.url.path / .hostname): the previous review left this UNVERIFIED
+#     and flagged it as the one to look at hardest, because the consoles are
+#     separated by path behind Caddy. CHECKED AND CLEAR: no authorization
+#     decision anywhere in services/ or shared/ reads request.url. The only
+#     path read is shared/http_observability.py::_route_label, which takes the
+#     MATCHED ROUTE TEMPLATE off scope["route"] for a metrics label — not the
+#     reconstructed URL, and not for any decision.
+#   - PYSEC-2026-2281 (StaticFiles UNC SSRF): Windows-only, and StaticFiles
+#     appears nowhere in services/ or shared/. Production is Linux containers.
+#   - PYSEC-2026-2280 (HTTPEndpoint attribute dispatch): needs an HTTPEndpoint
+#     subclass registered through Route(...) without methods=. Every route here
+#     is a FastAPI decorator, which always constrains the method.
+#   - PYSEC-2026-1941 / -1942 (FileResponse Range DoS): FileResponse appears
+#     nowhere in services/ or shared/.
+#
 # --- langchain-core 0.3.86 — UPGRADE-BLOCKED (interview_core) ---------------
 # CVE-2026-34070 is the legacy load_prompt path traversal; fixed only in
 # langchain-core 1.2.22, and the 0.3.x line has no fix. The app never calls

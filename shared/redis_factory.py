@@ -63,8 +63,6 @@ asserts that mechanically.
 
 from __future__ import annotations
 
-from typing import Any
-
 import redis.asyncio as aioredis
 from redis.asyncio import Redis
 from redis.asyncio.retry import Retry
@@ -82,12 +80,22 @@ BACKOFF_BASE_SECONDS = 0.1
 BACKOFF_CAP_SECONDS = 2.0
 
 
+# ``Redis`` is NOT subscripted here, deliberately. The annotation used to carry
+# a type argument plus a ``# type: ignore[type-arg]`` — the subscript for a
+# reader, the ignore because redis-py's class is not generic to mypy either.
+# That worked only while nothing evaluated it: ``from __future__ import
+# annotations`` keeps annotations as strings, and fastapi <=0.115 never resolved
+# this one. fastapi 0.133 resolves a dependency's annotations with
+# ``get_type_hints()``, which evaluates the string for real and raised "Redis is
+# not a generic class" at import time on all four services. Bare ``Redis``
+# satisfies mypy (which expects no type arguments) and the runtime (which must
+# not subscript it).
 def build_redis_client(
     url: str,
     *,
     decode_responses: bool = True,
     max_connections: int = 20,
-) -> Redis[Any]:  # type: ignore[type-arg]
+) -> Redis:
     """Return a Redis client hardened for serverless (Upstash) Redis.
 
     See the module docstring for the failure mode and the reason behind every

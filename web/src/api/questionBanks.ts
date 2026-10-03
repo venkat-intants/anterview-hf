@@ -11,7 +11,19 @@
 //
 // Every id interpolated into a URL goes through `pathId`.
 
-import { apiGet, apiPost, apiPatch, apiDelete } from './client';
+import {
+  apiDelete,
+  apiGet,
+  apiPatch,
+  apiPost,
+  fetchBlobWithAuth,
+  uploadWithProgress,
+} from './client';
+
+// client.ts does not export this — api/exams.ts declares its own the same way.
+// (The build caught it; `tsc --noEmit` did not, which is worth knowing about
+// this project's local gate: an unresolved named import reached rollup.)
+const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
 import { pathId } from './pathId';
 import type { CodingTestCase, ExamLanguage } from './exams';
 
@@ -327,6 +339,116 @@ export function saveCodingQuestionToBank(
   return apiPost<BankQuestion>(
     `/hr/exams/${pathId(examId)}/coding-questions/${pathId(questionId)}/save-to-bank`,
     body,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The other two ways to fill a bank: AI, and a spreadsheet.
+//
+// Authoring one at a time was the only way in until 2026-10-03, while an
+// EXAM's section had both of these — backwards, since the bank is the thing
+// worth filling once and reusing.
+// ---------------------------------------------------------------------------
+
+export interface BankGenerateParams {
+  topic: string;
+  num_questions?: number;
+  difficulty?: BankDifficulty;
+  language?: ExamLanguage;
+  /** Role context: lets the generator spread questions across what the role is
+   *  actually assessed on, instead of the topic alone. */
+  job_title?: string;
+  experience_level?: string;
+}
+
+export interface BankImportRowError {
+  /** 1-based, exactly as the spreadsheet numbers it — header included. */
+  row: number;
+  message: string;
+}
+
+export interface BankImportResult {
+  added: number;
+  errors: BankImportRowError[];
+  questions: BankQuestion[];
+}
+
+export interface BulkReviewResult {
+  acted: number;
+  /** Not an error list: the two-person rule answering, per question. */
+  skipped: { question_id: string; reason: string }[];
+}
+
+/** Draft MCQs with the configured LLM — returned for PREVIEW, nothing saved.
+ *  `createBankQuestionsBulk` is what stores the ones HR keeps. */
+export function generateBankQuestions(
+  bankId: string,
+  params: BankGenerateParams,
+): Promise<{ questions: BankQuestionInput[] }> {
+  return apiPost<{ questions: BankQuestionInput[] }>(
+    `/hr/question-banks/${pathId(bankId)}/questions/generate`,
+    params,
+  );
+}
+
+/** Upload an .xlsx/.csv; the server parses it and saves the valid rows as
+ *  DRAFTS. `difficulty` and `language` are the defaults for rows that leave
+ *  those columns blank, so a plain seven-column exam sheet imports too. */
+export function importBankQuestions(
+  bankId: string,
+  file: File,
+  opts: { difficulty?: BankDifficulty; language?: ExamLanguage } = {},
+): Promise<BankImportResult> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const qs = new URLSearchParams();
+  if (opts.difficulty) qs.set('difficulty', opts.difficulty);
+  if (opts.language) qs.set('language', opts.language);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return uploadWithProgress<BankImportResult>(
+    `${API_BASE}/hr/question-banks/${pathId(bankId)}/questions/import${suffix}`,
+    fd,
+  );
+}
+
+/** Fetch the .xlsx template (auth-scoped) and trigger a browser download. */
+export async function downloadBankQuestionTemplate(): Promise<void> {
+  // The .xlsx body must bypass clientFetch's JSON parsing but keep its
+  // refresh-on-401 — fetchBlobWithAuth is the helper that does both.
+  const res = await fetchBlobWithAuth(`${API_BASE}/hr/question-bank-template`);
+  if (!res.ok) throw new Error(`Could not download template (HTTP ${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'question-bank-template.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Submit every draft in this bank for review. */
+export function submitAllBankQuestions(bankId: string): Promise<BulkReviewResult> {
+  return apiPost<BulkReviewResult>(
+    `/hr/question-banks/${pathId(bankId)}/questions/submit-all`,
+    {},
+  );
+}
+
+/**
+ * Approve every submitted question in this bank that YOU may approve.
+ *
+ * The two-person rule is not relaxed: the server loops the same review() the
+ * per-question button calls, so the author, the submitter and anyone who edited
+ * a question's content are each refused — per question, with the reason, in
+ * `skipped`. A one-person bank therefore approves nothing here, and the UI
+ * shows that rather than a success.
+ */
+export function approveAllBankQuestions(bankId: string): Promise<BulkReviewResult> {
+  return apiPost<BulkReviewResult>(
+    `/hr/question-banks/${pathId(bankId)}/questions/approve-all`,
+    {},
   );
 }
 

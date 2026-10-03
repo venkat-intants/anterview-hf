@@ -21,27 +21,23 @@ import { execFileSync } from 'node:child_process';
 
 /** @type {Record<string, {reason: string, unblock: string}>} */
 const ALLOWLIST = {
-  'GHSA-qwww-vcr4-c8h2': {
-    reason:
-      'react-router "RSC Mode CSRF Bypass". Requires React Router RSC mode. ' +
-      'This app is a pure client-side SPA — src/main.tsx mounts with ' +
-      'createRoot(); there is no RSC, no SSR, no hydrateRoot, no ' +
-      'StaticRouter/createStaticHandler anywhere in src/. The vulnerable code ' +
-      'path is unreachable. No fixed version exists: the advisory range is ' +
-      '>=7.12.0 <8.3.0 and no 8.x is published (latest is 7.18.2), while ' +
-      'downgrading to 7.11.0 would REINTRODUCE the open-redirect advisories ' +
-      '(GHSA-2j2x-hqr9-3h42, GHSA-wrjc-x8rr-h8h6) that 7.18.x fixes.',
-    unblock: 'react-router-dom >= 8.3.0 once published',
-    // NOT PRUNED, although the script reports it stale. "Stale" is defined
-    // there as a risk accepted for a dependency we have since removed or
-    // upgraded — that is not this. react-router-dom is still 7.18.2, inside
-    // the advisory's own range (>=7.12.0 <8.3.0), and npm simply stopped
-    // reporting it on 2026-10-03, which means the advisory was withdrawn or
-    // re-scoped upstream rather than fixed here. Deleting the entry would
-    // throw away the reachability analysis above and leave the next person to
-    // redo it if the advisory is re-published. It costs one non-fatal line of
-    // output; the reasoning is worth more.
-  },
+  // Empty on purpose. GHSA-qwww-vcr4-c8h2 (react-router RSC CSRF) lived here
+  // and was pruned on 2026-10-03 because npm no longer reports it — this
+  // script flags a stale entry, since an allowlist nobody prunes is how a real
+  // advisory ends up excused by a line written for a different one.
+  //
+  // KEPT AS A NOTE, because the reachability analysis cost real work and the
+  // advisory may be re-published. This branch had argued for retaining the
+  // entry on the grounds that react-router-dom is still 7.18.2, which is
+  // inside the advisory's own range (>=7.12.0 <8.3.0), so npm going quiet
+  // means the advisory was withdrawn or re-scoped upstream rather than fixed
+  // here. Pruning is the better default and is kept; the analysis is this:
+  // the vulnerable path needs React Router RSC mode, and this app is a pure
+  // client-side SPA — src/main.tsx mounts with createRoot(), and there is no
+  // RSC, no SSR, no hydrateRoot and no StaticRouter/createStaticHandler
+  // anywhere in src/. Downgrading to 7.11.0 would also reintroduce the
+  // open-redirect advisories (GHSA-2j2x-hqr9-3h42, GHSA-wrjc-x8rr-h8h6) that
+  // 7.18.x fixes. If it returns, that is the reasoning — do not redo it.
 };
 
 function audit() {

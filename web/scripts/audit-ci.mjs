@@ -32,6 +32,15 @@ const ALLOWLIST = {
       'downgrading to 7.11.0 would REINTRODUCE the open-redirect advisories ' +
       '(GHSA-2j2x-hqr9-3h42, GHSA-wrjc-x8rr-h8h6) that 7.18.x fixes.',
     unblock: 'react-router-dom >= 8.3.0 once published',
+    // NOT PRUNED, although the script reports it stale. "Stale" is defined
+    // there as a risk accepted for a dependency we have since removed or
+    // upgraded — that is not this. react-router-dom is still 7.18.2, inside
+    // the advisory's own range (>=7.12.0 <8.3.0), and npm simply stopped
+    // reporting it on 2026-10-03, which means the advisory was withdrawn or
+    // re-scoped upstream rather than fixed here. Deleting the entry would
+    // throw away the reachability analysis above and leave the next person to
+    // redo it if the advisory is re-published. It costs one non-fatal line of
+    // output; the reasoning is worth more.
   },
 };
 

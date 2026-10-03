@@ -14,22 +14,35 @@ of these routers).
 
 from __future__ import annotations
 
+import io
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+import structlog
+from fastapi import (
+    APIRouter,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import exam_locks
+from app import exam_locks, question_import
 from app import question_banks as svc
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep, SuperAdminCtxDep
+from app.exam_ai_client import ExamGenerationError, generate_exam_questions_remote
 from app.routers.hr_coding import CodingQuestionIn, TestCaseIn
 from app.routers.hr_exams import QuestionIn
 
 hr_router = APIRouter(prefix="/hr", tags=["question-banks"])
 admin_router = APIRouter(prefix="/admin", tags=["question-banks"])
+
+log = structlog.get_logger(__name__)
 
 DIFFICULTIES = {"easy", "medium", "hard"}
 LANGUAGES = {"en", "hi", "te"}
@@ -167,6 +180,62 @@ class BankQuestionUpdateIn(BaseModel):
 
 class BulkQuestionsIn(BaseModel):
     questions: list[BankQuestionIn] = Field(min_length=1, max_length=200)
+
+
+class BankGenerateIn(BaseModel):
+    """What the AI needs in order to draft questions for a bank.
+
+    No exam is involved, which is the difference from the exam generator's
+    input: a bank question is reusable, so its context is a topic and a role,
+    not one exam's rubric.
+    """
+
+    topic: str = Field(min_length=2, max_length=200)
+    num_questions: int = Field(default=5, ge=1, le=20)
+    difficulty: str = Field(default="medium")
+    language: str = Field(default="en")
+    job_title: str = Field(default="", max_length=200)
+    experience_level: str = Field(default="mid", max_length=40)
+
+    @field_validator("difficulty")
+    @classmethod
+    def _difficulty(cls, v: str) -> str:
+        if v not in DIFFICULTIES:
+            raise ValueError("difficulty must be easy, medium or hard")
+        return v
+
+    @field_validator("language")
+    @classmethod
+    def _language(cls, v: str) -> str:
+        if v not in LANGUAGES:
+            raise ValueError("language must be en, hi or te")
+        return v
+
+
+class BankImportOut(BaseModel):
+    """Partial success, reported per row.
+
+    ``added`` and ``errors`` together are the whole answer: a 40-row file with
+    3 bad rows adds 37 and names the 3, because re-keying one spreadsheet cell
+    is a minute's work and re-keying the file is an afternoon's.
+    """
+
+    added: int
+    errors: list[dict[str, Any]]
+    questions: list[dict[str, Any]]
+
+
+class BulkReviewOut(BaseModel):
+    """What a bulk submit or approve actually did.
+
+    ``skipped`` is not an error list — it is the two-person rule answering, per
+    question, and the caller shows it rather than a success. A one-person
+    company sees every question skipped here, which is the same answer the
+    per-question button gives.
+    """
+
+    acted: int
+    skipped: list[dict[str, str]]
 
 
 class ReviewActionIn(BaseModel):
@@ -314,6 +383,195 @@ async def create_bank_questions_bulk(
         raise await _fail(db, exc) from exc
     await exam_locks.commit_or_conflict(db)
     return [svc.question_out(q) for q in created]
+
+
+# ---------------------------------------------------------------------------
+# HR — the other two ways to fill a bank: AI, and a spreadsheet
+# ---------------------------------------------------------------------------
+@hr_router.post("/question-banks/{bank_id}/questions/generate")
+async def generate_bank_questions(
+    bank_id: uuid.UUID, body: BankGenerateIn, ctx: HrCtxDep, db: DbSessionDep
+) -> dict[str, Any]:
+    """Draft MCQs with the configured LLM. Returned for PREVIEW — nothing saved.
+
+    The same two-step shape the exam generator uses, for the same reason: a
+    model's output is a suggestion, and a person reads it before it becomes a
+    question in a library that feeds real assessments. ``questions/bulk`` is
+    what saves the ones HR keeps, as ``origin='ai_draft'`` drafts.
+    """
+    uid, company_id = ctx
+    await svc.bank_summary(db, company_id=company_id, bank_id=bank_id)  # 404s another company's
+    try:
+        raw = await generate_exam_questions_remote(
+            topic=body.topic, num_questions=body.num_questions, difficulty=body.difficulty,
+            language=body.language, acting_user_id=str(uid), job_title=body.job_title,
+            experience_level=body.experience_level,
+        )
+    except ExamGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI generation failed: {exc}"
+        ) from exc
+    out: list[dict[str, Any]] = []
+    for q in raw:
+        opts = [str(o) for o in (q.get("options") or [])]
+        prompt = str(q.get("prompt") or "").strip()
+        try:
+            ci = int(q.get("correct_index", 0))
+        except (TypeError, ValueError):
+            continue
+        if prompt and len(opts) >= 2 and 0 <= ci < len(opts):
+            out.append({
+                "kind": "mcq", "prompt": prompt, "options": opts, "correct_index": ci,
+                "points": 1, "difficulty": body.difficulty, "language": body.language,
+            })
+    if not out:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The AI returned no usable questions. Try again or refine the topic.",
+        )
+    log.info("hr.bank.questions.generated", bank_id=str(bank_id), count=len(out))
+    return {"questions": out}
+
+
+@hr_router.post(
+    "/question-banks/{bank_id}/questions/import",
+    status_code=201,
+    response_model=BankImportOut,
+)
+async def import_bank_questions(
+    bank_id: uuid.UUID,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+    file: Annotated[UploadFile, File(description=".xlsx or .csv in the template layout")],
+    difficulty: Annotated[str, Query()] = "medium",
+    language: Annotated[str, Query()] = "en",
+) -> BankImportOut:
+    """Import questions from an Excel/CSV file. Every row lands as a DRAFT.
+
+    ``difficulty`` and ``language`` are the defaults for rows that leave those
+    columns blank — so a plain seven-column exam sheet imports with the
+    caller's choice, and a sheet that fills them per row keeps what it says.
+
+    Partial success by design: valid rows are saved, bad rows come back with
+    their line number and what is wrong with them.
+    """
+    uid, company_id = ctx
+    await svc.bank_summary(db, company_id=company_id, bank_id=bank_id)
+    if difficulty not in DIFFICULTIES:
+        raise HTTPException(status_code=422, detail="difficulty must be easy, medium or hard")
+    if language not in LANGUAGES:
+        raise HTTPException(status_code=422, detail="language must be en, hi or te")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    if len(content) > question_import.MAX_IMPORT_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 2 MB).")
+    try:
+        rows = question_import.read_spreadsheet(file.filename or "", content)
+    except question_import.SpreadsheetError as exc:
+        code = 500 if "not installed" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+    items, errors = question_import.parse_bank_rows(
+        rows, default_difficulty=difficulty, default_language=language
+    )
+    if not items and not errors:
+        raise HTTPException(
+            status_code=400, detail="No question rows found. Use the template layout."
+        )
+    created = []
+    if items:
+        try:
+            created = await svc.create_imported_bulk(
+                db, company_id=company_id, bank_id=bank_id, actor=uid, items=items
+            )
+        except svc.QuestionBankError as exc:
+            raise await _fail(db, exc) from exc
+        await exam_locks.commit_or_conflict(db)
+    log.info("hr.bank.questions.imported", bank_id=str(bank_id),
+             added=len(created), errors=len(errors))
+    return BankImportOut(
+        added=len(created),
+        errors=[e.as_dict() for e in errors],
+        questions=[svc.question_out(q) for q in created],
+    )
+
+
+@hr_router.get("/question-bank-template")
+async def download_bank_question_template(ctx: HrCtxDep) -> Response:
+    """The .xlsx template: the exam's seven columns plus Difficulty, Language
+    and Competency.
+
+    A distinct top-level path (NOT under /question-banks/...) so it can never
+    collide with the /question-banks/{bank_id} UUID route — the same reason
+    /exam-question-template sits where it does.
+    """
+    _uid, _company_id = ctx
+    try:
+        import openpyxl  # noqa: PLC0415 — lazy: only this route needs it
+    except ImportError as exc:  # pragma: no cover — the dep is in requirements
+        raise HTTPException(
+            status_code=500, detail="Excel support is not installed on the server."
+        ) from exc
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Questions"
+    ws.append(list(question_import.BANK_TEMPLATE_HEADER))
+    # Two examples, showing both ways of naming the answer and that the last
+    # three columns may be left blank.
+    ws.append(["What does a multimeter measure?", "Pressure", "Voltage", "Mass", "Volume",
+               "B", "1", "easy", "en", "Electrical safety"])
+    ws.append(["Which tool tightens a bolt to a set torque?", "Torque wrench", "Hammer",
+               "Chisel", "File", "Torque wrench", "2", "", "", ""])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="question-bank-template.xlsx"'
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# HR — bulk review, so a 500-row import is not 1000 clicks
+# ---------------------------------------------------------------------------
+@hr_router.post("/question-banks/{bank_id}/questions/submit-all", response_model=BulkReviewOut)
+async def submit_all_bank_questions(
+    bank_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> BulkReviewOut:
+    """Submit every draft in this bank for review."""
+    uid, company_id = ctx
+    try:
+        result = await svc.submit_all(db, company_id=company_id, bank_id=bank_id, actor=uid)
+    except svc.QuestionBankError as exc:
+        raise await _fail(db, exc) from exc
+    await exam_locks.commit_or_conflict(db)
+    return BulkReviewOut(acted=int(result["submitted"]), skipped=result["skipped"])
+
+
+@hr_router.post("/question-banks/{bank_id}/questions/approve-all", response_model=BulkReviewOut)
+async def approve_all_bank_questions(
+    bank_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> BulkReviewOut:
+    """Approve every submitted question in this bank that YOU may approve.
+
+    The two-person rule is not relaxed here. ``svc.approve_all`` loops the same
+    ``review()`` the per-question button calls, so the author, the submitter and
+    anyone who edited a question's content are each refused — per question, with
+    the reason, in ``skipped``. A one-person bank therefore approves nothing
+    through this route, which is the correct answer rather than a limitation.
+    """
+    uid, company_id = ctx
+    try:
+        result = await svc.approve_all(db, company_id=company_id, bank_id=bank_id, actor=uid,
+                                      role="hr_manager")
+    except svc.QuestionBankError as exc:
+        raise await _fail(db, exc) from exc
+    await exam_locks.commit_or_conflict(db)
+    return BulkReviewOut(acted=int(result["approved"]), skipped=result["skipped"])
 
 
 # ---------------------------------------------------------------------------

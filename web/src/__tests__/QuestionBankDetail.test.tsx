@@ -32,6 +32,17 @@ vi.mock('../api/questionBanks', () => ({
   retireBankQuestion: (...a: unknown[]) => retireBankQuestion(...a) as unknown,
   newBankQuestionVersion: (...a: unknown[]) => newBankQuestionVersion(...a) as unknown,
   listBankCompetencies: (...a: unknown[]) => listBankCompetencies(...a) as unknown,
+  // The page now renders BankFillPanel, which imports the AI / import / bulk
+  // calls from this same module. This factory lists the module's surface by
+  // hand, so anything the page's TREE imports has to appear here or vitest
+  // throws "No export is defined on the mock". These are stubs: what they do
+  // is BankFillPanel.test.tsx's subject, not this file's.
+  generateBankQuestions: vi.fn(() => Promise.resolve({ questions: [] })),
+  createBankQuestionsBulk: vi.fn(() => Promise.resolve([])),
+  importBankQuestions: vi.fn(() => Promise.resolve({ added: 0, errors: [], questions: [] })),
+  downloadBankQuestionTemplate: vi.fn(() => Promise.resolve()),
+  submitAllBankQuestions: vi.fn(() => Promise.resolve({ acted: 0, skipped: [] })),
+  approveAllBankQuestions: vi.fn(() => Promise.resolve({ acted: 0, skipped: [] })),
 }));
 
 const toastError = vi.fn();

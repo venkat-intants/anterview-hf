@@ -22,6 +22,7 @@ import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { BankQuestionEditor } from '@/components/bank/BankQuestionEditor';
+import BankFillPanel from '@/components/bank/BankFillPanel';
 import {
   createBankQuestion,
   deleteBankQuestion,
@@ -334,6 +335,11 @@ export default function QuestionBankDetail(): JSX.Element {
           </button>
         </div>
       </Reveal>
+
+      {/* The three ways to fill a bank. One question at a time is the
+          "New question" button above; AI and spreadsheet import live here
+          because both arrive as a BATCH that then needs review. */}
+      {bankId ? <BankFillPanel bankId={bankId} /> : null}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
         <GlassCard className="p-5">

@@ -65,10 +65,16 @@ it was deleted rather than retuned: a constant tuned until a test goes green
 proves only that the constant was tuned.
 
 And the floor FAILS OPEN. A branch that overruns it logs
-`public_apply.floor_exceeded` and answers immediately, so under enough
-load the control switches itself off. There is no counter and no alert on that
-log line. That residue, and the write-path 201/503 split the write probe does
-not reach, are in docs/ACCEPTED-RISKS.md with an owner — not here, because
+`public_apply.floor_exceeded` and answers immediately, so the term it was
+absorbing becomes readable again. It also increments
+`public_apply_floor_exceeded_total` and is consumed by
+`PublicApplyTimingPadFailingOpen` in `ops/alerts/` — this docstring said "there
+is no counter and no alert on that log line" for a round after both were added,
+which is the same stale-comment defect the pypdf pin carried. An UPPER bound on
+the pad is asserted now too, at the end of this file; for a round there was
+none, and that is how a 600 ms S3 delete lived inside a 400 ms pad with every
+guard green. That residue, and the write-path 201/503 split the write probe
+does not reach, are in docs/ACCEPTED-RISKS.md with an owner — not here, because
 neither a test docstring nor a commit message can grant an acceptance.
 
 Response HEADERS are not compared either (`_observable` reads status and body),
@@ -947,3 +953,83 @@ async def test_both_doors_refuse_a_read_only_database_identically(
             for c, (o, d) in mismatched.items()
         )
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", _BOTH_DOORS)
+async def test_no_state_overruns_the_pad_that_is_meant_to_absorb_it(
+    client: AsyncClient, door: str
+) -> None:
+    """THE UPPER BOUND. Its absence is how a 600 ms term lived in a 400 ms pad.
+
+    Round 11 found `_refuse` awaiting an S3 `DeleteObject` between its commit
+    and `_reply` — on the two states that reach it and not on the third. The
+    term was 350-650 ms against a 400 ms pad, because `shared.s3.s3_client`
+    builds a fresh `aioboto3` client per call and that construction alone is
+    180-450 ms of local Python. So the pad failed open on the refusing states,
+    on HEALTHY storage, on every request, and logged `floor_exceeded` each
+    time.
+
+    Fifteen structural guards and sixteen matrix tests were green throughout,
+    because every one of them asserts a LOWER bound. The sibling test above
+    checks that nothing answers FASTER than the floor — which is what a
+    disabled pad looks like — and deliberately dropped its spread assertion
+    because end-to-end time includes the caller-sized upload the pad excludes.
+    Nothing asserted that a pad still had budget left when it was reached,
+    which is the only question that matters for whether it absorbs anything.
+
+    This measures the pad's own budget rather than wall-clock, so the
+    caller-sized upload cannot drown it: `_hold_until` receives an absolute
+    deadline, so `deadline - now` AT ENTRY is exactly the unspent budget. A
+    negative value is an overrun and means the covered work has become
+    visible again. It is the same quantity `_hold_until` logs as `over_ms`,
+    asserted instead of merely reported.
+    """
+    from app.routers import public_apply
+
+    real_hold = public_apply._hold_until
+    seen: dict[str, list[tuple[str, float]]] = {}
+    current = ""
+
+    async def _recording(deadline: float, *, what: str) -> None:
+        seen.setdefault(current, []).append((what, deadline - time.monotonic()))
+        await real_hold(deadline, what=what)
+
+    addresses = await _seeded_addresses(client)
+    with mock.patch.object(public_apply, "_hold_until", _recording):
+        for case, (target, email) in addresses.items():
+            current = case
+            await _submit_through(door, client, target, email)
+
+    overruns = {
+        case: [(what, round(left * 1000, 1)) for what, left in pads if left < 0]
+        for case, pads in seen.items()
+    }
+    overruns = {c: v for c, v in overruns.items() if v}
+    # MEASURED, with the release moved off the reply path: every state leaves
+    # 379-399 ms of a 400 ms pad unspent, i.e. a tail of 1-21 ms. With the
+    # release awaited inside the pad again this test fails — but only when the
+    # delete lands on the slow side of its 350-650 ms range, because the base
+    # tail is ~20 ms against a 400 ms budget. So treat this as a bound that
+    # catches a clear regression reliably and a marginal one probabilistically;
+    # `test_no_object_release_is_awaited_on_a_reply_path` is the deterministic
+    # half, and it is the one that holds when this suite runs against local
+    # disk storage, where a delete is a cheap unlink and there is no term to
+    # measure at all.
+    assert not overruns, (
+        "these states spent their whole pad before reaching it, so the work it "
+        "absorbs is measurable again and the control is off for them "
+        f"(pad={settings.apply_reply_floor_ms}ms, values are unspent ms): "
+        f"{overruns}"
+    )
+
+    # Every state must actually reach both pads — a state that skips one is
+    # not being absorbed by it, and would pass the assertion above vacuously.
+    assert set(seen) == set(addresses), (
+        f"some states never reached a pad at all: {sorted(set(addresses) - set(seen))}"
+    )
+    for case, pads in seen.items():
+        kinds = {what for what, _ in pads}
+        assert kinds == {"lookup", "reply"}, (
+            f"{case} reached {sorted(kinds)}, not both pads"
+        )

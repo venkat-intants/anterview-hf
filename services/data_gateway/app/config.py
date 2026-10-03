@@ -490,9 +490,18 @@ class Settings(BaseSettings):
     # tens of milliseconds. Hence a small default: large enough to cover that
     # tail comfortably, small enough that a candidate does not notice.
     #
-    # Raise it if the p99 of the accepting branch ever approaches it. Setting
-    # it to 0 disables the control and reopens the channel.
-    apply_reply_floor_ms: int = 400
+    # Raise it if the p99 of the accepting branch ever approaches it.
+    #
+    # gt=0 ENFORCED, not merely documented. This said "setting it to 0 disables
+    # the control and reopens the channel" and nothing stopped anyone doing it:
+    # `APPLY_REPLY_FLOOR_MS=0` in a deployment's environment switched the pad
+    # off with every test still green, because the unit guard can only pin the
+    # DEFAULT. A validator is the one place that sees what a deployment
+    # actually set, so the claim is now true where it matters. Pydantic
+    # refuses to start the service rather than serving with the control off,
+    # which is the right way round for a privacy control: an apply endpoint
+    # that is down is visible, one that is silently answerable is not.
+    apply_reply_floor_ms: int = Field(default=400, gt=0)
     # How long the IDENTITY LOOKUP is padded to, on both anonymous doors.
     #
     # A second, separate pad, and it has to be separate. The lookup is a LEFT
@@ -509,9 +518,12 @@ class Settings(BaseSettings):
     # state-dependent — the parse and the upload are the caller's own bytes.
     #
     # Must exceed the p99 of the lookup, which is an indexed point read: 50 ms
-    # is roughly two orders of magnitude above it. Setting it to 0 disables the
-    # pad and reopens the channel.
-    apply_lookup_floor_ms: int = 50
+    # is roughly two orders of magnitude above it.
+    #
+    # gt=0 ENFORCED — same reasoning as `apply_reply_floor_ms` above, and this
+    # is the setting round 11 actually demonstrated: `APPLY_LOOKUP_FLOOR_MS=0`
+    # needed no code change at all and left 2,888 unit tests green.
+    apply_lookup_floor_ms: int = Field(default=50, gt=0)
     # When True, email verification is MANDATORY: self-registered accounts are not
     # auto-logged-in and cannot sign in until they confirm their email. Existing
     # accounts and admin-provisioned accounts (still on their bootstrap password)

@@ -550,87 +550,131 @@ def _hold_calls(node: ast.AST, what: str) -> list[ast.Call]:
     return out
 
 
+def _enclosing_if(node: ast.AST, target: ast.Call) -> ast.If | None:
+    """The `if` whose body directly contains the statement wrapping *target*."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.If):
+            for stmt in n.body:
+                if any(c is target for c in ast.walk(stmt)):
+                    return n
+    return None
+
+
 def test_the_lookup_pad_exists_and_bounds_the_identity_lookup() -> None:
-    """ROUND 10. The lookup pad was held up by NOTHING.
+    """ROUND 10 added this pad's only guard. ROUND 11 defeated it four ways.
 
-    `apply_lookup_floor_ms` is one of the two load-bearing pads — it is the
-    whole of round 7's fix, the reason round 9 existed, and the control that
-    keeps the identity lookup's cost (a LEFT JOIN that returns a row for four
-    states and nothing for the fifth) from being additively measurable. Before
-    this guard it appeared in exactly four places in the repository: the config
-    default, the two call sites, and one line of the risk register. No test
-    asserted that it existed, that it was non-zero, or that it bounded
-    anything.
+    `apply_lookup_floor_ms` is the whole of round 7's fix and the reason round
+    9 existed: it absorbs the identity lookup, a LEFT JOIN that returns a row
+    for four states and nothing for the fifth. Before round 10 it appeared
+    only in the config default, the two call sites and one line of the risk
+    register — asserted nowhere, removable three ways with the suite green.
 
-    Round 10 demonstrated three ways to remove it with all fourteen other
-    guards still passing: delete both blocks (caught only incidentally, by
-    ruff's F841 on the now-unused `floor_from`); relocate them below the upload
-    as a plausible "consolidate the two pads" refactor, which is ruff-clean and
-    makes the 50 ms budget cover the PDF parse so it absorbs nothing; or set
-    the config value to 0 and change no code at all.
+    Round 10's guard required a `_hold_until(..., what="lookup")` call whose
+    deadline mentioned `floor_from`, positioned before `tail_from` and before
+    a hard-coded list of caller-sized callees. Round 11 walked through it:
 
-    This is the same lesson round 9 taught about the reply pad — the guards
-    checked where the clocks were ASSIGNED and nothing checked that a clock
-    bounded anything — applied to the pad that did not get it at the time.
+    * `max(floor_from, time.monotonic()) + ...` — round 9's own bug, verbatim,
+      moved from `_reply` to the handlers. `floor_from` still appears as a
+      Name, so the guard passed, while the deadline became `now + 50 ms` and
+      absorbed nothing. The guard written for exactly this shape
+      (`test_the_reply_pad_is_not_a_max_of_two_clocks`) is scoped to `_reply`.
+    * `if settings.apply_lookup_floor_ms > 0:` → `< 0:`. One character, both
+      pads dead, 17/17 green. The guard inspected the call and never its
+      enclosing condition.
+    * Rename `_extract_pdf_text` to a one-line helper and the "caller-sized"
+      ceiling silently drops out of a name-keyed list, after which the pad can
+      be relocated below the parse again. The ceiling set was the weak part: a
+      list of three callee names is a guard against those three names.
 
-    Three properties, both doors: the pad is there, its deadline is measured
-    from `floor_from` (not from a clock taken after the lookup, which would
-    absorb nothing), and it sits between the lookup and the gate.
+    So this now asserts STRUCTURE rather than mentions:
+
+    1. The deadline is `floor_from + <something>` — `floor_from` as the BinOp's
+       own left operand, not a Name buried anywhere inside it.
+    2. The enclosing condition is `settings.apply_lookup_floor_ms > 0`.
+    3. The ONLY awaited work between `floor_from` and the pad is `_identify`.
+       That is the property the pad exists for, it names no caller-sized
+       callee, and it cannot be defeated by renaming one — anything moved into
+       that window is work a 50 ms budget was never sized for.
+    4. The pad still closes before the second deadline.
     """
     for name, node in _door_bodies().items():
         holds = _hold_calls(node, "lookup")
         assert len(holds) == 1, (
             f"{name}: expected exactly one lookup pad, found {len(holds)}. "
-            "Removing it reopens round 7's channel — the identity lookup "
-            "becomes additively measurable with a small PDF."
+            "Removing it reopens round 7's channel."
         )
         call = holds[0]
 
-        names = {n.id for n in ast.walk(call) if isinstance(n, ast.Name)}
-        assert "floor_from" in names, (
-            f"{name}: the lookup pad's deadline does not mention `floor_from`, "
-            "so it is not measured from before the lookup. A deadline taken "
-            "after the work it covers absorbs nothing — see "
-            "test_a_deadline_taken_after_the_work_absorbs_nothing."
+        # (1) shape, not mention.
+        deadline = call.args[0] if call.args else None
+        assert (
+            isinstance(deadline, ast.BinOp)
+            and isinstance(deadline.op, ast.Add)
+            and isinstance(deadline.left, ast.Name)
+            and deadline.left.id == "floor_from"
+        ), (
+            f"{name}: the lookup deadline is not `floor_from + <budget>`. It must "
+            "be measured FROM the clock taken before the lookup — "
+            "`max(floor_from, time.monotonic()) + budget` mentions floor_from and "
+            "absorbs nothing, which is round 9's bug moved into the handler."
         )
 
-        identify = _call_line(node, "_identify")
-        assert identify is not None, name
-        assert identify < call.lineno, (
-            f"{name}: the lookup pad is at line {call.lineno}, ABOVE the "
-            f"identity lookup at {identify}, so it absorbs nothing."
+        # (2) the switch that turns it off.
+        guard = _enclosing_if(node, call)
+        assert guard is not None, f"{name}: the lookup pad is not guarded by an `if`"
+        test_src = ast.dump(guard.test)
+        assert (
+            "apply_lookup_floor_ms" in test_src
+            and "Gt()" in test_src
+            and "value=0" in test_src
+        ), (
+            f"{name}: the pad's condition is not "
+            "`settings.apply_lookup_floor_ms > 0`. Flipping the comparison is a "
+            f"one-character way to disable both pads. Found: {test_src[:120]}"
         )
 
-        # The pad must close before the SECOND clock is taken, and before
-        # every caller-sized term in the handler. `identify < pad < gate`
-        # would NOT be enough: round 10's Variant B moved the block to sit
-        # immediately above the gate, which satisfies that and is ruff-clean,
-        # and there the 50 ms budget also has to cover the PDF parse and the
-        # S3 upload — so it overruns on every real submission and absorbs
-        # nothing. The deadline's own budget is what makes position matter.
-        ceilings = {
-            "the second deadline (`tail_from`)": _first_line(
-                node,
-                lambda n: isinstance(n, ast.Assign)
-                and any(
-                    isinstance(t, ast.Name) and t.id == "tail_from" for t in n.targets
-                ),
+        # (3) nothing but the lookup inside the padded window.
+        floor = _first_line(
+            node,
+            lambda n: isinstance(n, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "floor_from" for t in n.targets
             ),
-            "the PDF parse (caller-sized)": _call_line(node, "_extract_pdf_text"),
-            "the CV upload (caller-sized)": _call_line(node, "_upload_to_s3"),
-        }
-        present = {k: v for k, v in ceilings.items() if v is not None}
-        assert "the second deadline (`tail_from`)" in present, (
-            f"{name}: no `tail_from`, so the two-pad structure is gone"
         )
-        for what, line in present.items():
-            assert call.lineno < line, (
-                f"{name}: the lookup pad is at line {call.lineno}, BELOW {what} "
-                f"at line {line}. Its 50 ms budget then has to cover that term "
-                "as well as the lookup, so it overruns on every real submission "
-                "and absorbs nothing — while staying ruff-clean and leaving "
-                "every other guard green."
-            )
+        assert floor is not None, f"{name}: never starts the lookup clock"
+        assert floor < call.lineno, (
+            f"{name}: the pad at {call.lineno} is above `floor_from` at {floor}"
+        )
+
+        inside = [
+            n
+            for n in ast.walk(node)
+            if isinstance(n, ast.Await) and floor < n.lineno < call.lineno
+        ]
+        callees = {
+            n.value.func.id
+            for n in inside
+            if isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
+        }
+        assert callees == {"_identify"}, (
+            f"{name}: the work between `floor_from` and the lookup pad is "
+            f"{sorted(callees) or 'nothing'}, not just the identity lookup. A "
+            "50 ms budget was sized for one indexed point read; anything else in "
+            "that window is absorbed by the same deadline or pushes it over. "
+            "Relocating the pad below the CV parse lands here, whatever the "
+            "parse helper is called."
+        )
+
+        # (4) and it closes before the second clock.
+        tail = _first_line(
+            node,
+            lambda n: isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "tail_from" for t in n.targets),
+        )
+        assert tail is not None, f"{name}: no `tail_from`, the two-pad structure is gone"
+        assert call.lineno < tail, (
+            f"{name}: the lookup pad at {call.lineno} is below `tail_from` at {tail}"
+        )
 
 
 def test_the_lookup_pad_is_not_configured_off() -> None:
@@ -644,7 +688,10 @@ def test_the_lookup_pad_is_not_configured_off() -> None:
     floor never got one, which is exactly the one-of-two pattern this branch
     keeps finding.
     """
-    from app.config import settings
+    import pydantic
+    import pytest
+
+    from app.config import Settings, settings
 
     assert settings.apply_lookup_floor_ms > 0, (
         "the lookup pad is disabled, so the identity lookup's cost is "
@@ -652,6 +699,18 @@ def test_the_lookup_pad_is_not_configured_off() -> None:
         "deadline, and it separates 'never applied here' from the other four "
         "states in roughly 200 requests"
     )
+
+    # AND A DEPLOYMENT CANNOT TURN IT OFF EITHER. The assertion above pins the
+    # DEFAULT, which is all a unit test can see — round 11 pointed out that the
+    # docstring and the alert runbook both claimed this test stopped
+    # `APPLY_LOOKUP_FLOOR_MS=0` in a real environment, and it could not. Both
+    # pads now carry `Field(gt=0)`, so pydantic refuses to construct Settings
+    # at all rather than starting the service with the control off. An apply
+    # endpoint that fails to boot is visible; one that is silently answerable
+    # is not.
+    for field in ("apply_lookup_floor_ms", "apply_reply_floor_ms"):
+        with pytest.raises(pydantic.ValidationError):
+            Settings(**{field: 0})
 
 
 def test_the_stored_resume_text_is_bounded_on_both_doors() -> None:
@@ -704,8 +763,123 @@ def test_the_stored_resume_text_is_bounded_on_both_doors() -> None:
             "the other."
         )
 
+        # AND IT MUST WRAP THE PARSE, not sit at a write site. Round 11 found
+        # the draft door truncating at its `attach_resume` call instead, which
+        # left an unbounded local in scope for the rest of the function — so
+        # "every write site inherits the bound, and a third one cannot
+        # reintroduce the channel" was true on one door only. Requiring the
+        # subscript to wrap `await _extract_pdf_text(...)` is what makes that
+        # sentence checkable rather than aspirational.
+        at_producer = [
+            n
+            for n in bounded
+            if isinstance(n.value, ast.Await)
+            and isinstance(n.value.value, ast.Call)
+            and isinstance(n.value.value.func, ast.Name)
+            and n.value.value.func.id == "_extract_pdf_text"
+        ]
+        assert at_producer, (
+            f"{name}: the CV text is truncated somewhere, but not where it is "
+            "PRODUCED. Applied at a write site, the unbounded value stays in "
+            "scope and the next consumer added to this function inherits "
+            "nothing. Wrap the `_extract_pdf_text` await instead."
+        )
+
     assert 0 < mod._MAX_RESUME_TEXT_CHARS <= 200_000, (
         f"_MAX_RESUME_TEXT_CHARS is {mod._MAX_RESUME_TEXT_CHARS}. The point of "
         "the bound is that two writes of it stay far below the reply pad; "
         "raising it past ~200k chars needs the pad re-measured first."
+    )
+
+
+_DELETERS = frozenset({"_delete_from_s3", "_release_unadopted", "_best_effort_delete"})
+
+
+def test_no_object_release_is_awaited_on_a_reply_path() -> None:
+    """ROUND 11. The deterministic half of the pad's upper bound.
+
+    `_refuse` used to commit, then AWAIT an S3 `DeleteObject`, then call
+    `_reply`. The delete is therefore inside the reply pad, and it runs only on
+    the branches that release an unadopted CV — a live application and a
+    cooldown — while a never-applied address releases nothing. So it was a
+    state-dependent term inside the budget meant to hide state-dependent
+    terms.
+
+    The size of it is what made this urgent rather than theoretical:
+    `shared.s3.s3_client` builds a fresh `aioboto3` client per call with no
+    caching, and that construction alone measured 180-450 ms of local Python
+    before a byte leaves the process. One delete is 350-650 ms against a
+    400 ms pad, so the pad failed open on the refusing states on HEALTHY
+    storage, every request.
+
+    Why this guard and not only the timing one: the integration test that
+    measures unspent pad budget catches a clear regression but a marginal one
+    only probabilistically (a 350 ms delete fits, a 650 ms one does not), and
+    it cannot see this at all when the suite runs against local disk storage,
+    where a delete is a cheap unlink. This property is structural, so it holds
+    in every environment and on every future storage backend.
+
+    THE RULE: an object release on a path that returns a reply must be
+    SCHEDULED, not awaited. Awaiting is still correct inside an exception
+    handler — those paths raise a 503 rather than returning `_reply`, the
+    response is already decided, and no pad is covering them.
+    """
+    import app.routers.public_apply as mod
+
+    tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
+
+    # Every line that sits inside some `except` block; awaiting there is fine.
+    excused: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler):
+            for stmt in node.body:
+                for inner in ast.walk(stmt):
+                    if hasattr(inner, "lineno"):
+                        excused.add(inner.lineno)
+
+    scrutinised = ("_refuse", "submit_application", "submit_draft")
+    funcs = {
+        n.name: n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name in scrutinised
+    }
+    assert set(funcs) == set(scrutinised), funcs.keys()
+
+    offenders: list[str] = []
+    for name, node in funcs.items():
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Await):
+                continue
+            call = inner.value
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)):
+                continue
+            if call.func.id in _DELETERS and inner.lineno not in excused:
+                offenders.append(f"{name}:{inner.lineno} awaits {call.func.id}")
+
+    assert not offenders, (
+        "an object release is awaited on a path that returns a reply, which "
+        "puts a state-dependent S3 round trip (350-650 ms, against a 400 ms "
+        "pad) inside the pad. Schedule it with `background.add_task` instead; "
+        "awaiting is only correct inside an `except` block, where the path "
+        "raises rather than replying. Offenders: " + "; ".join(offenders)
+    )
+
+    # And the scheduling route must actually be in use, or the rule above is
+    # satisfied vacuously by a handler that simply stopped cleaning up.
+    scheduled = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "add_task"
+    ]
+    assert len(scheduled) == 5, (
+        f"{len(scheduled)} release(s) are scheduled after the reply, expected 5. "
+        "The five sites that release an object on a 201 path are `_refuse`, "
+        "both doors' superseded-reapplication CV, and both doors' lost-race "
+        "exit. A LOWER count is the vacuous escape from the rule above: a "
+        "handler that simply stops cleaning up awaits nothing and leaks the "
+        "object instead, which is an un-consented CV left in storage with no "
+        "erasure anchor. A HIGHER count means a new release site exists that "
+        "this guard has not been reasoned about — add it here deliberately."
     )

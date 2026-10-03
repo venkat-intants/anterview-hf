@@ -252,22 +252,32 @@ groups:
             affected door, which discloses whether a named third party has
             applied to this company and been turned down.
           impact: >-
-            The `reply` label is the one to act on first. The accepting branch
-            ("this address has never applied here") does roughly fifteen round
-            trips and two commits where a live application does two queries, so
-            the reply pad overruns for the accepting state FIRST — which
-            inverts the control into a cleaner oracle than the one it masks.
-            The `lookup` label is the identity read and is the milder of the
-            two. Rate limiting is NOT a compensating control here: both caps
-            fail open on the same Redis outage, and they are per-IP.
+            Do NOT assume which state overruns first. An earlier version of
+            this annotation reasoned from round-trip counts that the ACCEPTING
+            branch would go first, and measurement found the opposite by about
+            nine times — the dominant term turned out to be one un-cached S3
+            client construction (180-450 ms of local Python) on the REFUSING
+            branch, against fifteen database round trips on the accepting one.
+            Measure before acting. The current expectation, after the releases
+            moved off the reply path, is a tail of 1-21 ms against a 400 ms
+            pad for every state, so any firing here is a real change and not
+            a tuning question. Rate limiting is NOT a compensating control:
+            both caps fail open on the same Redis outage, they are per-IP, and
+            the edge body cap on /apply* is a size bound, not a rate one.
           runbook: >-
-            1. Check database latency and p99 on the apply path; the pads are
-            sized at 50 ms (lookup) and 400 ms (reply) against an indexed point
-            read and a dozen writes respectively. 2. If the cause is sustained
-            latency rather than a blip, raise `APPLY_REPLY_FLOOR_MS` to exceed
-            the new p99 of the accepting branch — a larger pad costs every
-            applicant latency and costs nothing else. 3. Never set either pad
-            to 0 to quiet this: that disables the control rather than the
-            alert, and `test_the_lookup_pad_is_not_configured_off` exists
-            because somebody will try. 4. Re-read AR-10; a sustained rate here
-            is one of its stated triggers to revisit the acceptance.
+            1. Read the `floor` label, then find what the padded region
+            actually spent — do not reason from the code's shape, which has
+            misled this entry three times. For `reply` that region is
+            everything between `tail_from` and the response; for `lookup` it is
+            the identity read alone. 2. Rule out a non-database term first: an
+            awaited network call inside the pad is the failure mode this alert
+            was created by, and `test_no_object_release_is_awaited_on_a_reply_
+            path` guards only the releases known in round 11. 3. If it really
+            is database latency, raise `APPLY_REPLY_FLOOR_MS` above the new
+            p99 — a larger pad costs every applicant some latency and costs
+            nothing else. 4. You CANNOT set either pad to 0 to quiet this:
+            both carry `Field(gt=0)`, so the service refuses to start rather
+            than run with the control off. That is deliberate — an apply
+            endpoint that fails to boot is visible, one that is silently
+            answerable is not. 5. Re-read AR-10; a sustained rate here is one
+            of its stated triggers to revisit the acceptance.

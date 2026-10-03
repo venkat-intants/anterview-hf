@@ -353,7 +353,33 @@ def coerce_answer(question: dict[str, Any], raw: Any) -> Any:
                     f"'{prompt}' takes one answer.", question_id=str(question["id"])
                 )
             return chosen[0] if chosen else None
-        return chosen
+        # DEDUPED, AND THAT IS A SIZE BOUND — round 11 of PH3-B4b.
+        #
+        # Every entry is already known to be one of `options`, which
+        # `normalise_questions` caps at MAX_OPTIONS, so collapsing duplicates
+        # bounds the stored list at twelve entries however long the submitted
+        # one was. Without it, `{"<qid>": ["Python"] * 5_000_000}` passed
+        # validation — each entry is a valid option — and landed as a 50 MB
+        # jsonb write.
+        #
+        # That write sits BELOW `tail_from` on both apply doors and happens
+        # only on the branches that accept: a refusal returns before
+        # `store_answers` is reached. So its cost was a caller-chosen,
+        # one-request separation between "this address was rejected and is in
+        # cooldown" and "this address has never applied here" — measured at
+        # 1.75 seconds past a 400 ms pad, with byte-identical 201 replies.
+        # Third instance of that class; the first two were the CV parse (round
+        # 8) and the extracted CV text (round 10).
+        #
+        # Bounded HERE, at the one place a choice answer is produced, rather
+        # than at the two write sites or on one door's request model — which is
+        # what makes it hold for both doors and for any future caller of
+        # `validate_answers`. `dict.fromkeys` rather than `set` so the
+        # candidate's own ordering survives into what HR reads back.
+        #
+        # Duplicates carried no meaning to lose: an option is chosen or it is
+        # not, and the form cannot render the same box ticked twice.
+        return list(dict.fromkeys(chosen))
 
     text_value = str(raw).strip()[:MAX_ANSWER_CHARS]
     return text_value or None

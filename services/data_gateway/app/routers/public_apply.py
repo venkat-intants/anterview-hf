@@ -56,6 +56,7 @@ import structlog
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     Form,
     Header,
@@ -965,6 +966,7 @@ async def _refuse(
     draft_id: uuid.UUID | None,
     cooldown: _CooldownNotice | None,
     tail_from: float,
+    background: BackgroundTasks,
 ) -> ApplicationOut:
     """Answer a submission the gate will not act on, on EITHER door.
 
@@ -1026,7 +1028,14 @@ async def _refuse(
             detail=_UNAVAILABLE,
         ) from exc
     if cv_key:
-        await _release_unadopted(str(cv_key))
+        # AFTER THE REPLY. Awaiting it here put 350-650 ms of S3 client
+        # construction inside a 400 ms pad, on the two states that reach this
+        # line and not on the third. See `_best_effort_delete`.
+        background.add_task(
+            _best_effort_delete,
+            str(cv_key),
+            event="public_apply.unadopted_cv_orphaned",
+        )
     return await _reply(name, tail_from=tail_from)
 
 
@@ -1123,6 +1132,45 @@ async def _require_write_capability(db: DbSessionDep) -> None:
         ) from exc
 
 
+async def _best_effort_delete(s3_key: str, *, event: str, **fields: str) -> None:
+    """Delete an object nothing points at any more. Never raises.
+
+    SCHEDULED AFTER THE REPLY, not awaited before it — round 11, and the
+    reason is a measurement rather than a preference. `shared.s3.s3_client`
+    builds a fresh `aioboto3.Session` and client on every call with no
+    caching, and constructing that client is 180-450 ms of local Python before
+    a byte leaves the process. One delete measured 347-651 ms end to end
+    against loopback MinIO.
+
+    The reply pad is 400 ms. So a delete awaited inside it did not fit, on
+    HEALTHY storage, every time — and the branches that delete are
+    state-dependent: `_refuse` releases the unadopted CV for a live
+    application and a cooldown, while a never-applied address releases
+    nothing. That put a ~450 ms state-dependent term inside a 400 ms budget
+    and logged `floor_exceeded` on the refusing states of every request.
+
+    An earlier version of AR-10 attributed this to "degraded-but-up object
+    storage" and said the overrun favoured the ACCEPTING branch. Both were
+    wrong: it is healthy storage, and the measured accepting tail is ~54 ms
+    against ~470-495 ms refusing.
+
+    Deleting after the response is sent removes the term from the pad
+    structurally, rather than relying on it being small enough — which is the
+    same argument that moved the CV parse out from under the floor in round 8.
+    The object's real lifetime is unchanged: it is still the same request, and
+    the pointer to it was already cleared in a committed transaction.
+
+    Caching the S3 client is worth doing on its own merits (it would take
+    ~300 ms off every upload too) but it belongs in its own change: it is a
+    lifecycle change to a module all four services share, and it would make
+    this term smaller rather than absent.
+    """
+    try:
+        await _delete_from_s3(s3_key)
+    except Exception:  # noqa: BLE001 — nothing points at it either way
+        log.warning(event, s3_key=s3_key, **fields)
+
+
 async def _release_unadopted(s3_key: str) -> None:
     """Remove a CV that was uploaded before the gate and then not kept.
 
@@ -1156,10 +1204,7 @@ async def _release_unadopted(s3_key: str) -> None:
     path with an opaque id is not personal data on its own, and the
     alternative is a file that cannot be found at all.
     """
-    try:
-        await _delete_from_s3(s3_key)
-    except Exception:  # noqa: BLE001 — nothing points at it either way
-        log.warning("public_apply.unadopted_cv_orphaned", s3_key=s3_key)
+    await _best_effort_delete(s3_key, event="public_apply.unadopted_cv_orphaned")
 
 
 def _email_name(existing: Any | None, submitted: str) -> str:
@@ -1685,7 +1730,16 @@ async def upload_draft_resume(
     if len(raw) > _MAX_RESUME_BYTES:
         raise HTTPException(status_code=413, detail="Your CV must be under 5 MB.")
     try:
-        resume_text = await _extract_pdf_text(raw)
+        # BOUNDED AT THE PRODUCER, like the one-shot door. This used to
+        # truncate at the `attach_resume` call instead, which left an
+        # unbounded `resume_text` in scope for the rest of the function —
+        # so the claim made in round 10 ('every write site inherits the
+        # bound, and a third one cannot reintroduce the channel') held on
+        # one door only. Round 11 called that out and it was right: the
+        # local also feeds `extract_contact_details`, which happens to
+        # truncate internally, so nothing was broken — but the structural
+        # property the comment claimed was not there.
+        resume_text = (await _extract_pdf_text(raw))[:_MAX_RESUME_TEXT_CHARS]
     except Exception as exc:  # noqa: BLE001 — encrypted or image-only PDF
         raise HTTPException(
             status_code=422,
@@ -1726,12 +1780,8 @@ async def upload_draft_resume(
     await draft_store.attach_resume(
         db, draft_id=row["id"], s3_key=s3_key,
         filename=resume.filename, parsed=parsed,
-        # BOUNDED, by the same constant and for the same reason as the one-shot
-        # door — see `_MAX_RESUME_TEXT_CHARS`. The bound is applied on both
-        # doors even though only the other one pads a region containing the
-        # write, because a bound that holds on one door only is the shape of
-        # defect this branch has now found five times.
-        resume_text=resume_text[:_MAX_RESUME_TEXT_CHARS],
+        # Already bounded at the parse above, on both doors.
+        resume_text=resume_text,
     )
     await db.commit()
     return _draft_out(await _draft_or_404(db, token))
@@ -1753,7 +1803,10 @@ async def upload_draft_resume(
     ],
 )
 async def submit_draft(
-    request: Request, db: DbSessionDep, token: DraftTokenDep
+    request: Request,
+    db: DbSessionDep,
+    token: DraftTokenDep,
+    background: BackgroundTasks,
 ) -> ApplicationOut:
     """Turn a confirmed draft into an application.
 
@@ -1882,6 +1935,7 @@ async def submit_draft(
             cv_key=row.get("resume_s3_key"),
             draft_id=row["id"],
             tail_from=tail_from,
+            background=background,
             cooldown=(
                 None
                 if gate.already_applied
@@ -2112,19 +2166,19 @@ async def submit_draft(
             log.warning("public_apply.draft_not_consumed_on_race", draft_id=str(row["id"]))
         else:
             if orphaned_race_cv:
-                try:
-                    await _delete_from_s3(str(orphaned_race_cv))
-                except Exception:  # noqa: BLE001 — the pointer is already cleared
-                    log.warning(
-                        "public_apply.draft_object_orphaned",
-                        draft_id=str(row["id"]),
-                        # The key too. `drafts/{company}/{draft}.pdf` is only
-                        # derivable from this line if company_id is on it, and
-                        # it is not — so without the key this permanent orphan
-                        # is unnameable, which is the thing
-                        # `_release_unadopted`'s docstring says must not happen.
-                        s3_key=str(orphaned_race_cv),
-                    )
+                # Scheduled, not awaited — this exit is reachable only for an
+                # address with no live application, so an S3 round trip here
+                # was a state-dependent term inside the pad like the others.
+                # The key is still logged on failure (`drafts/{company}/
+                # {draft}.pdf` is not derivable from `draft_id` alone, and an
+                # object nobody can name is one a DPDP erasure reports success
+                # over).
+                background.add_task(
+                    _best_effort_delete,
+                    str(orphaned_race_cv),
+                    event="public_apply.draft_object_orphaned",
+                    draft_id=str(row["id"]),
+                )
         return await _reply(name, tail_from=tail_from)
     except Exception:
         await db.rollback()
@@ -2198,12 +2252,16 @@ async def submit_draft(
     # skipped it and stranded the file. `drafts/` is outside the applicant
     # prefix erasure sweeps, which makes that strand permanent.
     if superseded_cv:
-        try:
-            await _delete_from_s3(superseded_cv)
-        except Exception:  # noqa: BLE001 — the pointer is already gone
-            log.warning(
-                "public_apply.superseded_reapply_cv_orphaned", s3_key=superseded_cv
-            )
+        # Scheduled, not awaited: same reason as `_refuse`'s release. This one
+        # fires only for a staged reapplication that superseded an earlier CV,
+        # which is a sub-state of "rejected and past cooldown" / "rejected with
+        # an override" — so awaiting it was a second state-dependent S3 term
+        # inside the pad.
+        background.add_task(
+            _best_effort_delete,
+            superseded_cv,
+            event="public_apply.superseded_reapply_cv_orphaned",
+        )
 
     # Scoring happens in the reconciler. Woken here for the same reason the
     # one-shot door wakes it: otherwise this application waits for the next
@@ -2456,6 +2514,7 @@ async def submit_application(
     requisition_id: uuid.UUID,
     request: Request,
     db: DbSessionDep,
+    background: BackgroundTasks,
     resume: UploadFile,
     full_name: Annotated[str, Form(min_length=2, max_length=200)],
     email: Annotated[EmailStr, Form()],
@@ -2734,6 +2793,7 @@ async def submit_application(
             cv_key=s3_key,
             draft_id=None,
             tail_from=tail_from,
+            background=background,
             cooldown=(
                 None
                 if gate.already_applied
@@ -2898,7 +2958,13 @@ async def submit_application(
         await db.rollback()
         # The winning submission stored its own CV; this one's object has no
         # row. (For a new person it never did: the applicant insert rolled back.)
-        await _release_unadopted(s3_key)
+        #
+        # Scheduled rather than awaited, as every other release on a 201 path
+        # now is: this exit is reachable only while an applicant is being
+        # created, so awaiting an S3 delete here timed that sub-state.
+        background.add_task(
+            _best_effort_delete, s3_key, event="public_apply.unadopted_cv_orphaned"
+        )
         log.info("public.apply.race_lost", requisition_id=str(requisition_id))
         return await _reply(name, tail_from=tail_from)
     # DELETED, NOT COPIED TO THE OTHER DOOR — round 10, the last of the
@@ -2980,12 +3046,16 @@ async def submit_application(
     # can still reach it, and it must not be skipped because staging a mail
     # failed.
     if superseded_cv:
-        try:
-            await _delete_from_s3(superseded_cv)
-        except Exception:  # noqa: BLE001 — the pointer is already gone
-            log.warning(
-                "public_apply.superseded_reapply_cv_orphaned", s3_key=superseded_cv
-            )
+        # Scheduled, not awaited: same reason as `_refuse`'s release. This one
+        # fires only for a staged reapplication that superseded an earlier CV,
+        # which is a sub-state of "rejected and past cooldown" / "rejected with
+        # an override" — so awaiting it was a second state-dependent S3 term
+        # inside the pad.
+        background.add_task(
+            _best_effort_delete,
+            superseded_cv,
+            event="public_apply.superseded_reapply_cv_orphaned",
+        )
 
     # Scoring happens in the reconciler. Wake it, as a bulk upload does, rather
     # than leaving this application for the next scheduled pass (up to ten
@@ -3033,6 +3103,30 @@ async def _ensure_guest_user(
         text("SELECT user_id FROM applicants WHERE id = :a"), {"a": applicant_id}
     )
     if linked is not None:
+        # FILL THE CV TEXT IF IT IS MISSING, then return. Round 11: the draft
+        # door builds its `Applicant` with `user_id` already set (the draft's
+        # own guest identity), so this early exit is the path it always takes —
+        # and `users.resume_text` was therefore never written on that door,
+        # while the one-shot door writes it in the INSERT below. The column is
+        # what the B-033 enrichment path and interview_core's avatar context
+        # read, so "provision both doors alike" was not true of it.
+        #
+        # FILLS, NEVER REPLACES, which is the same rule
+        # `apply_extracted_identity` follows for the name and the email: a
+        # value already on the row came from somewhere with more authority
+        # than this unauthenticated request. Idempotent, so a returning
+        # applicant is not rewritten, and bounded by
+        # `_MAX_RESUME_TEXT_CHARS` at the parse — a single-digit-millisecond
+        # statement against the reply pad.
+        await db.execute(
+            text(
+                "UPDATE users SET resume_text = :rt, updated_at = :n"
+                " WHERE id = :uid"
+                "   AND (resume_text IS NULL OR btrim(resume_text) = '')"
+                "   AND :rt <> ''"
+            ),
+            {"rt": resume_text, "uid": linked, "n": now},
+        )
         return uuid.UUID(str(linked))
 
     guest_user_id = uuid.uuid4()

@@ -750,19 +750,52 @@ it. What this entry now accepts is overrun by work whose size the caller does
 NOT choose — and that sentence is load-bearing only for as long as nobody adds
 another caller-sized write below `tail_from`, which is twice now.
 
-Two mechanisms belong here that earlier versions did not name. **Storage
-latency, not only database latency**: `_refuse` performs a real `DeleteObject`
-round trip after its commit and before `_reply`, so states (a) and (b) carry a
-network term inside the pad that state (d) does not. Under degraded-but-up
-object storage the refusing states overrun and the accepting one does not —
-the same channel with the sign reversed, and `_require_write_capability` does
-not cover it because storage is up. **And the overrun is asymmetric toward the
-state that most needs masking**: after `tail_from` the accepting branch runs
-roughly fifteen round trips and two commits where a live application runs two
-queries and a no-op commit, so on managed Postgres at 15-20 ms RTT the pad is
-at or over budget for the accepting state first. A pad that fails open for one
-state before the others is a cleaner oracle than the one it masks, which is why
-(b) is a trigger rather than a footnote.
+**This paragraph has now been wrong three times, and the third version was
+written one round ago. Read the numbers, not the reasoning.**
+
+The previous version said storage latency mattered only "under
+degraded-but-up object storage", and that the overrun favoured the ACCEPTING
+branch because it runs ~15 round trips to a live application's two. Round 11
+measured both claims and both were false:
+
+* **It was not a degraded-storage condition. It was every request, on healthy
+  storage.** `_refuse` awaited a real `DeleteObject` between its commit and
+  `_reply`, and `shared.s3.s3_client` builds a fresh `aioboto3` Session and
+  client on every call with no caching. That construction alone is 180-450 ms
+  of local Python before a byte leaves the process; a whole delete measured
+  347-651 ms against a 400 ms pad. The pad was failing open on the refusing
+  states continuously, against loopback MinIO.
+* **The direction was backwards by roughly nine times.** Measured tails:
+  accepting ~54 ms, refusing ~470-495 ms. The reasoning about round-trip counts
+  was sound and irrelevant — one un-cached S3 client dwarfed fifteen database
+  round trips.
+
+**Fixed, not accepted.** All five object releases that sit on a path returning
+a reply — `_refuse`, both doors' superseded-reapplication CV, both doors'
+lost-race exit — now run as `BackgroundTasks` after the response is sent, so
+the pad covers database work only. Re-measured: every state leaves 379-399 ms
+of the 400 ms pad unspent, a tail of 1-21 ms. Two guards hold it:
+`test_no_object_release_is_awaited_on_a_reply_path` (structural, deterministic,
+holds on any storage backend) and
+`test_no_state_overruns_the_pad_that_is_meant_to_absorb_it` (the first upper
+bound this control has ever had — fifteen guards and sixteen matrix tests were
+green while a 600 ms term lived in a 400 ms pad, because every one of them
+asserted a LOWER bound).
+
+Not fixed, and worth knowing before anyone trusts a number above: **the
+un-cached S3 client is still there**, so every CV upload still pays that
+180-450 ms. It is now outside both pads, where caller-sized work belongs, and
+caching it is a lifecycle change to a module all four services share — its own
+change, on its own review. One consequence to hold onto: that cost is also the
+noise floor which, at n=25, stopped round 11 converting the open pad into a
+working oracle. Caching it removes the jitter as well as the term, so the two
+should land together or the sizing should be re-measured after.
+
+What this residue now accepts is overrun of a pad by database work whose size
+the caller does not choose. The sentence is load-bearing only for as long as
+nobody puts another caller-sized or network term below `tail_from`, which has
+now happened three times: the CV parse (round 8), the extracted CV text
+(round 10), and the S3 delete plus the answers jsonb (round 11).
 
 3. **Both rate limits fail open when Redis is unavailable.** The burst (6/min)
    and sustained (60/hour) caps are the stated bound on the anonymous object
@@ -772,23 +805,40 @@ state before the others is a cleaner oracle than the one it masks, which is why
    worse — but it means the bound is conditional, and the same outage disables
    the JWT revocation epoch.
 
-   Two things the caps do NOT do, found in round 10. **They do not bound the
-   upload at all.** FastAPI resolves route-level `dependencies=[...]` AFTER
+   Two things the caps do NOT do. **They never reached the upload at all.**
+   FastAPI resolves route-level `dependencies=[...]` AFTER
    `await request.form()`, and Starlette applies no size limit to a part that
    carries a filename — it streams it into a `SpooledTemporaryFile` that rolls
-   to disk past 1 MB, with no total cap anywhere in this repo and none on the
-   uvicorn command line. So `_MAX_RESUME_BYTES` caps what the handler READS,
-   not what the service RECEIVES: a 1 GB part is written to the container's
-   filesystem before either limiter runs, and the request is then refused 413.
-   For that attack the bound is not merely fail-open, it is structurally
-   inapplicable. **And they are keyed per IP address**, so an attacker holding
-   an IPv6 /64 has 2^64 independent 60/hour budgets, which makes "60 an hour"
-   a bound on a well-behaved client rather than on bulk enumeration.
+   to disk past 1 MB. So `_MAX_RESUME_BYTES` caps what the handler READS, not
+   what the service RECEIVES: the part is written to the container's filesystem
+   before either limiter runs, and the request is then refused 413. Verified
+   against the running service — a 64 MB anonymous part was fully spooled and
+   only then answered 429 by the limiter, so for that attack the caps are not
+   merely fail-open, they are structurally inapplicable.
+
+   The bound is now at the EDGE, where it belongs: `request_body { max_size
+   8MB }` on `handle /apply*` in both `Caddyfile` and `space/Caddyfile`. An
+   earlier version of this entry said there was "no total cap anywhere in this
+   repo", which was false and is corrected as a matter of record — four sibling
+   upload prefixes already had one (`/interviewer/*` at 1 MB,
+   `/hr/rounds/*/task/materials*`, `/offer*` and `/task*` at 11 MB). `/apply*`
+   was the only UNAUTHENTICATED upload prefix in the service and the only one
+   without a cap, which is the wrong way round. It also composed with residue
+   1: a caller who can fill the container filesystem can CAUSE the write
+   failure residue 1 splits 201/503 on, so accepting the two separately had
+   accepted an attacker-triggerable state oracle without saying so anywhere.
+
+   **And they are keyed per IP address**, so an attacker holding an IPv6 /64
+   has 2^64 independent 60/hour budgets, which makes "60 an hour" a bound on a
+   well-behaved client rather than on bulk enumeration. Still open.
 
 4. **The concurrency exit is state-correlated, and no test reaches it.**
    Two concurrent submissions for the same address are arbitrated by a unique
    index and the loser takes its own code path on both doors. `IntegrityError`
-   can only be raised while an enrolment or an applicant is being CREATED,
+   can only be raised while an enrolment, an applicant or a guest IDENTITY is
+   being CREATED (the third is new in round 10, when `_ensure_guest_user`
+   moved inside the draft door's guarded region, so an HR-created applicant
+   with a NULL `user_id` now reaches it),
    which never happens for an address that already has one (`enrol_applicant`
    no-ops on any live enrolment, whatever its status) — so reaching that path
    at all is the answer **"this address has never applied here"**, state (d)
@@ -937,6 +987,71 @@ readable row.
 
 ---
 
+## AR-11 — The platform-owner bootstrap password is printed to stdout, where a deployment's log collector keeps it
+
+| | |
+|---|---|
+| **Source finding** | PH3-B4b round-11 security audit, 2026-10-03 — found while applying the migration chain to a throwaway database, not by looking for it |
+| **Status** | **ACCEPTED — open; only reached when `PLATFORM_OWNER_PASSWORD` is unset** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a deployment whose migration step runs where stdout is captured — CI, a container entrypoint, a PaaS build log, a log aggregator; (b) a log-retention or SOC2/ISO control review; (c) the first real deployment that does not set `PLATFORM_OWNER_PASSWORD`; (d) any report that the bootstrap account was used by someone who should not have it |
+
+**What is accepted.** `alembic/versions/20260625_0002_c3e5f7a9b1d3_platform_owner_hierarchy.py`
+seeds the `platform_owner` account. When `PLATFORM_OWNER_PASSWORD` is unset it
+generates `secrets.token_urlsafe(24)` and PRINTS it, with the account's email,
+in a banner on **stdout** — a live credential for the highest-privilege
+account in the product, in plaintext, in whatever captures that stream.
+CWE-532.
+
+The code is deliberate and says so: the comment explains that `print` is used
+rather than structlog precisely so the value is "never captured in structured
+log sinks that might ship to external collectors". That reasoning holds for an
+operator running `alembic upgrade head` in a terminal, which is the case it was
+written for. It does not hold for the way this product is actually deployed —
+a migration step in CI or a container entrypoint, where stdout is exactly what
+the platform collects and retains, typically far longer than "rotate
+immediately" assumes.
+
+**Why it is accepted rather than fixed in this branch.** It is unrelated to
+PH3-B4b, it predates it, and the fix is a product decision about bootstrap
+flow rather than a code tidy — see "Path to closure". Landing it inside a
+privacy branch that is already ten review rounds deep would mean changing how
+the highest-privilege account is provisioned without its own review.
+
+**What is NOT true.** A reader could assume any of these. None holds:
+
+* That the `print`-not-structlog choice keeps it out of log collectors. It
+  keeps it out of *structured* sinks. A PaaS, CI runner or container runtime
+  collects the stream itself, so the value is captured in exactly the
+  deployments where it matters most.
+* That "rotate immediately" is a control. Nothing enforces, checks or reminds;
+  the account works indefinitely with the printed password, and no alert fires
+  if it is used.
+* That it only affects development. It affects any deployment that has not set
+  `PLATFORM_OWNER_PASSWORD`, and nothing refuses to start without it.
+* That the migration being old means it has been reviewed in this light. It
+  was found incidentally in round 11 while migrating a throwaway database, not
+  by any audit of the bootstrap path.
+
+**What IS true, and bounds this.** The banner prints only when
+`PLATFORM_OWNER_PASSWORD` is unset, so a deployment that sets it is entirely
+unaffected, and the plaintext is used only to compute the bcrypt hash — it is
+never stored in the database.
+
+**Path to closure.** Three options, roughly in order of preference, all of them
+a product decision rather than a patch: (1) require
+`PLATFORM_OWNER_PASSWORD` and FAIL CLOSED when it is absent, which suits a
+deployed product and makes the credential the operator's to handle; (2) write
+the generated value to a `0600` file on the migration host instead of stdout,
+which keeps the convenience for a local `alembic upgrade head`; (3) print a
+one-time password-reset link rather than a password, so what leaks into a log
+expires. Whichever is chosen, set `PLATFORM_OWNER_PASSWORD` on every existing
+deployment first and rotate the account on any deployment where the banner has
+already been printed.
+
+---
+
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -950,4 +1065,5 @@ readable row.
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
-| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun (now counted and alerted, still open); rate limits fail open when Redis is down and never reach the upload at all; a refused submission's CV exists un-consented; the concurrency exit is state-correlated, untested, and arbitrated by a conditionally-created index; and the two handlers' size is an open debt | PH3-B4b rounds 1-10 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, `public_apply_floor_exceeded_total` above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
+| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun (now counted and alerted, still open); rate limits fail open when Redis is down and never reach the upload at all; a refused submission's CV exists un-consented; the concurrency exit is state-correlated, untested, and arbitrated by a conditionally-created index; and the two handlers' size is an open debt | PH3-B4b rounds 1-11 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, `public_apply_floor_exceeded_total` above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
+| **AR-11** | The platform-owner bootstrap password is printed to stdout in plaintext when `PLATFORM_OWNER_PASSWORD` is unset, so any deployment whose migration output is captured retains a live credential for the highest-privilege account | PH3-B4b round-11 audit (incidental) | `platform_owner` (+ `security-auditor`) | A deployment whose migration step runs where stdout is collected, a log-retention or SOC2 review, or the first deployment that does not set the variable |

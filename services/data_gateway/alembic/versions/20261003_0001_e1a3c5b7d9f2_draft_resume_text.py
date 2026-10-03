@@ -26,12 +26,24 @@ channel for a silently unscored door. Bounding the text (`_MAX_RESUME_TEXT_CHARS
 100k characters) fixes the channel, and this column lets BOTH doors store the
 same bounded text instead of diverging further.
 
-NULLABLE, with no backfill. Drafts already open when this lands have no stored
-text and cannot get one — the bytes are in object storage but re-parsing every
-expiring draft to fill a column is work nobody asked for, and those drafts
-behave exactly as they do today. New uploads fill it. A NULL therefore means
-"uploaded before this migration", which is also what the reconciler's predicate
-already treats correctly.
+NULLABLE, with no backfill, and the cost of that is NOT nothing — an earlier
+version of this docstring said those drafts "behave exactly as they do today",
+which is true and is the defect rather than a reassurance. A draft-door
+application created from a pre-migration draft has no `resume_text`, so
+`reconciliation._UNSCORED_WORK_SQL` still cannot see it, and
+`_SETTLE_UNSCORABLE_SQL` will not clear `pending_enrichment` while the
+enrolment has `ats_overall IS NULL` on an auto-scoring workflow. The HR views
+that read that flag ("scoring_pending" on the requisition dashboard, "still
+being read" on the applicant list) therefore never settle for those rows.
+
+Left open deliberately, and recorded rather than fixed here: the repair is to
+relax the reconciler's predicate to also admit `resume_s3_key IS NOT NULL`,
+which is nearly free because the scoring pass already downloads and re-extracts
+from an object key. That changes which rows the reconciler picks up across the
+whole product — HR-uploaded applicants with a key and no text included — so it
+belongs in a change reviewed on its own terms, not inside a privacy branch. The
+affected set is bounded and knowable: drafts open at the moment this migration
+ran.
 
 CONSENT IS ALREADY COVERED. `start_draft` records the DPDP consent ledger entry
 in the same transaction as the draft row, before any CV exists, which is why the

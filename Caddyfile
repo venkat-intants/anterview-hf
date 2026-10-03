@@ -117,6 +117,25 @@
 	# is the same mechanism that lets /hr/*, /jobs* and /exam* be both a React
 	# route and an API prefix. Only XHR (Accept: */*) reaches the backend.
 	handle /apply* {
+		# ANONYMOUS, AND THE ONLY UPLOAD ON THIS PREFIX IS A 5 MB CV.
+		#
+		# `_MAX_RESUME_BYTES` caps what the handler READS, not what the service
+		# RECEIVES: FastAPI resolves route dependencies after `await
+		# request.form()`, and Starlette applies no limit to a multipart part
+		# that carries a filename — it streams it into a SpooledTemporaryFile
+		# that rolls to disk past 1 MB. So before this block an unauthenticated
+		# caller could write an arbitrarily large body to the container's
+		# filesystem and only then be told 413, with neither apply rate limiter
+		# having run yet (both are route dependencies). docs/ACCEPTED-RISKS.md
+		# AR-10 residue 3 recorded that the caps "never reach the upload at
+		# all"; this is the bound that does.
+		#
+		# 8MB: the 5 MB CV plus multipart overhead, the JSON answers field and
+		# the form text, with room to spare. Everything on this prefix that is
+		# not the CV is small.
+		request_body {
+			max_size 8MB
+		}
 		reverse_proxy data_gateway:8002
 	}
 	handle /careers* {

@@ -7,9 +7,13 @@ The endpoint is exercised end to end against Postgres in
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 import pathlib
 import re
+import time
+
+import pytest
 
 
 def _submit() -> str:
@@ -398,4 +402,120 @@ def test_the_draft_door_wires_the_release_decision_into_mark_submitted() -> None
         "for `release_resume`, so the release decision "
         "`_stage_reapplication` makes is thrown away — the draft keeps a "
         "pointer to an object the tail delete removes"
+    )
+
+
+# ===========================================================================
+# The pad ABSORBS its term — asserted by behaviour, not by position
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_a_pad_absorbs_the_work_it_covers_to_a_constant() -> None:
+    """The property every placement guard in this file assumes and none proves.
+
+    Round 9 found the deadline arithmetic broken while every structural guard
+    stayed green: `_reply` computed
+        max(floor - (now - floor_from), floor - (now - tail_from))
+    and called it "the later of two deadlines". It is — and `time.monotonic`
+    is monotonic, so `tail_from >= floor_from` always, so the tail term always
+    won and the `floor_from` term was unreachable arithmetic. The reply
+    released at `tail_from + floor`, with `tail_from` taken AFTER the identity
+    lookup, so a 1.30 ms difference in that lookup produced a 1.30 ms
+    difference in reply time. The guards checked where the clocks were
+    ASSIGNED; nothing checked that a clock bounded anything.
+
+    So this measures the actual property: given a deadline taken BEFORE some
+    work, two runs whose work differs in duration must finish at the same
+    time. If the deadline is computed from a clock taken after the work — the
+    bug — the difference passes straight through and the two runs differ by
+    however much the work differed.
+    """
+    from app.routers.public_apply import _hold_until
+
+    budget = 0.25
+
+    async def release_after(work: float) -> float:
+        started = time.monotonic()
+        await asyncio.sleep(work)
+        await _hold_until(started + budget, what="test")
+        return time.monotonic() - started
+
+    quick = await release_after(0.005)
+    slow = await release_after(0.060)
+
+    # Both land on the deadline, so the 55 ms difference in work is gone.
+    assert quick >= budget * 0.95, quick
+    assert slow >= budget * 0.95, slow
+    assert abs(slow - quick) < 0.040, (
+        "the pad did not absorb the work it covers: runs differing by 55 ms of "
+        f"work finished {abs(slow - quick) * 1000:.0f} ms apart, so the work is "
+        "still observable from outside"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_deadline_taken_after_the_work_absorbs_nothing() -> None:
+    """The negative control, so the test above cannot pass vacuously.
+
+    This is the shape round 9 found in `_reply`: the deadline measured from a
+    clock taken after the state-dependent work. It must NOT absorb — and if
+    this ever starts absorbing, the test above is measuring something other
+    than what it claims.
+    """
+    from app.routers.public_apply import _hold_until
+
+    budget = 0.25
+
+    async def release_after(work: float) -> float:
+        started = time.monotonic()
+        await asyncio.sleep(work)
+        after_work = time.monotonic()  # the mistake: clock taken AFTER
+        await _hold_until(after_work + budget, what="test")
+        return time.monotonic() - started
+
+    quick = await release_after(0.005)
+    slow = await release_after(0.060)
+
+    assert slow - quick > 0.030, (
+        "a deadline taken after the work appears to absorb it, which cannot be "
+        "true — the positive test above is therefore not measuring absorption"
+    )
+
+
+def test_the_reply_pad_is_not_a_max_of_two_clocks() -> None:
+    """`max()` of two remaining-times is just the later deadline.
+
+    Kept as a cheap structural companion to the behavioural tests above,
+    because this exact expression shipped and was described as covering both
+    terms. It covers the later one, and the later one is the one that has
+    already let the lookup through.
+    """
+    import app.routers.public_apply as mod
+
+    # PARSED, not scanned. The first version of this test asserted
+    # `"max(" not in inspect.getsource(_reply)` and failed immediately — on the
+    # word "max()" inside the docstring explaining why max() is wrong. That is
+    # the same defect it exists to catch (an index into source text matching
+    # prose rather than code), reproduced in the guard against it.
+    tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
+    reply = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply"
+    )
+
+    calls = {
+        n.func.id
+        for n in ast.walk(reply)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "max" not in calls, (
+        "`_reply` combines deadlines with max() again — that selects the LATER "
+        "deadline, and the later clock is taken after the identity lookup, so "
+        "the lookup passes straight through"
+    )
+
+    names = {n.id for n in ast.walk(reply) if isinstance(n, ast.Name)}
+    assert "floor_from" not in names, (
+        "`_reply` reads floor_from again; the lookup is absorbed by its own pad "
+        "in the handler, and a second reference here is the broken shape"
     )

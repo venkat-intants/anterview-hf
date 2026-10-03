@@ -681,17 +681,17 @@ substantiated complaint — that is the decision recorded here, not a preference
 
 | | |
 |---|---|
-| **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-8, 2026-09-28 to 2026-10-02 |
+| **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-9, 2026-09-28 to 2026-10-03 |
 | **Status** | **ACCEPTED — four residues, all open; the property itself holds on a healthy system and is tested** |
 | **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
-| **Trigger to revisit** | Any of: (a) a timing or enumeration report against the apply doors; (b) a `public_apply.reply_floor_exceeded` rate above noise; (c) a Redis outage coinciding with apply traffic; (d) a residency or privacy bid asking about enumeration resistance; (e) the write-set design in "Path to closure" becoming cheap enough to build |
+| **Trigger to revisit** | Any of: (a) a timing or enumeration report against the apply doors; (b) a `public_apply.floor_exceeded` rate above noise; (c) a Redis outage coinciding with apply traffic; (d) a residency or privacy bid asking about enumeration resistance; (e) the write-set design in "Path to closure" becoming cheap enough to build |
 
 **What is accepted.** `POST /apply/{requisition_id}` and `POST /apply/draft/submit`
 are anonymous — no login, the caller supplies the email as a form field, and the
 requisition id is explicitly not a secret. They must answer identically whether
 that address has a live application, was rejected and is inside the waiting
 period, was rejected and the period elapsed, was rejected with an HR override,
-or has never applied here. Seven review rounds each found a way to tell those
+or has never applied here. Nine review rounds each found a way to tell those
 states apart. The reply body, the status code on a healthy system, the state
 left behind, what a second submission reads back, and the dominant timing term
 are all closed. FOUR residues are not, and are accepted here rather than in a commit
@@ -711,13 +711,23 @@ message or a test docstring — three failure modes and one traded invariant:
    characterisation of this residue as "a disk-full primary" understated it:
    several of these are ordinary production events rather than outages.
 
-2. **The reply floor fails open, silently.** Every reply is held to
-   `apply_reply_floor_ms` (default 400) measured from before that door's
-   state-dependent work. A branch that OVERRUNS the floor logs
-   `public_apply.reply_floor_exceeded` and answers immediately — so under
-   enough load, which is load an attacker can generate, the control switches
-   itself off and the timing difference is readable again. There is no counter
-   and no alert on that log line.
+2. **The reply floor fails open, silently.** Each state-dependent term is absorbed
+by its own pad — the identity lookup by `apply_lookup_floor_ms`, everything
+below the gate by `apply_reply_floor_ms` — and each deadline is taken BEFORE
+the term it covers, which is what makes the absorption real. A branch that
+OVERRUNS its pad logs `public_apply.floor_exceeded` and answers immediately, so
+that term becomes readable again. **There is no counter and no alert on that
+log line**, and the compensating control (`rate_limit`) is instrumented while
+this one is not.
+
+NOT the dense-CV mechanism any more. An earlier version of this entry said the
+floor failed open "under enough load", and the Index row said "on demand (a
+dense CV)" — the second was accurate when written and both are now obsolete.
+A single deadline was spent by the CV parse, so a large PDF switched the
+control off; the parse and upload now sit BETWEEN the two pads, outside either
+budget, because they are the caller's own bytes and identical in every state.
+What remains is genuine overrun of a pad by the work it covers, which is a
+database-latency condition rather than something a caller chooses.
 
 3. **Both rate limits fail open when Redis is unavailable.** The burst (6/min)
    and sustained (60/hour) caps are the stated bound on the anonymous object
@@ -779,12 +789,6 @@ for its own skipped checks; the contrast is not defensible for long — the
 compensating control is instrumented and the privacy control it compensates
 for is not. (3) is a product decision about which way to fail.
 
-**Owner:** `platform_owner` (+ `security-auditor`).
-**Fires when:** a timing or enumeration report against the apply doors; a
-`public_apply.reply_floor_exceeded` rate above noise; a Redis outage coinciding
-with apply traffic; a residency or privacy bid that asks about enumeration
-resistance; or the write-set design in (1) becoming cheap enough to build.
-
 ---
 
 ## Index
@@ -800,4 +804,4 @@ resistance; or the write-set design in (1) becoming cheap enough to build.
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
-| **AR-10** | The anonymous apply doors separate the states under any write failure; the reply floor fails open on demand (a dense CV); rate limits fail open; and a refused submission's CV exists un-consented | PH3-B4b rounds 1-7 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, a `reply_floor_exceeded` rate above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
+| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun with no alert; rate limits fail open when Redis is down; a refused submission's CV exists un-consented; and the two handlers' size is an open debt | PH3-B4b rounds 1-9 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, a `floor_exceeded` rate above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |

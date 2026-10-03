@@ -583,9 +583,29 @@ def _received(name: str) -> ApplicationOut:
     )
 
 
-async def _reply(
-    name: str, *, floor_from: float, tail_from: float | None = None
-) -> ApplicationOut:
+async def _hold_until(deadline: float, *, what: str) -> None:
+    """Sleep until *deadline* on the monotonic clock. Never sleeps backwards.
+
+    ABSORBING A TERM, not delaying a reply. Every caller computes the deadline
+    from a clock taken BEFORE the state-dependent work it covers, which is the
+    whole trick: the release time then does not depend on how long that work
+    took, so the work is unobservable from outside. A deadline taken AFTER the
+    work cannot absorb it, however it is combined with others.
+
+    Overruns are logged rather than hidden. Past the deadline the term is
+    visible again, and a control that switches itself off quietly is worse than
+    one that says so.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+        return
+    log.warning(
+        "public_apply.floor_exceeded", floor=what, over_ms=round(-remaining * 1000)
+    )
+
+
+async def _reply(name: str, *, tail_from: float) -> ApplicationOut:
     """The one reply, held until a common deadline.
 
     THE REPLY IS A CONSTANT; THE WORK IS NOT. Every state answers with the
@@ -615,40 +635,36 @@ async def _reply(
     than this one and it is recorded rather than claimed closed — see the
     module docstring of the indistinguishability test.
     """
+    # ONE DEADLINE, TAKEN BEFORE THE BRANCH. Not a `max()` of two.
+    #
+    # The previous version computed
+    #     max(floor - (now - floor_from), floor - (now - tail_from))
+    # and called it "the later of two deadlines". It is — and that is the bug.
+    # `time.monotonic` is monotonic, so `tail_from >= floor_from` always, so
+    # the tail term is always the larger and the `floor_from` term was
+    # unreachable arithmetic. The reply was released at `tail_from + floor`,
+    # and `tail_from` is taken AFTER the identity lookup, so the lookup's
+    # state-dependent cost passed straight through. Simulated with the shipped
+    # constant: a 1.30 ms difference in `_identify` produced a 1.30 ms
+    # difference in reply time at both a 5 ms and a 555 ms parse. Round 7's
+    # finding, re-opened by the commit that claimed to cover it — and asserted
+    # closed in four places, which is worse than the leak.
+    #
+    # QUANTISING WAS THE OTHER CANDIDATE AND IT IS WORSE. Releasing at
+    # `ceil(elapsed / floor) * floor` absorbs the difference mid-bucket and
+    # AMPLIFIES it at a seam: simulated, padding the parse to land ~399 ms in
+    # turns a 1.3 ms state difference into a 400 ms one, and the caller chooses
+    # the padding.
+    #
+    # So each state-dependent term gets its OWN pad, each measured from a clock
+    # taken before that term. The identity lookup is absorbed by
+    # `_hold_until(floor_from + lookup_floor)` in the handler, immediately
+    # after it happens. This absorbs everything from the gate down. Between
+    # them sit only the parse and the upload — the caller's own bytes,
+    # identical in every state, so nothing there needs masking.
     floor = settings.apply_reply_floor_ms / 1000
     if floor > 0:
-        # THE LATER OF TWO DEADLINES, and the reason is a regression this
-        # function already shipped once.
-        #
-        # Round 6 found the work differing below the gate, so the clock was
-        # started after the upload. Round 7 found the IDENTITY LOOKUP sitting
-        # above that clock, so round 7's fix moved the clock to the top of the
-        # handler. Round 8 measured what that cost: the PDF parse is now
-        # INSIDE the deadline, it is CPU-bound, and the caller sizes it. A
-        # dense 60-page CV parses in ~555 ms against a 400 ms floor — measured
-        # on this repo's own extractor, not argued — so the floor was
-        # routinely inactive in production and an attacker could guarantee it
-        # never engaged. One clock cannot cover both a caller-sized term and
-        # the tail below it: cover the term and the tail escapes, cover the
-        # tail and the term is exposed.
-        #
-        # So two. `floor_from` is the top of the handler and covers the
-        # identity lookup; `tail_from` is taken after that door's shared work
-        # and covers the branch. Sleeping to the later of both means neither a
-        # 600-byte PDF nor a 6 MB one exposes either.
-        remaining = max(
-            floor - (time.monotonic() - floor_from),
-            floor - (time.monotonic() - tail_from) if tail_from else 0.0,
-        )
-        if remaining > 0:
-            await asyncio.sleep(remaining)
-        else:
-            # Not fatal, and not something to hide: past the floor the timing
-            # of this branch is visible again.
-            log.warning(
-                "public_apply.reply_floor_exceeded",
-                over_ms=round(-remaining * 1000),
-            )
+        await _hold_until(tail_from + floor, what="reply")
     return _received(name)
 
 
@@ -904,11 +920,10 @@ async def _refuse(
     db: DbSessionDep,
     *,
     name: str,
-    floor_from: float,
     cv_key: str | None,
     draft_id: uuid.UUID | None,
     cooldown: _CooldownNotice | None,
-    tail_from: float | None = None,
+    tail_from: float,
 ) -> ApplicationOut:
     """Answer a submission the gate will not act on, on EITHER door.
 
@@ -971,7 +986,7 @@ async def _refuse(
         ) from exc
     if cv_key:
         await _release_unadopted(str(cv_key))
-    return await _reply(name, floor_from=floor_from, tail_from=tail_from)
+    return await _reply(name, tail_from=tail_from)
 
 
 async def _refuse_work(
@@ -1762,6 +1777,14 @@ async def submit_draft(
     existing = await _identify(
         db, company_id=company_id, requisition_id=requisition_id, address=address
     )
+    # ABSORB THE LOOKUP HERE, against a deadline taken before it. It is the one
+    # state-dependent term above the gate — a row for four of the five states
+    # and nothing for the fifth — and it cannot be moved below the upload,
+    # because the object key embeds the applicant id it returns.
+    if settings.apply_lookup_floor_ms > 0:
+        await _hold_until(
+            floor_from + settings.apply_lookup_floor_ms / 1000, what="lookup"
+        )
 
     # The SAME gate the one-shot form uses. This route had its own copy of the
     # decision and only the other copy was fixed, so a rejected candidate who
@@ -1774,6 +1797,11 @@ async def submit_draft(
     # top of the handler and the branch, and `floor_from` alone covers both
     # the identity lookup and the tail. `_refuse` and `_reply` default
     # `tail_from` to None for exactly this case.
+    # The tail clock, after the lookup pad and before anything branches.
+    # The same shape as the one-shot door; this door simply has no parse
+    # and no upload sitting between the two.
+    tail_from = time.monotonic()
+
     gate = await reapplication_gate(
         db,
         requisition_id=requisition_id,
@@ -1804,9 +1832,9 @@ async def submit_draft(
         return await _refuse(
             db,
             name=name,
-            floor_from=floor_from,
             cv_key=row.get("resume_s3_key"),
             draft_id=row["id"],
+            tail_from=tail_from,
             cooldown=(
                 None
                 if gate.already_applied
@@ -1999,9 +2027,16 @@ async def submit_draft(
                     await _delete_from_s3(str(orphaned_race_cv))
                 except Exception:  # noqa: BLE001 — the pointer is already cleared
                     log.warning(
-                        "public_apply.draft_object_orphaned", draft_id=str(row["id"])
+                        "public_apply.draft_object_orphaned",
+                        draft_id=str(row["id"]),
+                        # The key too. `drafts/{company}/{draft}.pdf` is only
+                        # derivable from this line if company_id is on it, and
+                        # it is not — so without the key this permanent orphan
+                        # is unnameable, which is the thing
+                        # `_release_unadopted`'s docstring says must not happen.
+                        s3_key=str(orphaned_race_cv),
                     )
-        return await _reply(name, floor_from=floor_from)
+        return await _reply(name, tail_from=tail_from)
     except Exception:
         await db.rollback()
         log.exception("public_apply.draft_submit_failed", requisition_id=str(requisition_id))
@@ -2092,7 +2127,7 @@ async def submit_draft(
         company_id=str(company_id), requisition_id=str(requisition_id),
         applicant_id=str(applicant_id), returning=not is_new_person,
     )
-    return await _reply(name, floor_from=floor_from)
+    return await _reply(name, tail_from=tail_from)
 
 
 
@@ -2185,7 +2220,7 @@ async def confirm_reapplication(
                     try:
                         await _delete_from_s3(orphaned)
                     except Exception:  # noqa: BLE001
-                        log.warning("apply.reapply_confirm.object_orphaned")
+                        log.warning("apply.reapply_confirm.object_orphaned", s3_key=orphaned)
                 log.info("apply.reapply_confirm.opening_closed")
                 # The same sentence a second click gets. This one is not the
                 # candidate's fault and not theirs to debug, and "that job has
@@ -2233,7 +2268,7 @@ async def confirm_reapplication(
             try:
                 await _delete_from_s3(orphaned)
             except Exception:  # noqa: BLE001 — the pointer is already cleared
-                log.warning("apply.reapply_confirm.object_orphaned")
+                log.warning("apply.reapply_confirm.object_orphaned", s3_key=orphaned)
     except Exception as exc:  # noqa: BLE001
         await db.rollback()
         log.exception("apply.reapply_confirm.failed", error_type=type(exc).__name__)
@@ -2426,6 +2461,14 @@ async def submit_application(
     existing = await _identify(
         db, company_id=company_id, requisition_id=requisition_id, address=address
     )
+    # ABSORB THE LOOKUP HERE, against a deadline taken before it. It is the one
+    # state-dependent term above the gate — a row for four of the five states
+    # and nothing for the fifth — and it cannot be moved below the upload,
+    # because the object key embeds the applicant id it returns.
+    if settings.apply_lookup_floor_ms > 0:
+        await _hold_until(
+            floor_from + settings.apply_lookup_floor_ms / 1000, what="lookup"
+        )
 
     # ── The opening's own questions ─────────────────────────────────────────
     # Validated here, before the CV is read or anything is stored. A required
@@ -2589,7 +2632,6 @@ async def submit_application(
         return await _refuse(
             db,
             name=name,
-            floor_from=floor_from,
             cv_key=s3_key,
             draft_id=None,
             tail_from=tail_from,
@@ -2759,7 +2801,7 @@ async def submit_application(
         # row. (For a new person it never did: the applicant insert rolled back.)
         await _release_unadopted(s3_key)
         log.info("public.apply.race_lost", requisition_id=str(requisition_id))
-        return await _reply(name, floor_from=floor_from, tail_from=tail_from)
+        return await _reply(name, tail_from=tail_from)
     except rediscovery.RediscoveryError as exc:
         # Unreachable in practice — `source` above is the fixed literal
         # "public_apply_form", never caller input — but rendered with the
@@ -2854,7 +2896,7 @@ async def submit_application(
         returning=not is_new_person,
         # NEVER log the name, email or resume text.
     )
-    return await _reply(name, floor_from=floor_from, tail_from=tail_from)
+    return await _reply(name, tail_from=tail_from)
 
 
 # ---------------------------------------------------------------------------

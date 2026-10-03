@@ -973,18 +973,55 @@ def test_the_already_applied_branch_deletes_the_object_it_released() -> None:
     # it guards. Both are asserted, because the split is the fix: a failure in
     # either write must give the same 503 the accept path gives, not an
     # unhandled 500 on the refusing states only.
+    import ast as _ast
+    import pathlib as _pathlib
+
     from app.routers.public_apply import _refuse_work
+
 
     body = inspect.getsource(_refuse) + inspect.getsource(_refuse_work)
     assert "release_resume=True" in body
     assert "_release_unadopted" in body
-    # Order matters: commit the cleared pointer BEFORE releasing the object, so
-    # a failed delete leaves a findable orphan rather than a row pointing at a
-    # file that is gone.
-    assert body.index("db.commit") < body.index("_release_unadopted")
-    # And the draft is consumed before the mail, because the notice owns a
-    # savepoint inside this transaction and the commit below covers both.
-    assert body.index("mark_submitted") < body.index("_mail_cooldown_reason")
+
+    # PARSED, NOT INDEXED. These were `body.index(...)` comparisons, and the
+    # explanatory comment added to `_refuse`'s except block — "left
+    # `mark_submitted` one line above it unguarded" — made the first match for
+    # "mark_submitted" a COMMENT, 40 lines above the real call. The assertion
+    # below could then be satisfied with the two writes in either order. A
+    # comment silently de-fanged an order assertion in another file.
+    import app.routers.public_apply as _mod
+
+    tree = _ast.parse(_pathlib.Path(_mod.__file__).read_text(encoding="utf-8"))
+
+    def _calls(fn_name: str) -> dict[str, int]:
+        fn = next(
+            n
+            for n in _ast.walk(tree)
+            if isinstance(n, _ast.AsyncFunctionDef) and n.name == fn_name
+        )
+        out: dict[str, int] = {}
+        for n in _ast.walk(fn):
+            if isinstance(n, _ast.Call):
+                name = (
+                    n.func.attr
+                    if isinstance(n.func, _ast.Attribute)
+                    else getattr(n.func, "id", None)
+                )
+                if name and name not in out:
+                    out[name] = n.lineno
+        return out
+
+    work = _calls("_refuse_work")
+    # The draft is consumed BEFORE the mail: the notice owns a savepoint inside
+    # this transaction, and the single commit in `_refuse` covers both.
+    assert work["mark_submitted"] < work["_mail_cooldown_reason"], work
+
+    refuse = _calls("_refuse")
+    # And the object is released only AFTER the commit, so a failed delete
+    # leaves a findable orphan rather than a row naming a file that is gone.
+    assert refuse["commit"] < max(
+        ln for name, ln in refuse.items() if name == "_release_unadopted"
+    ), refuse
 
 
 # ===========================================================================

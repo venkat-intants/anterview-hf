@@ -493,6 +493,25 @@ class Settings(BaseSettings):
     # Raise it if the p99 of the accepting branch ever approaches it. Setting
     # it to 0 disables the control and reopens the channel.
     apply_reply_floor_ms: int = 400
+    # How long the IDENTITY LOOKUP is padded to, on both anonymous doors.
+    #
+    # A second, separate pad, and it has to be separate. The lookup is a LEFT
+    # JOIN that returns a row for four of the five states and nothing for the
+    # fifth, so its cost is state-dependent — and it must happen before the CV
+    # upload, because the object key embeds the applicant id it returns. One
+    # deadline cannot absorb both this and the branch below the gate: a single
+    # clock at the top gets spent by a large PDF, and a deadline taken after
+    # the upload has already let this difference through.
+    #
+    # So each state-dependent term gets its own pad, measured from a clock
+    # taken BEFORE that term. This one absorbs the lookup to a constant;
+    # `apply_reply_floor_ms` then absorbs the branch. Nothing in between is
+    # state-dependent — the parse and the upload are the caller's own bytes.
+    #
+    # Must exceed the p99 of the lookup, which is an indexed point read: 50 ms
+    # is roughly two orders of magnitude above it. Setting it to 0 disables the
+    # pad and reopens the channel.
+    apply_lookup_floor_ms: int = 50
     # When True, email verification is MANDATORY: self-registered accounts are not
     # auto-logged-in and cannot sign in until they confirm their email. Existing
     # accounts and admin-provisioned accounts (still on their bootstrap password)

@@ -361,7 +361,13 @@ def test_a_cooldown_refusal_is_indistinguishable_from_a_live_application() -> No
         # a correct change gets reported as a regression. What the arguments
         # must be, and where the clocks must start, is pinned properly by the
         # AST guards in `test_group_e_public_apply.py`.
-        assert "_reply(name, floor_from=floor_from" in src
+        # The CALLEE, not the arguments. `tail_from` being a REQUIRED keyword
+        # on `_reply` and `_refuse` is what pins the arguments — an exit that
+        # omits it fails mypy, which CI gates on — and that is stronger than a
+        # substring here. The over-specific spelling this replaced broke the
+        # moment a second deadline arrived, and an over-specific assertion is
+        # how a correct change gets reported as a regression.
+        assert "_reply(name, tail_from=tail_from)" in src
         assert "ApplicationOut(" not in src, (
             f"{fn.__name__} builds its own reply, so it can differ again"
         )

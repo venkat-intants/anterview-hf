@@ -65,7 +65,7 @@ it was deleted rather than retuned: a constant tuned until a test goes green
 proves only that the constant was tuned.
 
 And the floor FAILS OPEN. A branch that overruns it logs
-`public_apply.reply_floor_exceeded` and answers immediately, so under enough
+`public_apply.floor_exceeded` and answers immediately, so under enough
 load the control switches itself off. There is no counter and no alert on that
 log line. That residue, and the write-path 201/503 split the write probe does
 not reach, are in docs/ACCEPTED-RISKS.md with an owner — not here, because
@@ -784,10 +784,20 @@ async def test_the_states_cannot_be_separated_by_how_long_the_reply_takes(
     # looks like, and a refactor of these two near-identical handlers is
     # exactly how that would happen.
     #
-    # Uniformity itself is pinned structurally, where it is not a measurement:
-    # `test_every_reply_from_both_doors_is_the_same_object` requires every exit
-    # on both doors to return through `_reply(name, floor_from=floor_from)`,
-    # and `test_every_state_does_the_same_work` pins the shared work above it.
+    # Uniformity itself is pinned structurally, where it is not a measurement.
+    # Stated precisely, because the earlier version of this comment claimed
+    # more than the guard delivered and that over-citation is what hid a
+    # broken deadline for a whole round:
+    #
+    # * `test_every_reply_from_both_doors_is_the_same_object` counts the
+    #   reply-bearing exits on both doors and requires each to go through
+    #   `_reply` or `_refuse`. It checks the CALLEE, not the arguments.
+    # * The arguments are pinned by the signature instead: `tail_from` is a
+    #   REQUIRED keyword on both, so an exit that omits it fails mypy, which
+    #   CI gates on. That is stronger than a test reading call sites.
+    # * `test_a_pad_absorbs_the_work_it_covers_to_a_constant` is the one that
+    #   proves the deadlines do their job, with a negative control beside it.
+    # * `test_every_state_does_the_same_work` pins the shared work above.
 
 
 @pytest.mark.asyncio
@@ -847,3 +857,93 @@ async def test_a_read_only_database_answers_the_same_way_for_every_state(
     # candidate their application landed when it did not would be a worse
     # thing to do than leaking the distinction.
     assert {s for s, _ in seen.values()} == {503}, seen
+
+
+@pytest.mark.asyncio
+async def test_the_two_doors_answer_the_same_state_the_same_way(
+    client: AsyncClient,
+) -> None:
+    """CROSS-DOOR EQUIVALENCE, which nothing in this file asserted.
+
+    Every other test here compares the five states WITHIN one door. Both
+    round-9 reviewers landed on the same gap: nothing compared door A's
+    observable against door B's, and that is where the damage has repeatedly
+    been. The reply bodies are equal by construction — both doors return
+    `_received` — but the timing properties, the failure shapes and the work
+    were not, and twice a fix was applied to one handler while the other
+    silently kept different behaviour. Round 9's own HIGH was exactly that: a
+    broken deadline on the one-shot door while the draft door was correct, and
+    the suite could not see the difference because no test looked across.
+
+    So this probes the same prepared address through BOTH doors and requires
+    the same answer. Not "the five states agree on door A, and separately on
+    door B" — the same answer, door to door.
+
+    It cannot catch a timing difference (nothing here measures time; see the
+    latency test's note). It catches what it can: status and body, per state,
+    across doors.
+    """
+    addresses = await _seeded_addresses(client)
+
+    mismatched: dict[str, tuple[object, object]] = {}
+    for case, (target, email) in addresses.items():
+        one = _observable(await _submit_through("one-shot", client, target, email))
+        draft = _observable(await _submit_through("draft", client, target, email))
+        if repr(one) != repr(draft):
+            mismatched[case] = (one, draft)
+
+    assert not mismatched, (
+        "the two anonymous doors answer the same address differently, so which "
+        "door a caller uses is itself information:\n"
+        + "\n".join(
+            f"    {c:9}\n        one-shot: {o}\n        draft:    {d}"
+            for c, (o, d) in mismatched.items()
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_both_doors_refuse_a_read_only_database_identically(
+    client: AsyncClient,
+) -> None:
+    """The same, for the failure shape rather than the happy path.
+
+    Round 8 found the draft door answering 500 where the one-shot door
+    answered 503, and round 9 found the two doors holding different timing
+    properties. Both were one-door drifts in a FAILURE path, which is where
+    the matrix never looked. This pins that a write-refusing database produces
+    the same status and body through either door.
+    """
+    from app.routers import public_apply
+
+    addresses = await _seeded_addresses(client)
+
+    async def _write_refused(_db: object) -> None:
+        raise HTTPException(status_code=503, detail=public_apply._UNAVAILABLE)
+
+    mismatched: dict[str, tuple[object, object]] = {}
+    with mock.patch.object(
+        public_apply, "_require_write_capability", _write_refused
+    ):
+        for case, (target, email) in addresses.items():
+            one = _observable(
+                await _submit_through(
+                    "one-shot", client, target, email, expect_submit=None
+                )
+            )
+            draft = _observable(
+                await _submit_through(
+                    "draft", client, target, email, expect_submit=None
+                )
+            )
+            if repr(one) != repr(draft):
+                mismatched[case] = (one, draft)
+
+    assert not mismatched, (
+        "the doors fail differently, so a degraded window tells a caller which "
+        "door they used and which state the address is in:\n"
+        + "\n".join(
+            f"    {c:9}\n        one-shot: {o}\n        draft:    {d}"
+            for c, (o, d) in mismatched.items()
+        )
+    )

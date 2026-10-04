@@ -1,4 +1,10 @@
-# Phase 2 test coverage map
+# Test coverage map
+
+Two halves, built at different times and by different methods, so they are kept
+apart rather than blended: **Phase 2** below (Groups A–E), then **Phase 3** at
+the end of the file.
+
+## Phase 2
 
 Where each Phase 2 item (Groups A–E, and the defects fixed on 2026-09-16) is tested
 today, and what is still missing. Built on 2026-09-16 by reading the unit test
@@ -16,7 +22,8 @@ predate this map, so their cells describe intent, not a passing check:
 `smoke_group_b_api`, `smoke_group_b_ledger` and `smoke_group_b_requisitions`.
 
 Phase 3 work (application source, JD versions, requisition approval, scheduled
-publishing, reapplication, drafts) is not mapped here.
+publishing, reapplication, drafts) is mapped in **Phase 3** at the end of this
+file, not in the Group A–E tables below.
 
 
 Paths used below:
@@ -157,3 +164,94 @@ Background and DB items with no browser need (A1, A2, A3, A6, B2 and B4 invarian
 - the decision email's language
 - exam generation from round criteria with a stubbed LLM (C3)
 - a direct API set and edit of round `time_limit` and `deadline_days` (C2)
+
+---
+
+# Phase 3
+
+Added 2026-10-04, when the browser suite caught up with the Phase 3 backend.
+Built the other way round from the Phase 2 half above: by reading the specs and
+the `test_ph3_*` files and matching them to item codes the specs already cite in
+their headers, so every cell below names a file that exists.
+
+**One deliberate difference in shape.** There is no *Web unit* column. Phase 2's
+was built by surveying `web/src/__tests__/`; that survey has not been redone for
+Phase 3, and a column of `—` would read as "none exists" rather than "not
+looked at". Component-level cover for these screens may well exist — it is
+simply not claimed here.
+
+**Why Phase 3 needed browser tests at all.** The backend landed first and landed
+well: 254 unit tests across seven `test_ph3_*` files. But several Phase 3
+acceptance criteria are phrased as *"organizations can define…"* and
+*"authorized users can override…"*, and for a while those were true of the API
+and not of the product — no screen set the waiting period, no control called the
+override. A unit test cannot tell the difference. Each spec below exists because
+it asserts something structurally out of reach below the browser: two tabs at
+once, a real wait for a scheduled job, or one rendered screen compared against
+another.
+
+What is in the browser suite for Phase 3 (`E`):
+
+- `apply-source.spec.ts` — the same opening posted to several places with tagged links, and each application filed under where it came from.
+- `requisition-approval.spec.ts` — an opening needs someone else's approval before the public can apply; HR cannot approve their own.
+- `jd-versions.spec.ts` — an HR tab drafts new advert wording while a candidate tab still reads the old, and the history cannot be rewritten by going back to it.
+- `scheduled-publishing.spec.ts` — a schedule is set and the spec *waits* for the opening to go live, then reads the careers board and clicks what is on it. The slowest spec in the suite, and the only proof the board never advertises something that 404s.
+- `reapply-cooldown.spec.ts` — HR sets a waiting period, rejects someone, the candidate is refused, and HR then lets that one person through.
+- `apply-indistinguishable.spec.ts` — the anonymous apply door renders the **same screen** in four different states.
+- `save-and-resume.spec.ts` — an application left half-finished and picked up later.
+- `application-confirmation.spec.ts` — what a parser read off a CV, shown for correction before it becomes an application.
+
+| Item | What must hold | Unit | Integration / smoke | Browser e2e | Gap / recommended level |
+|---|---|---|---|---|---|
+| B0 | What the careers board lists and what the apply page accepts are the same set — the board never advertises an opening that 404s on click | U `test_ph3_publish_gate.py` (13) | S `smoke_ph3_apply.py` | E `scheduled-publishing.spec.ts`: reads the board, then clicks through to each advert on it | covered. This was once two hand-written copies of one predicate that had drifted, and only a browser can see the drift. |
+| B1 | An application records where it came from; a tagged link is honoured but the server decides what channel it means | U `test_ph3_source_tracking.py` (22) | S `smoke_ph3_apply.py` | E `apply-source.spec.ts` | covered. |
+| B2 | An opening cannot take public applications until someone other than its author approves it | U `test_ph3_requisition_approval.py` (32) | — | E `requisition-approval.spec.ts` | covered. The refusal is also enforced on the patch (`update_requisition` returns 409 for `public_apply_enabled` on an unapproved opening) rather than only at the publish gate. |
+| B3 | Advert wording can be reworked without changing what candidates are currently reading, and replaced wording stays in the record | U `test_ph3_jd_versions.py` (31) | — | E `jd-versions.spec.ts`: two contexts — HR drafting, candidate reading — and a revert that publishes rather than edits | covered, and only observable with two tabs. |
+| B4 | A per-opening waiting period after a rejection, and an authorized person can let one candidate through | U `test_ph3_reapplication.py` (50) | S `test_ph3_cooldown_indistinguishable.py` | E `reapply-cooldown.spec.ts` | covered end to end: the period is set on a screen and the override is clicked, which is what criteria 7–9 actually say. |
+| B4a | An opening goes live by itself at a scheduled time, and the console never states a time without saying how precise it is | U `test_ph3_scheduled_publishing.py` (35) | S `smoke_group_d_publish_waiting.py` | E `scheduled-publishing.spec.ts` (sets a schedule and waits for it) | covered. The honesty sentence lives in the UI — the publisher is an interval loop, so "09:00" alone is a promise the architecture does not make. |
+| B4b | The anonymous apply door answers **identically** whether the address has a live application, is inside the waiting period, is past it, has an override, or has never applied | U `test_ph3_reapplication.py` | S `test_ph3_cooldown_indistinguishable.py` (16): both doors, the stored reply, the work done, a storage outage, a read-only database, reply timing and the pad, and four crafted-input cases | E `apply-indistinguishable.spec.ts`: four states, one rendered screen, compared for equality | covered. See the gap note below on the fifth state. |
+| B4c | An application can be left half-finished and resumed | U `test_ph3_drafts_and_confirmation.py` (71) | S `test_ph5_e3_draft_rediscovery_db.py` | E `save-and-resume.spec.ts` | covered. |
+| B5 | What a parser read off a CV is shown for correction before it becomes an application | U `test_ph3_drafts_and_confirmation.py` | — | E `application-confirmation.spec.ts`; E `save-and-resume.spec.ts` | covered. |
+| B6 | An application is pinned to the advert version that was live when it was made | U `test_ph3_jd_versions.py` | — | E `jd-versions.spec.ts` (the version-aware half) | **partial?** The browser proves the public page follows the published version. That an *application* stores the version it was made against is asserted in the unit file; no browser test reads it back off an application. Low value in the browser — recommend leaving it at unit. |
+
+### Phase 3 gaps worth naming
+
+1. **The fifth state is not browser-reachable (B4b, accepted).**
+   `apply-indistinguishable.spec.ts` covers four of the five states. "Rejected,
+   and the waiting period has since elapsed" needs a rejection backdated past
+   the window; a browser cannot do that, `/test-hooks` offers only `reconcile`
+   and `reminders`, and `cooldown_days: 0` is not a substitute because the
+   backend returns at `if not cooldown_days` before it reads the ledger — a
+   different path. It stays covered by
+   `test_ph3_cooldown_indistinguishable.py`, which backdates in SQL. Adding a
+   backdating test hook would close it; that is a new test-only write path into
+   the decision ledger, which is a larger decision than the gap is worth.
+2. **`reapply-cooldown.spec.ts` asserts a denylist (B4b).** It checks the
+   refused screen contains none of `reject`, `turned down`,
+   `not able to consider`, `until 20`. A denylist only catches the phrasings
+   somebody thought of. `apply-indistinguishable.spec.ts` now asserts the
+   effect — the screens are equal — which is why the denylist is kept as a
+   fast, readable signal rather than removed: it names the specific wordings
+   that were once really there.
+3. **Web unit not surveyed (all items).** See the note above. Redoing the
+   Phase 2 survey for `web/src/__tests__/` against Phase 3 screens would make
+   this table a complete map rather than a browser-and-backend one.
+
+### A budget any new apply spec has to live inside
+
+`POST /apply/{requisition_id}` and `POST /apply/draft/submit` share
+`rate_limit("public_apply_submit", 6)` — a fixed 60-second window, keyed on the
+client IP, counted across **both** doors. Everything in this suite runs from
+localhost, so separate browser contexts do not buy separate budgets, and a
+7th submission inside a minute gets "Too many requests. Please wait a minute and
+try again." rendered into the form rather than a useful failure.
+
+`apply-indistinguishable.spec.ts` was written with four candidates and seven
+submissions and failed exactly there. It now walks one candidate through four
+states in sequence, which fits. There is also
+`rate_limit_window("public_apply_submit_hourly", 60, 3600)`, so the whole suite
+has 60 public submissions an hour from one machine to share — worth knowing
+before adding a spec that applies in a loop. Do not raise either limit for a
+test: they are the product's defence on an anonymous, unauthenticated write
+path, and a spec that needs more submissions than a real person could make is
+asking the wrong question.

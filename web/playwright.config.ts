@@ -48,6 +48,27 @@ export default defineConfig({
   use: {
     baseURL: WEB_URL,
     headless: true,
+    // PINNED, because dates in this app are rendered by the BROWSER. Several
+    // components format with `toLocaleDateString(undefined, …)` — see
+    // `JdVersionPanel` — which reads the browser's locale, so the same build
+    // renders "3 Nov 2026" on one machine and "Nov 3, 2026" on another, and
+    // "03/11/2026" against "11/3/2026".
+    //
+    // Two Phase 3 specs asserted those formats and so passed only where they
+    // were written: `jd-versions` matched `/Live \d+ \w+ \d{4} – …/` and
+    // `save-and-resume` matched `/This link works until \d{2}\/\d{2}\/\d{4}/`.
+    // Both are en-GB spellings; on an en-US runner the first sees
+    // "Live Oct 4, 2026 – Oct 4, 2026" and the second "11/3/2026", and both
+    // fail for a reason that has nothing to do with job descriptions or saved
+    // applications.
+    //
+    // Fixed here rather than by loosening each regex, because loosening is one
+    // edit per assertion forever and costs the precision that made them worth
+    // asserting. One locale for the suite makes every date deterministic on a
+    // laptop and on CI alike. It is the browser's locale only — it does not
+    // touch the app's own language setting, which the specs choose explicitly
+    // via the apply form's language picker.
+    locale: 'en-GB',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     // Watching a run: `npm run e2e -- --headed` with E2E_SLOWMO=500 pauses

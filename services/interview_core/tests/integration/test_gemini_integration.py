@@ -2,13 +2,18 @@
 
 Runs the full LangGraph against the real Gemini API with three scripted
 candidate utterances and asserts every interviewer response is non-empty
-plus the phase machine ends in ``done``. Skipped automatically if
-``GEMINI_API_KEY`` is not set so the unit-test suite stays hermetic.
+plus the phase machine ends in ``done``.
+
+**This test spends money.** It is opt-in and skips by default everywhere; see
+the gate below for why a key alone is not enough to switch it on.
 
 USAGE
 -----
     cd services/interview_core
-    poetry run pytest -m integration -v tests/integration/test_gemini_integration.py
+    RUN_PAID_LLM_TESTS=1 poetry run pytest -m integration -v \
+        tests/integration/test_gemini_integration.py
+
+In PowerShell: ``$env:RUN_PAID_LLM_TESTS = '1'`` first.
 
 Token usage is printed to stdout (per turn + totals) so the founder /
 cost-watcher can sanity-check that a real 3-turn interview stays well
@@ -16,6 +21,8 @@ under the 700-token-per-turn budget assumed in ``Final_stack.md``.
 """
 
 from __future__ import annotations
+
+import os
 
 import pytest
 
@@ -41,9 +48,34 @@ CANDIDATE_INPUTS: list[str] = [
 ]
 
 
+# Spending money is a deliberate act, not a side effect of configuration.
+#
+# This gate was `not settings.gemini_api_key` alone, which means any machine
+# configured for ordinary local work billed a real Gemini call the moment
+# someone ran `pytest -m integration`. CI selects tests BY THAT MARKER, so a
+# `GEMINI_API_KEY` added to the CI secrets for any other reason would have
+# started charging on every run, silently and without anyone choosing it.
+#
+# Not hypothetical: a local `-m integration` run reached this test and came
+# back HTTP 429 — rate-limited by the provider, which is to say it really did
+# call the paid API.
+#
+# A key is now necessary but not sufficient — the run has to ask for paid tests
+# by name. Nothing else in the repo reads RUN_PAID_LLM_TESTS, so the default on
+# laptops, in CI and in containers is "skip".
+_PAID_OPT_IN = os.environ.get("RUN_PAID_LLM_TESTS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+
 @pytest.mark.skipif(
-    not settings.gemini_api_key,
-    reason="GEMINI_API_KEY not set — skipping live integration test",
+    not _PAID_OPT_IN or not settings.gemini_api_key,
+    reason=(
+        "live Gemini test is opt-in because it calls the real paid API: set "
+        "RUN_PAID_LLM_TESTS=1 (and GEMINI_API_KEY) to run it"
+    ),
 )
 async def test_real_gemini_3_turn_conversation(capsys: pytest.CaptureFixture[str]) -> None:
     """End-to-end: 3 candidate inputs -> 4 interviewer turns -> closing."""

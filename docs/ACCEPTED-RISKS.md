@@ -935,6 +935,29 @@ of the five were introduced by the fix for the previous one.
    failure residue 1 splits 201/503 on, so accepting the two separately had
    accepted an attacker-triggerable state oracle without saying so anywhere.
 
+   **Which prefixes are capped, enumerated rather than described.** Prose about
+   "sibling upload prefixes" went stale once already, so: in both `Caddyfile`
+   and `space/Caddyfile` the handles carrying `request_body { max_size … }` are
+   `/apply*` (8 MB), `/interviewer/*` (1 MB), and
+   `/hr/rounds/*/task/materials*`, `/offer*`, `/task*` (11 MB each). Every
+   other `handle` block proxies with no cap — including the general `/hr/*`
+   and `/jobs*`.
+
+   That matters because the structural gap this entry describes is not specific
+   to `/apply*`. `question_banks.py` and `hr_exams.py` both do a bounded read
+   with a comment saying it is "BOUNDED READ, like the apply door's
+   `read(_MAX_RESUME_BYTES + 1)`" — the same handler-side cap, with the same
+   property that the part is spooled to the container filesystem before the
+   handler reads any of it. Those two sit under `/hr/*`, which has no edge cap,
+   so for an AUTHENTICATED caller the disk-filling primitive described above
+   still exists. Not re-accepted silently: the difference from `/apply*` is
+   that it needs a valid session for a real company, which is a named,
+   revocable actor rather than anyone holding a public link, and that is why it
+   is recorded here instead of being treated as the same risk. Capping `/hr/*`
+   at the edge is cheap and is the obvious next step; it is not done here
+   because `/hr/*` carries the bulk-CV upload path and picking a number for it
+   needs the measurement that `/apply*`'s 8 MB got, not a guess.
+
    **And they are keyed per IP address**, so an attacker holding an IPv6 /64
    has 2^64 independent 60/hour budgets, which makes "60 an hour" a bound on a
    well-behaved client rather than on bulk enumeration. Still open.

@@ -532,28 +532,129 @@ async def test_the_client_is_constructed_exactly_once(
         await aclose_s3_clients()
 
 
-def test_the_cache_keeps_no_time_based_state() -> None:
-    """NO CLOCK IN THE CACHE, which is the only form of this that holds.
+#: The only two functions allowed to remove an entry from the cache.
+_EVICTION_EXITS = frozenset({"aclose_s3_clients", "_prune_closed_loops"})
 
-    Round 15 defeated the counting test above with a 300-second TTL, and the
-    first thing I reached for was a clock seam — a `_now()` in `shared/s3.py`
-    that a test could monkeypatch and advance. That fails for the same reason
-    the counting test does: a TTL can read `loop.time()`, or
-    `time.perf_counter()`, or anything else, and walk straight past a seam it
-    was never routed through. The reviewer's own first attempt used
-    `import time` and was caught by `test_factory_stays_dependency_light`; the
-    second used `loop.time()` and defeated everything.
+#: The module-level dicts that together ARE the cache.
+_CACHE_NAMES = frozenset({"_clients", "_stacks", "_locks"})
 
-    So this asserts the absence of the capability rather than the behaviour of
-    one implementation of it. If the cache cannot read a clock, it cannot
-    expire an entry on one, and no cleverer TTL exists to find.
 
-    Why that is an acceptable constraint on the module: the cache is keyed on
-    (event loop, connection settings) and is emptied by `aclose_s3_clients`
-    and `_prune_closed_loops`. Neither needs to know the time. If a future
-    change genuinely does, this test should be changed DELIBERATELY, with the
-    reasoning written down — which is the whole point of putting the
-    constraint here rather than in a comment.
+def test_nothing_evicts_from_the_cache_except_the_two_named_exits() -> None:
+    """NOTHING MAY EVICT, which is the property. Round 16 — fourth attempt.
+
+    The history matters more than the assertion, because each previous version
+    asserted something narrower than it claimed:
+
+    * Round 13's five tests compare object IDENTITY. Any eviction policy
+      satisfies them: a rebuilt client differs only on the call that rebuilds.
+    * Round 14 counted CONSTRUCTIONS and the register said it "actually holds
+      the property". A 300-second TTL passed all 28 tests — the suite makes
+      seven acquisitions in milliseconds and cannot advance a clock it does
+      not own.
+    * Round 15 asserted the module "reads no clock at all" and called that
+      "the only form that holds". It asserted no CALL NAMED one of five
+      strings. Both round-16 reviewers defeated it independently with
+      `loop.call_later(300.0, _evict, key)` — the event loop reads the clock on
+      the module's behalf, and `asyncio` is on the dependency allowlist
+      deliberately, for the per-loop lock. 835/835 green, ruff clean, and the
+      TTL demonstrably live. Three more spellings also miss: a sleeping
+      eviction task, `_tick = loop.time` then `_tick()` (round 15's own winning
+      defeat, re-spelled over two lines so the attribute access is not a
+      Call), and `getattr(loop, "time")()`. A counter cap (`_MAX_USES`) needs
+      no clock at all.
+
+    So this stops guessing at the MECHANISM and asserts the EFFECT. A TTL, an
+    LRU, a use-cap, a size cap and a clock-free counter all have one thing in
+    common: each must remove a key from the cache. Removing a key is what this
+    forbids, outside the two functions whose job it is. There is no cleverer
+    eviction to find because there is nowhere for one to put its `pop`.
+
+    If a future change genuinely needs to evict, it adds a named exit to
+    `_EVICTION_EXITS` — deliberately, with the reasoning written down, which is
+    the whole reason the constraint lives here and not in a comment.
+    """
+    import ast
+
+    source = pathlib.Path(__file__).parent.parent / "s3.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+
+    # Which function each line belongs to, so an eviction can be attributed.
+    owner: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for inner in ast.walk(node):
+                if hasattr(inner, "lineno"):
+                    owner.setdefault(inner.lineno, node.name)
+
+    offenders: list[str] = []
+
+    def _flag(lineno: int, what: str) -> None:
+        where = owner.get(lineno, "<module level>")
+        if where not in _EVICTION_EXITS:
+            offenders.append(f"{what} in {where}() at line {lineno}")
+
+    for node in ast.walk(tree):
+        # `_clients.pop(...)`, `_stacks.clear()`, `_locks.popitem()`
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            target = node.func.value
+            if (
+                isinstance(target, ast.Name)
+                and target.id in _CACHE_NAMES
+                and node.func.attr in {"pop", "popitem", "clear"}
+            ):
+                _flag(node.lineno, f"{target.id}.{node.func.attr}()")
+        # `del _clients[key]`
+        if isinstance(node, ast.Delete):
+            for t in node.targets:
+                if (
+                    isinstance(t, ast.Subscript)
+                    and isinstance(t.value, ast.Name)
+                    and t.value.id in _CACHE_NAMES
+                ):
+                    _flag(node.lineno, f"del {t.value.id}[...]")
+
+    assert not offenders, (
+        "something removes an entry from the client cache outside "
+        f"{sorted(_EVICTION_EXITS)}: {offenders}.\n\n"
+        "Every eviction policy — TTL, LRU, use-cap, size-cap — has to remove a "
+        "key, and each one reinstates the 180-450 ms SYNCHRONOUS botocore "
+        "construction on a cadence. On the anonymous apply doors that stall is "
+        "state-correlated, because only the refusing branches delete the CV "
+        "they were made to upload: it is the ~390 ms term round 12 read off a "
+        "CONCURRENT request at 24 of 25 (docs/ACCEPTED-RISKS.md AR-10 residue "
+        "2). If an eviction is genuinely needed, add its function to "
+        "_EVICTION_EXITS on purpose and say why."
+    )
+
+    # The exits must still exist, or this is excusing nothing.
+    defined = {
+        n.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    missing = _EVICTION_EXITS - defined
+    assert not missing, (
+        f"these named eviction exits no longer exist in shared/s3.py: "
+        f"{sorted(missing)} — this guard is now attributing evictions to "
+        "functions that are gone, which means it is excusing nothing and "
+        "hiding that."
+    )
+
+
+def test_the_cache_reads_no_clock_by_name() -> None:
+    """A BELT, not the buckle — and this docstring says so, unlike the last one.
+
+    `test_nothing_evicts_from_the_cache_except_the_two_named_exits` is what
+    holds the property. This check only catches the most obvious spellings of a
+    timed eviction, and round 16 showed four that it misses
+    (`loop.call_later`, a sleeping task, an aliased `loop.time`, and
+    `getattr`). It is kept because a direct `time.monotonic()` appearing here
+    is still a signal worth failing on early, and because deleting a check that
+    catches two real shapes to make a point about the two it does not would be
+    the wrong trade.
+
+    What it is NOT is evidence that the module cannot expire an entry. That
+    sentence was in the register for a round and was wrong.
     """
     import ast
 
@@ -573,14 +674,8 @@ def test_the_cache_keeps_no_time_based_state() -> None:
                 found.append(f"{name}() at line {node.lineno}")
 
     assert not found, (
-        "shared/s3.py reads a clock: " + "; ".join(found) + ".\n\n"
-        "The client cache must not expire entries on time. A TTL reinstates "
-        "the 180-450 ms synchronous construction every window, and on the "
-        "anonymous apply doors that stall is state-correlated — it is the "
-        "~390 ms term round 12 read off a CONCURRENT request at 24/25 "
-        "(docs/ACCEPTED-RISKS.md AR-10 residue 2). Round 15 demonstrated that "
-        "a 300-second TTL passes every other test in this file, including the "
-        "one that counts constructions, because no test can advance a clock it "
-        "does not own. If a clock is genuinely needed here, change this test "
-        "on purpose and say why."
+        "shared/s3.py reads a clock by name: " + "; ".join(found) + ". See "
+        "`test_nothing_evicts_from_the_cache_except_the_two_named_exits` for "
+        "why a timed eviction matters; that test is the one that holds, and "
+        "this one is the early signal."
     )

@@ -846,13 +846,34 @@ this paragraph's fifth inaccuracy:
     reviewers built a 300-second TTL and all 28 tests passed: every acquisition
     happens within milliseconds and no test can advance a clock it does not
     own. That claim is struck.
-  - Round 15 added `test_the_cache_keeps_no_time_based_state`, which asserts
-    the module reads no clock at all. A clock SEAM was the obvious fix and
-    would have failed the same way — the reviewer's winning defeat used
-    `loop.time()`, which routes through no seam. Asserting the absence of the
-    capability is the only form that holds: if the cache cannot read a clock it
-    cannot expire on one. Verified against both the `loop.time()` and
-    `time.monotonic()` variants.
+  - Round 15 added `test_the_cache_keeps_no_time_based_state` and this entry
+    said it asserts "the module reads no clock at all" and that "asserting the
+    absence of the capability is the only form that holds". **Wrong, and this
+    was the fourth consecutive version of this claim to be wrong.** It asserted
+    no CALL NAMED one of five strings. Both round-16 reviewers defeated it
+    independently with `loop.call_later(300.0, _evict, key)` — the event loop
+    reads the clock on the module's behalf, and `asyncio` is on the
+    dependency-light allowlist deliberately, for the per-loop lock. 835/835
+    green, ruff clean, and the TTL demonstrably live. Three more spellings also
+    miss: a sleeping eviction task, `_tick = loop.time` then `_tick()` (round
+    15's own winning defeat re-spelled so the attribute access is not a Call),
+    and `getattr(loop, "time")()`. A use-counter cap needs no clock at all.
+  - Round 16 stopped guessing at the mechanism.
+    `test_nothing_evicts_from_the_cache_except_the_two_named_exits` asserts the
+    EFFECT: a TTL, an LRU, a use-cap and a size-cap all have exactly one thing
+    in common, which is that each must remove a key from the cache. Removing a
+    key outside `aclose_s3_clients` and `_prune_closed_loops` is what is
+    forbidden, so there is no cleverer eviction to find because there is
+    nowhere left for one to put its `pop`. Verified against all four shapes
+    above, including `del` rather than `pop`. The name-based clock check is
+    kept as an early signal and its docstring now says it is a belt and not
+    the buckle.
+
+    The reason this took four attempts is worth recording, because it is the
+    branch's whole pattern in miniature: each version asserted a PROXY for the
+    property — "does it import time", "does it call a clock", "does it call one
+    of these five clocks" — and a proxy has a hole somebody else can find. The
+    effect does not.
 
 The lesson is the one this entry states in its own voice and then broke four
 times: a control described here is not thereby guarded.
@@ -1183,8 +1204,46 @@ the highest-privilege account is provisioned without its own review.
   tree of all 415 routes and requires every authenticated route that does not
   reach the gate to be in a named family with a stated reason — `/auth/*`,
   `/users/me/*`, `/consent`, `/notifications`, self-serve `/jobs`, each
-  self-scoped by construction. Three rounds of prose went stale here; an
-  enumeration cannot.
+  self-scoped by construction.
+
+  Three rounds of prose went stale here. The enumeration then went stale in its
+  own way within one round, which is worth recording rather than smoothing
+  over:
+
+  - It matched families by SUBSTRING, not prefix, so any path containing
+    `/jobs`, `/consent` or `/notifications` anywhere was excused. Both round-16
+    reviewers demonstrated it with `GET /hr/jobs/{company_id}/all-applicants` —
+    authenticated, no role gate, no password gate, i.e. precisely the shape
+    round 15 had just fixed — and renaming it to `/hr/roles/...` made the test
+    fail. The only difference was a literal string. It also defeated the
+    anti-rot test, since a family can be excusing nothing it was written for
+    and still appear to "match".
+  - The `/jobs` entry's stated reason was FALSE on the test's own definition.
+    `jobs.py`'s module docstring says `GET /jobs/{job_id}` "returns any active,
+    non-deleted job regardless of owner", and the query carries no owner or
+    company filter — so the subject comes from a path parameter, which is
+    exactly what "self-scoped by construction" excludes. It is now split, and
+    `/jobs/{job_id}` carries its own entry recording what it actually does:
+    any authenticated caller can read any active job by UUID, including another
+    user's practice job and its pasted JD text. Low sensitivity, a UUIDv4 the
+    only bound, accepted as that rather than claimed as scoping.
+  - Matching was then anchored on the path — and the fix put a BLANKET back,
+    because the `/` entry for the service banner made every path match.
+    Found by mutating in a route that should not be excused and noticing the
+    guard stayed green; neither the main test nor the anti-rot test could see
+    it. The root is exact-match only now.
+  - And the third bucket was unasserted. `_classify` defines "authenticated"
+    as "reaches `get_current_user`", so a route decoding the token ITSELF lands
+    in `anonymous` and nothing checked it — round 15's finding reshaped one
+    level out. The anonymous families are enumerated too, from the live app
+    rather than from memory: the first attempt at that list named seven
+    prefixes matching nothing and the anti-rot test caught all seven on its
+    first run.
+
+  So: an enumeration does not go stale, but it can be wrong on arrival in ways
+  prose cannot be — a matcher bug excuses everything at once. What makes it
+  recoverable is that each of those four was found by MUTATION rather than by
+  reading, and the mutations are now in the suite.
 * That `feedback_billing` and `interview_core` are covered by anything. They
   are not. `feedback_billing`'s `GET /scorecards/{scorecard_id}` explicitly
   grants `platform_owner` "unrestricted cross-company access" in its own

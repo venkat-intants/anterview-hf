@@ -67,13 +67,71 @@ _UNGATED_FAMILIES: dict[str, str] = {
         "that on a password-rotation chore would be the wrong trade."
     ),
     "/notifications": "The caller's own notifications, resolved from the token.",
+    # NOT self-scoped, and the previous version of this entry said it was.
+    # `jobs.py`'s own module docstring contradicts it: `GET /jobs/{job_id}`
+    # "Returns any active, non-deleted job regardless of owner", and the query
+    # filters on id/is_active/deleted_at with no `created_by_user_id` and no
+    # company. So the subject comes from a PATH PARAMETER, which is exactly
+    # what the definition above excludes.
+    #
+    # Listed by exact path rather than as a family, because the prefix was
+    # excusing routes in other routers (`jd.py` shares it) and because the
+    # three paths differ: the browse list returns public rows only, the detail
+    # route returns any owner's row, and the create route writes the caller's.
     "/jobs": (
-        "Self-serve custom jobs. No role logic anywhere in `jobs.py` — a "
-        "candidate creating and reading their own practice jobs. Note "
-        "`POST /jobs/{job_id}/jd-document` lives in `jd.py`, NOT here, and IS "
-        "gated (round 15)."
+        "Browse list. Returns only public rows (`created_by_user_id IS NULL`), "
+        "so there is no caller-specific data to scope."
+    ),
+    "/jobs/{job_id}": (
+        "ACCEPTED, NOT self-scoped: any authenticated caller can read any "
+        "active job by UUID, including another user's self-authored practice "
+        "job and its pasted JD text. Low sensitivity (a job description, not a "
+        "person's record) and a UUIDv4 is the only bound, but recorded as what "
+        "it is rather than claimed as scoping that does not exist. Scoping the "
+        "query to `created_by_user_id IS NULL OR = caller` is the fix if this "
+        "ever matters."
     ),
 }
+
+
+def _matches(prefix: str, path: str) -> bool:
+    """Whether *path* is in the family *prefix*, anchored and on a boundary.
+
+    SUBSTRING MATCHING WAS THE BUG, and both round-16 reviewers found it
+    independently with working demonstrations. The previous version asked
+    `prefix in label`, where `label` was `"GET /hr/applicants"` — so ANY path
+    containing `/jobs`, `/consent` or `/notifications` anywhere was excused.
+    Demonstrated: `GET /hr/jobs/{company_id}/all-applicants` — authenticated,
+    no password gate, privilege decided in-handler, i.e. precisely round 15's
+    blocking shape — passed this test, and renaming it to `/hr/roles/...`
+    failed it. The only difference was the literal string `/jobs`.
+
+    Worse, it defeated the anti-rot test too: a family can be excusing nothing
+    it was written for and still look like it "matches", because some unrelated
+    route contains the string. That is the exact condition
+    `test_the_listed_families_still_match_something` exists to catch.
+
+    Two routes already sit inside a family this way and are anonymous today, so
+    nothing is open: `POST /offer/documents/consent/withdraw` and
+    `POST /task/consent/withdraw` are both inside `/consent`. If either ever
+    takes a token, the `/consent` entry would have excused it silently.
+
+    Anchored at the start, and on a segment boundary, so `/jobs` admits
+    `/jobs` and `/jobs/{job_id}` but never `/hr/jobs/...` or `/jobsearch`.
+    """
+    if prefix == "/":
+        # EXACT ONLY. `"/".rstrip("/") + "/"` is `"/"`, and every path starts
+        # with `/`, so treating the root as a prefix made it a blanket pass
+        # over the whole app — a prefix blanket replacing the substring
+        # blanket this function was written to remove. Caught by the
+        # in-handler-authentication mutation, which the root entry was
+        # silently excusing.
+        return path == "/"
+    return path == prefix or path.startswith(prefix.rstrip("/") + "/")
+
+
+def _in_a_listed_family(path: str) -> bool:
+    return any(_matches(prefix, path) for prefix in _UNGATED_FAMILIES)
 
 
 def _callables(dependant: Any, out: list[Any] | None = None) -> list[Any]:
@@ -87,26 +145,32 @@ def _callables(dependant: Any, out: list[Any] | None = None) -> list[Any]:
     return out
 
 
-def _classify() -> tuple[list[str], list[str], list[str]]:
-    """(anonymous, password-gated, authenticated-but-ungated) route labels."""
+def _classify() -> tuple[
+    list[tuple[str, str]], list[tuple[str, str]], list[tuple[str, str]]
+]:
+    """(anonymous, password-gated, authenticated-but-ungated) as (methods, path).
+
+    Paths are kept separate from methods so a family can be matched against the
+    PATH rather than against a rendered label — see `_matches`.
+    """
     from app.dependencies import get_current_user, require_password_changed
     from app.main import app
 
-    anonymous: list[str] = []
-    gated: list[str] = []
-    ungated: list[str] = []
+    anonymous: list[tuple[str, str]] = []
+    gated: list[tuple[str, str]] = []
+    ungated: list[tuple[str, str]] = []
     for route in app.routes:
         if not isinstance(route, APIRoute):
             continue
         found = _callables(route.dependant)
         methods = ",".join(sorted(route.methods - {"HEAD", "OPTIONS"}))
-        label = f"{methods} {route.path}"
+        entry = (methods, route.path)
         if require_password_changed in found:
-            gated.append(label)
+            gated.append(entry)
         elif get_current_user in found:
-            ungated.append(label)
+            ungated.append(entry)
         else:
-            anonymous.append(label)
+            anonymous.append(entry)
     return anonymous, gated, ungated
 
 
@@ -120,9 +184,9 @@ def test_every_authenticated_route_is_gated_or_listed() -> None:
     )
 
     unexplained = [
-        label
-        for label in ungated
-        if not any(prefix in label for prefix in _UNGATED_FAMILIES)
+        f"{methods} {path}"
+        for methods, path in ungated
+        if not _in_a_listed_family(path)
     ]
     assert not unexplained, (
         "these routes authenticate a caller but never reach "
@@ -145,7 +209,7 @@ def test_the_listed_families_still_match_something() -> None:
     stale = [
         prefix
         for prefix in _UNGATED_FAMILIES
-        if not any(prefix in label for label in ungated)
+        if not any(_matches(prefix, path) for _methods, path in ungated)
     ]
     assert not stale, (
         f"these exempt families match no ungated route any more: {stale}. "
@@ -170,6 +234,106 @@ def test_the_agent_and_jd_routes_are_gated() -> None:
         "/agent/panel/{applicant_id}",
         "/jobs/{job_id}/jd-document",
     ):
-        assert any(label.endswith(f" {path}") for label in gated), (
+        assert any(p == path for _methods, p in gated), (
             f"{path} no longer reaches the bootstrap-password gate"
         )
+
+
+# Route families that legitimately take no token at all — ENUMERATED FROM THE
+# LIVE APP, not guessed. The first version of this list was written from memory
+# and named seven prefixes that match nothing (`/docs`, `/openapi.json`,
+# `/redoc` are plain `Route`s and never reach `_classify`; `/consent`,
+# `/interview`, `/sso`, `/test-hooks` have no anonymous APIRoute). The anti-rot
+# test below caught all seven on the first run, which is the only reason this
+# list is now real — and is a small argument for writing the anti-rot half
+# before the allowlist.
+#
+# Every entry is public, or carries its own CAPABILITY token in a header: a long
+# random string that IS the authorisation, checked by the handler. None reaches
+# `get_current_user`, which is why they land in the anonymous bucket.
+_ANONYMOUS_FAMILIES: dict[str, str] = {
+    "/": "the service banner. No data.",
+    "/apply": (
+        "the two anonymous apply doors, their draft token and the activation / "
+        "reapply-confirm links. docs/ACCEPTED-RISKS.md AR-10 is entirely about "
+        "these, and they are anonymous by product design: a candidate applies "
+        "without an account."
+    ),
+    "/auth": (
+        "login, register, verification, password reset, SSO initiate and "
+        "callback. Pre-authentication by nature."
+    ),
+    "/careers": "the public careers board — published openings only.",
+    "/exam": "candidate exam links. Capability token in `X-Exam-Token`.",
+    "/interview-invite": (
+        "invite redemption. The invite code IS the credential, and redeeming "
+        "it is how a candidate first gets a session."
+    ),
+    "/offer": "offer links. Capability token in the header, not a login.",
+    "/task": "job-simulation task links. Capability token.",
+    "/health": "liveness and deep readiness. No data.",
+    "/metrics": (
+        "Prometheus. NOT unprotected — `shared/metrics_auth` requires "
+        "`Authorization: Bearer $METRICS_TOKEN` and fails CLOSED as a 404 when "
+        "`METRICS_TOKEN` is unset under a production APP_ENV, so an "
+        "unauthenticated prober cannot tell it from a route that does not "
+        "exist. It is in this list because the check is inside the handler "
+        "rather than a dependency, which is exactly the shape this test warns "
+        "about — named here deliberately rather than discovered later."
+    ),
+}
+
+
+def test_the_anonymous_bucket_is_asserted_too() -> None:
+    """THE THIRD BUCKET, which both earlier versions silently discarded.
+
+    Round 14's sweep searched for "a role gate with no password gate", and
+    round 15's finding was that this excluded routes deciding privilege
+    IN-HANDLER. Round 16 pointed out the same shape one level further out:
+    `_classify` defines "authenticated" as "reaches `get_current_user`", so a
+    route that decodes the token ITSELF — same HS256 secret, checked in the
+    handler — lands in `anonymous`, and both tests here threw that list away.
+
+    Not live today: nothing outside `app/dependencies.py` references
+    `verify_access_token`, `HTTPBearer` or `Security(`, and every anonymous
+    route is public or capability-token. But "not live today" is what was true
+    of the in-handler role shape in round 14, one round before it was
+    exploitable. So the bucket is enumerated rather than trusted.
+
+    What this cannot see: a route that authenticates in-handler AND sits under
+    a listed prefix. That is a real residual limit and it is the reason the
+    families below are paths rather than a blanket pass — a new top-level
+    prefix shows up here before it can hide anything.
+    """
+    anonymous, _gated, _ungated = _classify()
+
+    unexplained = [
+        f"{methods} {path}"
+        for methods, path in anonymous
+        if not any(_matches(prefix, path) for prefix in _ANONYMOUS_FAMILIES)
+    ]
+    assert not unexplained, (
+        "these routes take no token and are not in a listed anonymous family:\n    "
+        + "\n    ".join(sorted(unexplained))
+        + "\n\nEither they are genuinely public or capability-token — in which "
+        "case add the family with the reason — or they authenticate INSIDE the "
+        "handler, which is the shape round 16 flagged: the password gate, the "
+        "role gate and this enumeration would all miss them. A route that "
+        "checks its own JWT is not anonymous; it is authenticated somewhere "
+        "this walk cannot read."
+    )
+
+
+def test_the_anonymous_families_still_match_something() -> None:
+    """Same anti-rot rule as the gated families, for the same reason."""
+    anonymous, _gated, _ungated = _classify()
+    stale = [
+        prefix
+        for prefix in _ANONYMOUS_FAMILIES
+        if not any(_matches(prefix, path) for _methods, path in anonymous)
+    ]
+    assert not stale, (
+        f"these anonymous families match no route any more: {sorted(stale)}. "
+        "Either they were gated (delete the entry) or renamed (in which case "
+        "the entry now excuses nothing and hides that)."
+    )

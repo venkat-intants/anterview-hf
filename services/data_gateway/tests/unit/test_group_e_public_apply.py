@@ -979,6 +979,10 @@ _REFUSAL_EXEMPT = {
 }
 
 #: What a `pattern=` constraint must refuse before it counts as protection.
+#:
+#: The lone surrogate is kept for documentation rather than for evidence:
+#: pydantic 2.13 refuses one under ANY pattern, including `[a-z]`, so that half
+#: of the check cannot fail and proves nothing. U+0000 is the live half.
 _MUST_NOT_MATCH = (chr(0), chr(0xD800))
 
 #: Form parameter types that plainly carry no text into a column. Anything NOT
@@ -1009,7 +1013,6 @@ def _form_text_fields() -> dict[str, object]:
     import inspect
     import typing
 
-    from fastapi.params import File as FileParam
     from fastapi.params import Form as FormParam
 
     from app.routers import public_apply
@@ -1028,37 +1031,85 @@ def _form_text_fields() -> dict[str, object]:
             form = default if isinstance(default, FormParam) else None
         if form is None:
             continue
-        # `fastapi.params.File` SUBCLASSES `Form`, so an upload declared the
-        # ordinary way — `Annotated[UploadFile, File()]` — satisfies the
-        # isinstance check above and would be read as an unprotected text
-        # field. Today `resume` is a bare `UploadFile` annotation and slips
-        # past, so this is a false positive waiting for a refactor rather than
-        # a live one; it is excluded here because a guard that cries wolf is a
-        # guard somebody weakens.
-        if isinstance(form, FileParam):
-            continue
         base = getattr(hint, "__origin__", hint)
         args = {a for a in typing.get_args(base) if a is not type(None)}
         candidates = args or {base}
         # INVERTED ON PURPOSE: a field is in scope unless its type is plainly
         # NOT text. Listing the string-like types instead would put every new
         # pydantic string type silently OUT of the guard, which is how
-        # `EmailStr` escaped the previous version — and `email` is the one
-        # field the whole five-state property is keyed on. A guard whose
-        # failure mode is silent omission should default to including.
-        if candidates & _NOT_TEXT:
+        # `EmailStr` escaped an earlier version — and `email` is the one field
+        # the whole five-state property is keyed on. A guard whose failure mode
+        # is silent omission should default to including.
+        #
+        # `<=` AND NOT `&` — round 16. With `&`, any union that merely TOUCHES
+        # the non-text set was dropped whole, so `Annotated[str | int, Form()]`
+        # left the guard entirely. `str | int` is not "plainly not text", and
+        # an any-member test defaults to EXCLUDE, which is the opposite of the
+        # paragraph above.
+        if candidates <= _NOT_TEXT:
             continue
+        # A `File()` declaration carrying a `str` is a working TEXT field — a
+        # plain form value, not an upload — so the exclusion is by resolved
+        # type (above) and not by declaration. An earlier version did
+        # `isinstance(form, FileParam): continue`, which exempted
+        # `Annotated[str, File()]` outright; that was verified for
+        # `UploadFile` + `File()` and not for `str` + `File()`, which is the
+        # combination that matters.
         out[name] = form
     return out
 
 
-def _declared_pattern(form: object) -> str | None:
-    """The `pattern=` a Form carries, or None. Lives in `Form.metadata`."""
+def _declared_pattern(form: object) -> object | None:
+    """The `pattern=` a Form carries, or None. Lives in `Form.metadata`.
+
+    Returned UNCONVERTED. An earlier version did `str(pattern)`, which turns a
+    compiled `re.Pattern` into the text `"re.compile('...')"` — a string that
+    matches nothing, so every compiled pattern was certified as protective
+    while pydantic enforced the real regex. `pattern=` accepts either form.
+    """
     for m in getattr(form, "metadata", ()):
         pattern = getattr(m, "pattern", None)
-        if pattern:
-            return str(pattern)
+        if pattern is not None:
+            return pattern
     return None
+
+
+def _pattern_refuses(pattern: object, value: str) -> bool:
+    """Whether a declared `pattern=` makes pydantic REJECT *value*.
+
+    RUNS PYDANTIC, rather than modelling it. Round 16 defeated the previous
+    version three ways, all of them the same mistake — re-implementing a
+    constraint instead of invoking it:
+
+    * **pydantic's `pattern=` is an unanchored SEARCH; `re.match` anchors at
+      the start.** So `r"[\w ]{1,200}$"` — no leading `^` — made `re.match`
+      return None, the guard called the field protected, and pydantic accepted
+      `"a\x00b"`. Demonstrated end to end: with that pattern on `phone` and
+      `phone` dropped from the refusal tuple, all 19 tests here passed and a
+      NUL reached the handler.
+    * A compiled `re.Pattern` was stringified into something that never
+      matched, so it was always certified.
+    * The probe was the fixed three-character `f"a{ch}b"`, so a pattern whose
+      length constraint excludes 3 (`^.{2}$`) was certified while admitting
+      two NULs.
+
+    `TypeAdapter(Annotated[str, Field(pattern=...)])` is the same machinery
+    FastAPI runs, so it cannot disagree with it. Two probe shapes — the
+    character alone and embedded — so a length constraint cannot hide one.
+    """
+    from typing import Annotated as Ann
+
+    import pydantic
+    from pydantic import Field, TypeAdapter
+
+    adapter = TypeAdapter(Ann[str, Field(pattern=pattern)])
+    for probe in (value, f"a{value}b"):
+        try:
+            adapter.validate_python(probe)
+        except pydantic.ValidationError:
+            continue
+        return False  # pydantic accepted something unstorable
+    return True
 
 
 def test_every_text_form_field_is_refused_or_exempt_on_purpose() -> None:
@@ -1076,8 +1127,6 @@ def test_every_text_form_field_is_refused_or_exempt_on_purpose() -> None:
     `"a\x00b"` — `.` matches a NUL — so "carry a pattern" was protection in
     name only.
     """
-    import re
-
     fields = _form_text_fields()
     assert fields, (
         "found no text Form parameters on submit_application — this guard has "
@@ -1115,11 +1164,13 @@ def test_every_text_form_field_is_refused_or_exempt_on_purpose() -> None:
         admitted = [
             f"U+{ord(ch):04X}"
             for ch in _MUST_NOT_MATCH
-            if re.match(pattern, f"a{ch}b") is not None
+            if not _pattern_refuses(pattern, ch)
         ]
         if admitted:
             problems[name] = (
-                f"pattern {pattern!r} still admits {', '.join(admitted)}"
+                f"pattern {pattern!r} still admits {', '.join(admitted)} "
+                "(pydantic's pattern is an unanchored search — a missing "
+                "leading ^ protects nothing)"
             )
 
     assert not problems, (

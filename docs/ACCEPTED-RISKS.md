@@ -830,18 +830,29 @@ this paragraph's fifth inaccuracy:
   test cannot see it.
 * The config bounds — unrelated to either half, and listed here previously as
   though they were.
-* `shared/tests/test_s3.py`'s cache suite (round 13) — the CACHING half, which
-  nothing held when the register first claimed it was held. Five of its tests
-  go red if the cache is removed while the context-manager API is kept, which
-  is the shape a plausible revert would take. Two caveats worth carrying:
-  **two of those five go red by `AttributeError` on `shared.s3._clients`**, so
-  they pin an internal name and would also fail on a harmless rename; and the
-  other four assert object IDENTITY, which any eviction policy satisfies — a
-  five-minute TTL was demonstrated to keep all of them green while reinstating
-  the full construction cost every window. `test_the_client_is_constructed_exactly_once`
-  (round 14) is the behavioural form and is the one that actually holds the
-  property: it counts constructions, which is the only quantity the cache
-  exists to reduce.
+* `shared/tests/test_s3.py`'s cache suite — the CACHING half, which nothing
+  held when this register first claimed it was held, and which took three
+  rounds to actually hold. The history is worth keeping because each version
+  claimed more than it delivered:
+
+  - Round 13's five tests assert object IDENTITY. They go red if the cache is
+    removed while the context-manager API is kept, but any EVICTION policy
+    satisfies them — an evicted-and-rebuilt client is a different object only
+    on the call that rebuilds. Two of the five also go red by `AttributeError`
+    on `shared.s3._clients`, so they pin an internal name and would fail on a
+    harmless rename.
+  - Round 14 added `test_the_client_is_constructed_exactly_once`, and this
+    entry said it "actually holds the property". **It does not.** Both round-15
+    reviewers built a 300-second TTL and all 28 tests passed: every acquisition
+    happens within milliseconds and no test can advance a clock it does not
+    own. That claim is struck.
+  - Round 15 added `test_the_cache_keeps_no_time_based_state`, which asserts
+    the module reads no clock at all. A clock SEAM was the obvious fix and
+    would have failed the same way — the reviewer's winning defeat used
+    `loop.time()`, which routes through no seam. Asserting the absence of the
+    capability is the only form that holds: if the cache cannot read a clock it
+    cannot expire on one. Verified against both the `loop.time()` and
+    `time.monotonic()` variants.
 
 The lesson is the one this entry states in its own voice and then broke four
 times: a control described here is not thereby guarded.
@@ -1146,21 +1157,34 @@ the highest-privilege account is provisioned without its own review.
   someone is reading deploy logs. Even within `data_gateway`, `/auth/*` is
   ungated so the flag can be cleared, so the holder can simply
   `POST /auth/change-password` and own the account outright.
-* That the gate covers all of `data_gateway`. An earlier version of this
-  entry said it "covers one service of four", which reads as though the one it
-  covers is whole, and round 14 walked the live dependency tree of every route
-  to check. It found exactly one route with a role gate and no password gate:
-  **`GET /users/{user_id}/profile`**, which used bare `require_role(...)` while
-  its own `_GLOBAL_VIEW_ROLES` gives `admin` and `platform_owner` UNSCOPED,
-  cross-tenant reads of any user's email, phone, LinkedIn, GitHub, location,
-  employment status and desired roles.
+* That the gate covers all of `data_gateway`. It took three rounds to get this
+  sentence right, and the way each version failed is the useful part.
 
-  That one is FIXED rather than documented — it is now on
-  `require_role_password_ok`, which is the chokepoint that exists so a
-  privileged route cannot miss the gate. A route that is actually gated needs
-  no paragraph. It is recorded here anyway because the shape matters: the
-  chokepoint existed and one route simply did not use it, which is the same
-  failure mode as every other finding on this branch.
+  Round 13's version said the printed password granted no API access at all.
+  Round 14 said the gate "covers one service of four", and found
+  **`GET /users/{user_id}/profile`** using bare `require_role(...)` with
+  `_GLOBAL_VIEW_ROLES` granting unscoped cross-tenant reads of personal data.
+  Round 15 then found four more — all of `/agent/*` plus
+  `POST /jobs/{job_id}/jd-document` — and diagnosed why round 14's sweep had
+  missed them: it searched for *"a route with a role gate and no password
+  gate"*, a predicate that excludes by construction the shape that survived it,
+  namely a route with NO role gate whose privilege decision is inside the
+  handler.
+
+  The cost was concrete. `admin_hr` provisions every `hr_manager` and
+  `super_admin` with `must_change_password = true`. Such an account is refused
+  `GET /hr/applicants`, and was ADMITTED to `POST /agent/panel/{applicant_id}`,
+  whose own comment calls it "the DENSEST candidate record in the platform".
+  Refused the lighter read, allowed the heavier one.
+
+  All five are FIXED rather than documented, on `require_password_changed`
+  (which leaves the in-handler role logic untouched). **And the claim is now a
+  test**: `test_bootstrap_password_gate_coverage.py` walks the live dependency
+  tree of all 415 routes and requires every authenticated route that does not
+  reach the gate to be in a named family with a stated reason — `/auth/*`,
+  `/users/me/*`, `/consent`, `/notifications`, self-serve `/jobs`, each
+  self-scoped by construction. Three rounds of prose went stale here; an
+  enumeration cannot.
 * That `feedback_billing` and `interview_core` are covered by anything. They
   are not. `feedback_billing`'s `GET /scorecards/{scorecard_id}` explicitly
   grants `platform_owner` "unrestricted cross-company access" in its own

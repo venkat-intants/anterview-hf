@@ -61,7 +61,7 @@ from app.agents.tools import registry
 from app.config import settings
 from app.corpus import embeddings_available
 from app.database import get_db_session
-from app.dependencies import get_current_user
+from app.dependencies import require_password_changed
 from app.models import AuditLog
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 
@@ -70,7 +70,27 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 DbSessionDep = Annotated[Any, Depends(get_db_session)]
-UserDep = Annotated[User, Depends(get_current_user)]
+# `require_password_changed`, not `get_current_user` — round 15.
+#
+# This router makes its privilege decision INSIDE the handler (`_primary_role`,
+# and the explicit `ctx.role != "hr_manager"` / `!= "platform_owner"` checks),
+# so it never passes through `require_role_password_ok` — which is the only
+# place the bootstrap-password gate lives. Both round-15 reviewers found that
+# independently, and both diagnosed why round 14's sweep missed it: that sweep
+# looked for "routes WITH a role gate and no password gate", a predicate which
+# excludes by construction exactly the shape that survived it.
+#
+# What it cost: `admin_hr` provisions every `hr_manager` and `super_admin` with
+# `must_change_password = true`. Such an account is refused `GET /hr/applicants`
+# (that path goes through `get_hr_company` -> `require_role_password_ok`) and was
+# ADMITTED to `POST /agent/panel/{applicant_id}`, whose own comment calls it
+# "the DENSEST candidate record in the platform". Refused the lighter read,
+# allowed the heavier one. `platform_owner`'s console reaches cross-tenant
+# aggregates the same way.
+#
+# `require_password_changed` is a drop-in for `get_current_user`: it adds the
+# gate and leaves every in-handler role decision exactly as it was.
+UserDep = Annotated[User, Depends(require_password_changed)]
 
 # How much prior conversation the client may replay. Long histories are the
 # main driver of agent cost, and beyond a handful of turns a console copilot is

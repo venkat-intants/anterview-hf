@@ -483,25 +483,22 @@ def test_a_closed_loop_is_pruned_rather_than_reused() -> None:
 async def test_the_client_is_constructed_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """COUNTS CONSTRUCTIONS, which identity never can.
+    """Counts constructions, which identity cannot.
 
-    Round 14's requested defeat of the five tests above, and it worked: every
-    one of them compares object identity, so ANY eviction policy satisfies all
-    of them. The reviewer added a plausible "rotated credentials" TTL — a
-    `_built_at` map and a five-minute expiry that pops the entry and rebuilds —
-    and all 27 tests stayed green, in a service that would then reinstate the
-    full 180-450 ms synchronous construction every five minutes, on the
-    `_refuse`-only CV delete. That is precisely the state-correlated stall the
-    cache exists to remove.
+    Round 14's requested defeat: every identity-based test above is satisfied
+    by any eviction policy, because an evicted-and-rebuilt client is a
+    different object only on the call that rebuilds. This counts.
 
-    Identity cannot see it because an evicted-and-rebuilt client is a different
-    object only on the call that rebuilds; every pair of calls inside one TTL
-    window still compares equal. The number of constructions is the only
-    quantity that is actually the point, so this test spies on it.
+    HONEST LIMIT, and round 15 proved it: this does NOT catch a TTL. Both
+    reviewers built a 300-second expiry and all 28 tests here passed, because
+    every acquisition below happens within milliseconds and nothing advances a
+    clock — no window longer than the test's own runtime can expire inside it.
+    An earlier version of this docstring claimed otherwise ("a cap, a TTL, an
+    LRU or a per-call rebuild all show up here"), and AR-10 claimed this test
+    "actually holds the property". Both were wrong.
 
-    Both halves matter: exactly one construction across many acquisitions, and
-    still exactly one after a later acquisition — so a cap, a TTL, an LRU or a
-    per-call rebuild all show up here.
+    `test_the_cache_keeps_no_time_based_state` below is what closes the TTL
+    shape. The two together are the guard; this one alone is not.
     """
     import aioboto3
 
@@ -527,14 +524,63 @@ async def test_the_client_is_constructed_exactly_once(
             "Each construction is 180-450 ms of SYNCHRONOUS botocore work that "
             "blocks the event loop, and on the anonymous apply doors that stall "
             "is state-correlated because only the refusing branches delete the "
-            "CV they were made to upload (AR-10 residue 2). Identity-based "
-            "tests cannot see this: an eviction policy rebuilds and still "
-            "returns one object per window."
+            "CV they were made to upload (AR-10 residue 2)."
         )
-
-        # A later acquisition must not rebuild either — this is the half that
-        # catches a TTL whose window happens to be longer than the loop above.
         await _acquire()
         assert built == 1, f"a later acquisition rebuilt the client ({built} total)"
     finally:
         await aclose_s3_clients()
+
+
+def test_the_cache_keeps_no_time_based_state() -> None:
+    """NO CLOCK IN THE CACHE, which is the only form of this that holds.
+
+    Round 15 defeated the counting test above with a 300-second TTL, and the
+    first thing I reached for was a clock seam — a `_now()` in `shared/s3.py`
+    that a test could monkeypatch and advance. That fails for the same reason
+    the counting test does: a TTL can read `loop.time()`, or
+    `time.perf_counter()`, or anything else, and walk straight past a seam it
+    was never routed through. The reviewer's own first attempt used
+    `import time` and was caught by `test_factory_stays_dependency_light`; the
+    second used `loop.time()` and defeated everything.
+
+    So this asserts the absence of the capability rather than the behaviour of
+    one implementation of it. If the cache cannot read a clock, it cannot
+    expire an entry on one, and no cleverer TTL exists to find.
+
+    Why that is an acceptable constraint on the module: the cache is keyed on
+    (event loop, connection settings) and is emptied by `aclose_s3_clients`
+    and `_prune_closed_loops`. Neither needs to know the time. If a future
+    change genuinely does, this test should be changed DELIBERATELY, with the
+    reasoning written down — which is the whole point of putting the
+    constraint here rather than in a comment.
+    """
+    import ast
+
+    source = pathlib.Path(__file__).parent.parent / "s3.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+
+    clocks = {"monotonic", "time", "perf_counter", "process_time", "clock"}
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = None
+            if isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+            elif isinstance(node.func, ast.Name):
+                name = node.func.id
+            if name in clocks:
+                found.append(f"{name}() at line {node.lineno}")
+
+    assert not found, (
+        "shared/s3.py reads a clock: " + "; ".join(found) + ".\n\n"
+        "The client cache must not expire entries on time. A TTL reinstates "
+        "the 180-450 ms synchronous construction every window, and on the "
+        "anonymous apply doors that stall is state-correlated — it is the "
+        "~390 ms term round 12 read off a CONCURRENT request at 24/25 "
+        "(docs/ACCEPTED-RISKS.md AR-10 residue 2). Round 15 demonstrated that "
+        "a 300-second TTL passes every other test in this file, including the "
+        "one that counts constructions, because no test can advance a clock it "
+        "does not own. If a clock is genuinely needed here, change this test "
+        "on purpose and say why."
+    )

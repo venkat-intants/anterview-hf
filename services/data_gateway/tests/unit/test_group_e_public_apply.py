@@ -14,6 +14,7 @@ import re
 import time
 
 import pytest
+from fastapi import UploadFile
 
 
 def _submit() -> str:
@@ -959,9 +960,9 @@ def test_no_object_release_is_awaited_on_a_reply_path() -> None:
     )
 
 
-# Form fields that may be absent from the refusal tuple, each with the reason.
-# An entry here is a DECISION, which is the point: adding a text field to the
-# handler forces either a refusal or a line in this dict.
+# Form fields that may skip the refusal, each with the reason. An entry here is
+# a DECISION, which is the point: adding a text field forces either a refusal or
+# a line in this dict.
 _REFUSAL_EXEMPT = {
     "answers": (
         "a JSON document, not a stored string. Its values go through "
@@ -969,29 +970,120 @@ _REFUSAL_EXEMPT = {
         "the same code points, and that runs above `tail_from` so the refusal "
         "is state-independent."
     ),
+    "email": (
+        "`EmailStr`, not `str` — pydantic's email validator refuses a NUL and "
+        "a lone surrogate before the handler sees it. Listed explicitly because "
+        "round 15 pointed out it was silently outside the old guard, and it is "
+        "the one field the whole five-state property is keyed on."
+    ),
 }
+
+#: What a `pattern=` constraint must refuse before it counts as protection.
+_MUST_NOT_MATCH = (chr(0), chr(0xD800))
+
+#: Form parameter types that plainly carry no text into a column. Anything NOT
+#: in here is treated as text and must be refused, patterned or exempted.
+_NOT_TEXT: frozenset[object] = frozenset({bool, int, float, bytes, UploadFile})
+
+
+def _form_text_fields() -> dict[str, object]:
+    """Every text Form parameter of `submit_application`, from the LIVE signature.
+
+    DERIVED FROM THE RESOLVED SIGNATURE, not from source text — round 15, and
+    this is the second time on this branch that deriving an obligation from
+    source text turned out to enumerate fewer shapes than Python accepts. The
+    previous version parsed the AST and was bypassed three ways:
+
+    * `referral_code: str | None = Form(default=None, ...)` — the non-`Annotated`
+      style, which FastAPI fully supports, skipped because the annotation was
+      not an `ast.Subscript`;
+    * `Annotated[Optional[str], Form(...)]` — `ast.unparse` gives
+      `"Optional[str]"`, which was not in the hard-coded set of accepted
+      spellings, and the same goes for any type alias;
+    * `Annotated[EmailStr, Form()]` — outside the guard for the same reason,
+      which is why it is now an explicit exemption rather than an accident.
+
+    `typing.get_type_hints(include_extras=True)` resolves aliases and unions to
+    one canonical form, so all three collapse into the same shape here.
+    """
+    import inspect
+    import typing
+
+    from fastapi.params import File as FileParam
+    from fastapi.params import Form as FormParam
+
+    from app.routers import public_apply
+
+    fn = public_apply.submit_application
+    hints = typing.get_type_hints(fn, include_extras=True)
+    params = inspect.signature(fn).parameters
+
+    out: dict[str, object] = {}
+    for name, hint in hints.items():
+        meta = getattr(hint, "__metadata__", ())
+        form = next((m for m in meta if isinstance(m, FormParam)), None)
+        if form is None:
+            # The other supported spelling: `name: str | None = Form(...)`.
+            default = params[name].default if name in params else None
+            form = default if isinstance(default, FormParam) else None
+        if form is None:
+            continue
+        # `fastapi.params.File` SUBCLASSES `Form`, so an upload declared the
+        # ordinary way — `Annotated[UploadFile, File()]` — satisfies the
+        # isinstance check above and would be read as an unprotected text
+        # field. Today `resume` is a bare `UploadFile` annotation and slips
+        # past, so this is a false positive waiting for a refactor rather than
+        # a live one; it is excluded here because a guard that cries wolf is a
+        # guard somebody weakens.
+        if isinstance(form, FileParam):
+            continue
+        base = getattr(hint, "__origin__", hint)
+        args = {a for a in typing.get_args(base) if a is not type(None)}
+        candidates = args or {base}
+        # INVERTED ON PURPOSE: a field is in scope unless its type is plainly
+        # NOT text. Listing the string-like types instead would put every new
+        # pydantic string type silently OUT of the guard, which is how
+        # `EmailStr` escaped the previous version — and `email` is the one
+        # field the whole five-state property is keyed on. A guard whose
+        # failure mode is silent omission should default to including.
+        if candidates & _NOT_TEXT:
+            continue
+        out[name] = form
+    return out
+
+
+def _declared_pattern(form: object) -> str | None:
+    """The `pattern=` a Form carries, or None. Lives in `Form.metadata`."""
+    for m in getattr(form, "metadata", ()):
+        pattern = getattr(m, "pattern", None)
+        if pattern:
+            return str(pattern)
+    return None
 
 
 def test_every_text_form_field_is_refused_or_exempt_on_purpose() -> None:
-    """RETIRES THE STALE-LIST CATEGORY, which is where rounds 12 and 13 both went.
+    """RETIRES THE STALE-LIST CATEGORY, which is where rounds 12 and 13 went.
 
     Round 12 guarded `full_name`. Round 13 reproduced the identical 201/503
-    split through five sibling fields, because the fix went to one call site
-    instead of to every text input. Round 13 then fixed it by listing seven
-    fields in the handler and seven in the integration matrix — two
-    hand-maintained tuples with no cross-check, which round 14 correctly
-    called the thing that will go stale next.
+    split through five siblings. Round 13's fix listed seven fields in the
+    handler and seven in the matrix — two hand-maintained tuples with no
+    cross-check, which round 14 called the thing that would go stale next, and
+    round 15 then walked through the AST guard that replaced them.
 
-    So this derives the obligation from the HANDLER'S SIGNATURE rather than
-    from a list somebody remembered to update. Every parameter annotated
-    `str` or `str | None` with a `Form(...)` must either appear in the
-    refusal tuple, or carry a `pattern=` constraint (which cannot admit a NUL
-    or a lone surrogate), or be named in `_REFUSAL_EXEMPT` with a reason.
-
-    Adding an eighth text field to `submit_application` now fails this test
-    until somebody decides which of those three it is. That is worth more than
-    the eighth field, because the ninth gets it for free.
+    So the obligation comes from the resolved signature, and a `pattern=` only
+    counts if it actually REFUSES what Postgres refuses. Round 15 measured that
+    `pattern="^.{0,50}$"` satisfied the old check while pydantic accepted
+    `"a\x00b"` — `.` matches a NUL — so "carry a pattern" was protection in
+    name only.
     """
+    import re
+
+    fields = _form_text_fields()
+    assert fields, (
+        "found no text Form parameters on submit_application — this guard has "
+        "stopped matching, which looks identical to a pass"
+    )
+
     import app.routers.public_apply as mod
 
     tree = ast.parse(pathlib.Path(mod.__file__).read_text(encoding="utf-8"))
@@ -1000,36 +1092,6 @@ def test_every_text_form_field_is_refused_or_exempt_on_purpose() -> None:
         for n in ast.walk(tree)
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "submit_application"
     )
-
-    args = handler.args
-    params = args.posonlyargs + args.args + args.kwonlyargs
-
-    text_fields: dict[str, bool] = {}  # name -> has a pattern= constraint
-    for arg in params:
-        ann = arg.annotation
-        if not isinstance(ann, ast.Subscript):
-            continue
-        if not (isinstance(ann.value, ast.Name) and ann.value.id == "Annotated"):
-            continue
-        parts = ann.slice.elts if isinstance(ann.slice, ast.Tuple) else [ann.slice]
-        if not parts:
-            continue
-        # The declared type: `str`, or `str | None`.
-        declared = ast.unparse(parts[0]).replace(" ", "")
-        if declared not in {"str", "str|None", "None|str"}:
-            continue
-        # The metadata: must be a Form(...) for this to be a form field.
-        rest = [ast.unparse(p) for p in parts[1:]]
-        if not any(r.startswith("Form(") for r in rest):
-            continue
-        text_fields[arg.arg] = any("pattern=" in r for r in rest)
-
-    assert text_fields, (
-        "found no Annotated[str, Form(...)] parameters on submit_application — "
-        "this guard has stopped matching, which looks identical to a pass"
-    )
-
-    # The handler's own refusal tuple, read from the source rather than named.
     refused: set[str] = set()
     for node in ast.walk(handler):
         if (
@@ -1038,34 +1100,41 @@ def test_every_text_form_field_is_refused_or_exempt_on_purpose() -> None:
             and isinstance(node.target, ast.Name)
             and node.target.id.startswith("_submitted")
         ):
-            refused = {
-                e.id for e in node.iter.elts if isinstance(e, ast.Name)
-            }
+            refused = {e.id for e in node.iter.elts if isinstance(e, ast.Name)}
             break
-    assert refused, (
-        "could not find the loop that refuses unstorable text in "
-        "submit_application — if it was restructured, update this guard "
-        "deliberately rather than deleting it"
+    assert refused, "could not find the refusal loop in submit_application"
+
+    problems: dict[str, str] = {}
+    for name, form in fields.items():
+        if name in refused or name in _REFUSAL_EXEMPT:
+            continue
+        pattern = _declared_pattern(form)
+        if pattern is None:
+            problems[name] = "not refused, no pattern, not exempt"
+            continue
+        admitted = [
+            f"U+{ord(ch):04X}"
+            for ch in _MUST_NOT_MATCH
+            if re.match(pattern, f"a{ch}b") is not None
+        ]
+        if admitted:
+            problems[name] = (
+                f"pattern {pattern!r} still admits {', '.join(admitted)}"
+            )
+
+    assert not problems, (
+        "these text Form fields on the anonymous one-shot door are not "
+        "protected against values Postgres cannot store:\n    "
+        + "\n    ".join(f"{k}: {v}" for k, v in sorted(problems.items()))
+        + "\n\nEvery one reaches the `applicants` INSERT that only the "
+        "applicant-creating branch performs, so a value the database rejects is "
+        "a 503 in exactly one of the five states and a 201 in the other four. "
+        "Add it to the refusal tuple, give it a pattern that actually refuses "
+        "U+0000 and lone surrogates, or add it to _REFUSAL_EXEMPT with the "
+        "reason it is safe."
     )
 
-    unprotected = {
-        name: "no pattern= and not refused"
-        for name, has_pattern in text_fields.items()
-        if name not in refused and not has_pattern and name not in _REFUSAL_EXEMPT
-    }
-    assert not unprotected, (
-        "these text Form fields on the anonymous one-shot door are neither "
-        "refused for unstorable characters, nor pattern-constrained, nor "
-        f"exempted with a reason: {sorted(unprotected)}. Every one of them "
-        "reaches the `applicants` INSERT that only the applicant-creating "
-        "branch performs, so a value the database rejects is a 503 in exactly "
-        "one of the five states and a 201 in the other four. Add it to the "
-        "refusal tuple, give it a pattern, or add it to _REFUSAL_EXEMPT with "
-        "the reason it is safe."
-    )
-
-    # And the exemptions must still be real fields, or they are rot.
-    stale = set(_REFUSAL_EXEMPT) - set(text_fields)
+    stale = set(_REFUSAL_EXEMPT) - set(fields)
     assert not stale, (
         f"_REFUSAL_EXEMPT names fields that no longer exist: {sorted(stale)}"
     )

@@ -462,12 +462,24 @@ async def import_bank_questions(
     if language not in LANGUAGES:
         raise HTTPException(status_code=422, detail="language must be en, hi or te")
 
-    # BOUNDED READ, like the apply door's `read(_MAX_RESUME_BYTES + 1)`.
-    # This read the whole body into memory and checked MAX_IMPORT_BYTES
-    # afterwards, so an authenticated session could make the service
-    # buffer an arbitrary body before being told no — and `handle /hr/*`
-    # carries no edge `request_body max_size`, unlike `/apply*`.
-    # One byte past the limit is all it takes to know it is over.
+    # BOUNDED READ, like the apply door's `read(_MAX_RESUME_BYTES + 1)`: one
+    # byte past the limit is all it takes to know it is over, so the `bytes`
+    # object this handler holds is capped rather than being however large the
+    # caller sent.
+    #
+    # WHAT IT DOES NOT DO, because the first version of this comment claimed
+    # it did. FastAPI resolves an `UploadFile` parameter during dependency
+    # solving, which runs starlette's multipart parser to completion BEFORE
+    # the first line of this function — into a `SpooledTemporaryFile` that
+    # rolls to disk past 1 MB. So the service still receives and spools the
+    # whole body; measured at 20 MB with `file.size == 20971520` and the spool
+    # rolled. This bounds memory in the handler, not what arrives.
+    #
+    # The half that actually bounds arrival is an edge cap, and `handle /hr/*`
+    # has none — unlike `/apply*` (8 MB), `/interviewer/*` (1 MB) and the three
+    # 11 MB blocks. That is recorded rather than fixed here: it is an
+    # authenticated route and the cap belongs in the same change as a review of
+    # what HR legitimately uploads.
     content = await file.read(question_import.MAX_IMPORT_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")

@@ -43,8 +43,15 @@ Open:
 # Apply all migrations
 poetry run alembic upgrade head
 
-# Roll back one migration
-poetry run alembic downgrade -1
+# Roll back one migration -- NAME THE TARGET, do not use -1.
+#
+# `downgrade -1` fails with "Ambiguous walk" whenever the head is a merge
+# revision, which it is: `f1b3d5a7c9e2` joins the PH3-B4b chain and main's
+# question-bank chain. It fails CLOSED (nothing is applied, the database is
+# untouched), so this is confusion rather than damage -- but it is the command
+# somebody reaches for during an incident, so it should not be the one written
+# down. An explicit target walks both parents correctly:
+poetry run alembic downgrade <revision>
 
 # Create a new migration (autogenerate)
 poetry run alembic revision --autogenerate -m "describe change"

@@ -212,7 +212,30 @@ What is in the browser suite for Phase 3 (`E`):
 | B4b | The anonymous apply door answers **identically** whether the address has a live application, is inside the waiting period, is past it, has an override, or has never applied | U `test_ph3_reapplication.py` | S `test_ph3_cooldown_indistinguishable.py` (16): both doors, the stored reply, the work done, a storage outage, a read-only database, reply timing and the pad, and four crafted-input cases | E `apply-indistinguishable.spec.ts`: four states, one rendered screen, compared for equality | covered. See the gap note below on the fifth state. |
 | B4c | An application can be left half-finished and resumed | U `test_ph3_drafts_and_confirmation.py` (71) | S `test_ph5_e3_draft_rediscovery_db.py` | E `save-and-resume.spec.ts` | covered. |
 | B5 | What a parser read off a CV is shown for correction before it becomes an application | U `test_ph3_drafts_and_confirmation.py` | — | E `application-confirmation.spec.ts`; E `save-and-resume.spec.ts` | covered. |
-| B6 | An application is pinned to the advert version that was live when it was made | U `test_ph3_jd_versions.py` | — | E `jd-versions.spec.ts` (the version-aware half) | **partial?** The browser proves the public page follows the published version. That an *application* stores the version it was made against is asserted in the unit file; no browser test reads it back off an application. Low value in the browser — recommend leaving it at unit. |
+| B6 | JD Studio versioning: history is viewable, a revert is a publish rather than an edit, and only one version is live | U `test_ph3_jd_versions.py` (31) | — | E `jd-versions.spec.ts` (the version-aware half) | covered, as far as a browser can reach. See the correction below. |
+
+### A correction to this table's own B6 row
+
+The first version of the B6 row, written 2026-10-04, described the item as "an
+application is pinned to the advert version that was live when it was made" and
+marked it **partial?** on the grounds that "no browser test reads it back off an
+application".
+
+**Both halves of that were wrong, and in the way this file warns about most: it
+was a claim about the code written without reading the code.** There is no
+per-application JD-version pin to read back. `published_jd_version_id` sits on
+the **requisition** — which version is currently live — and the enrolment pins
+the *workflow* version and carries `target_jd_text`, a text snapshot that
+`applicants.ts` only ever sends as an upload field and no screen renders back.
+So the browser test said to be missing could not have been written, because
+the feature it would have tested does not exist. B6 is JD Studio versioning:
+history, revert-as-publish, one live version — and `jd-versions.spec.ts` covers
+the part that needs a browser, which is that a draft stays private while
+candidates keep reading the old advert.
+
+Recorded rather than quietly edited, because a **partial?** that is actually a
+misreading is worse than a real gap: a real gap gets closed, while this one
+would have sent somebody to write a test against a column that is not there.
 
 ### Phase 3 gaps worth naming
 

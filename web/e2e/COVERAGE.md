@@ -237,6 +237,57 @@ What is in the browser suite for Phase 3 (`E`):
    Phase 2 survey for `web/src/__tests__/` against Phase 3 screens would make
    this table a complete map rather than a browser-and-backend one.
 
+### Two browser specs that are not green, and are not Phase 3
+
+A full suite run on 2026-10-04 was **32 passed, 2 failed, 1 skipped**. All eight
+Phase 3 specs above passed. The skip is `coding-round`, which skips by design
+when no code runner is up. The two failures are:
+
+- `offer-preboarding.spec.ts` — waits for the offer accept-code email and never
+  sees it. The subject it wants (`Your code to accept the offer`) does exist in
+  `email_templates.py`, and the other five offer emails in that journey do
+  arrive, so the template is right and the send is not happening.
+- `review-round.spec.ts` — waits for a `Passes this round` button that does not
+  appear.
+
+Recorded here rather than left for the next person to rediscover, with what is
+known about them:
+
+- **Not caused by the `locale: 'en-GB'` pin.** Both were re-run with that line
+  removed and both failed the same way.
+- **Not this branch's doing.** PH3-B4b changes 92 files and none of them match
+  offer, preboarding, round or review. Both specs' most recent commits are on
+  `main`, and `offer-preboarding`'s says it ran green end to end.
+
+What that leaves — a pre-existing failure on `main`, or an environment
+difference on this machine — is **not established**, because neither was run
+against a checkout of `main` to find out. Do that before treating either as a
+product defect, and rule out the three faults below first: each of those
+produced a failure whose message pointed somewhere other than its cause, so a
+spec waiting on a button or an email is not yet evidence about buttons or email.
+
+### Before reading any failure here as a defect
+
+Three environment faults account for most of the time lost to this suite on
+2026-10-04, and all three produced failures that read as product bugs.
+
+1. **A stale database looks exactly like a missing column, because it is one.**
+   Four Phase 3 specs failed with the draft door returning 500 —
+   `column "resume_text" of relation "application_drafts" does not exist` — with
+   the migration present in the branch the whole time. The dev database was at
+   `2577ba99b7fe`; head was `f1b3d5a7c9e2`. Check `alembic current` against
+   `alembic heads` before anything else, and run `alembic upgrade head` from
+   `services/data_gateway` with `PYTHONPATH` set to the repo root.
+2. **data_gateway needs `RATE_LIMIT_LOGIN_PER_MINUTE=1000`**, not only
+   `AI_FAKE_MODE` and `TEST_HOOKS_ENABLED`. Without it small runs pass and a
+   full run loses about six specs in **under a second each**, because the suite
+   signs in far more than five times a minute from one IP. Several
+   sub-second failures across unrelated specs is almost always the environment
+   rather than any of them. The full table is in `README.md`; the fixtures also
+   say so in the failure text.
+3. **The apply door's submission budget is shared by the whole suite** — see
+   the section below.
+
 ### A budget any new apply spec has to live inside
 
 `POST /apply/{requisition_id}` and `POST /apply/draft/submit` share

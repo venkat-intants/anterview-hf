@@ -237,34 +237,48 @@ What is in the browser suite for Phase 3 (`E`):
    Phase 2 survey for `web/src/__tests__/` against Phase 3 screens would make
    this table a complete map rather than a browser-and-backend one.
 
-### Two browser specs that are not green, and are not Phase 3
+### The two specs that were not green, and what they turned out to be
 
-A full suite run on 2026-10-04 was **32 passed, 2 failed, 1 skipped**. All eight
-Phase 3 specs above passed. The skip is `coding-round`, which skips by design
-when no code runner is up. The two failures are:
+A full run on 2026-10-04 was 32 passed, 2 failed, 1 skipped. The skip is
+`coding-round`, which skips by design when no code runner is up. All eight
+Phase 3 specs passed. Both failures were chased to a cause, and neither was a
+Phase 3 defect — but one was a real bug and the other still is.
 
-- `offer-preboarding.spec.ts` — waits for the offer accept-code email and never
-  sees it. The subject it wants (`Your code to accept the offer`) does exist in
-  `email_templates.py`, and the other five offer emails in that journey do
-  arrive, so the template is right and the send is not happening.
-- `review-round.spec.ts` — waits for a `Passes this round` button that does not
-  appear.
+**`offer-preboarding` — fixed, and it was arithmetic, not product.** It waited
+for the offer accept-code email and never saw it. The service log settled it in
+one line: `{"template": "offer_code", "event": "email.enqueued"}` — the backend
+had sent it. The mail worker sleeps `email_poll_interval_seconds` (**default
+60**) between polls, while `waitForMail`'s default patience is **30 s**, so the
+spec passed only when the worker's tick happened to land inside its window. It
+has two such waits, which is why it could honestly be committed as "runs green
+end to end" and then fail later. `EMAIL_POLL_INTERVAL_SECONDS=2` is now in the
+documented run env and in the CI job; the spec passes and runs a minute faster.
 
-Recorded here rather than left for the next person to rediscover, with what is
-known about them:
+**`review-round` — quarantined with `test.fixme`, cause narrowed, not closed.**
+Everything up to and including the hold passes. After the release the card
+offers the final Hire/Reject pair instead of "Passes this round". The controls
+are gated on `row.awaiting_review`, which `workflow_runner.py` computes as
+`review_round_id is not None and status != 'held'` — so the product's intent
+agrees with the spec, and the observed behaviour means `review_round_id` is no
+longer set when the card renders. A `page.reload()` first was tried and does not
+help, so it is not a stale page. It may be a race: the poll returns the instant
+the status leaves `held`, and a runner pass completing the round would clear
+`review_round_id` underneath the page.
 
-- **Not caused by the `locale: 'en-GB'` pin.** Both were re-run with that line
-  removed and both failed the same way.
-- **Not this branch's doing.** PH3-B4b changes 92 files and none of them match
-  offer, preboarding, round or review. Both specs' most recent commits are on
-  `main`, and `offer-preboarding`'s says it ran green end to end.
+Two things about that one are worth keeping straight. **It is not this branch's
+doing** — `workflow_runner.py`, `DecisionQueue.tsx` and the decision routers are
+untouched by PH3-B4b, which changes 92 files and none of them here. And
+**whether it also fails on `main` is not established**, because it was never run
+against a `main` checkout; settle that before calling it a product defect. The
+spec carries the same reasoning at its `test.fixme`, so it travels with the
+code. C4's unit and smoke cover stays green; what is unguarded meanwhile is the
+browser path for releasing a hold and then passing the round.
 
-What that leaves — a pre-existing failure on `main`, or an environment
-difference on this machine — is **not established**, because neither was run
-against a checkout of `main` to find out. Do that before treating either as a
-product defect, and rule out the three faults below first: each of those
-produced a failure whose message pointed somewhere other than its cause, so a
-spec waiting on a button or an email is not yet evidence about buttons or email.
+Neither failure was caused by the `locale: 'en-GB'` pin — both were re-run with
+that line removed and failed identically. And rule out the three faults below
+before reading any failure as a defect: each produced a message pointing
+somewhere other than its cause, which is exactly how `offer-preboarding` spent
+a run looking like a broken email template.
 
 ### Before reading any failure here as a defect
 

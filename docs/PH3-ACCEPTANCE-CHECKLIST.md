@@ -10,9 +10,23 @@ document, in the document's own order and wording.
 `tests/integration/smoke_ph3_apply.py`, which runs the real endpoints against a real
 Postgres 16 and passes 57/57; `db` = asserted directly against the migrated schema;
 `e2e` = a Playwright journey in `web/e2e/`, driving the real browser against the real
-stack. **Run on demand, NOT in CI** — `.github/workflows/ci.yml` has no Playwright step,
-so nothing gates these on a pull request. Six criteria below cite `e2e` as evidence;
-read that as "this was demonstrated", not "this is enforced", until the job exists.
+stack.
+
+**Enforced since 2026-10-05.** This paragraph used to say the opposite — "Run on
+demand, NOT in CI — `.github/workflows/ci.yml` has no Playwright step, so nothing gates
+these on a pull request… read that as 'this was demonstrated', not 'this is enforced',
+until the job exists." The job now exists: `browser (playwright e2e)` in `ci.yml` stands
+up Postgres, Redis, Mailpit and MinIO, migrates, runs data_gateway and the dev server,
+and runs the suite. It is in `ci-ok`'s `needs`, which is the single required status that
+`sync-to-space.yml` gates the deploy on — so every `e2e` citation below is now checked
+on a pull request, and a regression in one blocks the deploy rather than waiting for
+somebody to remember.
+
+Two caveats that keep this honest. `coding-round` skips by design when no code runner is
+up, so it is enforced only where one is. And `review-round` is quarantined with
+`test.fixme` — it fails after a released hold and the cause is narrowed but not closed;
+the reasoning travels with the spec and in `web/e2e/COVERAGE.md`. Neither is a Phase 3
+criterion, and all eight Phase 3 specs pass.
 
 **Added 2026-09-27: `e2e`.** Phase 3 shipped with none. Seven journeys now cover it,
 and writing them found three things no unit test could have: the reapplication rule

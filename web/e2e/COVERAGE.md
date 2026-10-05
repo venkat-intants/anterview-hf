@@ -311,14 +311,25 @@ help, so it is not a stale page. It may be a race: the poll returns the instant
 the status leaves `held`, and a runner pass completing the round would clear
 `review_round_id` underneath the page.
 
-Two things about that one are worth keeping straight. **It is not this branch's
-doing** — `workflow_runner.py`, `DecisionQueue.tsx` and the decision routers are
-untouched by PH3-B4b, which changes 92 files and none of them here. And
-**whether it also fails on `main` is not established**, because it was never run
-against a `main` checkout; settle that before calling it a product defect. The
-spec carries the same reasoning at its `test.fixme`, so it travels with the
-code. C4's unit and smoke cover stays green; what is unguarded meanwhile is the
-browser path for releasing a hold and then passing the round.
+**It is pre-existing on `main`** — settled 2026-10-05 by comparison rather than
+by running it there, which an earlier version of this section said had to happen
+first. Every production file in the path is byte-identical to `main`:
+`hr_workflows.py` (which implements `release-hold`), `workflow_runner.py`
+(`awaiting_review`), `DecisionQueue.tsx` (the controls) and `workflows.ts` (the
+call). PH3-B4b changes 92 files and none is among them.
+
+The branch does touch `e2e/support/journeys.ts`, which this spec uses — named
+because leaving it out would make the comparison look more complete than it is.
+Three hunks: `aCandidate` appends a four-consonant tag to the name, and
+`applyThroughPublicForm` gains `expectReceived` and `src` with defaults that
+preserve the old behaviour. `shortlistFromApplicants`, the helper this spec
+leans on, is untouched, and the tag is cosmetic — the failing run found
+"Ravi Dkzm" on the board without trouble.
+
+So the ownership is settled and the CAUSE is not. C4's unit and smoke cover
+stays green; what is unguarded meanwhile is the browser path for releasing a
+hold and then passing the round. The spec carries the same reasoning at its
+`test.fixme`, so it travels with the code.
 
 Neither failure was caused by the `locale: 'en-GB'` pin — both were re-run with
 that line removed and failed identically. And rule out the three faults below

@@ -45,6 +45,27 @@ belongs in a change reviewed on its own terms, not inside a privacy branch. The
 affected set is bounded and knowable: drafts open at the moment this migration
 ran.
 
+AND HERE IS THE QUERY THAT COUNTS THEM, because "bounded and knowable" is a
+claim until someone can run it, and the row this describes is invisible on every
+screen that would show it — the HR views read `pending_enrichment` and report
+"still being read" for ever, which looks like slowness rather than a stuck row:
+
+    SELECT count(*) AS stuck
+      FROM applicants a
+      JOIN enrolments e ON e.applicant_id = a.id
+     WHERE a.pending_enrichment
+       AND (a.resume_text IS NULL OR btrim(a.resume_text) = '')
+       AND a.resume_s3_key IS NOT NULL
+       AND e.ats_overall IS NULL;
+
+A zero means this deployment had no draft open when the migration ran and the
+residue is empty here — which is the likely answer on any deployment that
+migrated promptly, and is worth confirming rather than assuming. A non-zero
+count is the exact set the predicate relaxation above would release, and those
+rows can also be settled by hand: the scoring pass re-extracts from
+`resume_s3_key`, so clearing nothing and simply widening the reconciler's
+predicate picks them up on the next pass.
+
 CONSENT IS ALREADY COVERED. `start_draft` records the DPDP consent ledger entry
 in the same transaction as the draft row, before any CV exists, which is why the
 consent checkbox sits on the first save rather than at submission. This column

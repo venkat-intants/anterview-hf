@@ -47,14 +47,25 @@ test.describe('a round a person judges', () => {
   // `page.reload()` before the assertion was tried and does not help, so this
   // is not a stale page.
   //
-  // WHAT IS NOT KNOWN, and must be settled before anyone calls this a product
-  // defect: whether it also fails on `main`. It was never run against a `main`
-  // checkout. What IS established is that PH3-B4b did not cause it —
-  // `workflow_runner.py`, `DecisionQueue.tsx` and the decision routers are
-  // untouched by that branch, which changes 92 files and none of them here.
-  // It may also be a race rather than a fixed behaviour: the poll returns the
-  // instant the status leaves 'held', and a runner pass that then completes the
-  // round would clear `review_round_id` underneath the page.
+  // IT IS PRE-EXISTING ON `main`, settled 2026-10-05 by comparison rather than
+  // by running it there. Every production file in this path is byte-identical
+  // to `main`: `hr_workflows.py`, which implements `release-hold`;
+  // `workflow_runner.py`, which computes `awaiting_review`;
+  // `web/src/pages/hr/DecisionQueue.tsx`, which renders the controls; and
+  // `web/src/api/workflows.ts`, which calls the endpoint. PH3-B4b changes 92
+  // files and none of them is in that list.
+  //
+  // The branch does touch `e2e/support/journeys.ts` — worth naming, because
+  // this spec uses it. Three hunks: `aCandidate` appends a four-consonant tag
+  // to the name, and `applyThroughPublicForm` gains `expectReceived` and `src`
+  // with defaults that preserve the old behaviour. `shortlistFromApplicants`,
+  // the helper this spec actually leans on, is untouched, and the tag is
+  // cosmetic — the failing run found "Ravi Dkzm" on the board perfectly well.
+  // So nothing the branch changed reaches this.
+  //
+  // What is still open is the CAUSE, not the ownership. It may be a race: the
+  // poll returns the instant the status leaves 'held', and a runner pass that
+  // then completes the round would clear `review_round_id` underneath the page.
   //
   // C4's unit and smoke cover remain green (see COVERAGE.md): the verdict is
   // recorded as a person's, failing a review holds rather than rejects, and a

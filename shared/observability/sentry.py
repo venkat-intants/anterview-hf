@@ -53,6 +53,7 @@ _TRANSPORT_HEADERS: frozenset[str] = frozenset(
         "x-exam-token",
         "x-interview-token",
         "x-draft-token",
+        "x-activation-token",
         "x-offer-token",
         "x-offer-session",
         "x-task-token",

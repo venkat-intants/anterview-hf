@@ -100,4 +100,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 # never sees the signal, in-flight requests are not drained, and the container is
 # SIGKILLed at the stop grace period. --timeout-graceful-shutdown bounds the drain
 # so it fits within the compose stop_grace_period.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --timeout-graceful-shutdown 25"]
+# --no-access-log: uvicorn's access log writes the full request line INCLUDING
+# the query string (uvicorn/protocols/utils.py::get_path_with_query_string),
+# straight to this container's stdout and so into the Space/Railway log
+# stream. Caddy's log filter protects Caddy's log, not this one. The
+# activation token that used to travel in a query string is now a header
+# (VAPT 2026-10-05) — this closes the channel for anything that lands there
+# next. Request telemetry is not lost: shared/http_observability.py logs
+# method, matched-route template, status and duration, with no raw path.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --timeout-graceful-shutdown 25 --no-access-log"]

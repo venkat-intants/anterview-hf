@@ -301,3 +301,92 @@ describe('BankFillPanel — the two-person rule survives the bulk button', () =>
     expect(api.approveAllBankQuestions).not.toHaveBeenCalled();
   });
 });
+
+describe('BankFillPanel — review 2026-10-05 fixes', () => {
+  it('refreshes the REVIEWER queue after sending a batch for review', async () => {
+    // The whole point of "send all for review" is to populate someone else's
+    // queue. That queue is keyed ['hr','bank-review-queue'], which neither of
+    // the panel's original two invalidation keys matched, so the second
+    // reviewer kept looking at a list without the questions just sent to them.
+    const user = userEvent.setup();
+    api.submitAllBankQuestions.mockResolvedValue({ acted: 4, skipped: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    render(
+      <QueryClientProvider client={client}>
+        <BankFillPanel bankId="bank-1" />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /send all drafts for review/i }));
+
+    await waitFor(() => expect(api.submitAllBankQuestions).toHaveBeenCalled());
+    const keys = spy.mock.calls.map((c) => JSON.stringify((c[0] as { queryKey: unknown }).queryKey));
+    expect(keys).toContain(JSON.stringify(['hr', 'bank-review-queue']));
+  });
+
+  it('does not leave a previous file’s row errors on screen', async () => {
+    // Row errors naming lines 3 and 14 of a DIFFERENT spreadsheet, still
+    // listed, read as errors in the file just chosen.
+    const user = userEvent.setup();
+    api.importBankQuestions.mockResolvedValueOnce({
+      added: 1, errors: [{ row: 3, message: 'need at least 2 options' }], questions: [],
+    });
+    renderPanel();
+    const input = screen.getByLabelText(/choose a spreadsheet to import/i);
+    await user.upload(input, new File(['a'], 'first.csv', { type: 'text/csv' }));
+    await screen.findByTestId('bank-import-errors');
+
+    // A second import that fails outright must not keep the first one's list.
+    api.importBankQuestions.mockRejectedValueOnce(new Error('network down'));
+    await user.upload(input, new File(['b'], 'second.csv', { type: 'text/csv' }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(screen.queryByTestId('bank-import-errors')).not.toBeInTheDocument();
+  });
+
+  it('tells the truth about re-importing the same file', async () => {
+    // The original copy claimed rows "are not duplicated by a second import",
+    // and nothing checked content_hash on the way in, so every good row WAS
+    // duplicated. The server now skips duplicates; this is the sentence that
+    // has to match it. The advice only appears alongside row errors, which is
+    // exactly when someone is about to re-import.
+    const user = userEvent.setup();
+    api.importBankQuestions.mockResolvedValue({
+      added: 37, errors: [{ row: 3, message: 'need at least 2 options' }], questions: [],
+    });
+    renderPanel();
+    await user.upload(
+      screen.getByLabelText(/choose a spreadsheet to import/i),
+      new File(['x'], 'bank.csv', { type: 'text/csv' }),
+    );
+
+    const errors = await screen.findByTestId('bank-import-errors');
+    expect(errors).toHaveTextContent(/skipped rather than added twice/i);
+    expect(errors.textContent ?? '').not.toMatch(/unless the rows themselves are duplicates/i);
+  });
+
+  it('reports a server-side duplicate alongside the bad rows', async () => {
+    // The server returns duplicates in the same list as parse errors, because
+    // to the person fixing the file they are the same kind of fact: this line
+    // did not become a question, and here is why.
+    const user = userEvent.setup();
+    api.importBankQuestions.mockResolvedValue({
+      added: 1,
+      errors: [
+        { row: 2, message: 'already in this bank — skipped' },
+        { row: 4, message: 'missing question text' },
+      ],
+      questions: [],
+    });
+    renderPanel();
+    await user.upload(
+      screen.getByLabelText(/choose a spreadsheet to import/i),
+      new File(['x'], 'bank.csv', { type: 'text/csv' }),
+    );
+
+    const errors = await screen.findByTestId('bank-import-errors');
+    expect(errors).toHaveTextContent('Row 2: already in this bank');
+    expect(errors).toHaveTextContent('Row 4: missing question text');
+  });
+});

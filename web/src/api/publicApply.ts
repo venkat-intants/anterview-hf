@@ -245,7 +245,11 @@ export interface ActivationResult {
  * rather than after somebody has chosen a password.
  */
 export async function getActivationTarget(token: string): Promise<ActivationTarget> {
-  const res = await fetch(`${API_BASE}/apply/activate/target?token=${encodeURIComponent(token)}`);
+  // Header, never the query string: the token is a live account-activation
+  // credential and a query string reaches uvicorn's access log (CWE-598).
+  const res = await fetch(`${API_BASE}/apply/activate/target`, {
+    headers: { 'X-Activation-Token': token },
+  });
   if (!res.ok) return readError(res);
   return (await res.json()) as ActivationTarget;
 }

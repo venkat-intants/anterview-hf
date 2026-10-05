@@ -300,8 +300,33 @@ class ActivateOut(BaseModel):
     summary="Whose account an activation link belongs to",
     dependencies=[rate_limit("apply_activate", settings.rate_limit_login_per_minute)],
 )
+async def _activation_token(
+    x_activation_token: Annotated[str | None, Header(alias="X-Activation-Token")] = None,
+) -> str:
+    """The activation token, from a HEADER — never the URL.
+
+    The same rule, and the same reasoning, as ``_draft_token`` below: this route
+    used to take ``?token=``, which put a live account-activation credential
+    into uvicorn's access log (no ``--no-access-log``, and uvicorn logs the
+    query string), the Space and Railway log streams, browser history and any
+    cross-origin Referer. The token is ``password_reset``-kind with a 7-day TTL
+    and ``POST /apply/activate`` sets a password with it, so a log reader could
+    take over that candidate's account for a week. CWE-598, CWE-532 — found by
+    the VAPT pass on 2026-10-05.
+
+    The emailed link still carries it in the URL FRAGMENT, which browsers never
+    send to a server; the SPA reads the fragment and puts it in this header.
+    """
+    if not x_activation_token or not 16 <= len(x_activation_token) <= 256:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That activation link is not valid or has expired.",
+        )
+    return x_activation_token
+
+
 async def read_activation_target(
-    db: DbSessionDep, token: Annotated[str, Query(min_length=16, max_length=256)]
+    db: DbSessionDep, token: Annotated[str, Depends(_activation_token)]
 ) -> ActivationTargetOut:
     """Check a link and report who it is for, without consuming it.
 

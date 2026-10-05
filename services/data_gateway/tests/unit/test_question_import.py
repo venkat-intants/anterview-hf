@@ -155,7 +155,9 @@ def test_each_error_names_the_spreadsheet_line() -> None:
     ))
     assert [i["prompt"] for i in items] == ["Fine"]
     assert [(e.row, e.message) for e in errors] == [
-        (3, "correct 'Z' is out of range for 2 options"),
+        # "columns", not "options": a letter names a COLUMN now, so the bound
+        # it was checked against is the four Option columns.
+        (3, "correct 'Z' is out of range for 4 columns"),
         (4, "missing question text"),
         (5, "need at least 2 options"),
     ]
@@ -342,3 +344,254 @@ def test_the_bank_importer_sets_no_status_or_origin_of_its_own() -> None:
     for item in items:
         assert "status" not in item
         assert "origin" not in item
+
+
+# ===========================================================================
+# Review 2026-10-05 — four confirmed defects, each reproduced before the fix
+# ===========================================================================
+def test_a_letter_names_the_column_not_a_position_in_the_survivors() -> None:
+    """THE WORST DEFECT THIS FILE HAS HELD, and it shipped in the exam importer
+    from PH3 until 2026-10-05.
+
+    Blank option cells are dropped before the answer is resolved, and a letter
+    used to index the COMPACTED list. So a row with a gap marked the wrong
+    answer, silently:
+
+        Which wire is live? | red | <blank> | blue | green | C
+
+    compacts to [red, blue, green], and 'C' -> index 2 -> "green". The sheet
+    says column C, which is "blue". No error, no warning — a wrong graded fact
+    imported into a library that decides who gets interviewed, which is exactly
+    what this module's docstring says a misspelled Difficulty must never become.
+    """
+    items, errors = qi.parse_mcq_rows(
+        _rows(_q("Which wire is live?", "red", "", "blue", "green", correct="C"))
+    )
+    assert errors == []
+    chosen = items[0]["options"][items[0]["correct_index"]]
+    assert chosen == "blue", f"column C is 'blue', got {chosen!r}"
+
+
+def test_naming_an_empty_column_is_an_error_rather_than_a_shift() -> None:
+    """The other half of the fix. If the letter points at a blank cell there is
+    no answer to store, and guessing the next one along is how the bug above
+    produced wrong data instead of a complaint."""
+    items, errors = qi.parse_mcq_rows(_rows(_q("Q?", "red", "", "blue", "", correct="B")))
+    assert items == []
+    assert errors[0].row == 2
+    assert "names option B, which is empty" in errors[0].message
+
+
+@pytest.mark.parametrize(
+    ("correct", "expected"),
+    [("A", "red"), ("C", "blue"), ("D", "green"), ("1", "red"), ("3", "blue"), ("blue", "blue")],
+)
+def test_every_spelling_of_correct_agrees_across_a_gap(correct: str, expected: str) -> None:
+    """Letter, number and text must all name the same answer on a row with a
+    gap. Before the fix the three disagreed, which is the shape that makes a
+    bug like this survive review: whichever one a tester tried looked fine."""
+    items, errors = qi.parse_mcq_rows(
+        _rows(_q("Q?", "red", "", "blue", "green", correct=correct))
+    )
+    assert errors == []
+    assert items[0]["options"][items[0]["correct_index"]] == expected
+
+
+def test_a_row_with_no_gaps_is_resolved_exactly_as_before() -> None:
+    """The fix must not move the ordinary case."""
+    items, _ = qi.parse_mcq_rows(_rows(_q("Q?", "w", "x", "y", "z", correct="C")))
+    assert items[0]["options"] == ["w", "x", "y", "z"]
+    assert items[0]["options"][items[0]["correct_index"]] == "y"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "विद्युत सुरक्षा",  # hi
+        "విద్యుత్ భద్రత",        # te
+    ],
+)
+def test_a_hindi_or_telugu_competency_does_not_abort_the_import(name: str) -> None:
+    """It used to take the WHOLE FILE down, naming no row.
+
+    The slug was built with ``ch.isalnum()``, which is True for Devanagari and
+    Telugu letters, so the id came out non-ASCII;
+    ``question_banks.validate_competencies`` enforces ``^[a-z0-9_]{1,80}$`` and
+    raised INSIDE create_imported_bulk's loop, rolling every row back. EN/HI/TE
+    are the Day-1 languages (CLAUDE.md hard constraint 5), so the languages the
+    platform exists for were the ones that broke it.
+    """
+    from app import question_banks
+
+    items, errors = qi.parse_bank_rows(
+        _rows(_q("Q", "a", "b", correct="A", extra=["easy", "en", name]))
+    )
+    assert errors == []
+    comps = items[0]["competencies"]
+    # The real validator, not a copy of its regex — that is the whole point.
+    question_banks.validate_competencies(comps)
+    assert comps[0]["name"] == name, "the human name must survive intact"
+
+
+def test_the_competency_id_is_stable_for_the_same_name() -> None:
+    """Two rows tagged with the same name must land on the same competency, or
+    a bank tagged in Hindi could not be filtered at all."""
+    name = "विद्युत"
+    assert qi.competency_slug(name) == qi.competency_slug(name)
+    assert qi.competency_slug(name) != qi.competency_slug(name + "x")
+
+
+@pytest.mark.parametrize("name", ["Electrical Safety", "SQL", "a-b-c", "  Safety  "])
+def test_a_latin_competency_keeps_its_readable_slug(name: str) -> None:
+    """The hash fallback is for names with no usable ASCII. An English name must
+    still produce something a person can recognise in a filter."""
+    slug = qi.competency_slug(name)
+    assert not slug.startswith("comp_"), f"{name!r} should not need the hash"
+    assert slug and all(c.islower() or c.isdigit() or c == "_" for c in slug)
+
+
+@pytest.mark.parametrize("name", ["व", "___", "...", "中文"])
+def test_a_name_with_no_usable_ascii_falls_back_to_a_valid_hashed_id(name: str) -> None:
+    from app import question_banks
+
+    slug = qi.competency_slug(name)
+    question_banks.validate_competencies([{"id": slug, "name": name}])
+
+
+def test_an_oversized_csv_field_is_a_readable_refusal_not_a_crash() -> None:
+    """csv raises on a field over 131072 chars. Uncaught it was a 500 on a file
+    the uploader could have fixed."""
+    body = ("Question,Option A,Option B,Option C,Option D,Correct,Points\n"
+            + "x" * 200_000 + ",a,b,,,A,1\n").encode()
+    with pytest.raises(qi.SpreadsheetError) as exc:
+        qi.read_spreadsheet("q.csv", body)
+    assert "CSV" in str(exc.value)
+
+
+def test_a_nul_byte_names_its_row_instead_of_failing_at_the_database() -> None:
+    """Postgres refuses a NUL in a text column. Left in, it surfaced as a 500 at
+    flush time — after every other row had been built — so the whole import
+    failed on one unusable cell with nothing to point at."""
+    rows = qi.read_spreadsheet(
+        "q.csv",
+        b"Question,Option A,Option B,Option C,Option D,Correct,Points\n"
+        b"A\x00B,a,b,,,A,1\nGood one,a,b,,,A,1\n",
+    )
+    items, errors = qi.parse_mcq_rows(rows)
+    assert [i["prompt"] for i in items] == ["Good one"], "the good row must still import"
+    assert errors[0].row == 2
+    assert "NUL" in errors[0].message
+
+
+# ===========================================================================
+# Resource bounds — the reader, not the parser, is where the bound belongs
+# ===========================================================================
+def _dimension_bomb(declared_rows: int) -> bytes:
+    """A valid .xlsx whose `<dimension>` lies about its width.
+
+    `A1:XFD1048576` makes openpyxl's read-only reader pad EVERY row out to
+    16,384 cells, and byte-identical rows deflate at roughly 229:1 — so a few
+    kilobytes of upload used to become gigabytes of Python lists. The payload
+    stays far under MAX_IMPORT_BYTES, which is the point: the upload cap and the
+    Caddy body cap cannot see this attack at all.
+    """
+    import io
+    import zipfile
+
+    rows = "".join(
+        "<row><c t='inlineStr'><is><t>x</t></is></c></row>" for _ in range(declared_rows)
+    )
+    ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    pkg = "http://schemas.openxmlformats.org/package/2006/relationships"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        z.writestr(
+            "[Content_Types].xml",
+            "<?xml version='1.0'?><Types xmlns='http://schemas.openxmlformats.org/"
+            "package/2006/content-types'><Default Extension='xml' ContentType="
+            "'application/xml'/><Override PartName='/xl/workbook.xml' ContentType="
+            "'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'/>"
+            "<Override PartName='/xl/worksheets/sheet1.xml' ContentType='application/"
+            "vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'/></Types>",
+        )
+        z.writestr(
+            "_rels/.rels",
+            f"<?xml version='1.0'?><Relationships xmlns='{pkg}'><Relationship Id='rId1' "
+            f"Type='{rel}/officeDocument' Target='xl/workbook.xml'/></Relationships>",
+        )
+        z.writestr(
+            "xl/workbook.xml",
+            f"<?xml version='1.0'?><workbook xmlns='{ns}' xmlns:r='{rel}'><sheets>"
+            "<sheet name='S' sheetId='1' r:id='rId1'/></sheets></workbook>",
+        )
+        z.writestr(
+            "xl/_rels/workbook.xml.rels",
+            f"<?xml version='1.0'?><Relationships xmlns='{pkg}'><Relationship Id='rId1' "
+            f"Type='{rel}/worksheet' Target='worksheets/sheet1.xml'/></Relationships>",
+        )
+        z.writestr(
+            "xl/worksheets/sheet1.xml",
+            f"<?xml version='1.0'?><worksheet xmlns='{ns}'>"
+            f"<dimension ref='A1:XFD1048576'/><sheetData>{rows}</sheetData></worksheet>",
+        )
+    return buf.getvalue()
+
+
+def test_a_lied_about_dimension_cannot_amplify_a_tiny_upload() -> None:
+    """Measured before the fix: a 25.7 KB upload produced 20,000 x 16,384 cells,
+    2.7 GB of peak memory and 30 s of CPU — on the event loop, in a service that
+    runs one uvicorn worker. The upload was well under the 2 MB cap, so neither
+    MAX_IMPORT_BYTES nor the proxy's body cap could see it.
+    """
+    openpyxl = pytest.importorskip("openpyxl")
+    assert openpyxl
+    payload = _dimension_bomb(20_000)
+    assert len(payload) < qi.MAX_IMPORT_BYTES, "the payload must be small — that is the attack"
+
+    rows = qi.read_spreadsheet("bomb.xlsx", payload)
+
+    # Every row sliced to the template width, so the padding costs nothing.
+    assert {len(r) for r in rows} == {qi.MAX_COLS}
+    # One past the cap, so the parser can still say "stopped after N rows".
+    assert len(rows) <= qi.MAX_ROWS + 1
+
+
+def test_the_reader_stops_rather_than_materialising_the_whole_sheet() -> None:
+    """The bound has to live in the reader. MAX_ROWS used to be enforced in
+    parse_mcq_rows — after every row had already been built — which is the
+    "a cap applied after the read is not a cap" shape."""
+    openpyxl = pytest.importorskip("openpyxl")
+    assert openpyxl
+    rows = qi.read_spreadsheet("bomb.xlsx", _dimension_bomb(50_000))
+    assert len(rows) <= qi.MAX_ROWS + 1
+
+
+def test_a_sheet_of_only_blank_rows_is_not_walked_forever() -> None:
+    """The regression my own 2026-10-05 blank-row fix introduced. Removing the
+    hard loop bound meant a padded sheet of blank rows was stripped cell by
+    cell: 10,000 rows x 16,384 cells measured at 12.5 s. Blank rows must not
+    consume the cap, AND must not be unbounded."""
+    blank = [[""] * 40 for _ in range(qi.MAX_SCAN_ROWS * 3)]
+    items, errors = qi.parse_mcq_rows([list(qi.TEMPLATE_HEADER), *blank])
+    assert items == []
+    # The point is that it returned at all, bounded by MAX_SCAN_ROWS.
+    assert len(blank) > qi.MAX_SCAN_ROWS
+
+
+def test_a_csv_is_bounded_the_same_way() -> None:
+    """Both readers, or the bound is only on whichever format the attacker does
+    not pick."""
+    body = "Question,Option A,Option B,Option C,Option D,Correct,Points\n" + (
+        "Q,a,b,,,A,1\n" * (qi.MAX_ROWS + 50)
+    )
+    rows = qi.read_spreadsheet("q.csv", body.encode())
+    assert len(rows) <= qi.MAX_ROWS + 1
+
+
+def test_rows_wider_than_the_template_are_sliced() -> None:
+    body = "Question,Option A,Option B,Option C,Option D,Correct,Points\n" + (
+        "Q," + ",".join(["x"] * 500) + "\n"
+    )
+    rows = qi.read_spreadsheet("q.csv", body.encode())
+    assert all(len(r) <= qi.MAX_COLS for r in rows)

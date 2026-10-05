@@ -138,6 +138,34 @@ def token_headers() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------- the config side
+# The request-body caps, as a table CI holds both Caddyfiles to.
+#
+# WHY THIS IS A TABLE AND NOT PROSE. docs/ACCEPTED-RISKS.md AR-10 described
+# these in prose, which went stale; the prose was replaced with an enumeration
+# on 2026-10-04, and that enumeration was stale the NEXT DAY, when the VAPT pass
+# retuned /apply* from 8MB to 6MB and capped four more prefixes. An enumeration
+# of a moving target is just slower-rotting prose. So the list lives here, where
+# a mismatch fails CI, and AR-10 points at it instead of restating it.
+#
+# A cap is sized from the handler's own limit. The reason a cap at the EDGE is
+# the only one that works: fastapi 0.133 reads the whole request body before it
+# solves a route's dependencies, so an in-handler size check and a
+# `dependencies=[rate_limit(...)]` both run after an arbitrarily large body has
+# been buffered — and a multipart file part lands in a SpooledTemporaryFile that
+# rolls onto the container's disk. Pre-auth, pre-limit, one request.
+BODY_CAPS: dict[str, str] = {
+    "/apply*": "6MB",  # 5 MB CV + multipart overhead. Anonymous.
+    "/auth/*": "256KB",  # JSON only, pre-authentication by nature.
+    "/careers*": "256KB",  # JSON only, anonymous.
+    "/exam*": "2MB",  # code_max_source_bytes 64,000 x 20 questions.
+    "/interview-invite*": "256KB",  # JSON only; the invite code is the credential.
+    "/interviewer/*": "1MB",  # scorecard attachments.
+    "/hr/rounds/*/task/materials*": "11MB",  # job-simulation materials.
+    "/offer*": "11MB",  # signed offer documents.
+    "/task*": "11MB",  # job-simulation submissions.
+}
+
+_MAX_SIZE = re.compile(r"max_size\s+(\S+)")
 _HANDLE = re.compile(r"^\s*handle\s+(\S+)\s*\{", re.MULTILINE)
 
 
@@ -196,7 +224,44 @@ def main() -> int:
                         f"does not reverse_proxy"
                     )
 
-    # 2. Every token header is redacted from both access logs.
+    # 2. The request-body caps are exactly BODY_CAPS, in both files.
+    for path, text in configs.items():
+        rel = path.relative_to(ROOT).as_posix()
+        found = {}
+        for pat, body in handle_blocks(text):
+            m = _MAX_SIZE.search(body)
+            if m:
+                found[pat] = m.group(1)
+        # Only prefixes the file actually HAS. The check is about agreement
+        # between the table and the config, not about a file carrying every
+        # entry: `handle` blocks differ between the two deploys, and demanding
+        # all nine made the gate's own minimal fixtures fail — which would have
+        # left four of its tests passing for the wrong reason, since they assert
+        # a non-zero exit and would have got one no matter what they broke.
+        present = {pat for pat, _ in handle_blocks(text)}
+        for prefix in sorted(set(found) | (set(BODY_CAPS) & present)):
+            want, got = BODY_CAPS.get(prefix), found.get(prefix)
+            if want == got:
+                continue
+            if want is None:
+                problems.append(
+                    f"{rel}: {prefix!r} caps bodies at {got} and is not in "
+                    f"BODY_CAPS — add it there with its reason, and check "
+                    f"whether docs/ACCEPTED-RISKS.md AR-10 should say so"
+                )
+            elif got is None:
+                problems.append(
+                    f"{rel}: {prefix!r} should cap bodies at {want} and has no "
+                    f"request_body block — an uncapped public prefix is how an "
+                    f"anonymous caller writes to this container's disk"
+                )
+            else:
+                problems.append(
+                    f"{rel}: {prefix!r} caps bodies at {got}, BODY_CAPS says "
+                    f"{want} — change one, deliberately"
+                )
+
+    # 3. Every token header is redacted from both access logs.
     headers = token_headers()
     for alias, where in sorted(headers.items()):
         if alias in LOG_REDACTION_EXEMPT:

@@ -104,6 +104,15 @@
 	# for the remaining bare prefixes + the generic /admin and /users).
 	# ==================================================================
 	handle /auth/* {
+		# Sized from the handler's own limit, not guessed. A cap here is the ONLY
+		# control that works: fastapi 0.133 reads the whole request body before it
+		# solves a route's dependencies, so the in-handler size check and the
+		# rate_limit both run AFTER an arbitrarily large body has been buffered —
+		# a multipart file part lands in a SpooledTemporaryFile that rolls onto
+		# this container's disk. Pre-auth, pre-limit, one request (VAPT 2026-10-05).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy data_gateway:8002
 	}
 	# /apply* and /careers* are the PUBLIC candidate surface (PH3): the careers
@@ -119,32 +128,52 @@
 	handle /apply* {
 		# ANONYMOUS, AND THE ONLY UPLOAD ON THIS PREFIX IS A 5 MB CV.
 		#
-		# `_MAX_RESUME_BYTES` caps what the handler READS, not what the service
-		# RECEIVES: FastAPI resolves route dependencies after `await
-		# request.form()`, and Starlette applies no limit to a multipart part
-		# that carries a filename — it streams it into a SpooledTemporaryFile
-		# that rolls to disk past 1 MB. So before this block an unauthenticated
-		# caller could write an arbitrarily large body to the container's
-		# filesystem and only then be told 413, with neither apply rate limiter
-		# having run yet (both are route dependencies). docs/ACCEPTED-RISKS.md
-		# AR-10 residue 3 recorded that the caps "never reach the upload at
-		# all"; this is the bound that does.
+		# Sized from the handler's own limit, not guessed. A cap here is the ONLY
+		# control that works: fastapi 0.133 reads the whole request body before it
+		# solves a route's dependencies, so the in-handler size check and the
+		# rate_limit both run AFTER an arbitrarily large body has been buffered —
+		# a multipart file part lands in a SpooledTemporaryFile that rolls onto
+		# this container's disk. Pre-auth, pre-limit, one request (VAPT 2026-10-05).
 		#
-		# 8MB: the 5 MB CV plus multipart overhead, the JSON answers field and
-		# the form text, with room to spare. Everything on this prefix that is
-		# not the CV is small.
+		# `_MAX_RESUME_BYTES` is therefore a bound on what the handler READS, not
+		# on what the service RECEIVES. docs/ACCEPTED-RISKS.md AR-10 residue 3
+		# recorded that the rate limits "never reach the upload at all"; this is
+		# the bound that does.
+		#
+		# 6MB, not the 8MB PH3-B4b first put here: 5 MB of CV plus multipart
+		# overhead, with the JSON answers field and the form text accounted for
+		# rather than given room to spare. The VAPT number is the one kept — it
+		# is derived from the same handler limit and is tighter.
 		request_body {
-			max_size 8MB
+			max_size 6MB
 		}
 		reverse_proxy data_gateway:8002
 	}
 	handle /careers* {
+		# Sized from the handler's own limit, not guessed. A cap here is the ONLY
+		# control that works: fastapi 0.133 reads the whole request body before it
+		# solves a route's dependencies, so the in-handler size check and the
+		# rate_limit both run AFTER an arbitrarily large body has been buffered —
+		# a multipart file part lands in a SpooledTemporaryFile that rolls onto
+		# this container's disk. Pre-auth, pre-limit, one request (VAPT 2026-10-05).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy data_gateway:8002
 	}
 	handle /consent* {
 		reverse_proxy data_gateway:8002
 	}
 	handle /exam* {
+		# Sized from the handler's own limit, not guessed. A cap here is the ONLY
+		# control that works: fastapi 0.133 reads the whole request body before it
+		# solves a route's dependencies, so the in-handler size check and the
+		# rate_limit both run AFTER an arbitrarily large body has been buffered —
+		# a multipart file part lands in a SpooledTemporaryFile that rolls onto
+		# this container's disk. Pre-auth, pre-limit, one request (VAPT 2026-10-05).
+		request_body {
+			max_size 2MB
+		}
 		reverse_proxy data_gateway:8002
 	}
 	handle /agent/* {
@@ -177,6 +206,15 @@
 		reverse_proxy data_gateway:8002
 	}
 	handle /interview-invite* {
+		# Sized from the handler's own limit, not guessed. A cap here is the ONLY
+		# control that works: fastapi 0.133 reads the whole request body before it
+		# solves a route's dependencies, so the in-handler size check and the
+		# rate_limit both run AFTER an arbitrarily large body has been buffered —
+		# a multipart file part lands in a SpooledTemporaryFile that rolls onto
+		# this container's disk. Pre-auth, pre-limit, one request (VAPT 2026-10-05).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy data_gateway:8002
 	}
 	# /offer* — PH4-A3/A4: the candidate's offer and preboarding documents,
@@ -264,6 +302,7 @@
 				request>headers>X-Exam-Token delete
 				request>headers>X-Interview-Token delete
 				request>headers>X-Draft-Token delete
+				request>headers>X-Activation-Token delete
 				request>headers>X-Offer-Token delete
 				request>headers>X-Offer-Session delete
 				request>headers>X-Task-Token delete

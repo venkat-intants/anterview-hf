@@ -70,6 +70,18 @@ export default function BankFillPanel({ bankId }: { bankId: string }): JSX.Eleme
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ['hr', 'question-banks'] });
     void qc.invalidateQueries({ queryKey: ['hr', 'bank-questions'] });
+    // The REVIEWER's queue (QuestionReviews), which neither key above matches.
+    // Without it, "send all for review" left the second reviewer looking at a
+    // queue that did not contain the forty questions just submitted to them —
+    // the one screen the action exists to populate (review 2026-10-05).
+    void qc.invalidateQueries({ queryKey: ['hr', 'bank-review-queue'] });
+  };
+
+  // F13: a new attempt must not leave the last one's results on screen. Row
+  // errors from a DIFFERENT file, still listed, read as errors in this one.
+  const clearResults = (): void => {
+    setRowErrors([]);
+    setBulk(null);
   };
 
   const genMut = useMutation({
@@ -103,6 +115,7 @@ export default function BankFillPanel({ bankId }: { bankId: string }): JSX.Eleme
 
   const importMut = useMutation({
     mutationFn: (file: File) => importBankQuestions(bankId, file, { difficulty, language }),
+    onMutate: clearResults,
     onSuccess: (out) => {
       setRowErrors(out.errors);
       setPreview(null);
@@ -127,6 +140,7 @@ export default function BankFillPanel({ bankId }: { bankId: string }): JSX.Eleme
 
   const submitAllMut = useMutation({
     mutationFn: () => submitAllBankQuestions(bankId),
+    onMutate: clearResults,
     onSuccess: (result) => {
       setBulk({ what: 'submitted', result });
       if (result.acted > 0) {
@@ -141,6 +155,7 @@ export default function BankFillPanel({ bankId }: { bankId: string }): JSX.Eleme
 
   const approveAllMut = useMutation({
     mutationFn: () => approveAllBankQuestions(bankId),
+    onMutate: clearResults,
     onSuccess: (result) => {
       setBulk({ what: 'approved', result });
       if (result.acted > 0) {
@@ -151,7 +166,6 @@ export default function BankFillPanel({ bankId }: { bankId: string }): JSX.Eleme
         // rule rather than as a failure.
         toast.warning('Nothing could be approved by you — another reviewer must');
       }
-      invalidate();
     },
     onError: (e) => toast.error(errText(e, 'Could not approve these')),
   });
@@ -329,7 +343,7 @@ export default function BankFillPanel({ bankId }: { bankId: string }): JSX.Eleme
             aria-label="Choose a spreadsheet to import"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) importMut.mutate(file);
+              if (file && !busy) importMut.mutate(file);
               e.target.value = '';
             }}
           />
@@ -363,9 +377,9 @@ export default function BankFillPanel({ bankId }: { bankId: string }): JSX.Eleme
               ))}
             </ul>
             <p className="mt-1.5 text-[11.5px] text-[var(--ui-faint)]">
-              Everything else was imported. Fix these rows and import the file again — the
-              questions already added are not duplicated by a second import of the same rows
-              unless the rows themselves are duplicates.
+              Everything else was imported. Fix these rows and import the file again — a question
+              already in this bank is skipped rather than added twice, so re-importing the whole
+              file is safe.
             </p>
           </div>
         ) : null}

@@ -14,6 +14,7 @@ of these routers).
 
 from __future__ import annotations
 
+import asyncio
 import io
 import uuid
 from typing import Annotated, Any
@@ -400,7 +401,13 @@ async def generate_bank_questions(
     what saves the ones HR keeps, as ``origin='ai_draft'`` drafts.
     """
     uid, company_id = ctx
-    await svc.bank_summary(db, company_id=company_id, bank_id=bank_id)  # 404s another company's
+    # Inside its own try: QuestionBankError has no global handler, so raising it
+    # here answered 500 for an unknown or another company's bank — where the
+    # whole point of the call is the 404 (review 2026-10-05).
+    try:
+        await svc.bank_summary(db, company_id=company_id, bank_id=bank_id)
+    except svc.QuestionBankError as exc:
+        raise await _fail(db, exc) from exc
     try:
         raw = await generate_exam_questions_remote(
             topic=body.topic, num_questions=body.num_questions, difficulty=body.difficulty,
@@ -456,7 +463,10 @@ async def import_bank_questions(
     their line number and what is wrong with them.
     """
     uid, company_id = ctx
-    await svc.bank_summary(db, company_id=company_id, bank_id=bank_id)
+    try:
+        await svc.bank_summary(db, company_id=company_id, bank_id=bank_id)
+    except svc.QuestionBankError as exc:
+        raise await _fail(db, exc) from exc
     if difficulty not in DIFFICULTIES:
         raise HTTPException(status_code=422, detail="difficulty must be easy, medium or hard")
     if language not in LANGUAGES:
@@ -486,7 +496,13 @@ async def import_bank_questions(
     if len(content) > question_import.MAX_IMPORT_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 2 MB).")
     try:
-        rows = question_import.read_spreadsheet(file.filename or "", content)
+        # In a thread: inflating a zip and parsing its XML is CPU-bound, and this
+        # service runs ONE uvicorn worker — done inline it blocked every other
+        # request for the duration (review 2026-10-05). Bounded now, but a
+        # bound is not the same as not blocking.
+        rows = await asyncio.to_thread(
+            question_import.read_spreadsheet, file.filename or "", content
+        )
     except question_import.SpreadsheetError as exc:
         code = 500 if "not installed" in str(exc) else 400
         raise HTTPException(status_code=code, detail=str(exc)) from exc
@@ -498,20 +514,26 @@ async def import_bank_questions(
         raise HTTPException(
             status_code=400, detail="No question rows found. Use the template layout."
         )
-    created = []
+    created: list[Any] = []
+    duplicates: list[dict[str, Any]] = []
     if items:
         try:
-            created = await svc.create_imported_bulk(
+            created, duplicates = await svc.create_imported_bulk(
                 db, company_id=company_id, bank_id=bank_id, actor=uid, items=items
             )
         except svc.QuestionBankError as exc:
             raise await _fail(db, exc) from exc
         await exam_locks.commit_or_conflict(db)
+    # Duplicates join the per-row list rather than getting a channel of their
+    # own: to the person fixing the file they are the same kind of fact as a bad
+    # row — "this line did not become a question, and here is why".
+    reported = [e.as_dict() for e in errors] + duplicates
+    reported.sort(key=lambda e: int(e.get("row") or 0))
     log.info("hr.bank.questions.imported", bank_id=str(bank_id),
-             added=len(created), errors=len(errors))
+             added=len(created), errors=len(errors), duplicates=len(duplicates))
     return BankImportOut(
         added=len(created),
-        errors=[e.as_dict() for e in errors],
+        errors=reported,
         questions=[svc.question_out(q) for q in created],
     )
 

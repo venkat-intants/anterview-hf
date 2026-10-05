@@ -985,13 +985,21 @@ of the five were introduced by the fix for the previous one.
    failure residue 1 splits 201/503 on, so accepting the two separately had
    accepted an attacker-triggerable state oracle without saying so anywhere.
 
-   **Which prefixes are capped, enumerated rather than described.** Prose about
-   "sibling upload prefixes" went stale once already, so: in both `Caddyfile`
-   and `space/Caddyfile` the handles carrying `request_body { max_size … }` are
-   `/apply*` (8 MB), `/interviewer/*` (1 MB), and
-   `/hr/rounds/*/task/materials*`, `/offer*`, `/task*` (11 MB each). Every
-   other `handle` block proxies with no cap — including the general `/hr/*`
-   and `/jobs*`.
+   **Which prefixes are capped: see `BODY_CAPS` in
+   `ops/ci/check_routing_contract.py`, which CI holds both Caddyfiles to.**
+   Not restated here, and the reason is this entry's own history. Prose about
+   "sibling upload prefixes" went stale; it was replaced with an enumeration on
+   2026-10-04 — `/apply*` at 8 MB, four other prefixes capped, "every other
+   handle proxies with no cap" — and **that enumeration was wrong the next
+   day**, when the VAPT pass retuned `/apply*` to 6 MB and capped `/auth/*`,
+   `/careers*`, `/exam*` and `/interview-invite*`. An enumeration of a moving
+   target is prose that rots more slowly. The table is now in one place, a
+   mismatch between it and either Caddyfile fails the `invariants` job, and the
+   check was confirmed to fail by changing a cap and watching it do so.
+
+   What is still true and worth stating, because it is the part that bears on
+   this residue rather than on the numbers: the general `/hr/*` and `/jobs*`
+   remain **uncapped**.
 
    That matters because the structural gap this entry describes is not specific
    to `/apply*`. `question_banks.py` and `hr_exams.py` both do a bounded read

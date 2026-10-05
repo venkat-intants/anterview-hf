@@ -662,6 +662,7 @@ app.add_middleware(
         "X-Exam-Token",
         "X-Interview-Token",
         "X-Draft-Token",
+        "X-Activation-Token",
         # PH4-A3/A4: the candidate's offer link — view, one-time code, accept or
         # decline, and preboarding document upload.
         "X-Offer-Token",

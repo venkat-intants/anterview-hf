@@ -403,11 +403,34 @@ async def create_drafts_bulk(
     ]
 
 
+async def bank_content_hashes(
+    db: AsyncSession, *, company_id: uuid.UUID, bank_id: uuid.UUID
+) -> set[str]:
+    """Every live question's content hash in this bank, for duplicate detection.
+
+    Retired versions are included on purpose: re-importing a question somebody
+    retired should not quietly resurrect it as a fresh draft.
+    """
+    rows = (
+        await db.execute(
+            select(BankQuestion.content_hash).where(
+                BankQuestion.company_id == company_id,
+                BankQuestion.bank_id == bank_id,
+            )
+        )
+    ).scalars().all()
+    return {h for h in rows if h}
+
+
 async def create_imported_bulk(
     db: AsyncSession, *, company_id: uuid.UUID, bank_id: uuid.UUID, actor: uuid.UUID | None,
     items: list[dict[str, Any]],
-) -> list[BankQuestion]:
+) -> tuple[list[BankQuestion], list[dict[str, Any]]]:
     """Rows from a spreadsheet, saved as ``origin='imported'`` drafts.
+
+    Returns ``(created, duplicates)``, where a duplicate is
+    ``{"row": n, "message": ...}`` shaped like the parser's row errors so the
+    caller can report both in one list.
 
     The mirror of :func:`create_drafts_bulk`, and deliberately a separate
     function rather than an ``origin`` argument on it: these two are the only
@@ -416,16 +439,47 @@ async def create_imported_bulk(
     lands it is an ordinary draft, reviewed exactly like anything typed by
     hand — importing a question is not a way to skip the review.
 
-    ``row`` is dropped: it is the parser's line number, useful for telling the
-    importer which row failed, and meaningless once the row is a question.
+    DUPLICATES ARE SKIPPED, NOT INSERTED (review 2026-10-05). The UI tells HR to
+    fix the rejected rows and import the file again, which is the right
+    instruction and the natural thing to do after a partial import — and without
+    this it duplicated every row that HAD worked. ``content_hash`` was already
+    computed for every question and already consulted by ``add_to_section``; it
+    simply was not consulted on the way in. Skipping is also what makes the
+    panel's own copy true, which it was not.
+
+    Hashes are read ONCE and updated as we go, so a file containing the same
+    question twice imports it once — the second occurrence is a duplicate of the
+    first even though nothing was in the bank when the request started.
+
+    ``row`` is dropped from the insert: it is the parser's line number, useful
+    for telling the importer which row was skipped, and meaningless on the row.
     """
-    return [
-        await create_question(
-            db, company_id=company_id, bank_id=bank_id, actor=actor, origin="imported",
-            **{k: v for k, v in item.items() if k != "row"},
+    seen = await bank_content_hashes(db, company_id=company_id, bank_id=bank_id)
+    created: list[BankQuestion] = []
+    duplicates: list[dict[str, Any]] = []
+    for item in items:
+        fields = {k: v for k, v in item.items() if k != "row"}
+        digest = content_hash(
+            kind=fields.get("kind", "mcq"),
+            prompt=fields.get("prompt", ""),
+            options=fields.get("options"),
+            correct_index=fields.get("correct_index"),
+            test_cases=fields.get("test_cases"),
         )
-        for item in items
-    ]
+        if digest in seen:
+            duplicates.append({
+                "row": int(item.get("row") or 0),
+                "message": "already in this bank — skipped",
+            })
+            continue
+        seen.add(digest)
+        created.append(
+            await create_question(
+                db, company_id=company_id, bank_id=bank_id, actor=actor,
+                origin="imported", **fields,
+            )
+        )
+    return created, duplicates
 
 
 async def update_question(

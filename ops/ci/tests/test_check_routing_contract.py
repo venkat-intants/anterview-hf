@@ -40,6 +40,9 @@ GOOD_CADDY = """
 \t\trespond "Forbidden" 403
 \t}
 \thandle /apply* {
+\t\trequest_body {
+\t\t\tmax_size 6MB
+\t\t}
 \t\treverse_proxy 127.0.0.1:8002
 \t}
 \tlog {
@@ -117,8 +120,10 @@ def test_a_prefix_matched_but_not_proxied_is_caught(fake) -> None:
     """A `handle` that only responds is not routing; catching the block but not
     the proxy would be a false pass."""
     caddy = GOOD_CADDY.replace(
-        '\thandle /apply* {\n\t\treverse_proxy 127.0.0.1:8002\n\t}',
-        '\thandle /apply* {\n\t\trespond "Not Found" 404\n\t}',
+        '\thandle /apply* {\n\t\trequest_body {\n\t\t\tmax_size 6MB\n\t\t}\n'
+        '\t\treverse_proxy 127.0.0.1:8002\n\t}',
+        '\thandle /apply* {\n\t\trequest_body {\n\t\t\tmax_size 6MB\n\t\t}\n'
+        '\t\trespond "Not Found" 404\n\t}',
     )
     assert fake(caddy=caddy) == 1
 
@@ -133,6 +138,28 @@ def test_a_header_missing_from_cors_is_caught(fake, capsys) -> None:
     """Same-origin on the Space, dead on every split-origin deploy."""
     assert fake(cors='allow_headers=["Authorization"],\n') == 1
     assert "preflight" in capsys.readouterr().err
+
+
+def test_a_body_cap_that_disagrees_with_the_table_is_caught(fake, capsys) -> None:
+    """The cap and BODY_CAPS must agree, or AR-10's enumeration rots again.
+
+    That is not hypothetical. AR-10 described these caps in prose, which went
+    stale; the prose became an enumeration on 2026-10-04 and the enumeration was
+    wrong the NEXT DAY, when a VAPT pass retuned /apply* from 8MB to 6MB. This
+    check is why the table is now the only statement of them.
+    """
+    assert fake(caddy=GOOD_CADDY.replace("max_size 6MB", "max_size 9MB")) == 1
+    assert "BODY_CAPS says" in capsys.readouterr().err
+
+
+def test_a_capped_prefix_losing_its_cap_is_caught(fake, capsys) -> None:
+    """Deleting the block is the likelier regression than mistyping the number —
+    it looks like tidying up, and it uncaps an anonymous upload prefix."""
+    assert (
+        fake(caddy=GOOD_CADDY.replace("\t\trequest_body {\n\t\t\tmax_size 6MB\n\t\t}\n", ""))
+        == 1
+    )
+    assert "has no request_body block" in capsys.readouterr().err
 
 
 def test_an_exempt_header_is_not_required_to_be_redacted(fake) -> None:

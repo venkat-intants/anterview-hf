@@ -27,6 +27,7 @@ import ast
 import inspect
 import uuid
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -327,3 +328,116 @@ async def test_an_empty_bank_is_not_an_error(wire: Any) -> None:
         out = await fn(db_cls("draft"), **kwargs)
         assert out[key] == 0
         assert out["skipped"] == []
+
+
+# ===========================================================================
+# Review 2026-10-05 — re-importing a file must not duplicate the bank
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_re_importing_the_same_rows_skips_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The panel tells HR to fix the rejected rows and import the file again —
+    the right instruction, and the natural thing to do after a partial import.
+    Without this it added a second copy of every row that HAD worked, and the
+    copy I wrote even claimed it would not.
+    """
+    rows = [
+        {"row": 2, "kind": "mcq", "prompt": "Already here", "options": ["a", "b"],
+         "correct_index": 0, "points": 1, "difficulty": "easy", "language": "en"},
+        {"row": 3, "kind": "mcq", "prompt": "Brand new", "options": ["a", "b"],
+         "correct_index": 1, "points": 1, "difficulty": "easy", "language": "en"},
+    ]
+    existing = svc.content_hash(
+        kind="mcq", prompt="Already here", options=["a", "b"], correct_index=0
+    )
+
+    async def _hashes(*_a: object, **_k: object) -> set[str]:
+        return {existing}
+
+    inserted: list[str] = []
+
+    async def _create(_db: object, **kw: Any) -> object:
+        inserted.append(kw["prompt"])
+        return object()
+
+    monkeypatch.setattr(svc, "bank_content_hashes", _hashes)
+    monkeypatch.setattr(svc, "create_question", _create)
+
+    created, duplicates = await svc.create_imported_bulk(
+        AsyncMock(), company_id=uuid.uuid4(), bank_id=uuid.uuid4(), actor=uuid.uuid4(), items=rows
+    )
+
+    assert inserted == ["Brand new"], "the question already in the bank was re-inserted"
+    assert len(created) == 1
+    assert [d["row"] for d in duplicates] == [2]
+    assert "already in this bank" in duplicates[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_file_containing_the_same_question_twice_imports_it_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The second occurrence is a duplicate of the first even though the bank was
+    empty when the request started — so the hash set has to grow as we go, not
+    be read once and left alone."""
+    same = {"kind": "mcq", "prompt": "Dup", "options": ["a", "b"], "correct_index": 0,
+            "points": 1, "difficulty": "easy", "language": "en"}
+    items = [{**same, "row": 2}, {**same, "row": 3}]
+
+    async def _hashes(*_a: object, **_k: object) -> set[str]:
+        return set()
+
+    inserted: list[str] = []
+
+    async def _create(_db: object, **kw: Any) -> object:
+        inserted.append(kw["prompt"])
+        return object()
+
+    monkeypatch.setattr(svc, "bank_content_hashes", _hashes)
+    monkeypatch.setattr(svc, "create_question", _create)
+
+    created, duplicates = await svc.create_imported_bulk(
+        AsyncMock(), company_id=uuid.uuid4(), bank_id=uuid.uuid4(), actor=uuid.uuid4(), items=items
+    )
+
+    assert len(inserted) == 1
+    assert len(created) == 1
+    assert [d["row"] for d in duplicates] == [3]
+
+
+@pytest.mark.asyncio
+async def test_dedupe_is_by_content_not_by_row_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """content_hash normalises case and whitespace, so a re-export of the same
+    sheet with different capitalisation is still the same question — otherwise
+    the dedupe would be trivially defeated by the thing most likely to change."""
+    async def _hashes(*_a: object, **_k: object) -> set[str]:
+        return {svc.content_hash(kind="mcq", prompt="What is 2 + 2?",
+                                options=["Three", "Four"], correct_index=1)}
+
+    inserted: list[str] = []
+
+    async def _create(_db: object, **kw: Any) -> object:
+        inserted.append(kw["prompt"])
+        return object()
+
+    monkeypatch.setattr(svc, "bank_content_hashes", _hashes)
+    monkeypatch.setattr(svc, "create_question", _create)
+
+    created, duplicates = await svc.create_imported_bulk(
+        AsyncMock(), company_id=uuid.uuid4(), bank_id=uuid.uuid4(), actor=uuid.uuid4(),
+        items=[{"row": 2, "kind": "mcq", "prompt": "what is  2 + 2?  ",
+                "options": ["three", "FOUR "], "correct_index": 1, "points": 1,
+                "difficulty": "easy", "language": "en"}],
+    )
+
+    assert inserted == [], "a case/whitespace variant was treated as a new question"
+    assert len(duplicates) == 1
+    assert created == []
+
+
+def test_the_row_key_never_reaches_create_question() -> None:
+    """`row` is the parser's line number. Passed through it would be a TypeError
+    on every import, so this is asserted structurally as well as exercised."""
+    import inspect
+
+    source = inspect.getsource(svc.create_imported_bulk)
+    assert 'k != "row"' in source

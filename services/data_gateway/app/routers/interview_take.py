@@ -177,9 +177,19 @@ async def preview_invite(
     if not x_interview_token:
         raise _NOT_AVAILABLE
     th = hash_interview_token(x_interview_token, settings.interview_link_secret)
+    # status AND expiry, not just deleted_at. revoke_invite (hr_interviews.py)
+    # sets status='revoked' and never touches deleted_at, so filtering on
+    # deleted_at alone meant a REVOKED link still returned the candidate's name,
+    # the role and the level — indefinitely, with no expiry either. HR revoking
+    # a misdirected invite did not actually cut the recipient off (VAPT
+    # 2026-10-05). redeem_invite below and exam_take.get_exam_link_ctx have
+    # always filtered both; this route was the one that did not.
     inv = await db.scalar(
         select(InterviewInvite).where(
-            InterviewInvite.token_hash == th, InterviewInvite.deleted_at.is_(None)
+            InterviewInvite.token_hash == th,
+            InterviewInvite.deleted_at.is_(None),
+            InterviewInvite.status.in_(("invited", "consumed", "completed")),
+            InterviewInvite.expires_at > datetime.now(tz=UTC),
         )
     )
     if inv is None:

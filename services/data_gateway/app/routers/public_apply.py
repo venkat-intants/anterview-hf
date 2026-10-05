@@ -405,16 +405,24 @@ class ActivateOut(BaseModel):
     message: str
 
 
-@router.get(
-    "/activate/target",
-    response_model=ActivationTargetOut,
-    summary="Whose account an activation link belongs to",
-    dependencies=[rate_limit("apply_activate", settings.rate_limit_login_per_minute)],
-)
 async def _activation_token(
     x_activation_token: Annotated[str | None, Header(alias="X-Activation-Token")] = None,
 ) -> str:
     """The activation token, from a HEADER — never the URL.
+
+    DECLARED ABOVE THE ROUTE, not between the decorator and its handler. It was
+    inserted between them on 2026-10-05, which silently made THIS function the
+    handler for `GET /apply/activate/target`: the decorator binds to whatever
+    `def` follows it, so the route returned a token string against
+    `response_model=ActivationTargetOut` and answered **500** on every call,
+    while `read_activation_target` stopped being registered at all. Candidates
+    could not claim their accounts.
+
+    Nothing caught it because the browser job that does — three specs fail on it
+    — did not exist on `main` when the fix merged. It was found on this branch's
+    first CI run after the merge, by `ResponseValidationError` in the service
+    log naming the token as the response body.
+
 
     The same rule, and the same reasoning, as ``_draft_token`` below: this route
     used to take ``?token=``, which put a live account-activation credential
@@ -436,6 +444,12 @@ async def _activation_token(
     return x_activation_token
 
 
+@router.get(
+    "/activate/target",
+    response_model=ActivationTargetOut,
+    summary="Whose account an activation link belongs to",
+    dependencies=[rate_limit("apply_activate", settings.rate_limit_login_per_minute)],
+)
 async def read_activation_target(
     db: DbSessionDep, token: Annotated[str, Depends(_activation_token)]
 ) -> ActivationTargetOut:

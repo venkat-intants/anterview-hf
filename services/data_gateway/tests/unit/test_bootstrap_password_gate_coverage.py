@@ -337,3 +337,45 @@ def test_the_anonymous_families_still_match_something() -> None:
         "Either they were gated (delete the entry) or renamed (in which case "
         "the entry now excuses nothing and hides that)."
     )
+
+
+def test_no_route_is_served_by_a_private_helper() -> None:
+    """A dependency helper must not be the thing a decorator binds to.
+
+    THIS IS A REAL BUG, NOT A STYLE RULE, and it shipped to `main` on
+    2026-10-05. The VAPT pass moved the activation token out of the query
+    string and into a header — correctly — by adding an `_activation_token`
+    dependency, and declared it BETWEEN `@router.get("/activate/target",
+    response_model=ActivationTargetOut, ...)` and `read_activation_target`.
+
+    A decorator binds to whatever `def` follows it. So the helper became the
+    handler: the route returned a token STRING against a model, every call
+    answered 500 with `ResponseValidationError`, and `read_activation_target`
+    stopped being registered at all. Candidates could not claim their accounts,
+    and the activation link in their email was dead.
+
+    Nothing caught it. The browser specs that fail on it —
+    journey-candidate-view, exam-from-dashboard, interview-scheduling — were not
+    a CI gate when that merged, and the unit suite does not call the route. It
+    surfaced in a service log as a validation error whose `input` was the token.
+
+    The shape generalises past that one function, which is why this is a test
+    and not a fixed comparison: an underscore-named handler means a decorator
+    captured something never written to be a handler. A deliberate exception
+    should be renamed rather than exempted here — the name is the signal.
+    """
+    from app.main import app  # noqa: PLC0415 — lazily, as `_classify` does
+
+    captured = [
+        f"{sorted(route.methods or [])} {route.path} -> {route.endpoint.__name__}"
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.endpoint.__name__.startswith("_")
+    ]
+    assert not captured, (
+        "these routes are served by private helpers, which means a decorator "
+        "bound to the wrong `def` — the function below it rather than the "
+        "handler:\n    " + "\n    ".join(captured) + "\n\n"
+        "Move the helper ABOVE the decorator. Left alone, the route returns "
+        "whatever the helper returns, which is a 500 as soon as the route "
+        "declares a response_model, and the real handler is not registered."
+    )

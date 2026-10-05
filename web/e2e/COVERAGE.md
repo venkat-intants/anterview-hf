@@ -174,11 +174,32 @@ Built the other way round from the Phase 2 half above: by reading the specs and
 the `test_ph3_*` files and matching them to item codes the specs already cite in
 their headers, so every cell below names a file that exists.
 
-**One deliberate difference in shape.** There is no *Web unit* column. Phase 2's
-was built by surveying `web/src/__tests__/`; that survey has not been redone for
-Phase 3, and a column of `—` would read as "none exists" rather than "not
-looked at". Component-level cover for these screens may well exist — it is
-simply not claimed here.
+**Web unit cover, surveyed 2026-10-05.** This section first shipped without a
+*Web unit* column and said the survey "has not been redone for Phase 3", on the
+grounds that a column of `—` would read as "none exists" rather than "not looked
+at". It has now been done, and it did not need guessing: these tests cite their
+own PH3 item, so the mapping below is read off the files rather than inferred
+from their names.
+
+| Item | `web/src/__tests__/` |
+|---|---|
+| B0 | — none cites it |
+| B1 | `Careers`, `PublicApply`, `PublicApplyQuestions`, `PublicApplySteps` |
+| B2 | `Governance`, `PostingEditor`, `RequisitionClosePrompt` |
+| B3 | — none cites B3; the JD-versioning component tests cite B6 |
+| B4 | `Applicants`, `Governance`, `PublicApplySaveLater` |
+| B4a | `Governance` |
+| B4b | `ConfirmReapplication` |
+| B4c | `PublicApplySaveLater`, `ResumeApplication` |
+| B5 | `CandidateLocalisation`, `ResumeApplication` |
+| B6 | `JdVersionPanel` |
+
+So eight of the ten items have component-level cover as well. The two that do
+not are worth reading precisely rather than as gaps: **B0** is the shared
+publish predicate, which is a server-side agreement between the careers board
+and the apply door and has nothing a component test could hold; and **B3** and
+**B6** are the same JD-versioning feature from two angles, with `JdVersionPanel`
+citing only the latter.
 
 **Why Phase 3 needed browser tests at all.** The backend landed first and landed
 well: 254 unit tests across seven `test_ph3_*` files. But several Phase 3
@@ -256,9 +277,11 @@ would have sent somebody to write a test against a column that is not there.
    effect — the screens are equal — which is why the denylist is kept as a
    fast, readable signal rather than removed: it names the specific wordings
    that were once really there.
-3. **Web unit not surveyed (all items).** See the note above. Redoing the
-   Phase 2 survey for `web/src/__tests__/` against Phase 3 screens would make
-   this table a complete map rather than a browser-and-backend one.
+3. **Web unit: surveyed 2026-10-05 and no longer a gap.** The mapping is in the
+   table near the top of this section, read off the tests' own PH3 citations
+   rather than inferred. Eight of ten items have component cover; B0 is a
+   server-side predicate with nothing a component test could hold, and B3/B6
+   are one feature whose component tests cite only B6.
 
 ### The two specs that were not green, and what they turned out to be
 

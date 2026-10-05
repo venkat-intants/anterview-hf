@@ -78,12 +78,29 @@ does not reach, are in docs/ACCEPTED-RISKS.md with an owner — not here, becaus
 neither a test docstring nor a commit message can grant an acceptance.
 
 Response HEADERS are not compared either (`_observable` reads status and body),
-and neither are emails staged, auth-token rows minted, or behaviour under
-concurrent submissions.
+and neither are emails staged or auth-token rows minted.
+
+CONCURRENT SUBMISSIONS ARE NOW COVERED, and this paragraph used to say they
+were not. `test_a_race_for_one_address_answers_the_same_and_leaves_one_of_
+everything` races two submissions for a never-applied address on both doors —
+the state-correlated exit of AR-10 residue 4, reachable only while an
+applicant, an enrolment or a guest identity is being created, which never
+happens for an address that already has one. It asserts the replies are
+indistinguishable, that one applicant, one enrolment and one identity survive,
+and that the arbitrating index exists at all rather than assuming it.
+
+On the ONE-SHOT door it also proves it entered the loser's branch, by requiring
+`public.apply.race_lost` and retrying until it appears — which earned its keep
+immediately: the first version raced two whole draft journeys, passed, and
+entered the branch on neither door. On the DRAFT door entry is still not
+provable from outside, for reasons written at `_RACE_MARKER`, so there the test
+is a property check rather than a coverage proof and residue 4 is closed for
+the one-shot door only.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -353,6 +370,46 @@ async def _apply_via_draft(
     return submitted, token
 
 
+async def _draft_ready_to_submit(
+    client: AsyncClient, req_id: uuid.UUID, email: str
+) -> str:
+    """A draft taken to the point of submission, and not submitted.
+
+    Split out of `_apply_via_draft` so a test can race the SUBMITS alone.
+    Racing the whole journey does not collide: each one is four round trips,
+    and the first submit commits long before the second reaches its flush.
+    Measured, not assumed — the first version of
+    `test_a_race_for_one_address_...` gathered two full journeys, passed, and
+    reached no race exit on this door at all.
+    """
+    await _clear_rate_limit()
+    started = await client.post(
+        f"/apply/{req_id}/draft", json={"email": email, "consent_granted": True}
+    )
+    if started.status_code != 201:
+        raise AssertionError(f"draft start failed: {started.status_code} {started.text}")
+    token = started.json()["resume_token"]
+    hdr = {"X-Draft-Token": token}
+    for label, resp in (
+        ("patch", await client.patch(
+            "/apply/draft", json={"full_name": "Probe Person"}, headers=hdr
+        )),
+        ("resume-upload", await client.post(
+            "/apply/draft/resume-upload",
+            files={"resume": ("cv.pdf", _PDF, "application/pdf")},
+            headers=hdr,
+        )),
+        ("confirm", await client.post(
+            "/apply/draft/confirm", json={"full_name": "Probe Person"}, headers=hdr
+        )),
+    ):
+        if resp.status_code != 200:
+            raise AssertionError(
+                f"draft {label} failed: {resp.status_code} {resp.text[:200]}"
+            )
+    return token
+
+
 async def _draft_readback(client: AsyncClient, token: str):  # noqa: ANN202
     """What ``GET /apply/draft`` says about a draft after it was submitted.
 
@@ -484,6 +541,32 @@ def _assert_one_answer(seen: dict[str, tuple[int, object]], what: str) -> None:
 
 
 _BOTH_DOORS = ("one-shot", "draft")
+
+# What a door writes when it takes the LOSER's branch, so a test can prove it
+# entered the path rather than hoping it did.
+#
+# ONLY THE ONE-SHOT DOOR HAS ONE, and the absence on the other door is a
+# measured conclusion rather than an omission. Three candidate signals were
+# tried on the draft door and none works:
+#
+#   * `public_apply.draft_object_orphaned` — passed to `_best_effort_delete` as
+#     its `event`, and that helper logs ONLY from its `except` branch. A
+#     release that succeeds is silent, so this fires when the delete FAILS, not
+#     when the branch runs. It was tried and produced one sighting in a whole
+#     run, from a delete that happened to fail.
+#   * `public_apply.draft_not_consumed_on_race` — the cleanup's own failure
+#     branch, same objection.
+#   * the end state of the two draft rows — both finish `status='submitted'`,
+#     and whether the winner keeps its `resume_s3_key` depends on
+#     `staged.release_draft_pointer`, decided per request. The loser is not
+#     distinguishable from the winner by reading the table.
+#
+# So on the draft door the PROPERTY is asserted and branch entry is not
+# claimed. That is weaker, and it is said out loud at the assertion rather than
+# papered over, because the alternative — a marker that fires on a failure path
+# — would report the exit covered on exactly the runs where something else went
+# wrong.
+_RACE_MARKER = {"one-shot": "public.apply.race_lost"}
 
 
 async def _submit_through(
@@ -1464,4 +1547,215 @@ async def test_an_unstorable_filename_leaves_no_cv_behind(client: AsyncClient) -
     )
     assert _NUL not in (row["resume_filename"] or ""), (
         "the NUL reached the stored filename"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", _BOTH_DOORS)
+async def test_a_race_for_one_address_answers_the_same_and_leaves_one_of_everything(
+    door: str, client: AsyncClient, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AR-10 residue 4, which was open only because nothing reached this path.
+
+    The entry says so in its own words: "it is not a trade but an untested
+    path, and the test that would close it is cheap; it is listed here because
+    the behaviour is accepted until that test exists, not because anyone
+    prefers it this way." This file's docstring also admitted it — "neither
+    are ... behaviour under concurrent submissions."
+
+    WHY THE PATH IS STATE-CORRELATED, which is what makes it a leak and not
+    merely a race. `IntegrityError` can only be raised while an enrolment, an
+    applicant or a guest IDENTITY is being CREATED, and none of those happens
+    for an address that already has one — `enrol_applicant` no-ops on any live
+    enrolment whatever its status. So reaching the loser's branch AT ALL is the
+    answer "this address has never applied here": state (d), and told apart
+    from (c) and (e) individually rather than from the group of them.
+
+    TWO THINGS ARE ASSERTED, because the entry names two different harms.
+
+      The leak — both racers must be indistinguishable from each other and from
+      all five sequential states, so which one lost is not an observable.
+
+      The integrity — exactly one applicant, one enrolment and one guest
+      identity may survive. The entry is explicit that double-writing is "worse
+      than the residue being accepted here": `_identify`'s
+      `ORDER BY created_at LIMIT 1` would hide the second applicant from the
+      cooldown gate permanently, which is a BYPASS rather than a timing leak,
+      and erasure enumerates by `applicants WHERE user_id = :uid`, so a
+      duplicate hanging off a different guest user keeps its CV through a
+      completed erasure.
+
+    AND THE PRECONDITION IS ASSERTED RATHER THAN ASSUMED. The arbiter is
+    `uq_applicants_company_email`, and its migration SKIPS CREATION on a tenant
+    that already holds duplicate applicants, deferring to a human merge. On
+    that deployment this exit is unreachable and the race succeeds twice
+    instead — so a run without the index would report the property holding on
+    the one configuration where it does not. The index is checked first and its
+    absence fails here by name. This is the same lesson as the rest of the
+    branch: assert the thing, not a proxy for it, and say what the test cannot
+    speak for.
+    """
+    factory = get_session_factory()
+    async with factory() as db:
+        arbiter = (
+            await db.execute(
+                text(
+                    "SELECT indexname FROM pg_indexes"
+                    " WHERE tablename = 'applicants'"
+                    "   AND indexname = 'uq_applicants_company_email'"
+                )
+            )
+        ).scalar()
+    assert arbiter == "uq_applicants_company_email", (
+        "uq_applicants_company_email is absent from this database, so the exit "
+        "this test exists to reach is unreachable and a race would succeed "
+        "TWICE instead. AR-10 residue 4 names that deployment as worse than "
+        "the residue it accepts: a duplicate applicant that `_identify`'s "
+        "`ORDER BY created_at LIMIT 1` hides from the cooldown gate for good, "
+        "and whose CV survives a completed erasure. This test cannot speak for "
+        "such a deployment and refuses to look as though it does."
+    )
+
+    # The sequential answer first, so the race is compared against the real
+    # matrix rather than only against itself. A race that answered consistently
+    # but differently from every ordinary submission would still be an oracle.
+    baseline = await _seeded_addresses(client)
+    seen = {
+        case: _observable(await _submit_through(door, client, req, email))
+        for case, (req, email) in baseline.items()
+    }
+    _assert_one_answer(seen, f"the {door} door, submitted one at a time")
+    the_one_answer = seen[_LIVE]
+
+    # Now the race, on an opening and an address nothing above has touched.
+    # `_seed_opening` returns (company_id, requisition_id) — in that order, as
+    # every other caller here unpacks it. Reversed, the requisition id is a
+    # company id and the door answers 404 "not accepting applications", which
+    # reads as a seeding fault rather than as the finding it is not.
+    _, req_id = await _seed_opening(cooldown_days=90)
+
+    # RETRIED UNTIL THE EXIT IS ACTUALLY REACHED, because a race that does not
+    # collide proves nothing and looks exactly like one that does. The reply
+    # assertion runs on every attempt either way; what the loop is for is the
+    # marker. Eight attempts, each on a fresh address.
+    marker = _RACE_MARKER.get(door)
+    reached = False
+    captured_anything = False
+    email = ""
+    for _attempt in range(4 if marker else 1):
+        email = f"race-{uuid.uuid4().hex[:10]}@example.com"
+        if door == "one-shot":
+            await _clear_rate_limit()
+            racers = await asyncio.gather(
+                _apply(client, req_id, email), _apply(client, req_id, email)
+            )
+        else:
+            tokens = [
+                await _draft_ready_to_submit(client, req_id, email),
+                await _draft_ready_to_submit(client, req_id, email),
+            ]
+            await _clear_rate_limit()
+            racers = await asyncio.gather(
+                *(
+                    client.post("/apply/draft/submit", headers={"X-Draft-Token": t})
+                    for t in tokens
+                )
+            )
+
+        for which, response in enumerate(racers, start=1):
+            observed = _observable(response)
+            assert observed == the_one_answer, (
+                f"on the {door} door, submission {which} of two concurrent ones "
+                f"for a never-applied address answered\n    {observed}\n"
+                f"where every sequential state answers\n    {the_one_answer}\n"
+                "Reaching the loser's branch is only possible while an "
+                "applicant, an enrolment or a guest identity is being created, "
+                "which never happens for an address that already has one — so "
+                "any difference here is the answer 'this address has never "
+                "applied here', readable by whoever typed it."
+            )
+
+        # Let the scheduled work land before reading the evidence. The draft
+        # door's loser logs nothing itself; its only visible trace is the
+        # release of the CV it uploaded and no longer owns, and that release is
+        # a `background.add_task` rather than an await — deliberately, because
+        # awaiting an S3 round trip on that exit timed a sub-state and was one
+        # of the leaks this branch closed. So the marker arrives AFTER the
+        # response, and a `capsys` read taken the moment `gather` returns
+        # misses it: measured, the collision had happened (one
+        # `draft_object_orphaned` in the run's own log) while the test
+        # concluded the exit was never entered.
+        # Up to six seconds, because the work being waited for is an S3 delete
+        # and this entry's own measurements put one un-cached client
+        # construction at 350-650 ms before the call even starts. A one-second
+        # window was tried and was too short: the collision had happened (the
+        # run's log carried a `draft_object_orphaned` the loop never saw) and
+        # the test concluded the exit was unreachable.
+        if marker is None:
+            break
+        for _ in range(120):
+            await asyncio.sleep(0.05)
+            out = capsys.readouterr().out
+            captured_anything = captured_anything or bool(out.strip())
+            if marker in out:
+                reached = True
+                break
+        if reached:
+            break
+
+    # Branch entry is checked only where it is observable — the one-shot door.
+    # On the draft door nothing the loser does is visible from outside (see
+    # `_RACE_MARKER` for the three signals that were tried and why each fails),
+    # so there this test is a property check and not a coverage proof, and
+    # AR-10 residue 4 should be read as closed for the one-shot door only. The
+    # integrity assertions below run on both doors either way.
+    if marker is not None:
+        assert captured_anything, (
+            "no stdout was captured, so this test cannot tell whether it "
+            "reached the exit it exists to cover. That happens when pytest's "
+            "capture is disabled (`-s`). Failing rather than reporting a "
+            "property it did not observe — AR-10 residue 4 is accepted "
+            "precisely because this path was untested, and a green run that "
+            "never entered it would re-create that situation while appearing "
+            "to have ended it."
+        )
+        assert reached, (
+            f"four attempts on the {door} door never logged {marker!r}, so the "
+            "concurrency exit was not entered and the assertions above passed "
+            "without it. The loser's branch is the whole subject: the two "
+            "racers agreeing proves nothing if both of them won. Either the "
+            "arbitrating index stopped firing, or the submissions stopped "
+            "overlapping."
+        )
+
+    async with factory() as db:
+        counts = (
+            await db.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM applicants"
+                    "          WHERE lower(btrim(email)) = :em) AS applicants,"
+                    "       (SELECT count(*) FROM enrolments en"
+                    "          JOIN applicants a ON a.id = en.applicant_id"
+                    "          WHERE lower(btrim(a.email)) = :em) AS enrolments,"
+                    "       (SELECT count(DISTINCT a.user_id) FROM applicants a"
+                    "          WHERE lower(btrim(a.email)) = :em"
+                    "            AND a.user_id IS NOT NULL) AS identities"
+                ),
+                {"em": email.lower()},
+            )
+        ).mappings().one()
+
+    assert (counts["applicants"], counts["enrolments"]) == (1, 1), (
+        f"the race left {counts['applicants']} applicant(s) and "
+        f"{counts['enrolments']} enrolment(s) for one address on the {door} "
+        "door. Two is the failure AR-10 residue 4 calls worse than the residue "
+        "itself: `_identify` orders by `created_at` and takes one, so the "
+        "second is invisible to the cooldown gate for ever — a bypass, not a "
+        "timing difference — and erasure walks `applicants WHERE user_id = "
+        ":uid`, so the duplicate's CV outlives an erasure that reported success."
+    )
+    assert counts["identities"] <= 1, (
+        f"the race minted {counts['identities']} guest identities for one "
+        "address, so the duplicate hangs off a user the erasure sweep for the "
+        "surviving one will never reach."
     )

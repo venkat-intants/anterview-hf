@@ -962,7 +962,44 @@ of the five were introduced by the fix for the previous one.
    has 2^64 independent 60/hour budgets, which makes "60 an hour" a bound on a
    well-behaved client rather than on bulk enumeration. Still open.
 
-4. **The concurrency exit is state-correlated, and no test reaches it.**
+4. **The concurrency exit is state-correlated. CLOSED on the one-shot door
+   2026-10-05; still a property-only check on the draft door.**
+   `test_a_race_for_one_address_answers_the_same_and_leaves_one_of_everything`
+   in `test_ph3_cooldown_indistinguishable.py` races two submissions for a
+   never-applied address on both doors and asserts the two things this entry
+   names: that both racers are indistinguishable from each other and from all
+   five sequential states, and that exactly one applicant, one enrolment and
+   one guest identity survive. It also asserts the ARBITER exists
+   (`uq_applicants_company_email`) rather than assuming it, because the entry's
+   own point is that the index is created conditionally and the exit is
+   unreachable without it — a run on such a deployment would otherwise report
+   the property holding on the one configuration where it does not.
+
+   **On the one-shot door the test proves it entered the loser's branch**, by
+   requiring `public.apply.race_lost` in the captured output and retrying the
+   race until it appears. That mattered: the first version gathered two full
+   draft journeys, passed, and reached no race exit at all — four round trips
+   apart, the submits never collide, so the draft door now has its SUBMITS
+   raced rather than its whole journey.
+
+   **On the draft door branch entry is not asserted, because nothing the loser
+   does is observable from outside.** Three candidates were tried and each
+   fails for the same kind of reason: `public_apply.draft_object_orphaned` is
+   passed to `_best_effort_delete` as its `event`, and that helper logs only
+   from its `except` branch, so it fires when the release FAILS rather than
+   when the branch runs; `public_apply.draft_not_consumed_on_race` is the
+   cleanup's own failure branch; and the two draft rows both finish
+   `status='submitted'`, with the winner's `resume_s3_key` kept or cleared
+   according to `staged.release_draft_pointer`, decided per request. So on that
+   door the test is a property check and not a coverage proof, and this residue
+   is closed for the one-shot door only. A marker that fired on a failure path
+   would have been worse than none: it would report the exit covered on exactly
+   the runs where something else had gone wrong.
+
+   The original text of this residue follows, because the reasoning in it is
+   what the test was written against.
+
+   **The concurrency exit is state-correlated, and no test reaches it.**
    Two concurrent submissions for the same address are arbitrated by a unique
    index and the loser takes its own code path on both doors. `IntegrityError`
    can only be raised while an enrolment, an applicant or a guest IDENTITY is
@@ -1046,10 +1083,14 @@ wrongly stated here as a reason the residue cannot be closed at all; see "Path
 to closure", which now names a design the objection does not reach. (2) and (3)
 are both "fail closed instead", which converts a privacy residue into an
 availability one: candidates refused during an incident, and during a Redis
-outage refused entirely. (4) is open for a different reason from the other
-three — it is not a trade but an untested path, and the test that would close
-it is cheap; it is listed here because the behaviour is accepted until that test
-exists, not because anyone prefers it this way.
+outage refused entirely. (4) was open for a different reason from the other
+three — not a trade but an untested path, accepted until the test existed
+rather than because anyone preferred it. **That test now exists** and (4) is
+closed for the one-shot door; see the residue for what the draft door's half
+does and does not claim. The claim "the test that would close it is cheap" was
+true of the assertion and wrong about the work: the first version passed
+without entering the path at all, and finding that out took a marker, a retry
+loop, and three rejected candidate signals on the other door.
 
 **What is NOT true.** A reader could reasonably assume any of these
 compensating controls exists. None does:

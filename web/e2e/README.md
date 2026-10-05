@@ -65,11 +65,13 @@ only; the service **refuses to start** with `AI_FAKE_MODE` or
 | `RATE_LIMIT_LOGIN_PER_MINUTE=1000` | the suite signs in far more than 5 times a minute from one IP |
 | `AI_FAKE_MODE=true` | resume scoring, question generation and embeddings return deterministic stand-ins (`app/fake_ai.py`): no model spend, same answer every run. A CV containing `E2E-SCORE: 85` scores exactly 85 |
 | `TEST_HOOKS_ENABLED=true` and `TEST_HOOKS_TOKEN=<32+ chars>` | mounts `/test-hooks/reconcile` and `/test-hooks/reminders`, so a spec runs the scoring pass or the reminder sweep now instead of waiting up to 10 minutes. Every call needs `X-Test-Hooks-Token`; without it the paths answer 404 |
+| `CORS_ALLOWED_ORIGINS=http://localhost:5174,http://127.0.0.1:5174` | **the one that is easiest to miss.** `cors_allowed_origins` defaults to `http://localhost:5173` and this suite serves the app on **5174**, so without this the browser loads the app and every API call it makes is blocked. The symptom is nowhere near the cause: 33 of 34 specs time out at 120 s and retry, and the only spec that passes is the one needing no API ("a signed-out visitor is sent to sign in"). A laptop has it because `services/data_gateway/.env` sets it, and that file is git-ignored — this table omitted it until 2026-10-05, which cost three CI runs |
 | `EMAIL_POLL_INTERVAL_SECONDS=2` | the mail worker sleeps `email_poll_interval_seconds` (**default 60**) between polls, while `waitForMail`'s default patience is **30 s** — so any spec that enqueues a mail and waits the default passes only when the worker's tick happens to land inside its window. `offer-preboarding` has two such waits and failed on them while the service log showed `email.enqueued` for the very mail it was waiting for: nothing was broken except the arithmetic. Two seconds removes the class rather than padding each timeout, and takes about a minute off that spec |
 
 ```powershell
 $env:RATE_LIMIT_LOGIN_PER_MINUTE = '1000'
 $env:EMAIL_POLL_INTERVAL_SECONDS = '2'
+$env:CORS_ALLOWED_ORIGINS = 'http://localhost:5174,http://127.0.0.1:5174'
 $env:AI_FAKE_MODE = 'true'
 $env:TEST_HOOKS_ENABLED = 'true'
 $env:TEST_HOOKS_TOKEN = '<a random string of 32+ characters>'

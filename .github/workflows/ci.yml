@@ -1196,6 +1196,19 @@ jobs:
       # waiting for, so nothing was broken except the arithmetic. Two seconds
       # removes the whole class rather than padding each timeout.
       EMAIL_POLL_INTERVAL_SECONDS: '2'
+      # CORS, and this one cost three CI runs and roughly two hours of runner
+      # time. `cors_allowed_origins` defaults to **http://localhost:5173**,
+      # while this suite serves the app on **5174** — so the browser loads
+      # fine and every API call it makes is blocked. The symptom is not an
+      # error anywhere near the cause: 33 of 34 specs time out at 120s and
+      # retry, the job hits its cap, and the single spec that passes is the one
+      # that needs no API at all ("a signed-out visitor is sent to sign in").
+      #
+      # It works on a laptop because `services/data_gateway/.env` sets this,
+      # and that file is git-ignored. The e2e README documents the 5174 port in
+      # two places and did NOT document this requirement, which is why reading
+      # that README carefully was not enough; it is in the table there now.
+      CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
       # SMTP needs no env: smtp_host/smtp_port default to localhost:1025, which
       # is the Mailpit container below.
       #
@@ -1430,6 +1443,26 @@ jobs:
           done
           curl -sf http://localhost:5174/ >/dev/null \
             || { echo "::error::vite never came up"; cat "$RUNNER_TEMP/vite.log"; exit 1; }
+
+      - name: Check the browser could actually reach the API
+        # A five-second check in front of a forty-minute suite, added because
+        # three consecutive runs of this job spent their whole budget
+        # discovering a connectivity problem one request would have shown.
+        #
+        # It asks the question the specs ask: a cross-origin request from
+        # http://localhost:5174, which is what the browser sends. A missing
+        # `access-control-allow-origin` here is the CORS default pointing at
+        # 5173, and failing on it costs seconds instead of an hour of 120s
+        # timeouts whose logs blame whichever screen the spec happened to be on.
+        run: |
+          hdrs="$(curl -sS -D - -o /dev/null \
+            -H 'Origin: http://localhost:5174' \
+            http://localhost:8002/health/live)"
+          echo "$hdrs"
+          echo "$hdrs" | grep -qi '^access-control-allow-origin:' || {
+            echo "::error::data_gateway did not allow http://localhost:5174 — every API call the browser makes will be blocked. Check CORS_ALLOWED_ORIGINS (it defaults to port 5173)."
+            exit 1
+          }
 
       - name: Run the browser suite
         working-directory: web

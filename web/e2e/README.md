@@ -80,6 +80,49 @@ cd services/data_gateway; .\.venv\Scripts\python -m uvicorn app.main:app --port 
 $env:E2E_TEST_HOOKS_TOKEN = '<the same string>'
 ```
 
+### If you add a setting to your local `.env`, check the CI job
+
+`services/data_gateway/.env` and `web/.env` are both **git-ignored**, and the
+browser job in `ci.yml` has to restate by hand everything in them that matters.
+That gap caused four consecutive CI-only failures, each found one run at a time:
+a cached Docker image, `E2E_PYTHON` as a bare name, the missing `web/.env`, then
+`CORS_ALLOWED_ORIGINS` defaulting to port 5173.
+
+The fifth was found by sweeping instead of guessing, and the sweep is cheap:
+
+```powershell
+# every name the local .env sets, against the names the CI job sets
+python - <<'PY'
+import pathlib, re, yaml
+root = pathlib.Path(".")
+local = {l.split("=",1)[0].strip()
+         for l in (root/"services/data_gateway/.env").read_text(encoding="utf-8").splitlines()
+         if l.strip() and not l.startswith("#") and "=" in l}
+ci = set(yaml.safe_load((root/".github/workflows/ci.yml").read_text(encoding="utf-8"))
+         ["jobs"]["browser"]["env"])
+for name in sorted(local - ci):
+    print(name)
+PY
+```
+
+Then, for each name it prints, read the default in
+`services/data_gateway/app/config.py` and ask whether that default is right for
+an e2e run — **not** whether the name looks important. The three that mattered
+most were `APP_BASE_URL`, `EXAM_LINK_BASE_URL` and `INTERVIEW_LINK_BASE_URL`,
+which look like deployment trivia and in fact decide whether the links the suite
+reads out of Mailpit point at the app under test. All three default to `:5173`.
+
+Names whose defaults are deliberately left alone, so a future sweep does not
+re-litigate them: the `GEMINI_*`, `GROQ_*` and `LLM_PROVIDER` family (unused
+under `AI_FAKE_MODE`, and leaving them empty is what keeps CI from calling a
+paid API), `GOOGLE_OAUTH_*` (SSO is covered by mock-based tests, not here),
+`EXECUTION_PROVIDER` / `JDOODLE_*` / `PISTON_API_URL` (`coding-round` probes
+`localhost:2000` and skips, so the public Piston endpoint is never called),
+`SMTP_HOST` / `SMTP_PORT` / `EMAIL_PROVIDER` (the defaults already point at the
+Mailpit container), `AGENTS_ENABLED` / `WATCHERS_ENABLED` (default on, as
+locally), and `STORAGE_LOCAL_DIR` (declared in `config.py` and read nowhere —
+dead setting).
+
 ## Test data
 
 Every run provisions its own company and one account per role

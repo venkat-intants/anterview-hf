@@ -1209,6 +1209,34 @@ jobs:
       # two places and did NOT document this requirement, which is why reading
       # that README carefully was not enough; it is in the table there now.
       CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
+      # THE SAME 5173-vs-5174 MISTAKE, THREE MORE TIMES. These build the links
+      # that go INTO EMAILS, and the suite reads those links out of Mailpit and
+      # navigates to them: the exam invitation, the offer, the draft's resume
+      # link, the reapplication confirmation. All three default to
+      # http://localhost:5173, so with the defaults every emailed link in CI
+      # would point at a dead port and most of the suite would fail one step
+      # after the mail arrived — journey-hire, exam-from-dashboard,
+      # offer-preboarding, save-and-resume, application-confirmation,
+      # reapply-cooldown, interview-scheduling.
+      #
+      # Found by SWEEPING the local .env against this block rather than by
+      # waiting for three more runs to fail one at a time. That sweep is the
+      # reason these are here before they broke anything, and it is the lesson
+      # from the four CI-only failures that preceded it: the gap was never one
+      # variable, it was a git-ignored file with 37 settings in it.
+      APP_BASE_URL: http://localhost:5174
+      EXAM_LINK_BASE_URL: http://localhost:5174
+      INTERVIEW_LINK_BASE_URL: http://localhost:5174
+      # So the bootstrap migration stops minting and PRINTING a random owner
+      # password into the CI log. Nothing signs in as this account — the suite
+      # provisions its own tenant — and a fixed, obviously-fake value is better
+      # than a fresh credential in a public build log on every run.
+      PLATFORM_OWNER_PASSWORD: ci-only-not-a-real-password-0123456789
+      # Second bucket, for interview scorecard PDFs. Created alongside the
+      # uploads one below: `interview-scorecard.spec.ts` exists, nothing creates
+      # buckets at runtime, and a missing bucket fails as an opaque S3 error
+      # rather than as "the bucket is missing".
+      S3_SCORECARD_BUCKET: intants-interview-scorecards
       # SMTP needs no env: smtp_host/smtp_port default to localhost:1025, which
       # is the Mailpit container below.
       #
@@ -1343,7 +1371,8 @@ jobs:
               use_ssl=False,
               config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
           )
-          s3.create_bucket(Bucket="intants-uploads")
+          for bucket in ("intants-uploads", "intants-interview-scorecards"):
+              s3.create_bucket(Bucket=bucket)
           print("buckets:", [b["Name"] for b in s3.list_buckets()["Buckets"]])
           PY
 
@@ -1463,6 +1492,24 @@ jobs:
             echo "::error::data_gateway did not allow http://localhost:5174 — every API call the browser makes will be blocked. Check CORS_ALLOWED_ORIGINS (it defaults to port 5173)."
             exit 1
           }
+
+          # And the links that go into emails must point at the app under test.
+          # Asserted rather than trusted because all four of these default to
+          # :5173 while the suite serves on :5174, and a mismatch does not fail
+          # here — it fails one step after a candidate opens their email, in
+          # whichever spec got there first, which is a much worse place to read
+          # about it.
+          for pair in \
+            "APP_BASE_URL=$APP_BASE_URL" \
+            "EXAM_LINK_BASE_URL=$EXAM_LINK_BASE_URL" \
+            "INTERVIEW_LINK_BASE_URL=$INTERVIEW_LINK_BASE_URL"; do
+            name="${pair%%=*}"; value="${pair#*=}"
+            if [ "$value" != "$E2E_WEB_URL" ]; then
+              echo "::error::$name is '$value' but the suite drives $E2E_WEB_URL. Emailed links would point somewhere the browser is not."
+              exit 1
+            fi
+          done
+          echo "emailed links point at $E2E_WEB_URL"
 
       - name: Run the browser suite
         working-directory: web

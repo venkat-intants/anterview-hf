@@ -1202,9 +1202,14 @@ jobs:
       # way to create a platform owner, and an account-creating endpoint added
       # "for tests" would be attack surface production carries too.
       E2E_DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
-      # No virtualenv on the runner, so point global-setup at the interpreter
-      # the requirements went into rather than services/data_gateway/.venv.
-      E2E_PYTHON: python
+      # E2E_PYTHON is deliberately NOT set here. There is no virtualenv on the
+      # runner, so global-setup must be pointed at the interpreter the
+      # requirements went into — but it checks the value with
+      # `fs.existsSync(python)`, a FILE test, so the bare name `python` fails
+      # even though it is on PATH. That is what the first CI run of this job
+      # died on, after every container and service had come up:
+      # "No Python found at python." It is resolved to an absolute path in a
+      # step below, once setup-python has run.
 
     services:
       postgres:
@@ -1281,6 +1286,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r services/data_gateway/requirements.txt
+
+      - name: Point the suite at this runner's Python
+        # Absolute, because `web/e2e/global-setup.ts` validates E2E_PYTHON with
+        # `fs.existsSync`, which asks whether a FILE is there and not whether
+        # the name resolves on PATH. `command -v` rather than hardcoding
+        # `${{ env.pythonLocation }}/bin/python` so this keeps working if the
+        # setup-python action changes where it puts things.
+        run: |
+          py="$(command -v python)"
+          test -x "$py" || { echo "::error::no python on PATH"; exit 1; }
+          echo "E2E_PYTHON=$py" >> "$GITHUB_ENV"
+          echo "using $py"
 
       - name: Create the S3 bucket
         # The bucket must pre-exist: nothing in shared/s3.py or the routers

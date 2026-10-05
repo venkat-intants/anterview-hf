@@ -712,6 +712,52 @@ message or a test docstring — four failure modes and one traded invariant:
    characterisation of this residue as "a disk-full primary" understated it:
    several of these are ordinary production events rather than outages.
 
+   **THE MEASURED WRITE SET, per state and per door** (2026-10-05, rows
+   inserted by the submit alone, against a real Postgres; the draft door's
+   journey was built first so the numbers are the submit and not the four
+   calls before it):
+
+   | state | one-shot door | draft door |
+   |---|---|---|
+   | live application | *nothing* | *nothing* |
+   | rejected, in cooldown | `email_events` | `email_events` |
+   | rejected, elapsed | `email_events` | `email_events` |
+   | rejected, overridden | `email_events` | `email_events` |
+   | never applied here | `applicants`, `enrolments`, `users`, `dpdp_consent_ledger`, `stage_transitions`, `email_events` | `applicants`, `enrolments`, `stage_transitions`, `email_events` |
+
+   The doors differ only on the last row, and not in a way anyone outside can
+   see: the draft door already wrote `users` and `dpdp_consent_ledger` at
+   `start_draft`, so its submit writes fewer. That is a difference between
+   doors, not between states.
+
+   **What the vector changes about this residue.** It was written as though the
+   split were broadly "states that write" against "states that do not". It is
+   sharper and narrower than that:
+
+   * A live application writes **nothing at all**, on either door. No write
+     failure can make it answer anything but 201.
+   * The three rejected states write exactly one row, the staged notice — and
+     that write sits inside `begin_nested()`, a savepoint taken precisely so a
+     failing notice "must cost this notice and nothing else". A failure
+     confined to it is absorbed and still answers 201.
+   * So the state actually exposed to a mid-write failure is **"never applied
+     here"**, the one with four to six table writes and no savepoint around
+     them.
+
+   Which means this residue and residue (4) leak the SAME state by different
+   mechanisms: a write failure says "never applied here", and so does reaching
+   the concurrency exit. That is worth stating because it changes what closing
+   either one buys — they are not independent coverage of the same surface,
+   they are two doors onto one fact, and a reader comparing the five states
+   should expect (d) to be the one that separates.
+
+   Re-measure with the counts rather than trusting this table: snapshot
+   `applicants`, `application_drafts`, `dpdp_consent_ledger`, `email_events`,
+   `enrolments`, `stage_transitions` and `users`, submit one state, snapshot
+   again. The five states are already built by `_seeded_addresses` in
+   `test_ph3_cooldown_indistinguishable.py`, so the measurement is a loop over
+   that fixture and not a second hand-built approximation of the states.
+
 2. **The reply floor fails open, silently.** Each state-dependent term is absorbed
 by its own pad — the identity lookup by `apply_lookup_floor_ms`, everything
 below the gate by `apply_reply_floor_ms` — and each deadline is taken BEFORE

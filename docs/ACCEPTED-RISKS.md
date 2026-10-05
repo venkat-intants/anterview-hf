@@ -682,7 +682,7 @@ substantiated complaint — that is the decision recorded here, not a preference
 | | |
 |---|---|
 | **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-14, 2026-09-28 to 2026-10-04 |
-| **Status** | **ACCEPTED — five residues, all open; the property itself holds on a healthy system and is tested** |
+| **Status** | **ACCEPTED — five residues; (4) closed on the one-shot door 2026-10-05, the other four open. The property itself holds on a healthy system and is tested** |
 | **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
 | **Trigger to revisit** | Any of: (a) a timing or enumeration report against the apply doors; (b) `public_apply_floor_exceeded_total` above noise — `PublicApplyTimingPadFailingOpen` in `ops/alerts/` is the consumer, added in round 10 because this trigger previously had no mechanism to fire; (c) a Redis outage coinciding with apply traffic; (d) a residency or privacy bid asking about enumeration resistance; (e) the write-set design in "Path to closure" becoming cheap enough to build |
 
@@ -695,8 +695,12 @@ or has never applied here. Fourteen review rounds each found a way to tell those
 the fourteenth, which could not, and said so. That is the first round where
 the answer to "is there a disclosure" was no. The reply body, the status code on a healthy system, the state
 left behind, what a second submission reads back, and the dominant timing term
-are all closed. FIVE residues are not, and are accepted here rather than in a commit
-message or a test docstring — four failure modes and one traded invariant:
+are all closed. FIVE residues were not, and are accepted here rather than in a
+commit message or a test docstring — four failure modes and one traded
+invariant. **(4) has since been closed on the one-shot door** (2026-10-05, by
+the test it was waiting for); it is kept below rather than deleted because its
+draft-door half is a property check and not a coverage proof, and because the
+reasoning in it is what that test was written against:
 
 1. **Any write-path failure after the probe still splits the states 201/503.**
    `_require_write_capability` asks whether the transaction can write at all

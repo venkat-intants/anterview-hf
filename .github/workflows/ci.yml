@@ -1133,7 +1133,16 @@ jobs:
     name: browser (playwright e2e)
     runs-on: ubuntu-latest
     # Generous but finite. A hung browser otherwise burns the 6-hour default.
-    timeout-minutes: 45
+    #
+    # 45 -> 60 after the third run hit the cap. That run was failing every spec
+    # for an unrelated reason (see "Give the frontend its API endpoints"), so 45
+    # was never actually measured against a working suite — but a CI runner is
+    # slower than the laptop that finishes in 11 minutes, and s3mock is slower
+    # than the MinIO those 11 minutes were measured against, so the headroom is
+    # worth having before it is needed. If a run ever approaches this, the thing
+    # to question is the single worker (`playwright.config.ts` explains why) and
+    # not this number.
+    timeout-minutes: 60
 
     # NONE OF THE VALUES BELOW ARE SECRETS. They are the same shape as the
     # erasure-live and services jobs': fixed, obviously-fake strings for a
@@ -1381,6 +1390,30 @@ jobs:
         # transient download failure should not fail a suite that is about
         # applications, offers and reviews.
         run: node scripts/fetch-mediapipe.mjs
+
+      - name: Give the frontend its API endpoints
+        working-directory: web
+        # WITHOUT THIS, EVERY SPEC FAILS, and the third CI run of this job is
+        # how that was found: all 34 tests timing out at 120s and retrying, so
+        # 43 minutes covered four of them before the job cap killed it. Even
+        # `auth.spec.ts › platform_owner lands on their own console` failed,
+        # which is as simple as this suite gets.
+        #
+        # The reason is `web/.env`, which sets `VITE_API_BASE_URL` to
+        # http://localhost:8002 and is GIT-IGNORED. Vite reads VITE_* at
+        # dev-server start, so on a laptop the frontend knows where
+        # data_gateway is and in CI it does not — every API call goes nowhere.
+        # The same shape as the mediapipe assets two steps up: a local,
+        # untracked file that makes everything work on one machine.
+        #
+        # `cp` from the tracked example rather than writing the values into
+        # this workflow, because `.env.example` is the repo's own documented
+        # procedure ("Copy this file to .env") and stays in step with it. The
+        # file names four services and only data_gateway runs here; the other
+        # three ports are simply unused, which is also true locally.
+        run: |
+          cp .env.example .env
+          grep -E '^VITE_(API_BASE_URL|APP_ENV|USE_MOCK)=' .env
 
       - name: Start the web dev server
         working-directory: web

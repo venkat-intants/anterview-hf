@@ -19,6 +19,7 @@ SECURITY:
 
 from __future__ import annotations
 
+import asyncio
 import io
 import uuid
 from collections import Counter
@@ -909,6 +910,13 @@ async def import_questions(
     """Bulk-import questions from an uploaded Excel/CSV in the template layout.
 
     Valid rows are inserted; malformed rows are reported (partial success).
+
+    CAPPED AT ``question_import.MAX_ROWS`` (1000) SINCE 2026-10-03, and stated
+    here because it was not: this route was previously uncapped, and sharing the
+    parser with the bank importer brought the cap with it. A larger sheet is not
+    silently truncated — the row it stopped at comes back in ``errors`` with
+    "split the file and import the rest" — but the limit is new, so a 1200-row
+    sheet that used to import whole now needs two passes.
     """
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
@@ -920,7 +928,7 @@ async def import_questions(
     if len(content) > _MAX_IMPORT_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 2 MB).")
 
-    rows = _read_spreadsheet(file.filename or "", content)
+    rows = await asyncio.to_thread(_read_spreadsheet, file.filename or "", content)
     items, errors = _parse_question_rows(rows)
     if not items and not errors:
         raise HTTPException(

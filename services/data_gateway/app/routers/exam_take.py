@@ -582,7 +582,19 @@ async def _accommodation_params(
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-@router.get("", response_model=TakeExamOut)
+@router.get(
+    "",
+    response_model=TakeExamOut,
+    # The heaviest read here — get_exam_link_ctx plus sections, MCQ, coding,
+    # the in-progress attempt, accommodations and the camera consent, roughly a
+    # dozen queries — and it was the ONE route on this router with no limiter
+    # (VAPT 2026-10-05). An invalid token still costs a query, and this database
+    # is billed by wake-ups and has been exhausted once already. Sized like the
+    # other eight call sites on this router.
+    dependencies=[
+        rate_limit_link("exam_view", "X-Exam-Token", per_token=60, per_ip=1800)
+    ],
+)
 async def get_take_exam(ctx: ExamTakeCtxDep, db: DbSessionDep) -> TakeExamOut:
     sections = await _round_sections(db, ctx)
     mcq_section_ids = [s.id for s in sections if s.kind == "mcq"]

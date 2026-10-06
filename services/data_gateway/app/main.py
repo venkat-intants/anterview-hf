@@ -50,6 +50,7 @@ from app.hire_checkins import purge as purge_hire_checkins
 from app.interview_kits import purge_expired_notes
 from app.job_tasks import purge as purge_task_submissions
 from app.mailer import purge_old_email_events, start_email_worker, stop_email_worker
+from app.question_import import assert_xlsx_parser_hardened
 from app.redis_client import close_redis, get_redis, init_redis
 from app.retention import purge_expired_sessions
 from app.routers.accommodations import hr_router as accommodations_hr_router
@@ -412,6 +413,32 @@ async def _run_retention_job() -> None:
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # --- startup ---
+    # Spreadsheet XML hardening: REPORTED here, ENFORCED at the point of use.
+    #
+    # The control is the identical check inside ``question_import._read_workbook``,
+    # which raises before ``load_workbook`` ever runs — so an undefused parse is
+    # structurally impossible whatever this line does. This one exists only so an
+    # operator learns at deploy rather than when the first HR manager imports a
+    # question bank.
+    #
+    # WHY IT LOGS INSTEAD OF REFUSING. This service is the AUTH service: login,
+    # SSO, consent, the DPDP ledger. A boot refusal here would let a wrong
+    # ``OPENPYXL_DEFUSEDXML``, or an image build that dropped ``defusedxml``, take
+    # down authentication for the whole platform — a total outage against a 99.5%
+    # uptime NFR, bought for visibility we already have another way (security
+    # review 2026-10-06). CRITICAL rather than WARNING because the thing it reports
+    # is one upload away from being exploitable, and the feature it guards is
+    # already failing closed with a 500 by the time anybody sees this.
+    #
+    # It is also NOT on ``Settings``: importing openpyxl at config-import time cost
+    # ~180 ms to every importer of ``settings``, ``alembic/env.py`` included, which
+    # would have made a database MIGRATION refuse to run over a spreadsheet
+    # parser's environment variable.
+    try:
+        assert_xlsx_parser_hardened()
+    except RuntimeError as exc:
+        log.critical("startup.xlsx_parser_not_hardened", error=str(exc))
+
     init_engine()
     init_redis()
     provider = get_auth_provider(

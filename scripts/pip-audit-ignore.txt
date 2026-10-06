@@ -158,6 +158,27 @@ GHSA-xf7x-x43h-rpqh
 # upgrade notes.
 
 # --- python-jose 3.5.0 — NOT EXPLOITABLE, NO FIX EXISTS (all four services) --
+#
+# SUPERSEDED ON `main`, AND THIS ENTRY HAS A KNOWN END DATE. On 2026-10-06
+# `main` landed `acc2484 refactor(auth)!: replace python-jose with PyJWT,
+# removing two unfixable advisories` — all four services now pin PyJWT 2.15.1
+# and nothing imports `jose`. That is the right answer and better than this
+# entry: it removes a CRITICAL finding that had no patched release rather than
+# reasoning around it.
+#
+# The entry stays HERE only because this branch has not merged that yet, so
+# python-jose 3.5.0 is still pinned and still used in `shared/auth/jwt.py` —
+# deleting it now would fail the audit on a real, live dependency. DELETE IT IN
+# THE SAME CHANGE that merges `main`, along with the PINNED entry for it in
+# ops/ci/check_accepted_risk_claims.py, and re-point that checker's AST matcher
+# at PyJWT (it keys on a receiver named `jwt`, which PyJWT satisfies, so it will
+# keep working — but "keeps working" is not the same as "still checks the thing
+# the acceptance rested on").
+#
+# A REVIEWER SHOULD NOT BE ASKED TO ACCEPT THIS LONG-TERM. The decision in front
+# of a security-auditor is not "is python-jose tolerable forever" — it is "is it
+# tolerable for the days between now and this branch merging the migration that
+# already exists on main".
 # CVE-2026-85394 / GHSA-3qf3-8w2g-rqmx (CRITICAL): the algorithm-confusion
 # guard is bypassed by DER-encoded public keys. python-jose accepts a
 # DER-encoded public key that lacks PEM armor as HMAC key material, so an

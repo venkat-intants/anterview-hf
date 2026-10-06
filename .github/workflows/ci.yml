@@ -804,23 +804,14 @@ jobs:
         # Accepted risks live in scripts/pip-audit-ignore.txt, each with a
         # reason and an unblock condition. Anything NOT listed fails the build.
         # This is the list .trivyignore's header has always claimed was here.
-        run: |
-          mapfile -t IDS < <(grep -vE '^\s*#|^\s*$' scripts/pip-audit-ignore.txt)
-          ARGS=()
-          for id in "${IDS[@]}"; do ARGS+=(--ignore-vuln "$id"); done
-          echo "${#IDS[@]} accepted-risk ids loaded"
-          status=0
-          for svc in data_gateway interview_core feedback_billing admin_ops; do
-            echo "::group::pip-audit $svc"
-            # --no-deps: these are complete freeze files, so the pinned set IS
-            # the install set. Auditing them directly avoids a full dependency
-            # resolution (slow, and network-flaky for interview_core's stack).
-            # Loop rather than && so one service's finding does not mask the
-            # other three.
-            pip-audit -r "services/$svc/requirements.txt" --no-deps "${ARGS[@]}" || status=1
-            echo "::endgroup::"
-          done
-          exit $status
+        #
+        # The loop used to be inline here. It moved into the script so that
+        # dependency-watch.yml — which runs the same scan nightly, because an
+        # advisory published today fails a push made next week — cannot drift
+        # from it. The nightly copy is the one nobody would notice had stopped
+        # covering a service. ops/ci/tests/test_dependency_watch.py asserts both
+        # workflows call this one file.
+        run: bash scripts/audit_python_deps.sh
 
       - name: Audit npm dependencies
         working-directory: web

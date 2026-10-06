@@ -358,6 +358,67 @@ def _is_loopback_database(database_url: str | None) -> bool:
         return False
 
 
+def validate_redis_tls(app_env: str | None, redis_url: str | None) -> str:
+    """Require TLS on the Redis link in production/staging (DPDP §8, CWE-319).
+
+    The third copy of a gap this module exists to close. ``validate_database_ssl``
+    above was itself the second — its docstring records the same drift — and
+    Redis never got one at all: ``redis_url`` is declared as a bare ``str`` in all
+    four services with no validator, and ``shared/redis_factory`` takes the scheme
+    from the URL without looking at it. A ``redis://`` link in a hardened
+    environment is accepted in silence and sends the AUTH token in cleartext on
+    the first command.
+
+    WHY THIS ONE IS WORTH A BOOT FAILURE. Write access to this Redis is account
+    takeover for any user whose id is known, because the refresh store lives
+    here: write ``refresh:<sha256(R)>`` = ``"<victim_uuid>:<now>"`` for a chosen
+    ``R``, then POST it to ``/auth/refresh`` in the BODY (the body path skips the
+    CSRF check by design) and the provider mints an access token for that user.
+    Deleting the ``auth_epoch:<uuid>`` keys additionally defeats "log out all
+    devices", password change and the DPDP erasure session purge. So the
+    credential travelling in plaintext is not one secret among many.
+
+    Returns *redis_url* unchanged when valid; raises ValueError otherwise.
+
+    Loopback is exempt for the same reason it is on the database link — a socket
+    that cannot leave the machine has nothing to encrypt — and that exemption is
+    derived from the host, never from an operator's assertion about it.
+    """
+    env = normalise_app_env(app_env)
+    if env not in ENFORCED_ENVS:
+        return redis_url or ""
+    url = (redis_url or "").strip()
+    if not url:
+        # Absence is another validator's problem; this one is about the scheme.
+        return url
+    if url.startswith("rediss://"):
+        return url
+    if _is_loopback_redis(url):
+        return url
+    raise ValueError(
+        f"APP_ENV={app_env!r} requires a TLS Redis link: REDIS_URL must use "
+        "rediss:// (or point at loopback). A redis:// link to a managed "
+        "instance sends the AUTH token and every session key in cleartext, and "
+        "write access to this store is account takeover (DPDP §8, CWE-319)."
+    )
+
+
+def _is_loopback_redis(redis_url: str) -> bool:
+    """True only when the Redis link provably cannot leave the machine."""
+    try:
+        host = urlsplit(redis_url).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host.lower() in _LOOPBACK_HOSTNAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def validate_database_ssl(
     app_env: str | None,
     database_ssl: str | None,

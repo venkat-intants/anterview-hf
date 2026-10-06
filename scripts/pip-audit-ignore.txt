@@ -30,6 +30,34 @@
 # alone.
 # =============================================================================
 
+# --- python-jose 3.5.0 — NO FIX EXISTS (all four services) ------------------
+# CVE-2026-85394 (2026-10): algorithm confusion. python-jose accepts a
+# DER-encoded public key (no PEM armour, no SSH prefix) as an HMAC secret, so an
+# attacker holding the service's PUBLIC key can forge an HS256 token that
+# verifies — "when algorithms are not explicitly restricted", in the advisory's
+# own words. An incomplete fix for CVE-2024-33663.
+#
+# NOT exploitable here, on that exact condition. There is ONE `jwt.decode` call
+# in the entire repo (shared/auth/jwt.py, inside verify_access_token) and it
+# passes `algorithms=[candidate_algorithm]` — a single algorithm, taken from the
+# CANDIDATE's own configuration, never from the token header. A `kid` in the
+# header can only FILTER which configured candidates are tried; it cannot
+# introduce an algorithm. So an RS256 verification key is only ever offered to
+# jose as RS256, and the HS256 path only ever receives JWT_SECRET, which is a
+# secret and not a published key.
+#
+# The one way in is an operator pasting DER public-key material into JWT_SECRET.
+# PEM-armoured material is already caught — jose raises JWKError, which
+# verify_access_token re-raises as JWTError so it is a logged 401 rather than a
+# 500 (see test_jwt_key_construction_failure.py) — and `forbid_private_signing_key`
+# covers the private half. Bare DER is the remaining gap, and it needs that
+# misconfiguration first.
+# Unblock: a python-jose release containing the fix. 3.5.0 IS the latest release
+# on PyPI as of 2026-10-06 — the fix exists only as a commit — so there is
+# nothing to upgrade to. The real exit is the PyJWT migration the ecdsa entry
+# below also names; both ids are python-jose, and ecdsa is reached THROUGH it.
+CVE-2026-85394
+
 # --- ecdsa 0.19.2 — NO FIX EXISTS ------------------------------------------
 # Minerva-class timing attack on ECDSA signing. Reached only through
 # python-jose, which is the platform's JWT library (shared/auth/jwt.py:21).
@@ -115,6 +143,28 @@ PYSEC-2026-2574
 # no reasoning at all before. Same upgrade block.
 PYSEC-2026-2194
 PYSEC-2026-2575
+# langgraph-sdk, CVE-2026-104873 (HIGH, 2026-10): the resource-scoped
+# authorization decorators @auth.on.threads / .assistants / .crons ignore their
+# `actions=` argument and register the handler for EVERY action on the resource,
+# so an authenticated user can bypass the fallback ownership check and read or
+# delete another user's resource.
+#
+# NOT REACHABLE HERE, and the reason is structural rather than a judgement about
+# our handlers: those decorators exist for a LangGraph **API server**
+# deployment, and we do not run one. `langgraph_sdk` is never imported anywhere
+# in services/ or shared/ — grep finds no `langgraph_sdk`, no `auth.on`, no auth
+# handler of any kind. We use langgraph as a library: the graph is built and
+# compiled in-process (`build_graph(llm).compile()`,
+# interview_core/app/graph/build.py). The package is here only because langgraph
+# depends on it.
+#
+# Unblock is the same migration as the cluster above, and it is a hard version
+# wall rather than caution: langgraph==0.2.76 pins `langgraph-sdk<0.2.0,>=0.1.42`
+# so 0.4.4 cannot be installed beside it, and langgraph-sdk 0.4.4 itself requires
+# `langchain-core>=1.4.0` against our pinned 0.3.86 (checked against PyPI
+# metadata 2026-10-06). Mirrored in .trivyignore: it is HIGH with a fix
+# available, so the image scan sees it too.
+CVE-2026-104873
 
 # --- langsmith 0.8.5 — NOT EXPLOITABLE (interview_core) ---------------------
 # CVE-2026-59152: TracingMiddleware allows an arbitrary server-side file read.

@@ -888,6 +888,14 @@ class ChangePasswordBody(BaseModel):
     status_code=status.HTTP_200_OK,
     response_model=OkResponse,
     summary="Set a new password and clear the must-change flag",
+    # This route bcrypt-verifies `current_password` on every call and had NO
+    # limiter (review 2026-10-06). Two consequences: an attacker holding a
+    # 15-minute access token could brute-force the account's real password —
+    # which does not expire when the token does — and each attempt burns ~250 ms
+    # of a worker thread on a service with a p95-under-2s NFR, i.e. an
+    # authenticated CPU-exhaustion primitive. Keyed like login, because the cost
+    # and the guessing are the same shape.
+    dependencies=[rate_limit("change_password", settings.rate_limit_login_per_minute)],
 )
 async def change_password(
     body: ChangePasswordBody,

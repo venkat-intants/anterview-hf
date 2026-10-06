@@ -79,6 +79,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import document_storage as store
+from app import pdf_text
 from app.config import settings
 from app.document_storage import DocumentRejectedError
 from app.embedding_client import EmbeddingError, embed_one_remote, to_pgvector_literal
@@ -226,24 +227,67 @@ class ExtractedDocument:
 
 
 def _extract_pdf_sync(data: bytes) -> ExtractedDocument:
+    """Text, page count and per-page offsets — BOUNDED (``app.pdf_text``).
+
+    The encrypted check stays here because ``encrypted`` is one of this module's
+    own failure sentences; everything else is the shared bounded extractor. See
+    its module docstring for the DAG /Pages bomb that made the page and character
+    caps necessary (review 2026-10-06): the old loop here had neither, so a
+    kilobyte of PDF could produce millions of characters.
+    """
     try:
         reader = PdfReader(io.BytesIO(data))
     except Exception as exc:  # noqa: BLE001 — any malformed PDF is `parse_error`
         raise _corpus_error("parse_error") from exc
     if reader.is_encrypted:
         raise _corpus_error("encrypted")
-    pages: list[str] = []
-    offsets: list[int] = []
-    pos = 0
     try:
-        for page in reader.pages:
-            extracted = page.extract_text() or ""
-            offsets.append(pos)
-            pages.append(extracted)
-            pos += len(extracted) + 1  # +1 for the "\n" joiner below
+        out = pdf_text.extract(data)
     except Exception as exc:  # noqa: BLE001 — pypdf raises assorted types on bad content
         raise _corpus_error("parse_error") from exc
-    return ExtractedDocument(text="\n".join(pages), page_count=len(reader.pages), page_offsets=offsets)
+    return ExtractedDocument(
+        text=out.text, page_count=out.page_count, page_offsets=out.page_offsets
+    )
+
+
+#: How deep `<w:p>` nesting may go before the rest is ignored. Word nests
+#: paragraphs for text boxes and table cells, a handful of levels at most; a
+#: document claiming hundreds is not a document. Defence in depth only — the
+#: single-pass walk below is already linear — but it also bounds the number of
+#: Python objects the XML parser builds for a pathological tree.
+_DOCX_MAX_PARA_DEPTH = 64
+
+
+def _docx_own_text(para: Any) -> list[str]:
+    """The `w:t` text belonging to ``para`` ITSELF, not to paragraphs inside it.
+
+    This is what makes extraction linear. The previous version called
+    ``para.iter(w:t)`` per paragraph, which walks the entire subtree — so a chain
+    of N nested `<w:p>` cost O(N^2) and a 1,151-byte upload took 8.85 s
+    (review 2026-10-06). Descending past a nested `w:p` is also wrong on its own
+    terms: that paragraph gets its own line from the outer loop, so its text was
+    being emitted twice.
+
+    An explicit stack rather than recursion: the depth here is attacker-chosen,
+    and Python's recursion limit is not an error anybody should have to read.
+    """
+    out: list[str] = []
+    t_tag, p_tag = _qn("t"), _qn("p")
+    # REVERSED on the way in, both here and below: this is a LIFO stack, so
+    # pushing children in document order pops them backwards. My first version
+    # did exactly that and turned "Wear " + "boots." into "boots.Wear" — every
+    # multi-run paragraph silently scrambled, which is most of them. Caught by
+    # the ordering assertion in the test rather than by reading it.
+    stack: list[Any] = list(reversed(list(para)))
+    while stack:
+        node = stack.pop()
+        if node.tag == p_tag:
+            continue  # its own paragraph, its own line
+        if node.tag == t_tag:
+            out.append(node.text or "")
+            continue  # w:t holds text, not more runs
+        stack.extend(reversed(list(node)))
+    return out
 
 
 def _docx_paragraph_lines(root: Any) -> list[str]:
@@ -252,8 +296,16 @@ def _docx_paragraph_lines(root: Any) -> list[str]:
     carries a DOCX heading — read from ``w:pStyle`` in the raw XML, which is
     available without a DOCX library."""
     lines: list[str] = []
-    for para in root.iter(_qn("p")):
-        runs = [node.text or "" for node in para.iter(_qn("t"))]
+    depth_of: dict[Any, int] = {root: 0}
+    p_tag = _qn("p")
+    for parent in root.iter():
+        base = depth_of.get(parent, 0)
+        for child in parent:
+            depth_of[child] = base + (1 if child.tag == p_tag else 0)
+    for para in root.iter(p_tag):
+        if depth_of.get(para, 0) > _DOCX_MAX_PARA_DEPTH:
+            continue
+        runs = _docx_own_text(para)
         line = "".join(runs).strip()
         if not line:
             continue
@@ -322,10 +374,16 @@ def _extract_text_sync(data: bytes) -> ExtractedDocument:
 
 
 async def extract_text(data: bytes, content_type: str) -> ExtractedDocument:
-    """Parse *data* off the event loop, with a hard wall-clock timeout.
+    """Parse *data* off the event loop, behind a wall-clock backstop.
 
     Raises ``CorpusError`` for every failure this module recognises —
     ``parse_timeout`` here, everything else from the per-format extractor.
+
+    ``parse_timeout`` means the REQUEST gave up, not that the parse stopped:
+    ``wait_for`` cannot cancel a thread. The real bounds are per format — the page
+    and character caps in ``app.pdf_text``, and the single-pass depth-bounded walk
+    in ``_docx_paragraph_lines``. If this timeout fires in production, treat it as
+    one of those bounds being too loose (review 2026-10-06).
     """
     if content_type == "application/pdf":
         fn = _extract_pdf_sync

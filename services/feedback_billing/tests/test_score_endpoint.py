@@ -13,9 +13,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import jwt as pyjwt
 import pytest
 from fastapi.testclient import TestClient
-from jose import jwt as jose_jwt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,7 +41,7 @@ def _make_jwt(sub: str = "interview_core", roles: list[str] | None = None) -> st
         "jti": uuid.uuid4().hex,
     }
     return str(
-        jose_jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+        pyjwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     )
 
 
@@ -523,8 +523,8 @@ def test_internal_score_rejects_revoked_service_token(client: TestClient) -> Non
         "aud": settings.jwt_audience,
         "jti": uuid.uuid4().hex,
     }
-    from jose import jwt as jose_jwt  # noqa: PLC0415
-    token = str(jose_jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm))
+    import jwt as pyjwt  # noqa: PLC0415
+    token = str(pyjwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm))
 
     # Simulate epoch set 5 minutes ago (after the iat), so the token is stale.
     stale_epoch = int((datetime.now(tz=UTC) - timedelta(minutes=5)).timestamp())

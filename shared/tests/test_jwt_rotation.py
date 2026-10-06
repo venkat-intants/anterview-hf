@@ -23,13 +23,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import jwt as pyjwt
 import pytest
 import structlog
-from jose import JWTError
-from jose import jwt as jose_jwt
-from jose.exceptions import ExpiredSignatureError
 
-from shared.auth.jwt import issue_access_token, verify_access_token
+from shared.auth.jwt import ExpiredSignatureError, issue_access_token, verify_access_token
+from shared.auth.jwt import TokenError as JWTError
 
 _OLD_SECRET = "test-only-old-secret-0123456789abcdef"
 _NEW_SECRET = "test-only-new-secret-fedcba9876543210"
@@ -57,7 +56,7 @@ def _handcraft(secret: str, **overrides: Any) -> str:
     for key, value in list(claims.items()):
         if value is None:
             del claims[key]
-    return str(jose_jwt.encode(claims, secret, algorithm="HS256"))
+    return str(pyjwt.encode(claims, secret, algorithm="HS256"))
 
 
 # ---------------------------------------------------------------------------

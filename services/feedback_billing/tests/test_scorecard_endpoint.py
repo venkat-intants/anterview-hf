@@ -21,9 +21,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt as pyjwt
 import pytest
 from fastapi.testclient import TestClient
-from jose import jwt as jose_jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, settings
@@ -46,7 +46,7 @@ def _make_jwt(sub: str | None = None, roles: list[str] | None = None) -> str:
         "aud": settings.jwt_audience,
         "jti": uuid.uuid4().hex,
     }
-    return str(jose_jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm))
+    return str(pyjwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm))
 
 
 _SCORECARD_ID = str(uuid.uuid4())

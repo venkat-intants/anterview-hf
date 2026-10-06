@@ -15,7 +15,6 @@ from typing import Annotated, Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError
 from pydantic import BaseModel, Field, field_validator
 from shared.auth.jwt import (
     USER_TOKEN_EPOCH_PREFIX,
@@ -23,6 +22,16 @@ from shared.auth.jwt import (
     is_token_revoked,
     verify_access_token,
 )
+
+# The name to catch comes from shared.auth.jwt, NOT from the JWT library.
+#
+# `InvalidKeyError` is a `PyJWTError` but not an `InvalidTokenError` (measured), so
+# `except InvalidTokenError` here would let a key-construction failure escape as a
+# 500 on every authenticated request — the 2026-10-06 defect, in which jose's
+# `JWKError` escaped `JWTError` the same way. Two libraries in a row have put that
+# exception outside the family a caller would reach for, so the defence lives in one
+# module and these five files import it.
+from shared.auth.jwt import TokenError as JWTError
 from shared.intelligence import RoleProfile
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import IntegrityError

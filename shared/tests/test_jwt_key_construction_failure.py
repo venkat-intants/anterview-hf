@@ -1,18 +1,29 @@
 """A key that fails CONSTRUCTION must still be a 401, not a 500.
 
-``jose.exceptions.JWKError`` and ``jose.JWTError`` are SIBLINGS — both derive from
-``JOSEError``, neither from the other — and ``jose.jwt.decode`` converts only
-``JWSError`` into ``JWTError``. So the one jose exception that means "this key
-cannot be used for this algorithm" escaped ``verify_access_token``'s loop entirely,
-past every caller's ``except JWTError -> 401``, and surfaced as a 500 on EVERY
-authenticated request in all four services (review 2026-10-06).
+THE SAME TRAP IN TWO LIBRARIES, which is why this file outlived the migration that
+prompted it.
+
+Under python-jose: ``JWKError`` and ``JWTError`` were SIBLINGS — both derived from
+``JOSEError``, neither from the other — and ``jose.jwt.decode`` converted only
+``JWSError`` into ``JWTError``. So the one exception meaning "this key cannot be used
+for this algorithm" escaped ``verify_access_token``'s loop entirely, past every
+caller's ``except JWTError -> 401``, and surfaced as a 500 on EVERY authenticated
+request in all four services (review 2026-10-06).
+
+Under PyJWT, measured against the pinned 2.15.1: ``InvalidKeyError`` is a
+``PyJWTError`` but NOT an ``InvalidTokenError``. Identical shape. Which is why
+``shared.auth.jwt`` now re-exports ``TokenError`` and the five services catch that
+rather than a name from the library — one place to get wrong instead of five.
 
 THE OPERATOR MISTAKE THAT GETS YOU THERE is the mirror of the one
 ``forbid_private_signing_key`` exists to catch: PEM key material pasted into
-``JWT_SECRET`` while the algorithm is still HS256. ``assert_strong_secrets`` is
-happy — it is long and has no placeholder marker — the service boots clean, and
-then every request 500s with nothing in the auth log to point at the cause. The
-symptom (total authenticated outage) is as bad as it gets and the diagnosis is as
+``JWT_SECRET``. ``assert_strong_secrets`` is happy — it is long and has no placeholder
+marker — the service boots clean, and then every authenticated request fails with
+nothing in the auth log to point at the cause. PyJWT 2.15.1 says the same for BARE DER
+material, which jose ACCEPTED as an HMAC secret: that is CVE-2026-85394's root cause,
+and taking this library is what closes it.
+
+The symptom (total authenticated outage) is as bad as it gets and the diagnosis is as
 slow as it gets, which is the combination worth a test.
 """
 
@@ -23,14 +34,15 @@ from typing import Any
 
 import pytest
 import structlog
-from jose import JWTError
-from jose.exceptions import JOSEError, JWKError
+from jwt.exceptions import InvalidKeyError as JWKError
 
+from shared.auth.jwt import TokenError as JOSEError
+from shared.auth.jwt import TokenError as JWTError
 from shared.auth.jwt import VerificationKey, issue_access_token, verify_access_token
 
 _GOOD_SECRET = "test-only-secret-0123456789abcdefghij"
 
-#: Not a real key — only the PEM *envelope* matters, because jose refuses on the
+#: Not a real key — only the PEM *envelope* matters, because the library refuses on the
 #: armour before it parses the body. Deliberately not a parseable key, so nothing
 #: here can be mistaken for committed key material.
 _PEM_SHAPED_SECRET = (
@@ -41,12 +53,48 @@ _PEM_SHAPED_SECRET = (
 
 
 def test_the_two_exception_types_are_still_siblings() -> None:
-    """The whole defect is this hierarchy, so pin it. If a future jose makes
-    JWKError a subclass of JWTError, the handler becomes redundant rather than
-    wrong — but a reader should be told by a failing test, not by guessing."""
-    assert issubclass(JWKError, JOSEError)
-    assert issubclass(JWTError, JOSEError)
-    assert not issubclass(JWKError, JWTError), "the re-raise exists because of this"
+    """The whole defect is this hierarchy, so pin it.
+
+    IT SURVIVED THE LIBRARY CHANGE UNCHANGED, which is the thing worth knowing.
+    Under jose: `JWKError` and `JWTError` both derive from `JOSEError`, neither from
+    the other. Under PyJWT, measured against the pinned 2.15.1:
+
+        issubclass(InvalidKeyError, PyJWTError)        -> True
+        issubclass(InvalidKeyError, InvalidTokenError) -> False
+
+    Two libraries in a row have put the one exception meaning "this key cannot be
+    used" outside the family a caller would naturally catch. If a future release makes
+    it a subclass, the re-raise becomes redundant rather than wrong — but a reader
+    should be told that by a failing test and not have to guess.
+    """
+    from jwt.exceptions import InvalidKeyError, InvalidTokenError, PyJWTError
+
+    assert issubclass(InvalidKeyError, PyJWTError)
+    assert issubclass(InvalidTokenError, PyJWTError)
+    assert not issubclass(InvalidKeyError, InvalidTokenError), (
+        "the re-raise exists because of this"
+    )
+
+
+def test_the_module_re_exports_what_a_caller_should_catch() -> None:
+    """The defence against this trap, asserted where it lives.
+
+    Because `InvalidKeyError` sits outside `InvalidTokenError`, a caller who
+    reasonably wrote `except InvalidTokenError -> 401` would let a key-construction
+    failure escape as a 500 — the exact 2026-10-06 defect, in a new library. So
+    `shared.auth.jwt` re-exports `TokenError` and the five services catch THAT: one
+    place to get wrong instead of five, and the next library swap cannot recreate it
+    at the call sites.
+    """
+    from jwt.exceptions import InvalidKeyError, InvalidTokenError
+
+    from shared.auth.jwt import TokenError
+
+    assert issubclass(InvalidKeyError, TokenError), (
+        "TokenError must be wide enough to catch a key-construction failure — that "
+        "is the only reason it exists"
+    )
+    assert issubclass(InvalidTokenError, TokenError)
 
 
 def test_pem_material_in_jwt_secret_raises_jwterror_not_jwkerror() -> None:
@@ -61,7 +109,7 @@ def test_pem_material_in_jwt_secret_raises_jwterror_not_jwkerror() -> None:
 
 
 def test_the_original_jwkerror_is_kept_as_the_cause() -> None:
-    """``raise ... from exc``. jose's own sentence ("should not be used as an HMAC
+    """``raise ... from exc``. The library's own sentence ("should not be used as an HMAC
     secret") is the one that tells an operator what they did, so losing it would
     trade a 500 for a 401 and leave the diagnosis just as slow."""
     token = issue_access_token(str(uuid.uuid4()), ["candidate"], _GOOD_SECRET)

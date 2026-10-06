@@ -366,11 +366,31 @@ Three environment faults account for most of the time lost to this suite on
 client IP, counted across **both** doors. Everything in this suite runs from
 localhost, so separate browser contexts do not buy separate budgets, and a
 7th submission inside a minute gets "Too many requests. Please wait a minute and
-try again." rendered into the form rather than a useful failure.
+try again." rendered into the form.
+
+**`applyThroughPublicForm` now waits that out and resubmits**
+(`sendRespectingTheRateLimit` in `support/journeys.ts`), so this is no longer a
+way for a spec to fail — it is a way for one to take an extra ~65 seconds.
+Before that, it was the cause of the "flaky" `exam-from-dashboard` and
+`save-and-resume` in CI, and it took three attempts to find because the evidence
+is a page snapshot that only the failure artifact carries, and the artifact was
+not uploaded on a run that went green on retry. Verified by deliberately
+submitting seven times in a row: six took 3–8 s each and the seventh took 69.3 s
+and passed.
+
+Waiting rather than clearing the limiter is deliberate. The integration suite
+clears it only because it can reach Redis directly; from here that would mean a
+Redis client in the browser suite or a test-only endpoint whose purpose is
+switching a security control off — and `test_hooks.py` says of its own hooks that
+they "change nothing a pass would not change anyway".
+
+So the budget below still shapes what a spec should do, even though exceeding it
+no longer fails:
 
 `apply-indistinguishable.spec.ts` was written with four candidates and seven
 submissions and failed exactly there. It now walks one candidate through four
-states in sequence, which fits. There is also
+states in sequence, which fits — and which is also the stronger design, so it
+stayed that way after the retry landed. There is also
 `rate_limit_window("public_apply_submit_hourly", 60, 3600)`, so the whole suite
 has 60 public submissions an hour from one machine to share — worth knowing
 before adding a spec that applies in a loop. Do not raise either limit for a

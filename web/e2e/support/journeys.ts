@@ -2,7 +2,7 @@
 // and sitting an exam from the emailed link. Two journeys share them, and a
 // spec reads as what a person did rather than as a list of clicks.
 
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { waitForMail, linkIn } from './mail';
 import { makeCvPdf } from './pdf';
 
@@ -77,10 +77,69 @@ export async function applyThroughPublicForm(
   await page.locator('label').filter({ hasText: 'may store my name, email and CV' })
     .locator('input[type="checkbox"]').check();
   await expect(send).toBeEnabled();
-  await send.click();
+  await sendRespectingTheRateLimit(page, send);
 
   if (opts.expectReceived === false) return;
   await expect(page.getByText('Application received')).toBeVisible();
+}
+
+/** The rate-limit alert the apply form renders on a 429. */
+const TOO_MANY = 'Too many requests. Please wait a minute and try again.';
+
+/**
+ * Click Send, and if the door answers 429, wait the window out and click again.
+ *
+ * `POST /apply/{id}` and `POST /apply/draft/submit` share
+ * `rate_limit("public_apply_submit", 6)` — a FIXED 60-second window, keyed on
+ * the client IP, counted across both doors. Every spec in this suite submits
+ * from the same address, so a run that happens to put seven submissions inside
+ * one minute gets a 429 on the seventh, the success panel never renders, and
+ * whichever spec was unlucky fails.
+ *
+ * That is what was happening. In CI it showed up as one or two "flaky" specs
+ * per run — `exam-from-dashboard` and `save-and-resume` — and it took three
+ * attempts to diagnose because the evidence was in a page snapshot that only
+ * the failure artifact carries, and the artifact was not uploaded on a run that
+ * went green on retry. The alert is right there in the snapshot:
+ * "Too many requests. Please wait a minute and try again."
+ *
+ * WHY WAIT RATHER THAN RESET THE LIMITER. The limit is the product's defence on
+ * an anonymous, unauthenticated write path, and the integration suite only
+ * clears it because it can reach Redis directly. Doing the same from here would
+ * mean either a Redis client in the browser suite or a test-only endpoint whose
+ * whole purpose is switching a security control off — and `test_hooks.py` says
+ * of itself that its hooks "change nothing a pass would not change anyway",
+ * which that would not. Waiting needs no new surface and models what a real
+ * rate-limited candidate does: they wait and press the button again.
+ *
+ * The window is fixed at 60s and expires from the first request in it, so one
+ * wait is always enough; the second attempt is a safety net, not an expectation.
+ */
+async function sendRespectingTheRateLimit(page: Page, send: Locator): Promise<void> {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await send.click();
+    // Whichever lands first: the reply (any state renders the shared panel) or
+    // the limiter. Racing them rather than waiting on the alert keeps the
+    // normal path at its old speed.
+    const limited = page.getByText(TOO_MANY);
+    const accepted = page.getByText('Application received');
+    try {
+      await expect(limited.or(accepted).first()).toBeVisible({ timeout: 30_000 });
+    } catch {
+      return; // neither appeared; let the caller's own assertion report it
+    }
+    if (!(await limited.isVisible())) return;
+    if (attempt === 3) {
+      throw new Error(
+        `the apply door answered 429 on ${attempt} attempts, ~${attempt} minutes apart. ` +
+          'That is more than a shared 6-per-minute window explains — check whether ' +
+          'the hourly cap (public_apply_submit_hourly, 60/hour per IP) is exhausted, ' +
+          'which a whole suite re-run inside one hour can do.',
+      );
+    }
+    // The window is 60s from its first request; 65 clears it whenever it opened.
+    await page.waitForTimeout(65_000);
+  }
 }
 
 /** Open the emailed exam link and answer every question. */

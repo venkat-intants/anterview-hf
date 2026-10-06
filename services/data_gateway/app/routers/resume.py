@@ -352,7 +352,22 @@ async def _do_upload(
     """Core upload logic shared by the B-031 compat route and the new versioned route."""
 
     # --- 1. content-type check ---
-    if file.content_type != "application/pdf":
+    # THE PARSER IS THE GATE, not this header. `content_type` is supplied by the
+    # client and cannot be a control; `application/octet-stream` is accepted because
+    # curl with no --header, some Android file pickers and some corporate proxies all
+    # send it for a perfectly ordinary PDF.
+    #
+    # What actually refuses a non-PDF is `app/pdf_text.extract`: pypdf raises
+    # PdfStreamError on a JPEG, a PNG, a zip or plain text, and EmptyFileError on an
+    # empty body, each of which the handler below turns into a 400 (measured). Since
+    # the page and character caps went in, a non-PDF also costs milliseconds rather
+    # than minutes.
+    #
+    # And a sniff is not the improvement it looks like: pypdf finds `%PDF-` at ANY
+    # offset — measured at 64 KB in — so an offset-0 check would refuse PDFs this
+    # product accepts today, and a "within N bytes" check would be a number with
+    # nothing to match it to (review 2026-10-06).
+    if file.content_type not in ("application/pdf", "application/octet-stream"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only PDF files are accepted for resume upload.",

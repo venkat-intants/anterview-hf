@@ -1196,6 +1196,24 @@ jobs:
       # waiting for, so nothing was broken except the arithmetic. Two seconds
       # removes the whole class rather than padding each timeout.
       EMAIL_POLL_INTERVAL_SECONDS: '2'
+      # SCHEDULED_PUBLISH_INTERVAL_SECONDS, the same arithmetic one more time.
+      # It defaults to 300 s while `scheduled-publishing.spec.ts` waits 180 s
+      # for an opening to go live by itself — so that spec passes only when the
+      # publisher's tick happens to land inside its window. It is the one
+      # background worker with NO test hook (`/test-hooks` exposes `reconcile`
+      # and `reminders` only), which is exactly why that spec waits on the real
+      # timer rather than driving it.
+      #
+      # 60 is the floor the field allows (`ge=60`), so the worst case is a tick
+      # about a minute out — comfortably inside 180 s. Evidence it was needed:
+      # the two runs of commit 7c2862c, same code, one green and one with this
+      # spec failing both attempts.
+      #
+      # `reconciliation_interval_seconds` (1800) and `reminders_interval_seconds`
+      # (3600) are deliberately left alone: the suite drives both through
+      # `/test-hooks`, so their cadence never gates a spec, and shortening them
+      # would only add background churn.
+      SCHEDULED_PUBLISH_INTERVAL_SECONDS: '60'
       # CORS, and this one cost three CI runs and roughly two hours of runner
       # time. `cors_allowed_origins` defaults to **http://localhost:5173**,
       # while this suite serves the app on **5174** — so the browser loads

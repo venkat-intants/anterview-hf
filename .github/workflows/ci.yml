@@ -1539,10 +1539,26 @@ jobs:
         run: npm run e2e
 
       - name: Keep the evidence
-        if: failure()
+        # ALWAYS, not `failure()`. With `retries: 1` a spec can fail its first
+        # attempt and pass its second: the job goes green, the artifact step
+        # never runs, and the only record is the word "flaky" in a summary line.
+        # That is precisely how a real bug gets mislabelled — on 2026-10-05
+        # `exam-from-dashboard` was recorded as flaky twice while it was
+        # actually failing on a 500 from `/apply/activate/target`, and the retry
+        # was passing by luck.
+        #
+        # Playwright's report keeps the first attempt's trace and screenshots
+        # even when the retry succeeds, so uploading on success is what makes a
+        # flake diagnosable instead of a label. `!cancelled()` rather than
+        # `always()` so a timed-out or cancelled job does not spend minutes
+        # uploading a partial report.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: browser-failure
+          # `browser-report`, not `browser-failure`: it is uploaded on a green
+          # run too now, and a name that says "failure" on a passing job sends
+          # the next reader looking for one.
+          name: browser-report
           # The report and traces, plus both server logs. A spec that fails
           # here is usually explained by one of the logs rather than by the
           # screenshot: the mail-poll arithmetic above was found by reading

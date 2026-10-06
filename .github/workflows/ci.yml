@@ -613,6 +613,24 @@ jobs:
         # config, and the Space variant fails as a 200.
         run: python ops/ci/check_routing_contract.py
 
+      - name: Every accepted risk's justification still holds
+        # Two dependency advisories are ACCEPTED rather than fixed —
+        # python-jose CVE-2026-85394 (CRITICAL, no patched release) and
+        # langgraph-sdk CVE-2026-104873 — and neither acceptance says "the risk
+        # is tolerable". Each says the vulnerability is UNREACHABLE HERE, on a
+        # claim about this codebase: every JWT decode restricts algorithms, and
+        # the langgraph SDK's affected auth API is not used at all.
+        #
+        # A claim like that is one commit from false and nothing would say so.
+        # The python-jose entry names its own re-check condition — "a decode
+        # added anywhere without `algorithms=`" — and this step is that
+        # condition, enforced rather than written down.
+        #
+        # It is also what a reviewer should read instead of trusting a pull
+        # request: the facts under a CRITICAL acceptance are mechanical, so a
+        # person should not have to take them on faith.
+        run: python ops/ci/check_accepted_risk_claims.py
+
       - name: The gate scripts' own tests
         # ops/ci/ had no tests, and the way a checker fails is silent: a parser
         # stops matching, every set comes back empty, and it prints OK forever.

@@ -177,3 +177,11 @@ CVE-2026-84304
 # ids, and this entry is accepted on unreachability rather than on "upstream
 # will get to it". Re-review trigger is unchanged — each sprint.
 CVE-2026-84445
+
+# langgraph-sdk CVE-2026-104873 (HIGH) — authorization bypass in the
+# @auth.on.* resource decorators of a LangGraph API SERVER. We run no such
+# server and never import langgraph_sdk; it is a transitive langgraph
+# dependency. Fixed in 0.4.4, which langgraph==0.2.76 forbids
+# (`langgraph-sdk<0.2.0`) and which itself needs langchain-core>=1.4.0 against
+# our 0.3.86. Full reasoning and the unblock: scripts/pip-audit-ignore.txt.
+CVE-2026-104873

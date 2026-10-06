@@ -26,6 +26,7 @@ const ME: MeResponse = {
   has_resume: false,
   company_id: 'c-acme',
   company_name: 'Acme Skills University',
+  company_slug: 'acme-skills-university',
 };
 
 const HRS: HrManager[] = [
@@ -164,6 +165,20 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
+
+describe('CompanyAdminConsole — the public careers link', () => {
+  it('shows the board address for its own company', async () => {
+    // The slug is per-COMPANY, so this console is the link's other natural owner
+    // beside /hr. It needs its own instance rather than a shared surface, because
+    // HRRoute admits only hr_manager and SuperAdminRoute only super_admin — the same
+    // reason /superadmin/library exists beside /hr/library.
+    renderConsole();
+
+    expect(
+      await screen.findByText(`${window.location.origin}/careers/acme-skills-university`),
+    ).toBeInTheDocument();
+  });
+});
 
 describe('CompanyAdminConsole — scoping', () => {
   it("names the caller's own company from the session, not from a URL param", async () => {

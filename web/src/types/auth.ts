@@ -47,6 +47,8 @@ export interface MeResponse {
   /** Read-only tenant context (HR's company, set by admins). */
   company_id?: string | null;
   company_name?: string | null;
+  /** Careers-board slug — the public board lives at /careers/<slug>. */
+  company_slug?: string | null;
 }
 
 /** Body for PATCH /auth/me/profile — all fields optional; '' clears a field. */

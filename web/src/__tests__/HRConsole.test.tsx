@@ -97,10 +97,56 @@ beforeEach(() => {
     email: 'hr@acme.edu',
     roles: ['hr_manager'],
     has_resume: false,
+    company_id: 'c-acme',
+    company_name: 'Acme Skills University',
+    company_slug: 'acme-skills-university',
   });
   getHrAnalytics.mockResolvedValue(ANALYTICS);
   listNotifications.mockResolvedValue(NOTIFS);
   getSlaBoard.mockResolvedValue([]);
+});
+
+describe('HRConsole — the public careers link', () => {
+  it('shows the board address, which appeared nowhere in this console before', async () => {
+    // THE TEST THAT WOULD HAVE FAILED BEFORE THIS CHANGE, and the reason the card
+    // exists. Candidates apply with no login at /careers/<slug>; the address was on
+    // exactly one screen — the PLATFORM OWNER's company table, as a bare slug with
+    // no link and no copy button — so the company's own HR manager could not
+    // discover their own front door. Same bug class navRoleScoping.test.ts already
+    // fails the build for on the document library.
+    renderConsole();
+
+    expect(
+      await screen.findByText(`${window.location.origin}/careers/acme-skills-university`),
+    ).toBeInTheDocument();
+  });
+
+  it('offers a copy button rather than text to select by hand', async () => {
+    renderConsole();
+
+    expect(
+      await screen.findByRole('button', { name: /copy the careers page link/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no careers card for an account with no company', async () => {
+    // A platform owner has company_id NULL, so there is no board to link to. An
+    // empty card would be worse than no card.
+    getMe.mockResolvedValue({
+      user_id: 'u-owner',
+      full_name: 'Support',
+      email: 'support@intants.com',
+      roles: ['platform_owner'],
+      has_resume: false,
+    });
+    renderConsole();
+
+    // Wait for the page to settle on something else first, so this is not merely
+    // asserting against a tree that has not rendered yet.
+    await screen.findByRole('heading', { name: /welcome, support/i });
+
+    expect(screen.queryByTestId('careers-link-card')).toBeNull();
+  });
 });
 
 describe('HRConsole — greeting', () => {

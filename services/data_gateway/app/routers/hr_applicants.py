@@ -630,7 +630,7 @@ async def create_applicant(
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF resumes are accepted.")
     try:
-        raw: bytes = await file.read()
+        raw: bytes = await file.read(_MAX_RESUME_BYTES + 1)  # bounded; see hr_exams.py
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail="Could not read the uploaded file.") from exc
     if len(raw) > _MAX_RESUME_BYTES:

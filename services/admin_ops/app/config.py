@@ -12,6 +12,7 @@ from shared.security import (
     strip_pasted_settings,
     validate_cors_origins,
     validate_database_ssl,
+    validate_redis_tls,
 )
 
 # app/config.py -> app -> <service> -> services -> repo root
@@ -169,6 +170,12 @@ class Settings(BaseSettings):
             "database_ssl",
             validate_database_ssl(self.app_env, self.database_ssl, self.database_url),
         )
+        # Same gate, same reasoning, for the store that holds the refresh
+        # tokens and the revocation epochs — Redis had no TLS gate at all
+        # (review 2026-10-06). Raises rather than normalising: unlike
+        # DATABASE_SSL there is no value to rewrite, the scheme either is
+        # rediss:// or it is not.
+        validate_redis_tls(self.app_env, self.redis_url)
         return self
 
     @model_validator(mode="after")

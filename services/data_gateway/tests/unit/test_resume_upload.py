@@ -5,13 +5,13 @@ All external I/O (S3, DB) is mocked so these tests run without infrastructure.
 
 from __future__ import annotations
 
+import io
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
 from fastapi import HTTPException
-from pypdf import PdfReader
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,26 +40,62 @@ def _make_minimal_pdf() -> bytes:
 # ---------------------------------------------------------------------------
 
 
+def _two_page_pdf(first: str, second: str) -> bytes:
+    """A real two-page PDF carrying *first* and *second* as extractable text.
+
+    Built with pypdf rather than hand-written: a hand-rolled xref table is a
+    maintenance liability for a fixture that is not about malformed input.
+    """
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = PdfWriter()
+    # The /Resources font is NOT optional: without it extract_text() returns ""
+    # for every page, and the assertion below would compare "" to "" and pass
+    # against a parser that read nothing.
+    font = writer._add_object(
+        DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+    )
+    for text in (first, second):
+        page = writer.add_blank_page(width=200, height=200)
+        stream = DecodedStreamObject()
+        stream.set_data(f"BT /F1 12 Tf 10 100 Td ({text}) Tj ET".encode())
+        page[NameObject("/Contents")] = writer._add_object(stream)
+        page[NameObject("/Resources")] = DictionaryObject(
+            {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})}
+        )
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
 def test_pdf_text_extraction() -> None:
     """_extract_pdf_text_sync must join text from multiple pages with newlines.
 
-    NOTE: _extract_pdf_text (no _sync suffix) is now the async wrapper that runs
-    _extract_pdf_text_sync via asyncio.to_thread.  Unit tests for the pure text-
-    extraction logic should call _extract_pdf_text_sync directly to avoid needing
-    an event loop.  The async wrapper itself is tested in test_security_fixes.py.
+    NOTE: _extract_pdf_text (no _sync suffix) is the async wrapper that runs
+    _extract_pdf_text_sync via asyncio.to_thread. Unit tests for the pure
+    text-extraction logic call _extract_pdf_text_sync directly to avoid needing an
+    event loop.
+
+    Rewritten 2026-10-06: this used to ``patch("app.routers.resume.PdfReader")``
+    and feed it two MagicMock pages. The bounded extractor now lives in
+    ``app.pdf_text``, so this module no longer imports ``PdfReader`` and that patch
+    target stopped existing. Re-pointing the patch would restore the test and keep
+    its weakness — the mock asserted the JOIN while saying nothing about the page
+    and character bounds the real parser now applies, and it would have passed
+    against a parser that read nothing at all. Two real pages is the stronger
+    statement and does not care where the reader is imported. The bounds
+    themselves are covered in test_parser_resource_bounds.py.
     """
     from app.routers.resume import _extract_pdf_text_sync
 
-    page1 = MagicMock()
-    page1.extract_text.return_value = "Hello from page one"
-    page2 = MagicMock()
-    page2.extract_text.return_value = "Hello from page two"
-
-    mock_reader = MagicMock(spec=PdfReader)
-    mock_reader.pages = [page1, page2]
-
-    with patch("app.routers.resume.PdfReader", return_value=mock_reader):
-        result = _extract_pdf_text_sync(b"fake-pdf-bytes")
+    result = _extract_pdf_text_sync(_two_page_pdf("Hello from page one", "Hello from page two"))
 
     assert result == "Hello from page one\nHello from page two"
 

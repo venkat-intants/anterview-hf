@@ -472,7 +472,12 @@ async def import_bank_questions(
     if language not in LANGUAGES:
         raise HTTPException(status_code=422, detail="language must be en, hi or te")
 
-    content = await file.read()
+    # read(limit + 1), not read(): an unbounded read pulls the entire spooled
+    # body into memory and only THEN measures it, so the cap described the
+    # request without limiting it. One byte over is all that is needed to know
+    # it is too big. Same pattern as the pre-auth paths in public_apply.py
+    # (review 2026-10-06).
+    content = await file.read(question_import.MAX_IMPORT_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
     if len(content) > question_import.MAX_IMPORT_BYTES:

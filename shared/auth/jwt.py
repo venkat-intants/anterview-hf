@@ -616,6 +616,35 @@ def verify_access_token(
             # the operator as a key mismatch, during the one window (rotation)
             # when a key mismatch is what they are already looking for.
             raise
+        except JWKError as exc:
+            # JWKError is NOT a subclass of JWTError — both derive from JOSEError
+            # — and jose.jwt.decode only converts JWSError into JWTError. So a
+            # key that fails CONSTRUCTION for its algorithm escaped this loop
+            # entirely, past every caller's `except JWTError -> 401`, and became a
+            # 500 on every authenticated request across all four services
+            # (review 2026-10-06).
+            #
+            # The operator mistake that gets you here is the mirror of the one
+            # `forbid_private_signing_key` exists to catch: PEM key material
+            # pasted into JWT_SECRET. assert_strong_secrets accepts it (long
+            # enough, no placeholder marker), the service boots, and then jose
+            # says "asymmetric key ... should not be used as an HMAC secret" on
+            # every request with no auth log line to point at it.
+            #
+            # Re-raised as JWTError so it lands on the 401 path, and logged first,
+            # exactly as the empty-candidate-list branch above does deliberately.
+            # A 401 with nothing in the log would move the outage from "500s
+            # everywhere" to "nobody can log in and nothing says why", which is not
+            # an improvement — and jose's own sentence is the only thing that names
+            # what the operator actually did. It describes the key's SHAPE, never
+            # its bytes, which is why it is safe to log here.
+            log.error(
+                "auth.jwt.key_unusable",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                key_index=index,
+            )
+            raise JWTError(f"key could not be used for verification: {exc}") from exc
 
         # Explicit defence-in-depth check: jose raises JWTError when
         # require_jti=True and jti is missing, but an empty string would pass

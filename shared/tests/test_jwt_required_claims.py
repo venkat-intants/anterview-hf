@@ -33,10 +33,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import jwt as pyjwt
 import pytest
-from jose import JWTError
-from jose import jwt as jose_jwt
 
+from shared.auth.jwt import TokenError as JWTError
 from shared.auth.jwt import verify_access_token
 
 _SECRET = "test-only-secret-not-real-0123456789"
@@ -75,7 +75,7 @@ def _token_without(claim: str) -> str:
     claims = _full_claims()
     del claims[claim]
     assert claim not in claims, "the fixture still carries the claim it should omit"
-    return jose_jwt.encode(claims, _SECRET, algorithm="HS256")
+    return pyjwt.encode(claims, _SECRET, algorithm="HS256")
 
 
 def _verify(token: str) -> dict[str, Any]:
@@ -112,7 +112,7 @@ def test_a_token_missing_one_required_claim_is_rejected(claim: str, why: str) ->
 def test_the_control_verifies() -> None:
     """Guards the guard. If the full fixture did not verify, all five tests above
     would pass for the wrong reason — every token would be rejected regardless."""
-    payload = _verify(jose_jwt.encode(_full_claims(), _SECRET, algorithm="HS256"))
+    payload = _verify(pyjwt.encode(_full_claims(), _SECRET, algorithm="HS256"))
 
     assert payload["roles"] == ["candidate"]
     for claim in _REQUIRED:
@@ -133,13 +133,19 @@ def test_every_claim_the_options_require_has_a_test_here() -> None:
     from shared.auth import jwt as jwt_module
 
     source = inspect.getsource(jwt_module.verify_access_token)
-    declared = set(re.findall(r'"require_(\w+)":\s*True', source))
 
-    assert declared, (
-        "no require_<claim> options found in verify_access_token — if the spelling "
-        "changed (PyJWT uses options={'require': [...]}), update this test to read "
-        "the new form, and make sure all five claims are still in it"
+    # PyJWT's spelling: options={"require": ["exp", "iss", ...]}. Updated from jose's
+    # per-claim `"require_exp": True` keys when the migration landed — which is the
+    # case this test's own failure message told the next reader to handle, and the
+    # reason it reads the source rather than trusting a dict literal nobody checks.
+    block = re.search(r'"require":\s*\[([^\]]*)\]', source)
+    assert block is not None, (
+        "no `require` list found in verify_access_token. If the spelling changed "
+        "again, update this regex — and check all five claims are still in it, "
+        "because a library that ignores an unrecognised options key turns a typo "
+        "here into five silently disabled checks"
     )
+    declared = set(re.findall(r'"(\w+)"', block.group(1)))
     assert declared == set(_REQUIRED), (
         f"the verifier requires {sorted(declared)} but this file tests "
         f"{sorted(_REQUIRED)} — reconcile the two"
@@ -155,7 +161,7 @@ def test_an_empty_jti_is_rejected_although_it_is_present() -> None:
     explicit guard for that, and this is the test that keeps it when the options dict
     changes shape under it.
     """
-    token = jose_jwt.encode(_full_claims(jti=""), _SECRET, algorithm="HS256")
+    token = pyjwt.encode(_full_claims(jti=""), _SECRET, algorithm="HS256")
 
     with pytest.raises(JWTError) as exc:
         _verify(token)
@@ -168,7 +174,7 @@ def test_an_expired_token_is_rejected_as_expired() -> None:
     reporting "expired" as the next key's "signature verification failed" sends an
     incident responder hunting a key mismatch that does not exist."""
     past = datetime.now(tz=UTC) - timedelta(minutes=30)
-    token = jose_jwt.encode(
+    token = pyjwt.encode(
         _full_claims(iat=past, exp=past + timedelta(minutes=1)), _SECRET, algorithm="HS256"
     )
 
@@ -181,7 +187,7 @@ def test_an_expired_token_is_rejected_as_expired() -> None:
 def test_a_wrong_issuer_is_rejected() -> None:
     """``require_iss`` checks presence; the ``issuer=`` argument checks the VALUE.
     Both matter, and only one of them is in the options dict."""
-    token = jose_jwt.encode(
+    token = pyjwt.encode(
         _full_claims(iss="https://not-us.example"), _SECRET, algorithm="HS256"
     )
 
@@ -190,7 +196,7 @@ def test_a_wrong_issuer_is_rejected() -> None:
 
 
 def test_a_wrong_audience_is_rejected() -> None:
-    token = jose_jwt.encode(_full_claims(aud="some-other-service"), _SECRET, algorithm="HS256")
+    token = pyjwt.encode(_full_claims(aud="some-other-service"), _SECRET, algorithm="HS256")
 
     with pytest.raises(JWTError):
         _verify(token)
@@ -211,7 +217,7 @@ def test_a_future_iat_is_accepted_today_and_this_will_change() -> None:
     independent of it — measured) or a ``leeway``, which also widens ``exp``.
     """
     ahead = datetime.now(tz=UTC) + timedelta(seconds=30)
-    token = jose_jwt.encode(
+    token = pyjwt.encode(
         _full_claims(iat=ahead, exp=ahead + timedelta(minutes=15)), _SECRET, algorithm="HS256"
     )
 

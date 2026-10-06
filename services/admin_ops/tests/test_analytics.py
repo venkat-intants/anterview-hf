@@ -1146,9 +1146,9 @@ def test_no_sub_claim_returns_401_not_500() -> None:
 
     Uses the real verify_admin_role (no override) so the full auth path runs.
     """
-    from jose import jwt as jose_jwt
+    import jwt as pyjwt
 
-    token = jose_jwt.encode(
+    token = pyjwt.encode(
         {
             "roles": ["admin"],
             # Deliberately omit 'sub'
@@ -1175,9 +1175,9 @@ def test_no_sub_claim_returns_401_not_500() -> None:
 
 def test_no_sub_claim_detail_endpoint_returns_401() -> None:
     """C6: detail endpoint must also return 401 on missing sub."""
-    from jose import jwt as jose_jwt
+    import jwt as pyjwt
 
-    token = jose_jwt.encode(
+    token = pyjwt.encode(
         {"roles": ["admin"]},
         settings.jwt_secret,
         algorithm=settings.jwt_algorithm,

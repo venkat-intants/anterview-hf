@@ -30,60 +30,24 @@
 # alone.
 # =============================================================================
 
-# --- python-jose 3.5.0 — NO FIX EXISTS (all four services) ------------------
-# CVE-2026-85394 (2026-10): algorithm confusion. python-jose accepts a
-# DER-encoded public key (no PEM armour, no SSH prefix) as an HMAC secret, so an
-# attacker holding the service's PUBLIC key can forge an HS256 token that
-# verifies — "when algorithms are not explicitly restricted", in the advisory's
-# own words. An incomplete fix for CVE-2024-33663.
+# --- python-jose + ecdsa: GONE, not accepted -------------------------------
+# Both blocks that lived here are DELETED because the dependency is.
+# `python-jose` was removed on 2026-10-06 in favour of PyJWT, and with it the three
+# packages it alone pulled in — `ecdsa`, `pyasn1`, `rsa`. So:
 #
-# NOT exploitable here, on that exact condition. There is ONE `jwt.decode` call
-# in the entire repo (shared/auth/jwt.py, inside verify_access_token) and it
-# passes `algorithms=[candidate_algorithm]` — a single algorithm, taken from the
-# CANDIDATE's own configuration, never from the token header. A `kid` in the
-# header can only FILTER which configured candidates are tried; it cannot
-# introduce an algorithm. So an RS256 verification key is only ever offered to
-# jose as RS256, and the HS256 path only ever receives JWT_SECRET, which is a
-# secret and not a published key.
+#   * CVE-2026-85394 (algorithm confusion: a DER public key accepted as an HMAC
+#     secret) is FIXED, not suppressed. PyJWT rejects bare DER — but only from
+#     2.14.0; 2.13.0 accepts it exactly as jose did, verified by forging a token
+#     against it. The floor is `^2.14` in every pyproject.toml for that reason, and
+#     the exact pin is 2.15.1.
+#   * PYSEC-2026-1325 (`ecdsa`, Minerva-class timing attack) is GONE from the images
+#     entirely — `ecdsa` was `Required-by: python-jose` and nothing else.
 #
-# The one way in is an operator pasting DER public-key material into JWT_SECRET.
-# PEM-armoured material is already caught — jose raises JWKError, which
-# verify_access_token re-raises as JWTError so it is a logged 401 rather than a
-# 500 (see test_jwt_key_construction_failure.py) — and `forbid_private_signing_key`
-# covers the private half. Bare DER is the remaining gap, and it needs that
-# misconfiguration first.
-# Unblock: a python-jose release containing the fix. 3.5.0 IS the latest release
-# on PyPI as of 2026-10-06 — the fix exists only as a commit — so there is
-# nothing to upgrade to. The real exit is the PyJWT migration the ecdsa entry
-# below also names; both ids are python-jose, and ecdsa is reached THROUGH it.
-CVE-2026-85394
-
-# --- ecdsa 0.19.2 — NO FIX EXISTS ------------------------------------------
-# Minerva-class timing attack on ECDSA signing. Reached only through
-# python-jose, which is the platform's JWT library (shared/auth/jwt.py).
+# They are deleted rather than left as entries with a note, because
+# `scripts/audit_python_deps.sh` passes every id in this file as `--ignore-vuln`: an
+# entry for a package nobody installs is a live suppression waiting to hide something
+# real.
 #
-# NOT exploitable here, and the reason is the PACKAGE WIRING rather than our
-# configuration — which matters, because the previous reason ("every issue/verify
-# path is HS256") stopped being true when RS256 issue/verify shipped on
-# 2026-09-28 even though the conclusion did not change. Corrected 2026-10-06,
-# read out of the installed package rather than assumed:
-#
-#   jose/backends/__init__.py
-#       try:    from jose.backends.cryptography_backend import CryptographyECKey as ECKey
-#       except ImportError:  from jose.backends.ecdsa_backend import ECDSAECKey as ECKey
-#
-# The `ecdsa` backend is the FALLBACK, taken only when `cryptography` cannot be
-# imported. All four services pin `cryptography==50.0.0`, so jose binds
-# `CryptographyECKey` and the vulnerable library is never called — verified at
-# runtime: `from jose.backends import ECKey` resolves to
-# `jose.backends.cryptography_backend.CryptographyECKey`. This holds whatever
-# algorithm anybody configures, including an ES* one, which the old reasoning did
-# not.
-#
-# What would make it reachable: dropping the `cryptography` pin from any service.
-# Unblock: an ecdsa release with a fix, or the PyJWT migration (see the
-# python-jose entry above — both ids are that one library).
-PYSEC-2026-1325
 
 # --- pytest — FIXED 2026-10-03 ----------------------------------------------
 # PYSEC-2026-1845 is gone: all four services now pin pytest 9.0.3 with

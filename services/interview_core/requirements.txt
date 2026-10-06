@@ -23,7 +23,6 @@ cryptography==50.0.0
 distro==1.9.0
 dnspython==2.8.0
 docstring_parser==0.18.0
-ecdsa==0.19.2
 email-validator==2.3.0
 eval_type_backport==0.3.1
 fastapi==0.133.0
@@ -92,24 +91,25 @@ prometheus_client==0.25.0
 propcache==0.5.2
 protobuf==6.33.6
 psutil==7.2.2
-pyasn1==0.6.4
 pycparser==3.0
 pydantic==2.13.4
 pydantic-settings==2.14.2
 pydantic_core==2.46.4
 Pygments==2.20.0
+# PyJWT >= 2.14 is a SECURITY FLOOR, not a preference: 2.13.0 accepts a bare
+# DER public key as an HMAC secret exactly as python-jose did (verified by
+# forging a token against it), and 2.14.0 is where that rejection arrived.
+# Downgrading below 2.14 reopens CVE-2026-85394. See scripts/pip-audit-ignore.txt.
 PyJWT==2.15.1
 pytest==9.0.3
 pytest-asyncio==1.4.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
-python-jose==3.5.0
 PyYAML==6.0.3
 redis==5.3.1
 requests==2.34.2
 requests-toolbelt==1.0.0
 rich==15.0.0
-rsa==4.9.1
 ruff==0.7.4
 s3transfer==0.14.0
 shellingham==1.5.4

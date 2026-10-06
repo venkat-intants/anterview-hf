@@ -13,9 +13,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt as pyjwt
 import pytest
 from fastapi.testclient import TestClient
-from jose import jwt as jose_jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -34,7 +34,7 @@ def _token(sub: str = "data_gateway", roles: list[str] | None = None) -> str:
         "exp": now + timedelta(minutes=1), "iss": settings.jwt_issuer,
         "aud": settings.jwt_audience, "jti": uuid.uuid4().hex,
     }
-    return str(jose_jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm))
+    return str(pyjwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm))
 
 
 _ROW: dict[str, Any] = {

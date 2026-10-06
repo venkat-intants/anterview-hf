@@ -19,10 +19,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import jwt as pyjwt
 import pytest
-from jose import JWTError
-from jose import jwt as jose_jwt
 
+from shared.auth.jwt import TokenError as JWTError
 from shared.auth.jwt import issue_access_token, verify_access_token
 
 _SECRET = "test-only-secret-not-real-0123456789"
@@ -48,7 +48,7 @@ def test_token_missing_iat_is_rejected() -> None:
     """A hand-crafted token with no ``iat`` claim must fail verification."""
     claims = _claims_without_iat()
     assert "iat" not in claims
-    token = jose_jwt.encode(claims, _SECRET, algorithm="HS256")
+    token = pyjwt.encode(claims, _SECRET, algorithm="HS256")
 
     with pytest.raises(JWTError):
         verify_access_token(
@@ -64,7 +64,7 @@ def test_token_with_iat_still_verifies() -> None:
     this would fail if require_iat were reverted to also reject good tokens."""
     now = datetime.now(tz=UTC)
     claims = _claims_without_iat(iat=now)
-    token = jose_jwt.encode(claims, _SECRET, algorithm="HS256")
+    token = pyjwt.encode(claims, _SECRET, algorithm="HS256")
 
     payload = verify_access_token(
         token,

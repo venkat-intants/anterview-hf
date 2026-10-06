@@ -81,7 +81,7 @@ jobs:
           # floating install had CI verifying those assertions against 2.0.51
           # while every image runs 2.0.50; the gate would then be describing a
           # library nothing deploys.
-          pip install redis "python-jose[cryptography]" bcrypt "SQLAlchemy==2.0.50" \
+          pip install redis "pyjwt[crypto]" bcrypt "SQLAlchemy==2.0.50" \
             email-validator
           # shared/http_observability.py, added 2026-08-07 (XS-01/XS-05/XS-06):
           # the one HTTP metrics + unhandled-exception layer all four services

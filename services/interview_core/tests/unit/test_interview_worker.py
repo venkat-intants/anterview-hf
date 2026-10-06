@@ -27,8 +27,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import jwt as pyjwt
 import pytest
-from jose import jwt as jose_jwt
 
 # ---------------------------------------------------------------------------
 # Unit under test
@@ -298,7 +298,7 @@ def test_mint_service_jwt_short_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
 
     token = _mint_service_jwt()
     # Decode without verification to inspect exp.
-    raw = jose_jwt.decode(
+    raw = pyjwt.decode(
         token,
         "test-secret-32bytes-xxxxxxxxxxx",
         algorithms=["HS256"],

@@ -60,12 +60,29 @@ CVE-2026-85394
 
 # --- ecdsa 0.19.2 — NO FIX EXISTS ------------------------------------------
 # Minerva-class timing attack on ECDSA signing. Reached only through
-# python-jose, which is the platform's JWT library (shared/auth/jwt.py:21).
-# NOT exploitable here: every issue/verify path is HS256 (symmetric) —
-# issue_access_token/verify_access_token default algorithm="HS256" and pass a
-# single algorithm to jose, which also blocks algorithm-confusion. No ES*
-# algorithm is used anywhere, so the vulnerable code never runs.
-# Unblock: an ecdsa release with a fix, or migrating fully to PyJWT.
+# python-jose, which is the platform's JWT library (shared/auth/jwt.py).
+#
+# NOT exploitable here, and the reason is the PACKAGE WIRING rather than our
+# configuration — which matters, because the previous reason ("every issue/verify
+# path is HS256") stopped being true when RS256 issue/verify shipped on
+# 2026-09-28 even though the conclusion did not change. Corrected 2026-10-06,
+# read out of the installed package rather than assumed:
+#
+#   jose/backends/__init__.py
+#       try:    from jose.backends.cryptography_backend import CryptographyECKey as ECKey
+#       except ImportError:  from jose.backends.ecdsa_backend import ECDSAECKey as ECKey
+#
+# The `ecdsa` backend is the FALLBACK, taken only when `cryptography` cannot be
+# imported. All four services pin `cryptography==50.0.0`, so jose binds
+# `CryptographyECKey` and the vulnerable library is never called — verified at
+# runtime: `from jose.backends import ECKey` resolves to
+# `jose.backends.cryptography_backend.CryptographyECKey`. This holds whatever
+# algorithm anybody configures, including an ES* one, which the old reasoning did
+# not.
+#
+# What would make it reachable: dropping the `cryptography` pin from any service.
+# Unblock: an ecdsa release with a fix, or the PyJWT migration (see the
+# python-jose entry above — both ids are that one library).
 PYSEC-2026-1325
 
 # --- pytest — FIXED 2026-10-03 ----------------------------------------------

@@ -12,7 +12,7 @@
 
 import { expect, test } from './support/fixtures';
 import { Api, createLiveMcqOpening } from './support/fixtures';
-import { aCandidate } from './support/journeys';
+import { aCandidate, submitRespectingTheRateLimit } from './support/journeys';
 import { makeCvPdf } from './support/pdf';
 
 test.describe('an application saved for later', () => {
@@ -123,7 +123,15 @@ test.describe('an application saved for later', () => {
 
     const submit = later.getByRole('button', { name: 'Submit application' });
     await expect(submit).toBeEnabled({ timeout: 30_000 });
-    await submit.click();
+    // Through the shared helper: this is the DRAFT door, and it counts against
+    // the same `public_apply_submit` window as the one-shot one. This spec was
+    // the flaky one that survived the first fix, because that fix wrapped only
+    // the one-shot door's Send.
+    await submitRespectingTheRateLimit(
+      later,
+      submit,
+      'Thanks — we have your application',
+    );
     // The draft path has its own words, because it IS a different moment: they
     // finished something they had started, rather than sending a fresh form.
     await expect(

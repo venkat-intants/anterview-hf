@@ -77,7 +77,7 @@ export async function applyThroughPublicForm(
   await page.locator('label').filter({ hasText: 'may store my name, email and CV' })
     .locator('input[type="checkbox"]').check();
   await expect(send).toBeEnabled();
-  await sendRespectingTheRateLimit(page, send);
+  await submitRespectingTheRateLimit(page, send, 'Application received');
 
   if (opts.expectReceived === false) return;
   await expect(page.getByText('Application received')).toBeVisible();
@@ -87,7 +87,16 @@ export async function applyThroughPublicForm(
 const TOO_MANY = 'Too many requests. Please wait a minute and try again.';
 
 /**
- * Click Send, and if the door answers 429, wait the window out and click again.
+ * Click a submit button, and if the door answers 429, wait the window out and
+ * click again.
+ *
+ * TAKES THE BUTTON AND ITS SUCCESS TEXT because BOTH apply doors need it, which
+ * the first version of this got wrong. `POST /apply/{id}` and
+ * `POST /apply/draft/submit` share one limiter, but the first fix only wrapped
+ * the one-shot door's Send inside `applyThroughPublicForm` — so the very next
+ * CI run still reported one flaky spec, and it was `save-and-resume`, which
+ * submits through the DRAFT door and never goes near that helper. Fixing the
+ * door I had tripped over rather than the limit both doors share.
  *
  * `POST /apply/{id}` and `POST /apply/draft/submit` share
  * `rate_limit("public_apply_submit", 6)` — a FIXED 60-second window, keyed on
@@ -115,14 +124,18 @@ const TOO_MANY = 'Too many requests. Please wait a minute and try again.';
  * The window is fixed at 60s and expires from the first request in it, so one
  * wait is always enough; the second attempt is a safety net, not an expectation.
  */
-async function sendRespectingTheRateLimit(page: Page, send: Locator): Promise<void> {
+export async function submitRespectingTheRateLimit(
+  page: Page,
+  send: Locator,
+  successText: string,
+): Promise<void> {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     await send.click();
     // Whichever lands first: the reply (any state renders the shared panel) or
     // the limiter. Racing them rather than waiting on the alert keeps the
     // normal path at its old speed.
     const limited = page.getByText(TOO_MANY);
-    const accepted = page.getByText('Application received');
+    const accepted = page.getByText(successText);
     try {
       await expect(limited.or(accepted).first()).toBeVisible({ timeout: 30_000 });
     } catch {

@@ -18,7 +18,7 @@
 
 import { expect, test } from './support/fixtures';
 import { Api, createLiveMcqOpening, signIn } from './support/fixtures';
-import { aCandidate } from './support/journeys';
+import { aCandidate, submitRespectingTheRateLimit } from './support/journeys';
 import { makeCvPdf } from './support/pdf';
 
 /** The name the CV carries — deliberately not the name they will give us. */
@@ -129,7 +129,16 @@ test.describe('the details read off a CV', () => {
 
     const submit = page.getByRole('button', { name: 'Submit application' });
     await expect(submit).toBeEnabled({ timeout: 30_000 });
-    await submit.click();
+    // The draft door counts against the same `public_apply_submit` window as
+    // the one-shot one, so this goes through the shared helper too. Not because
+    // this spec has been seen to trip it, but because it submits on the same
+    // budget as the two that have — fixing only the doors that have failed so
+    // far is what made this take two rounds.
+    await submitRespectingTheRateLimit(
+      page,
+      submit,
+      'Thanks — we have your application',
+    );
     await expect(
       page.getByText('Thanks — we have your application'),
     ).toBeVisible({ timeout: 60_000 });

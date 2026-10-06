@@ -49,7 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import get_current_user
-from app.models import DpdpConsent
+from app.models import AuditLog, DpdpConsent
 from app.models import Session as InterviewSession
 from app.rediscovery import (
     REDISCOVERY_CONSENT_TYPE,
@@ -427,6 +427,83 @@ async def get_consent_status(
     )
 
 
+#: The action a DPDP §11 withdrawal records. One row per ledger entry revoked, so
+#: "when was video_capture withdrawn for this candidate" is answerable without
+#: joining through the ledger's own mutable ``revoked_at``.
+CONSENT_WITHDRAWN_AUDIT_ACTION = "dpdp_consent.withdrawn"
+
+
+def _audit_withdrawal(
+    db: AsyncSession,
+    *,
+    user_id: _uuid_mod.UUID,
+    items: list[RevokedConsentItem],
+    sessions_withdrawn: int,
+) -> None:
+    """Record the withdrawal itself in the append-only audit log.
+
+    THE GAP THIS CLOSES. Before this, a §11 withdrawal left the ledger mutated, the
+    in-flight sessions stamped, and a ``log.info`` — and exactly one ``audit_log``
+    row, written only when a ``preboarding_documents`` consent happened to be among
+    the revoked set (``preboarding.documents_consent_withdrawn_elsewhere``). A
+    candidate who had granted only interview consents produced no audit evidence at
+    all, so the platform could show that the row IS revoked and could not evidence
+    who did it, when, or through which door.
+
+    That matters more here than for most actions because of how wide this route
+    reaches, deliberately: it is reachable with a guest token (an interview magic
+    link, which carries no company claim), and it revokes across EVERY company
+    because §11 says "without restriction" — ``revoke_opt_ins`` is called with
+    ``company_id=None`` and a test asserts the absence of a company filter. The
+    ledger's own ``revoked_at`` is also an UPDATE in place, so the ledger cannot say
+    who performed it; the append-only log can.
+
+    ONE ROW PER REVOKED LEDGER ENTRY, with the ledger as the resource — the shape
+    ``rediscovery.py`` already uses for its expiry sweep. Per entry rather than one
+    summary row so each type is queryable on its own, and ``resource_id`` points at
+    the exact ledger row this revoked.
+
+    NO ``ip_address`` OR ``user_agent``. ``audit_log`` rows survive DPDP erasure, so
+    request metadata stored here is un-erasable PII about the data principal.
+    ``exam_camera._audit_notice_accepted`` makes the same call under DPDP §6(1) and
+    has a test enforcing it. The sibling row in ``preboarding.py`` does carry meta;
+    this follows the stricter precedent rather than widening the looser one.
+
+    ``details`` is facts only — ids, counts, the door — never prose and never a
+    reason the candidate typed. Caller commits, on the same transaction as the
+    revocation: evidence staged separately could be lost to a crash that keeps the
+    revocation, which is the worse of the two half-states.
+    """
+    for item in items:
+        db.add(
+            AuditLog(
+                actor_id=user_id,
+                actor_type="candidate",
+                action=CONSENT_WITHDRAWN_AUDIT_ACTION,
+                resource_type="dpdp_consent_ledger",
+                resource_id=_uuid_mod.UUID(item.consent_id),
+                details={
+                    "consent_type": item.consent_type,
+                    # The door, following preboarding.py's "via" convention. Three
+                    # other routes can withdraw a narrower consent
+                    # (/exam/camera-consent's grant, /task/consent/withdraw,
+                    # /offer/documents/consent/withdraw), so "which one was this"
+                    # is a question the row has to answer by itself.
+                    "via": "DELETE /consent",
+                    # Scope, recorded because it is surprising: this is every
+                    # company's consent of this type, not one company's.
+                    "scope": "all_companies",
+                    # How much was stopped mid-flight. These sessions become
+                    # purgeable at the next nightly window rather than at 90 days,
+                    # so the number is part of what the withdrawal did.
+                    "sessions_withdrawn": sessions_withdrawn,
+                    "consents_revoked": len(items),
+                },
+                event_ts=datetime.now(tz=UTC),
+            )
+        )
+
+
 @router.delete(
     "",
     status_code=status.HTTP_200_OK,
@@ -535,6 +612,16 @@ async def revoke_consent(
     # the two to leave a revoked consent whose in-flight sessions still read
     # 'in_progress' — the exact ambiguity this write removes.
     sessions_withdrawn = await _mark_sessions_consent_withdrawn(db, current_user.user_id)
+
+    # Evidence, on the SAME transaction as the revocation it describes. See
+    # _audit_withdrawal: before this, three of the four consent types this route
+    # revokes left no audit row at all.
+    _audit_withdrawal(
+        db,
+        user_id=_uuid_mod.UUID(current_user.user_id),
+        items=revoked_items,
+        sessions_withdrawn=sessions_withdrawn,
+    )
 
     await db.commit()
 

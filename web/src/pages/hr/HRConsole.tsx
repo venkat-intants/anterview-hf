@@ -11,6 +11,7 @@ import { getMe } from '@/api/auth';
 import { getHrAnalytics } from '@/api/hr';
 import { listNotifications, type NotificationItem } from '@/api/notifications';
 import AttentionPanel from '@/components/AttentionPanel';
+import CareersLinkCard from '@/components/hr/CareersLinkCard';
 import StagesAtRiskWidget from '@/components/StagesAtRiskWidget';
 import { useAuth } from '@/context/AuthContext';
 import { LIVE_POLL_MS } from '@/lib/polling';
@@ -246,6 +247,15 @@ export default function HRConsole() {
                 </Link>
               </div>
             </GlassCard>
+          </Reveal>
+
+          {/* The public careers board's address, which until now appeared
+              nowhere in this console — see CareersLinkCard's header. Second in
+              the column, under Quick actions: it is a thing you copy, which is
+              what the rest of this column is for. Renders nothing when the
+              account has no company. */}
+          <Reveal dir="right">
+            <CareersLinkCard slug={me?.company_slug} companyName={me?.company_name} />
           </Reveal>
 
           {/* PH4-O1 — overdue/due-soon stages across every opening, so nobody

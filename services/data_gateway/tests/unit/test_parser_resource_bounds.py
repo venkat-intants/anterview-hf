@@ -154,7 +154,15 @@ class TestPdfPageBound:
         page-tree limit rather than by anything here. A 1,393-byte PDF whose tree
         holds 1,048,576 slots raises ``LimitReachedError`` in ~0.5 s — which every
         caller already maps to a 400, because they catch ``Exception`` around this
-        call. Worth a test because the bound is someone else's and could move."""
+        call. Worth a test because the bound is someone else's and could move.
+
+        THE RAISE is the assertion that matters; the time bound is a loose safety
+        net and is deliberately nowhere near the measurement. This took 0.47 s on
+        a developer machine and 2.22 s on a GitHub runner — the first version of
+        this test asserted ``< 2.0`` from the local figure and went red in CI on a
+        correct implementation. The defect it guards against produced 41.4 s, so
+        15 s separates "bounded" from "grinds" with room for any runner, and
+        tightening it back buys nothing a reader of the number can use."""
         liar = _dag_pdf(levels=10, fanout=4, declared_count=1)
 
         started = time.perf_counter()
@@ -163,7 +171,7 @@ class TestPdfPageBound:
         elapsed = time.perf_counter() - started
 
         assert "limit" in str(exc.value).lower()
-        assert elapsed < 2.0, f"flattening took {elapsed:.2f}s"
+        assert elapsed < 15.0, f"flattening took {elapsed:.2f}s"
 
     def test_an_ordinary_document_is_not_truncated_and_keeps_its_text(self) -> None:
         """The bound must not be visible on the documents people actually upload."""

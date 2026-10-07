@@ -23,7 +23,6 @@ Authorization — tenant scoping:
 from __future__ import annotations
 
 import asyncio
-import io
 import uuid
 from typing import Annotated
 
@@ -31,12 +30,11 @@ import structlog
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from pydantic import BaseModel
-from pypdf import PdfReader
 from shared.auth.base import User
-from shared.text import strip_unstorable
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import pdf_text
 from app.config import settings
 from app.database import get_db_session
 from app.dependencies import require_password_changed
@@ -139,7 +137,22 @@ async def upload_jd_document(
     6. Persist ``jd_text`` and ``jd_s3_key`` on the jobs row.
     """
     # --- 1. content-type check ---
-    if file.content_type != "application/pdf":
+    # THE PARSER IS THE GATE, not this header. `content_type` is supplied by the
+    # client and cannot be a control; `application/octet-stream` is accepted because
+    # curl with no --header, some Android file pickers and some corporate proxies all
+    # send it for a perfectly ordinary PDF.
+    #
+    # What actually refuses a non-PDF is `app/pdf_text.extract`: pypdf raises
+    # PdfStreamError on a JPEG, a PNG, a zip or plain text, and EmptyFileError on an
+    # empty body, each of which the handler below turns into a 400 (measured). Since
+    # the page and character caps went in, a non-PDF also costs milliseconds rather
+    # than minutes.
+    #
+    # And a sniff is not the improvement it looks like: pypdf finds `%PDF-` at ANY
+    # offset — measured at 64 KB in — so an offset-0 check would refuse PDFs this
+    # product accepts today, and a "within N bytes" check would be a number with
+    # nothing to match it to (review 2026-10-06).
+    if file.content_type not in ("application/pdf", "application/octet-stream"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only PDF files are accepted for JD document upload.",
@@ -149,7 +162,9 @@ async def upload_jd_document(
     # A mid-upload client disconnect / spooled temp OSError must not escape as
     # an unhandled, CORS-less 500.
     try:
-        raw: bytes = await file.read()
+        # read(limit + 1) — the cap below described the request without
+        # limiting it while this read was unbounded.
+        raw: bytes = await file.read(_MAX_JD_BYTES + 1)
     except Exception as exc:
         log.warning("jd.upload.read_failed", error_type=type(exc).__name__)
         raise HTTPException(
@@ -185,11 +200,13 @@ async def upload_jd_document(
     # --- 3b. Authorization: caller must own or be co-tenant of the job ---
     await _assert_jd_upload_authorized(db, current_user, job)
 
-    # --- 4. text extraction (off the event loop — CVE-2025-62707 + DoS guard) ---
-    # pypdf is synchronous and CPU-bound. Running it via asyncio.to_thread with a
-    # hard timeout prevents a crafted PDF from blocking the event loop.
-    # CVE-2025-62707 is fixed in pypdf>=6.1.1 (pinned in requirements.txt);
-    # the to_thread wrapper is defence-in-depth.
+    # --- 4. text extraction (off the event loop, and BOUNDED) ---
+    # pypdf is synchronous and CPU-bound, so to_thread keeps the event loop free.
+    # The comment here used to credit the "hard timeout" with preventing a crafted
+    # PDF from blocking the service; wait_for cancels this coroutine and cannot
+    # cancel the thread, so that half was false (review 2026-10-06). What bounds
+    # the work is app.pdf_text's page and character caps.
+    # CVE-2025-62707 is fixed in pypdf>=6.1.1 (pinned in requirements.txt).
     try:
         text_content = await _extract_pdf_text(raw)
     except TimeoutError as exc:
@@ -389,44 +406,26 @@ _PDF_PARSE_TIMEOUT_SECONDS: float = 30.0  # crafted PDFs must not hang the event
 
 
 def _extract_pdf_text_sync(raw: bytes) -> str:
-    """Extract plain text from a PDF byte payload using pypdf (synchronous).
+    """Extract plain text from a PDF byte payload — BOUNDED (``app.pdf_text``).
 
-    Must be called via asyncio.to_thread.  CVE-2025-62707 fixed by pypdf>=6.1.1.
-    Returns an empty string for scanned PDFs with no text layer — never raises.
+    Must be called via asyncio.to_thread. Returns an empty string for scanned
+    PDFs with no text layer.
+
+    The page and character caps live in ``app.pdf_text``; see its module
+    docstring for why the to_thread + timeout this file used to rely on was not
+    a bound on the work (review 2026-10-06).
     """
-    reader = PdfReader(io.BytesIO(raw))
-    pages: list[str] = []
-    for page in reader.pages:
-        extracted = page.extract_text()
-        if extracted:
-            pages.append(extracted)
-    # SANITISED HERE, so all six call sites inherit it — round 13.
-    #
-    # pypdf returns whatever the PDF's encoding maps its codes to, NUL and lone
-    # surrogates included, and a PDF carrying one is pure ASCII to look at (an
-    # octal escape in the content stream, or a ToUnicode CMap entry). The text
-    # is then written to `text` columns that cannot hold it.
-    #
-    # On the anonymous apply doors that was a state oracle: `resume_text` is
-    # written only on the branch that creates an applicant, so a crafted CV
-    # answered 503 for "this address has never applied here" and 201 for the
-    # other four states — with no form field involved and nothing a request
-    # model could refuse. On the authenticated paths that share this function
-    # (HR's single and bulk CV upload, the JD reader) the same PDF was an
-    # unhandled 500.
-    #
-    # Stripped rather than refused because nobody typed it; see
-    # `shared.text.strip_unstorable`. Done at the extractor rather than at the
-    # call sites because this branch has now spent two rounds learning that a
-    # list of guarded call sites is the thing that goes stale.
-    return strip_unstorable("\n".join(pages))
+    return pdf_text.extract_text(raw)
 
 
 async def _extract_pdf_text(raw: bytes) -> str:
-    """Async wrapper: runs pypdf parsing in a thread with a hard timeout.
+    """Async wrapper: runs the bounded parse in a thread, with a timeout backstop.
 
     Raises asyncio.TimeoutError when the PDF takes longer than
-    _PDF_PARSE_TIMEOUT_SECONDS — callers surface a 400.
+    _PDF_PARSE_TIMEOUT_SECONDS — callers surface a 400. The timeout bounds THIS
+    REQUEST's response, never the thread's work; the page and character caps in
+    ``app.pdf_text`` are the actual control. See ``routers/resume.py`` for the
+    same note at length.
     """
     return await asyncio.wait_for(
         asyncio.to_thread(_extract_pdf_text_sync, raw),

@@ -22,11 +22,11 @@ import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from jose import jwt
 
 from app.database import get_db_session
 from app.redis_client import get_redis

@@ -1,20 +1,31 @@
 """Re-derive the facts that docs/ACCEPTED-RISKS.md and the ignore lists rest on.
 
-WHY THIS EXISTS. Two dependency advisories are accepted rather than fixed
-(scripts/pip-audit-ignore.txt): python-jose CVE-2026-85394, which is CRITICAL,
-and langgraph-sdk CVE-2026-104873. Neither acceptance is "we judged the risk
-tolerable" — each is a claim ABOUT THIS CODEBASE that makes the vulnerability
-unreachable:
+WHY THIS EXISTS. Some dependency advisories here are not fixed by a bump but by
+a claim ABOUT THIS CODEBASE that makes the vulnerability unreachable — and a
+claim like that is one commit away from being false, with nothing to say so.
+This script re-derives each one.
 
-  * python-jose: the advisory needs "algorithms not explicitly restricted", and
-    every `jwt.decode` here passes `algorithms=`.
-  * langgraph-sdk: the advisory needs `actions=` on `@auth.on.*` decorators, and
-    the SDK is not imported, no such decorator exists, and there is no
-    langgraph.json.
+  * langgraph-sdk CVE-2026-104873 (accepted, scripts/pip-audit-ignore.txt): the
+    advisory needs `actions=` on `@auth.on.*` decorators, and the SDK is not
+    imported, no such decorator exists, and there is no langgraph.json.
+  * PyJWT's version floor: CVE-2026-85394 (algorithm confusion — a DER public
+    key accepted as an HMAC secret) is FIXED rather than accepted, since the
+    2026-10-06 migration off python-jose. But it is fixed BY A VERSION: PyJWT
+    2.13.0 accepts bare DER exactly as jose did, and only 2.14.0 refuses it. So
+    `>=2.14` is a security floor, and a resolver that walks under it silently
+    restores a CRITICAL. That is a pin claim, checked here.
+  * Every JWT decode still passes `algorithms=`. This no longer backs an
+    acceptance — PyJWT raises `DecodeError` when the argument is missing, so the
+    library enforces it — and it is kept because the VACUITY GUARD below is the
+    thing that matters: "no decode found" and "every decode is safe" look the
+    same from outside, and only one is good news.
 
-A claim like that is one commit away from being false, and nothing would say so.
-The python-jose entry names its own re-check condition — "a decode added
-anywhere without `algorithms=`" — and this script is that condition, enforced.
+UPDATED 2026-10-07, on merging the PyJWT migration. This file previously opened
+"Two dependency advisories are accepted rather than fixed … python-jose
+CVE-2026-85394, which is CRITICAL". That acceptance is gone: the dependency is.
+The check it justified stayed, re-aimed at the floor that now carries the fix,
+because deleting it along with the entry would have left the 2.14 boundary
+unguarded in the same change that started depending on it.
 
 It is a REVIEWER'S TOOL as much as a gate. Everything it prints is a fact a
 security-auditor would otherwise have to take on trust from a pull request
@@ -41,10 +52,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 # the product — it is a reason to re-read the entry, because the reasoning was
 # checked against these exact releases.
 PINNED = {
-    "python-jose": "3.5.0",
+    "PyJWT": "2.15.1",
     "langgraph": "0.2.76",
     "langgraph-sdk": "0.1.74",
 }
+
+#: The release that first refuses a bare DER public key as an HMAC secret
+#: (CVE-2026-85394). Below this, the advisory is live again. Compared as a tuple
+#: so 2.9 does not sort above 2.14 the way a string compare would.
+PYJWT_SECURITY_FLOOR = (2, 14)
 
 # Where production code lives. Tests are excluded deliberately: a test may
 # construct a deliberately-unsafe decode to prove a guard works, and counting it
@@ -93,7 +109,7 @@ def _decode_calls(path: pathlib.Path) -> list[tuple[int, bool]]:
 
 
 def check_jwt_decodes(problems: list[str]) -> list[str]:
-    """python-jose CVE-2026-85394: every JWT decode restricts algorithms."""
+    """Every JWT decode restricts algorithms (CVE-2026-85394's precondition)."""
     notes: list[str] = []
     total = 0
     for path in _prod_files():
@@ -104,22 +120,68 @@ def check_jwt_decodes(problems: list[str]) -> list[str]:
                 notes.append(f"  {rel}:{lineno} decode restricts algorithms")
             else:
                 problems.append(
-                    f"{rel}:{lineno}: a JWT decode with NO `algorithms=`. This "
-                    "invalidates the python-jose CVE-2026-85394 acceptance in "
-                    "scripts/pip-audit-ignore.txt, whose whole basis is that the "
-                    "advisory's precondition — 'algorithms not explicitly "
-                    "restricted' — is absent here. python-jose has no patched "
-                    "release, so this is not a finding to fix later: either "
-                    "restrict the algorithms or re-open that acceptance."
+                    f"{rel}:{lineno}: a JWT decode with NO `algorithms=`. That is "
+                    "the precondition CVE-2026-85394 needs ('algorithms not "
+                    "explicitly restricted'), and it is the one shape the auth "
+                    "stack must never grow. PyJWT raises DecodeError without the "
+                    "argument, so this is most likely a decode that will fail at "
+                    "runtime rather than a silent downgrade — but check which, "
+                    "because the two look identical here."
                 )
     if total == 0:
         problems.append(
             "no JWT decode found in production code at all. Either the auth "
-            "stack moved (good — check whether the python-jose acceptance is "
-            "still needed) or this script's AST matcher stopped recognising it "
-            "(bad — it would now pass vacuously)."
+            "stack moved again (check what replaced PyJWT, and whether this "
+            "script's claims still describe it) or the AST matcher stopped "
+            "recognising it (bad — it would now pass vacuously)."
         )
     notes.insert(0, f"  {total} JWT decode call(s) in production code")
+    return notes
+
+
+def check_pyjwt_floor(problems: list[str]) -> list[str]:
+    """PyJWT >= 2.14, the release that fixed CVE-2026-85394.
+
+    A FLOOR, not a pin, and the two need separate checks. `check_pins` catches a
+    change to the exact `==` in requirements.txt; this catches the declared RANGE
+    in pyproject.toml, which is what a `poetry lock` resolves against. A floor
+    edited to `^2` would leave every requirements.txt untouched and still let the
+    next lock walk down to 2.13.0, where a forged DER-as-HMAC token verifies.
+    """
+    notes: list[str] = []
+    floor = ".".join(str(n) for n in PYJWT_SECURITY_FLOOR)
+    found = 0
+    for proj in sorted(ROOT.glob("*/pyproject.toml")) + sorted(
+        ROOT.glob("services/*/pyproject.toml")
+    ):
+        text = proj.read_text(encoding="utf-8")
+        m = re.search(r'^pyjwt\s*=.*?version\s*=\s*"\^?(\d+)\.(\d+)', text, re.M | re.I)
+        if not m:
+            m = re.search(r'^pyjwt\s*=\s*"\^?(\d+)\.(\d+)', text, re.M | re.I)
+        if not m:
+            continue
+        found += 1
+        rel = proj.relative_to(ROOT).as_posix()
+        declared = (int(m.group(1)), int(m.group(2)))
+        if declared < PYJWT_SECURITY_FLOOR:
+            problems.append(
+                f"{rel}: pyjwt declares >={declared[0]}.{declared[1]}, under the "
+                f"{floor} security floor. CVE-2026-85394 — a DER public key "
+                "accepted as an HMAC secret — is unfixed below 2.14.0, so a lock "
+                "resolved against this range can reintroduce a CRITICAL with no "
+                "code change and no new advisory. Raise the floor or re-open the "
+                "entry in scripts/pip-audit-ignore.txt."
+            )
+        else:
+            notes.append(f"  {rel}: pyjwt >={declared[0]}.{declared[1]} (floor {floor})")
+    if found == 0:
+        problems.append(
+            "no pyjwt dependency declared in any pyproject.toml. Either the JWT "
+            "library changed again — in which case this check and the "
+            "CVE-2026-85394 note in scripts/pip-audit-ignore.txt both need "
+            "re-reading — or this matcher has stopped matching and is now "
+            "passing vacuously."
+        )
     return notes
 
 
@@ -216,7 +278,8 @@ def check_pins(problems: list[str]) -> list[str]:
 def main() -> int:
     problems: list[str] = []
     sections = [
-        ("python-jose CVE-2026-85394 — algorithms are restricted", check_jwt_decodes),
+        ("CVE-2026-85394 — every JWT decode restricts algorithms", check_jwt_decodes),
+        ("CVE-2026-85394 — PyJWT stays above its 2.14 security floor", check_pyjwt_floor),
         ("langgraph-sdk CVE-2026-104873 — affected API unused", check_langgraph_sdk_unused),
         ("pinned versions the acceptances were reasoned against", check_pins),
     ]

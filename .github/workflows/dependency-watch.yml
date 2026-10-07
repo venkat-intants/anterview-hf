@@ -1,0 +1,198 @@
+# Nightly dependency-advisory watch — the gap CI cannot close by design.
+#
+# ci.yml scans dependencies on every push and PR, and that is the right gate for
+# a change. It says nothing about the days BETWEEN changes, and a CVE is published
+# against code that is already deployed. On 2026-10-06 three advisories —
+# multidict CVE-2026-104874, langgraph-sdk CVE-2026-104873 (HIGH) and python-jose
+# CVE-2026-85394 — were live on `main` and were found only because somebody
+# happened to push a branch. Until this workflow existed the repo had NO scheduled
+# trigger at all: `grep -n "schedule:" .github/workflows/*.yml` returned nothing.
+#
+# WHY IT OPENS AN ISSUE instead of only going red. A scheduled workflow that fails
+# into the Actions tab is a notification nobody receives — there is no PR to block
+# and no reviewer to tell. One issue is created and then UPDATED in place on
+# subsequent nights, so a week of unfixed advisories is one thread rather than
+# seven duplicates, and closing it is the signal that the work is done.
+#
+# WHAT IT DOES NOT DO. It does not build the five service images, so it does not
+# reproduce ci.yml's per-image Trivy scan. It scans the shared `python:3.12-slim`
+# base instead, which is where OS-layer CVEs enter all five, and leaves the
+# Python-package layer to pip-audit. That keeps this run at a couple of minutes;
+# a nightly five-image build would be the reason this workflow gets switched off.
+name: dependency watch
+
+on:
+  schedule:
+    # 01:30 UTC = 07:00 IST. Early enough that a finding is on the board before
+    # the day starts, late enough that the advisory feeds have published.
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+
+# Default-deny, then the one escalation this workflow needs and ci.yml must never
+# have: writing the issue. Nothing here checks out a branch to push.
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-watch
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: '3.12'
+  # Pinned to match ci.yml's image-scan step. An unpinned scanner means last
+  # night's clean run and tonight's red one can differ by the tool, not the code.
+  TRIVY_VERSION: '0.73.0'
+  BASE_IMAGE: 'python:3.12-slim'
+
+jobs:
+  scan:
+    name: advisories (pip + npm + base image)
+    runs-on: ubuntu-latest
+    outputs:
+      report: ${{ steps.collect.outputs.report }}
+      failed: ${{ steps.collect.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      # Every step below uses `continue-on-error` and records its own result, so
+      # one red scanner does not hide the other two. The job's verdict is
+      # assembled in `collect`.
+      - name: Audit Python dependencies
+        id: pip
+        continue-on-error: true
+        run: bash scripts/audit_python_deps.sh
+
+      - name: Audit npm dependencies
+        id: npm
+        continue-on-error: true
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run audit:ci
+
+      - name: Scan the shared base image
+        id: base
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD":/work -w /work \
+            -e TRIVY_DB_REPOSITORY=ghcr.io/aquasecurity/trivy-db:2 \
+            aquasec/trivy:${TRIVY_VERSION} image \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --ignorefile .trivyignore \
+              --scanners vuln \
+              --exit-code 1 \
+              --quiet \
+              "${BASE_IMAGE}"
+
+      - name: Collect the verdict
+        id: collect
+        run: |
+          failed=0
+          lines=()
+          for pair in "pip-audit (4 services):${{ steps.pip.outcome }}" \
+                      "npm audit (web):${{ steps.npm.outcome }}" \
+                      "trivy (${BASE_IMAGE}):${{ steps.base.outcome }}"; do
+            name="${pair%:*}"
+            outcome="${pair##*:}"
+            if [[ "${outcome}" == "success" ]]; then
+              lines+=("- [x] ${name} — clean")
+            else
+              lines+=("- [ ] **${name} — FINDINGS**")
+              failed=1
+            fi
+          done
+          {
+            echo 'report<<REPORT_EOF'
+            printf '%s\n' "${lines[@]}"
+            echo 'REPORT_EOF'
+          } >> "$GITHUB_OUTPUT"
+          echo "failed=${failed}" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "${lines[@]}"
+          exit "${failed}"
+
+  report:
+    name: open or update the tracking issue
+    needs: scan
+    if: always() && needs.scan.outputs.failed == '1'
+    runs-on: ubuntu-latest
+    # Scoped to this job alone: the scan job itself installs third-party packages
+    # and must not hold a write token while doing so.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the issue
+        uses: actions/github-script@v7
+        env:
+          REPORT: ${{ needs.scan.outputs.report }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const title = 'Dependency advisories need triage';
+            const marker = '<!-- dependency-watch -->';
+            const body = [
+              marker,
+              '',
+              'The nightly dependency watch found advisories that are neither fixed nor',
+              'on an accepted-risk list.',
+              '',
+              process.env.REPORT,
+              '',
+              `Full output: ${process.env.RUN_URL}`,
+              '',
+              '**To resolve each finding, one of:**',
+              '',
+              '1. Bump the pin — the clean outcome, no judgement needed.',
+              '2. Accept it with a written reason in `scripts/pip-audit-ignore.txt`',
+              '   (and `.trivyignore` too if it is HIGH/CRITICAL with a fix available,',
+              '   or the image scan will stay red). Every entry needs why it is not',
+              '   exploitable *here* and what unblocks it — see that file\'s header.',
+              '',
+              'This issue is updated in place each night, so it reflects the current',
+              'state rather than accumulating duplicates. Close it once the list is clean;',
+              'the next finding opens a fresh one.',
+            ].join('\n');
+
+            const existing = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const mine = existing.find(i => !i.pull_request && i.body && i.body.includes(marker));
+
+            if (mine) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: mine.number,
+                body,
+              });
+              core.notice(`Updated issue #${mine.number}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+              core.notice(`Opened issue #${created.data.number}`);
+            }

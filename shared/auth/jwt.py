@@ -12,12 +12,20 @@ when its ``kid`` matches the token's header). ``build_verification_keys`` builds
 that sequence from a service's ``Settings`` object, and ``resolve_signing_key``
 picks the active signing key for an issuer — see both for the exact shape.
 
-Why RS256 and not EdDSA: this repo pins ``python-jose==3.5.0``, whose
-``jose.constants.ALGORITHMS`` has no ``EdDSA`` member (verified against the
-installed package — ``"EdDSA" in ALGORITHMS.SUPPORTED`` is ``False``). RS256 is
-the algorithm this dependency actually supports cleanly, and both a
-``cryptography`` and a pure-Python ``rsa`` backend are already pinned in every
-service's requirements.txt, so no new dependency was added.
+Why RS256 and not EdDSA. The original reason was that ``python-jose==3.5.0``'s
+``jose.constants.ALGORITHMS`` had no ``EdDSA`` member — true, verified against the
+installed package at the time, and NO LONGER THE CONSTRAINT: jose was removed on
+2026-10-06 and PyJWT's default algorithms do include ``EdDSA``.
+
+The choice stands, on reasons that do not depend on the library:
+
+* RS256 is deployed nowhere yet — every default is still HS256-only — so changing
+  the signing algorithm in the same change that swapped the JWT library would put
+  two untested variables into one rollout.
+* ``_KNOWN_VERIFY_ALGORITHMS`` below is an ALLOWLIST of ``{"HS256", "RS256"}``, and
+  that is what keeps ``none`` and every ``ES*`` unreachable whatever the library
+  happens to support. Widening it is the deliberate edit EdDSA would need, and it
+  should be made on its own, with its own key-generation and rollout steps.
 
 Only ``data_gateway`` is ever configured with an RSA *private* key
 (``jwt_private_key`` — a field that does not even exist on the other three
@@ -91,9 +99,64 @@ from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any, Protocol
 
+import jwt
 import structlog
-from jose import JWTError, jwk, jwt
-from jose.exceptions import ExpiredSignatureError, JWKError, JWSError, JWTClaimsError
+from jwt.algorithms import RSAAlgorithm
+from jwt.exceptions import (
+    DecodeError,
+    ExpiredSignatureError,
+    InvalidAlgorithmError,
+    InvalidKeyError,
+    InvalidTokenError,
+    PyJWTError,
+)
+
+#: What a CALLER of this module catches. Re-exported deliberately, and the five
+#: services import this rather than a name from the JWT library.
+#:
+#: WHY. ``InvalidKeyError`` is a ``PyJWTError`` but NOT an ``InvalidTokenError`` —
+#: measured, not assumed. A caller that reasonably wrote
+#: ``except InvalidTokenError -> 401`` would therefore let a key-construction failure
+#: escape as a 500 on every authenticated request, which is exactly the defect fixed
+#: on 2026-10-06 when ``JWKError`` escaped jose's ``JWTError`` the same way. Catching
+#: a name this module controls means the next library swap cannot recreate that bug at
+#: five call sites, because there is only one place left to get it wrong.
+#:
+#: ``verify_access_token`` normalises everything it raises to an ``InvalidTokenError``
+#: subclass, so this alias is wider than what actually comes out — on purpose. A
+#: caller is better off catching too much than discovering a sibling class in
+#: production.
+TokenError = PyJWTError
+
+#: Kept so existing ``except JWTError`` call sites keep compiling during a staged
+#: rollout. Not for new code: it says "jose" and there is no jose here any more.
+JWTError = PyJWTError
+
+#: Re-exported, not caught by name any more — ``InvalidTokenError`` covers it, since
+#: an expired token is a claim defect and terminal for the same reason the others are.
+#: It stays exported because telling "expired" from "invalid" is a real distinction for
+#: a caller and for three test modules, and they should not have to import it from the
+#: library directly: that is how a call site ends up depending on which library this
+#: module happens to use.
+__all__ = [  # noqa: RUF022 — grouped by what it is, not alphabetically
+    # What a caller catches
+    "TokenError",
+    "JWTError",
+    "ExpiredSignatureError",
+    "InvalidTokenError",
+    # The API
+    "VerificationKey",
+    "build_verification_keys",
+    "decode_private_key",
+    "encode_key_material",
+    "issue_access_token",
+    "generate_refresh_token",
+    "hash_refresh_token",
+    "parse_public_keys",
+    "parse_verify_algorithms",
+    "resolve_signing_key",
+    "verify_access_token",
+]
 
 log = structlog.get_logger(__name__)
 
@@ -172,6 +235,28 @@ def issue_access_token(
     for key, value in (extra_claims or {}).items():
         claims.setdefault(key, value)
     headers = {"kid": kid} if kid else None
+
+    # AR-2's structural guarantee, enforced here rather than left to the library.
+    #
+    # jose refused to sign with a public key and raised a JOSEError;
+    # ``test_jwt_asymmetric.py::test_public_key_cannot_be_used_to_sign_at_all`` pins
+    # that as "a service holding only public keys CANNOT mint a token". PyJWT does
+    # not: ``RSAAlgorithm.prepare_key`` happily returns an ``RSAPublicKey`` and
+    # ``sign`` then raises ``AttributeError: 'RSAPublicKey' object has no attribute
+    # 'sign'`` — measured, and NOT a ``PyJWTError``, so it would surface as a 500
+    # instead of a refusal.
+    #
+    # Checked by marker rather than by catching the AttributeError, because the
+    # guarantee should not depend on which attribute a future cryptography release
+    # happens to expose. ``_validate_rsa_pem`` already rejects the inverse mistake at
+    # boot; this is the runtime half, and it is cheap.
+    if algorithm.startswith("RS") and _PRIVATE_KEY_MARKER not in secret:
+        raise ValueError(
+            f"cannot sign with {algorithm}: the key material has no "
+            f"{_PRIVATE_KEY_MARKER!r} marker, so it is a PUBLIC key. Only "
+            "data_gateway holds a private key — see docs/ACCEPTED-RISKS.md AR-2."
+        )
+
     result: str = jwt.encode(claims, secret, algorithm=algorithm, headers=headers)
     return result
 
@@ -234,9 +319,11 @@ def _validate_rsa_pem(pem: str, *, label: str, want_private: bool) -> None:
 
     Two checks, deliberately both present:
 
-    * ``jose.jwk.construct`` proves the bytes actually parse as an RSA key —
-      catches truncated base64, a JSON blob, a double-encoded value, anything
-      that plainly is not a PEM key.
+    * ``RSAAlgorithm.prepare_key`` proves the bytes actually parse as an RSA key
+      — catches truncated base64, a JSON blob, a double-encoded value, anything
+      that plainly is not a PEM key. (Was ``jose.jwk.construct``; same
+      accept/reject partition, verified on good public PEM, good private PEM,
+      garbage PEM and a plain secret.)
     * The ``PRIVATE KEY`` marker check catches the operator mistake this
       design exists to prevent: pasting the WRONG half of the keypair into the
       WRONG setting. ``jose`` alone would not catch this — an RSA private key
@@ -246,8 +333,12 @@ def _validate_rsa_pem(pem: str, *, label: str, want_private: bool) -> None:
       the entire point of AR-2 without ever raising.
     """
     try:
-        jwk.construct(pem, algorithm="RS256")
-    except JWKError as exc:
+        RSAAlgorithm(RSAAlgorithm.SHA256).prepare_key(pem)
+    except (InvalidKeyError, ValueError, TypeError) as exc:
+        # InvalidKeyError is PyJWT's own; ValueError/TypeError come straight out of
+        # `cryptography` for malformed DER inside a well-formed PEM envelope, which
+        # jose used to wrap. Caught together so a bad key is always a ValueError
+        # with our sentence on it, never a library type a caller has to know.
         raise ValueError(f"{label} is not a valid RS256 PEM key: {exc}") from exc
     is_private = _PRIVATE_KEY_MARKER in pem
     if want_private and not is_private:
@@ -414,28 +505,24 @@ def resolve_signing_key(settings: Any) -> tuple[str, str, str | None]:
     return "HS256", str(getattr(settings, "jwt_secret", "")), None
 
 
-def _is_signature_failure(exc: JWTError) -> bool:
-    """True when *exc* came from the SIGNATURE layer, so another key may help.
-
-    ``jwt.decode`` runs in two stages and reports both as a bare ``JWTError``,
-    which is why the class alone cannot separate them:
-
-    * the JWS stage (signature, header parsing) re-raises as
-      ``JWTError(JWSError(...))`` — the cause is an exception INSTANCE
-    * the claim stage raises ``JWTError("missing required key \\"iat\\" ...")``
-      directly — the argument is a plain string
-
-    So the wrapped cause is the discriminator, and it is a type check rather
-    than a match on message text: jose is free to reword "Signature
-    verification failed." in a patch release, and a verifier that silently
-    changed meaning when it did would be worse than no check.
-
-    A malformed token also lands here (``Invalid header string``) and is
-    key-independent, so retrying it against the remaining keys is wasted work
-    but not wrong — every candidate fails it identically and the loop ends at
-    ``errors[0]``, which is the right report for a token that is not a JWT.
-    """
-    return bool(exc.args) and isinstance(exc.args[0], JWSError)
+# `_is_signature_failure` lived here and is DELETED, not ported.
+#
+# It existed because jose reported both the signature stage and the claim stage as a
+# bare `JWTError`, so the class could not separate them — it discriminated on whether
+# the wrapped cause was a `JWSError` INSTANCE or a plain string. PyJWT gives every
+# case its own class, so the question the function answered is answered by the
+# `except` clauses in `verify_access_token` instead. Measured mapping:
+#
+#   bad signature              -> InvalidSignatureError (a DecodeError)
+#   malformed header/segments  -> DecodeError
+#   alg not in `algorithms`    -> InvalidAlgorithmError (NOT a DecodeError)
+#   missing required claim     -> MissingRequiredClaimError
+#   wrong iss / aud            -> InvalidIssuerError / InvalidAudienceError
+#   expired                    -> ExpiredSignatureError
+#   key unusable for the alg   -> InvalidKeyError (NOT an InvalidTokenError)
+#
+# Keeping a predicate over those would be re-deriving a type hierarchy the library
+# already states.
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +630,7 @@ def verify_access_token(
         # `except JWTError -> 401` path instead of escaping as a 500 that a
         # generic handler would file under "server error".
         log.error("auth.jwt.no_verification_secret")
-        raise JWTError("no verification secret configured")
+        raise InvalidTokenError("no verification secret configured")
 
     # `kid`-based selection (see the comment block above this function). A
     # token whose header cannot even be parsed is left UNFILTERED — every
@@ -553,7 +640,10 @@ def verify_access_token(
     # way" matters during a rotation window).
     try:
         token_kid: str | None = jwt.get_unverified_header(token).get("kid") or None
-    except JWTError:
+    except PyJWTError:
+        # A token whose header cannot be parsed: PyJWT raises DecodeError here.
+        # Caught at the base class because the point is "we could not read a kid",
+        # not which way it failed.
         candidates = all_candidates
     else:
         if token_kid is None:
@@ -567,19 +657,33 @@ def verify_access_token(
                 if token_kid
                 else "no legacy (kid-less) verification key configured"
             )
-            raise JWTError(detail)
+            raise InvalidTokenError(detail)
 
-    # python-jose options dict: each "require_<claim>" key forces the claim to
-    # be present; combining with audience/issuer args also validates values.
-    # jose supports require_exp, require_iss, require_aud, require_jti etc.
-    decode_options: dict[str, bool] = {
-        "require_exp": True,
-        "require_iss": True,
-        "require_aud": True,
-        "require_jti": True,
-        "require_iat": True,
+    # PyJWT's options dict. THE SPELLING IS LOAD-BEARING AND WAS A TRAP.
+    #
+    # This was jose's `{"require_exp": True, "require_iss": True, ...}`. PyJWT takes a
+    # LIST under one `require` key — and it SILENTLY IGNORES option keys it does not
+    # recognise. Measured against the pinned 2.15.1: a token carrying only `sub` and
+    # `exp` decoded clean under the jose-style dict, with no error and no warning. A
+    # copy-paste port therefore switches all five required-claim checks off while
+    # every test that mints a COMPLETE token stays green.
+    # `shared/tests/test_jwt_required_claims.py` was written before this change to
+    # make that impossible; if you edit this dict, read that file first.
+    #
+    # `verify_iat: False` is the second deliberate choice. PyJWT rejects a FUTURE
+    # `iat` with ImmatureSignatureError at +1 SECOND (measured); jose did not reject
+    # it at all. Every verifier is a different process from the issuer, usually a
+    # different host, so a verifier whose clock trails by one second would start
+    # 401-ing freshly minted tokens — a platform-wide outage this repo has never had.
+    # Turning the check off does NOT weaken the `iat` requirement: `require` enforces
+    # PRESENCE independently of `verify_iat` (also measured), and presence is all the
+    # revocation epoch needs. The alternative, a `leeway`, would widen `exp` by the
+    # same amount, which is the wrong thing to trade.
+    decode_options: dict[str, Any] = {
+        "require": ["exp", "iss", "aud", "jti", "iat"],
+        "verify_iat": False,
     }
-    errors: list[JWTError] = []
+    errors: list[PyJWTError] = []
     for index, (candidate_key, candidate_algorithm, _candidate_kid) in enumerate(candidates):
         try:
             payload = dict(
@@ -592,38 +696,91 @@ def verify_access_token(
                     options=decode_options,
                 )
             )
-        except (ExpiredSignatureError, JWTClaimsError):
-            # python-jose verifies the signature BEFORE validating claims, so
-            # these two are only reachable once a key has matched: the token is
-            # genuinely ours and no later key can do better. Stop here, or a
-            # rotation window would turn every "expired" into the next key's
-            # "signature verification failed" and send an incident responder
-            # hunting a key mismatch that does not exist.
-            raise
-        except JWTError as exc:
-            if _is_signature_failure(exc):
-                # The only error a LATER key can do better on. Collect and move
-                # to the next candidate.
-                errors.append(exc)
-                continue
-            # Any other JWTError means this key MATCHED and the token then failed
-            # a claim rule — the missing-``iat`` case above all, which jose
-            # reports as a bare JWTError ('missing required key "iat" among
-            # claims') rather than as JWTClaimsError, so the two-exception clause
-            # above never caught it. Collecting it meant `errors[0]` was raised
-            # instead: candidates[0]'s "Signature verification failed", i.e. a
-            # token rejected for a real, nameable claim defect was reported to
-            # the operator as a key mismatch, during the one window (rotation)
-            # when a key mismatch is what they are already looking for.
+        except DecodeError as exc:
+            # The ONLY family a later key can do better on: a bad signature
+            # (InvalidSignatureError, which is a DecodeError) and a malformed token.
+            # Collect and try the next candidate.
+            #
+            # A malformed token is key-independent, so retrying it is wasted work but
+            # not wrong — every candidate fails it identically and the loop ends at
+            # `errors[0]`, which is the right report for something that is not a JWT.
+            errors.append(exc)
+            continue
+        except InvalidAlgorithmError as exc:
+            # The token's `alg` is not the one this candidate is configured for.
+            # COLLECTED rather than raised, to preserve jose's behaviour exactly:
+            # jose wrapped this as JWTError(JWSError(...)), which `_is_signature_failure`
+            # classed as retryable. During an HS256->RS256 rotation the candidate list
+            # holds both, and an HS256 token must be allowed to reach the HS256
+            # candidate rather than being refused by the RS256 one it was offered to
+            # first. Raising here would be defensible on its own terms and is a
+            # BEHAVIOUR CHANGE, so it is not made silently.
+            errors.append(exc)
+            continue
+        except InvalidKeyError as exc:
+            # THE SAME TRAP, IN A SECOND LIBRARY. Under jose this was `JWKError`,
+            # which is not a subclass of `JWTError` — both derive from `JOSEError` —
+            # so a key that failed CONSTRUCTION for its algorithm escaped this loop
+            # entirely, past every caller's `except JWTError -> 401`, and became a
+            # 500 on every authenticated request across all four services
+            # (review 2026-10-06). PyJWT has the identical shape, measured:
+            #
+            #     issubclass(InvalidKeyError, PyJWTError)        -> True
+            #     issubclass(InvalidKeyError, InvalidTokenError) -> False
+            #
+            # Which is why this module re-exports `TokenError = PyJWTError` and the
+            # five services catch THAT rather than a name from the library. Two
+            # libraries in a row have put the one exception meaning "this key cannot
+            # be used" outside the family a caller would naturally catch, so the
+            # defence belongs here, once, and not at five call sites.
+            #
+            # The operator mistake that gets you here is the mirror of the one
+            # `forbid_private_signing_key` exists to catch: PEM key material pasted
+            # into JWT_SECRET. `assert_strong_secrets` accepts it (long enough, no
+            # placeholder marker), the service boots, and then the library says
+            # "asymmetric key ... should not be used as an HMAC secret" on every
+            # request with no auth log line to point at it. PyJWT 2.15.1 says the same
+            # for BARE DER material, which jose accepted — that is CVE-2026-85394's
+            # root cause, and taking this library is what closes it.
+            #
+            # Re-raised as `InvalidTokenError` so it lands on the 401 path, and logged
+            # first, exactly as the empty-candidate-list branch above does
+            # deliberately. A 401 with nothing in the log would move the outage from
+            # "500s everywhere" to "nobody can log in and nothing says why", which is
+            # not an improvement — and the library's own sentence is the only thing
+            # that names what the operator actually did. It describes the key's SHAPE,
+            # never its bytes, which is why it is safe to log here.
+            log.error(
+                "auth.jwt.key_unusable",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                key_index=index,
+            )
+            raise InvalidTokenError(
+                f"key could not be used for verification: {exc}"
+            ) from exc
+        except InvalidTokenError:
+            # Everything else: the signature MATCHED this key and the token then
+            # failed a claim rule — expired, wrong issuer, wrong audience, a missing
+            # required claim. PyJWT verifies the signature before validating claims
+            # (measured: an expired token under the wrong key yields
+            # InvalidSignatureError, not ExpiredSignatureError), so reaching here
+            # means this key is genuinely the token's and no later key can do better.
+            #
+            # Raised, not collected, and that is the fix a previous review paid for:
+            # collecting it meant `errors[0]` was raised instead — candidates[0]'s
+            # "Signature verification failed" — so a token rejected for a real,
+            # nameable claim defect was reported as a key mismatch during the one
+            # window (a rotation) when a key mismatch is what the operator is already
+            # hunting.
             raise
 
-        # Explicit defence-in-depth check: jose raises JWTError when
-        # require_jti=True and jti is missing, but an empty string would pass
-        # the require check. Guard against that edge case explicitly. Raised
-        # rather than collected, for the same reason as the claim errors above:
-        # the signature already matched this key.
+        # Explicit defence-in-depth check: `require` only tests PRESENCE — both jose
+        # and PyJWT compare against None — so `jti: ""` satisfies it. Guard against
+        # that edge case explicitly. Raised rather than collected, for the same reason
+        # as the claim errors above: the signature already matched this key.
         if not payload.get("jti"):
-            raise JWTError("jti claim is empty")
+            raise InvalidTokenError("jti claim is empty")
 
         if index > 0:
             # The signal that lets a rotation actually be finished. While this

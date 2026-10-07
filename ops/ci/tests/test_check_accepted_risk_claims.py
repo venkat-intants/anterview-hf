@@ -29,13 +29,13 @@ def _write(tmp_path: pathlib.Path, body: str) -> pathlib.Path:
 
 
 def test_a_decode_with_algorithms_is_seen_as_restricted(tmp_path) -> None:
-    p = _write(tmp_path, "from jose import jwt\nx = jwt.decode(t, k, algorithms=['HS256'])\n")
+    p = _write(tmp_path, "import jwt\nx = jwt.decode(t, k, algorithms=['HS256'])\n")
     assert claims._decode_calls(p) == [(2, True)]
 
 
 def test_a_decode_without_algorithms_is_seen_as_unrestricted(tmp_path) -> None:
-    """The whole python-jose acceptance turns on catching exactly this."""
-    p = _write(tmp_path, "from jose import jwt\nx = jwt.decode(t, k)\n")
+    """CVE-2026-85394's precondition is exactly this shape."""
+    p = _write(tmp_path, "import jwt\nx = jwt.decode(t, k)\n")
     assert claims._decode_calls(p) == [(2, False)]
 
 
@@ -45,7 +45,7 @@ def test_the_keyword_may_sit_on_another_line(tmp_path) -> None:
     a comment three functions away."""
     p = _write(
         tmp_path,
-        "from jose import jwt\nx = jwt.decode(\n    t,\n    k,\n    algorithms=[a],\n)\n",
+        "import jwt\nx = jwt.decode(\n    t,\n    k,\n    algorithms=[a],\n)\n",
     )
     assert claims._decode_calls(p) == [(2, True)]
 
@@ -53,7 +53,7 @@ def test_the_keyword_may_sit_on_another_line(tmp_path) -> None:
 def test_a_mention_in_a_comment_does_not_count_as_restriction(tmp_path) -> None:
     p = _write(
         tmp_path,
-        "from jose import jwt\n# algorithms=['HS256'] would be safer\nx = jwt.decode(t, k)\n",
+        "import jwt\n# algorithms=['HS256'] would be safer\nx = jwt.decode(t, k)\n",
     )
     assert claims._decode_calls(p) == [(3, False)]
 
@@ -67,7 +67,7 @@ def test_bytes_decode_is_not_a_jwt_decode(tmp_path) -> None:
 
 def test_an_aliased_jwt_module_is_still_matched(tmp_path) -> None:
     p = _write(
-        tmp_path, "from jose import jwt as jose_jwt\nx = jose_jwt.decode(t, k)\n"
+        tmp_path, "import jwt as pyjwt\nx = pyjwt.decode(t, k)\n"
     )
     assert claims._decode_calls(p) == [(2, False)]
 
@@ -92,8 +92,53 @@ def test_an_empty_match_set_is_a_failure_not_a_pass(monkeypatch, capsys) -> None
     assert "vacuously" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("pkg", ["python-jose", "langgraph", "langgraph-sdk"])
+@pytest.mark.parametrize("pkg", ["PyJWT", "langgraph", "langgraph-sdk"])
 def test_each_reasoned_pin_is_named(pkg: str) -> None:
     """A bump must be noticed, so the versions the reasoning was checked against
     have to be recorded here rather than inferred from the tree."""
     assert pkg in claims.PINNED
+
+
+def test_a_pyjwt_floor_under_2_14_is_refused(tmp_path, monkeypatch) -> None:
+    """The floor check must fail on the range that reopens CVE-2026-85394.
+
+    A guard nobody has watched fail is worth nothing, so this drives the real
+    function against a tree whose only pyproject declares `^2.13` — the release
+    that still accepts a bare DER public key as an HMAC secret.
+    """
+    (tmp_path / "shared").mkdir()
+    (tmp_path / "shared" / "pyproject.toml").write_text(
+        '[tool.poetry.dependencies]\npyjwt = {extras = ["crypto"], version = "^2.13"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(claims, "ROOT", tmp_path)
+    problems: list[str] = []
+    claims.check_pyjwt_floor(problems)
+    assert len(problems) == 1, problems
+    assert "security floor" in problems[0]
+    assert "CVE-2026-85394" in problems[0]
+
+
+def test_a_pyjwt_floor_at_the_boundary_passes(tmp_path, monkeypatch) -> None:
+    """2.14 is the fix, so the floor is `>=`, not `>`. Asserted because an
+    off-by-one here fails the build on the exact version that is correct."""
+    (tmp_path / "shared").mkdir()
+    (tmp_path / "shared" / "pyproject.toml").write_text(
+        '[tool.poetry.dependencies]\npyjwt = {extras = ["crypto"], version = "^2.14"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(claims, "ROOT", tmp_path)
+    problems: list[str] = []
+    notes = claims.check_pyjwt_floor(problems)
+    assert problems == []
+    assert any("pyjwt >=2.14" in n for n in notes), notes
+
+
+def test_no_pyjwt_declaration_at_all_is_a_failure(tmp_path, monkeypatch) -> None:
+    """The same vacuity rule as the decode matcher: a check that matches nothing
+    must say so rather than report the floor as holding."""
+    monkeypatch.setattr(claims, "ROOT", tmp_path)
+    problems: list[str] = []
+    claims.check_pyjwt_floor(problems)
+    assert len(problems) == 1, problems
+    assert "vacuously" in problems[0]

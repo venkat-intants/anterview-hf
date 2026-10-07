@@ -30,7 +30,12 @@ packages = [{include = "shared", from = ".."}]
 [tool.poetry.dependencies]
 python = "^3.11"
 pydantic = {extras = ["email"], version = "^2.9"}
-python-jose = {extras = ["cryptography"], version = "^3.3"}
+# python-jose removed 2026-10-06: two advisories with no released fix
+# (CVE-2026-85394 algorithm confusion, and PYSEC-2026-1325 in its `ecdsa`
+# dependency) were reachable only through it. PyJWT was already installed
+# transitively from redis and livekit, so this is a swap rather than an addition.
+# The extra is spelled `crypto`, not `cryptography`.
+pyjwt = {extras = ["crypto"], version = "^2.14"}
 structlog = "^24.4"
 
 [build-system]

@@ -721,31 +721,58 @@ predated `96b51bf` and so silently omitted `test_phase2_pipeline_defects.py` and
 two web suites — the counts were real but were not "current main + this change",
 which is the only number worth quoting before a deploy.
 
+**Re-measured 2026-10-07**, after merging `origin/main` at `ef33267` (the PyJWT
+migration, the upload content-type allow-list and the bounded PDF/spreadsheet
+parsers). The previous numbers in this table were from 2026-10-05 and every one of
+them had moved; two were wrong in a way worth naming, because they were the two
+this branch's own work changed — `ops/ci` read 41 against an actual 109, and the
+routing gate read "24 prefixes, 4 headers" against 31 and 9. A totals table that
+nobody re-runs is a table that certifies the wrong tree.
+
 | | |
 |---|---|
-| `data_gateway` unit tests | 1,578 passed |
-| `admin_ops` tests | 163 passed |
-| `shared` tests | 676 passed |
-| Web tests | 976 passed |
-| End-to-end smoke against real Postgres | 60/60 |
-| `ruff` | clean |
-| `mypy` (root config, as CI runs it) | clean |
-| `bandit` SAST (MEDIUM+) vs baseline | 0 new findings |
-| `ops/ci` gate tests | 41 passed |
-| Routing / header contract gate | OK — 24 prefixes, 4 headers |
-| Alembic | 6 new migrations, single linear head, applied cleanly |
-| Erasure inventory (table + column) | both satisfied |
-| Web build | succeeds |
+| `data_gateway` unit tests | 3,165 passed |
+| `admin_ops` tests | 206 passed |
+| `shared` tests | 876 passed |
+| Web tests | 1,906 passed, 164 files |
+| Web typecheck (`npm run typecheck`) | clean |
+| `ruff` (all four services, `app/` + `tests/`) | clean |
+| `mypy` (root config, as CI runs it) | clean — 156 / 19 / 18 files |
+| `ops/ci` gate tests | 109 passed |
+| Routing / header contract gate | OK — 31 prefixes, 9 headers, 9 upload caps |
+| Accepted-risk claims gate | OK — every justification still holds |
+| Alembic | single linear head (`f1b3d5a7c9e2`) |
+
+**Three rows were deliberately NOT re-run here, and are left to CI rather than
+restated on stale evidence.** The integration smoke (60/60) and the erasure
+inventory both need a live migrated Postgres, which this pass did not stand up.
+`bandit` cannot be checked on a Windows machine at all: the committed baseline
+stores forward-slash paths, Windows bandit emits `services/admin_ops/app\config.py`
+with a backslash, so **zero** baseline entries match and all 19 known MEDIUM+
+findings are reported as new — `ci.yml`'s own comment warns about exactly this in
+the opposite direction. `interview_core`'s mypy is the same shape: one error here
+(`Module "livekit" has no attribute "rtc"`) that CI does not have, because the
+Linux wheel provides `rtc` and this checkout's does not. Neither is a finding.
 
 ---
 
 ## Browser coverage (added 2026-09-27)
 
-Phase 3 shipped with none. Seven Playwright journeys now drive the real browser against
-the real stack. Each passes; the full set is memory-hungry and has been flaky as a batch
-on a 8 GB machine (two specs wait on real clock time — a scheduled publish and an
-emailed confirmation), so the honest figure is "about five minutes with headroom", not a
-guarantee. They are not run by CI.
+Phase 3 shipped with none. **Eight** Playwright journeys now drive the real browser
+against the real stack, and all eight pass. The table below lists seven; the eighth,
+`apply-indistinguishable.spec.ts` (B4b), was added later and has its own row at the end.
+
+**Corrected 2026-10-07.** This paragraph said "Seven … They are not run by CI", which
+contradicted this document's own header two screens up. Both halves were stale: the
+eighth spec landed with PH3-B4b, and the `browser (playwright e2e)` job has gated every
+pull request since 2026-10-05. The count and the CI claim are the two things in this
+section a reader would take on trust, so they are corrected rather than left to rot — and
+the header is the authority on enforcement, not this paragraph.
+
+On timing: the suite is memory-hungry and has been flaky as a batch on an 8 GB machine
+(two specs wait on real clock time — a scheduled publish and an emailed confirmation).
+Locally the honest figure is "about eleven minutes with headroom", not a guarantee;
+in CI it runs in about five and a half with `EMAIL_POLL_INTERVAL_SECONDS=2`.
 
 | Spec | Stories | What only a browser can say |
 |---|---|---|
@@ -756,6 +783,7 @@ guarantee. They are not run by CI.
 | `save-and-resume.spec.ts` | B4, B4c | saving is offered and inert before consent, and a genuinely new browsing context comes back to the answers already given |
 | `reapply-cooldown.spec.ts` | B4 | a rejected candidate is refused by the waiting period with nothing leaked on screen, let through by an override, and — after confirming by email — is back in **HR's own view** as `new`. The confirmation leg was added after a review found the spec passed while the enrolment stayed rejected and the override went unspent: it proved the form accepted a submission, not that criterion 9 works |
 | `apply-source.spec.ts` | B1 | a campaign tag never costs an applicant, and is never shown to the person being counted |
+| `apply-indistinguishable.spec.ts` | B4b | one address walked through four states renders **one** screen, compared for equality rather than searched for forbidden words. Dates deliberately unmasked. The API matrix in `test_ph3_cooldown_indistinguishable.py` renders nothing, and the panel is a second place the leak can come back — `awaiting_confirmation`, `already_applied` and the ids were each removed after a review found them telling a stranger that a named person had been turned down |
 
 **Three defects were found by writing them**, each in a criterion already marked ✅:
 

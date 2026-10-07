@@ -13,7 +13,8 @@ naming convention:
   - a token signed with the WRONG private key is rejected even when its `kid`
     correctly names the RIGHT one (kid selects a candidate to try, it does not
     replace the signature check)
-  - a holder of the PUBLIC key alone cannot mint anything jose will even sign,
+  - a holder of the PUBLIC key alone cannot mint anything: issuance refuses it
+    outright (the guard is ours, not the library's — see the test for why),
     let alone anything a verifier accepts
   - HS256 and RS256 verify concurrently from one candidate list, and HS256
     stops being accepted the moment it is dropped from that list
@@ -35,8 +36,8 @@ from types import SimpleNamespace
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jose.exceptions import JOSEError, JWTError
 
+from shared.auth.jwt import TokenError as JWTError
 from shared.auth.jwt import (
     VerificationKey,
     build_verification_keys,
@@ -113,11 +114,11 @@ def test_rs256_roundtrip() -> None:
 def test_rs256_token_carries_the_kid_in_its_header() -> None:
     """resolve_signing_key's whole point: the header names the key, so a
     verifier holding several can select instead of guessing."""
-    from jose import jwt as jose_jwt
+    import jwt as pyjwt
 
     token = _issue_rs256()
-    assert jose_jwt.get_unverified_header(token)["kid"] == _KID
-    assert jose_jwt.get_unverified_header(token)["alg"] == "RS256"
+    assert pyjwt.get_unverified_header(token)["kid"] == _KID
+    assert pyjwt.get_unverified_header(token)["alg"] == "RS256"
 
 
 # ---------------------------------------------------------------------------
@@ -200,13 +201,53 @@ def test_wrong_private_key_rejected_even_with_the_correct_kid() -> None:
 
 def test_public_key_cannot_be_used_to_sign_at_all() -> None:
     """The structural guarantee AR-2 exists for: a service handed only
-    JWT_PUBLIC_KEYS has no private exponent, so jose refuses to sign with it —
-    this fails at ISSUANCE, before there is even a token to verify."""
-    with pytest.raises(JOSEError):
+    JWT_PUBLIC_KEYS has no private exponent, so it cannot mint a token. This fails at
+    ISSUANCE, before there is even a token to verify.
+
+    THE GUARANTEE MOVED, AND THAT IS THE POINT. Under jose this was the library's
+    refusal — `jwk.construct` raised a `JOSEError` — and this test asserted that.
+    PyJWT does not refuse: `RSAAlgorithm.prepare_key` happily returns an
+    `RSAPublicKey` and `sign` then raises `AttributeError: 'RSAPublicKey' object has
+    no attribute 'sign'`, measured, and NOT a `PyJWTError`. Borrowed from the
+    library, the guarantee would have degraded from a clean refusal to a 500 on the
+    one path AR-2 is written about.
+
+    So `issue_access_token` now checks for the `PRIVATE KEY` marker itself. The
+    assertion is on the GUARANTEE — issuance refuses, with a message naming the
+    cause — not on which library happens to be installed.
+    """
+    with pytest.raises(ValueError) as exc:
         issue_access_token(
             str(uuid.uuid4()), ["service"], _PUB_PEM, algorithm="RS256",
             issuer=_ISSUER, audience=_AUDIENCE, kid=_KID,
         )
+
+    assert "PUBLIC key" in str(exc.value)
+    assert "AR-2" in str(exc.value), (
+        "the refusal must point at the decision it enforces, or the next person "
+        "reads it as a key-format complaint and goes looking for a better PEM"
+    )
+
+
+def test_the_library_would_not_have_caught_that_on_its_own() -> None:
+    """Why the guard is in our code and not left to PyJWT.
+
+    Handed a public key for RS256, PyJWT raises `AttributeError` — not a
+    `PyJWTError` — so without the guard above an operator misconfiguration would
+    surface as a 500 rather than a refusal. This asserts the guard is what stops it:
+    nothing uncatchable escapes `issue_access_token`.
+    """
+    with pytest.raises(Exception) as exc:  # noqa: PT011 — the type IS the assertion
+        issue_access_token(
+            str(uuid.uuid4()), ["service"], _PUB_PEM, algorithm="RS256",
+            issuer=_ISSUER, audience=_AUDIENCE, kid=_KID,
+        )
+
+    assert not isinstance(exc.value, AttributeError), (
+        "an AttributeError escaped issuance — the marker guard in "
+        "issue_access_token has gone, and a public key in JWT_PRIVATE_KEY is a 500 "
+        "again instead of a refusal"
+    )
 
 
 def test_the_public_key_cannot_be_used_as_an_hmac_secret_to_forge_a_token() -> None:
@@ -218,7 +259,7 @@ def test_the_public_key_cannot_be_used_as_an_hmac_secret_to_forge_a_token() -> N
     HEADER will then verify it happily, and the public key has become a
     signing key.
 
-    Forged with ``hmac.new`` rather than ``jose.jwt.encode`` deliberately: jose
+    Forged with ``hmac.new`` rather than the library's encoder deliberately: it
     refuses this at encode time, so going through the library would be testing
     the library's politeness rather than our verifier. A real attacker does not
     call our encoder.

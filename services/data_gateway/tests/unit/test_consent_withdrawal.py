@@ -40,6 +40,11 @@ class _FakeDb:
     which is why ``execute`` now takes them. It is answered from
     ``rediscovery_rows`` (a list of ``(consent_id, company_id)`` pairs) so a test
     can decide whether this person had any.
+
+    2026-10-06 added ``add``, because the revoke path now stages ``audit_log`` rows
+    for the withdrawal itself. RECORDED into ``added`` rather than accepted and
+    discarded: a fake that silently swallows a write is how a suite stays green over
+    a control somebody deleted, and the audit assertions below read this list.
     """
 
     def __init__(
@@ -54,7 +59,12 @@ class _FakeDb:
         self.rediscovery_rows = rediscovery_rows or []
         self.updates: list[Update] = []
         self.rediscovery_statements: list[str] = []
+        self.added: list[Any] = []
         self.committed = False
+
+    def add(self, obj: Any) -> None:
+        """Stage an ORM object, as AsyncSession.add does — synchronous, no await."""
+        self.added.append(obj)
 
     async def execute(self, stmt: Any, params: Any = None) -> Any:
         result = MagicMock()

@@ -13,6 +13,7 @@ from shared.security import (
 )
 from shared.security import validate_cors_origins as _validate_cors_origins
 from shared.security import validate_database_ssl as _validate_database_ssl
+from shared.security import validate_redis_tls as _validate_redis_tls
 
 log = structlog.get_logger(__name__)
 
@@ -1061,6 +1062,11 @@ class Settings(BaseSettings):
             "database_ssl",
             _validate_database_ssl(self.app_env, self.database_ssl, self.database_url),
         )
+        # Same gate, same reasoning, for the store that holds the refresh tokens
+        # and the revocation epochs. Raises rather than normalising, because
+        # unlike DATABASE_SSL there is no value to rewrite — the scheme is either
+        # rediss:// or it is not.
+        _validate_redis_tls(self.app_env, self.redis_url)
         return self
 
     cors_allowed_origins: str = "http://localhost:5173"

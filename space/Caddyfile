@@ -203,7 +203,32 @@
 		}
 		reverse_proxy 127.0.0.1:8002
 	}
+	# /hr/applicants/bulk — the ONE route behind /hr/* that is meant to carry a
+	# large body: up to _MAX_BULK_FILES (500) resumes and _MAX_BULK_TOTAL_BYTES
+	# (250 MB) in a single multipart request, both enforced in the handler. A
+	# tighter prefix cap would 413 a legitimate batch at the edge, which is why
+	# this needs its own block rather than a bigger number on /hr/* (review
+	# 2026-10-06). Longest-path-wins puts it ahead of /hr/* — see the header.
+	handle /hr/applicants/bulk* {
+		request_body {
+			max_size 260MB
+		}
+		reverse_proxy 127.0.0.1:8002
+	}
 	handle /hr/* {
+		# Defence in depth only — it does NOT bound the parse (a kilobyte of
+		# crafted PDF or xlsx is the real attack, see app/pdf_text.py). What it
+		# does bound is the body FastAPI buffers before any handler runs.
+		#
+		# 12MB is the largest single-document limit behind this prefix: the HR
+		# library corpus and preboarding documents are 10 MB
+		# (corpus_document_max_bytes, preboarding_document_max_bytes), the exam
+		# and question-bank importers 2 MB, a single resume 5 MB. The two routes
+		# that legitimately exceed it have their own blocks above —
+		# /hr/rounds/*/task/materials* and /hr/applicants/bulk*.
+		request_body {
+			max_size 12MB
+		}
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /interview-invite* {
@@ -233,6 +258,18 @@
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /jobs* {
+		# Defence in depth only — it does NOT bound the parse (a kilobyte of
+		# crafted PDF is the real attack, see app/pdf_text.py). What it does bound
+		# is the body FastAPI buffers before any handler runs.
+		#
+		# 11MB because routers/jd.py's _MAX_JD_BYTES is 10 MB and its router
+		# prefix is /jobs — a JD upload is a real document, and this block first
+		# went in at 1MB, which would have 413'd every JD over a megabyte at the
+		# edge (caught in review, 2026-10-06). Same +1MB multipart allowance as
+		# the /offer* and /task* blocks above.
+		request_body {
+			max_size 11MB
+		}
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /notifications* {
@@ -242,6 +279,13 @@
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /users/* {
+		# Defence in depth only — it does NOT bound the parse (a kilobyte of
+		# crafted PDF or xlsx is the real attack, see app/pdf_text.py). What it
+		# does bound is the body FastAPI buffers before any handler runs. Sized
+		# from the largest upload limit behind this prefix (review 2026-10-06).
+		request_body {
+			max_size 6MB
+		}
 		reverse_proxy 127.0.0.1:8002
 	}
 

@@ -472,10 +472,12 @@ async def import_bank_questions(
     if language not in LANGUAGES:
         raise HTTPException(status_code=422, detail="language must be en, hi or te")
 
-    # BOUNDED READ, like the apply door's `read(_MAX_RESUME_BYTES + 1)`: one
-    # byte past the limit is all it takes to know it is over, so the `bytes`
-    # object this handler holds is capped rather than being however large the
-    # caller sent.
+    # BOUNDED READ: read(limit + 1), not read(). An unbounded read pulls the
+    # entire spooled body into memory and only THEN measures it, so the cap
+    # described the request without limiting it. One byte past the limit is all
+    # it takes to know it is over. Same pattern as the pre-auth paths in
+    # public_apply.py and the apply door's `read(_MAX_RESUME_BYTES + 1)`
+    # (review 2026-10-06).
     #
     # WHAT IT DOES NOT DO, because the first version of this comment claimed
     # it did. FastAPI resolves an `UploadFile` parameter during dependency
@@ -486,10 +488,12 @@ async def import_bank_questions(
     # rolled. This bounds memory in the handler, not what arrives.
     #
     # The half that actually bounds arrival is an edge cap, and `handle /hr/*`
-    # has none — unlike `/apply*` (8 MB), `/interviewer/*` (1 MB) and the three
-    # 11 MB blocks. That is recorded rather than fixed here: it is an
-    # authenticated route and the cap belongs in the same change as a review of
-    # what HR legitimately uploads.
+    # NOW HAS ONE — 12MB, added by the upload-hardening change on `main`
+    # (2026-10-06) and sized from the largest single document behind the prefix.
+    # This comment said it had none, which was true when it was written and was
+    # false within a day; `ops/ci/check_routing_contract.py`'s BODY_CAPS is the
+    # machine-checked copy of that list, and it is the thing that caught this on
+    # merge. Prose about which prefixes are capped goes stale — read BODY_CAPS.
     content = await file.read(question_import.MAX_IMPORT_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")

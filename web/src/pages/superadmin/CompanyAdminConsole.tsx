@@ -18,6 +18,7 @@ import {
   ClipboardCheck,
 } from '@/design/components/icons';
 import { getMe } from '@/api/auth';
+import CareersLinkCard from '@/components/hr/CareersLinkCard';
 import {
   listMyHrManagers,
   createMyHrManager,
@@ -276,6 +277,15 @@ export default function CompanyAdminConsole() {
             Add HR
           </Pill>
         </div>
+      </Reveal>
+
+      {/* The company's public careers board address. The slug is per-COMPANY, so
+          this console is its other natural owner alongside /hr — and it has to be
+          its own instance rather than a shared link, because HRRoute admits only
+          hr_manager and SuperAdminRoute only super_admin. Same pattern the repo
+          already uses for /superadmin/library. */}
+      <Reveal>
+        <CareersLinkCard slug={me?.company_slug} companyName={me?.company_name} />
       </Reveal>
 
       <StaffRoster

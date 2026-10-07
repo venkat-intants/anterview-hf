@@ -14,10 +14,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import jwt as pyjwt
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from jose import jwt as jose_jwt
 
 from app.config import settings
 from app.main import app
@@ -50,7 +50,7 @@ def _make_expired_token(user_id: str, roles: list[str]) -> str:
         "aud": settings.jwt_audience,
         "jti": uuid.uuid4().hex,
     }
-    token: str = jose_jwt.encode(
+    token: str = pyjwt.encode(
         claims,
         settings.jwt_secret,
         algorithm=settings.jwt_algorithm,

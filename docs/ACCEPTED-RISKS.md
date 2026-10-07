@@ -116,10 +116,18 @@ radius — every verifier still holds every signing key. It converts an outage
 into a procedure.
 
 **What is NOT true.**
-* There is **no `kid` header**, so a token does not say which key signed it —
-  multi-key verification is trial-and-error across the list, not selection.
 * There is **no automated rotation** and no rotation runbook yet. The capability
   exists; the procedure does not.
+* **Corrected 2026-10-06.** This list used to begin "There is **no `kid`
+  header**, so a token does not say which key signed it — multi-key verification
+  is trial-and-error across the list, not selection." That was true when written
+  and was contradicted by this entry's OWN addendum below from 2026-09-28, which
+  records that `shared/auth/jwt.py` gained a `kid` header and
+  `VerificationKey`-based selection. `verify_access_token` now reads the header's
+  `kid` and filters candidates by it, falling back to trial-and-error only for a
+  token whose header carries no `kid` or cannot be parsed. The bullet is deleted
+  rather than reworded because the sentence it replaced is the kind that gets
+  quoted into a bid answer without the addendum underneath it.
 * Token-epoch revocation **fails open** in all verifiers (SEC-3) — a Redis
   outage means revoked tokens verify until they expire. That is a separate
   deliberate availability trade, and it means "we can revoke" is only true while
@@ -132,9 +140,16 @@ anything, which is the actual goal.
 
 **2026-09-28 addendum — the capability now exists; nothing has adopted it yet.**
 `shared/auth/jwt.py` gained RS256 issue/verify (EdDSA was the first choice but
-`python-jose==3.5.0` as pinned has no `EdDSA` member in `jose.constants.
-ALGORITHMS` — verified against the installed package, not assumed — so RS256
-is what this dependency actually supports), a `kid` header, and
+`python-jose==3.5.0` as pinned had no `EdDSA` member in `jose.constants.ALGORITHMS`
+— verified against the installed package, not assumed — so RS256 was what that
+dependency supported. **Corrected 2026-10-06: jose has been removed in favour of
+PyJWT, whose default algorithms DO include EdDSA, so that is no longer the
+constraint.** RS256 stays, for two reasons that do not depend on the library: it is
+deployed nowhere yet, so changing the algorithm in the same change that swapped the
+library would put two untested variables in one rollout; and
+`_KNOWN_VERIFY_ALGORITHMS` is an allowlist of `{HS256, RS256}`, which is what keeps
+`none` and every `ES*` unreachable whatever the library supports), a `kid` header,
+and
 `VerificationKey` so a verifier can hold several public keys and a caller can
 hold both an HS256 secret and RS256 keys at once. `data_gateway`'s `Settings` gained
 `jwt_signing_algorithm` / `jwt_private_key` / `jwt_active_kid`; the other three

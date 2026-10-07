@@ -105,9 +105,32 @@ Under the Digital Personal Data Protection Act 2023, candidates have:
 - **Right to Erasure** — request account + data deletion: email support@intants.com
   or use the in-dashboard delete option (when available)
 - **Right to Withdraw Consent** — consent can be withdrawn at any time by
-  emailing support@intants.com; withdrawal ends all active and future recording.
-  Sessions already completed are retained for the stated retention period unless
-  an erasure request is also submitted.
+  emailing support@intants.com, or directly through `DELETE /consent`, which is the
+  implemented door and revokes the voice-recording, video-capture,
+  preboarding-documents and talent-pool-rediscovery consents in one action.
+  Withdrawal ends all active and future recording. Sessions already completed are
+  retained for the stated retention period unless an erasure request is also
+  submitted; in-flight sessions are stamped `consent_withdrawn`, which brings them
+  into the next nightly purge window rather than leaving them to the 90-day
+  retention clock.
+  - **It applies at every company, not one.** DPDP §11 grants withdrawal "at any
+    time without restriction", and this platform reads that as written: the
+    rediscovery revocation is issued with no company filter, and a test asserts the
+    absence of one. A candidate who applied to three companies and withdraws has
+    withdrawn at all three.
+  - **It is reachable without a password.** An unactivated applicant's only
+    credential is the guest token in their interview link, so the route is
+    deliberately not role-gated — gating it would remove the right from exactly the
+    people whose data was collected without an account.
+  - **Evidenced in `audit_log`, since 2026-10-06.** One append-only
+    `dpdp_consent.withdrawn` row per revoked ledger entry, naming the consent type,
+    the door (`DELETE /consent`), the global scope and how many in-flight sessions it
+    stopped. The ledger's own `revoked_at` is an UPDATE in place and so cannot say
+    who performed it; this row can. It carries no IP address and no user-agent, by
+    the same §6(1) minimisation reasoning as the camera-notice row — `audit_log` is
+    excluded from erasure, so request metadata stored there would be un-erasable.
+    Before that date only a `preboarding_documents` withdrawal was audited, so a
+    candidate who had granted only interview consents left no evidence at all.
 - **Right to Grievance Redressal** — complaints addressed within 30 days by the
   platform owner (support@intants.com)
 

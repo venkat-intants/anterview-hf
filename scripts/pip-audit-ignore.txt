@@ -30,15 +30,24 @@
 # alone.
 # =============================================================================
 
-# --- ecdsa 0.19.2 — NO FIX EXISTS ------------------------------------------
-# Minerva-class timing attack on ECDSA signing. Reached only through
-# python-jose, which is the platform's JWT library (shared/auth/jwt.py:21).
-# NOT exploitable here: every issue/verify path is HS256 (symmetric) —
-# issue_access_token/verify_access_token default algorithm="HS256" and pass a
-# single algorithm to jose, which also blocks algorithm-confusion. No ES*
-# algorithm is used anywhere, so the vulnerable code never runs.
-# Unblock: an ecdsa release with a fix, or migrating fully to PyJWT.
-PYSEC-2026-1325
+# --- python-jose + ecdsa: GONE, not accepted -------------------------------
+# Both blocks that lived here are DELETED because the dependency is.
+# `python-jose` was removed on 2026-10-06 in favour of PyJWT, and with it the three
+# packages it alone pulled in — `ecdsa`, `pyasn1`, `rsa`. So:
+#
+#   * CVE-2026-85394 (algorithm confusion: a DER public key accepted as an HMAC
+#     secret) is FIXED, not suppressed. PyJWT rejects bare DER — but only from
+#     2.14.0; 2.13.0 accepts it exactly as jose did, verified by forging a token
+#     against it. The floor is `^2.14` in every pyproject.toml for that reason, and
+#     the exact pin is 2.15.1.
+#   * PYSEC-2026-1325 (`ecdsa`, Minerva-class timing attack) is GONE from the images
+#     entirely — `ecdsa` was `Required-by: python-jose` and nothing else.
+#
+# They are deleted rather than left as entries with a note, because
+# `scripts/audit_python_deps.sh` passes every id in this file as `--ignore-vuln`: an
+# entry for a package nobody installs is a live suppression waiting to hide something
+# real.
+#
 
 # --- pytest — FIXED 2026-10-03 ----------------------------------------------
 # PYSEC-2026-1845 is gone: all four services now pin pytest 9.0.3 with
@@ -115,6 +124,28 @@ PYSEC-2026-2574
 # no reasoning at all before. Same upgrade block.
 PYSEC-2026-2194
 PYSEC-2026-2575
+# langgraph-sdk, CVE-2026-104873 (HIGH, 2026-10): the resource-scoped
+# authorization decorators @auth.on.threads / .assistants / .crons ignore their
+# `actions=` argument and register the handler for EVERY action on the resource,
+# so an authenticated user can bypass the fallback ownership check and read or
+# delete another user's resource.
+#
+# NOT REACHABLE HERE, and the reason is structural rather than a judgement about
+# our handlers: those decorators exist for a LangGraph **API server**
+# deployment, and we do not run one. `langgraph_sdk` is never imported anywhere
+# in services/ or shared/ — grep finds no `langgraph_sdk`, no `auth.on`, no auth
+# handler of any kind. We use langgraph as a library: the graph is built and
+# compiled in-process (`build_graph(llm).compile()`,
+# interview_core/app/graph/build.py). The package is here only because langgraph
+# depends on it.
+#
+# Unblock is the same migration as the cluster above, and it is a hard version
+# wall rather than caution: langgraph==0.2.76 pins `langgraph-sdk<0.2.0,>=0.1.42`
+# so 0.4.4 cannot be installed beside it, and langgraph-sdk 0.4.4 itself requires
+# `langchain-core>=1.4.0` against our pinned 0.3.86 (checked against PyPI
+# metadata 2026-10-06). Mirrored in .trivyignore: it is HIGH with a fix
+# available, so the image scan sees it too.
+CVE-2026-104873
 
 # --- langsmith 0.8.5 — NOT EXPLOITABLE (interview_core) ---------------------
 # CVE-2026-59152: TracingMiddleware allows an arbitrary server-side file read.

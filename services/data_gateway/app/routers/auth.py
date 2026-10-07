@@ -153,6 +153,11 @@ class MeResponse(BaseModel):
     # Tenant context (read-only on the profile — HR's company is set by admins).
     company_id: str | None = None
     company_name: str | None = None
+    #: The company's careers-board slug, so a staff console can show the public
+    #: link. Candidate-facing responses already carry it under this same name
+    #: (``candidate_applications.OpenRole``, ``careers.CareersBoard``) — one name for
+    #: one thing. NULL for a platform owner, who belongs to no company.
+    company_slug: str | None = None
 
 
 # Editable fields whitelist — column name → max length (None = unbounded text).
@@ -745,7 +750,12 @@ async def _build_me_response(db: object, user_id_str: str, user: object) -> MeRe
             " u.phone, u.preferred_language, u.avatar_url, u.headline, u.bio,"
             " u.employment_status, u.desired_roles, u.official_email, u.location,"
             " u.company_id, c.name AS company_name,"
-            " u.email_verified_at, u.notify_login_email"
+            " u.email_verified_at, u.notify_login_email,"
+            # APPENDED LAST on purpose: the row is unpacked positionally by g(i)
+            # below, so inserting a column mid-list would shift g(15) and g(16) —
+            # both booleans, so the symptom would be a silently wrong value rather
+            # than an error.
+            " c.slug AS company_slug"
             " FROM users u LEFT JOIN companies c ON c.id = u.company_id"
             " WHERE u.id = :uid"
         ),
@@ -778,6 +788,7 @@ async def _build_me_response(db: object, user_id_str: str, user: object) -> MeRe
         company_name=g(14),  # type: ignore[arg-type]
         email_verified=bool(g(15)),
         notify_login_email=bool(g(16)),
+        company_slug=g(17),  # type: ignore[arg-type]
     )
 
 
@@ -888,6 +899,14 @@ class ChangePasswordBody(BaseModel):
     status_code=status.HTTP_200_OK,
     response_model=OkResponse,
     summary="Set a new password and clear the must-change flag",
+    # This route bcrypt-verifies `current_password` on every call and had NO
+    # limiter (review 2026-10-06). Two consequences: an attacker holding a
+    # 15-minute access token could brute-force the account's real password —
+    # which does not expire when the token does — and each attempt burns ~250 ms
+    # of a worker thread on a service with a p95-under-2s NFR, i.e. an
+    # authenticated CPU-exhaustion primitive. Keyed like login, because the cost
+    # and the guessing are the same shape.
+    dependencies=[rate_limit("change_password", settings.rate_limit_login_per_minute)],
 )
 async def change_password(
     body: ChangePasswordBody,

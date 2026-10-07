@@ -39,12 +39,12 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 
+import jwt as pyjwt
 import pytest
 import pytest_asyncio
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
-from jose import jwt as jose_jwt
 from shared.auth.jwt import encode_key_material, issue_access_token
 
 from app.config import settings
@@ -199,7 +199,7 @@ async def test_real_login_issues_rs256_token_with_kid(client: AsyncClient) -> No
     tokens = await _register(client)
     access_token = str(tokens["access_token"])
 
-    header = jose_jwt.get_unverified_header(access_token)
+    header = pyjwt.get_unverified_header(access_token)
     assert header["alg"] == "RS256"
     assert header["kid"] == _KID
 

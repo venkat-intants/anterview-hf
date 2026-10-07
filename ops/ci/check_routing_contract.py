@@ -24,8 +24,16 @@ Neither failure is reachable from any test that runs a service: they live in
 config files, and the Space variant fails as a 200. So they are asserted here,
 statically, in the job that gates the merge.
 
+A third list joined them: the edge body caps. ``/jobs*`` went in at 1MB while
+``routers/jd.py`` accepts a 10 MB JD, and ``/hr/*`` at 12MB while the bulk resume
+route accepts 250 MB. A cap BELOW the handler's limit 413s a legitimate upload at
+the edge, so the service logs nothing and the only evidence is the 413 the user
+sees — the same shape of silent failure as the two above.
+
 Scope, stated honestly: this checks that each prefix is matched by SOME
-``handle`` block, not that it is matched by the RIGHT one. Upstream correctness
+``handle`` block, not that it is matched by the RIGHT one. For the body caps it
+checks only that a cap is not too SMALL: a cap that is too large, or missing
+entirely, is a judgement call this cannot make. Upstream correctness
 for the deliberately-shared prefixes (``/admin``, ``/api``, ``/users``) is
 Caddy's longest-path-wins and is not modelled here. The failure this exists to
 catch is "reaches no backend at all", which is the one that has actually
@@ -137,6 +145,108 @@ def token_headers() -> dict[str, str]:
     return out
 
 
+# ---------------------------------------------------------------- body caps
+#: Routes whose handler accepts an upload, mapped to the constant that caps it.
+#: ``(probe path, module under services/, symbol, why)``.
+#:
+#: The edge cap must be >= the handler's limit, or Caddy 413s a body the service
+#: would have accepted — at the edge, so the service logs nothing and the only
+#: evidence is a 413 the user sees. Added after this check's absence let
+#: ``/jobs*`` go in at 1MB against a 10 MB JD limit, and ``/hr/*`` at 12MB against
+#: a 250 MB bulk-resume limit (review 2026-10-06).
+#:
+#: The VALUES come from the code so that raising a handler's limit and forgetting
+#: Caddy is a failure here; only the prefix-to-symbol mapping is by hand, which is
+#: the same trade every other list in this file makes.
+UPLOAD_LIMITS: tuple[tuple[str, str, str, str], ...] = (
+    ("/jobs/probe/jd", "data_gateway/app/routers/jd.py", "_MAX_JD_BYTES", "JD PDF"),
+    (
+        "/users/me/resume",
+        "data_gateway/app/routers/resume.py",
+        "_MAX_RESUME_BYTES",
+        "candidate resume",
+    ),
+    (
+        "/apply/probe/resume",
+        "data_gateway/app/routers/public_apply.py",
+        "_MAX_RESUME_BYTES",
+        "pre-auth resume",
+    ),
+    (
+        "/hr/applicants/probe/resume",
+        "data_gateway/app/routers/hr_applicants.py",
+        "_MAX_RESUME_BYTES",
+        "single resume",
+    ),
+    (
+        "/hr/applicants/bulk",
+        "data_gateway/app/routers/hr_applicants.py",
+        "_MAX_BULK_TOTAL_BYTES",
+        "bulk resume batch",
+    ),
+    (
+        "/hr/library/documents",
+        "data_gateway/app/config.py",
+        "corpus_document_max_bytes",
+        "HR library document",
+    ),
+    (
+        "/hr/offers/probe/document",
+        "data_gateway/app/config.py",
+        "preboarding_document_max_bytes",
+        "preboarding document",
+    ),
+    (
+        "/hr/rounds/probe/task/materials",
+        "data_gateway/app/config.py",
+        "task_material_max_bytes",
+        "task material",
+    ),
+    ("/task/probe/response", "data_gateway/app/config.py", "task_response_max_bytes", "task response"),
+)
+
+_SIZE = re.compile(r"^\s*max_size\s+(\d+)\s*([KMG]?B)\s*$", re.MULTILINE)
+_UNIT = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}
+
+
+def _literal_int(node: ast.expr) -> int | None:
+    """``10 * 1024 * 1024`` and ``5242880``, but nothing that needs a runtime."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+        left, right = _literal_int(node.left), _literal_int(node.right)
+        return None if left is None or right is None else left * right
+    return None
+
+
+def handler_limit(module: str, symbol: str) -> int | None:
+    """The byte limit *symbol* is assigned in *module*, by AST.
+
+    Covers both shapes the repo uses: a module-level ``_MAX_X = 10 * 1024 * 1024``
+    and a Settings field ``x_max_bytes: int = 10 * 1024 * 1024``.
+    """
+    path = ROOT / "services" / module
+    if not path.is_file():
+        return None
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+            if isinstance(target, ast.Name) and target.id == symbol and node.value:
+                return _literal_int(node.value)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == symbol:
+                    return _literal_int(node.value)
+    return None
+
+
+def body_cap(block: str) -> int | None:
+    """The ``max_size`` a handle block declares, in bytes; None when it has none."""
+    m = _SIZE.search(block)
+    return int(m.group(1)) * _UNIT[m.group(2)] if m else None
+
+
 # ---------------------------------------------------------------- the config side
 # The request-body caps, as a table CI holds both Caddyfiles to.
 #
@@ -163,6 +273,15 @@ BODY_CAPS: dict[str, str] = {
     "/hr/rounds/*/task/materials*": "11MB",  # job-simulation materials.
     "/offer*": "11MB",  # signed offer documents.
     "/task*": "11MB",  # job-simulation submissions.
+    # Added 2026-10-06 by the upload-hardening change on `main`, and recorded
+    # here in the merge that brought it. Authenticated prefixes, so these are
+    # defence in depth: they bound the body FastAPI buffers before a handler
+    # runs, NOT the parse — a kilobyte of crafted PDF or xlsx is the real
+    # attack, which `app/pdf_text.py` is what bounds.
+    "/hr/*": "12MB",  # largest single document behind it: corpus + preboarding 10MB.
+    "/hr/applicants/bulk*": "260MB",  # its own block, not a bigger /hr/* number.
+    "/jobs*": "11MB",  # routers/jd.py _MAX_JD_BYTES is 10MB + multipart.
+    "/users/*": "6MB",  # largest upload limit behind the prefix.
 }
 
 _MAX_SIZE = re.compile(r"max_size\s+(\S+)")
@@ -287,13 +406,38 @@ def main() -> int:
                 f"preflight on any split-origin deploy"
             )
 
+    # 4. No edge cap sits below the limit the handler itself enforces.
+    for probe, module, symbol, what in UPLOAD_LIMITS:
+        limit = handler_limit(module, symbol)
+        if limit is None:
+            problems.append(
+                f"ops/ci/check_routing_contract.py: UPLOAD_LIMITS names "
+                f"{symbol} in {module}, which no longer has a literal value — "
+                f"update the table or drop the row"
+            )
+            continue
+        for path, text in configs.items():
+            rel = path.relative_to(ROOT).as_posix()
+            hit = next((b for pat, b in handle_blocks(text) if matches(pat, probe)), None)
+            if hit is None:
+                continue  # check 1 already reports an unrouted prefix
+            cap = body_cap(hit)
+            if cap is not None and cap < limit:
+                problems.append(
+                    f"{rel}: the handle block matching {probe!r} caps bodies at "
+                    f"{cap:,} bytes, below the {limit:,} the handler allows "
+                    f"({what}, {symbol}) — Caddy would 413 an upload the service "
+                    f"accepts, at the edge, with nothing in the service log"
+                )
+
     if problems:
         return _fail(problems)
 
     print(
         f"OK - {sum(len(v) for v in router_prefixes().values())} router prefixes "
         f"routed in both Caddyfiles; {len(headers)} custom headers "
-        f"({len(LOG_REDACTION_EXEMPT)} exempt) redacted and CORS-allowed."
+        f"({len(LOG_REDACTION_EXEMPT)} exempt) redacted and CORS-allowed; "
+        f"{len(UPLOAD_LIMITS)} upload caps at or above the handler's own limit."
     )
     return 0
 

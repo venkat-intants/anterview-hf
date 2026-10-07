@@ -297,7 +297,7 @@ def test_a_block_with_no_cap_at_all_is_not_reported(
     assert fake(caddy=no_cap, upload_limits=(ROW,)) == 0
 
 
-def test_an_enumerated_cap_that_vanishes_IS_reported(fake, tmp_path: Path, capsys) -> None:
+def test_an_enumerated_cap_that_vanishes_is_reported(fake, tmp_path: Path, capsys) -> None:
     """The other side of the test above, so the asymmetry is bounded rather than
     general: a prefix listed in BODY_CAPS whose ``request_body`` block has gone is
     a finding. Without this, the monkeypatch above could be loosened to "never
